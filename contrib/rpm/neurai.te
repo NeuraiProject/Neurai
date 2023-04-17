@@ -1,0 +1,81 @@
+policy_module(neurai, 1.100.1)
+
+########################################
+#
+# Declarations
+#
+
+type neurai_t;
+type neurai_exec_t;
+init_daemon_domain(neurai_t, neurai_exec_t)
+
+permissive neurai_t;
+
+type neurai_initrc_exec_t;
+init_script_file(neurai_initrc_exec_t)
+
+type neurai_conf_t;
+files_type(neurai_conf_t)
+
+type neurai_var_lib_t;
+files_type(neurai_var_lib_t)
+
+type neurai_var_run_t;
+files_type(neurai_var_run_t)
+
+type neurai_port_t;
+corenet_port(neurai_port_t)
+
+########################################
+#
+# neurai local policy
+#
+allow neurai_t self:process { fork };
+
+allow neurai_t self:fifo_file rw_fifo_file_perms;
+allow neurai_t self:unix_stream_socket create_stream_socket_perms;
+
+manage_dirs_pattern(neurai_t, neurai_conf_t, neurai_conf_t)
+manage_files_pattern(neurai_t, neurai_conf_t, neurai_conf_t)
+
+manage_dirs_pattern(neurai_t, neurai_var_lib_t, neurai_var_lib_t)
+manage_files_pattern(neurai_t, neurai_var_lib_t, neurai_var_lib_t)
+files_var_lib_filetrans(neurai_t, neurai_var_lib_t, { dir file })
+
+manage_dirs_pattern(neurai_t, neurai_var_run_t, neurai_var_run_t)
+manage_files_pattern(neurai_t, neurai_var_run_t, neurai_var_run_t)
+
+sysnet_dns_name_resolve(neurai_t)
+corenet_all_recvfrom_unlabeled(neurai_t)
+
+allow neurai_t self:tcp_socket create_stream_socket_perms;
+corenet_tcp_sendrecv_generic_if(neurai_t)
+corenet_tcp_sendrecv_generic_node(neurai_t)
+corenet_tcp_sendrecv_all_ports(neurai_t)
+corenet_tcp_bind_generic_node(neurai_t)
+
+gen_require(`
+    type neurai_port_t;
+')
+allow neurai_t neurai_port_t:tcp_socket name_bind;
+
+gen_require(`
+    type neurai_port_t;
+')
+allow neurai_t neurai_port_t:tcp_socket name_connect;
+
+domain_use_interactive_fds(neurai_t)
+
+files_read_etc_files(neurai_t)
+
+miscfiles_read_localization(neurai_t)
+
+sysnet_dns_name_resolve(neurai_t)
+
+allow neurai_t neurai_exec_t:file execute_no_trans;
+allow neurai_t self:process setsched;
+corecmd_exec_ls(neurai_t)
+corenet_tcp_connect_http_port(neurai_t)
+dev_read_urand(neurai_t)
+fs_getattr_xattr_fs(neurai_t)
+kernel_read_system_state(neurai_t)

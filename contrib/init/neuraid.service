@@ -1,0 +1,22 @@
+[Unit]
+Description=Neurai's distributed currency daemon
+After=network.target
+
+[Service]
+User=neurai
+Group=neurai
+
+Type=forking
+PIDFile=/var/lib/neuraid/neuraid.pid
+ExecStart=/usr/bin/neuraid -daemon -pid=/var/lib/neuraid/neuraid.pid \
+-conf=/etc/neurai/neurai.conf -datadir=/var/lib/neuraid -disablewallet
+
+Restart=always
+PrivateTmp=true
+TimeoutStopSec=60s
+TimeoutStartSec=2s
+StartLimitInterval=120s
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target

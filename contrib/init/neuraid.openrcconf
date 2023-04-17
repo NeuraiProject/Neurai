@@ -1,0 +1,33 @@
+# /etc/conf.d/neuraid: config file for /etc/init.d/neuraid
+
+# Config file location
+#NEURAID_CONFIGFILE="/etc/neurai/neurai.conf"
+
+# What directory to write pidfile to?  (created and owned by $NEURAID_USER)
+#NEURAID_PIDDIR="/var/run/neuraid"
+
+# What filename to give the pidfile
+#NEURAID_PIDFILE="${NEURAID_PIDDIR}/neuraid.pid"
+
+# Where to write neuraid data (be mindful that the blockchain is large)
+#NEURAID_DATADIR="/var/lib/neuraid"
+
+# User and group to own neuraid process
+#NEURAID_USER="neurai"
+#NEURAID_GROUP="neurai"
+
+# Path to neuraid executable
+#NEURAID_BIN="/usr/bin/neuraid"
+
+# Nice value to run neuraid under
+#NEURAID_NICE=0
+
+# Additional options (avoid -conf and -datadir, use flags above)
+#NEURAID_OPTS=""
+
+# The timeout in seconds OpenRC will wait for neuraid to terminate
+# after a SIGTERM has been raised.
+# Note that this will be mapped as argument to start-stop-daemon's
+# '--retry' option, which means you can specify a retry schedule
+# here. For more information see man 8 start-stop-daemon.
+NEURAID_SIGTERM_TIMEOUT=60

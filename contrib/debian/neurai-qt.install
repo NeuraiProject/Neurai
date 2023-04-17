@@ -1,0 +1,6 @@
+usr/local/bin/neurai-qt usr/bin
+share/pixmaps/neurai32.xpm usr/share/pixmaps
+share/pixmaps/neurai16.xpm usr/share/pixmaps
+share/pixmaps/neurai128.png usr/share/pixmaps
+debian/neurai-qt.desktop usr/share/applications
+debian/neurai-qt.protocol usr/share/kde4/services/

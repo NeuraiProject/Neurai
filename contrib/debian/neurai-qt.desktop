@@ -1,0 +1,13 @@
+[Desktop Entry]
+Encoding=UTF-8
+Name=Neurai Core
+Comment=Connect to the Neurai P2P Network
+Comment[de]=Verbinde mit dem Neurai peer-to-peer Netzwerk
+Comment[fr]=Neurai, monnaie virtuelle cryptographique pair à pair
+Comment[tr]=Neurai, eşten eşe kriptografik sanal para birimi
+Exec=neurai-qt %u
+Terminal=false
+Type=Application
+Icon=neurai128
+MimeType=x-scheme-handler/neurai;
+Categories=Office;Finance;
