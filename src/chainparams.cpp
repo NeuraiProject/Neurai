@@ -127,7 +127,7 @@ public:
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days
         consensus.nPowTargetSpacing = 1 * 60;
-	    consensus.fPowAllowMinDifficultyBlocks = false;
+	consensus.fPowAllowMinDifficultyBlocks = false;
         consensus.fPowNoRetargeting = false;
         consensus.nRuleChangeActivationThreshold = 1000;
         consensus.nMinerConfirmationWindow = 2016;
@@ -219,6 +219,17 @@ public:
             }
         };
 
+	    
+	checkpointData = (CCheckpointData) {
+            {
+                { 0, genesis.GetHash()},
+                { 1000, uint256S("0x000002f94d6d13b28e16b63d31fc1ec8e239c24d984f016832ffd77d1d942be7")},
+                { 5000, uint256S("0x00000002c8e014859dcf88659b68bc8e7446f9f768b7ad58345abb0c5728baef")},
+                { 10000, uint256S("0x00000001189e35e795f531f86ded4adef83962035e602181355c935734bbf169")},
+                { 20000, uint256S("0x00000005883ce924be51c43b617ead2f156c1882c6644e1c3a4f41e7d2c24d3c")},
+                { 27000, uint256S("0x00000000ab0d7c1f1e2d8ad3f195474c616e95b7a5d12b20916d0f5a63135cb7")}
+            }
+        };
 
         chainTxData = ChainTxData{
             nGenesisTime, // * UNIX timestamp of last known number of transactions
