@@ -227,9 +227,11 @@ public:
                 { 5000, uint256S("0x00000002c8e014859dcf88659b68bc8e7446f9f768b7ad58345abb0c5728baef")},
                 { 10000, uint256S("0x00000001189e35e795f531f86ded4adef83962035e602181355c935734bbf169")},
                 { 20000, uint256S("0x00000005883ce924be51c43b617ead2f156c1882c6644e1c3a4f41e7d2c24d3c")},
-                { 27000, uint256S("0x00000000ab0d7c1f1e2d8ad3f195474c616e95b7a5d12b20916d0f5a63135cb7")}
+		{ 27000, uint256S("0x00000000ab0d7c1f1e2d8ad3f195474c616e95b7a5d12b20916d0f5a63135cb7")},
+                { 37000, uint256S("0x0000000069fcc1a9e0f405afc967ca432271439288d58aa1db7103ef370ca3ff")}
             }
         };
+	    
 
         chainTxData = ChainTxData{
             nGenesisTime, // * UNIX timestamp of last known number of transactions
