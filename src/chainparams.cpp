@@ -179,7 +179,7 @@ public:
         pchMessageStart[0] = 0x4e; // N
         pchMessageStart[1] = 0x45; // E
         pchMessageStart[2] = 0x55; // U
-	    pchMessageStart[3] = 0x52; // R
+	pchMessageStart[3] = 0x52; // R
         nDefaultPort = 19000;
         nPruneAfterHeight = 100000;
 
@@ -196,6 +196,7 @@ public:
         vSeeds.emplace_back("seed3.neuracrypt.org", false);
         vSeeds.emplace_back("seed4.neuracrypt.org", false);
         vSeeds.emplace_back("seed1.neuracrypt.org", false);
+	vSeeds.emplace_back("neurai.satopool.com", false);
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,53); //N
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,117);
@@ -299,7 +300,7 @@ public:
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days
         consensus.nPowTargetSpacing = 1 * 60;
-	    consensus.fPowAllowMinDifficultyBlocks = false;
+	consensus.fPowAllowMinDifficultyBlocks = false;
         consensus.fPowNoRetargeting = false;
         consensus.nRuleChangeActivationThreshold = 1000; // Approx 80% of 2016
         consensus.nMinerConfirmationWindow = 2016; // nPowTargetTimespan / nPowTargetSpacing
@@ -344,7 +345,7 @@ public:
         pchMessageStart[0] = 0x52; // R
         pchMessageStart[1] = 0x55; // U
         pchMessageStart[2] = 0x45; // E
-	    pchMessageStart[3] = 0x4e; // N
+	pchMessageStart[3] = 0x4e; // N
         nDefaultPort = 19100;
         nPruneAfterHeight = 1000;
 
@@ -454,7 +455,7 @@ public:
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days
         consensus.nPowTargetSpacing = 1 * 60;
-	    consensus.fPowAllowMinDifficultyBlocks = false;
+	consensus.fPowAllowMinDifficultyBlocks = false;
         consensus.fPowNoRetargeting = false;
         consensus.nRuleChangeActivationThreshold = 1000; 
         consensus.nMinerConfirmationWindow = 2016; 
@@ -499,7 +500,7 @@ public:
         pchMessageStart[0] = 0x52; // R
         pchMessageStart[1] = 0x55; // U
         pchMessageStart[2] = 0x45; // E
-	    pchMessageStart[3] = 0x4e; // N
+	pchMessageStart[3] = 0x4e; // N
         nDefaultPort = 19200;
         nPruneAfterHeight = 1000;
 
