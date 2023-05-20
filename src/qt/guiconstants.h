@@ -39,7 +39,7 @@ static const bool DEFAULT_SPLASHSCREEN = true;
 #define COLOR_WALLETFRAME_SHADOW QColor(0,0,0,71)
 
 /* Color of labels */
-#define COLOR_LABELS QColor("#4960ad")
+#define COLOR_LABELS QColor("#4b0066")
 
 /** LIGHT MODE */
 /* Background color, very light gray */
@@ -49,9 +49,9 @@ static const bool DEFAULT_SPLASHSCREEN = true;
 /* Neurai light orange */
 #define COLOR_LIGHT_ORANGE QColor("#f79433")
 /* Neurai dark blue */
-#define COLOR_DARK_BLUE QColor("#384192")
+#define COLOR_DARK_BLUE QColor("#4d0066")
 /* Neurai light blue */
-#define COLOR_LIGHT_BLUE QColor("#5874cf")
+#define COLOR_LIGHT_BLUE QColor("#9933ff")
 /* Neurai asset text */
 #define COLOR_ASSET_TEXT QColor(255, 255, 255)
 /* Neurai shadow color - light mode */
@@ -66,15 +66,17 @@ static const bool DEFAULT_SPLASHSCREEN = true;
 
 /** DARK MODE */
 /* Widget background color, dark mode */
-#define COLOR_WIDGET_BACKGROUND_DARK QColor("#1c2535")
+#define COLOR_WIDGET_BACKGROUND_DARK QColor("#2e004d")
 /* Neurai shadow color - dark mode */
 #define COLOR_SHADOW_DARK QColor("#0c1b3d")
 /* Neurai Light blue - dark mode - dark mode */
-#define COLOR_LIGHT_BLUE_DARK QColor("#1e2636")
+//#define COLOR_LIGHT_BLUE_DARK QColor("#2d3a52")
+#define COLOR_LIGHT_BLUE_DARK QColor("#3d0066")
+
 /* Neurai Dark blue - dark mode - dark mode */
-#define COLOR_DARK_BLUE_DARK QColor("#0b1018")
+#define COLOR_DARK_BLUE_DARK QColor("#2e004d")
 /* Pricing widget background color */
-#define COLOR_PRICING_WIDGET QColor("#161e2d")
+#define COLOR_PRICING_WIDGET QColor("#2e004d")
 /* Neurai dark mode administrator background color */
 #define COLOR_ADMIN_CARD_DARK COLOR_BLACK
 /* Neurai dark mode regular asset background color */
@@ -86,7 +88,7 @@ static const bool DEFAULT_SPLASHSCREEN = true;
 /* Toolbar selected text color */
 #define COLOR_TOOLBAR_SELECTED_TEXT_DARK_MODE QColor("#c5ccdf")
 /* Send entries background color dark mode */
-#define COLOR_SENDENTRIES_BACKGROUND_DARK QColor("#1c2535")
+#define COLOR_SENDENTRIES_BACKGROUND_DARK QColor("#3d0066")
 
 
 /* Neurai label color as a string */

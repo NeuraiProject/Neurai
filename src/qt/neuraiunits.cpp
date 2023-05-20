@@ -21,6 +21,7 @@ QList<NeuraiUnits::Unit> NeuraiUnits::availableUnits()
     unitlist.append(XNA);
     unitlist.append(mXNA);
     unitlist.append(uXNA);
+    unitlist.append(Neuron);
     return unitlist;
 }
 
@@ -31,6 +32,7 @@ bool NeuraiUnits::valid(int unit)
     case XNA:
     case mXNA:
     case uXNA:
+    case Neuron:
         return true;
     default:
         return false;
@@ -44,6 +46,7 @@ QString NeuraiUnits::name(int unit)
     case XNA: return QString("XNA");
     case mXNA: return QString("mXNA");
     case uXNA: return QString::fromUtf8("μXNA");
+    case Neuron: return QString::fromUtf8("Neuron");
     default: return QString("???");
     }
 }
@@ -55,6 +58,7 @@ QString NeuraiUnits::description(int unit)
     case XNA: return QString("Neurais");
     case mXNA: return QString("Milli-Neurais (1 / 1" THIN_SP_UTF8 "000)");
     case uXNA: return QString("Micro-Neurais (1 / 1" THIN_SP_UTF8 "000" THIN_SP_UTF8 "000)");
+    case Neuron: return QString("Micro-Neurais (1 / 1" THIN_SP_UTF8 "000" THIN_SP_UTF8 "000)");
     default: return QString("???");
     }
 }
@@ -66,6 +70,7 @@ qint64 NeuraiUnits::factor(int unit)
     case XNA:  return 100000000;
     case mXNA: return 100000;
     case uXNA: return 100;
+    case Neuron: return 1;
     default:   return 100000000;
     }
 }
@@ -94,6 +99,7 @@ int NeuraiUnits::decimals(int unit)
     case XNA: return 8;
     case mXNA: return 5;
     case uXNA: return 2;
+    case Neuron: return 0;
     default: return 0;
     }
 }

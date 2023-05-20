@@ -64,7 +64,8 @@ public:
     {
         XNA,
         mXNA,
-        uXNA
+        uXNA,
+        Neuron
     };
 
     enum SeparatorStyle
