@@ -197,6 +197,8 @@ public:
         vSeeds.emplace_back("seed4.neuracrypt.org", false);
         vSeeds.emplace_back("seed1.neuracrypt.org", false);
         vSeeds.emplace_back("neurai.satopool.com", false);
+        vSeeds.emplace_back("seed1.neurai.org", false);
+        vSeeds.emplace_back("seed2.neurai.org", false);
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,53); //N
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,117);
