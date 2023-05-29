@@ -41,17 +41,6 @@ static CBlock CreateGenesisBlock(const char* pszTimestamp, const CScript& genesi
     return genesis;
 }
 
-/**
- * Build the genesis block. Note that the output of its generation
- * transaction cannot be spent since it did not originally exist in the
- * database.
- *
- * CBlock(hash=000000000019d6, ver=1, hashPrevBlock=00000000000000, hashMerkleRoot=4a5e1e, nTime=1231006505, nBits=1d00ffff, nNonce=2083236893, vtx=1)
- *   CTransaction(hash=4a5e1e, ver=1, vin.size=1, vout.size=1, nLockTime=0)
- *     CTxIn(COutPoint(000000, -1), coinbase 04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73)
- *     CTxOut(nValue=50.00000000, scriptPubKey=0x5F1DF16B2B704C8A578D0B)
- *   vMerkleTree: 4a5e1e
- */
 static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits, int32_t nVersion, const CAmount& genesisReward)
 {
     const char* pszTimestamp = "Fortune 16/April/2023  Elon Musk agrees A.I. will hit people like an asteroid";
@@ -166,10 +155,10 @@ public:
         uint32_t nGenesisTime = 1681720840;
 
         // The best chain should have at least this much work
-        consensus.nMinimumChainWork = uint256S("0x00");
+        consensus.nMinimumChainWork = uint256S("0x0000000000000000000000000000000000000000000000000000bc45d3c25c5f"); // block 58000
 
         // By default assume that the signatures in ancestors of this block are valid.
-        consensus.defaultAssumeValid = uint256S("0x00");
+        consensus.defaultAssumeValid = uint256S("0x00000000155b81afb6ac20009e45eb98c9810fb4dd5501e9f636c7951ae5f768"); // block 58000
 
         /**
          * The message start string is designed to be unlikely to occur in normal data.
@@ -199,6 +188,8 @@ public:
         vSeeds.emplace_back("neurai.satopool.com", false);
         vSeeds.emplace_back("seed1.neurai.org", false);
         vSeeds.emplace_back("seed2.neurai.org", false);
+        vSeeds.emplace_back("neurai-ipv6.neuraiexplorer.com", false);
+        vSeeds.emplace_back("neurai-ipv4.neuraiexplorer.com", false);
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,53); //N
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,117);
@@ -233,7 +224,8 @@ public:
                 { 27000, uint256S("0x00000000ab0d7c1f1e2d8ad3f195474c616e95b7a5d12b20916d0f5a63135cb7")},
                 { 37000, uint256S("0x0000000069fcc1a9e0f405afc967ca432271439288d58aa1db7103ef370ca3ff")},
                 { 43000, uint256S("0x00000002397ff101430416d3366690b15cf81e9e7ae6d4b44100b24a09f106c8")},
-                { 55300, uint256S("0x000000004680b6917faa6c2bb21c5339a1c4b5275aa3e0dd6c19ddfe5e8ec463")}
+                { 55300, uint256S("0x000000004680b6917faa6c2bb21c5339a1c4b5275aa3e0dd6c19ddfe5e8ec463")},
+                { 58150, uint256S("0x00000000155b81afb6ac20009e45eb98c9810fb4dd5501e9f636c7951ae5f768")}
             }
         };
 	    
