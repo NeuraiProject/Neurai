@@ -122,7 +122,7 @@ static const int MAX_URI_LENGTH = 255;
 #define QAPP_APP_NAME_TESTNET "Neurai-Qt-testnet"
 
 /* Default third party browser urls */
-#define DEFAULT_THIRD_PARTY_BROWSERS "https://explorer.neurai.org/tx/%s"
+#define DEFAULT_THIRD_PARTY_BROWSERS "https://explorer.neurai.org/tx/%s|https://neuraiexplorer.com/tx/%s"
 
 /* Default IPFS viewer */
 #define DEFAULT_IPFS_VIEWER "https://ipfs.io/ipfs/%s"
