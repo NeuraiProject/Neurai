@@ -206,14 +206,7 @@ public:
         fRequireStandard = true;
         fMineBlocksOnDemand = false;
         fMiningRequiresPeers = true;
-
-        checkpointData = (CCheckpointData) {
-            {
-              {0, genesis.GetHash()}
-            }
-        };
-
-	    
+   
 	checkpointData = (CCheckpointData) {
             {
                 { 0, genesis.GetHash()},
@@ -225,7 +218,8 @@ public:
                 { 37000, uint256S("0x0000000069fcc1a9e0f405afc967ca432271439288d58aa1db7103ef370ca3ff")},
                 { 43000, uint256S("0x00000002397ff101430416d3366690b15cf81e9e7ae6d4b44100b24a09f106c8")},
                 { 55300, uint256S("0x000000004680b6917faa6c2bb21c5339a1c4b5275aa3e0dd6c19ddfe5e8ec463")},
-                { 58150, uint256S("0x00000000155b81afb6ac20009e45eb98c9810fb4dd5501e9f636c7951ae5f768")}
+                { 58150, uint256S("0x00000000155b81afb6ac20009e45eb98c9810fb4dd5501e9f636c7951ae5f768")},
+                { 61000, uint256S("0x0000000002441c4a83360da932cfd929048d52ba752464ad793191ef85f956cc")}
             }
         };
 	    
@@ -253,15 +247,15 @@ public:
         strGlobalBurnAddress = "NbURNXXXXXXXXXXXXXXXXXXXXXXXT65Gdr";
 
         // Burn Addresses
-        strIssueAssetBurnAddress = strGlobalBurnAddress;
-        strReissueAssetBurnAddress = strGlobalBurnAddress;
-        strIssueSubAssetBurnAddress = strGlobalBurnAddress;
-        strIssueUniqueAssetBurnAddress = strGlobalBurnAddress;
-        strIssueMsgChannelAssetBurnAddress = strGlobalBurnAddress;
-        strIssueQualifierAssetBurnAddress = strGlobalBurnAddress;
-        strIssueSubQualifierAssetBurnAddress = strGlobalBurnAddress;
-        strIssueRestrictedAssetBurnAddress = strGlobalBurnAddress;
-        strAddNullQualifierTagBurnAddress = strGlobalBurnAddress;
+        strIssueAssetBurnAddress = "NbURNXXXXXXXXXXXXXXXXXXXXXXXT65Gdr";
+        strReissueAssetBurnAddress = "NXReissueAssetXXXXXXXXXXXXXXWLe4Ao";
+        strIssueSubAssetBurnAddress = "NXissueSubAssetXXXXXXXXXXXXXX6B2JF";
+        strIssueUniqueAssetBurnAddress = "NXissueUniqueAssetXXXXXXXXXXUBzP4Z";
+        strIssueMsgChannelAssetBurnAddress = "NXissueMsgChanneLAssetXXXXXXTUzrtJ";
+        strIssueQualifierAssetBurnAddress = "NXissueQuaLifierXXXXXXXXXXXXWurNcU";
+        strIssueSubQualifierAssetBurnAddress = "NXissueSubQuaLifierXXXXXXXXXV71vM3";
+        strIssueRestrictedAssetBurnAddress = "NXissueRestrictedXXXXXXXXXXXWpXx4H";
+        strAddNullQualifierTagBurnAddress = "NXaddTagBurnXXXXXXXXXXXXXXXXWucUTr";
 
         // DGW Activation
         nDGWActivationBlock = 1;
