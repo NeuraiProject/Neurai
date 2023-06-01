@@ -4,6 +4,46 @@ Build instructions for Neurai
 This will install most of the dependencies from ubuntu.
 The only one we build, is Berkeley DB 4.8.
 
+Ubuntu 22.04 - Jammy Jellyfish - Install dependencies:
+---------------------------
+`$ sudo apt install 
+build-essential
+libssl-dev
+libboost-chrono-dev
+libboost-filesystem-dev
+libboost-program-options-dev
+libboost-system-dev
+libboost-thread-dev
+libboost-test-dev
+qtbase5-dev
+qttools5-dev
+bison
+libexpat1-dev
+libdbus-1-dev
+libfontconfig-dev
+libfreetype6-dev
+libice-dev
+libsm-dev
+libx11-dev
+libxau-dev
+libxext-dev
+libevent-dev
+libxcb1-dev
+libxkbcommon-dev
+libminiupnpc-dev
+libprotobuf-dev
+libqrencode-dev
+xcb-proto
+x11proto-xext-dev
+x11proto-dev
+xtrans-dev
+zlib1g-dev
+libczmq-dev
+autoconf
+automake
+libtool
+protobuf-compiler
+`
 
 Ubuntu 21.10 - Impish Indri - Install dependencies:
 ---------------------------
