@@ -2991,8 +2991,8 @@ They are not recoverable !!</translation>
         <translation>Neurai Market Price</translation>
     </message>
     <message>
-        <source>Brought to you by binance.com</source>
-        <translation>Brought to you by binance.com</translation>
+        <source>Brought to you by xeggex.com</source>
+        <translation>Brought to you by xeggex.com</translation>
     </message>
     <message>
         <source>Click to disable network activity.</source>

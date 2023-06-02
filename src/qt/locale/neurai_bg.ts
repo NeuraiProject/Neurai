@@ -1605,8 +1605,8 @@ Recommended action: Fully sync your wallet before sending a transaction.
         <translation>Пазарна цена на Neurai</translation>
     </message>
     <message>
-        <source>Brought to you by binance.com</source>
-        <translation>Допринесено от binance.com</translation>
+        <source>Brought to you by xeggex.com</source>
+        <translation>Допринесено от xeggex.com</translation>
     </message>
     <message>
         <source>Click to disable network activity.</source>

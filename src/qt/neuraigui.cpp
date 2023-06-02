@@ -798,7 +798,7 @@ void NeuraiGUI::createToolBars()
                             }
                             this->unitChanged = false;
                             labelCurrentPrice->setText(QString("%1").arg(QString().setNum(next, 'f', this->currentPriceDisplay->Decimals)));
-                            labelCurrentPrice->setToolTip(tr("Brought to you by binance.com"));
+                            labelCurrentPrice->setToolTip(tr("Brought to you by xeggex.com"));
                         }
                     }
                 }
@@ -1879,7 +1879,6 @@ void NeuraiGUI::onCurrencyChange(int newIndex)
 
 void NeuraiGUI::getPriceInfo()
 {
-    /** request->setUrl(QUrl(QString("https://api.binance.com/api/v1/ticker/price?symbol=%1").arg(this->currentPriceDisplay->Ticker)));*/
     request->setUrl(QUrl(QString("https://xeggex.com/api/v2/ticker/%1").arg(this->currentPriceDisplay->Ticker)));
     networkManager->get(*request);
 }

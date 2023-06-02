@@ -3870,7 +3870,7 @@ They are not recoverable !!</source>
     </message>
     <message>
         <location line="+95"/>
-        <source>Brought to you by binance.com</source>
+        <source>Brought to you by xeggex.com</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
