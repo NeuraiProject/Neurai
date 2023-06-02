@@ -112,7 +112,7 @@ std::array<CurrencyUnitDetails, 5> CurrencyUnits::CurrencyOptions = { {
     { "mBTC",   "XNABTC"  , 1000,       5},
     { "µBTC",   "XNABTC"  , 1000000,    2},
     { "Satoshi","XNABTC"  , 100000000,  0},
-    { "USDT",   "XNAUSDT" , 1,          5}
+    { "USDT",   "XNA_USDT" , 1,          6}
 } };
 
 static bool ThreadSafeMessageBox(NeuraiGUI *gui, const std::string& message, const std::string& caption, unsigned int style);
@@ -711,16 +711,16 @@ void NeuraiGUI::createToolBars()
         labelCurrentPrice->setStyleSheet(currentPriceStyleSheet.arg(COLOR_LABELS.name()));
         labelCurrentPrice->setFont(currentMarketFont);
 
-        comboRvnUnit = new QComboBox(headerWidget);
+        comboXnaUnit = new QComboBox(headerWidget);
         QStringList list;
         for(int unitNum = 0; unitNum < CurrencyUnits::count(); unitNum++) {
             list.append(QString(CurrencyUnits::CurrencyOptions[unitNum].Header));
         }
-        comboRvnUnit->addItems(list);
-        comboRvnUnit->setFixedHeight(26);
-        comboRvnUnit->setContentsMargins(5,0,0,0);
-        comboRvnUnit->setStyleSheet(STRING_LABEL_COLOR);
-        comboRvnUnit->setFont(currentMarketFont);
+        comboXnaUnit->addItems(list);
+        comboXnaUnit->setFixedHeight(26);
+        comboXnaUnit->setContentsMargins(5,0,0,0);
+        comboXnaUnit->setStyleSheet(STRING_LABEL_COLOR);
+        comboXnaUnit->setFont(currentMarketFont);
 
         labelVersionUpdate->setText("<a href=\"https://github.com/NeuraiProject/Neurai/releases\">New Wallet Version Available</a>");
         labelVersionUpdate->setTextFormat(Qt::RichText);
@@ -735,7 +735,7 @@ void NeuraiGUI::createToolBars()
         priceLayout->setGeometry(headerWidget->rect());
         priceLayout->addWidget(labelCurrentMarket, 0, Qt::AlignVCenter | Qt::AlignLeft);
         priceLayout->addWidget(labelCurrentPrice, 0,  Qt::AlignVCenter | Qt::AlignLeft);
-        priceLayout->addWidget(comboRvnUnit, 0 , Qt::AlignBottom| Qt::AlignLeft);
+        priceLayout->addWidget(comboXnaUnit, 0 , Qt::AlignBottom| Qt::AlignLeft);
         priceLayout->addStretch();
         priceLayout->addWidget(labelVersionUpdate, 0 , Qt::AlignVCenter | Qt::AlignRight);
 
@@ -808,10 +808,10 @@ void NeuraiGUI::createToolBars()
 
 
         // Signal change of displayed price units, must get new conversion ratio
-        connect(comboRvnUnit, SIGNAL(activated(int)), this, SLOT(currencySelectionChanged(int)));
+        connect(comboXnaUnit, SIGNAL(activated(int)), this, SLOT(currencySelectionChanged(int)));
         // Create the timer
         connect(pricingTimer, SIGNAL(timeout()), this, SLOT(getPriceInfo()));
-        pricingTimer->start(10000);
+        pricingTimer->start(60000);
         getPriceInfo();
         /** XNA END */
 
@@ -1873,13 +1873,14 @@ void NeuraiGUI::onCurrencyChange(int newIndex)
     this->currentPriceDisplay = &CurrencyUnits::CurrencyOptions[newIndex];
     //Update the main GUI box in case this was changed from the settings screen
     //This will fire the event again, but the options model prevents the infinite loop
-    this->comboRvnUnit->setCurrentIndex(newIndex);
+    this->comboXnaUnit->setCurrentIndex(newIndex);
     this->getPriceInfo();
 }
 
 void NeuraiGUI::getPriceInfo()
 {
-    request->setUrl(QUrl(QString("https://api.binance.com/api/v1/ticker/price?symbol=%1").arg(this->currentPriceDisplay->Ticker)));
+    /** request->setUrl(QUrl(QString("https://api.binance.com/api/v1/ticker/price?symbol=%1").arg(this->currentPriceDisplay->Ticker)));*/
+    request->setUrl(QUrl(QString("https://xeggex.com/api/v2/ticker/%1").arg(this->currentPriceDisplay->Ticker)));
     networkManager->get(*request);
 }
 

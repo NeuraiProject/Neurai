@@ -137,7 +137,7 @@ private:
     QWidget *headerWidget = nullptr;
     QLabel *labelCurrentMarket = nullptr;
     QLabel *labelCurrentPrice = nullptr;
-    QComboBox *comboRvnUnit = nullptr;
+    QComboBox *comboXnaUnit = nullptr;
     QTimer *pricingTimer = nullptr;
     QNetworkAccessManager* networkManager = nullptr;
     QNetworkRequest* request = nullptr;
