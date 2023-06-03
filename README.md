@@ -28,6 +28,13 @@ Maximum Supply: 21,000,000,000 XNA
 Decimal Places: 8
 Launch Date: 2024-04-17 08:40 UTC
 Genesis: Fortune 16/April/2023  Elon Musk agrees A.I. will hit people like an asteroid 
+
+Main Network: 19000
+Main RPC: 19001
+Testnet Network: 19100
+Testnet RPC: 19001
+Regtest Network: 19200
+Regtest RPC: 19201
 ```
 
 License
