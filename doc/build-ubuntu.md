@@ -127,6 +127,47 @@ libtool
 protobuf-compiler
 `
 
+Ubuntu 20.04 - Focal Fossa - Install dependencies:
+---------------------------
+`$ sudo apt install 
+build-essential
+libssl-dev
+libboost-chrono-dev
+libboost-filesystem-dev
+libboost-program-options-dev
+libboost-system-dev
+libboost-thread-dev
+libboost-test-dev
+qtbase5-dev
+qttools5-dev
+bison
+libexpat1-dev
+libdbus-1-dev
+libfontconfig-dev
+libfreetype6-dev
+libice-dev
+libsm-dev
+libx11-dev
+libxau-dev
+libxext-dev
+libevent-dev
+libxcb1-dev
+libxkbcommon-dev
+libminiupnpc-dev
+libprotobuf-dev
+libqrencode-dev
+xcb-proto
+x11proto-xext-dev
+x11proto-dev
+xtrans-dev
+zlib1g-dev
+libczmq-dev
+autoconf
+automake
+libtool
+protobuf-compiler
+`
+
 Ubuntu 18.04 - Bionic Beaver - Install dependencies:
 ----------------------------
 `$ sudo apt install 
