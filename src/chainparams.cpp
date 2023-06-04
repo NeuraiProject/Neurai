@@ -326,10 +326,10 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_COINBASE_ASSETS].nOverrideMinerConfirmationWindow = 500;
 
         // The best chain should have at least this much work.
-        consensus.nMinimumChainWork = uint256S("0x000000000000000000000000000000000000000000000000000168050db560b4");
+        consensus.nMinimumChainWork = uint256S("0x00");
 
         // By default assume that the signatures in ancestors of this block are valid.
-        consensus.defaultAssumeValid = uint256S("0x000000006272208605c4df3b54d4d5515759105e7ffcb258e8cd8077924ffef1");
+        consensus.defaultAssumeValid = uint256S("0x00");
 
 
         pchMessageStart[0] = 0x52; // R
@@ -402,14 +402,14 @@ public:
 
         // Burn Addresses
         strIssueAssetBurnAddress = strGlobalBurnAddress;
-        strReissueAssetBurnAddress = strGlobalBurnAddress;
-        strIssueSubAssetBurnAddress = strGlobalBurnAddress;
-        strIssueUniqueAssetBurnAddress = strGlobalBurnAddress;
-        strIssueMsgChannelAssetBurnAddress = strGlobalBurnAddress;
-        strIssueQualifierAssetBurnAddress = strGlobalBurnAddress;
-        strIssueSubQualifierAssetBurnAddress = strGlobalBurnAddress;
-        strIssueRestrictedAssetBurnAddress = strGlobalBurnAddress;
-        strAddNullQualifierTagBurnAddress = strGlobalBurnAddress;
+        strReissueAssetBurnAddress = "tXReissueAssetXXXXXXXXXXXXXXYmsjpM";
+        strIssueSubAssetBurnAddress = "tXissueSubAssetXXXXXXXXXXXXXW53F8Q";
+        strIssueUniqueAssetBurnAddress = "tXissueUniqueAssetXXXXXXXXXXSChvqQ";
+        strIssueMsgChannelAssetBurnAddress = "tXissueMsgChanneLAssetXXXXXXVFmW2d";
+        strIssueQualifierAssetBurnAddress = "tXissueQuaLifierXXXXXXXXXXXXTfjTyH";
+        strIssueSubQualifierAssetBurnAddress = "tXissueSubQuaLifierXXXXXXXXXYmbjCh";
+        strIssueRestrictedAssetBurnAddress = "tXissueRestrictedXXXXXXXXXXXbvd3Ug";
+        strAddNullQualifierTagBurnAddress = "tXaddTagBurnXXXXXXXXXXXXXXXXYXaTg1";
 
         // DGW Activation
         nDGWActivationBlock = 1;
