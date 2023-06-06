@@ -35,6 +35,9 @@ Testnet Network: 19100
 Testnet RPC: 19001
 Regtest Network: 19200
 Regtest RPC: 19201
+
+BIP32 Derivation Path
+m/44'/0'/0'/0
 ```
 
 License
