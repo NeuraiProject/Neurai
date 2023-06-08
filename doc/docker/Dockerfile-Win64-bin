@@ -1,0 +1,36 @@
+# docker build -t neurai-win64-bin .
+
+FROM debian:11
+
+LABEL maintainer="Asimov"
+
+LABEL version="1.0.2"
+
+LABEL description="Neurai 1.0.2 | Docker for windows x64 bin"
+
+ARG DEBIAN_FRONTEND=nointeractive
+
+RUN apt update
+RUN apt-get install -y git unzip
+
+WORKDIR /root
+RUN git clone --branch 1.0.2 https://github.com/NeuraiProject/Neurai.git
+
+WORKDIR /root/Neurai
+
+RUN .github/scripts/00-install-deps.sh windows
+
+WORKDIR /root/Neurai/depends
+RUN make HOST=x86_64-w64-mingw32 -j2
+
+WORKDIR /root/Neurai
+RUN ./autogen.sh
+RUN contrib/install_db4.sh ../
+
+RUN export BDB_PREFIX=/root/db4
+
+RUN CONFIG_SITE=$PWD/depends/x86_64-w64-mingw32/share/config.site ./configure BDB_LIBS="-L${BDB_PREFIX}/lib -ldb_cxx-4.8" BDB_CFLAGS="-I${BDB_PREFIX}/include" --prefix=/ --enable-cxx --disable-shared --disable-tests --disable-gui-tests --with-pic
+
+RUN make -j2
+
+CMD tail -f /dev/null
