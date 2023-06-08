@@ -184,7 +184,6 @@ public:
         vSeeds.emplace_back("seed2.neuracrypt.org", false);
         vSeeds.emplace_back("seed3.neuracrypt.org", false);
         vSeeds.emplace_back("seed4.neuracrypt.org", false);
-        vSeeds.emplace_back("seed1.neuracrypt.org", false);
         vSeeds.emplace_back("neurai.satopool.com", false);
         vSeeds.emplace_back("seed1.neurai.org", false);
         vSeeds.emplace_back("seed2.neurai.org", false);
