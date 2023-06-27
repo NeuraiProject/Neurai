@@ -24,7 +24,7 @@ RUN .github/scripts/00-install-deps.sh linux
 
 WORKDIR /root/Neurai/depends
 
-RUN make HOST=x86_64-pc-linux-gnu make -j6
+RUN make HOST=x86_64-pc-linux-gnu -j6
 
 WORKDIR /root/Neurai
 
