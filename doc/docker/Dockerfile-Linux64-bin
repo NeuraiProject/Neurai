@@ -24,11 +24,7 @@ RUN scripts/00-install-deps.sh linux
 
 WORKDIR /root/Neurai/depends
 
-<<<<<<< HEAD
-RUN make HOST=x86_64-pc-linux-gnu -j6
-=======
 RUN make HOST=x86_64-pc-linux-gnu -j2
->>>>>>> 81c88a4 (- Updated dockerfile script.)
 
 WORKDIR /root/Neurai
 
