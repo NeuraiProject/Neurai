@@ -16,15 +16,19 @@ RUN apt-get install -y git unzip
 
 WORKDIR /root
 
-RUN git clone https://github.com/NeuraiProject/Neurai.git
+RUN git clone --branch 1.0.2 https://github.com/NeuraiProject/Neurai.git
 
 WORKDIR /root/Neurai
 
-RUN .github/scripts/00-install-deps.sh linux
+RUN scripts/00-install-deps.sh linux
 
 WORKDIR /root/Neurai/depends
 
+<<<<<<< HEAD
 RUN make HOST=x86_64-pc-linux-gnu -j6
+=======
+RUN make HOST=x86_64-pc-linux-gnu -j2
+>>>>>>> 81c88a4 (- Updated dockerfile script.)
 
 WORKDIR /root/Neurai
 
@@ -34,8 +38,8 @@ RUN contrib/install_db4.sh ../
 
 RUN export BDB_PREFIX=/root/db4
 
-RUN CONFIG_SITE=$PWD/depends/x86_64-pc-linux-gnu/share/config.site ./configure  --prefix=$PWD/depends/x86_64-pc-linux-gnu --enable-cxx --disable-shared --disable-tests --disable-gui-tests --with-pic LDFLAGS="-L${BDB_PREFIX}/lib/" CPPFLAGS="-I${BDB_PREFIX}/include/"
+RUN CONFIG_SITE=$PWD/depends/x86_64-pc-linux-gnu/share/config.site ./configure --prefix=$PWD/depends/x86_64-pc-linux-gnu --enable-cxx --disable-shared --disable-tests --disable-gui-tests --with-pic LDFLAGS="-L${BDB_PREFIX}/lib/" CPPFLAGS="-I${BDB_PREFIX}/include/"
 
-RUN make -j6
+RUN make -j2
 
 CMD tail -f /dev/null

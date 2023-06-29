@@ -11,20 +11,25 @@ LABEL description="Neurai 1.0.2 | Docker for windows x64 bin"
 ARG DEBIAN_FRONTEND=nointeractive
 
 RUN apt update
+
 RUN apt-get install -y git unzip
 
 WORKDIR /root
+
 RUN git clone --branch 1.0.2 https://github.com/NeuraiProject/Neurai.git
 
 WORKDIR /root/Neurai
 
-RUN .github/scripts/00-install-deps.sh windows
+RUN scripts/00-install-deps.sh windows
 
 WORKDIR /root/Neurai/depends
+
 RUN make HOST=x86_64-w64-mingw32 -j2
 
 WORKDIR /root/Neurai
+
 RUN ./autogen.sh
+
 RUN contrib/install_db4.sh ../
 
 RUN export BDB_PREFIX=/root/db4
