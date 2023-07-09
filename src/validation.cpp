@@ -1328,16 +1328,16 @@ CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
     if (halvings >= 383)
         return 0;
 
-    // Force block reward to 500 after 215 micro-halvings. Mined 19791599270 XNA
-    if (halvings >= 215)
+    // Force block reward to 500 after 216 micro-halvings. Mined 19791599270 XNA
+    if (halvings >= 216)
         return 500 * COIN;
 		
     // Force block reward to 1000 after 180 micro-halvings. Mined 19280399270 XNA
     if (halvings >= 180)
         return 1000 * COIN;
 
-    // Force block reward to 2000 after 145 micro-halvings. Mined 18257999270 XNA
-    if (halvings >= 145)
+    // Force block reward to 2000 after 144 micro-halvings. Mined 18257999270 XNA
+    if (halvings >= 144)
         return 2000 * COIN;
 		
     // Force block reward to 3000 after 108 micro-halvings. Mined 16717199270 XNA
