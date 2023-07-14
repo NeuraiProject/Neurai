@@ -107,12 +107,8 @@ const QString NeuraiGUI::DEFAULT_WALLET = "~Default";
 
 /* Bit of a bodge, c++ really doesn't want you to predefine values
  * in only header files, so we do one-time value assignment here. */
-std::array<CurrencyUnitDetails, 5> CurrencyUnits::CurrencyOptions = { {
-    { "BTC",    "XNABTC"  , 1,          8},
-    { "mBTC",   "XNABTC"  , 1000,       5},
-    { "µBTC",   "XNABTC"  , 1000000,    2},
-    { "Satoshi","XNABTC"  , 100000000,  0},
-    { "USDT",   "XNA_USDT" , 1,          6}
+std::array<CurrencyUnitDetails, 1> CurrencyUnits::CurrencyOptions = { {
+    { "USD",   "usd" , 1,          6}
 } };
 
 static bool ThreadSafeMessageBox(NeuraiGUI *gui, const std::string& message, const std::string& caption, unsigned int style);
@@ -798,7 +794,7 @@ void NeuraiGUI::createToolBars()
                             }
                             this->unitChanged = false;
                             labelCurrentPrice->setText(QString("%1").arg(QString().setNum(next, 'f', this->currentPriceDisplay->Decimals)));
-                            labelCurrentPrice->setToolTip(tr("Brought to you by xeggex.com"));
+                            labelCurrentPrice->setToolTip(tr("Brought to you by txbit.io"));
                         }
                     }
                 }
@@ -811,7 +807,7 @@ void NeuraiGUI::createToolBars()
         connect(comboXnaUnit, SIGNAL(activated(int)), this, SLOT(currencySelectionChanged(int)));
         // Create the timer
         connect(pricingTimer, SIGNAL(timeout()), this, SLOT(getPriceInfo()));
-        pricingTimer->start(60000);
+        pricingTimer->start(120000);
         getPriceInfo();
         /** XNA END */
 
@@ -1879,7 +1875,9 @@ void NeuraiGUI::onCurrencyChange(int newIndex)
 
 void NeuraiGUI::getPriceInfo()
 {
-    request->setUrl(QUrl(QString("https://xeggex.com/api/v2/ticker/%1").arg(this->currentPriceDisplay->Ticker)));
+    request->setUrl(QUrl(QString("https://api.coingecko.com/api/v3/simple/price?ids=neurai&vs_currencies=%1").arg(this->currentPriceDisplay->Ticker)));
+
+    https://api.coingecko.com/api/v3/simple/price?ids=neurai&vs_currencies=
     networkManager->get(*request);
 }
 

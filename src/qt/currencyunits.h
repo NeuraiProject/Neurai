@@ -23,7 +23,7 @@ struct CurrencyUnitDetails
 class CurrencyUnits
 {
 public:
-    static std::array<CurrencyUnitDetails, 5> CurrencyOptions;
+    static std::array<CurrencyUnitDetails, 1> CurrencyOptions;
 
     static int count() {
         return CurrencyOptions.size();
