@@ -32,7 +32,7 @@ Genesis: Fortune 16/April/2023  Elon Musk agrees A.I. will hit people like an as
 Main Network: 19000
 Main RPC: 19001
 Testnet Network: 19100
-Testnet RPC: 19001
+Testnet RPC: 19101
 Regtest Network: 19200
 Regtest RPC: 19201
 
