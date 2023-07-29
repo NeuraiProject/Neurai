@@ -26,7 +26,7 @@ Block Reward Schedule: 50,000 XNA per block
 Block Reward Micro-halvening: 10 days (5%)
 Maximum Supply: 21,000,000,000 XNA
 Decimal Places: 8
-Launch Date: 2024-04-17 08:40 UTC
+Launch Date: 2023-04-17 08:40 UTC
 Genesis: Fortune 16/April/2023  Elon Musk agrees A.I. will hit people like an asteroid 
 
 Main Network: 19000
