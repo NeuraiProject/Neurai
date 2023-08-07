@@ -1,5 +1,6 @@
 ﻿// Copyright (c) 2011-2016 The Bitcoin Core developers
-// Copyright (c) 2017-2019 The Neurai Core developers
+// Copyright (c) 2019-2022 The Ravencoin developers
+// Copyright (c) 2023 The Neurai developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 

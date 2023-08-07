@@ -46,12 +46,14 @@ Updates all the copyright headers of `The Neurai Core developers` which were
 changed in a year more recent than is listed. For example:
 ```
 // Copyright (c) <firstYear>-<lastYear> The Bitcoin Core developers
-// Copyright (c) 2017-2019 The Neurai Core developers
+// Copyright (c) 2019-2022 The Ravencoin developers
+// Copyright (c) 2023 The Neurai developers
 ```
 will be updated to:
 ```
 // Copyright (c) <firstYear>-<lastModifiedYear> The Bitcoin Core developers
-// Copyright (c) 2017-2019 The Neurai Core developers
+// Copyright (c) 2019-2022 The Ravencoin developers
+// Copyright (c) 2023 The Neurai developers
 ```
 where `<lastModifiedYear>` is obtained from the `git log` history.
 
@@ -59,12 +61,14 @@ This subcommand also handles copyright headers that have only a single year. In
 those cases:
 ```
 // Copyright (c) <year> The Bitcoin Core developers
-// Copyright (c) 2017-2019 The Neurai Core developers
+// Copyright (c) 2019-2022 The Ravencoin developers
+// Copyright (c) 2023 The Neurai developers
 ```
 will be updated to:
 ```
 // Copyright (c) <year>-<lastModifiedYear> The Bitcoin Core developers
-// Copyright (c) 2017-2019 The Neurai Core developers
+// Copyright (c) 2019-2022 The Ravencoin developers
+// Copyright (c) 2023 The Neurai developers
 ```
 where the update is appropriate.
 

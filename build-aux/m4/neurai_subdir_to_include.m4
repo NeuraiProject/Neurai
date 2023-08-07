@@ -1,5 +1,6 @@
 dnl Copyright (c) 2013-2014 The Bitcoin Core developers
-dnl Copyright (c) 2017 The Neurai Core developers
+dnl Copyright (c) 2017-2022 The Ravencoin developers
+dnl Copyright (c) 2023 The Neurai developers
 dnl Distributed under the MIT software license, see the accompanying
 dnl file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
