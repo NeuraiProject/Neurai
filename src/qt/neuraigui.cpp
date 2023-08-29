@@ -807,7 +807,7 @@ void NeuraiGUI::createToolBars()
         connect(comboXnaUnit, SIGNAL(activated(int)), this, SLOT(currencySelectionChanged(int)));
         // Create the timer
         connect(pricingTimer, SIGNAL(timeout()), this, SLOT(getPriceInfo()));
-        pricingTimer->start(120000);
+        pricingTimer->start(150000);
         getPriceInfo();
         /** XNA END */
 
