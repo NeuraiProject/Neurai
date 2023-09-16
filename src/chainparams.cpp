@@ -187,6 +187,7 @@ public:
         vSeeds.emplace_back("neurai.satopool.com", false);
         vSeeds.emplace_back("seed1.neurai.org", false);
         vSeeds.emplace_back("seed2.neurai.org", false);
+        vSeeds.emplace_back("seed3.neurai.org", false);
         vSeeds.emplace_back("neurai-ipv6.neuraiexplorer.com", false);
         vSeeds.emplace_back("neurai-ipv4.neuraiexplorer.com", false);
 
@@ -221,7 +222,8 @@ public:
                 { 61000, uint256S("0x0000000002441c4a83360da932cfd929048d52ba752464ad793191ef85f956cc")},
                 { 70100, uint256S("0x00000000000a431aa2f41657f5b46e3c86fc0489aeba6ea2550054b46ca8c5d1")},
                 { 158000, uint256S("0x0000000000024416ff91d4102b2d3b7302929283ad42192e2f09a8539a4cf343")},
-                { 190000, uint256S("0x0000000000011d26a3cfdd8cbe23fc223722c82969b86d0a6282bf62558097bd")}
+                { 190000, uint256S("0x0000000000011d26a3cfdd8cbe23fc223722c82969b86d0a6282bf62558097bd")},
+                { 216000, uint256S("0x000000000001d989bfce030064cf3693621922cb2425ac6477ae8779600a4261")}
             }
         };
 	    
@@ -357,6 +359,7 @@ public:
         vSeeds.emplace_back("testnet1.neuracrypt.org", false);
         vSeeds.emplace_back("testnet2.neuracrypt.org", false);
         vSeeds.emplace_back("testnet3.neuracrypt.org", false);
+        vSeeds.emplace_back("testnet1.neurai.org", false);
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,127); //t
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,196);
