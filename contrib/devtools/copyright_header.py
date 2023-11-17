@@ -86,7 +86,7 @@ EXPECTED_HOLDER_NAMES = [
     "Satoshi Nakamoto\n",
     "The Neurai Core developers\n",
     "The Neurai Core developers \n",
-    "Neurai Core Developers\n",
+    "Neurai Developers\n",
     "the Neurai Core developers\n",
     "The Neurai developers\n",
     "The LevelDB Authors\. All rights reserved\.\n",

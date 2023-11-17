@@ -4,7 +4,8 @@ Source: https://github.com/NeuraiProject/Neurai
 
 Files: *
 Copyright: 2009-2017, Bitcoin Core Developers
-           2017-2020, Neurai Core Developers
+           2017-2022, Ravencoin Core Developers              
+           2023, Neurai Developers
 License: Expat
 Comment: The Bitcoin Core Developers encompasses the current developers listed on bitcoin.org,
          as well as the numerous contributors to the project.
@@ -80,7 +81,7 @@ Files: src/qt/res/icons/about.png
        src/qt/res/icons/neurai.*
        share/pixmaps/neurai*
        src/qt/res/src/neurai.svg
-Copyright: The Neurai Core Developers
+Copyright: The Neurai Developers
 License: public-domain
 
 
