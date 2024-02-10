@@ -408,16 +408,16 @@ public:
         //Global Burn Address
         strGlobalBurnAddress = "tBURNXXXXXXXXXXXXXXXXXXXXXXXVZLroy";
 
-        // Burn Addresses
+        // Burn Addresses 
         strIssueAssetBurnAddress = strGlobalBurnAddress;
-        strReissueAssetBurnAddress = "tXReissueAssetXXXXXXXXXXXXXXYmsjpM";
-        strIssueSubAssetBurnAddress = "tXissueSubAssetXXXXXXXXXXXXXW53F8Q";
-        strIssueUniqueAssetBurnAddress = "tXissueUniqueAssetXXXXXXXXXXSChvqQ";
-        strIssueMsgChannelAssetBurnAddress = "tXissueMsgChanneLAssetXXXXXXVFmW2d";
-        strIssueQualifierAssetBurnAddress = "tXissueQuaLifierXXXXXXXXXXXXTfjTyH";
-        strIssueSubQualifierAssetBurnAddress = "tXissueSubQuaLifierXXXXXXXXXYmbjCh";
-        strIssueRestrictedAssetBurnAddress = "tXissueRestrictedXXXXXXXXXXXbvd3Ug";
-        strAddNullQualifierTagBurnAddress = "tXaddTagBurnXXXXXXXXXXXXXXXXYXaTg1";
+        strReissueAssetBurnAddress = "tAssetXXXXXXXXXXXXXXXXXXXXXXas6pz8";
+        strIssueSubAssetBurnAddress = "tSubAssetXXXXXXXXXXXXXXXXXXXXGTvF4";
+        strIssueUniqueAssetBurnAddress = "tUniqueAssetXXXXXXXXXXXXXXXXVCgpLs";
+        strIssueMsgChannelAssetBurnAddress = "tMsgChanneLAssetXXXXXXXXXXXXVsJoya";
+        strIssueQualifierAssetBurnAddress = "tQuaLifierXXXXXXXXXXXXXXXXXXT5czoV";
+        strIssueSubQualifierAssetBurnAddress = "tSubQuaLifierXXXXXXXXXXXXXXXW5MmGk";
+        strIssueRestrictedAssetBurnAddress = "tRestrictedXXXXXXXXXXXXXXXXXVyPBEK";
+        strAddNullQualifierTagBurnAddress = "tTagBurnXXXXXXXXXXXXXXXXXXXXYm6pxA";
 
         // DGW Activation
         nDGWActivationBlock = 1;
