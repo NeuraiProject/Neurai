@@ -36,7 +36,7 @@ Testnet RPC: 19101
 Regtest Network: 19200
 Regtest RPC: 19201
 
- 
+MAIN NETWORK
 BIP32 Derivation Path: m/44'/0'/0'/0
 BIP32 private: 0x0488ade4
 BIP32 public: 0x0488b21e
@@ -44,11 +44,20 @@ BIP32 public: 0x0488b21e
 private: 0x80
 public: 0x35
 scripthash: 0x75
+
+TESTNET NETWORK
+BIP32 Derivation Path: m/44'/0'/0'/1
+BIP32 private: 0x043587cf
+BIP32 public:  0x04358394
+
+private: 0x80
+public: 0x7f
+scripthash: 0x75
 ```
 
 Code Source
 -------
-The Neurai code comes from Ravencoin.
+The Neurai code comes from Ravencoin and Ravencoin comes from Bitcoin.
 
 License
 -------
