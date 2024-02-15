@@ -1,11 +1,11 @@
-Neurai Core
+Neurai
 ==============
 
 Setup
 ---------------------
-Neurai Core is the original Neurai client and it builds the backbone of the network. It downloads and, by default, stores the entire history of Neurai transactions; depending on the speed of your computer and network connection, the synchronization process is typically complete in under an hour.
+Neurai is the original Neurai client and it builds the backbone of the network. It downloads and, by default, stores the entire history of Neurai transactions; depending on the speed of your computer and network connection, the synchronization process is typically complete in under an hour.
 
-To download compiled binaries of the Neurai Core and wallet, visit the [GitHub release page](https://github.com/NeuraiProject/Neurai/releases).
+To download compiled binaries of the Neurai and wallet, visit the [GitHub release page](https://github.com/NeuraiProject/Neurai/releases).
 
 Running
 ---------------------
@@ -17,7 +17,7 @@ The following are some helpful notes on how to run Neurai on your native platfor
 
 2) Install distribution-specific dependencies listed below.
 
-3) Run the GUI wallet or only the Neurai core deamon
+3) Run the GUI wallet or only the Neurai deamon
 
    a. GUI wallet:
 
@@ -74,11 +74,11 @@ The GUI wallet requires the QR Code encoding library and Google's data interchan
 
 2) Double click the DMG to mount it.
 
-3) Drag Neurai Core icon to the Applications Folder
+3) Drag Neurai icon to the Applications Folder
 
 ![alt tag](https://i.imgur.com/GLhBFUV.png)
 
-4) Open the Applications folder and Launch Neurai Core. The client will begin synchronizing with the network.
+4) Open the Applications folder and Launch Neurai. The client will begin synchronizing with the network.
 
 ![alt tag](https://i.imgur.com/v3962qo.png)
 
@@ -105,7 +105,7 @@ for help and more information.
 
 Building from source
 ---------------------
-The following are developer notes on how to build the Neurai core software on your native platform. They are not complete guides, but include notes on the necessary libraries, compile flags, etc.
+The following are developer notes on how to build the Neurai software on your native platform. They are not complete guides, but include notes on the necessary libraries, compile flags, etc.
 
 - [Dependencies](https://github.com/NeuraiProject/Neurai/tree/master/doc/dependencies.md)
 - [OS X Build Notes](https://github.com/NeuraiProject/Neurai/tree/master/doc/build-osx.md)

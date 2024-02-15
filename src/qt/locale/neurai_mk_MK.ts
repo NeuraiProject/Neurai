@@ -599,7 +599,7 @@
         <translation>Опции:</translation>
     </message>
     <message>
-        <source>Neurai Core</source>
+        <source>Neurai</source>
         <translation>Биткоин Core</translation>
     </message>
     <message>

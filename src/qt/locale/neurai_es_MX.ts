@@ -629,7 +629,7 @@
         <translation>Opciones:</translation>
     </message>
     <message>
-        <source>Neurai Core</source>
+        <source>Neurai</source>
         <translation>nucleo Neurai</translation>
     </message>
     <message>

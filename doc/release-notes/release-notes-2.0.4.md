@@ -1,4 +1,4 @@
-Neurai Core version *2.0.4.0* is now available!!
+Neurai version *2.0.4.0* is now available!!
 ==============
 
   <https://github.com/NeuraiProject/Neurai/releases/tag/v2.0.4>
@@ -46,11 +46,11 @@ will not be valid.
 Compatibility
 ==============
 
-Neurai Core is extensively tested on multiple operating systems using
+Neurai is extensively tested on multiple operating systems using
 the Linux kernel, macOS 10.8+, and Windows Vista and later. 32-bit versions of Windows,
 and Windows XP are not supported.
 
-Neurai Core should also work on most other Unix-like systems but is not
+Neurai should also work on most other Unix-like systems but is not
 frequently tested on them.
 
 Notable changes

@@ -4617,8 +4617,8 @@ Sie sind nicht wiederherstellbar!</translation>
         <translation>Kann HTTP Server nicht starten. Siehe debug log für Details.</translation>
     </message>
     <message>
-        <source>Neurai Core</source>
-        <translation>Neurai Core</translation>
+        <source>Neurai</source>
+        <translation>Neurai</translation>
     </message>
     <message>
         <source>The %s developers</source>

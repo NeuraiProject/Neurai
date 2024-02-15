@@ -927,10 +927,10 @@ std::string CopyrightHolders(const std::string &strPrefix)
 {
     std::string strCopyrightHolders = strPrefix + strprintf(_(COPYRIGHT_HOLDERS), _(COPYRIGHT_HOLDERS_SUBSTITUTION));
 
-    // Check for untranslated substitution to make sure Neurai Core copyright is not removed by accident
-    if (strprintf(COPYRIGHT_HOLDERS, COPYRIGHT_HOLDERS_SUBSTITUTION).find("Neurai Core") == std::string::npos)
+    // Check for untranslated substitution to make sure Neurai copyright is not removed by accident
+    if (strprintf(COPYRIGHT_HOLDERS, COPYRIGHT_HOLDERS_SUBSTITUTION).find("Neurai") == std::string::npos)
     {
-        strCopyrightHolders += "\n" + strPrefix + "The Neurai Core developers";
+        strCopyrightHolders += "\n" + strPrefix + "The Neurai developers";
     }
     return strCopyrightHolders;
 }

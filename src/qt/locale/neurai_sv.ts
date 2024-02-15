@@ -2892,8 +2892,8 @@ Var vänlig och försök igen.</translation>
         <translation>Kunde inte starta HTTP-server. Se avlusningsloggen för detaljer.</translation>
     </message>
     <message>
-        <source>Neurai Core</source>
-        <translation>Neurai Core</translation>
+        <source>Neurai</source>
+        <translation>Neurai</translation>
     </message>
     <message>
         <source>The %s developers</source>

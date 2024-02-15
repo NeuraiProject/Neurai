@@ -789,8 +789,8 @@
 </translation>
     </message>
     <message>
-        <source>Neurai Core</source>
-        <translation>neurai core</translation>
+        <source>Neurai</source>
+        <translation>Neurai</translation>
     </message>
     <message>
         <source>Error loading block database</source>

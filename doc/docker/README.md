@@ -1,4 +1,4 @@
-Neurai Core - Docker 
+Neurai - Docker 
 ==============
 
 Setup

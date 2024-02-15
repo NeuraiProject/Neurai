@@ -1124,7 +1124,7 @@
 </translation>
     </message>
     <message>
-        <source>Neurai Core</source>
+        <source>Neurai</source>
         <translation>Núcleo de Neurai</translation>
     </message>
     <message>

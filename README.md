@@ -62,7 +62,7 @@ The Neurai code comes from Ravencoin and Ravencoin comes from Bitcoin.
 License
 -------
 
-Neurai Core is released under the terms of the MIT license. See [COPYING](COPYING) for more
+Neurai is released under the terms of the MIT license. See [COPYING](COPYING) for more
 information or see https://opensource.org/licenses/MIT.
 
 

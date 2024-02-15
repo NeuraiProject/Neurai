@@ -18,7 +18,7 @@ NEURAID_BIN=${NEURAID_BIN:-/usr/bin/neuraid}
 NEURAID_NICE=${NEURAID_NICE:-${NICELEVEL:-0}}
 NEURAID_OPTS="${NEURAID_OPTS:-${NEURAI_OPTS}}"
 
-name="Neurai Core Daemon"
+name="Neurai Daemon"
 description="Neurai cryptocurrency P2P network daemon"
 
 command="/usr/bin/neuraid"

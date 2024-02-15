@@ -717,7 +717,7 @@
 <context>
     <name>neurai-core</name>
     <message>
-        <source>Neurai Core</source>
+        <source>Neurai</source>
         <translation>Neurai மையம்</translation>
     </message>
     <message>

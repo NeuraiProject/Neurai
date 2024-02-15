@@ -5179,7 +5179,7 @@ They are not recoverable !!</translation>
         <translation>HTTP sunucusu başlatılamadı. Ayrıntılar için debug.log dosyasına bakınız.</translation>
     </message>
     <message>
-        <source>Neurai Core</source>
+        <source>Neurai</source>
         <translation>Neurai Çekirdeği</translation>
     </message>
     <message>

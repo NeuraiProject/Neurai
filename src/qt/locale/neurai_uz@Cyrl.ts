@@ -1181,8 +1181,8 @@
         <translation>Демон сифатида орқа фонда ишга туширинг ва буйруқларга рози бўлинг</translation>
     </message>
     <message>
-        <source>Neurai Core</source>
-        <translation>Neurai Core</translation>
+        <source>Neurai</source>
+        <translation>Neurai</translation>
     </message>
     <message>
         <source>Connection options:</source>

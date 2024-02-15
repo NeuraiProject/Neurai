@@ -1385,8 +1385,8 @@
 </translation>
     </message>
     <message>
-        <source>Neurai Core</source>
-        <translation type="vanished">Neurai Core</translation>
+        <source>Neurai</source>
+        <translation type="vanished">Neurai</translation>
     </message>
     <message>
         <source>Execute command when a wallet transaction changes (%s in cmd is replaced by TxID)</source>

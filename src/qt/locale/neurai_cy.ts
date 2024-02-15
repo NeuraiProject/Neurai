@@ -521,7 +521,7 @@
         <translation>Opsiynau:</translation>
     </message>
     <message>
-        <source>Neurai Core</source>
+        <source>Neurai</source>
         <translation>Craidd Neurai</translation>
     </message>
     <message>

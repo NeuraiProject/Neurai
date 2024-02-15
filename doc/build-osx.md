@@ -42,9 +42,9 @@ from the root of the repository.
 
 **Note**: You only need Berkeley DB if the wallet is enabled (see [*Disable-wallet mode*](/doc/build-osx.md#disable-wallet-mode)).
 
-## Build Neurai Core
+## Build Neurai
 
-1. Clone the Neurai Core source code:
+1. Clone the Neurai source code:
     ```shell
     git clone https://github.com/NeuraiProject/Neurai
     cd Neurai
@@ -72,7 +72,7 @@ from the root of the repository.
     ```
 
 ## `disable-wallet` mode
-When the intention is to run only a P2P node without a wallet, Neurai Core may be
+When the intention is to run only a P2P node without a wallet, Neurai may be
 compiled in `disable-wallet` mode with:
 ```shell
 ./configure --disable-wallet
@@ -83,7 +83,7 @@ In this case there is no dependency on Berkeley DB 4.8 and SQLite.
 Mining is also possible in disable-wallet mode using the `getblocktemplate` RPC call.
 
 ## Running
-Neurai Core is now available at `./src/neuraid`
+Neurai is now available at `./src/neuraid`
 
 Before running, you may create an empty configuration file:
 ```shell

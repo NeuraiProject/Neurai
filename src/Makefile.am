@@ -79,7 +79,7 @@ if BUILD_NEURAI_TX
 endif
 
 .PHONY: FORCE check-symbols check-security
-# neurai core #
+# Neurai #
 NEURAI_CORE_H = \
   addrdb.h \
   addressindex.h \

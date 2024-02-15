@@ -2935,8 +2935,8 @@
         <translation>Невозможно запустить HTTP сервер. Смотри debug лог для подробностей.</translation>
     </message>
     <message>
-        <source>Neurai Core</source>
-        <translation>Neurai Core</translation>
+        <source>Neurai</source>
+        <translation>Neurai</translation>
     </message>
     <message>
         <source>The %s developers</source>

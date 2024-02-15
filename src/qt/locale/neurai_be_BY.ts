@@ -1287,8 +1287,8 @@
         <translation>Запусціць у фоне як дэман і прымаць каманды</translation>
     </message>
     <message>
-        <source>Neurai Core</source>
-        <translation>Neurai Core</translation>
+        <source>Neurai</source>
+        <translation>Neurai</translation>
     </message>
     <message>
         <source>Do you want to rebuild the block database now?</source>

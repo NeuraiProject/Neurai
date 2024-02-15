@@ -3473,8 +3473,8 @@ Aanbevolen actie: Synchroniseer uw wallet volledig vooraleer uw transactie te ve
         <translation>Niet mogelijk ok HTTP-server te starten. Zie debuglogboek voor details.</translation>
     </message>
     <message>
-        <source>Neurai Core</source>
-        <translation>Neurai Core</translation>
+        <source>Neurai</source>
+        <translation>Neurai</translation>
     </message>
     <message>
         <source>The %s developers</source>

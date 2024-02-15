@@ -1,7 +1,7 @@
 Translation Strings Policy
 ===========================
 
-This document provides guidelines for internationalization of the Neurai Core software.
+This document provides guidelines for internationalization of the Neurai software.
 
 How to translate?
 ------------------

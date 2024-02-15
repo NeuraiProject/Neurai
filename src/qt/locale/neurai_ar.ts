@@ -1965,7 +1965,7 @@
         <translation>حدد مجلد المعلومات</translation>
     </message>
     <message>
-        <source>Neurai Core</source>
+        <source>Neurai</source>
         <translation>جوهر البيت كوين</translation>
     </message>
     <message>

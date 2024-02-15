@@ -9,7 +9,7 @@
 #define UNUSED
 #endif
 static const char UNUSED *neurai_strings[] = {
-QT_TRANSLATE_NOOP("neurai-core", "Neurai Core"),
+QT_TRANSLATE_NOOP("neurai-core", "Neurai"),
 QT_TRANSLATE_NOOP("neurai-core", "The %s developers"),
 QT_TRANSLATE_NOOP("neurai-core", ""
 "(1 = keep tx meta data e.g. account owner and payment request information, 2 "

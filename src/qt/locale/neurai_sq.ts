@@ -809,7 +809,7 @@
         <translation>Opsionet:</translation>
     </message>
     <message>
-        <source>Neurai Core</source>
+        <source>Neurai</source>
         <translation>Berthama Neurai</translation>
     </message>
     <message>

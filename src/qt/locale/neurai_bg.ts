@@ -2909,7 +2909,7 @@ Recommended action: Fully sync your wallet before sending a transaction.
         <translation>Pruning blockstore...</translation>
     </message>
     <message>
-        <source>Neurai Core</source>
+        <source>Neurai</source>
         <translation>Биткойн ядро</translation>
     </message>
     <message>

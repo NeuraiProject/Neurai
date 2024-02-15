@@ -1029,7 +1029,7 @@
         <translation>Executar no fondo como un demo e aceptar comandos</translation>
     </message>
     <message>
-        <source>Neurai Core</source>
+        <source>Neurai</source>
         <translation>Core de Neurai</translation>
     </message>
     <message>

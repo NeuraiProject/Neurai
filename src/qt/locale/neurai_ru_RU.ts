@@ -584,7 +584,7 @@
     </message>
     <message>
         <source>Neurai</source>
-        <translation>Neurai Core</translation>
+        <translation>Neurai</translation>
     </message>
     <message>
         <source>Wallet</source>
@@ -825,8 +825,8 @@
 <context>
     <name>neurai-core</name>
     <message>
-        <source>Neurai Core</source>
-        <translation>Neurai Core</translation>
+        <source>Neurai</source>
+        <translation>Neurai</translation>
     </message>
     <message>
         <source>Whitelisted peers cannot be DoS banned and their transactions are always relayed, even if they are already in the mempool, useful e.g. for a gateway</source>

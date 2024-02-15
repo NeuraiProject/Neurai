@@ -1,4 +1,4 @@
-Neurai Core version *0.15.0.1* is now available from:
+Neurai version *0.15.0.1* is now available from:
 
   <https://neurai.org/bin/neurai-core-0.15.0.1/>
 
@@ -51,10 +51,10 @@ processing the entire blockchain.
 Compatibility
 ==============
 
-Neurai Core is extensively tested on multiple operating systems using
+Neurai is extensively tested on multiple operating systems using
 the Linux kernel, macOS 10.8+, and Windows Vista and later. Windows XP is not supported.
 
-Neurai Core should also work on most other Unix-like systems but is not
+Neurai should also work on most other Unix-like systems but is not
 frequently tested on them.
 
 Notable changes

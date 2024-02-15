@@ -32,7 +32,7 @@ Additional optional parameters are available. To display all optional parameters
 To display what individual tests are running (as they are running) use the
 `--log_level=message` parameter.  
 
-By default the log messages from the Neurai Core application are not echoed 
+By default the log messages from the Neurai application are not echoed 
 when running the unit tests.  If it is desired to print this log data change 
 the following from 'false' to 'true' in the `test_neurai.cpp` file and uncomment
 three lines in the `script\interpreter.cpp\ VerifyScript` method and recompile:

@@ -465,7 +465,7 @@
 <context>
     <name>neurai-core</name>
     <message>
-        <source>Neurai Core</source>
+        <source>Neurai</source>
         <translation>Биткойн ядро</translation>
     </message>
     </context>

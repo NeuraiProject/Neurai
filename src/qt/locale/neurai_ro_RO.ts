@@ -2147,7 +2147,7 @@
         <translation>Rulează în fundal ca un demon şi acceptă comenzi</translation>
     </message>
     <message>
-        <source>Neurai Core</source>
+        <source>Neurai</source>
         <translation>Nucleul Neurai</translation>
     </message>
     <message>

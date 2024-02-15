@@ -26,10 +26,10 @@ Contains files used to package neuraid/neurai-qt
 for Debian-based Linux systems. If you compile neuraid/neurai-qt yourself, there are some useful files here.
 
 ### [Gitian-descriptors](/contrib/gitian-descriptors) ###
-Files used during the gitian build process. For more information about gitian, see the [the Neurai Core documentation repository](https://github.com/neurai-core/docs).
+Files used during the gitian build process. For more information about gitian, see the [the Neurai documentation repository](https://github.com/neurai-core/docs).
 
 ### [Gitian-keys](/contrib/gitian-keys)
-PGP keys used for signing Neurai Core [Gitian release](/doc/release-process.md) results.
+PGP keys used for signing Neurai [Gitian release](/doc/release-process.md) results.
 
 ### [MacDeploy](/contrib/macdeploy) ###
 Scripts and notes for Mac builds. 

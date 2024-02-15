@@ -1033,7 +1033,7 @@
 <context>
     <name>neurai-core</name>
     <message>
-        <source>Neurai Core</source>
+        <source>Neurai</source>
         <translation>Neurai Kern</translation>
     </message>
     <message>

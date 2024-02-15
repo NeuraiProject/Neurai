@@ -789,7 +789,7 @@
         <translation>Operare infere sicut daemon et mandata accipe</translation>
     </message>
     <message>
-        <source>Neurai Core</source>
+        <source>Neurai</source>
         <translation>Neurai Nucleus</translation>
     </message>
     <message>

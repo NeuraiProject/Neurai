@@ -6742,8 +6742,8 @@ They are not recoverable !!</source>
     </message>
     <message>
         <location line="-525"/>
-        <source>Neurai Core</source>
-        <translation type="unfinished">Neurai Core</translation>
+        <source>Neurai</source>
+        <translation type="unfinished">Neurai</translation>
     </message>
     <message>
         <location line="+1"/>

@@ -901,8 +901,8 @@
 <context>
     <name>neurai-core</name>
     <message>
-        <source>Neurai Core</source>
-        <translation>Neurai Core</translation>
+        <source>Neurai</source>
+        <translation>Neurai</translation>
     </message>
     <message>
         <source>Information</source>

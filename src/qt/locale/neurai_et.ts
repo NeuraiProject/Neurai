@@ -1727,7 +1727,7 @@
         <translation>Tööta taustal ning aktsepteeri käsklusi</translation>
     </message>
     <message>
-        <source>Neurai Core</source>
+        <source>Neurai</source>
         <translation>Neuraii tuumik</translation>
     </message>
     <message>

@@ -2639,7 +2639,7 @@
         <translation>ריצה כסוכן ברקע וקבלת פקודות</translation>
     </message>
     <message>
-        <source>Neurai Core</source>
+        <source>Neurai</source>
         <translation>ליבת ביטקוין</translation>
     </message>
     <message>
