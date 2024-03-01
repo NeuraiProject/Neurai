@@ -4,9 +4,9 @@ FROM debian:11
 
 LABEL maintainer="Asimov"
 
-LABEL version="1.0.2"
+LABEL version="1.0.4"
 
-LABEL description="Neurai 1.0.2 | Docker for linux x64 bin"
+LABEL description="Neurai 1.0.4 | Docker for linux x64 bin"
 
 ARG DEBIAN_FRONTEND=nointeractive
 
