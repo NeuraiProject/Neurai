@@ -3,7 +3,7 @@
 FROM ubuntu:22.04
 
 LABEL maintainer="Asimov"
-LABEL version="1.0.3"
+LABEL version="1.0.4"
 LABEL description="Neurai Docker"
 
 ARG DEBIAN_FRONTEND=nointeractive
