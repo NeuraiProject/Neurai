@@ -42,7 +42,7 @@ BIP32 private: 0x0488ade4
 BIP32 public: 0x0488b21e
 
 Special derivation path for HW like Onekey
-BIP32 Derivation Path: m/44'/0'/0'/1900
+BIP32 Derivation Path: m/44'/1900'/0'/0
 
 private: 0x80
 public: 0x35
