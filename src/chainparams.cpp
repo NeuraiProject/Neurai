@@ -199,7 +199,7 @@ public:
         base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x88, 0xAD, 0xE4};
 
         // Neurai BIP44 cointype in mainnet is '0'
-        nExtCoinType = 0;
+        nExtCoinType = 1900;
 
         vFixedSeeds = std::vector<SeedSpec6>(pnSeed6_main, pnSeed6_main + ARRAYLEN(pnSeed6_main));
 
