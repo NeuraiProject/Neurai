@@ -147,6 +147,10 @@ const char* GetOpName(opcodetype opcode)
     case OP_XNA_ASSET              : return "OP_XNA_ASSET";
     /** XNA END */
 
+    /** For future IoT asset 
+    case OP_IOT_ASSET            : return "OP_IOT_ASSET";
+    */
+
     case OP_INVALIDOPCODE          : return "OP_INVALIDOPCODE";
 
     // Note:
