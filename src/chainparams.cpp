@@ -191,6 +191,7 @@ public:
         vSeeds.emplace_back("neurai-ipv6.neuraiexplorer.com", false);
         vSeeds.emplace_back("neurai-ipv4.neuraiexplorer.com", false);
         vSeeds.emplace_back("main-seed.neurai.top", false);
+        vSeeds.emplace_back("node.neurai.org", false);
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,53); //N
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,117);
