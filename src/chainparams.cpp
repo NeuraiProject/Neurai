@@ -180,10 +180,6 @@ public:
         assert(genesis.hashMerkleRoot == uint256S("4b28bf93d960cd83d1889757381d5a587208464e9075bdc0739151fbe15f5951"));
 
         vSeeds.emplace_back("dns.neurai.org", false);
-        // vSeeds.emplace_back("seed1.neuracrypt.org", false);
-        // vSeeds.emplace_back("seed2.neuracrypt.org", false);
-        // vSeeds.emplace_back("seed3.neuracrypt.org", false);
-        // vSeeds.emplace_back("seed4.neuracrypt.org", false);
         vSeeds.emplace_back("neurai.satopool.com", false);
         vSeeds.emplace_back("seed1.neurai.org", false);
         vSeeds.emplace_back("seed2.neurai.org", false);
