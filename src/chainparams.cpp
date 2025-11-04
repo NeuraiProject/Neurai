@@ -225,15 +225,16 @@ public:
                 { 235000, uint256S("0x00000000000148a02dfe4d476bec0e15edb8aba16aa5bbc250d39f9feec94083")},
                 { 304000, uint256S("0x000000000001b89a5b02d73f9835199d64e1fac2f276bc7b8783eaa3d8ab2d30")},
                 { 432000, uint256S("0x000000000001ce8ae0ee5a9a629ac8434a7e2ed371112a1737dadc5a7ae5b200")},
-	        { 1180000, uint256S("0x00000000000b01a49d709ff53ab480765cff9136bbd7237be66fd6ef079faa19")}
+	            { 1180000, uint256S("0x00000000000b01a49d709ff53ab480765cff9136bbd7237be66fd6ef079faa19")},
+                { 1330000, uint256S("0x00000000000e22514b7645a6901c97cf91e227fc9615a536f69ae4e1e53a9785")}
             }
         };
 
         chainTxData = ChainTxData{
-            nGenesisTime, // * UNIX timestamp of last known number of transactions
-            0,    // * total number of transactions between genesis and that timestamp
+            1762149426, // * UNIX timestamp of last known number of transactions
+            1885721,    // * total number of transactions between genesis and that timestamp
                         //   (the tx=... number in the SetBestChain debug.log lines)
-            0       // * estimated number of transactions per second after that timestamp
+            0.02      // * estimated number of transactions per second after that timestamp
         };
 
         /** XNA Start **/
