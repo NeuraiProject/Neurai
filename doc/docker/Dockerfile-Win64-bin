@@ -38,4 +38,4 @@ RUN CONFIG_SITE=$PWD/depends/x86_64-w64-mingw32/share/config.site ./configure BD
 
 RUN make -j2
 
-CMD tail -f /dev/null
+CMD ["tail", "-f", "/dev/null"]
