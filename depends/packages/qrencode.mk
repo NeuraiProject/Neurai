@@ -1,7 +1,7 @@
 package=qrencode
 $(package)_version=3.4.4
-$(package)_download_path=https://fukuchi.org/works/qrencode/
-$(package)_file_name=$(package)-$($(package)_version).tar.bz2
+$(package)_download_path=https://snapshot.debian.org/archive/debian/20170701T025043Z/pool/main/q/qrencode/
+$(package)_file_name=qrencode_$($(package)_version).orig.tar.bz2
 $(package)_sha256_hash=efe5188b1ddbcbf98763b819b146be6a90481aac30cfc8d858ab78a19cde1fa5
 
 define $(package)_set_vars
