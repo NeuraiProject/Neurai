@@ -494,12 +494,35 @@ void NeuraiGUI::createActions()
     showHelpMessageAction->setMenuRole(QAction::NoRole);
     showHelpMessageAction->setStatusTip(tr("Show the %1 help message to get a list with possible Neurai command-line options").arg(tr(PACKAGE_NAME)));
 
+    /** Links menu actions */
+    websiteAction = new QAction(tr("&Website"), this);
+    websiteAction->setStatusTip(tr("Open Neurai website"));
+    explorerAction = new QAction(tr("&Explorer"), this);
+    explorerAction->setStatusTip(tr("Open Neurai explorer"));
+    webWalletAction = new QAction(tr("&WebWallet"), this);
+    webWalletAction->setStatusTip(tr("Open Neurai web wallet"));
+    bGridAction = new QAction(tr("&BGrid"), this);
+    bGridAction->setStatusTip(tr("Open BGrid"));
+    telegramAction = new QAction(tr("&Telegram"), this);
+    telegramAction->setStatusTip(tr("Open Neurai Telegram group"));
+    twitterAction = new QAction(tr("&X (Twitter)"), this);
+    twitterAction->setStatusTip(tr("Open Neurai X (Twitter) page"));
+
     connect(quitAction, SIGNAL(triggered()), qApp, SLOT(quit()));
     connect(aboutAction, SIGNAL(triggered()), this, SLOT(aboutClicked()));
     connect(aboutQtAction, SIGNAL(triggered()), qApp, SLOT(aboutQt()));
     connect(optionsAction, SIGNAL(triggered()), this, SLOT(optionsClicked()));
     connect(toggleHideAction, SIGNAL(triggered()), this, SLOT(toggleHidden()));
     connect(showHelpMessageAction, SIGNAL(triggered()), this, SLOT(showHelpMessageClicked()));
+
+    /** Connect link actions */
+    connect(websiteAction, SIGNAL(triggered()), this, SLOT(openWebsite()));
+    connect(explorerAction, SIGNAL(triggered()), this, SLOT(openExplorer()));
+    connect(webWalletAction, SIGNAL(triggered()), this, SLOT(openWebWallet()));
+    connect(bGridAction, SIGNAL(triggered()), this, SLOT(openBGrid()));
+    connect(telegramAction, SIGNAL(triggered()), this, SLOT(openTelegram()));
+    connect(twitterAction, SIGNAL(triggered()), this, SLOT(openTwitter()));
+
     connect(openRPCConsoleAction, SIGNAL(triggered()), this, SLOT(showDebugWindow()));
     connect(openWalletRepairAction, SIGNAL(triggered()), this, SLOT(showWalletRepair()));
     // Get restart command-line parameters and handle restart
@@ -571,6 +594,14 @@ void NeuraiGUI::createMenuBar()
     help->addSeparator();
     help->addAction(aboutAction);
     help->addAction(aboutQtAction);
+
+    QMenu *links = appMenuBar->addMenu(tr("&Links"));
+    links->addAction(websiteAction);
+    links->addAction(explorerAction);
+    links->addAction(webWalletAction);
+    links->addAction(bGridAction);
+    links->addAction(telegramAction);
+    links->addAction(twitterAction);
 }
 
 void NeuraiGUI::createToolBars()
@@ -1893,4 +1924,35 @@ void NeuraiGUI::getLatestVersion()
 {
     versionRequest->setUrl(QUrl("https://api.github.com/repos/NeuraiProject/Neurai/releases"));
     networkVersionManager->get(*versionRequest);
+}
+
+/** Link opening slots */
+void NeuraiGUI::openWebsite()
+{
+    QDesktopServices::openUrl(QUrl("https://neurai.org"));
+}
+
+void NeuraiGUI::openExplorer()
+{
+    QDesktopServices::openUrl(QUrl("https://neuraiexplorer.com"));
+}
+
+void NeuraiGUI::openWebWallet()
+{
+    QDesktopServices::openUrl(QUrl("https://webwallet.neurai.org"));
+}
+
+void NeuraiGUI::openBGrid()
+{
+    QDesktopServices::openUrl(QUrl("https://bgrid.org"));
+}
+
+void NeuraiGUI::openTelegram()
+{
+    QDesktopServices::openUrl(QUrl("https://t.me/neuraiproject"));
+}
+
+void NeuraiGUI::openTwitter()
+{
+    QDesktopServices::openUrl(QUrl("https://x.com/neuraiproject"));
 }

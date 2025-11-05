@@ -127,6 +127,14 @@ private:
     QAction *openAction = nullptr;
     QAction *showHelpMessageAction = nullptr;
 
+    /** Links menu actions */
+    QAction *websiteAction = nullptr;
+    QAction *explorerAction = nullptr;
+    QAction *webWalletAction = nullptr;
+    QAction *bGridAction = nullptr;
+    QAction *telegramAction = nullptr;
+    QAction *twitterAction = nullptr;
+
     /** XNA START */
     QAction *transferAssetAction = nullptr;
     QAction *createAssetAction = nullptr;
@@ -294,6 +302,14 @@ private Q_SLOTS:
     /** Handle tray icon clicked */
     void trayIconActivated(QSystemTrayIcon::ActivationReason reason);
 #endif
+
+    /** Open external links */
+    void openWebsite();
+    void openExplorer();
+    void openWebWallet();
+    void openBGrid();
+    void openTelegram();
+    void openTwitter();
 
     /** Show window if hidden, unminimize when minimized, rise when obscured or show if hidden and fToggleHidden is true */
     void showNormalIfMinimized(bool fToggleHidden = false);
