@@ -4,15 +4,15 @@ FROM debian:11
 
 LABEL maintainer="Asimov"
 
-LABEL version="1.0.4"
+LABEL version="1.0.5"
 
-LABEL description="Neurai 1.0.4 | Docker for windows x64 bin"
+LABEL description="Neurai 1.0.5 | Docker for windows x64 bin"
 
 ARG DEBIAN_FRONTEND=nointeractive
 
 RUN apt update
 
-RUN apt-get install -y git unzip
+RUN apt-get install -y git unzip curl wget
 
 WORKDIR /root
 
