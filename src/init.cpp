@@ -48,6 +48,8 @@
 #include "assets/assets.h"
 #include "assets/assetdb.h"
 #include "assets/snapshotrequestdb.h"
+#include "depinmsgpool.h"
+#include "depinmsgpoolnet.h"
 #ifdef ENABLE_WALLET
 #include "wallet/init.h"
 #include <wallet/wallet.h>
@@ -1286,6 +1288,21 @@ static bool LockDataDirectory(bool probeOnly)
     } catch(const boost::interprocess::interprocess_exception& e) {
         return InitError(strprintf(_("Cannot obtain a lock on data directory %s. %s is probably already running.") + " %s.", strDataDir, _(PACKAGE_NAME), e.what()));
     }
+
+    // ********************************************************* Chat Mempool validation
+    if (gArgs.GetBoolArg("-depinmsg", false)) {
+        if (!gArgs.GetBoolArg("-assetindex", false)) {
+            return InitError(_("DePIN messaging requires -assetindex to be enabled. "
+                            "Please add assetindex=1 to your configuration and restart with -reindex"));
+        }
+
+        std::string token = gArgs.GetArg("-depinmsgtoken", "");
+        if (token.empty()) {
+            return InitError(_("DePIN messaging enabled but no token specified. "
+                            "Use -depinmsgtoken=TOKENNAME"));
+        }
+    }
+
     return true;
 }
 
@@ -1871,6 +1888,28 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
         chain_active_height = chainActive.Height();
     }
     LogPrintf("nBestHeight = %d\n", chain_active_height);
+
+    // ********************************************************* Initialize Chat Mempool
+    if (gArgs.GetBoolArg("-depinmsg", false)) {
+        std::string token = gArgs.GetArg("-depinmsgtoken", "");
+        unsigned int port = gArgs.GetArg("-depinmsgport", DEFAULT_DEPIN_MSG_PORT);
+        unsigned int maxRecipients = gArgs.GetArg("-depinmsgmaxusers", DEFAULT_MAX_DEPIN_RECIPIENTS);
+
+        pDepinMsgPool = std::make_unique<CDepinMsgPool>();
+        if (!pDepinMsgPool->Initialize(token, port, maxRecipients)) {
+            return InitError(_("Failed to initialize DePIN messaging. Check that the token exists and -assetindex is enabled."));
+        }
+
+        LogPrintf("DePIN messaging initialized for token: %s on port %d\n", token, port);
+
+        // Iniciar servidor de DePIN messaging
+        pDepinMsgPoolServer = std::make_unique<CDepinMsgPoolServer>();
+        if (!pDepinMsgPoolServer->Start(port)) {
+            return InitError(_("Failed to start DePIN messaging server on specified port"));
+        }
+
+        LogPrintf("DePIN messaging server started on port %d\n", port);
+    }
 
     if (gArgs.GetBoolArg("-listenonion", DEFAULT_LISTEN_ONION))
         StartTorControl(threadGroup, scheduler);

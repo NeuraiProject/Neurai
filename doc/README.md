@@ -1,5 +1,375 @@
-Neurai
+Neurai - DePIN Messenge: EXPERIMENTAL VERSION
 ==============
+
+## WARNING
+This is an experimental version for testing the DePIN MSG mode of the Neurai network. It allows messages to be exchanged between holders of a specific token, creating a mini-network of encrypted information between everyone in the network.
+
+
+## DePIN Messaging
+
+Is a private and temporary messaging system for Neurai that enables encrypted communication between holders of a specific token. This system:
+
+- **Does not write to blockchain**:no fees, no permanence.
+- **Encrypted messages**: only readable by token holders.
+- **Direct communication**: between nodes via TCP or relay Nodes with same configuration.
+- **Temporal message**: with max 7-day expiration, custom time or all read msg check.
+- **Token ownership verification**: to send/receive.
+- **Integrated TCP server**: for remote queries.
+
+
+## Key Features
+
+### 1. Privacy (In Development)
+- **Current status**: Encryption implemented as placeholder (plaintext messages)
+- **Future**: Messages encrypted with ECIES (Elliptic Curve Integrated Encryption Scheme)
+- Each recipient will receive a copy encrypted with their public key
+- Only token holders will be able to decrypt messages
+
+### 2. No Transaction Costs
+- No network fees required
+- Does not consume blockchain space
+- Completely off-chain operation
+
+### 3. Auto-Discovery of Participants
+- Node automatically queries who owns the token
+- No need to manually know addresses
+- Uses Neurai's asset index (`-assetindex`)
+
+### 4. Automatic Expiration
+- Messages expire after 7 days
+- Automatic mempool cleanup
+- Prevents data accumulation
+
+### 5. Token-Based Access Control
+- Only holders of the configured token can:
+  - Send messages
+  - Receive and decrypt messages
+- Automatic ownership verification
+
+---
+
+## Technical Architecture
+
+### Main Components
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│               Neurai Node with DePIN Messaging              │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌──────────────┐        ┌──────────────┐                   │
+│  │ RPC Server   │────────│ DePIN MsgPool│                   │
+│  │ (neurai-cli) │        │   Manager    │                   │
+│  └──────────────┘        └──────┬───────┘                   │
+│                                 │                           │
+│                         ┌───────┴─────────┐                 │
+│                         │                 │                 │
+│                    ┌────▼────┐      ┌─────▼──────┐          │
+│                    │ Message │      │ Network    │          │
+│                    │ Storage │      │ Listener   │          │
+│                    │ (7 days)│      │(Port 19002)│          │
+│                    └────┬────┘      └─────┬──────┘          │
+│                         │                 │                 │
+│                    ┌────▼─────────────────▼─────┐           │
+│                    │   Asset Index (-assetindex)│           │
+│                    │   Token Holder Lookup      │           │
+│                    └────────────────────────────┘           │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## System Requirements
+
+### Mandatory Requirements
+
+#### 1. Active Asset Index (`-assetindex`)
+**REQUIRED** for DePIN messaging functionality.
+
+```bash
+# In neurai.conf
+assetindex=1
+```
+
+**⚠️ Important**:
+- If this is your first time activating `-assetindex`, you need to do a **full reindex**
+- Reindexing can take several hours depending on blockchain size
+- Increases disk usage by ~20-30%
+
+**Reindex command**:
+```bash
+neuraid -reindex
+```
+
+#### 2. Existing Token
+You must specify a valid token that exists on the Neurai blockchain:
+- Can be a **ROOT** token (e.g., `MYTOKEN`)
+- Can be a **QUALIFIER** token (e.g., `#MEMBERS`)
+- Can be a **RESTRICTED** token (e.g., `$SECURITY`)
+
+**Recommendation**: Use QUALIFIER tokens (`#TOKEN`) for exclusive groups.
+
+
+### Message Sending Flow
+
+```
+1. User executes: depinsendmsg "TOKEN" "192.168.1.100" "Message"
+                                    ↓
+2. Node validates that user owns the token
+                                    ↓
+3. Queries token holders using -assetindex
+   (Example: finds 15 holder addresses)
+                                    ↓
+4. Encrypts message with ECIES for each address
+   (Creates 15 encrypted copies, one per holder)
+                                    ↓
+5. Signs the complete package with sender's private key
+                                    ↓
+6. Sends directly to IP:19002
+                                    ↓
+7. Receiving node verifies:
+   - Chat mempool active with that token ✓
+   - Valid signature ✓
+   - Sender owns the token ✓
+                                    ↓
+8. Stores in local mempool (NOT propagated to other nodes)
+                                    ↓
+9. Message expires automatically after 7 days
+```
+
+### Data Structure
+
+#### CDepinMessage
+```cpp
+struct CDepinMessage {
+    string token;                    // "MYTOKEN"
+    string senderAddress;            // "NXa1b2c3d4e5f6..."
+    int64_t timestamp;               // 1699564800 (UNIX time)
+    vector<unsigned char> signature; // Sender's ECDSA signature
+
+    // Encrypted messages per recipient
+    vector<CDepinEncryptedMessage> encryptedMessages; // [
+    //   {recipient: "NXaaa...", encryptedData: [bytes...]},
+    //   {recipient: "NXbbb...", encryptedData: [bytes...]},
+    //   ...
+    // ]
+};
+```
+
+#### CDepinMsgPool
+```cpp
+class CDepinMsgPool {
+    string activeToken;                    // Configured token
+    map<uint256, CDepinMessage> mapMessages; // Hash -> Message
+    multimap<int64_t, uint256> mapByTime;  // Timestamp -> Hash
+
+    unsigned int nMaxRecipients;           // Recipient limit
+    unsigned int nPort;                    // Server port
+};
+```
+
+---
+
+## Configuration
+
+### Basic Configuration
+
+Edit `neurai.conf`:
+
+```ini
+# REQUIRED: Enable asset index
+assetindex=1
+
+# Enable DePIN messaging
+depinmsg=1
+
+# Required token for chat
+depinmsgtoken=MYTOKEN
+
+# Server port (optional, default: 19002)
+depinmsgport=19002
+
+# Maximum recipients (optional, default: 20, max: 50)
+depinmsgmaxusers=20
+```
+
+### First-Time Configuration (Reindex Required)
+
+If this is your first time activating `-assetindex`:
+
+```bash
+# 1. Stop the node
+neurai-cli stop
+
+# 2. Edit neurai.conf and add assetindex=1
+
+# 3. Restart with reindex
+neuraid -reindex
+
+# 4. Wait for reindex to complete (may take hours)
+#    You can monitor progress with:
+neurai-cli getblockchaininfo
+```
+
+### Configuration for Different Use Cases
+
+#### Small Group (< 10 members)
+```ini
+assetindex=1
+depinmsg=1
+depinmsgtoken=#TEAM       # Use QUALIFIER
+depinmsgmaxusers=10
+```
+
+#### Medium Community (10-20 members)
+```ini
+assetindex=1
+depinmsg=1
+depinmsgtoken=COMMUNITY
+depinmsgmaxusers=20
+```
+
+#### Large Group (20-50 members)
+```ini
+assetindex=1
+depinmsg=1
+depinmsgtoken=#MEMBERS
+depinmsgmaxusers=50
+```
+
+# Verify DePIN messaging status
+```ini
+neurai-cli depingetmsginfo
+```
+# Shows: active token, port, number of messages, etc.
+
+
+## Usage
+
+### Available Commands
+
+#### 1. Send Message
+
+```bash
+neurai-cli depinsendmsg "TOKEN" "DEST_IP" "MESSAGE"
+```
+
+**Parameters**:
+- `TOKEN`: Token name (must match configuration)
+- `DEST_IP`: Receiving node IP address (e.g., "192.168.1.100")
+- `MESSAGE`: Text to send (maximum 1KB)
+
+**Example**:
+```bash
+neurai-cli depinsendmsg "MYTOKEN" "192.168.1.100" "Hello team!"
+```
+
+**Output**:
+```json
+{
+  "result": "success",
+  "txid": "a1b2c3d4e5f6...",
+  "recipients": 15,
+  "timestamp": 1699564800
+}
+```
+
+#### 2. Read Messages
+
+**Local Reading**:
+```bash
+neurai-cli depingetmsg "TOKEN"
+```
+
+**Remote Reading** (query another node):
+```bash
+neurai-cli depingetmsg "TOKEN" "REMOTE_IP" [PORT]
+```
+
+**Parameters**:
+- `TOKEN`: Token name
+- `REMOTE_IP` (optional): IP address of node to query
+- `PORT` (optional): Remote server port (default: 19002)
+
+**Local Example**:
+```bash
+neurai-cli depingetmsg "MYTOKEN"
+```
+
+**Remote Example**:
+```bash
+# Query node at 192.168.1.78
+neurai-cli depingetmsg "MYTOKEN" "192.168.1.78"
+
+# Query node on different port
+neurai-cli depingetmsg "MYTOKEN" "192.168.1.78" 19003
+```
+
+**Output**:
+```json
+[
+  {
+    "sender": "NXa1b2c3d4e5f6...",
+    "message": "Hello team!",
+    "timestamp": 1699564800,
+    "date": "2024-11-09 14:20:00",
+    "expires": "2024-11-16 14:20:00"
+  },
+  {
+    "sender": "NXz9y8x7w6v5...",
+    "message": "Meeting at 3pm",
+    "timestamp": 1699568400,
+    "date": "2024-11-09 15:20:00",
+    "expires": "2024-11-16 15:20:00"
+  }
+]
+```
+
+#### 3. DePIN Messaging Information
+
+```bash
+neurai-cli depingetmsginfo
+```
+
+**Output**:
+```json
+{
+  "enabled": true,
+  "token": "MYTOKEN",
+  "port": 19002,
+  "maxrecipients": 20,
+  "messages": 42,
+  "memoryusage": 52428,
+  "oldestmessage": "2024-11-02 10:15:30",
+  "newestmessage": "2024-11-09 15:20:00"
+}
+```
+
+#### 4. Clear Expired Messages
+
+```bash
+neurai-cli depinclearmsg
+```
+
+**Note**: Automatic cleanup occurs hourly, this command forces immediate cleanup.
+
+#### 5. List Token Holders
+
+```bash
+neurai-cli listaddressesbyasset "MYTOKEN"
+```
+
+**Output**:
+```json
+{
+  "NXa1b2c3d4e5f6...": 100.00000000,
+  "NXb2c3d4e5f6g7...": 50.00000000,
+  "NXc3d4e5f6g7h8...": 25.00000000
+  // ... more addresses
+}
+```
+
+---------------------
+
 
 Setup
 ---------------------

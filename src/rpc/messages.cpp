@@ -486,6 +486,389 @@ UniValue viewmyrestrictedaddresses(const JSONRPCRequest& request) {
 
 #endif
 
+// DePIN Messaging RPC Commands
+#include "depinmsgpool.h"
+
+UniValue depingetmsginfo(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 0)
+        throw std::runtime_error(
+                "depingetmsginfo\n"
+                "\nReturns information about the DePIN messaging system\n"
+                "\nResult:\n"
+                "{\n"
+                "  \"enabled\": true|false,        (boolean) Whether DePIN messaging is enabled\n"
+                "  \"token\": \"name\",              (string) Active token name\n"
+                "  \"port\": n,                    (numeric) Listening port\n"
+                "  \"maxrecipients\": n,           (numeric) Maximum recipients per message\n"
+                "  \"messages\": n,                (numeric) Number of messages in mempool\n"
+                "  \"memoryusage\": n,             (numeric) Memory usage in bytes\n"
+                "  \"oldestmessage\": \"time\",      (string) Timestamp of oldest message\n"
+                "  \"newestmessage\": \"time\"       (string) Timestamp of newest message\n"
+                "}\n"
+                "\nExamples:\n"
+                + HelpExampleCli("depingetmsginfo", "")
+                + HelpExampleRpc("depingetmsginfo", "")
+        );
+
+    if (!pDepinMsgPool) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Chat mempool not initialized");
+    }
+
+    UniValue obj(UniValue::VOBJ);
+    obj.push_back(Pair("enabled", pDepinMsgPool->IsEnabled()));
+    obj.push_back(Pair("token", pDepinMsgPool->GetActiveToken()));
+    obj.push_back(Pair("port", (int)pDepinMsgPool->GetPort()));
+    obj.push_back(Pair("maxrecipients", (int)pDepinMsgPool->GetMaxRecipients()));
+    obj.push_back(Pair("messages", (int)pDepinMsgPool->Size()));
+    obj.push_back(Pair("memoryusage", (int)pDepinMsgPool->DynamicMemoryUsage()));
+
+    int64_t oldest = pDepinMsgPool->GetOldestMessageTime();
+    int64_t newest = pDepinMsgPool->GetNewestMessageTime();
+
+    if (oldest > 0)
+        obj.push_back(Pair("oldestmessage", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", oldest)));
+    if (newest > 0)
+        obj.push_back(Pair("newestmessage", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", newest)));
+
+    return obj;
+}
+
+#ifdef ENABLE_WALLET
+UniValue depinsendmsg(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 3)
+        throw std::runtime_error(
+                "depinsendmsg \"token\" \"ip\" \"message\"\n"
+                "\nSend an encrypted message to a node via DePIN messaging\n"
+                "\nArguments:\n"
+                "1. \"token\"        (string, required) Token name (must match configured token)\n"
+                "2. \"ip\"           (string, required) IP address of recipient node\n"
+                "3. \"message\"      (string, required) Message to send (max 1KB)\n"
+                "\nResult:\n"
+                "{\n"
+                "  \"result\": \"success\",          (string) Status\n"
+                "  \"hash\": \"hash\",                (string) Message hash\n"
+                "  \"recipients\": n,              (numeric) Number of recipients\n"
+                "  \"timestamp\": n                (numeric) Message timestamp\n"
+                "}\n"
+                "\nExamples:\n"
+                + HelpExampleCli("depinsendmsg", "\"MYTOKEN\" \"192.168.1.100\" \"Hello team!\"")
+                + HelpExampleRpc("depinsendmsg", "\"MYTOKEN\", \"192.168.1.100\", \"Hello team!\"")
+        );
+
+    if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
+        throw JSONRPCError(RPC_MISC_ERROR, "Chat mempool is not enabled");
+    }
+
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+
+    LOCK2(cs_main, pwallet->cs_wallet);
+    EnsureWalletIsUnlocked(pwallet);
+
+    std::string token = request.params[0].get_str();
+    std::string ipAddress = request.params[1].get_str();
+    std::string message = request.params[2].get_str();
+
+    // Verificar token
+    if (token != pDepinMsgPool->GetActiveToken()) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER,
+                          strprintf("Token '%s' does not match configured token '%s'",
+                                   token, pDepinMsgPool->GetActiveToken()));
+    }
+
+    // Verificar tamaño del mensaje
+    if (message.size() > MAX_DEPIN_MESSAGE_SIZE) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER,
+                          strprintf("Message size (%d) exceeds maximum (%d)",
+                                   message.size(), MAX_DEPIN_MESSAGE_SIZE));
+    }
+
+    // Obtener una dirección del wallet que posea el token
+    std::string senderAddress;
+    bool foundAddress = false;
+
+    std::map<std::string, std::vector<COutput>> mapAssetCoins;
+    pwallet->AvailableAssets(mapAssetCoins);
+
+    if (mapAssetCoins.count(token)) {
+        for (const auto& out : mapAssetCoins[token]) {
+            CTxDestination dest;
+            if (ExtractDestination(out.tx->tx->vout[out.i].scriptPubKey, dest)) {
+                senderAddress = EncodeDestination(dest);
+                foundAddress = true;
+                break;
+            }
+        }
+    }
+
+    if (!foundAddress) {
+        throw JSONRPCError(RPC_WALLET_ERROR,
+                          strprintf("Wallet does not own any %s tokens", token));
+    }
+
+    // Obtener holders del token
+    std::string error;
+    std::vector<std::string> holders = GetTokenHolders(token, pDepinMsgPool->GetMaxRecipients(), error);
+
+    if (holders.empty()) {
+        throw JSONRPCError(RPC_MISC_ERROR, error);
+    }
+
+    // Crear mensaje
+    CDepinMessage chatMsg;
+    chatMsg.token = token;
+    chatMsg.senderAddress = senderAddress;
+    chatMsg.timestamp = GetTime();
+
+    // Cifrar para cada holder
+    for (const std::string& holderAddress : holders) {
+        std::vector<unsigned char> encryptedData;
+        if (!EncryptMessageForRecipient(message, holderAddress, encryptedData, error)) {
+            throw JSONRPCError(RPC_MISC_ERROR,
+                              strprintf("Failed to encrypt for %s: %s", holderAddress, error));
+        }
+
+        chatMsg.encryptedMessages.push_back(CDepinEncryptedMessage(holderAddress, encryptedData));
+    }
+
+    // Firmar mensaje
+    if (!SignDepinMessage(chatMsg, senderAddress)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to sign chat message");
+    }
+
+    // TODO: Enviar a IP remota (pendiente implementación de networking)
+    // Por ahora solo lo añadimos al mempool local
+    if (!pDepinMsgPool->AddMessage(chatMsg, error)) {
+        throw JSONRPCError(RPC_MISC_ERROR, strprintf("Failed to add message: %s", error));
+    }
+
+    UniValue result(UniValue::VOBJ);
+    result.push_back(Pair("result", "success"));
+    result.push_back(Pair("hash", chatMsg.GetHash().ToString()));
+    result.push_back(Pair("recipients", (int)chatMsg.encryptedMessages.size()));
+    result.push_back(Pair("timestamp", chatMsg.timestamp));
+
+    return result;
+}
+
+UniValue depingetmsg(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 3)
+        throw std::runtime_error(
+                "depingetmsg \"token\" (\"ip\") (port)\n"
+                "\nRetrieve and decrypt DePIN messages for your addresses\n"
+                "\nArguments:\n"
+                "1. \"token\"        (string, required) Token name\n"
+                "2. \"ip\"           (string, optional) IP address of remote node (default: local)\n"
+                "3. port           (numeric, optional) Port of remote DePIN messaging server (default: 19002)\n"
+                "\nResult:\n"
+                "[\n"
+                "  {\n"
+                "    \"sender\": \"address\",         (string) Sender address\n"
+                "    \"message\": \"text\",           (string) Decrypted message\n"
+                "    \"timestamp\": n,              (numeric) Unix timestamp\n"
+                "    \"date\": \"YYYY-MM-DD HH:MM:SS\", (string) Formatted date\n"
+                "    \"expires\": \"YYYY-MM-DD HH:MM:SS\" (string) Expiration date\n"
+                "  },\n"
+                "  ...\n"
+                "]\n"
+                "\nExamples:\n"
+                + HelpExampleCli("depingetmsg", "\"MYTOKEN\"")
+                + HelpExampleCli("depingetmsg", "\"MYTOKEN\" \"192.168.1.78\"")
+                + HelpExampleCli("depingetmsg", "\"MYTOKEN\" \"192.168.1.78\" 19002")
+                + HelpExampleRpc("depingetmsg", "\"MYTOKEN\"")
+        );
+
+    std::string token = request.params[0].get_str();
+    std::string ipAddress;
+    int port = DEFAULT_DEPIN_MSG_PORT;
+    bool isRemoteQuery = false;
+
+    // Verificar si es consulta remota
+    if (request.params.size() >= 2) {
+        ipAddress = request.params[1].get_str();
+        isRemoteQuery = true;
+
+        if (request.params.size() >= 3) {
+            port = request.params[2].get_int();
+            if (port <= 0 || port > 65535) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid port number");
+            }
+        }
+    }
+
+    // Si es consulta remota, hacer petición al nodo remoto
+    if (isRemoteQuery) {
+        CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+        if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+            return NullUniValue;
+        }
+
+        LOCK2(cs_main, pwallet->cs_wallet);
+
+        // Obtener direcciones locales que poseen el token
+        std::set<std::string> myAddresses;
+        std::map<std::string, std::vector<COutput>> mapAssetCoins;
+        pwallet->AvailableAssets(mapAssetCoins);
+
+        if (mapAssetCoins.count(token)) {
+            for (const auto& out : mapAssetCoins[token]) {
+                CTxDestination dest;
+                if (ExtractDestination(out.tx->tx->vout[out.i].scriptPubKey, dest)) {
+                    myAddresses.insert(EncodeDestination(dest));
+                }
+            }
+        }
+
+        if (myAddresses.empty()) {
+            throw JSONRPCError(RPC_WALLET_ERROR,
+                              strprintf("Wallet does not own any %s tokens", token));
+        }
+
+        // Consultar nodo remoto
+        std::vector<CDepinMessage> remoteMessages;
+        std::string error;
+        std::vector<std::string> addressList(myAddresses.begin(), myAddresses.end());
+
+        if (!QueryRemoteDepinMsgPool(ipAddress, port, token, addressList, remoteMessages, error)) {
+            throw JSONRPCError(RPC_MISC_ERROR, error);
+        }
+
+        // Descifrar mensajes recibidos
+        UniValue result(UniValue::VARR);
+
+        for (const CDepinMessage& msg : remoteMessages) {
+            for (const std::string& myAddress : myAddresses) {
+                for (const CDepinEncryptedMessage& enc : msg.encryptedMessages) {
+                    if (enc.recipientAddress == myAddress) {
+                        std::string decryptedMessage;
+                        std::string decryptError;
+
+                        if (DecryptMessageForAddress(enc.encryptedData, myAddress, decryptedMessage, decryptError)) {
+                            UniValue msgObj(UniValue::VOBJ);
+                            msgObj.push_back(Pair("sender", msg.senderAddress));
+                            msgObj.push_back(Pair("message", decryptedMessage));
+                            msgObj.push_back(Pair("timestamp", msg.timestamp));
+                            msgObj.push_back(Pair("date", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", msg.timestamp)));
+                            msgObj.push_back(Pair("expires", DateTimeStrFormat("%Y-%m-%d %H:%M:%S",
+                                                                               msg.timestamp + DEPIN_MESSAGE_EXPIRY_TIME)));
+                            result.push_back(msgObj);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        return result;
+    }
+
+    // Consulta local
+    if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
+        throw JSONRPCError(RPC_MISC_ERROR, "Chat mempool is not enabled");
+    }
+
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+
+    LOCK2(cs_main, pwallet->cs_wallet);
+
+    // Verificar token
+    if (token != pDepinMsgPool->GetActiveToken()) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER,
+                          strprintf("Token '%s' does not match configured token '%s'",
+                                   token, pDepinMsgPool->GetActiveToken()));
+    }
+
+    // Obtener todas las direcciones del wallet que poseen el token
+    std::set<std::string> myAddresses;
+    std::map<std::string, std::vector<COutput>> mapAssetCoins;
+    pwallet->AvailableAssets(mapAssetCoins);
+
+    if (mapAssetCoins.count(token)) {
+        for (const auto& out : mapAssetCoins[token]) {
+            CTxDestination dest;
+            if (ExtractDestination(out.tx->tx->vout[out.i].scriptPubKey, dest)) {
+                myAddresses.insert(EncodeDestination(dest));
+            }
+        }
+    }
+
+    if (myAddresses.empty()) {
+        throw JSONRPCError(RPC_WALLET_ERROR,
+                          strprintf("Wallet does not own any %s tokens", token));
+    }
+
+    UniValue result(UniValue::VARR);
+
+    // Buscar mensajes para cada dirección
+    for (const std::string& myAddress : myAddresses) {
+        std::vector<CDepinMessage> messages = pDepinMsgPool->GetMessagesForAddress(myAddress);
+
+        for (const CDepinMessage& msg : messages) {
+            // Buscar la copia cifrada para esta dirección
+            for (const CDepinEncryptedMessage& enc : msg.encryptedMessages) {
+                if (enc.recipientAddress == myAddress) {
+                    std::string decryptedMessage;
+                    std::string error;
+
+                    if (DecryptMessageForAddress(enc.encryptedData, myAddress, decryptedMessage, error)) {
+                        UniValue msgObj(UniValue::VOBJ);
+                        msgObj.push_back(Pair("sender", msg.senderAddress));
+                        msgObj.push_back(Pair("message", decryptedMessage));
+                        msgObj.push_back(Pair("timestamp", msg.timestamp));
+                        msgObj.push_back(Pair("date", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", msg.timestamp)));
+                        msgObj.push_back(Pair("expires", DateTimeStrFormat("%Y-%m-%d %H:%M:%S",
+                                                                           msg.timestamp + DEPIN_MESSAGE_EXPIRY_TIME)));
+                        result.push_back(msgObj);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    return result;
+}
+
+UniValue depinclearmsg(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 0)
+        throw std::runtime_error(
+                "depinclearmsg\n"
+                "\nRemove all expired messages from DePIN messaging system\n"
+                "\nResult:\n"
+                "{\n"
+                "  \"removed\": n,        (numeric) Number of messages removed\n"
+                "  \"remaining\": n       (numeric) Number of messages remaining\n"
+                "}\n"
+                "\nExamples:\n"
+                + HelpExampleCli("depinclearmsg", "")
+                + HelpExampleRpc("depinclearmsg", "")
+        );
+
+    if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
+        throw JSONRPCError(RPC_MISC_ERROR, "Chat mempool is not enabled");
+    }
+
+    size_t sizeBefore = pDepinMsgPool->Size();
+    pDepinMsgPool->RemoveExpiredMessages(GetTime());
+    size_t sizeAfter = pDepinMsgPool->Size();
+
+    UniValue result(UniValue::VOBJ);
+    result.push_back(Pair("removed", (int)(sizeBefore - sizeAfter)));
+    result.push_back(Pair("remaining", (int)sizeAfter));
+
+    return result;
+}
+#endif // ENABLE_WALLET
+
 static const CRPCCommand commands[] =
     {           //  category    name                          actor (function)             argNames
                 //  ----------- ------------------------      -----------------------      ----------
@@ -499,6 +882,13 @@ static const CRPCCommand commands[] =
             {"restricted",        "viewmyrestrictedaddresses",  &viewmyrestrictedaddresses,   {}},
 #endif
             { "messages",       "clearmessages",              &clearmessages,              {}},
+            // DePIN Messaging Commands
+            { "depin",          "depingetmsginfo",            &depingetmsginfo,            {}},
+#ifdef ENABLE_WALLET
+            { "depin",          "depinsendmsg",               &depinsendmsg,               {"token", "ip", "message"}},
+            { "depin",          "depingetmsg",                &depingetmsg,                {"token"}},
+            { "depin",          "depinclearmsg",              &depinclearmsg,              {}},
+#endif
     };
 
 void RegisterMessageRPCCommands(CRPCTable &t)

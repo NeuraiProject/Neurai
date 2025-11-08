@@ -211,6 +211,8 @@ NEURAI_CORE_H = \
   torcontrol.h \
   txdb.h \
   txmempool.h \
+  depinmsgpool.h \
+  depinmsgpoolnet.h \
   ui_interface.h \
   undo.h \
   util.h \
@@ -294,6 +296,8 @@ libneurai_server_a_SOURCES = \
   torcontrol.cpp \
   txdb.cpp \
   txmempool.cpp \
+  depinmsgpool.cpp \
+  depinmsgpoolnet.cpp \
   ui_interface.cpp \
   validation.cpp \
   validationinterface.cpp \

@@ -1,4 +1,4 @@
-Neurai
+Neurai - DePIN Messaging Experimental
 =====================================
 
 
@@ -13,6 +13,45 @@ What is Neurai?
 ----------------
 Neurai is a decentralized open source protocol optimized to transfer cryptoassets from one party to another on Layer1. The project aims to integrate NFT and Tokens with IoT and artificial intelligence applications.
 
+What is DePIN Messaging?
+----------------
+Is a private and temporary messaging system for Neurai that enables encrypted communication between holders of a specific token. 
+
+
+- **Does not write to blockchain**:no fees, no permanence.
+- **Encrypted messages**: only readable by token holders.
+- **Direct communication**: between nodes via TCP or relay Nodes with same configuration.
+- **Temporal message**: with max 7-day expiration, custom time or all read msg check.
+- **Token ownership verification**: to send/receive.
+- **Integrated TCP server**: for remote queries.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│               Neurai Node with DePIN Messaging              │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌──────────────┐        ┌──────────────┐                   │
+│  │ RPC Server   │────────│ DePIN MsgPool│                   │
+│  │ (neurai-cli) │        │   Manager    │                   │
+│  └──────────────┘        └──────┬───────┘                   │
+│                                 │                           │
+│                         ┌───────┴─────────┐                 │
+│                         │                 │                 │
+│                    ┌────▼────┐      ┌─────▼──────┐          │
+│                    │ Message │      │ Network    │          │
+│                    │ Storage │      │ Listener   │          │
+│                    │ (7 days)│      │(Port 19002)│          │
+│                    └────┬────┘      └─────┬──────┘          │
+│                         │                 │                 │
+│                    ┌────▼─────────────────▼─────┐           │
+│                    │   Asset Index (-assetindex)│           │
+│                    │   Token Holder Lookup      │           │
+│                    └────────────────────────────┘           │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+More about this  [Here](doc/README.md)
 
 Network Details
 ----------------
