@@ -19,6 +19,8 @@
 #include "txmempool.h"
 #include "util.h"
 #include "utilstrencodings.h"
+#include "txdb.h"
+#include "pubkeyindex.h"
 #ifdef ENABLE_WALLET
 #include "wallet/rpcwallet.h"
 #include "wallet/wallet.h"
