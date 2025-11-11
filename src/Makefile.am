@@ -127,6 +127,7 @@ NEURAI_CORE_H = \
   algo/sph_sha2.c \
   algo/gost_streebog.c \
   spentindex.h \
+  pubkeyindex.h \
   timestampindex.h \
   addrman.h \
   assets/assets.h \

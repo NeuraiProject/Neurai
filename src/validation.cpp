@@ -99,6 +99,7 @@ bool fAssetIndex = false;
 bool fAddressIndex = false;
 bool fTimestampIndex = false;
 bool fSpentIndex = false;
+bool fPubKeyIndex = false;
 bool fHavePruned = false;
 bool fPruneMode = false;
 bool fIsBareMultisigStd = DEFAULT_PERMIT_BAREMULTISIG;
@@ -2539,6 +2540,7 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
     std::vector<std::pair<CAddressIndexKey, CAmount> > addressIndex;
     std::vector<std::pair<CAddressUnspentKey, CAddressUnspentValue> > addressUnspentIndex;
     std::vector<std::pair<CSpentIndexKey, CSpentIndexValue> > spentIndex;
+    std::vector<std::pair<CPubKeyIndexKey, CPubKeyIndexValue> > pubkeyIndex;
 
     std::set<CMessage> setMessages;
     std::vector<std::pair<std::string, CNullAssetTxData>> myNullAssetData;
@@ -2656,6 +2658,39 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
                         // add the spent index to determine the txid and input that spent an output
                         // and to find the amount and address from an input
                         spentIndex.push_back(std::make_pair(CSpentIndexKey(input.prevout.hash, input.prevout.n), CSpentIndexValue(txhash, j, pindex->nHeight, prevout.nValue, addressType, hashBytes)));
+                    }
+
+                    // Extract public key from scriptSig for pubkey index
+                    if (fPubKeyIndex && addressType == 1 && !hashBytes.IsNull()) {
+                        // Try to extract public key from scriptSig
+                        // For P2PKH: scriptSig = <sig> <pubkey>
+                        // For P2PK: scriptSig = <sig>
+                        const CScript& scriptSig = input.scriptSig;
+
+                        if (!scriptSig.empty()) {
+                            CScript::const_iterator pc = scriptSig.begin();
+                            opcodetype opcode;
+                            std::vector<unsigned char> vchSig;
+                            std::vector<unsigned char> vchPubKey;
+
+                            // Try to read signature
+                            if (scriptSig.GetOp(pc, opcode, vchSig)) {
+                                // Try to read public key (second element)
+                                if (scriptSig.GetOp(pc, opcode, vchPubKey)) {
+                                    CPubKey pubkey(vchPubKey);
+                                    if (pubkey.IsValid()) {
+                                        // Verify that this pubkey matches the address
+                                        uint160 pubkeyHash = Hash160(vchPubKey.begin(), vchPubKey.end());
+                                        if (pubkeyHash == hashBytes) {
+                                            // Store the public key in the index
+                                            CPubKeyIndexKey key(hashBytes);
+                                            CPubKeyIndexValue value(pubkey, pindex->nHeight, txhash);
+                                            pubkeyIndex.push_back(std::make_pair(key, value));
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -2822,6 +2857,11 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
     if (!ignoreAddressIndex && fSpentIndex)
         if (!pblocktree->UpdateSpentIndex(spentIndex))
             return AbortNode(state, "Failed to write transaction index");
+
+    if (!ignoreAddressIndex && fPubKeyIndex)
+        if (!pubkeyIndex.empty())
+            if (!pblocktree->WritePubKeyIndex(pubkeyIndex))
+                return AbortNode(state, "Failed to write pubkey index");
 
     if (!ignoreAddressIndex && fTimestampIndex) {
         unsigned int logicalTS = pindex->nTime;
@@ -4857,6 +4897,10 @@ bool static LoadBlockIndexDB(const CChainParams& chainparams)
     // Check whether we have a spent index
     pblocktree->ReadFlag("spentindex", fSpentIndex);
     LogPrintf("%s: spent index %s\n", __func__, fSpentIndex ? "enabled" : "disabled");
+
+    // Check whether we have a pubkey index
+    pblocktree->ReadFlag("pubkeyindex", fPubKeyIndex);
+    LogPrintf("%s: pubkey index %s\n", __func__, fPubKeyIndex ? "enabled" : "disabled");
     return true;
 }
 
@@ -5254,6 +5298,11 @@ bool LoadBlockIndex(const CChainParams& chainparams)
         fSpentIndex = gArgs.GetBoolArg("-spentindex", DEFAULT_SPENTINDEX);
         pblocktree->WriteFlag("spentindex", fSpentIndex);
         LogPrintf("%s: spent index %s\n", __func__, fSpentIndex ? "enabled" : "disabled");
+
+        // Use the provided setting for -pubkeyindex in the new database
+        fPubKeyIndex = gArgs.GetBoolArg("-pubkeyindex", DEFAULT_PUBKEYINDEX);
+        pblocktree->WriteFlag("pubkeyindex", fPubKeyIndex);
+        LogPrintf("%s: pubkey index %s\n", __func__, fPubKeyIndex ? "enabled" : "disabled");
 
     }
     return true;

@@ -152,6 +152,7 @@ static const bool DEFAULT_ASSETINDEX = false;
 static const bool DEFAULT_ADDRESSINDEX = false;
 static const bool DEFAULT_TIMESTAMPINDEX = false;
 static const bool DEFAULT_SPENTINDEX = false;
+static const bool DEFAULT_PUBKEYINDEX = false;
 static const bool DEFAULT_REWARDS_ENABLED = false;
 /** Default for -dbmaxfilesize , in MB */
 static const int64_t DEFAULT_DB_MAX_FILE_SIZE = 2;
@@ -200,6 +201,7 @@ extern bool fAssetIndex;
 extern bool fAddressIndex;
 extern bool fSpentIndex;
 extern bool fTimestampIndex;
+extern bool fPubKeyIndex;
 extern bool fIsBareMultisigStd;
 extern bool fRequireStandard;
 extern bool fCheckBlockIndex;

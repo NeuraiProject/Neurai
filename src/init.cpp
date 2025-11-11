@@ -485,6 +485,7 @@ std::string HelpMessage(HelpMessageMode mode)
     strUsage += HelpMessageOpt("-addressindex", strprintf(_("Maintain a full address index, used to query for the balance, txids and unspent outputs for addresses (default: %u)"), DEFAULT_ADDRESSINDEX));
     strUsage += HelpMessageOpt("-timestampindex", strprintf(_("Maintain a timestamp index for block hashes, used to query blocks hashes by a range of timestamps (default: %u)"), DEFAULT_TIMESTAMPINDEX));
     strUsage += HelpMessageOpt("-spentindex", strprintf(_("Maintain a full spent index, used to query the spending txid and input index for an outpoint (default: %u)"), DEFAULT_SPENTINDEX));
+    strUsage += HelpMessageOpt("-pubkeyindex", strprintf(_("Maintain an index of revealed public keys from spending transactions, used for encryption purposes (default: %u)"), DEFAULT_PUBKEYINDEX));
 
     strUsage += HelpMessageGroup(_("Connection options:"));
     strUsage += HelpMessageOpt("-addnode=<ip>", _("Add a node to connect to and attempt to keep the connection open (see the `addnode` RPC command help for more info)"));
@@ -1686,6 +1687,12 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
                 // Check for changed -timestampindex state
                 if (fTimestampIndex != gArgs.GetBoolArg("-timestampindex", DEFAULT_TIMESTAMPINDEX)) {
                     strLoadError = _("You need to rebuild the database using -reindex-chainstate to change -timestampindex");
+                    break;
+                }
+
+                // Check for changed -pubkeyindex state
+                if (fPubKeyIndex != gArgs.GetBoolArg("-pubkeyindex", DEFAULT_PUBKEYINDEX)) {
+                    strLoadError = _("You need to rebuild the database using -reindex-chainstate to change -pubkeyindex");
                     break;
                 }
 

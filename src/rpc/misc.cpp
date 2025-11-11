@@ -1319,6 +1319,64 @@ UniValue getspentinfo(const JSONRPCRequest& request)
     return obj;
 }
 
+UniValue getpubkey(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "getpubkey \"address\"\n"
+            "\nReturns the public key for an address that has revealed it by spending (requires pubkeyindex to be enabled).\n"
+            "\nArguments:\n"
+            "1. \"address\"      (string, required) The Neurai address\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"address\": \"address\",         (string) The Neurai address\n"
+            "  \"pubkey\": \"hex\",              (string) The public key in hex format\n"
+            "  \"revealed\": true|false,         (boolean) Whether the public key has been revealed\n"
+            "  \"height\": n,                    (numeric) Block height where it was revealed\n"
+            "  \"txid\": \"hash\"                (string) Transaction ID where it was revealed\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getpubkey", "\"NXa1b2c3d4e5f6...\"")
+            + HelpExampleRpc("getpubkey", "\"NXa1b2c3d4e5f6...\"")
+        );
+
+    if (!fPubKeyIndex) {
+        throw JSONRPCError(RPC_MISC_ERROR, "Pubkey index not enabled. Run with -pubkeyindex");
+    }
+
+    std::string strAddress = request.params[0].get_str();
+    CTxDestination dest = DecodeDestination(strAddress);
+
+    if (!IsValidDestination(dest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
+    }
+
+    const CKeyID* keyID = boost::get<CKeyID>(&dest);
+    if (!keyID) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address does not refer to a key");
+    }
+
+    uint160 addressHash(*keyID);
+    CPubKeyIndexValue value;
+    UniValue result(UniValue::VOBJ);
+
+    result.pushKV("address", strAddress);
+
+    if (pblocktree->ReadPubKeyIndex(addressHash, value)) {
+        result.pushKV("pubkey", HexStr(value.pubkey.begin(), value.pubkey.end()));
+        result.pushKV("revealed", true);
+        result.pushKV("height", value.nHeight);
+        result.pushKV("txid", value.txid.GetHex());
+    } else {
+        result.pushKV("pubkey", "");
+        result.pushKV("revealed", false);
+        result.pushKV("height", 0);
+        result.pushKV("txid", "");
+    }
+
+    return result;
+}
+
 static const CRPCCommand commands[] =
 { //  category              name                      actor (function)         argNames
   //  --------------------- ------------------------  -----------------------  ----------
@@ -1338,6 +1396,7 @@ static const CRPCCommand commands[] =
 
     /* Blockchain */
     { "blockchain",         "getspentinfo",           &getspentinfo,           {} },
+    { "blockchain",         "getpubkey",              &getpubkey,              {"address"} },
 
     /* Not shown in help */
     { "hidden",             "setmocktime",            &setmocktime,            {"timestamp"}},

@@ -29,6 +29,7 @@ static const char DB_ADDRESSUNSPENTINDEX = 'u';
 static const char DB_TIMESTAMPINDEX = 's';
 static const char DB_BLOCKHASHINDEX = 'z';
 static const char DB_SPENTINDEX = 'p';
+static const char DB_PUBKEYINDEX = 'k';
 static const char DB_BLOCK_INDEX = 'b';
 
 static const char DB_BEST_BLOCK = 'B';
@@ -624,4 +625,30 @@ bool CCoinsViewDB::Upgrade() {
     uiInterface.ShowProgress("", 100, false);
     LogPrintf("[%s].\n", ShutdownRequested() ? "CANCELLED" : "DONE");
     return !ShutdownRequested();
+}
+
+// PubKey Index Implementation
+
+bool CBlockTreeDB::WritePubKeyIndex(const std::vector<std::pair<CPubKeyIndexKey, CPubKeyIndexValue>>& vect)
+{
+    CDBBatch batch(*this);
+    for (const auto& it : vect) {
+        batch.Write(std::make_pair(DB_PUBKEYINDEX, it.first), it.second);
+    }
+    return WriteBatch(batch);
+}
+
+bool CBlockTreeDB::ReadPubKeyIndex(const uint160& addressHash, CPubKeyIndexValue& value)
+{
+    CPubKeyIndexKey key(addressHash);
+    return Read(std::make_pair(DB_PUBKEYINDEX, key), value);
+}
+
+bool CBlockTreeDB::ErasePubKeyIndex(const std::vector<CPubKeyIndexKey>& vect)
+{
+    CDBBatch batch(*this);
+    for (const auto& it : vect) {
+        batch.Erase(std::make_pair(DB_PUBKEYINDEX, it));
+    }
+    return WriteBatch(batch);
 }

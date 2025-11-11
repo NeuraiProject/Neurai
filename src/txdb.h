@@ -13,6 +13,7 @@
 #include "addressindex.h"
 #include "spentindex.h"
 #include "timestampindex.h"
+#include "pubkeyindex.h"
 
 #include <map>
 #include <string>
@@ -147,6 +148,11 @@ public:
     bool WriteFlag(const std::string &name, bool fValue);
     bool ReadFlag(const std::string &name, bool &fValue);
     bool LoadBlockIndexGuts(const Consensus::Params& consensusParams, std::function<CBlockIndex*(const uint256&)> insertBlockIndex);
+
+    // PubKey Index
+    bool WritePubKeyIndex(const std::vector<std::pair<CPubKeyIndexKey, CPubKeyIndexValue>>& vect);
+    bool ReadPubKeyIndex(const uint160& addressHash, CPubKeyIndexValue& value);
+    bool ErasePubKeyIndex(const std::vector<CPubKeyIndexKey>& vect);
 };
 
 #endif // NEURAI_TXDB_H
