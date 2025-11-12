@@ -42,6 +42,7 @@ share/setup.nsi
 share/qt/Info.plist
 doc/depin
 doc/docker/bin
+NIP
 
 
 src/qt/*.moc

@@ -34,7 +34,7 @@ RUN contrib/install_db4.sh ../
 
 RUN export BDB_PREFIX=/root/db4
 
-RUN CONFIG_SITE=$PWD/depends/x86_64-w64-mingw32/share/config.site ./configure BDB_LIBS="-L${BDB_PREFIX}/lib -ldb_cxx-4.8" BDB_CFLAGS="-I${BDB_PREFIX}/include" --prefix=/ --enable-cxx --disable-shared --disable-tests --disable-gui-tests --with-pic
+RUN CONFIG_SITE=$PWD/depends/x86_64-w64-mingw32/share/config.site ./configure BDB_LIBS="-L${BDB_PREFIX}/lib -ldb_cxx-4.8" BDB_CFLAGS="-I${BDB_PREFIX}/include" --prefix=/ --enable-cxx --disable-shared --disable-tests --disable-gui-tests --disable-maintainer-mode --with-pic
 
 RUN make -j2
 

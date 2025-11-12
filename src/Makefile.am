@@ -214,6 +214,7 @@ NEURAI_CORE_H = \
   txmempool.h \
   depinmsgpool.h \
   depinmsgpoolnet.h \
+  depinecies.h \
   ui_interface.h \
   undo.h \
   util.h \
@@ -299,6 +300,7 @@ libneurai_server_a_SOURCES = \
   txmempool.cpp \
   depinmsgpool.cpp \
   depinmsgpoolnet.cpp \
+  depinecies.cpp \
   ui_interface.cpp \
   validation.cpp \
   validationinterface.cpp \

@@ -21,7 +21,7 @@ RUN ./autogen.sh
 
 RUN contrib/install_db4.sh ../
 
-RUN ./configure BDB_LIBS="-L/root/db4/lib -ldb_cxx-4.8" BDB_CFLAGS="-I/root/db4/include" --prefix=/usr/local --disable-tests --disable-bench --with-gui=no -enable-cxx --disable-shared --with-pic
+RUN ./configure BDB_LIBS="-L/root/db4/lib -ldb_cxx-4.8" BDB_CFLAGS="-I/root/db4/include" --prefix=/usr/local --disable-tests --disable-bench --with-gui=no -enable-cxx --disable-shared --disable-maintainer-mode --with-pic
 
 RUN make -j2
 RUN make install

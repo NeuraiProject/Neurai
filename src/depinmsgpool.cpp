@@ -4,9 +4,12 @@
 
 #include "depinmsgpool.h"
 #include "depinmsgpoolnet.h"
+#include "depinecies.h"
 #include "validation.h"
 #include "assets/assets.h"
 #include "assets/assetdb.h"
+#include "txdb.h"
+#include "pubkeyindex.h"
 #include "hash.h"
 #include "utiltime.h"
 #include "key.h"
@@ -48,14 +51,21 @@ CDepinMsgPool::CDepinMsgPool()
 bool CDepinMsgPool::Initialize(const std::string& token, unsigned int port, unsigned int maxRecipients) {
     LOCK(cs_depinmsgpool);
 
-    // Verificar que -assetindex esté activo (OBLIGATORIO)
+    // Verify that -assetindex is enabled (REQUIRED)
     if (!fAssetIndex) {
-        LogPrintf("ERROR: Chat mempool requires -assetindex to be enabled. "
+        LogPrintf("ERROR: DePIN messaging requires -assetindex to be enabled. "
                   "Please restart with -assetindex and -reindex\n");
         return false;
     }
 
-    // Verificar que el token sea válido
+    // Verify that -pubkeyindex is enabled (REQUIRED for encryption)
+    if (!fPubKeyIndex) {
+        LogPrintf("ERROR: DePIN messaging requires -pubkeyindex to be enabled. "
+                  "Please restart with -pubkeyindex and -reindex-chainstate\n");
+        return false;
+    }
+
+    // Verify that the token is valid
     AssetType type;
     std::string error;
     if (!IsAssetNameValid(token, type, error)) {
@@ -63,7 +73,7 @@ bool CDepinMsgPool::Initialize(const std::string& token, unsigned int port, unsi
         return false;
     }
 
-    // Verificar que el token existe
+    // Verify that the token exists
     if (!passetsdb) {
         LogPrintf("ERROR: Asset database not available\n");
         return false;
@@ -96,27 +106,27 @@ bool CDepinMsgPool::AddMessage(const CDepinMessage& message, std::string& error)
         return false;
     }
 
-    // Verificar que el token coincide
+    // Verify that the token matches
     if (message.token != activeToken) {
         error = strprintf("Message token '%s' does not match active token '%s'",
                          message.token, activeToken);
         return false;
     }
 
-    // Verificar timestamp (no aceptar mensajes del futuro)
+    // Verify timestamp (do not accept messages from the future)
     int64_t currentTime = GetTime();
-    if (message.timestamp > currentTime + 60) { // +60s de tolerancia
+    if (message.timestamp > currentTime + 60) { // +60s tolerance
         error = "Message timestamp is too far in the future";
         return false;
     }
 
-    // Verificar que no está expirado
+    // Verify that it is not expired
     if (message.IsExpired(currentTime)) {
         error = "Message is already expired";
         return false;
     }
 
-    // Verificar tamaño del mensaje
+    // Verify message size
     size_t totalSize = 0;
     for (const auto& enc : message.encryptedMessages) {
         totalSize += enc.encryptedData.size();
@@ -126,28 +136,28 @@ bool CDepinMsgPool::AddMessage(const CDepinMessage& message, std::string& error)
         return false;
     }
 
-    // Verificar número de destinatarios
+    // Verify number of recipients
     if (message.encryptedMessages.size() > nMaxRecipients) {
         error = strprintf("Too many recipients (%d), maximum is %d",
                          message.encryptedMessages.size(), nMaxRecipients);
         return false;
     }
 
-    // Verificar firma
+    // Verify signature
     if (!VerifyDepinMessageSignature(message)) {
         error = "Invalid message signature";
         return false;
     }
 
-    // Verificar que el remitente posee el token
+    // Verify that the sender owns the token
     if (!CheckTokenOwnership(message.senderAddress, activeToken, error)) {
         return false;
     }
 
-    // Añadir mensaje
+    // Add message
     uint256 hash = message.GetHash();
 
-    // Verificar si ya existe
+    // Verify if it already exists
     if (mapMessages.count(hash)) {
         error = "Message already exists in mempool";
         return false;
@@ -178,7 +188,7 @@ std::vector<CDepinMessage> CDepinMsgPool::GetMessagesForAddress(const std::strin
     for (const auto& entry : mapMessages) {
         const CDepinMessage& msg = entry.second;
 
-        // Buscar si esta dirección es destinataria
+        // Search if this address is a recipient
         for (const auto& enc : msg.encryptedMessages) {
             if (enc.recipientAddress == address) {
                 result.push_back(msg);
@@ -221,7 +231,7 @@ void CDepinMsgPool::RemoveExpiredMessages(int64_t currentTime) {
             int64_t timestamp = it->second.timestamp;
             mapMessages.erase(it);
 
-            // Eliminar de mapByTime
+            // Remove from mapByTime
             auto range = mapByTime.equal_range(timestamp);
             for (auto timeIt = range.first; timeIt != range.second; ) {
                 if (timeIt->second == hash) {
@@ -282,40 +292,127 @@ int64_t CDepinMsgPool::GetNewestMessageTime() const {
     return mapByTime.rbegin()->first;
 }
 
-// Funciones auxiliares
+// Auxiliary functions
+
+/**
+ * Check if an address has revealed its public key in the blockchain
+ * Requires -pubkeyindex to be enabled
+ */
+bool CheckAddressHasPublicKey(const std::string& address, CPubKey& pubkey, std::string& error) {
+    if (!fPubKeyIndex) {
+        error = "Public key index is required but not enabled. Use -pubkeyindex";
+        return false;
+    }
+
+    if (!pblocktree) {
+        error = "Block tree database not available";
+        return false;
+    }
+
+    // Decode address to get hash160
+    CTxDestination dest = DecodeDestination(address);
+    const CKeyID* keyID = boost::get<CKeyID>(&dest);
+    if (!keyID) {
+        error = strprintf("Invalid address format: %s", address);
+        return false;
+    }
+
+    uint160 addressHash(*keyID);
+
+    // Query pubkey index
+    CPubKeyIndexValue value;
+    if (!pblocktree->ReadPubKeyIndex(addressHash, value)) {
+        error = strprintf("Address %s has not revealed its public key", address);
+        return false;
+    }
+
+    pubkey = value.pubkey;
+    if (!pubkey.IsValid()) {
+        error = strprintf("Invalid public key found for address %s", address);
+        return false;
+    }
+
+    return true;
+}
 
 bool VerifyDepinMessageSignature(const CDepinMessage& message) {
-    // TODO: Implementar verificación de firma ECDSA
-    // Por ahora retornamos true para permitir desarrollo
-    // La implementación completa requiere:
-    // 1. Construir el hash del mensaje (token + sender + timestamp + encrypted messages)
-    // 2. Recuperar la clave pública desde la dirección del remitente
-    // 3. Verificar la firma usando CPubKey::Verify()
-
     if (message.signature.empty()) {
         return false;
     }
 
-    // Placeholder - en producción debe verificar la firma real
+    // Get sender's public key from pubkey index
+    CPubKey senderPubKey;
+    std::string error;
+    if (!CheckAddressHasPublicKey(message.senderAddress, senderPubKey, error)) {
+        LogPrintf("VerifyDepinMessageSignature: %s\n", error);
+        return false;
+    }
+
+    // Construct message hash for verification
+    // Hash format: SHA256(token || senderAddress || timestamp || encryptedMessages)
+    CHashWriter ss(SER_GETHASH, 0);
+    ss << message.token;
+    ss << message.senderAddress;
+    ss << message.timestamp;
+    ss << message.encryptedMessages;
+    uint256 messageHash = ss.GetHash();
+
+    // Verify signature
+    if (!senderPubKey.Verify(messageHash, message.signature)) {
+        LogPrintf("VerifyDepinMessageSignature: Signature verification failed\n");
+        return false;
+    }
+
     return true;
 }
 
 bool SignDepinMessage(CDepinMessage& message, const std::string& senderAddress) {
 #ifdef ENABLE_WALLET
-    // TODO: Implementar firma del mensaje
-    // Por ahora creamos una firma dummy para permitir desarrollo
-    // La implementación completa requiere:
-    // 1. Obtener la clave privada del wallet para senderAddress
-    // 2. Construir el hash del mensaje
-    // 3. Firmar con CKey::Sign()
-
-    // Firma dummy de 65 bytes
-    message.signature.resize(65);
-    for (size_t i = 0; i < 65; i++) {
-        message.signature[i] = static_cast<unsigned char>(i);
+    // Get wallet
+    if (vpwallets.empty()) {
+        LogPrintf("SignDepinMessage: Wallet not available\n");
+        return false;
     }
+    CWallet* const pwallet = vpwallets[0];
+
+    // Decode address
+    CTxDestination dest = DecodeDestination(senderAddress);
+    const CKeyID* keyID = boost::get<CKeyID>(&dest);
+    if (!keyID) {
+        LogPrintf("SignDepinMessage: Invalid sender address format\n");
+        return false;
+    }
+
+    // Get private key from wallet
+    CKey privKey;
+    if (!pwallet->GetKey(*keyID, privKey)) {
+        LogPrintf("SignDepinMessage: Private key not found in wallet for address %s\n", senderAddress);
+        return false;
+    }
+
+    if (!privKey.IsValid()) {
+        LogPrintf("SignDepinMessage: Invalid private key\n");
+        return false;
+    }
+
+    // Construct message hash
+    // Must match the format used in VerifyDepinMessageSignature
+    CHashWriter ss(SER_GETHASH, 0);
+    ss << message.token;
+    ss << message.senderAddress;
+    ss << message.timestamp;
+    ss << message.encryptedMessages;
+    uint256 messageHash = ss.GetHash();
+
+    // Sign
+    if (!privKey.Sign(messageHash, message.signature)) {
+        LogPrintf("SignDepinMessage: Failed to sign message\n");
+        return false;
+    }
+
     return true;
 #else
+    LogPrintf("SignDepinMessage: Wallet support not enabled\n");
     return false;
 #endif
 }
@@ -341,9 +438,15 @@ bool CheckTokenOwnership(const std::string& address, const std::string& token, s
 }
 
 std::vector<std::string> GetTokenHolders(const std::string& token, unsigned int maxHolders, std::string& error) {
-    // REQUIERE -assetindex (ya verificado en Initialize)
+    // REQUIRES -assetindex (already verified in Initialize)
     if (!fAssetIndex) {
         error = "Asset index is required but not enabled";
+        return std::vector<std::string>();
+    }
+
+    // REQUIRES -pubkeyindex for encryption
+    if (!fPubKeyIndex) {
+        error = "Public key index is required but not enabled. Use -pubkeyindex";
         return std::vector<std::string>();
     }
 
@@ -355,46 +458,81 @@ std::vector<std::string> GetTokenHolders(const std::string& token, unsigned int 
     std::vector<std::pair<std::string, CAmount>> vecHolders;
     int nTotalEntries = 0;
 
-    // Obtener holders desde el índice
-    if (!passetsdb->AssetAddressDir(vecHolders, nTotalEntries, false, token, maxHolders + 1, 0)) {
+    // Get holders from index (request more to have margin after filtering)
+    if (!passetsdb->AssetAddressDir(vecHolders, nTotalEntries, false, token, maxHolders * 2, 0)) {
         error = "Failed to query token holders from asset index";
         return std::vector<std::string>();
     }
 
-    // Verificar límite
-    if (nTotalEntries > (int)maxHolders) {
-        error = strprintf("Token has %d holders, exceeds maximum of %d. Use a more exclusive token.",
-                         nTotalEntries, maxHolders);
+    // Filter addresses:
+    // 1. Balance > 0
+    // 2. Public key revealed in blockchain
+    std::vector<std::string> addresses;
+    int skippedNoPubKey = 0;
+
+    for (const auto& holder : vecHolders) {
+        if (holder.second <= 0) {
+            continue;
+        }
+
+        // Check if public key is revealed
+        CPubKey pubkey;
+        std::string checkError;
+        if (!CheckAddressHasPublicKey(holder.first, pubkey, checkError)) {
+            skippedNoPubKey++;
+            LogPrint(BCLog::MEMPOOL, "GetTokenHolders: Skipping %s (no public key revealed)\n",
+                     holder.first);
+            continue;
+        }
+
+        addresses.push_back(holder.first);
+
+        // Check recipient limit
+        if (addresses.size() >= maxHolders) {
+            break;
+        }
+    }
+
+    if (skippedNoPubKey > 0) {
+        LogPrintf("GetTokenHolders: Filtered out %d addresses without revealed public keys\n",
+                  skippedNoPubKey);
+    }
+
+    if (addresses.empty()) {
+        error = strprintf("No holders of token '%s' have revealed their public keys. "
+                         "Holders must spend from their address at least once to reveal their public key.",
+                         token);
         return std::vector<std::string>();
     }
 
-    // Extraer solo direcciones con balance > 0
-    std::vector<std::string> addresses;
-    for (const auto& holder : vecHolders) {
-        if (holder.second > 0) {
-            addresses.push_back(holder.first);
-        }
-    }
+    LogPrintf("GetTokenHolders: Found %d eligible recipients (with revealed public keys)\n",
+              addresses.size());
 
     return addresses;
 }
 
 bool EncryptMessageForRecipient(const std::string& message, const std::string& recipientAddress,
                                  std::vector<unsigned char>& encryptedData, std::string& error) {
-    // TODO: Implementar cifrado ECIES real
-    // Por ahora simulamos el cifrado para permitir desarrollo
-    // La implementación completa requiere:
-    // 1. Obtener la clave pública del recipientAddress
-    // 2. Generar un par de claves efímeras
-    // 3. Realizar ECDH
-    // 4. Derivar clave de cifrado con KDF
-    // 5. Cifrar con AES-256-CBC
-    // 6. Calcular HMAC-SHA256
-    // 7. Empaquetar todo junto
+    // Get recipient's public key from pubkey index
+    CPubKey recipientPubKey;
+    if (!CheckAddressHasPublicKey(recipientAddress, recipientPubKey, error)) {
+        return false;
+    }
 
-    // Cifrado dummy: simplemente guardamos el mensaje en claro por ahora
-    encryptedData.clear();
-    encryptedData.insert(encryptedData.end(), message.begin(), message.end());
+    // Create a map with single recipient for ECIES encryption
+    std::map<std::string, CPubKey> recipients;
+    recipients[recipientAddress] = recipientPubKey;
+
+    // Use ECIES hybrid encryption
+    CECIESEncryptedMessage eciesMsg;
+    if (!ECIESEncryptMessage(message, recipients, eciesMsg, error)) {
+        return false;
+    }
+
+    // Serialize the ECIES message to encryptedData
+    CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
+    ss << eciesMsg;
+    encryptedData.assign(ss.begin(), ss.end());
 
     return true;
 }
@@ -403,22 +541,51 @@ bool DecryptMessageForAddress(const std::vector<unsigned char>& encryptedData,
                                const std::string& address, std::string& decryptedMessage,
                                std::string& error) {
 #ifdef ENABLE_WALLET
-    // TODO: Implementar descifrado ECIES real
-    // Por ahora simulamos el descifrado para permitir desarrollo
-    // La implementación completa requiere:
-    // 1. Obtener la clave privada del wallet para address
-    // 2. Extraer la clave pública efímera del paquete
-    // 3. Realizar ECDH
-    // 4. Derivar clave de descifrado con KDF
-    // 5. Verificar HMAC
-    // 6. Descifrar con AES-256-CBC
+    // Get wallet
+    if (vpwallets.empty()) {
+        error = "Wallet not available";
+        return false;
+    }
+    CWallet* const pwallet = vpwallets[0];
 
-    // Descifrado dummy: asumimos que está en claro
-    decryptedMessage = std::string(encryptedData.begin(), encryptedData.end());
+    // Decode address
+    CTxDestination dest = DecodeDestination(address);
+    const CKeyID* keyID = boost::get<CKeyID>(&dest);
+    if (!keyID) {
+        error = "Invalid address format";
+        return false;
+    }
+
+    // Get private key from wallet
+    CKey privKey;
+    if (!pwallet->GetKey(*keyID, privKey)) {
+        error = strprintf("Private key not found in wallet for address %s", address);
+        return false;
+    }
+
+    if (!privKey.IsValid()) {
+        error = "Invalid private key";
+        return false;
+    }
+
+    // Deserialize ECIES message
+    CECIESEncryptedMessage eciesMsg;
+    try {
+        CDataStream ss(encryptedData, SER_NETWORK, PROTOCOL_VERSION);
+        ss >> eciesMsg;
+    } catch (const std::exception& e) {
+        error = strprintf("Failed to deserialize encrypted message: %s", e.what());
+        return false;
+    }
+
+    // Decrypt using ECIES
+    if (!ECIESDecryptMessage(eciesMsg, privKey, address, decryptedMessage, error)) {
+        return false;
+    }
 
     return true;
 #else
-    error = "Wallet not available for decryption";
+    error = "Wallet support not enabled";
     return false;
 #endif
 }
@@ -431,7 +598,7 @@ bool QueryRemoteDepinMsgPool(const std::string& ipAddress, int port,
     LogPrint(BCLog::NET, "QueryRemoteDepinMsgPool: Connecting to %s:%d for token %s\n",
              ipAddress, port, token);
 
-    // Usar el cliente de chat mempool
+    // Use the DePIN message pool client
     bool success = CDepinMsgPoolClient::QueryMessages(ipAddress, port, token,
                                                      myAddresses, messages, error);
 
