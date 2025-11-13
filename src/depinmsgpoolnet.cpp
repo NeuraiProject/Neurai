@@ -4,13 +4,22 @@
 
 #include "depinmsgpoolnet.h"
 #include "depinmsgpool.h"
+#include "rpc/server.h"
+#include "rpc/protocol.h"
 #include "util.h"
 #include "utilstrencodings.h"
 #include "streams.h"
 #include "version.h"
+#include "random.h"
+#include "base58.h"
+#include "validation.h"
+#include "utiltime.h"
 
 #include <cstring>
 #include <sstream>
+#include <cstdlib>
+#include <algorithm>
+#include <cctype>
 
 // Platform-specific socket headers
 #ifdef WIN32
@@ -66,6 +75,11 @@ inline const char* InetNtopCompat(int af, const void* src, char* dst, socklen_t 
 #endif
 
 std::unique_ptr<CDepinMsgPoolServer> pDepinMsgPoolServer;
+
+#ifdef ENABLE_WALLET
+extern UniValue depinsendmsg(const JSONRPCRequest& request);
+extern UniValue depingetmsg(const JSONRPCRequest& request);
+#endif
 
 // ===== Servidor =====
 
@@ -204,14 +218,14 @@ void CDepinMsgPoolServer::ThreadServerHandler() {
                 clientIP, ntohs(clientAddr.sin_port));
 
         // Manejar cliente en thread separado (o inline para simplicidad)
-        std::thread clientThread(&CDepinMsgPoolServer::HandleClient, this, clientSocket);
+        std::thread clientThread(&CDepinMsgPoolServer::HandleClient, this, clientSocket, std::string(clientIP));
         clientThread.detach();
     }
 
     LogPrint(BCLog::NET, "Chat mempool server thread terminated\n");
 }
 
-void CDepinMsgPoolServer::HandleClient(int clientSocket) {
+void CDepinMsgPoolServer::HandleClient(int clientSocket, std::string clientIP) {
     // Configurar timeout
     struct timeval tv;
     tv.tv_sec = DEPIN_SOCKET_TIMEOUT;
@@ -251,7 +265,7 @@ void CDepinMsgPoolServer::HandleClient(int clientSocket) {
     }
 
     // Procesar request
-    std::string response = ProcessRequest(request);
+    std::string response = ProcessRequest(request, clientIP);
 
     // Enviar respuesta
     response += "\n";
@@ -261,7 +275,13 @@ void CDepinMsgPoolServer::HandleClient(int clientSocket) {
     close(clientSocket);
 }
 
-std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request) {
+std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request, const std::string& clientIP) {
+    CleanupExpiredChallenges();
+    std::string jsonResponse;
+    if (TryProcessJsonRpc(request, jsonResponse, clientIP)) {
+        return jsonResponse;
+    }
+
     LogPrint(BCLog::NET, "Chat mempool: Processing request: %s\n", request);
 
     // Parse: CMD|param1|param2|...
@@ -278,6 +298,32 @@ std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request) {
     }
 
     std::string cmd = parts[0];
+
+    // AUTH - request challenge
+    if (cmd == DEPIN_CMD_AUTH) {
+        if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
+            return "ERROR|Chat mempool not enabled";
+        }
+
+        if (parts.size() < 3) {
+            return "ERROR|Invalid AUTH format. Expected: AUTH|token|address[|SEND]";
+        }
+
+        std::string token = parts[1];
+        std::string address = parts[2];
+        std::string mode = parts.size() >= 4 ? parts[3] : "GET";
+        std::string modeUpper = mode;
+        std::transform(modeUpper.begin(), modeUpper.end(), modeUpper.begin(), ::toupper);
+        DepinChallengeType challengeType = (modeUpper == "SEND") ? DepinChallengeType::SEND : DepinChallengeType::RECEIVE;
+
+        std::string error;
+        std::string challenge = IssueChallenge(token, address, clientIP, challengeType, error);
+        if (challenge.empty()) {
+            return "ERROR|" + error;
+        }
+
+        return strprintf("CHALLENGE|%s|%d", challenge, DEPIN_CHALLENGE_TIMEOUT);
+    }
 
     // PING
     if (cmd == DEPIN_CMD_PING) {
@@ -302,12 +348,26 @@ std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request) {
             return "ERROR|Chat mempool not enabled";
         }
 
-        if (parts.size() < 3) {
-            return "ERROR|Invalid GETMESSAGES format. Expected: GETMESSAGES|token|address1,address2,...";
+        if (parts.size() < 6) {
+            return "ERROR|Authentication required. Use AUTH command first";
         }
 
         std::string token = parts[1];
         std::string addressesStr = parts[2];
+        std::string authAddress = parts[3];
+        std::string signature = parts[4];
+        std::string challenge = parts[5];
+
+        std::string error;
+
+        if (!ValidateChallenge(token, authAddress, clientIP, challenge, DepinChallengeType::RECEIVE, error)) {
+            return "ERROR|" + error;
+        }
+
+        std::string messageToSign = strprintf("DEPIN-GET|%s|%s|%s", token, authAddress, challenge);
+        if (!VerifyChallengeSignature(authAddress, signature, messageToSign, error)) {
+            return "ERROR|" + error;
+        }
 
         // Verificar token
         if (token != pDepinMsgPool->GetActiveToken()) {
@@ -324,6 +384,18 @@ std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request) {
 
         if (addresses.empty()) {
             return "ERROR|No addresses provided";
+        }
+
+        bool authFound = false;
+        for (const auto& addr : addresses) {
+            if (addr == authAddress) {
+                authFound = true;
+                break;
+            }
+        }
+
+        if (!authFound) {
+            return "ERROR|Authenticated address not present in request";
         }
 
         // Obtener mensajes para esas direcciones
@@ -347,11 +419,339 @@ std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request) {
     return "ERROR|Unknown command: " + cmd;
 }
 
+bool CDepinMsgPoolServer::TryProcessJsonRpc(const std::string& request, std::string& response, const std::string& clientIP) {
+    UniValue valRequest;
+    if (!valRequest.read(request)) {
+        return false;
+    }
+
+    if (!valRequest.isObject() || !valRequest.exists("method")) {
+        return false;
+    }
+
+    try {
+        response = ProcessJsonRpcRequest(valRequest, clientIP);
+    } catch (const std::exception& e) {
+        UniValue error = JSONRPCError(RPC_PARSE_ERROR, e.what());
+        UniValue reply = JSONRPCReplyObj(NullUniValue, error,
+                                         valRequest.exists("id") ? valRequest["id"] : NullUniValue);
+        response = reply.write();
+    }
+
+    return true;
+}
+
+std::string CDepinMsgPoolServer::ProcessJsonRpcRequest(const UniValue& valRequest, const std::string& clientIP) {
+    UniValue id = valRequest.exists("id") ? valRequest["id"] : NullUniValue;
+
+    const UniValue& methodVal = valRequest["method"];
+    if (!methodVal.isStr()) {
+        UniValue reply = JSONRPCReplyObj(NullUniValue,
+                                         JSONRPCError(RPC_INVALID_REQUEST, "'method' must be a string"),
+                                         id);
+        return reply.write();
+    }
+
+    JSONRPCRequest jsonRequest;
+    jsonRequest.strMethod = methodVal.get_str();
+    jsonRequest.fHelp = false;
+    jsonRequest.URI = "/";
+    jsonRequest.authUser = "depin-port";
+
+    if (valRequest.exists("params")) {
+        jsonRequest.params = valRequest["params"];
+    } else {
+        jsonRequest.params.setArray();
+    }
+
+    if (jsonRequest.params.isNull()) {
+        jsonRequest.params.setArray();
+    }
+
+    if (!jsonRequest.params.isArray()) {
+        UniValue reply = JSONRPCReplyObj(NullUniValue,
+                                         JSONRPCError(RPC_INVALID_REQUEST, "Parameters must be an array"),
+                                         id);
+        return reply.write();
+    }
+
+    if (jsonRequest.strMethod == "depinsendmsg") {
+        size_t paramCount = jsonRequest.params.size();
+        if (paramCount < 6) {
+            UniValue reply = JSONRPCReplyObj(NullUniValue,
+                                             JSONRPCError(RPC_INVALID_PARAMETER,
+                                                          "Remote depinsendmsg requires fromaddress, challenge and signature"),
+                                             id);
+            return reply.write();
+        }
+
+        if (!jsonRequest.params[0].isStr()) {
+            UniValue reply = JSONRPCReplyObj(NullUniValue,
+                                             JSONRPCError(RPC_INVALID_PARAMETER, "Token must be a string"),
+                                             id);
+            return reply.write();
+        }
+
+        if (!jsonRequest.params[3].isStr()) {
+            UniValue reply = JSONRPCReplyObj(NullUniValue,
+                                             JSONRPCError(RPC_INVALID_PARAMETER,
+                                                          "fromaddress is required for remote depinsendmsg"),
+                                             id);
+            return reply.write();
+        }
+
+        std::string token = jsonRequest.params[0].get_str();
+        std::string fromAddress = jsonRequest.params[3].get_str();
+        std::string challenge = jsonRequest.params[paramCount - 2].get_str();
+        std::string signature = jsonRequest.params[paramCount - 1].get_str();
+
+        if (challenge.empty() || signature.empty()) {
+            UniValue reply = JSONRPCReplyObj(NullUniValue,
+                                             JSONRPCError(RPC_INVALID_PARAMETER,
+                                                          "Challenge and signature cannot be empty"),
+                                             id);
+            return reply.write();
+        }
+
+        std::string authError;
+        if (!ValidateChallenge(token, fromAddress, clientIP, challenge, DepinChallengeType::SEND, authError)) {
+            UniValue reply = JSONRPCReplyObj(NullUniValue,
+                                             JSONRPCError(RPC_INVALID_PARAMETER, authError),
+                                             id);
+            return reply.write();
+        }
+
+        std::string messageToSign = strprintf("DEPIN-SEND|%s|%s|%s", token, fromAddress, challenge);
+        if (!VerifyChallengeSignature(fromAddress, signature, messageToSign, authError)) {
+            UniValue reply = JSONRPCReplyObj(NullUniValue,
+                                             JSONRPCError(RPC_INVALID_PARAMETER, authError),
+                                             id);
+            return reply.write();
+        }
+
+        UniValue trimmed(UniValue::VARR);
+        for (size_t i = 0; i < paramCount - 2; ++i) {
+            trimmed.push_back(jsonRequest.params[i]);
+        }
+        jsonRequest.params = trimmed;
+    }
+
+    UniValue result = NullUniValue;
+    UniValue error = NullUniValue;
+
+    try {
+#ifdef ENABLE_WALLET
+        if (jsonRequest.strMethod == "depinsendmsg") {
+            result = depinsendmsg(jsonRequest);
+        } else if (jsonRequest.strMethod == "depingetmsg") {
+            result = depingetmsg(jsonRequest);
+        } else {
+            throw JSONRPCError(RPC_METHOD_NOT_FOUND, "Method not allowed on DePIN port");
+        }
+#else
+        throw JSONRPCError(RPC_METHOD_NOT_FOUND, "Wallet RPC not available in this build");
+#endif
+    } catch (const UniValue& e) {
+        error = e;
+    } catch (const std::exception& e) {
+        error = JSONRPCError(RPC_MISC_ERROR, e.what());
+    }
+
+    UniValue reply = JSONRPCReplyObj(error.isNull() ? result : NullUniValue,
+                                     error,
+                                     id);
+    return reply.write();
+}
+
+std::string CDepinMsgPoolServer::IssueChallenge(const std::string& token, const std::string& address,
+                                                const std::string& clientIP, DepinChallengeType type,
+                                                std::string& error) {
+    if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
+        error = "Chat mempool not enabled";
+        return "";
+    }
+
+    if (token != pDepinMsgPool->GetActiveToken()) {
+        error = strprintf("Token mismatch. Server has: %s", pDepinMsgPool->GetActiveToken());
+        return "";
+    }
+
+    if (address.empty()) {
+        error = "Address is required";
+        return "";
+    }
+
+    if (!IsValidDestinationString(address)) {
+        error = "Invalid address format";
+        return "";
+    }
+
+    if (!CheckTokenOwnership(address, token, error)) {
+        return "";
+    }
+
+    unsigned char randBytes[32];
+    GetRandBytes(randBytes, sizeof(randBytes));
+    std::string nonce = HexStr(randBytes, randBytes + sizeof(randBytes));
+
+    CDepinChallenge challenge;
+    challenge.token = token;
+    challenge.address = address;
+    challenge.nonce = nonce;
+    challenge.clientIP = clientIP;
+    challenge.expiry = GetTime() + DEPIN_CHALLENGE_TIMEOUT;
+    challenge.type = type;
+
+    {
+        LOCK(cs_challenges);
+        mapChallenges[nonce] = challenge;
+    }
+
+    return nonce;
+}
+
+void CDepinMsgPoolServer::CleanupExpiredChallenges() {
+    int64_t now = GetTime();
+    LOCK(cs_challenges);
+    for (auto it = mapChallenges.begin(); it != mapChallenges.end();) {
+        if (it->second.expiry <= now) {
+            it = mapChallenges.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+bool CDepinMsgPoolServer::ValidateChallenge(const std::string& token, const std::string& address,
+                                            const std::string& clientIP, const std::string& nonce,
+                                            DepinChallengeType expectedType,
+                                            std::string& error) {
+    int64_t now = GetTime();
+    LOCK(cs_challenges);
+    auto it = mapChallenges.find(nonce);
+    if (it == mapChallenges.end()) {
+        error = "Challenge not found";
+        return false;
+    }
+
+    const CDepinChallenge& entry = it->second;
+    if (entry.expiry <= now) {
+        error = "Challenge expired";
+        mapChallenges.erase(it);
+        return false;
+    }
+
+    if (entry.token != token || entry.address != address) {
+        error = "Challenge does not match token/address";
+        mapChallenges.erase(it);
+        return false;
+    }
+
+    if (!entry.clientIP.empty() && entry.clientIP != clientIP) {
+        error = "Challenge IP mismatch";
+        mapChallenges.erase(it);
+        return false;
+    }
+
+    if (entry.type != expectedType) {
+        error = "Challenge type mismatch";
+        mapChallenges.erase(it);
+        return false;
+    }
+
+    mapChallenges.erase(it);
+    return true;
+}
+
+bool CDepinMsgPoolServer::VerifyChallengeSignature(const std::string& address,
+                                                   const std::string& signature,
+                                                   const std::string& message,
+                                                   std::string& error) const {
+    CTxDestination dest = DecodeDestination(address);
+    if (!IsValidDestination(dest)) {
+        error = "Invalid address";
+        return false;
+    }
+
+    const CKeyID* keyID = boost::get<CKeyID>(&dest);
+    if (!keyID) {
+        error = "Address does not refer to a key";
+        return false;
+    }
+
+    bool fInvalid = false;
+    std::vector<unsigned char> vchSig = DecodeBase64(signature.c_str(), &fInvalid);
+    if (fInvalid || vchSig.empty()) {
+        error = "Malformed signature";
+        return false;
+    }
+
+    CHashWriter ss(SER_GETHASH, 0);
+    ss << strMessageMagic;
+    ss << message;
+
+    CPubKey pubkey;
+    if (!pubkey.RecoverCompact(ss.GetHash(), vchSig)) {
+        error = "Failed to recover public key from signature";
+        return false;
+    }
+
+    if (pubkey.GetID() != *keyID) {
+        error = "Signature does not match address";
+        return false;
+    }
+
+    return true;
+}
+
 // ===== Cliente =====
+
+bool CDepinMsgPoolClient::RequestChallenge(const std::string& host, int port,
+                                           const std::string& token,
+                                           const std::string& address,
+                                           std::string& challenge,
+                                           int& expiresIn,
+                                           std::string& error) {
+    std::string request = strprintf("%s|%s|%s", DEPIN_CMD_AUTH, token, address);
+    std::string response;
+
+    if (!SendRequest(host, port, request, response, error)) {
+        return false;
+    }
+
+    std::vector<std::string> parts;
+    std::stringstream ss(response);
+    std::string part;
+    while (std::getline(ss, part, '|')) {
+        parts.push_back(part);
+    }
+
+    if (parts.empty()) {
+        error = "Invalid challenge response";
+        return false;
+    }
+
+    if (parts[0] == DEPIN_RESP_ERROR) {
+        error = parts.size() > 1 ? parts[1] : "Challenge rejected";
+        return false;
+    }
+
+    if (parts.size() != 3 || parts[0] != "CHALLENGE") {
+        error = "Unexpected challenge response: " + response;
+        return false;
+    }
+
+    challenge = parts[1];
+    expiresIn = atoi(parts[2].c_str());
+    return true;
+}
 
 bool CDepinMsgPoolClient::QueryMessages(const std::string& host, int port,
                                        const std::string& token,
                                        const std::vector<std::string>& addresses,
+                                       const std::string& authAddress,
+                                       const std::string& signature,
+                                       const std::string& challenge,
                                        std::vector<CDepinMessage>& messages,
                                        std::string& error) {
     // Construir lista de direcciones
@@ -362,10 +762,13 @@ bool CDepinMsgPoolClient::QueryMessages(const std::string& host, int port,
     }
 
     // Construir request
-    std::string request = strprintf("%s|%s|%s",
+    std::string request = strprintf("%s|%s|%s|%s|%s|%s",
                                    DEPIN_CMD_GETMESSAGES,
                                    token,
-                                   addressList);
+                                   addressList,
+                                   authAddress,
+                                   signature,
+                                   challenge);
 
     // Enviar request
     std::string response;

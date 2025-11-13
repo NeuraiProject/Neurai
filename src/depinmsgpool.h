@@ -14,23 +14,27 @@
 #include "serialize.h"
 #include "amount.h"
 
-// Configuración
+#ifdef ENABLE_WALLET
+class CWallet;
+#endif
+
+// Configuration
 static const unsigned int DEFAULT_DEPIN_MSG_PORT = 19002;
 static const unsigned int DEFAULT_MAX_DEPIN_RECIPIENTS = 20;
 static const unsigned int MAX_DEPIN_RECIPIENTS = 50;
 static const unsigned int MAX_DEPIN_MESSAGE_SIZE = 1024; // 1KB
-static const int64_t DEPIN_MESSAGE_EXPIRY_TIME = 7 * 24 * 60 * 60; // 7 días en segundos
+static const int64_t DEPIN_MESSAGE_EXPIRY_TIME = 7 * 24 * 60 * 60; // 7 days in seconds
 
 // DePIN pool persistence
 static const bool DEFAULT_DEPINPOOL_PERSIST = false;
 static const uint32_t DEPINPOOL_MAGIC_BYTES = 0xD0D1D2D3;
 static const uint32_t DEPINPOOL_FILE_VERSION = 1;
 
-// Estructura de mensaje cifrado por destinatario
+// Per-recipient encrypted message structure
 class CDepinEncryptedMessage {
 public:
-    std::string recipientAddress;           // Dirección destinataria
-    std::vector<unsigned char> encryptedData; // Mensaje cifrado con ECIES
+    std::string recipientAddress;           // Destination address
+    std::vector<unsigned char> encryptedData; // ECIES-encrypted payload
 
     CDepinEncryptedMessage() {
         SetNull();
@@ -52,15 +56,15 @@ public:
     }
 };
 
-// Estructura principal del mensaje de chat
+// Primary chat message structure
 class CDepinMessage {
 public:
-    std::string token;                      // Token requerido
-    std::string senderAddress;              // Dirección del remitente
-    int64_t timestamp;                      // Tiempo UNIX
-    std::vector<unsigned char> signature;   // Firma del remitente
+    std::string token;                      // Required token
+    std::string senderAddress;              // Sender address
+    int64_t timestamp;                      // UNIX time
+    std::vector<unsigned char> signature;   // Sender signature
 
-    // Mensajes cifrados por destinatario
+    // Per-recipient encrypted payloads
     std::vector<CDepinEncryptedMessage> encryptedMessages;
 
     CDepinMessage() {
@@ -90,14 +94,14 @@ public:
     }
 };
 
-// Mempool de mensajes de chat
+// Chat message mempool
 class CDepinMsgPool {
 private:
     mutable CCriticalSection cs_depinmsgpool;
 
-    std::string activeToken;                    // Token activo para este mempool
-    std::map<uint256, CDepinMessage> mapMessages; // Hash -> Mensaje
-    std::multimap<int64_t, uint256> mapByTime;  // Timestamp -> Hash (para expiración)
+    std::string activeToken;                    // Token active in this pool
+    std::map<uint256, CDepinMessage> mapMessages; // Hash -> Message
+    std::multimap<int64_t, uint256> mapByTime;  // Timestamp -> Hash (for expiry)
 
     bool fEnabled;
     unsigned int nPort;
@@ -106,25 +110,25 @@ private:
 public:
     CDepinMsgPool();
 
-    // Configuración
+    // Configuration
     bool Initialize(const std::string& token, unsigned int port, unsigned int maxRecipients);
     bool IsEnabled() const { return fEnabled; }
     std::string GetActiveToken() const { return activeToken; }
     unsigned int GetPort() const { return nPort; }
     unsigned int GetMaxRecipients() const { return nMaxRecipients; }
 
-    // Gestión de mensajes
+    // Message handling
     bool AddMessage(const CDepinMessage& message, std::string& error);
     bool GetDepinMessage(const uint256& hash, CDepinMessage& message) const;
     std::vector<CDepinMessage> GetMessagesForAddress(const std::string& address) const;
     std::vector<CDepinMessage> GetAllMessages() const;
     size_t GetMessageCount() const;
 
-    // Limpieza
+    // Cleanup
     void RemoveExpiredMessages(int64_t currentTime);
     void Clear();
 
-    // Estadísticas
+    // Stats
     size_t Size() const;
     size_t DynamicMemoryUsage() const;
     int64_t GetOldestMessageTime() const;
@@ -138,7 +142,7 @@ public:
 // Global chat mempool instance
 extern std::unique_ptr<CDepinMsgPool> pDepinMsgPool;
 
-// Funciones auxiliares
+// Helper functions
 bool VerifyDepinMessageSignature(const CDepinMessage& message);
 bool SignDepinMessage(CDepinMessage& message, const std::string& senderAddress);
 bool CheckTokenOwnership(const std::string& address, const std::string& token, std::string& error);
@@ -149,11 +153,21 @@ bool DecryptMessageForAddress(const std::vector<unsigned char>& encryptedData,
                                const std::string& address, std::string& decryptedMessage,
                                std::string& error);
 
-// Consulta remota de chat mempool
-bool QueryRemoteDepinMsgPool(const std::string& ipAddress, int port,
+// Remote chat mempool helpers
+#ifdef ENABLE_WALLET
+bool QueryRemoteDepinMsgPool(CWallet* pwallet,
+                            const std::string& ipAddress, int port,
                             const std::string& token,
                             const std::vector<std::string>& myAddresses,
                             std::vector<CDepinMessage>& messages,
                             std::string& error);
+
+bool SignDepinChallenge(CWallet* pwallet,
+                        const std::string& address,
+                        const std::string& token,
+                        const std::string& challenge,
+                        std::string& signature,
+                        std::string& error);
+#endif
 
 #endif // NEURAI_DEPINMSGPOOL_H

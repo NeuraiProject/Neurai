@@ -9,6 +9,8 @@
 #include <vector>
 #include <thread>
 #include <atomic>
+#include <map>
+#include <univalue.h>
 #include "depinmsgpool.h"
 #include "sync.h"
 
@@ -21,6 +23,7 @@
 static const std::string DEPIN_CMD_GETMESSAGES = "GETMESSAGES";
 static const std::string DEPIN_CMD_PING = "PING";
 static const std::string DEPIN_CMD_INFO = "INFO";
+static const std::string DEPIN_CMD_AUTH = "AUTH";
 
 // Respuestas
 static const std::string DEPIN_RESP_OK = "OK";
@@ -29,6 +32,21 @@ static const std::string DEPIN_RESP_ERROR = "ERROR";
 // Configuración
 static const int DEPIN_SOCKET_TIMEOUT = 30; // segundos
 static const size_t DEPIN_MAX_PROTOCOL_SIZE = 10 * 1024 * 1024; // 10MB
+static const int DEPIN_CHALLENGE_TIMEOUT = 30; // segundos
+
+enum class DepinChallengeType {
+    RECEIVE,
+    SEND
+};
+
+struct CDepinChallenge {
+    std::string token;
+    std::string address;
+    std::string nonce;
+    std::string clientIP;
+    int64_t expiry;
+    DepinChallengeType type;
+};
 
 // Servidor de DePIN messaging
 class CDepinMsgPoolServer {
@@ -40,8 +58,23 @@ private:
     mutable CCriticalSection cs_server;
 
     void ThreadServerHandler();
-    void HandleClient(int clientSocket);
-    std::string ProcessRequest(const std::string& request);
+    void HandleClient(int clientSocket, std::string clientIP);
+    std::string ProcessRequest(const std::string& request, const std::string& clientIP);
+    bool TryProcessJsonRpc(const std::string& request, std::string& response, const std::string& clientIP);
+    std::string ProcessJsonRpcRequest(const UniValue& valRequest, const std::string& clientIP);
+    std::string IssueChallenge(const std::string& token, const std::string& address,
+                               const std::string& clientIP, DepinChallengeType type,
+                               std::string& error);
+    bool ValidateChallenge(const std::string& token, const std::string& address,
+                           const std::string& clientIP, const std::string& nonce,
+                           DepinChallengeType expectedType,
+                           std::string& error);
+    bool VerifyChallengeSignature(const std::string& address, const std::string& signature,
+                                  const std::string& message, std::string& error) const;
+    void CleanupExpiredChallenges();
+
+    std::map<std::string, CDepinChallenge> mapChallenges;
+    mutable CCriticalSection cs_challenges;
 
 public:
     CDepinMsgPoolServer();
@@ -56,9 +89,19 @@ public:
 // Cliente de chat mempool
 class CDepinMsgPoolClient {
 public:
+    static bool RequestChallenge(const std::string& host, int port,
+                                 const std::string& token,
+                                 const std::string& address,
+                                 std::string& challenge,
+                                 int& expiresIn,
+                                 std::string& error);
+
     static bool QueryMessages(const std::string& host, int port,
                              const std::string& token,
-                             const std::vector<std::string>& addresses,
+                              const std::vector<std::string>& addresses,
+                             const std::string& authAddress,
+                             const std::string& signature,
+                             const std::string& challenge,
                              std::vector<CDepinMessage>& messages,
                              std::string& error);
 

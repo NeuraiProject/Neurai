@@ -586,17 +586,46 @@ bool DecryptMessageForAddress(const std::vector<unsigned char>& encryptedData,
 #endif
 }
 
-bool QueryRemoteDepinMsgPool(const std::string& ipAddress, int port,
+#ifdef ENABLE_WALLET
+bool QueryRemoteDepinMsgPool(CWallet* pwallet,
+                            const std::string& ipAddress, int port,
                             const std::string& token,
                             const std::vector<std::string>& myAddresses,
                             std::vector<CDepinMessage>& messages,
                             std::string& error) {
+    if (!pwallet) {
+        error = "Wallet not available";
+        return false;
+    }
+
+    if (myAddresses.empty()) {
+        error = "No addresses provided for authentication";
+        return false;
+    }
+
+    std::string authAddress = myAddresses.front();
+
     LogPrint(BCLog::NET, "QueryRemoteDepinMsgPool: Connecting to %s:%d for token %s\n",
              ipAddress, port, token);
 
-    // Use the DePIN message pool client
+    std::string challenge;
+    int expiresIn = 0;
+    if (!CDepinMsgPoolClient::RequestChallenge(ipAddress, port, token, authAddress,
+                                               challenge, expiresIn, error)) {
+        LogPrint(BCLog::NET, "QueryRemoteDepinMsgPool: Challenge failed: %s\n", error);
+        return false;
+    }
+
+    std::string signature;
+    if (!SignDepinChallenge(pwallet, authAddress, token, challenge, signature, error)) {
+        LogPrint(BCLog::NET, "QueryRemoteDepinMsgPool: Failed to sign challenge: %s\n", error);
+        return false;
+    }
+
     bool success = CDepinMsgPoolClient::QueryMessages(ipAddress, port, token,
-                                                     myAddresses, messages, error);
+                                                     myAddresses, authAddress,
+                                                     signature, challenge,
+                                                     messages, error);
 
     if (success) {
         LogPrint(BCLog::NET, "QueryRemoteDepinMsgPool: Successfully retrieved %d messages\n",
@@ -607,6 +636,55 @@ bool QueryRemoteDepinMsgPool(const std::string& ipAddress, int port,
 
     return success;
 }
+
+bool SignDepinChallenge(CWallet* pwallet,
+                        const std::string& address,
+                        const std::string& token,
+                        const std::string& challenge,
+                        std::string& signature,
+                        std::string& error) {
+    if (!pwallet) {
+        error = "Wallet not available";
+        return false;
+    }
+
+    CTxDestination dest = DecodeDestination(address);
+    if (!IsValidDestination(dest)) {
+        error = "Invalid address";
+        return false;
+    }
+
+    const CKeyID* keyID = boost::get<CKeyID>(&dest);
+    if (!keyID) {
+        error = "Address does not refer to key";
+        return false;
+    }
+
+    CKey key;
+    if (!pwallet->GetKey(*keyID, key)) {
+        error = strprintf("Private key not found in wallet for address %s", address);
+        return false;
+    }
+
+    if (!key.IsValid()) {
+        error = "Invalid private key";
+        return false;
+    }
+
+    CHashWriter ss(SER_GETHASH, 0);
+    ss << strMessageMagic;
+    ss << strprintf("DEPIN-GET|%s|%s|%s", token, address, challenge);
+
+    std::vector<unsigned char> vchSig;
+    if (!key.SignCompact(ss.GetHash(), vchSig)) {
+        error = "Failed to sign challenge";
+        return false;
+    }
+
+    signature = EncodeBase64(vchSig.data(), vchSig.size());
+    return true;
+}
+#endif
 
 // Persistence: Save DePIN pool to disk
 bool CDepinMsgPool::SaveToDisk()

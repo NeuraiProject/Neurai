@@ -539,14 +539,15 @@ UniValue depingetmsginfo(const JSONRPCRequest& request)
 #ifdef ENABLE_WALLET
 UniValue depinsendmsg(const JSONRPCRequest& request)
 {
-    if (request.fHelp || request.params.size() != 3)
+    if (request.fHelp || request.params.size() < 3 || request.params.size() > 4)
         throw std::runtime_error(
-                "depinsendmsg \"token\" \"ip\" \"message\"\n"
+                "depinsendmsg \"token\" \"ip\" \"message\" (\"fromaddress\")\n"
                 "\nSend an encrypted message to a node via DePIN messaging\n"
                 "\nArguments:\n"
                 "1. \"token\"        (string, required) Token name (must match configured token)\n"
                 "2. \"ip\"           (string, required) IP address of recipient node\n"
                 "3. \"message\"      (string, required) Message to send (max 1KB)\n"
+                "4. \"fromaddress\" (string, optional) Wallet address to use for signing/encryption\n"
                 "\nResult:\n"
                 "{\n"
                 "  \"result\": \"success\",          (string) Status\n"
@@ -556,6 +557,7 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
                 "}\n"
                 "\nExamples:\n"
                 + HelpExampleCli("depinsendmsg", "\"MYTOKEN\" \"192.168.1.100\" \"Hello team!\"")
+                + HelpExampleCli("depinsendmsg", "\"MYTOKEN\" \"192.168.1.100\" \"Hello team!\" \"NXsender...\"")
                 + HelpExampleRpc("depinsendmsg", "\"MYTOKEN\", \"192.168.1.100\", \"Hello team!\"")
         );
 
@@ -574,6 +576,11 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
     std::string token = request.params[0].get_str();
     std::string ipAddress = request.params[1].get_str();
     std::string message = request.params[2].get_str();
+    std::string requestedSender;
+    bool hasRequestedSender = request.params.size() >= 4;
+    if (hasRequestedSender) {
+        requestedSender = request.params[3].get_str();
+    }
 
     // Verificar token
     if (token != pDepinMsgPool->GetActiveToken()) {
@@ -596,7 +603,41 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
     std::map<std::string, std::vector<COutput>> mapAssetCoins;
     pwallet->AvailableAssets(mapAssetCoins);
 
-    if (mapAssetCoins.count(token)) {
+    auto addressMatchesToken = [&](const std::string& addr) {
+        if (!mapAssetCoins.count(token)) {
+            return false;
+        }
+        for (const auto& out : mapAssetCoins[token]) {
+            CTxDestination dest;
+            if (ExtractDestination(out.tx->tx->vout[out.i].scriptPubKey, dest)) {
+                if (EncodeDestination(dest) == addr) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
+    if (hasRequestedSender) {
+        CTxDestination requestedDest = DecodeDestination(requestedSender);
+        if (!IsValidDestination(requestedDest)) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
+                              strprintf("Invalid address: %s", requestedSender));
+        }
+
+        if (!IsMine(*pwallet, requestedDest)) {
+            throw JSONRPCError(RPC_WALLET_ERROR,
+                              strprintf("Address %s is not part of this wallet", requestedSender));
+        }
+
+        if (!addressMatchesToken(requestedSender)) {
+            throw JSONRPCError(RPC_WALLET_ERROR,
+                              strprintf("Wallet does not own any %s tokens at %s", token, requestedSender));
+        }
+
+        senderAddress = requestedSender;
+        foundAddress = true;
+    } else if (mapAssetCoins.count(token)) {
         for (const auto& out : mapAssetCoins[token]) {
             CTxDestination dest;
             if (ExtractDestination(out.tx->tx->vout[out.i].scriptPubKey, dest)) {
@@ -711,6 +752,7 @@ UniValue depingetmsg(const JSONRPCRequest& request)
         }
 
         LOCK2(cs_main, pwallet->cs_wallet);
+        EnsureWalletIsUnlocked(pwallet);
 
         // Obtener direcciones locales que poseen el token
         std::set<std::string> myAddresses;
@@ -736,7 +778,7 @@ UniValue depingetmsg(const JSONRPCRequest& request)
         std::string error;
         std::vector<std::string> addressList(myAddresses.begin(), myAddresses.end());
 
-        if (!QueryRemoteDepinMsgPool(ipAddress, port, token, addressList, remoteMessages, error)) {
+        if (!QueryRemoteDepinMsgPool(pwallet, ipAddress, port, token, addressList, remoteMessages, error)) {
             throw JSONRPCError(RPC_MISC_ERROR, error);
         }
 
@@ -1232,7 +1274,7 @@ static const CRPCCommand commands[] =
             { "depin",          "depingetpoolcontent",        &depingetpoolcontent,        {}},
             { "depin",          "depinpoolstats",             &depinpoolstats,             {}},
 #ifdef ENABLE_WALLET
-            { "depin",          "depinsendmsg",               &depinsendmsg,               {"token", "ip", "message"}},
+            { "depin",          "depinsendmsg",               &depinsendmsg,               {"token", "ip", "message", "fromaddress"}},
             { "depin",          "depingetmsg",                &depingetmsg,                {"token"}},
             { "depin",          "depinclearmsg",              &depinclearmsg,              {}},
 #endif
