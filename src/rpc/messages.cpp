@@ -8,6 +8,8 @@
 #include "assets/messages.h"
 #include "assets/myassetsdb.h"
 #include <map>
+#include <set>
+#include <limits>
 #include "tinyformat.h"
 
 #include "amount.h"
@@ -869,6 +871,326 @@ UniValue depinclearmsg(const JSONRPCRequest& request)
 }
 #endif // ENABLE_WALLET
 
+UniValue depingetpoolcontent(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() > 7)
+        throw std::runtime_error(
+            "depingetpoolcontent ( verbose sender_address recipient_address start_time end_time limit offset )\n"
+            "\nInspect the contents of the DePIN message pool.\n"
+            "\nArguments:\n"
+            "1. verbose           (boolean, \"all\", or \"raw\", optional, default=false) Show detailed message structure. Use \"all\" for all messages, \"raw\" to show encrypted hex data\n"
+            "2. sender_address    (string, optional) Filter by sender address\n"
+            "3. recipient_address (string, optional) Filter by recipient address\n"
+            "4. start_time        (numeric, optional) Filter messages after timestamp\n"
+            "5. end_time          (numeric, optional) Filter messages before timestamp\n"
+            "6. limit             (numeric, optional, default=100) Maximum messages to return\n"
+            "7. offset            (numeric, optional, default=0) Skip first N messages\n"
+            "\nResult (verbose=false):\n"
+            "[\n"
+            "  {\n"
+            "    \"hash\": \"hex\",\n"
+            "    \"sender\": \"address\",\n"
+            "    \"timestamp\": n,\n"
+            "    \"date\": \"YYYY-MM-DD HH:MM:SS\",\n"
+            "    \"expires\": \"YYYY-MM-DD HH:MM:SS\",\n"
+            "    \"recipients\": n,\n"
+            "    \"size\": n\n"
+            "  },\n"
+            "  ...\n"
+            "]\n"
+            "\nResult (verbose=true):\n"
+            "[\n"
+            "  {\n"
+            "    \"hash\": \"hex\",\n"
+            "    \"sender\": \"address\",\n"
+            "    \"timestamp\": n,\n"
+            "    \"date\": \"YYYY-MM-DD HH:MM:SS\",\n"
+            "    \"expires\": \"YYYY-MM-DD HH:MM:SS\",\n"
+            "    \"recipients\": [\n"
+            "      {\n"
+            "        \"address\": \"address\",\n"
+            "        \"encrypted_size\": n\n"
+            "      },\n"
+            "      ...\n"
+            "    ],\n"
+            "    \"signature_size\": n,\n"
+            "    \"total_encrypted_size\": n,\n"
+            "    \"total_size\": n\n"
+            "  },\n"
+            "  ...\n"
+            "]\n"
+            "\nExamples:\n"
+            + HelpExampleCli("depingetpoolcontent", "")
+            + HelpExampleCli("depingetpoolcontent", "true")
+            + HelpExampleCli("depingetpoolcontent", "all")
+            + HelpExampleCli("depingetpoolcontent", "raw")
+            + HelpExampleCli("depingetpoolcontent", "false \"NXXaddress...\"")
+            + HelpExampleRpc("depingetpoolcontent", "true")
+        );
+
+    // Check if DePIN pool is enabled
+    if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
+        throw JSONRPCError(RPC_MISC_ERROR, "DePIN message pool is not enabled");
+    }
+
+    // Parse parameters
+    bool fVerbose = false;
+    bool fShowAll = false;
+    bool fShowRaw = false;
+    std::string senderFilter = "";
+    std::string recipientFilter = "";
+    int64_t startTime = 0;
+    int64_t endTime = std::numeric_limits<int64_t>::max();
+    int limit = 100;
+    int offset = 0;
+
+    if (request.params.size() > 0 && !request.params[0].isNull()) {
+        if (request.params[0].isBool()) {
+            fVerbose = request.params[0].get_bool();
+        } else if (request.params[0].isNum()) {
+            fVerbose = request.params[0].get_int() != 0;
+        } else if (request.params[0].isStr()) {
+            std::string val = request.params[0].get_str();
+            if (val == "all") {
+                fVerbose = true;
+                fShowAll = true;
+                limit = std::numeric_limits<int>::max();
+            } else if (val == "raw") {
+                fVerbose = true;
+                fShowRaw = true;
+            } else {
+                fVerbose = (val == "true" || val == "1");
+            }
+        }
+    }
+    if (request.params.size() > 1) senderFilter = request.params[1].get_str();
+    if (request.params.size() > 2) recipientFilter = request.params[2].get_str();
+    if (request.params.size() > 3) startTime = request.params[3].get_int64();
+    if (request.params.size() > 4) endTime = request.params[4].get_int64();
+    if (request.params.size() > 5 && !fShowAll) limit = request.params[5].get_int();
+    if (request.params.size() > 6 && !fShowAll) offset = request.params[6].get_int();
+
+    // Validate limits (unless showing all)
+    if (!fShowAll) {
+        if (limit < 1) limit = 1;
+        if (limit > 1000) limit = 1000;
+    }
+    if (offset < 0) offset = 0;
+
+    // Get all messages from pool
+    std::vector<CDepinMessage> messages = pDepinMsgPool->GetAllMessages();
+
+    // Apply filters and build result
+    UniValue result(UniValue::VARR);
+    int skipped = 0;
+    int added = 0;
+
+    for (const auto& msg : messages) {
+        // Filter by sender
+        if (!senderFilter.empty() && msg.senderAddress != senderFilter)
+            continue;
+
+        // Filter by recipient
+        if (!recipientFilter.empty()) {
+            bool hasRecipient = false;
+            for (const auto& encMsg : msg.encryptedMessages) {
+                if (encMsg.recipientAddress == recipientFilter) {
+                    hasRecipient = true;
+                    break;
+                }
+            }
+            if (!hasRecipient) continue;
+        }
+
+        // Filter by time range
+        if (msg.timestamp < startTime || msg.timestamp > endTime)
+            continue;
+
+        // Apply offset
+        if (skipped < offset) {
+            skipped++;
+            continue;
+        }
+
+        // Apply limit
+        if (added >= limit)
+            break;
+
+        // Build message object
+        UniValue msgObj(UniValue::VOBJ);
+        msgObj.push_back(Pair("hash", msg.GetHash().GetHex()));
+        msgObj.push_back(Pair("sender", msg.senderAddress));
+        msgObj.push_back(Pair("timestamp", msg.timestamp));
+        msgObj.push_back(Pair("date", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", msg.timestamp)));
+        msgObj.push_back(Pair("expires", DateTimeStrFormat("%Y-%m-%d %H:%M:%S",
+                                                    msg.timestamp + DEPIN_MESSAGE_EXPIRY_TIME)));
+
+        if (fVerbose) {
+            // Verbose mode: show detailed structure
+            UniValue recipients(UniValue::VARR);
+            size_t totalEncryptedSize = 0;
+
+            for (const auto& encMsg : msg.encryptedMessages) {
+                UniValue recipientObj(UniValue::VOBJ);
+                recipientObj.push_back(Pair("address", encMsg.recipientAddress));
+                recipientObj.push_back(Pair("encrypted_size", (int)encMsg.encryptedData.size()));
+
+                // If raw mode, show the encrypted data in hex
+                if (fShowRaw) {
+                    recipientObj.push_back(Pair("encrypted_data_hex", HexStr(encMsg.encryptedData)));
+                }
+
+                recipients.push_back(recipientObj);
+                totalEncryptedSize += encMsg.encryptedData.size();
+            }
+
+            msgObj.push_back(Pair("recipients", recipients));
+            msgObj.push_back(Pair("signature_size", (int)msg.signature.size()));
+
+            // If raw mode, show the signature in hex
+            if (fShowRaw) {
+                msgObj.push_back(Pair("signature_hex", HexStr(msg.signature)));
+            }
+
+            msgObj.push_back(Pair("total_encrypted_size", (int)totalEncryptedSize));
+            msgObj.push_back(Pair("total_size", (int)(totalEncryptedSize + msg.signature.size())));
+        } else {
+            // Simple mode: just counts
+            msgObj.push_back(Pair("recipients", (int)msg.encryptedMessages.size()));
+
+            size_t totalSize = msg.signature.size();
+            for (const auto& encMsg : msg.encryptedMessages) {
+                totalSize += encMsg.encryptedData.size();
+            }
+            msgObj.push_back(Pair("size", (int)totalSize));
+        }
+
+        result.push_back(msgObj);
+        added++;
+    }
+
+    return result;
+}
+
+UniValue depinpoolstats(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() > 0)
+        throw std::runtime_error(
+            "depinpoolstats\n"
+            "\nGet statistical analysis of the DePIN message pool.\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"enabled\": true|false,\n"
+            "  \"token\": \"string\",\n"
+            "  \"total_messages\": n,\n"
+            "  \"total_size_bytes\": n,\n"
+            "  \"memory_usage_bytes\": n,\n"
+            "  \"oldest_message\": \"YYYY-MM-DD HH:MM:SS\",\n"
+            "  \"newest_message\": \"YYYY-MM-DD HH:MM:SS\",\n"
+            "  \"messages_by_age\": {\n"
+            "    \"last_hour\": n,\n"
+            "    \"last_day\": n,\n"
+            "    \"last_week\": n\n"
+            "  },\n"
+            "  \"unique_senders\": n,\n"
+            "  \"unique_recipients\": n,\n"
+            "  \"avg_recipients_per_message\": n.nn,\n"
+            "  \"avg_message_size\": n,\n"
+            "  \"expiring_in_24h\": n\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("depinpoolstats", "")
+            + HelpExampleRpc("depinpoolstats", "")
+        );
+
+    // Check if DePIN pool is enabled
+    if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
+        throw JSONRPCError(RPC_MISC_ERROR, "DePIN message pool is not enabled");
+    }
+
+    // Get all messages
+    std::vector<CDepinMessage> messages = pDepinMsgPool->GetAllMessages();
+
+    // Calculate statistics
+    int64_t now = GetTime();
+    int64_t oldest = std::numeric_limits<int64_t>::max();
+    int64_t newest = 0;
+    size_t totalSize = 0;
+    int totalRecipients = 0;
+    int messagesLastHour = 0;
+    int messagesLastDay = 0;
+    int messagesLastWeek = 0;
+    int expiringIn24h = 0;
+
+    std::set<std::string> uniqueSenders;
+    std::set<std::string> uniqueRecipients;
+
+    for (const auto& msg : messages) {
+        // Track time range
+        if (msg.timestamp < oldest) oldest = msg.timestamp;
+        if (msg.timestamp > newest) newest = msg.timestamp;
+
+        // Count by age
+        int64_t age = now - msg.timestamp;
+        if (age < 3600) messagesLastHour++;
+        if (age < 86400) messagesLastDay++;
+        if (age < 604800) messagesLastWeek++;
+
+        // Count expiring soon
+        int64_t timeToExpiry = (msg.timestamp + DEPIN_MESSAGE_EXPIRY_TIME) - now;
+        if (timeToExpiry < 86400 && timeToExpiry > 0) expiringIn24h++;
+
+        // Track senders and recipients
+        uniqueSenders.insert(msg.senderAddress);
+        totalRecipients += msg.encryptedMessages.size();
+
+        // Calculate size
+        totalSize += msg.signature.size();
+        for (const auto& encMsg : msg.encryptedMessages) {
+            uniqueRecipients.insert(encMsg.recipientAddress);
+            totalSize += encMsg.encryptedData.size();
+        }
+    }
+
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    result.push_back(Pair("enabled", pDepinMsgPool->IsEnabled()));
+    result.push_back(Pair("token", pDepinMsgPool->GetActiveToken()));
+    result.push_back(Pair("total_messages", (int)messages.size()));
+    result.push_back(Pair("total_size_bytes", (int)totalSize));
+    result.push_back(Pair("memory_usage_bytes", (int)pDepinMsgPool->DynamicMemoryUsage()));
+
+    if (messages.size() > 0) {
+        result.push_back(Pair("oldest_message", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", oldest)));
+        result.push_back(Pair("newest_message", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", newest)));
+
+        UniValue byAge(UniValue::VOBJ);
+        byAge.push_back(Pair("last_hour", messagesLastHour));
+        byAge.push_back(Pair("last_day", messagesLastDay));
+        byAge.push_back(Pair("last_week", messagesLastWeek));
+        result.push_back(Pair("messages_by_age", byAge));
+
+        result.push_back(Pair("unique_senders", (int)uniqueSenders.size()));
+        result.push_back(Pair("unique_recipients", (int)uniqueRecipients.size()));
+
+        double avgRecipients = (double)totalRecipients / messages.size();
+        result.push_back(Pair("avg_recipients_per_message", avgRecipients));
+
+        result.push_back(Pair("avg_message_size", (int)(totalSize / messages.size())));
+        result.push_back(Pair("expiring_in_24h", expiringIn24h));
+    } else {
+        result.push_back(Pair("oldest_message", ""));
+        result.push_back(Pair("newest_message", ""));
+        result.push_back(Pair("unique_senders", 0));
+        result.push_back(Pair("unique_recipients", 0));
+        result.push_back(Pair("avg_recipients_per_message", 0));
+        result.push_back(Pair("avg_message_size", 0));
+        result.push_back(Pair("expiring_in_24h", 0));
+    }
+
+    return result;
+}
+
 static const CRPCCommand commands[] =
     {           //  category    name                          actor (function)             argNames
                 //  ----------- ------------------------      -----------------------      ----------
@@ -884,6 +1206,8 @@ static const CRPCCommand commands[] =
             { "messages",       "clearmessages",              &clearmessages,              {}},
             // DePIN Messaging Commands
             { "depin",          "depingetmsginfo",            &depingetmsginfo,            {}},
+            { "depin",          "depingetpoolcontent",        &depingetpoolcontent,        {}},
+            { "depin",          "depinpoolstats",             &depinpoolstats,             {}},
 #ifdef ENABLE_WALLET
             { "depin",          "depinsendmsg",               &depinsendmsg,               {"token", "ip", "message"}},
             { "depin",          "depingetmsg",                &depingetmsg,                {"token"}},

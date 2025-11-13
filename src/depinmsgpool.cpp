@@ -79,14 +79,8 @@ bool CDepinMsgPool::Initialize(const std::string& token, unsigned int port, unsi
         return false;
     }
 
-    CNewAsset assetData;
-    int nHeight;
-    uint256 blockHash;
-    if (!passetsdb->ReadAssetData(token, assetData, nHeight, blockHash)) {
-        LogPrintf("ERROR: Token '%s' does not exist in blockchain\n", token);
-        return false;
-    }
-
+    // Token existence is not validated to allow server configuration before token creation
+    // or during reindex when asset index may not be fully populated
     activeToken = token;
     nPort = port;
     nMaxRecipients = std::min(maxRecipients, MAX_DEPIN_RECIPIENTS);
