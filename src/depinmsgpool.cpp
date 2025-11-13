@@ -17,6 +17,8 @@
 #include "base58.h"
 #include "util.h"
 #include "utilstrencodings.h"
+#include "streams.h"
+#include "fs.h"
 
 #ifdef ENABLE_WALLET
 #include "wallet/wallet.h"
@@ -604,4 +606,163 @@ bool QueryRemoteDepinMsgPool(const std::string& ipAddress, int port,
     }
 
     return success;
+}
+
+// Persistence: Save DePIN pool to disk
+bool CDepinMsgPool::SaveToDisk()
+{
+    LOCK(cs_depinmsgpool);
+
+    int64_t start = GetTimeMillis();
+    fs::path filepath = GetDataDir() / "depinpool.dat";
+    fs::path filepathTmp = GetDataDir() / "depinpool.dat.new";
+
+    try {
+        FILE* file = fsbridge::fopen(filepathTmp, "wb");
+        if (!file) {
+            LogPrintf("ERROR: CDepinMsgPool::SaveToDisk(): Failed to open file %s\n",
+                     filepathTmp.string());
+            return false;
+        }
+
+        CAutoFile fileout(file, SER_DISK, CLIENT_VERSION);
+
+        // Write magic bytes
+        fileout << DEPINPOOL_MAGIC_BYTES;
+
+        // Write version
+        fileout << DEPINPOOL_FILE_VERSION;
+
+        // Write current timestamp
+        int64_t now = GetTime();
+        fileout << now;
+
+        // Get all messages
+        std::vector<CDepinMessage> messages;
+        for (const auto& entry : mapMessages) {
+            messages.push_back(entry.second);
+        }
+
+        // Write message count
+        uint64_t count = messages.size();
+        fileout << count;
+
+        // Write each message
+        for (const auto& msg : messages) {
+            fileout << msg;
+        }
+
+        FileCommit(fileout.Get());
+        fileout.fclose();
+
+        // Rename to final file
+        if (!RenameOver(filepathTmp, filepath)) {
+            LogPrintf("ERROR: CDepinMsgPool::SaveToDisk(): Failed to rename file\n");
+            return false;
+        }
+
+        LogPrintf("DePIN Pool: Saved %d messages to disk in %dms\n",
+                 count, GetTimeMillis() - start);
+        return true;
+
+    } catch (const std::exception& e) {
+        LogPrintf("ERROR: CDepinMsgPool::SaveToDisk(): %s\n", e.what());
+        return false;
+    }
+}
+
+// Persistence: Load DePIN pool from disk
+bool CDepinMsgPool::LoadFromDisk()
+{
+    LOCK(cs_depinmsgpool);
+
+    int64_t start = GetTimeMillis();
+    fs::path filepath = GetDataDir() / "depinpool.dat";
+
+    // Check if file exists
+    if (!fs::exists(filepath)) {
+        LogPrintf("DePIN Pool: No persisted pool file found (first run)\n");
+        return true;  // Not an error
+    }
+
+    try {
+        FILE* file = fsbridge::fopen(filepath, "rb");
+        if (!file) {
+            LogPrintf("ERROR: CDepinMsgPool::LoadFromDisk(): Failed to open file %s\n",
+                     filepath.string());
+            return false;
+        }
+
+        CAutoFile filein(file, SER_DISK, CLIENT_VERSION);
+
+        // Read and verify magic bytes
+        uint32_t magic;
+        filein >> magic;
+        if (magic != DEPINPOOL_MAGIC_BYTES) {
+            LogPrintf("ERROR: CDepinMsgPool::LoadFromDisk(): Invalid magic bytes (file corrupted)\n");
+            filein.fclose();
+            // Delete corrupted file
+            fs::remove(filepath);
+            return false;
+        }
+
+        // Read and verify version
+        uint32_t version;
+        filein >> version;
+        if (version != DEPINPOOL_FILE_VERSION) {
+            LogPrintf("ERROR: CDepinMsgPool::LoadFromDisk(): Incompatible version %d (expected %d)\n",
+                     version, DEPINPOOL_FILE_VERSION);
+            filein.fclose();
+            return false;
+        }
+
+        // Read save timestamp
+        int64_t saveTime;
+        filein >> saveTime;
+
+        // Read message count
+        uint64_t count;
+        filein >> count;
+
+        // Read messages
+        int64_t now = GetTime();
+        size_t loadedCount = 0;
+        size_t expiredCount = 0;
+
+        for (uint64_t i = 0; i < count; i++) {
+            CDepinMessage msg;
+            filein >> msg;
+
+            // Check if expired
+            if (msg.IsExpired(now)) {
+                expiredCount++;
+                continue;
+            }
+
+            // Add to pool
+            std::string error;
+            if (AddMessage(msg, error)) {
+                loadedCount++;
+            } else {
+                LogPrintf("WARNING: CDepinMsgPool::LoadFromDisk(): Failed to add message: %s\n", error);
+            }
+        }
+
+        filein.fclose();
+
+        LogPrintf("DePIN Pool: Loaded %d messages from disk (%d expired, skipped) in %dms\n",
+                 loadedCount, expiredCount, GetTimeMillis() - start);
+
+        // Auto-compact if more than 50% were expired
+        if (expiredCount > loadedCount && loadedCount > 0) {
+            LogPrintf("DePIN Pool: Auto-compacting (removed %d expired messages)\n", expiredCount);
+            SaveToDisk();
+        }
+
+        return true;
+
+    } catch (const std::exception& e) {
+        LogPrintf("ERROR: CDepinMsgPool::LoadFromDisk(): %s\n", e.what());
+        return false;
+    }
 }

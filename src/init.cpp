@@ -221,6 +221,15 @@ void PrepareShutdown()
         DumpMempool();
     }
 
+    // Save DePIN pool to disk if enabled
+    if (pDepinMsgPool && pDepinMsgPool->IsEnabled() &&
+        gArgs.GetBoolArg("-depinpoolpersist", DEFAULT_DEPINPOOL_PERSIST)) {
+        LogPrintf("Saving DePIN message pool...\n");
+        if (!pDepinMsgPool->SaveToDisk()) {
+            LogPrintf("WARNING: Failed to save DePIN pool to disk\n");
+        }
+    }
+
     if (fFeeEstimatesInitialized)
     {
         ::feeEstimator.FlushUnconfirmed(::mempool);
@@ -463,6 +472,7 @@ std::string HelpMessage(HelpMessageMode mode)
         strUsage += HelpMessageOpt("-minimumchainwork=<hex>", strprintf("Minimum work assumed to exist on a valid chain in hex (default: %s, testnet: %s)", defaultChainParams->GetConsensus().nMinimumChainWork.GetHex(), testnetChainParams->GetConsensus().nMinimumChainWork.GetHex()));
     }
     strUsage += HelpMessageOpt("-persistmempool", strprintf(_("Whether to save the mempool on shutdown and load on restart (default: %u)"), DEFAULT_PERSIST_MEMPOOL));
+    strUsage += HelpMessageOpt("-depinpoolpersist", strprintf(_("Whether to save the DePIN message pool on shutdown and load on restart (default: %u)"), DEFAULT_DEPINPOOL_PERSIST));
     strUsage += HelpMessageOpt("-blockreconstructionextratxn=<n>", strprintf(_("Extra transactions to keep in memory for compact block reconstructions (default: %u)"), DEFAULT_BLOCK_RECONSTRUCTION_EXTRA_TXN));
     strUsage += HelpMessageOpt("-par=<n>", strprintf(_("Set the number of script verification threads (%u to %d, 0 = auto, <0 = leave that many cores free, default: %d)"),
         -GetNumCores(), MAX_SCRIPTCHECK_THREADS, DEFAULT_SCRIPTCHECK_THREADS));
@@ -1908,6 +1918,13 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
         }
 
         LogPrintf("DePIN messaging initialized for token: %s on port %d\n", token, port);
+
+        // Load persisted DePIN pool if enabled
+        if (gArgs.GetBoolArg("-depinpoolpersist", DEFAULT_DEPINPOOL_PERSIST)) {
+            if (!pDepinMsgPool->LoadFromDisk()) {
+                LogPrintf("WARNING: Failed to load DePIN pool from disk\n");
+            }
+        }
 
         // Iniciar servidor de DePIN messaging
         pDepinMsgPoolServer = std::make_unique<CDepinMsgPoolServer>();

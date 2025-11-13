@@ -1035,9 +1035,32 @@ UniValue depingetpoolcontent(const JSONRPCRequest& request)
                 recipientObj.push_back(Pair("address", encMsg.recipientAddress));
                 recipientObj.push_back(Pair("encrypted_size", (int)encMsg.encryptedData.size()));
 
-                // If raw mode, show the encrypted data in hex
+                // If raw mode, show the encrypted data components (ECIES structure)
                 if (fShowRaw) {
-                    recipientObj.push_back(Pair("encrypted_data_hex", HexStr(encMsg.encryptedData)));
+                    // ECIES format: [EphemeralPubKey(33)] + [IV(16)] + [Ciphertext(variable)] + [MAC(32)]
+                    const size_t ECIES_OVERHEAD = 33 + 16 + 32; // 81 bytes
+
+                    if (encMsg.encryptedData.size() >= ECIES_OVERHEAD) {
+                        // Extract ECIES components
+                        std::vector<unsigned char> ephemeralPubKey(encMsg.encryptedData.begin(),
+                                                                    encMsg.encryptedData.begin() + 33);
+                        std::vector<unsigned char> iv(encMsg.encryptedData.begin() + 33,
+                                                      encMsg.encryptedData.begin() + 49);
+                        std::vector<unsigned char> ciphertext(encMsg.encryptedData.begin() + 49,
+                                                              encMsg.encryptedData.end() - 32);
+                        std::vector<unsigned char> mac(encMsg.encryptedData.end() - 32,
+                                                       encMsg.encryptedData.end());
+
+                        recipientObj.push_back(Pair("ephemeral_pubkey", HexStr(ephemeralPubKey)));
+                        recipientObj.push_back(Pair("iv", HexStr(iv)));
+                        recipientObj.push_back(Pair("ciphertext_hex", HexStr(ciphertext)));
+                        recipientObj.push_back(Pair("ciphertext_size", (int)ciphertext.size()));
+                        recipientObj.push_back(Pair("mac", HexStr(mac)));
+                    } else {
+                        // Fallback for malformed data
+                        recipientObj.push_back(Pair("encrypted_data_hex", HexStr(encMsg.encryptedData)));
+                        recipientObj.push_back(Pair("warning", "Data too small for ECIES format"));
+                    }
                 }
 
                 recipients.push_back(recipientObj);

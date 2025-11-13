@@ -21,6 +21,11 @@ static const unsigned int MAX_DEPIN_RECIPIENTS = 50;
 static const unsigned int MAX_DEPIN_MESSAGE_SIZE = 1024; // 1KB
 static const int64_t DEPIN_MESSAGE_EXPIRY_TIME = 7 * 24 * 60 * 60; // 7 días en segundos
 
+// DePIN pool persistence
+static const bool DEFAULT_DEPINPOOL_PERSIST = false;
+static const uint32_t DEPINPOOL_MAGIC_BYTES = 0xD0D1D2D3;
+static const uint32_t DEPINPOOL_FILE_VERSION = 1;
+
 // Estructura de mensaje cifrado por destinatario
 class CDepinEncryptedMessage {
 public:
@@ -124,6 +129,10 @@ public:
     size_t DynamicMemoryUsage() const;
     int64_t GetOldestMessageTime() const;
     int64_t GetNewestMessageTime() const;
+
+    // Persistence
+    bool SaveToDisk();
+    bool LoadFromDisk();
 };
 
 // Global chat mempool instance
