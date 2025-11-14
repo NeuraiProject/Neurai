@@ -117,6 +117,13 @@ public:
                                     UniValue& result,
                                     std::string& error);
 
+    // Submit pre-encrypted and signed message (new secure protocol)
+    // hexMessage: hex-encoded serialized CDepinMessage (already encrypted & signed)
+    static bool SubmitSerializedMessage(const std::string& host, int port,
+                                        const std::string& hexMessage,
+                                        UniValue& result,
+                                        std::string& error);
+
     static bool Ping(const std::string& host, int port, std::string& error);
 
     static bool GetInfo(const std::string& host, int port,

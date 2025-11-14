@@ -30,33 +30,13 @@ static const bool DEFAULT_DEPINPOOL_PERSIST = false;
 static const uint32_t DEPINPOOL_MAGIC_BYTES = 0xD0D1D2D3;
 static const uint32_t DEPINPOOL_FILE_VERSION = 1;
 
-// Per-recipient encrypted message structure
-class CDepinEncryptedMessage {
-public:
-    std::string recipientAddress;           // Destination address
-    std::vector<unsigned char> encryptedData; // ECIES-encrypted payload
-
-    CDepinEncryptedMessage() {
-        SetNull();
-    }
-
-    CDepinEncryptedMessage(const std::string& address, const std::vector<unsigned char>& data)
-        : recipientAddress(address), encryptedData(data) {}
-
-    void SetNull() {
-        recipientAddress = "";
-        encryptedData.clear();
-    }
-
-    ADD_SERIALIZE_METHODS;
-    template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream& s, Operation ser_action) {
-        READWRITE(recipientAddress);
-        READWRITE(encryptedData);
-    }
-};
-
-// Primary chat message structure
+// Primary chat message structure with ECIES hybrid encryption
+// Uses a single CECIESEncryptedMessage shared by all recipients
+// The ECIES structure contains:
+//   - encryptedPayload: message encrypted ONCE with AES-256-CBC
+//   - recipientKeys: map of (address_hash160 -> encrypted_AES_key)
+// Each recipient can decrypt the AES key with their private key,
+// then decrypt the shared payload.
 class CDepinMessage {
 public:
     std::string token;                      // Required token
@@ -64,8 +44,9 @@ public:
     int64_t timestamp;                      // UNIX time
     std::vector<unsigned char> signature;   // Sender signature
 
-    // Per-recipient encrypted payloads
-    std::vector<CDepinEncryptedMessage> encryptedMessages;
+    // ECIES encrypted message (serialized CECIESEncryptedMessage)
+    // Shared by all recipients - each can decrypt with their private key
+    std::vector<unsigned char> encryptedPayload;
 
     CDepinMessage() {
         SetNull();
@@ -76,7 +57,7 @@ public:
         senderAddress = "";
         timestamp = 0;
         signature.clear();
-        encryptedMessages.clear();
+        encryptedPayload.clear();
     }
 
     uint256 GetHash() const;
@@ -90,7 +71,7 @@ public:
         READWRITE(senderAddress);
         READWRITE(timestamp);
         READWRITE(signature);
-        READWRITE(encryptedMessages);
+        READWRITE(encryptedPayload);
     }
 };
 
@@ -147,10 +128,22 @@ bool VerifyDepinMessageSignature(const CDepinMessage& message);
 bool SignDepinMessage(CDepinMessage& message, const std::string& senderAddress);
 bool CheckTokenOwnership(const std::string& address, const std::string& token, std::string& error);
 std::vector<std::string> GetTokenHolders(const std::string& token, unsigned int maxHolders, std::string& error);
-bool EncryptMessageForRecipient(const std::string& message, const std::string& recipientAddress,
-                                 std::vector<unsigned char>& encryptedData, std::string& error);
+
+// Encrypt message for ALL recipients at once (ECIES hybrid encryption)
+// Creates a single CECIESEncryptedMessage with:
+//   - Message encrypted once with AES
+//   - AES key encrypted for each recipient
+bool EncryptMessageForAllRecipients(const std::string& message,
+                                     const std::vector<std::string>& recipientAddresses,
+                                     std::vector<unsigned char>& encryptedData,
+                                     std::string& error);
+
+// Decrypt message for a specific address
+// Extracts the recipient's encrypted AES key from CECIESEncryptedMessage,
+// decrypts it with private key, then decrypts the shared payload
 bool DecryptMessageForAddress(const std::vector<unsigned char>& encryptedData,
-                               const std::string& address, std::string& decryptedMessage,
+                               const std::string& address,
+                               std::string& decryptedMessage,
                                std::string& error);
 
 // Remote chat mempool helpers

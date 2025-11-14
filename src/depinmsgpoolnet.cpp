@@ -14,9 +14,15 @@
 #include "base58.h"
 #include "validation.h"
 #include "utiltime.h"
+#include "txdb.h"
 
 #include <cstring>
 #include <sstream>
+
+// Forward declarations of RPC functions
+UniValue depinsendmsg(const JSONRPCRequest& request);
+UniValue depingetmsg(const JSONRPCRequest& request);
+UniValue depinsubmitmsg(const JSONRPCRequest& request);
 #include <cstdlib>
 #include <algorithm>
 #include <cctype>
@@ -541,7 +547,12 @@ std::string CDepinMsgPoolServer::ProcessJsonRpcRequest(const UniValue& valReques
 
     try {
 #ifdef ENABLE_WALLET
-        if (jsonRequest.strMethod == "depinsendmsg") {
+        if (jsonRequest.strMethod == "depinsubmitmsg") {
+            // NEW SECURE PROTOCOL: Receives pre-encrypted and signed messages
+            // Message signature is ALWAYS verified in depinsubmitmsg
+            result = depinsubmitmsg(jsonRequest);
+        } else if (jsonRequest.strMethod == "depinsendmsg") {
+            // LEGACY PROTOCOL: Server encrypts and signs (less secure, deprecated)
             // Mark request as pre-authenticated by DePIN server
             // This skips wallet ownership check since signature was already verified
             jsonRequest.fSkipWalletCheck = true;
@@ -589,7 +600,33 @@ std::string CDepinMsgPoolServer::IssueChallenge(const std::string& token, const 
         return "";
     }
 
+    // Verify token ownership BEFORE issuing challenge (prevents DoS)
     if (!CheckTokenOwnership(address, token, error)) {
+        return "";
+    }
+
+    // Verify that address has public key registered in blockchain (prevents DoS from non-spending addresses)
+    CTxDestination dest = DecodeDestination(address);
+    const CKeyID* keyID = boost::get<CKeyID>(&dest);
+    if (!keyID) {
+        error = "Address is not a P2PKH address";
+        return "";
+    }
+
+    CPubKeyIndexValue pubKeyValue;
+    if (!pblocktree->ReadPubKeyIndex(uint160(*keyID), pubKeyValue)) {
+        error = "Address has no public key registered in blockchain. Address must spend coins first to reveal public key.";
+        return "";
+    }
+
+    if (!pubKeyValue.pubkey.IsValid() || !pubKeyValue.pubkey.IsFullyValid()) {
+        error = "Invalid public key in blockchain index";
+        return "";
+    }
+
+    // Verify that the pubkey corresponds to the address
+    if (pubKeyValue.pubkey.GetID() != *keyID) {
+        error = "Public key does not match address";
         return "";
     }
 
@@ -839,6 +876,45 @@ bool CDepinMsgPoolClient::SubmitRemoteMessage(const std::string& host, int port,
     params.push_back(challenge);
     params.push_back(signature);
 
+    request.push_back(Pair("params", params));
+
+    std::string response;
+    if (!SendRequest(host, port, request.write(), response, error)) {
+        return false;
+    }
+
+    UniValue reply;
+    if (!reply.read(response)) {
+        error = "Invalid JSON response";
+        return false;
+    }
+
+    const UniValue& errVal = reply["error"];
+    if (!errVal.isNull()) {
+        if (errVal.isObject() && errVal.exists("message")) {
+            error = errVal["message"].get_str();
+        } else {
+            error = "Remote node returned an error";
+        }
+        return false;
+    }
+
+    result = reply["result"];
+    return true;
+}
+
+bool CDepinMsgPoolClient::SubmitSerializedMessage(const std::string& host, int port,
+                                                   const std::string& hexMessage,
+                                                   UniValue& result,
+                                                   std::string& error) {
+    // Create JSON-RPC request for the new "depinsubmitmsg" method
+    UniValue request(UniValue::VOBJ);
+    request.push_back(Pair("jsonrpc", "2.0"));
+    request.push_back(Pair("id", 1));
+    request.push_back(Pair("method", "depinsubmitmsg"));
+
+    UniValue params(UniValue::VARR);
+    params.push_back(hexMessage);  // Hex-encoded serialized CDepinMessage
     request.push_back(Pair("params", params));
 
     std::string response;

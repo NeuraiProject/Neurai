@@ -39,8 +39,8 @@ bool CDepinMessage::IsExpired(int64_t currentTime) const {
 }
 
 std::string CDepinMessage::ToString() const {
-    return strprintf("CDepinMessage(token=%s, sender=%s, timestamp=%d, recipients=%d)",
-                     token, senderAddress, timestamp, encryptedMessages.size());
+    return strprintf("CDepinMessage(token=%s, sender=%s, timestamp=%d, payload_size=%d)",
+                     token, senderAddress, timestamp, encryptedPayload.size());
 }
 
 // CDepinMsgPool implementation
@@ -122,20 +122,18 @@ bool CDepinMsgPool::AddMessage(const CDepinMessage& message, std::string& error,
         return false;
     }
 
-    // Verify message size
-    size_t totalSize = 0;
-    for (const auto& enc : message.encryptedMessages) {
-        totalSize += enc.encryptedData.size();
-    }
-    if (totalSize > MAX_DEPIN_MESSAGE_SIZE * message.encryptedMessages.size()) {
-        error = "Message exceeds maximum size";
+    // Verify encryptedPayload is not empty
+    if (message.encryptedPayload.empty()) {
+        error = "Message has no encrypted payload";
         return false;
     }
 
-    // Verify number of recipients
-    if (message.encryptedMessages.size() > nMaxRecipients) {
-        error = strprintf("Too many recipients (%d), maximum is %d",
-                         message.encryptedMessages.size(), nMaxRecipients);
+    // Verify total message size (ECIES message includes encrypted payload + all recipient keys)
+    // Maximum size is generous to accommodate multiple recipient keys
+    const size_t MAX_TOTAL_SIZE = MAX_DEPIN_MESSAGE_SIZE * MAX_DEPIN_RECIPIENTS;
+    if (message.encryptedPayload.size() > MAX_TOTAL_SIZE) {
+        error = strprintf("Message payload too large (%d bytes), maximum is %d",
+                         message.encryptedPayload.size(), MAX_TOTAL_SIZE);
         return false;
     }
 
@@ -166,8 +164,8 @@ bool CDepinMsgPool::AddMessage(const CDepinMessage& message, std::string& error,
     mapMessages[hash] = message;
     mapByTime.insert(std::make_pair(message.timestamp, hash));
 
-    LogPrint(BCLog::MEMPOOL, "Chat message added: hash=%s, sender=%s, recipients=%d\n",
-             hash.ToString(), message.senderAddress, message.encryptedMessages.size());
+    LogPrint(BCLog::MEMPOOL, "DePIN message added: hash=%s, sender=%s, payload_size=%d\n",
+             hash.ToString(), message.senderAddress, message.encryptedPayload.size());
 
     return true;
 }
@@ -182,22 +180,9 @@ bool CDepinMsgPool::GetDepinMessage(const uint256& hash, CDepinMessage& message)
 }
 
 std::vector<CDepinMessage> CDepinMsgPool::GetMessagesForAddress(const std::string& address) const {
-    LOCK(cs_depinmsgpool);
-    std::vector<CDepinMessage> result;
-
-    for (const auto& entry : mapMessages) {
-        const CDepinMessage& msg = entry.second;
-
-        // Search if this address is a recipient
-        for (const auto& enc : msg.encryptedMessages) {
-            if (enc.recipientAddress == address) {
-                result.push_back(msg);
-                break;
-            }
-        }
-    }
-
-    return result;
+    // With ECIES hybrid encryption, we cannot determine recipients without decrypting
+    // Return all messages - caller will attempt decryption with their private key
+    return GetAllMessages();
 }
 
 std::vector<CDepinMessage> CDepinMsgPool::GetAllMessages() const {
@@ -269,11 +254,7 @@ size_t CDepinMsgPool::DynamicMemoryUsage() const {
         total += msg.token.size();
         total += msg.senderAddress.size();
         total += msg.signature.size();
-        for (const auto& enc : msg.encryptedMessages) {
-            total += sizeof(CDepinEncryptedMessage);
-            total += enc.recipientAddress.size();
-            total += enc.encryptedData.size();
-        }
+        total += msg.encryptedPayload.size();
     }
     return total;
 }
@@ -349,12 +330,12 @@ bool VerifyDepinMessageSignature(const CDepinMessage& message) {
     }
 
     // Construct message hash for verification
-    // Hash format: SHA256(token || senderAddress || timestamp || encryptedMessages)
+    // Hash format: SHA256(token || senderAddress || timestamp || encryptedPayload)
     CHashWriter ss(SER_GETHASH, 0);
     ss << message.token;
     ss << message.senderAddress;
     ss << message.timestamp;
-    ss << message.encryptedMessages;
+    ss << message.encryptedPayload;
     uint256 messageHash = ss.GetHash();
 
     // Verify signature
@@ -401,7 +382,7 @@ bool SignDepinMessage(CDepinMessage& message, const std::string& senderAddress) 
     ss << message.token;
     ss << message.senderAddress;
     ss << message.timestamp;
-    ss << message.encryptedMessages;
+    ss << message.encryptedPayload;
     uint256 messageHash = ss.GetHash();
 
     // Sign
@@ -511,28 +492,46 @@ std::vector<std::string> GetTokenHolders(const std::string& token, unsigned int 
     return addresses;
 }
 
-bool EncryptMessageForRecipient(const std::string& message, const std::string& recipientAddress,
-                                 std::vector<unsigned char>& encryptedData, std::string& error) {
-    // Get recipient's public key from pubkey index
-    CPubKey recipientPubKey;
-    if (!CheckAddressHasPublicKey(recipientAddress, recipientPubKey, error)) {
+bool EncryptMessageForAllRecipients(const std::string& message,
+                                     const std::vector<std::string>& recipientAddresses,
+                                     std::vector<unsigned char>& encryptedData,
+                                     std::string& error) {
+    if (recipientAddresses.empty()) {
+        error = "No recipients provided";
         return false;
     }
 
-    // Create a map with single recipient for ECIES encryption
+    // Build map of all recipients with their public keys
     std::map<std::string, CPubKey> recipients;
-    recipients[recipientAddress] = recipientPubKey;
+    for (const auto& address : recipientAddresses) {
+        CPubKey recipientPubKey;
+        if (!CheckAddressHasPublicKey(address, recipientPubKey, error)) {
+            // Log warning but continue with other recipients
+            LogPrintf("Warning: Skipping recipient %s: %s\n", address, error);
+            continue;
+        }
+        recipients[address] = recipientPubKey;
+    }
 
-    // Use ECIES hybrid encryption
+    if (recipients.empty()) {
+        error = "No valid recipients with public keys";
+        return false;
+    }
+
+    // Create single ECIES message for ALL recipients
+    // This encrypts the message ONCE and creates encrypted keys for each recipient
     CECIESEncryptedMessage eciesMsg;
     if (!ECIESEncryptMessage(message, recipients, eciesMsg, error)) {
         return false;
     }
 
-    // Serialize the ECIES message to encryptedData
+    // Serialize the ECIES message
     CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
     ss << eciesMsg;
     encryptedData.assign(ss.begin(), ss.end());
+
+    LogPrintf("EncryptMessageForAllRecipients: Created shared ECIES message for %d recipients, payload size: %d bytes\n",
+              recipients.size(), encryptedData.size());
 
     return true;
 }
