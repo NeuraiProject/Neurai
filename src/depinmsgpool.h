@@ -118,7 +118,7 @@ public:
     unsigned int GetMaxRecipients() const { return nMaxRecipients; }
 
     // Message handling
-    bool AddMessage(const CDepinMessage& message, std::string& error);
+    bool AddMessage(const CDepinMessage& message, std::string& error, bool skipSignatureCheck = false);
     bool GetDepinMessage(const uint256& hash, CDepinMessage& message) const;
     std::vector<CDepinMessage> GetMessagesForAddress(const std::string& address) const;
     std::vector<CDepinMessage> GetAllMessages() const;
@@ -167,7 +167,8 @@ bool SignDepinChallenge(CWallet* pwallet,
                         const std::string& token,
                         const std::string& challenge,
                         std::string& signature,
-                        std::string& error);
+                        std::string& error,
+                        bool forSend = false);
 #endif
 
 #endif // NEURAI_DEPINMSGPOOL_H

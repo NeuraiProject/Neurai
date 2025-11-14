@@ -94,7 +94,8 @@ public:
                                  const std::string& address,
                                  std::string& challenge,
                                  int& expiresIn,
-                                 std::string& error);
+                                 std::string& error,
+                                 bool forSend = false);
 
     static bool QueryMessages(const std::string& host, int port,
                              const std::string& token,
@@ -104,6 +105,17 @@ public:
                              const std::string& challenge,
                              std::vector<CDepinMessage>& messages,
                              std::string& error);
+
+    static bool SubmitRemoteMessage(const std::string& host, int port,
+                                    const std::string& token,
+                                    const std::string& destination,
+                                    int destinationPort,
+                                    const std::string& message,
+                                    const std::string& fromAddress,
+                                    const std::string& challenge,
+                                    const std::string& signature,
+                                    UniValue& result,
+                                    std::string& error);
 
     static bool Ping(const std::string& host, int port, std::string& error);
 

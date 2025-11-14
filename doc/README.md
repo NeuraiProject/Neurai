@@ -140,6 +140,8 @@ To keep the send endpoint lightweight, port 19002 now uses the same challenge/re
    ```
 4. The server validates the challenge/signature within 30 seconds and only then performs the expensive holder-lookup/encryption. If the signature fails or the nonce expires, restart at step 1.
 
+> Tip: when you run `neurai-cli depinsendmsg` from another machine (with the same wallet but without `depinmsg` enabled), the CLI now handles steps 1-4 automatically. Just pass the remote node as `ip[:port]` and include your `fromaddress`; the tool will request the challenge, sign it with the local private key, and forward the request through the gateway.
+
 ## System Requirements
 
 ### Mandatory Requirements
@@ -174,7 +176,7 @@ You must specify a valid token that exists on the Neurai blockchain:
 ### Message Sending Flow
 
 ```
-1. User executes: depinsendmsg "TOKEN" "192.168.1.100" "Message" ["FROM_ADDRESS"]
+1. User executes: depinsendmsg "TOKEN" "192.168.1.100[:PORT]" "Message" ["FROM_ADDRESS"]
                                     ↓
 2. Node validates that user owns the token
                                     ↓
@@ -314,22 +316,23 @@ neurai-cli depingetmsginfo
 #### 1. Send Message
 
 ```bash
-neurai-cli depinsendmsg "TOKEN" "DEST_IP" "MESSAGE" ["FROM_ADDRESS"]
+neurai-cli depinsendmsg "TOKEN" force_remote "DEST_IP[:PORT]" "MESSAGE" ["FROM_ADDRESS"]
 ```
 
 **Parameters**:
 - `TOKEN`: Token name (must match configuration)
-- `DEST_IP`: Receiving node IP address (e.g., "192.168.1.100")
+- `force_remote`: `0` (use local pool if available) or `1` (force gateway mode, useful for thin clients/tests)
+- `DEST_IP[:PORT]`: Receiving node IP/gateway (supports `host:port` when the remote node listens on a non-default port)
 - `MESSAGE`: Text to send (maximum 1KB)
-- `FROM_ADDRESS` *(optional)*: Address in your wallet (holding the token) that must be used for signing/encryption
+- `FROM_ADDRESS`: Address in your wallet used for signing. Required when acting as a remote client or when local indices are disabled; optional when the local DePIN pool can auto-select an address
 
 **Example**:
 ```bash
-# Automatic address selection
-neurai-cli depinsendmsg "MYTOKEN" "192.168.1.100" "Hello team!"
+# Automatic address selection (local pool enabled)
+neurai-cli depinsendmsg "MYTOKEN" 0 "192.168.1.100" "Hello team!"
 
-# Force a specific sender address
-neurai-cli depinsendmsg "MYTOKEN" "192.168.1.100" "Hello team!" "NXspecificAddress..."
+# Remote send from a lightweight node (uses challenge automatically)
+neurai-cli depinsendmsg "MYTOKEN" 1 "192.168.1.100:19005" "Hello team!" "NXspecificAddress..."
 ```
 
 **Output**:

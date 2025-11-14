@@ -94,7 +94,7 @@ bool CDepinMsgPool::Initialize(const std::string& token, unsigned int port, unsi
     return true;
 }
 
-bool CDepinMsgPool::AddMessage(const CDepinMessage& message, std::string& error) {
+bool CDepinMsgPool::AddMessage(const CDepinMessage& message, std::string& error, bool skipSignatureCheck) {
     LOCK(cs_depinmsgpool);
 
     if (!fEnabled) {
@@ -139,10 +139,14 @@ bool CDepinMsgPool::AddMessage(const CDepinMessage& message, std::string& error)
         return false;
     }
 
-    // Verify signature
-    if (!VerifyDepinMessageSignature(message)) {
-        error = "Invalid message signature";
-        return false;
+    // Verify signature (skip if pre-authenticated by DePIN server)
+    if (!skipSignatureCheck) {
+        if (!VerifyDepinMessageSignature(message)) {
+            error = "Invalid message signature";
+            return false;
+        }
+    } else {
+        LogPrintf("AddMessage: Skipping signature check for pre-authenticated message\n");
     }
 
     // Verify that the sender owns the token
@@ -611,7 +615,7 @@ bool QueryRemoteDepinMsgPool(CWallet* pwallet,
     std::string challenge;
     int expiresIn = 0;
     if (!CDepinMsgPoolClient::RequestChallenge(ipAddress, port, token, authAddress,
-                                               challenge, expiresIn, error)) {
+                                               challenge, expiresIn, error, false)) {
         LogPrint(BCLog::NET, "QueryRemoteDepinMsgPool: Challenge failed: %s\n", error);
         return false;
     }
@@ -642,7 +646,8 @@ bool SignDepinChallenge(CWallet* pwallet,
                         const std::string& token,
                         const std::string& challenge,
                         std::string& signature,
-                        std::string& error) {
+                        std::string& error,
+                        bool forSend) {
     if (!pwallet) {
         error = "Wallet not available";
         return false;
@@ -672,8 +677,10 @@ bool SignDepinChallenge(CWallet* pwallet,
     }
 
     CHashWriter ss(SER_GETHASH, 0);
+    const char* prefix = forSend ? "DEPIN-SEND" : "DEPIN-GET";
+
     ss << strMessageMagic;
-    ss << strprintf("DEPIN-GET|%s|%s|%s", token, address, challenge);
+    ss << strprintf("%s|%s|%s|%s", prefix, token, address, challenge);
 
     std::vector<unsigned char> vchSig;
     if (!key.SignCompact(ss.GetHash(), vchSig)) {

@@ -542,6 +542,9 @@ std::string CDepinMsgPoolServer::ProcessJsonRpcRequest(const UniValue& valReques
     try {
 #ifdef ENABLE_WALLET
         if (jsonRequest.strMethod == "depinsendmsg") {
+            // Mark request as pre-authenticated by DePIN server
+            // This skips wallet ownership check since signature was already verified
+            jsonRequest.fSkipWalletCheck = true;
             result = depinsendmsg(jsonRequest);
         } else if (jsonRequest.strMethod == "depingetmsg") {
             result = depingetmsg(jsonRequest);
@@ -711,8 +714,13 @@ bool CDepinMsgPoolClient::RequestChallenge(const std::string& host, int port,
                                            const std::string& address,
                                            std::string& challenge,
                                            int& expiresIn,
-                                           std::string& error) {
-    std::string request = strprintf("%s|%s|%s", DEPIN_CMD_AUTH, token, address);
+                                           std::string& error,
+                                           bool forSend) {
+    std::string request = strprintf("%s|%s|%s%s",
+                                    DEPIN_CMD_AUTH,
+                                    token,
+                                    address,
+                                    forSend ? "|SEND" : "");
     std::string response;
 
     if (!SendRequest(host, port, request, response, error)) {
@@ -802,6 +810,59 @@ bool CDepinMsgPoolClient::QueryMessages(const std::string& host, int port,
         return false;
     }
 
+    return true;
+}
+
+bool CDepinMsgPoolClient::SubmitRemoteMessage(const std::string& host, int port,
+                                    const std::string& token,
+                                    const std::string& destination,
+                                    int destinationPort,
+                                    const std::string& message,
+                                    const std::string& fromAddress,
+                                    const std::string& challenge,
+                                    const std::string& signature,
+                                    UniValue& result,
+                                    std::string& error) {
+    UniValue request(UniValue::VOBJ);
+    request.push_back(Pair("jsonrpc", "2.0"));
+    request.push_back(Pair("id", 1));
+    request.push_back(Pair("method", "depinsendmsg"));
+
+    UniValue params(UniValue::VARR);
+    params.push_back(token);
+    params.push_back(destination);
+    params.push_back(message);
+    params.push_back(fromAddress);
+    if (destinationPort != DEFAULT_DEPIN_MSG_PORT) {
+        params.push_back(destinationPort);
+    }
+    params.push_back(challenge);
+    params.push_back(signature);
+
+    request.push_back(Pair("params", params));
+
+    std::string response;
+    if (!SendRequest(host, port, request.write(), response, error)) {
+        return false;
+    }
+
+    UniValue reply;
+    if (!reply.read(response)) {
+        error = "Invalid JSON response";
+        return false;
+    }
+
+    const UniValue& errVal = reply["error"];
+    if (!errVal.isNull()) {
+        if (errVal.isObject() && errVal.exists("message")) {
+            error = errVal["message"].get_str();
+        } else {
+            error = "Remote node returned an error";
+        }
+        return false;
+    }
+
+    result = reply["result"];
     return true;
 }
 

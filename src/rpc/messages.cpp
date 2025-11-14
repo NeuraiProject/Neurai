@@ -10,6 +10,8 @@
 #include <map>
 #include <set>
 #include <limits>
+#include <algorithm>
+#include <cctype>
 #include "tinyformat.h"
 
 #include "amount.h"
@@ -24,6 +26,7 @@
 #include "policy/fees.h"
 #include "policy/policy.h"
 #include "policy/rbf.h"
+#include "depinmsgpoolnet.h"
 #include "rpc/mining.h"
 #include "rpc/safemode.h"
 #include "rpc/server.h"
@@ -539,15 +542,16 @@ UniValue depingetmsginfo(const JSONRPCRequest& request)
 #ifdef ENABLE_WALLET
 UniValue depinsendmsg(const JSONRPCRequest& request)
 {
-    if (request.fHelp || request.params.size() < 3 || request.params.size() > 4)
+    if (request.fHelp || request.params.size() < 3 || request.params.size() > 5)
         throw std::runtime_error(
-                "depinsendmsg \"token\" \"ip\" \"message\" (\"fromaddress\")\n"
-                "\nSend an encrypted message to a node via DePIN messaging\n"
+                "depinsendmsg \"token\" \"ip[:port]\" \"message\" \"fromaddress\" (port)\n"
+                "\nSend an encrypted message through a remote DePIN gateway (challenge/response)\n"
                 "\nArguments:\n"
-                "1. \"token\"        (string, required) Token name (must match configured token)\n"
-                "2. \"ip\"           (string, required) IP address of recipient node\n"
+                "1. \"token\"        (string, required) Token name\n"
+                "2. \"ip[:port]\"    (string, required) Target node address (optional :port to contact remote gateway)\n"
                 "3. \"message\"      (string, required) Message to send (max 1KB)\n"
-                "4. \"fromaddress\" (string, optional) Wallet address to use for signing/encryption\n"
+                "4. \"fromaddress\" (string, required) Wallet address used for signing/encryption\n"
+                "5. port           (numeric, optional) Destination message port (defaults to 19002). Only used when specified after fromaddress\n"
                 "\nResult:\n"
                 "{\n"
                 "  \"result\": \"success\",          (string) Status\n"
@@ -556,14 +560,10 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
                 "  \"timestamp\": n                (numeric) Message timestamp\n"
                 "}\n"
                 "\nExamples:\n"
-                + HelpExampleCli("depinsendmsg", "\"MYTOKEN\" \"192.168.1.100\" \"Hello team!\"")
                 + HelpExampleCli("depinsendmsg", "\"MYTOKEN\" \"192.168.1.100\" \"Hello team!\" \"NXsender...\"")
-                + HelpExampleRpc("depinsendmsg", "\"MYTOKEN\", \"192.168.1.100\", \"Hello team!\"")
+                + HelpExampleCli("depinsendmsg", "\"MYTOKEN\" \"192.168.1.100:19005\" \"Hello team!\" \"NXsender...\" 19005")
+                + HelpExampleRpc("depinsendmsg", "\"MYTOKEN\", \"192.168.1.100\", \"Hello team!\", \"NXsender...\"")
         );
-
-    if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
-        throw JSONRPCError(RPC_MISC_ERROR, "Chat mempool is not enabled");
-    }
 
     CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
     if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
@@ -574,36 +574,140 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
     EnsureWalletIsUnlocked(pwallet);
 
     std::string token = request.params[0].get_str();
-    std::string ipAddress = request.params[1].get_str();
+    std::string destinationParam = request.params[1].get_str();
     std::string message = request.params[2].get_str();
-    std::string requestedSender;
-    bool hasRequestedSender = request.params.size() >= 4;
-    if (hasRequestedSender) {
-        requestedSender = request.params[3].get_str();
+    std::string senderAddress = request.params.size() >= 4 ? request.params[3].get_str() : "";
+    if (senderAddress.empty()) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "fromaddress is required for remote send");
     }
 
-    // Verificar token
-    if (token != pDepinMsgPool->GetActiveToken()) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER,
-                          strprintf("Token '%s' does not match configured token '%s'",
-                                   token, pDepinMsgPool->GetActiveToken()));
+    int paramIndex = 4;
+
+    int destinationPort = DEFAULT_DEPIN_MSG_PORT;
+    bool destinationPortProvided = false;
+    if (request.params.size() >= paramIndex + 1) {
+        destinationPort = request.params[paramIndex].get_int();
+        if (destinationPort <= 0 || destinationPort > 65535) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid destination port");
+        }
+        destinationPortProvided = true;
     }
 
-    // Verificar tamaño del mensaje
+    auto parseHostPort = [](const std::string& input, std::string& hostOut, int& portOut) {
+        hostOut = input;
+        portOut = DEFAULT_DEPIN_MSG_PORT;
+        size_t pos = input.rfind(':');
+        if (pos != std::string::npos && pos + 1 < input.size()) {
+            std::string portStr = input.substr(pos + 1);
+            bool numeric = !portStr.empty() && std::all_of(portStr.begin(), portStr.end(), [](unsigned char c) {
+                return std::isdigit(c);
+            });
+            if (numeric) {
+                hostOut = input.substr(0, pos);
+                portOut = atoi(portStr.c_str());
+            }
+        }
+    };
+
+    // If called from DePIN server (pre-authenticated), force local processing
+    bool localPoolActive = request.fSkipWalletCheck;
+
+    std::string gatewayHost;
+    int gatewayPortFromAddress = DEFAULT_DEPIN_MSG_PORT;
+    parseHostPort(destinationParam, gatewayHost, gatewayPortFromAddress);
+    if (!destinationPortProvided) {
+        destinationPort = gatewayPortFromAddress;
+    }
+    if (gatewayPortFromAddress <= 0 || gatewayPortFromAddress > 65535) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid gateway port");
+    }
+
+    std::string targetHost = gatewayHost;
+    int targetPort = destinationPort;
+    if (targetPort <= 0 || targetPort > 65535) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid destination port");
+    }
+    std::string ipAddress = targetHost;
+
     if (message.size() > MAX_DEPIN_MESSAGE_SIZE) {
         throw JSONRPCError(RPC_INVALID_PARAMETER,
                           strprintf("Message size (%d) exceeds maximum (%d)",
                                    message.size(), MAX_DEPIN_MESSAGE_SIZE));
     }
 
-    // Obtener una dirección del wallet que posea el token
-    std::string senderAddress;
-    bool foundAddress = false;
+    auto ensureWalletOwnsAddress = [&](const std::string& addr, bool enforceTokenOwnership) {
+        CTxDestination dest = DecodeDestination(addr);
+        if (!IsValidDestination(dest)) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
+                              strprintf("Invalid address: %s", addr));
+        }
+
+        // Debug logging
+        isminetype mine = IsMine(*pwallet, dest);
+        LogPrintf("DEBUG depinsendmsg: Checking address %s, IsMine result: %d, wallet name: %s\n",
+                  addr, mine, pwallet->GetName());
+
+        if (!mine) {
+            throw JSONRPCError(RPC_WALLET_ERROR,
+                              strprintf("Address %s is not part of this wallet", addr));
+        }
+        if (!enforceTokenOwnership) {
+            return;
+        }
+    };
+
+    if (!localPoolActive) {
+        LogPrintf("DEBUG depinsendmsg: Remote send path - checking if needs wallet validation\n");
+        // Only check wallet ownership if NOT called from DePIN server (already authenticated)
+        if (!request.fSkipWalletCheck) {
+            LogPrintf("DEBUG depinsendmsg: Calling ensureWalletOwnsAddress (client-initiated)\n");
+            ensureWalletOwnsAddress(senderAddress, false);
+        } else {
+            LogPrintf("DEBUG depinsendmsg: Skipping wallet check (server-authenticated request)\n");
+        }
+        LogPrintf("DEBUG depinsendmsg: Wallet checks passed - requesting challenge from %s:%d\n",
+                  gatewayHost, gatewayPortFromAddress);
+
+        std::string challenge;
+        int expires = 0;
+        std::string remoteError;
+        if (!CDepinMsgPoolClient::RequestChallenge(gatewayHost, gatewayPortFromAddress,
+                                                   token, senderAddress, challenge,
+                                                   expires, remoteError, true)) {
+            LogPrintf("DEBUG depinsendmsg: RequestChallenge FAILED - error: %s\n", remoteError);
+            throw JSONRPCError(RPC_MISC_ERROR, remoteError);
+        }
+        LogPrintf("DEBUG depinsendmsg: Challenge received - signing with address\n");
+
+        std::string signature;
+        if (!SignDepinChallenge(pwallet, senderAddress, token, challenge, signature, remoteError, true)) {
+            LogPrintf("DEBUG depinsendmsg: SignDepinChallenge FAILED - error: %s\n", remoteError);
+            throw JSONRPCError(RPC_MISC_ERROR, remoteError);
+        }
+        LogPrintf("DEBUG depinsendmsg: Signature created - submitting to remote server\n");
+
+        UniValue remoteResult;
+        if (!CDepinMsgPoolClient::SubmitRemoteMessage(gatewayHost, gatewayPortFromAddress,
+                                                      token, targetHost, targetPort,
+                                                      message, senderAddress,
+                                                      challenge, signature,
+                                                      remoteResult, remoteError)) {
+            LogPrintf("DEBUG depinsendmsg: SubmitRemoteMessage FAILED - error: %s\n", remoteError);
+            throw JSONRPCError(RPC_MISC_ERROR, remoteError);
+        }
+        LogPrintf("DEBUG depinsendmsg: Remote send SUCCESS\n");
+
+        return remoteResult;
+    }
+
+    if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
+        throw JSONRPCError(RPC_MISC_ERROR, "Chat mempool is not enabled");
+    }
 
     std::map<std::string, std::vector<COutput>> mapAssetCoins;
     pwallet->AvailableAssets(mapAssetCoins);
 
-    auto addressMatchesToken = [&](const std::string& addr) {
+    auto walletHasTokenAtAddress = [&](const std::string& addr) {
         if (!mapAssetCoins.count(token)) {
             return false;
         }
@@ -618,39 +722,32 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
         return false;
     };
 
-    if (hasRequestedSender) {
-        CTxDestination requestedDest = DecodeDestination(requestedSender);
-        if (!IsValidDestination(requestedDest)) {
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
-                              strprintf("Invalid address: %s", requestedSender));
+    auto requireAddressWithTokens = [&](const std::string& addr) {
+        // Only check wallet ownership if NOT called from DePIN server
+        if (!request.fSkipWalletCheck) {
+            ensureWalletOwnsAddress(addr, false);
         }
-
-        if (!IsMine(*pwallet, requestedDest)) {
+        if (!walletHasTokenAtAddress(addr)) {
             throw JSONRPCError(RPC_WALLET_ERROR,
-                              strprintf("Address %s is not part of this wallet", requestedSender));
+                              strprintf("Wallet does not own any %s tokens at %s", token, addr));
         }
+    };
 
-        if (!addressMatchesToken(requestedSender)) {
-            throw JSONRPCError(RPC_WALLET_ERROR,
-                              strprintf("Wallet does not own any %s tokens at %s", token, requestedSender));
-        }
-
-        senderAddress = requestedSender;
-        foundAddress = true;
-    } else if (mapAssetCoins.count(token)) {
-        for (const auto& out : mapAssetCoins[token]) {
-            CTxDestination dest;
-            if (ExtractDestination(out.tx->tx->vout[out.i].scriptPubKey, dest)) {
-                senderAddress = EncodeDestination(dest);
-                foundAddress = true;
-                break;
-            }
-        }
+    // Skip address checks if pre-authenticated by DePIN server
+    if (!request.fSkipWalletCheck) {
+        requireAddressWithTokens(senderAddress);
+    }
+    // Local pool path: ensure token matches active configuration
+    if (token != pDepinMsgPool->GetActiveToken()) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER,
+                          strprintf("Token '%s' does not match configured token '%s'",
+                                   token, pDepinMsgPool->GetActiveToken()));
     }
 
-    if (!foundAddress) {
+    // Only verify sender has token if not pre-authenticated by DePIN server
+    if (!request.fSkipWalletCheck && !walletHasTokenAtAddress(senderAddress)) {
         throw JSONRPCError(RPC_WALLET_ERROR,
-                          strprintf("Wallet does not own any %s tokens", token));
+                          strprintf("Wallet does not own any %s tokens at %s", token, senderAddress));
     }
 
     // Obtener holders del token
@@ -678,14 +775,21 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
         chatMsg.encryptedMessages.push_back(CDepinEncryptedMessage(holderAddress, encryptedData));
     }
 
-    // Firmar mensaje
-    if (!SignDepinMessage(chatMsg, senderAddress)) {
-        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to sign chat message");
+    // Firmar mensaje (only if not pre-authenticated by DePIN server)
+    if (!request.fSkipWalletCheck) {
+        if (!SignDepinMessage(chatMsg, senderAddress)) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "Failed to sign chat message");
+        }
+    } else {
+        // Message is pre-authenticated by DePIN server via challenge/response
+        // Generate a placeholder signature from the auth process
+        chatMsg.signature.resize(65, 0);  // Empty signature for pre-authenticated messages
     }
 
     // TODO: Enviar a IP remota (pendiente implementación de networking)
     // Por ahora solo lo añadimos al mempool local
-    if (!pDepinMsgPool->AddMessage(chatMsg, error)) {
+    // Skip signature verification if pre-authenticated by DePIN server
+    if (!pDepinMsgPool->AddMessage(chatMsg, error, request.fSkipWalletCheck)) {
         throw JSONRPCError(RPC_MISC_ERROR, strprintf("Failed to add message: %s", error));
     }
 
@@ -1274,7 +1378,7 @@ static const CRPCCommand commands[] =
             { "depin",          "depingetpoolcontent",        &depingetpoolcontent,        {}},
             { "depin",          "depinpoolstats",             &depinpoolstats,             {}},
 #ifdef ENABLE_WALLET
-            { "depin",          "depinsendmsg",               &depinsendmsg,               {"token", "ip", "message", "fromaddress"}},
+            { "depin",          "depinsendmsg",               &depinsendmsg,               {"token", "ip", "message", "fromaddress", "port"}},
             { "depin",          "depingetmsg",                &depingetmsg,                {"token"}},
             { "depin",          "depinclearmsg",              &depinclearmsg,              {}},
 #endif
