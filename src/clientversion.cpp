@@ -19,7 +19,7 @@ const std::string CLIENT_NAME("Neurai");
 /**
  * Client version number
  */
-#define CLIENT_VERSION_SUFFIX ""
+#define CLIENT_VERSION_SUFFIX "-depin"
 
 
 /**
