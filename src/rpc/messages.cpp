@@ -869,15 +869,19 @@ UniValue depingetmsg(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() < 1 || request.params.size() > 3)
         throw std::runtime_error(
-                "depingetmsg \"token\" (\"ip\") (port)\n"
+                "depingetmsg \"token\" (\"ip[:port]\"|\"fromaddress\") (\"fromaddress\")\n"
                 "\nRetrieve and decrypt DePIN messages for your addresses\n"
                 "\nArguments:\n"
                 "1. \"token\"        (string, required) Token name\n"
-                "2. \"ip\"           (string, optional) IP address of remote node (default: local)\n"
-                "3. port           (numeric, optional) Port of remote DePIN messaging server (default: 19002)\n"
+                "2. \"ip[:port]\" OR \"fromaddress\" (string, optional)\n"
+                "                    - IP address with optional port (e.g., \"192.168.1.31\" or \"192.168.1.31:19002\")\n"
+                "                    - OR Neurai address for local query with specific address\n"
+                "                    - Omit for local query with all addresses\n"
+                "3. \"fromaddress\"  (string, optional) Specific address to decrypt with (only if arg 2 is an IP)\n"
                 "\nResult:\n"
                 "[\n"
                 "  {\n"
+                "    \"recipient\": \"address\",      (string) Recipient address (your address)\n"
                 "    \"sender\": \"address\",         (string) Sender address\n"
                 "    \"message\": \"text\",           (string) Decrypted message\n"
                 "    \"timestamp\": n,              (numeric) Unix timestamp\n"
@@ -887,9 +891,12 @@ UniValue depingetmsg(const JSONRPCRequest& request)
                 "  ...\n"
                 "]\n"
                 "\nExamples:\n"
-                + HelpExampleCli("depingetmsg", "\"MYTOKEN\"")
-                + HelpExampleCli("depingetmsg", "\"MYTOKEN\" \"192.168.1.78\"")
-                + HelpExampleCli("depingetmsg", "\"MYTOKEN\" \"192.168.1.78\" 19002")
+                + HelpExampleCli("depingetmsg", "\"MYTOKEN\"") + " (local, all addresses)\n"
+                + HelpExampleCli("depingetmsg", "\"MYTOKEN\" \"NXyouraddress...\"") + " (local with specific address)\n"
+                + HelpExampleCli("depingetmsg", "\"MYTOKEN\" \"192.168.1.78\"") + " (remote, default port 19002)\n"
+                + HelpExampleCli("depingetmsg", "\"MYTOKEN\" \"192.168.1.78:19002\"") + " (remote with explicit port)\n"
+                + HelpExampleCli("depingetmsg", "\"MYTOKEN\" \"192.168.1.78\" \"NXyouraddress...\"") + " (remote, default port, specific address)\n"
+                + HelpExampleCli("depingetmsg", "\"MYTOKEN\" \"192.168.1.78:19002\" \"NXyouraddress...\"") + " (remote with port and address)\n"
                 + HelpExampleRpc("depingetmsg", "\"MYTOKEN\"")
         );
 
@@ -897,21 +904,58 @@ UniValue depingetmsg(const JSONRPCRequest& request)
     std::string ipAddress;
     int port = DEFAULT_DEPIN_MSG_PORT;
     bool isRemoteQuery = false;
+    std::string specificAddress;
 
     // Check if this is a remote query
-    if (request.params.size() >= 2) {
-        ipAddress = request.params[1].get_str();
-        isRemoteQuery = true;
+    if (request.params.size() >= 2 && !request.params[1].get_str().empty()) {
+        std::string param1 = request.params[1].get_str();
 
-        if (request.params.size() >= 3) {
-            port = request.params[2].get_int();
-            if (port <= 0 || port > 65535) {
-                throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid port number");
+        // Check if param1 is an IP address (remote) or a Neurai address (local with fromaddress)
+        // Neurai addresses start with 'N', IPs start with digits
+        if (param1[0] >= '0' && param1[0] <= '9') {
+            // This is a remote query (IP address)
+            isRemoteQuery = true;
+
+            // Check if IP contains port (format: IP:PORT)
+            size_t colonPos = param1.find(':');
+            if (colonPos != std::string::npos) {
+                // Split IP:PORT
+                ipAddress = param1.substr(0, colonPos);
+                std::string portStr = param1.substr(colonPos + 1);
+
+                try {
+                    port = std::stoi(portStr);
+                    if (port <= 0 || port > 65535) {
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid port number");
+                    }
+                } catch (...) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid port in IP:PORT format");
+                }
+            } else {
+                // Just IP, use default port
+                ipAddress = param1;
             }
+
+            // params[2] would be fromaddress if present
+            if (request.params.size() >= 3 && !request.params[2].get_str().empty()) {
+                specificAddress = request.params[2].get_str();
+            }
+        } else {
+            // This is a local query with fromaddress
+            specificAddress = param1;
         }
     }
 
-    // Si es consulta remota, hacer petición al nodo remoto
+    // Validate address if specified
+    if (!specificAddress.empty()) {
+        CTxDestination dest = DecodeDestination(specificAddress);
+        if (!IsValidDestination(dest)) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
+                              strprintf("Invalid fromaddress: %s", specificAddress));
+        }
+    }
+
+    // Query remote node if specified
     if (isRemoteQuery) {
         CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
         if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
@@ -923,21 +967,50 @@ UniValue depingetmsg(const JSONRPCRequest& request)
 
         // Get local addresses that own the token
         std::set<std::string> myAddresses;
-        std::map<std::string, std::vector<COutput>> mapAssetCoins;
-        pwallet->AvailableAssets(mapAssetCoins);
 
-        if (mapAssetCoins.count(token)) {
-            for (const auto& out : mapAssetCoins[token]) {
-                CTxDestination dest;
-                if (ExtractDestination(out.tx->tx->vout[out.i].scriptPubKey, dest)) {
-                    myAddresses.insert(EncodeDestination(dest));
+        if (!specificAddress.empty()) {
+            // Use only the specified address
+            myAddresses.insert(specificAddress);
+
+            // Verify it owns the token
+            std::map<std::string, std::vector<COutput>> mapAssetCoins;
+            pwallet->AvailableAssets(mapAssetCoins);
+
+            bool hasToken = false;
+            if (mapAssetCoins.count(token)) {
+                for (const auto& out : mapAssetCoins[token]) {
+                    CTxDestination dest;
+                    if (ExtractDestination(out.tx->tx->vout[out.i].scriptPubKey, dest)) {
+                        if (EncodeDestination(dest) == specificAddress) {
+                            hasToken = true;
+                            break;
+                        }
+                    }
                 }
             }
-        }
 
-        if (myAddresses.empty()) {
-            throw JSONRPCError(RPC_WALLET_ERROR,
-                              strprintf("Wallet does not own any %s tokens", token));
+            if (!hasToken) {
+                throw JSONRPCError(RPC_WALLET_ERROR,
+                                  strprintf("Address %s does not own any %s tokens", specificAddress, token));
+            }
+        } else {
+            // Get all addresses with token
+            std::map<std::string, std::vector<COutput>> mapAssetCoins;
+            pwallet->AvailableAssets(mapAssetCoins);
+
+            if (mapAssetCoins.count(token)) {
+                for (const auto& out : mapAssetCoins[token]) {
+                    CTxDestination dest;
+                    if (ExtractDestination(out.tx->tx->vout[out.i].scriptPubKey, dest)) {
+                        myAddresses.insert(EncodeDestination(dest));
+                    }
+                }
+            }
+
+            if (myAddresses.empty()) {
+                throw JSONRPCError(RPC_WALLET_ERROR,
+                                  strprintf("Wallet does not own any %s tokens", token));
+            }
         }
 
         // Query remote node
@@ -1004,21 +1077,50 @@ UniValue depingetmsg(const JSONRPCRequest& request)
 
     // Get all wallet addresses that own the token
     std::set<std::string> myAddresses;
-    std::map<std::string, std::vector<COutput>> mapAssetCoins;
-    pwallet->AvailableAssets(mapAssetCoins);
 
-    if (mapAssetCoins.count(token)) {
-        for (const auto& out : mapAssetCoins[token]) {
-            CTxDestination dest;
-            if (ExtractDestination(out.tx->tx->vout[out.i].scriptPubKey, dest)) {
-                myAddresses.insert(EncodeDestination(dest));
+    if (!specificAddress.empty()) {
+        // Use only the specified address
+        myAddresses.insert(specificAddress);
+
+        // Verify it owns the token
+        std::map<std::string, std::vector<COutput>> mapAssetCoins;
+        pwallet->AvailableAssets(mapAssetCoins);
+
+        bool hasToken = false;
+        if (mapAssetCoins.count(token)) {
+            for (const auto& out : mapAssetCoins[token]) {
+                CTxDestination dest;
+                if (ExtractDestination(out.tx->tx->vout[out.i].scriptPubKey, dest)) {
+                    if (EncodeDestination(dest) == specificAddress) {
+                        hasToken = true;
+                        break;
+                    }
+                }
             }
         }
-    }
 
-    if (myAddresses.empty()) {
-        throw JSONRPCError(RPC_WALLET_ERROR,
-                          strprintf("Wallet does not own any %s tokens", token));
+        if (!hasToken) {
+            throw JSONRPCError(RPC_WALLET_ERROR,
+                              strprintf("Address %s does not own any %s tokens", specificAddress, token));
+        }
+    } else {
+        // Get all addresses with token
+        std::map<std::string, std::vector<COutput>> mapAssetCoins;
+        pwallet->AvailableAssets(mapAssetCoins);
+
+        if (mapAssetCoins.count(token)) {
+            for (const auto& out : mapAssetCoins[token]) {
+                CTxDestination dest;
+                if (ExtractDestination(out.tx->tx->vout[out.i].scriptPubKey, dest)) {
+                    myAddresses.insert(EncodeDestination(dest));
+                }
+            }
+        }
+
+        if (myAddresses.empty()) {
+            throw JSONRPCError(RPC_WALLET_ERROR,
+                              strprintf("Wallet does not own any %s tokens", token));
+        }
     }
 
     UniValue result(UniValue::VARR);
