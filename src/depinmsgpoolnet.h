@@ -130,6 +130,11 @@ public:
                        std::string& token, int& messageCount,
                        std::string& error);
 
+    // Get remote server configuration (JSON-RPC depingetmsginfo)
+    static bool GetRemoteServerInfo(const std::string& host, int port,
+                                   int64_t& messageExpiryHours,
+                                   std::string& error);
+
 private:
     static bool SendRequest(const std::string& host, int port,
                           const std::string& request,

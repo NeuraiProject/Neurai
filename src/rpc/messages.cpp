@@ -1034,31 +1034,12 @@ UniValue depingetmsg(const JSONRPCRequest& request)
 
         // Get remote server's message expiry configuration
         int64_t remoteExpiryHours = DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS;
-        try {
-            // Query remote server's depingetmsginfo via JSON-RPC
-            JSONRPCRequest infoRequest;
-            infoRequest.strMethod = "depingetmsginfo";
-            infoRequest.params.setArray();
+        std::string configError;
 
-            std::string infoRequestStr = JSONRPCRequestObj(infoRequest.strMethod, infoRequest.params, 1).write();
-            std::string infoResponse;
-            std::string infoError;
-
-            if (CDepinMsgPoolClient::SendRequest(ipAddress, port, infoRequestStr, infoResponse, infoError)) {
-                UniValue infoReply;
-                if (infoReply.read(infoResponse) && infoReply.isObject()) {
-                    const UniValue& result = find_value(infoReply, "result");
-                    if (result.isObject()) {
-                        const UniValue& expiryHours = find_value(result, "messageexpiryhours");
-                        if (expiryHours.isNum()) {
-                            remoteExpiryHours = expiryHours.get_int64();
-                            LogPrint(BCLog::NET, "Remote server expiry: %d hours\n", remoteExpiryHours);
-                        }
-                    }
-                }
-            }
-        } catch (const std::exception& e) {
-            LogPrint(BCLog::NET, "Warning: Could not get remote server config, using default expiry time: %s\n", e.what());
+        if (CDepinMsgPoolClient::GetRemoteServerInfo(ipAddress, port, remoteExpiryHours, configError)) {
+            LogPrint(BCLog::NET, "Remote server expiry: %d hours\n", remoteExpiryHours);
+        } else {
+            LogPrint(BCLog::NET, "Warning: Could not get remote server config, using default expiry time: %s\n", configError.c_str());
         }
 
         int64_t expiryTime = remoteExpiryHours * 3600;  // Convert hours to seconds

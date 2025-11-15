@@ -1001,6 +1001,59 @@ bool CDepinMsgPoolClient::GetInfo(const std::string& host, int port,
     return true;
 }
 
+bool CDepinMsgPoolClient::GetRemoteServerInfo(const std::string& host, int port,
+                                              int64_t& messageExpiryHours,
+                                              std::string& error) {
+    // Build JSON-RPC request for depingetmsginfo
+    UniValue request(UniValue::VOBJ);
+    request.push_back(Pair("jsonrpc", "2.0"));
+    request.push_back(Pair("id", 1));
+    request.push_back(Pair("method", "depingetmsginfo"));
+
+    UniValue params(UniValue::VARR);
+    request.push_back(Pair("params", params));
+
+    std::string response;
+    if (!SendRequest(host, port, request.write(), response, error)) {
+        return false;
+    }
+
+    // Parse JSON-RPC response
+    UniValue reply;
+    if (!reply.read(response)) {
+        error = "Invalid JSON response";
+        return false;
+    }
+
+    // Check for error
+    const UniValue& errVal = reply["error"];
+    if (!errVal.isNull()) {
+        if (errVal.isObject() && errVal.exists("message")) {
+            error = errVal["message"].get_str();
+        } else {
+            error = "Remote node returned an error";
+        }
+        return false;
+    }
+
+    // Extract result
+    const UniValue& result = reply["result"];
+    if (!result.isObject()) {
+        error = "Invalid result format";
+        return false;
+    }
+
+    // Get messageexpiryhours
+    const UniValue& expiryHours = find_value(result, "messageexpiryhours");
+    if (!expiryHours.isNum()) {
+        error = "messageexpiryhours not found in response";
+        return false;
+    }
+
+    messageExpiryHours = expiryHours.get_int64();
+    return true;
+}
+
 bool CDepinMsgPoolClient::SendRequest(const std::string& host, int port,
                                      const std::string& request,
                                      std::string& response,
