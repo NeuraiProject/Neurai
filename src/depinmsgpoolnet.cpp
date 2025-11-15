@@ -105,14 +105,14 @@ bool CDepinMsgPoolServer::Start(int listenPort) {
         return false;
     }
 
-    // Crear socket
+    // Create socket
     serverSocket = socket(AF_INET, SOCK_STREAM, 0);
     if (serverSocket < 0) {
         LogPrintf("ERROR: Failed to create chat mempool server socket: %s\n", GetSocketErrorMsg().c_str());
         return false;
     }
 
-    // Permitir reutilizar dirección
+    // Allow address reuse
     int opt = 1;
 #ifdef WIN32
     if (setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt)) < 0) {
@@ -122,14 +122,14 @@ bool CDepinMsgPoolServer::Start(int listenPort) {
         LogPrintf("WARNING: Failed to set SO_REUSEADDR on chat mempool socket\n");
     }
 
-    // Configurar dirección
+    // Configure address
     struct sockaddr_in serverAddr;
     memset(&serverAddr, 0, sizeof(serverAddr));
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_addr.s_addr = INADDR_ANY;
     serverAddr.sin_port = htons(listenPort);
 
-    // Bind
+    // Bind socket
     if (bind(serverSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
         LogPrintf("ERROR: Failed to bind chat mempool server socket to port %d: %s\n",
                   listenPort, GetSocketErrorMsg().c_str());
@@ -138,7 +138,7 @@ bool CDepinMsgPoolServer::Start(int listenPort) {
         return false;
     }
 
-    // Listen
+    // Listen for connections
     if (listen(serverSocket, 10) < 0) {
         LogPrintf("ERROR: Failed to listen on chat mempool server socket: %s\n", GetSocketErrorMsg().c_str());
         close(serverSocket);
@@ -149,7 +149,7 @@ bool CDepinMsgPoolServer::Start(int listenPort) {
     port = listenPort;
     fRunning = true;
 
-    // Iniciar thread del servidor
+    // Start server thread
     serverThread = std::thread(&CDepinMsgPoolServer::ThreadServerHandler, this);
 
     LogPrintf("Chat mempool server started on port %d\n", port);
@@ -162,14 +162,14 @@ void CDepinMsgPoolServer::Stop() {
 
     fRunning = false;
 
-    // Cerrar socket
+    // Close socket
     if (serverSocket >= 0) {
         shutdown(serverSocket, SHUT_RDWR);
         close(serverSocket);
         serverSocket = -1;
     }
 
-    // Esperar a que termine el thread
+    // Wait for thread to finish
     if (serverThread.joinable()) {
         serverThread.join();
     }
@@ -184,13 +184,13 @@ void CDepinMsgPoolServer::ThreadServerHandler() {
         struct sockaddr_in clientAddr;
         socklen_t clientLen = sizeof(clientAddr);
 
-        // Configurar timeout para accept
+        // Configure timeout for accept
         fd_set readfds;
         FD_ZERO(&readfds);
         FD_SET(serverSocket, &readfds);
 
         struct timeval tv;
-        tv.tv_sec = 1;  // 1 segundo de timeout
+        tv.tv_sec = 1;  // 1 second timeout
         tv.tv_usec = 0;
 
         int activity = select(serverSocket + 1, &readfds, NULL, NULL, &tv);
@@ -203,11 +203,11 @@ void CDepinMsgPoolServer::ThreadServerHandler() {
         }
 
         if (activity == 0) {
-            // Timeout, continuar loop
+            // Timeout, continue loop
             continue;
         }
 
-        // Aceptar conexión
+        // Accept connection
         int clientSocket = accept(serverSocket, (struct sockaddr*)&clientAddr, &clientLen);
         if (clientSocket < 0) {
             int err = GetSocketError();
@@ -217,13 +217,13 @@ void CDepinMsgPoolServer::ThreadServerHandler() {
             continue;
         }
 
-        // Log de conexión
+        // Log connection
         char clientIP[INET_ADDRSTRLEN];
         InetNtopCompat(AF_INET, &clientAddr.sin_addr, clientIP, INET_ADDRSTRLEN);
         LogPrint(BCLog::NET, "Chat mempool: Accepted connection from %s:%d\n",
                 clientIP, ntohs(clientAddr.sin_port));
 
-        // Manejar cliente en thread separado (o inline para simplicidad)
+        // Handle client in separate thread
         std::thread clientThread(&CDepinMsgPoolServer::HandleClient, this, clientSocket, std::string(clientIP));
         clientThread.detach();
     }
@@ -232,14 +232,14 @@ void CDepinMsgPoolServer::ThreadServerHandler() {
 }
 
 void CDepinMsgPoolServer::HandleClient(int clientSocket, std::string clientIP) {
-    // Configurar timeout
+    // Configure timeout
     struct timeval tv;
     tv.tv_sec = DEPIN_SOCKET_TIMEOUT;
     tv.tv_usec = 0;
     setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
     setsockopt(clientSocket, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
 
-    // Leer request
+    // Read request
     std::string request;
     char buffer[4096];
     ssize_t bytesRead;
@@ -248,7 +248,7 @@ void CDepinMsgPoolServer::HandleClient(int clientSocket, std::string clientIP) {
         buffer[bytesRead] = '\0';
         request += buffer;
 
-        // Buscar fin de mensaje (newline)
+        // Look for end of message (newline)
         size_t pos = request.find('\n');
         if (pos != std::string::npos) {
             request = request.substr(0, pos);
@@ -270,14 +270,14 @@ void CDepinMsgPoolServer::HandleClient(int clientSocket, std::string clientIP) {
         return;
     }
 
-    // Procesar request
+    // Process request
     std::string response = ProcessRequest(request, clientIP);
 
-    // Enviar respuesta
+    // Send response
     response += "\n";
     send(clientSocket, response.c_str(), response.size(), 0);
 
-    // Cerrar conexión
+    // Close connection
     close(clientSocket);
 }
 
@@ -375,12 +375,12 @@ std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request, cons
             return "ERROR|" + error;
         }
 
-        // Verificar token
+        // Verify token
         if (token != pDepinMsgPool->GetActiveToken()) {
             return strprintf("ERROR|Token mismatch. Server has: %s", pDepinMsgPool->GetActiveToken());
         }
 
-        // Parse direcciones
+        // Parse addresses
         std::vector<std::string> addresses;
         std::stringstream addrSS(addressesStr);
         std::string addr;
@@ -404,7 +404,7 @@ std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request, cons
             return "ERROR|Authenticated address not present in request";
         }
 
-        // Obtener mensajes para esas direcciones
+        // Get messages for those addresses
         std::vector<CDepinMessage> messages;
 
         try {
@@ -413,11 +413,11 @@ std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request, cons
                 messages.insert(messages.end(), addrMessages.begin(), addrMessages.end());
             }
 
-            // Serializar mensajes con manejo de excepciones
+            // Serialize messages with exception handling
             CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
             ss << messages;
 
-            // Convertir a hex
+            // Convert to hex
             std::string hex = HexStr(ss.begin(), ss.end());
 
             LogPrint(BCLog::NET, "GETMESSAGES: Successfully serialized %d messages for %d addresses\n",
@@ -807,14 +807,14 @@ bool CDepinMsgPoolClient::QueryMessages(const std::string& host, int port,
                                        const std::string& challenge,
                                        std::vector<CDepinMessage>& messages,
                                        std::string& error) {
-    // Construir lista de direcciones
+    // Build address list
     std::string addressList;
     for (size_t i = 0; i < addresses.size(); i++) {
         if (i > 0) addressList += ",";
         addressList += addresses[i];
     }
 
-    // Construir request
+    // Build request
     std::string request = strprintf("%s|%s|%s|%s|%s|%s",
                                    DEPIN_CMD_GETMESSAGES,
                                    token,
@@ -823,13 +823,13 @@ bool CDepinMsgPoolClient::QueryMessages(const std::string& host, int port,
                                    signature,
                                    challenge);
 
-    // Enviar request
+    // Send request
     std::string response;
     if (!SendRequest(host, port, request, response, error)) {
         return false;
     }
 
-    // Parse response: OK|hex_data o ERROR|mensaje
+    // Parse response: OK|hex_data or ERROR|message
     size_t pos = response.find('|');
     if (pos == std::string::npos) {
         error = "Invalid response format";
@@ -844,7 +844,7 @@ bool CDepinMsgPoolClient::QueryMessages(const std::string& host, int port,
         return false;
     }
 
-    // Deserializar mensajes desde hex
+    // Deserialize messages from hex
     std::vector<unsigned char> vData = ParseHex(data);
     CDataStream ss(vData, SER_NETWORK, PROTOCOL_VERSION);
 
@@ -1047,7 +1047,7 @@ bool CDepinMsgPoolClient::SendRequest(const std::string& host, int port,
         return false;
     }
 
-    // Enviar request
+    // Send request
     std::string fullRequest = request + "\n";
     ssize_t sent = send(sock, fullRequest.c_str(), fullRequest.size(), 0);
     if (sent < 0) {
@@ -1056,7 +1056,7 @@ bool CDepinMsgPoolClient::SendRequest(const std::string& host, int port,
         return false;
     }
 
-    // Recibir respuesta
+    // Receive response
     response.clear();
     char buffer[4096];
     ssize_t bytesRead;
@@ -1065,7 +1065,7 @@ bool CDepinMsgPoolClient::SendRequest(const std::string& host, int port,
         buffer[bytesRead] = '\0';
         response += buffer;
 
-        // Buscar fin de mensaje
+        // Look for end of message
         size_t pos = response.find('\n');
         if (pos != std::string::npos) {
             response = response.substr(0, pos);
