@@ -344,8 +344,9 @@ std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request, cons
 
         std::string token = pDepinMsgPool->GetActiveToken();
         size_t messageCount = pDepinMsgPool->Size();
+        unsigned int messageExpiryHours = pDepinMsgPool->GetMessageExpiryHours();
 
-        return strprintf("OK|%s|%d", token, messageCount);
+        return strprintf("OK|%s|%d|%d", token, messageCount, messageExpiryHours);
     }
 
     // GETMESSAGES
@@ -976,7 +977,7 @@ bool CDepinMsgPoolClient::GetInfo(const std::string& host, int port,
         return false;
     }
 
-    // Parse: OK|token|count
+    // Parse: OK|token|count|expiryhours (expiryhours is optional for backward compatibility)
     size_t pos1 = response.find('|');
     if (pos1 == std::string::npos) {
         error = "Invalid INFO response format";
@@ -996,7 +997,16 @@ bool CDepinMsgPoolClient::GetInfo(const std::string& host, int port,
     }
 
     token = response.substr(pos1 + 1, pos2 - pos1 - 1);
-    messageCount = std::stoi(response.substr(pos2 + 1));
+
+    // Check if there's a third field (expiryhours)
+    size_t pos3 = response.find('|', pos2 + 1);
+    if (pos3 != std::string::npos) {
+        // New format: OK|token|count|expiryhours
+        messageCount = std::stoi(response.substr(pos2 + 1, pos3 - pos2 - 1));
+    } else {
+        // Old format: OK|token|count
+        messageCount = std::stoi(response.substr(pos2 + 1));
+    }
 
     return true;
 }
@@ -1004,53 +1014,48 @@ bool CDepinMsgPoolClient::GetInfo(const std::string& host, int port,
 bool CDepinMsgPoolClient::GetRemoteServerInfo(const std::string& host, int port,
                                               int64_t& messageExpiryHours,
                                               std::string& error) {
-    // Build JSON-RPC request for depingetmsginfo
-    UniValue request(UniValue::VOBJ);
-    request.push_back(Pair("jsonrpc", "2.0"));
-    request.push_back(Pair("id", 1));
-    request.push_back(Pair("method", "depingetmsginfo"));
-
-    UniValue params(UniValue::VARR);
-    request.push_back(Pair("params", params));
-
+    // Use INFO command to get server configuration
+    std::string request = DEPIN_CMD_INFO;
     std::string response;
-    if (!SendRequest(host, port, request.write(), response, error)) {
+
+    if (!SendRequest(host, port, request, response, error)) {
         return false;
     }
 
-    // Parse JSON-RPC response
-    UniValue reply;
-    if (!reply.read(response)) {
-        error = "Invalid JSON response";
+    // Parse: OK|token|count|expiryhours
+    size_t pos1 = response.find('|');
+    if (pos1 == std::string::npos) {
+        error = "Invalid INFO response format";
         return false;
     }
 
-    // Check for error
-    const UniValue& errVal = reply["error"];
-    if (!errVal.isNull()) {
-        if (errVal.isObject() && errVal.exists("message")) {
-            error = errVal["message"].get_str();
-        } else {
-            error = "Remote node returned an error";
-        }
+    size_t pos2 = response.find('|', pos1 + 1);
+    if (pos2 == std::string::npos) {
+        error = "Invalid INFO response format";
         return false;
     }
 
-    // Extract result
-    const UniValue& result = reply["result"];
-    if (!result.isObject()) {
-        error = "Invalid result format";
+    size_t pos3 = response.find('|', pos2 + 1);
+    if (pos3 == std::string::npos) {
+        error = "Server does not support message expiry info (old version)";
         return false;
     }
 
-    // Get messageexpiryhours
-    const UniValue& expiryHours = find_value(result, "messageexpiryhours");
-    if (!expiryHours.isNum()) {
-        error = "messageexpiryhours not found in response";
+    std::string status = response.substr(0, pos1);
+    if (status != "OK") {
+        error = "Server error: " + response.substr(pos1 + 1);
         return false;
     }
 
-    messageExpiryHours = expiryHours.get_int64();
+    // Extract expiry hours (third field)
+    std::string expiryStr = response.substr(pos3 + 1);
+    try {
+        messageExpiryHours = std::stoi(expiryStr);
+    } catch (const std::exception& e) {
+        error = strprintf("Failed to parse expiry hours: %s", e.what());
+        return false;
+    }
+
     return true;
 }
 
