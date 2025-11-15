@@ -34,8 +34,8 @@ uint256 CDepinMessage::GetHash() const {
     return ss.GetHash();
 }
 
-bool CDepinMessage::IsExpired(int64_t currentTime) const {
-    return (currentTime - timestamp) > DEPIN_MESSAGE_EXPIRY_TIME;
+bool CDepinMessage::IsExpired(int64_t currentTime, int64_t expiryTimeSeconds) const {
+    return (currentTime - timestamp) > expiryTimeSeconds;
 }
 
 std::string CDepinMessage::ToString() const {
@@ -47,10 +47,14 @@ std::string CDepinMessage::ToString() const {
 
 CDepinMsgPool::CDepinMsgPool()
     : fEnabled(false), nPort(DEFAULT_DEPIN_MSG_PORT),
-      nMaxRecipients(DEFAULT_MAX_DEPIN_RECIPIENTS) {
+      nMaxRecipients(DEFAULT_MAX_DEPIN_RECIPIENTS),
+      nMaxMessageSize(DEFAULT_DEPIN_MESSAGE_SIZE),
+      nMessageExpiryHours(DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS),
+      nMaxPoolSizeMB(DEFAULT_DEPIN_POOL_SIZE_MB) {
 }
 
-bool CDepinMsgPool::Initialize(const std::string& token, unsigned int port, unsigned int maxRecipients) {
+bool CDepinMsgPool::Initialize(const std::string& token, unsigned int port, unsigned int maxRecipients,
+                               unsigned int maxMessageSize, unsigned int messageExpiryHours, unsigned int maxPoolSizeMB) {
     LOCK(cs_depinmsgpool);
 
     // Verify that -assetindex is enabled (REQUIRED)
@@ -85,11 +89,17 @@ bool CDepinMsgPool::Initialize(const std::string& token, unsigned int port, unsi
     // or during reindex when asset index may not be fully populated
     activeToken = token;
     nPort = port;
+
+    // Apply limits
     nMaxRecipients = std::min(maxRecipients, MAX_DEPIN_RECIPIENTS);
+    nMaxMessageSize = std::min(maxMessageSize, MAX_DEPIN_MESSAGE_SIZE);
+    nMessageExpiryHours = std::min(messageExpiryHours, MAX_DEPIN_MESSAGE_EXPIRY_HOURS);
+    nMaxPoolSizeMB = std::min(maxPoolSizeMB, MAX_DEPIN_POOL_SIZE_MB);
+
     fEnabled = true;
 
-    LogPrintf("Chat mempool initialized: token=%s, port=%d, maxRecipients=%d\n",
-              activeToken, nPort, nMaxRecipients);
+    LogPrintf("DePIN messaging initialized: token=%s, port=%d, maxRecipients=%d, maxMessageSize=%d, expiryHours=%d, maxPoolSizeMB=%d\n",
+              activeToken, nPort, nMaxRecipients, nMaxMessageSize, nMessageExpiryHours, nMaxPoolSizeMB);
 
     return true;
 }
@@ -117,7 +127,7 @@ bool CDepinMsgPool::AddMessage(const CDepinMessage& message, std::string& error,
     }
 
     // Verify that it is not expired
-    if (message.IsExpired(currentTime)) {
+    if (message.IsExpired(currentTime, GetMessageExpiryTime())) {
         error = "Message is already expired";
         return false;
     }
@@ -128,12 +138,21 @@ bool CDepinMsgPool::AddMessage(const CDepinMessage& message, std::string& error,
         return false;
     }
 
-    // Verify total message size (ECIES message includes encrypted payload + all recipient keys)
+    // Verify message size (ECIES message includes encrypted payload + all recipient keys)
     // Maximum size is generous to accommodate multiple recipient keys
-    const size_t MAX_TOTAL_SIZE = MAX_DEPIN_MESSAGE_SIZE * MAX_DEPIN_RECIPIENTS;
+    const size_t MAX_TOTAL_SIZE = nMaxMessageSize * nMaxRecipients;
     if (message.encryptedPayload.size() > MAX_TOTAL_SIZE) {
         error = strprintf("Message payload too large (%d bytes), maximum is %d",
                          message.encryptedPayload.size(), MAX_TOTAL_SIZE);
+        return false;
+    }
+
+    // Verify pool size limit
+    size_t currentPoolSize = DynamicMemoryUsage();
+    size_t maxPoolSizeBytes = (size_t)nMaxPoolSizeMB * 1024 * 1024;  // Convert MB to bytes
+    if (currentPoolSize + message.encryptedPayload.size() > maxPoolSizeBytes) {
+        error = strprintf("Pool size limit exceeded (current: %d MB, limit: %d MB). Message rejected.",
+                         currentPoolSize / (1024 * 1024), nMaxPoolSizeMB);
         return false;
     }
 
@@ -203,9 +222,10 @@ void CDepinMsgPool::RemoveExpiredMessages(int64_t currentTime) {
     LOCK(cs_depinmsgpool);
 
     std::vector<uint256> toRemove;
+    int64_t expiryTime = GetMessageExpiryTime();
 
     for (const auto& entry : mapMessages) {
-        if (entry.second.IsExpired(currentTime)) {
+        if (entry.second.IsExpired(currentTime, expiryTime)) {
             toRemove.push_back(entry.first);
         }
     }
@@ -818,7 +838,7 @@ bool CDepinMsgPool::LoadFromDisk()
             filein >> msg;
 
             // Check if expired
-            if (msg.IsExpired(now)) {
+            if (msg.IsExpired(now, GetMessageExpiryTime())) {
                 expiredCount++;
                 continue;
             }

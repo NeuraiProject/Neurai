@@ -18,12 +18,18 @@
 class CWallet;
 #endif
 
-// Configuration
+// Configuration defaults
 static const unsigned int DEFAULT_DEPIN_MSG_PORT = 19002;
 static const unsigned int DEFAULT_MAX_DEPIN_RECIPIENTS = 20;
+static const unsigned int DEFAULT_DEPIN_MESSAGE_SIZE = 1024;  // 1KB
+static const unsigned int DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS = 168;  // 7 days
+static const unsigned int DEFAULT_DEPIN_POOL_SIZE_MB = 100;  // 100 MB
+
+// Hard limits (maximum allowed values)
 static const unsigned int MAX_DEPIN_RECIPIENTS = 50;
-static const unsigned int MAX_DEPIN_MESSAGE_SIZE = 1024; // 1KB
-static const int64_t DEPIN_MESSAGE_EXPIRY_TIME = 7 * 24 * 60 * 60; // 7 days in seconds
+static const unsigned int MAX_DEPIN_MESSAGE_SIZE = 10240;  // 10KB max
+static const unsigned int MAX_DEPIN_MESSAGE_EXPIRY_HOURS = 720;  // 30 days max
+static const unsigned int MAX_DEPIN_POOL_SIZE_MB = 1000;  // 1GB max
 
 // DePIN pool persistence
 static const bool DEFAULT_DEPINPOOL_PERSIST = false;
@@ -61,7 +67,7 @@ public:
     }
 
     uint256 GetHash() const;
-    bool IsExpired(int64_t currentTime) const;
+    bool IsExpired(int64_t currentTime, int64_t expiryTimeSeconds) const;
     std::string ToString() const;
 
     ADD_SERIALIZE_METHODS;
@@ -87,16 +93,24 @@ private:
     bool fEnabled;
     unsigned int nPort;
     unsigned int nMaxRecipients;
+    unsigned int nMaxMessageSize;       // Maximum message size in bytes
+    unsigned int nMessageExpiryHours;   // Message expiry time in hours
+    unsigned int nMaxPoolSizeMB;        // Maximum pool size in MB
 
 public:
     CDepinMsgPool();
 
     // Configuration
-    bool Initialize(const std::string& token, unsigned int port, unsigned int maxRecipients);
+    bool Initialize(const std::string& token, unsigned int port, unsigned int maxRecipients,
+                   unsigned int maxMessageSize, unsigned int messageExpiryHours, unsigned int maxPoolSizeMB);
     bool IsEnabled() const { return fEnabled; }
     std::string GetActiveToken() const { return activeToken; }
     unsigned int GetPort() const { return nPort; }
     unsigned int GetMaxRecipients() const { return nMaxRecipients; }
+    unsigned int GetMaxMessageSize() const { return nMaxMessageSize; }
+    unsigned int GetMessageExpiryHours() const { return nMessageExpiryHours; }
+    unsigned int GetMaxPoolSizeMB() const { return nMaxPoolSizeMB; }
+    int64_t GetMessageExpiryTime() const { return nMessageExpiryHours * 3600; }  // Convert to seconds
 
     // Message handling
     bool AddMessage(const CDepinMessage& message, std::string& error, bool skipSignatureCheck = false);

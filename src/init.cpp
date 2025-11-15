@@ -473,6 +473,9 @@ std::string HelpMessage(HelpMessageMode mode)
     }
     strUsage += HelpMessageOpt("-persistmempool", strprintf(_("Whether to save the mempool on shutdown and load on restart (default: %u)"), DEFAULT_PERSIST_MEMPOOL));
     strUsage += HelpMessageOpt("-depinpoolpersist", strprintf(_("Whether to save the DePIN message pool on shutdown and load on restart (default: %u)"), DEFAULT_DEPINPOOL_PERSIST));
+    strUsage += HelpMessageOpt("-depinmsgsize=<n>", strprintf(_("Maximum DePIN message size in bytes (default: %u, max: %u)"), DEFAULT_DEPIN_MESSAGE_SIZE, MAX_DEPIN_MESSAGE_SIZE));
+    strUsage += HelpMessageOpt("-depinmsgexpire=<n>", strprintf(_("DePIN message expiry time in hours (default: %u, max: %u)"), DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS, MAX_DEPIN_MESSAGE_EXPIRY_HOURS));
+    strUsage += HelpMessageOpt("-depinpoolsize=<n>", strprintf(_("Maximum DePIN pool size in MB (default: %u, max: %u)"), DEFAULT_DEPIN_POOL_SIZE_MB, MAX_DEPIN_POOL_SIZE_MB));
     strUsage += HelpMessageOpt("-blockreconstructionextratxn=<n>", strprintf(_("Extra transactions to keep in memory for compact block reconstructions (default: %u)"), DEFAULT_BLOCK_RECONSTRUCTION_EXTRA_TXN));
     strUsage += HelpMessageOpt("-par=<n>", strprintf(_("Set the number of script verification threads (%u to %d, 0 = auto, <0 = leave that many cores free, default: %d)"),
         -GetNumCores(), MAX_SCRIPTCHECK_THREADS, DEFAULT_SCRIPTCHECK_THREADS));
@@ -1911,9 +1914,12 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
         std::string token = gArgs.GetArg("-depinmsgtoken", "");
         unsigned int port = gArgs.GetArg("-depinmsgport", DEFAULT_DEPIN_MSG_PORT);
         unsigned int maxRecipients = gArgs.GetArg("-depinmsgmaxusers", DEFAULT_MAX_DEPIN_RECIPIENTS);
+        unsigned int maxMessageSize = gArgs.GetArg("-depinmsgsize", DEFAULT_DEPIN_MESSAGE_SIZE);
+        unsigned int messageExpiryHours = gArgs.GetArg("-depinmsgexpire", DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS);
+        unsigned int maxPoolSizeMB = gArgs.GetArg("-depinpoolsize", DEFAULT_DEPIN_POOL_SIZE_MB);
 
         pDepinMsgPool = std::make_unique<CDepinMsgPool>();
-        if (!pDepinMsgPool->Initialize(token, port, maxRecipients)) {
+        if (!pDepinMsgPool->Initialize(token, port, maxRecipients, maxMessageSize, messageExpiryHours, maxPoolSizeMB)) {
             return InitError(_("Failed to initialize DePIN messaging. Check that the token exists and -assetindex is enabled."));
         }
 

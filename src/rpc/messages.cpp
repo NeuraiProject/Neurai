@@ -506,8 +506,12 @@ UniValue depingetmsginfo(const JSONRPCRequest& request)
                 "  \"token\": \"name\",              (string) Active token name\n"
                 "  \"port\": n,                    (numeric) Listening port\n"
                 "  \"maxrecipients\": n,           (numeric) Maximum recipients per message\n"
+                "  \"maxmessagesize\": n,          (numeric) Maximum message size in bytes\n"
+                "  \"messageexpiryhours\": n,      (numeric) Message expiry time in hours\n"
+                "  \"maxpoolsizemb\": n,           (numeric) Maximum pool size in MB\n"
                 "  \"messages\": n,                (numeric) Number of messages in mempool\n"
                 "  \"memoryusage\": n,             (numeric) Memory usage in bytes\n"
+                "  \"memoryusagemb\": n,           (numeric) Memory usage in MB\n"
                 "  \"oldestmessage\": \"time\",      (string) Timestamp of oldest message\n"
                 "  \"newestmessage\": \"time\"       (string) Timestamp of newest message\n"
                 "}\n"
@@ -525,8 +529,14 @@ UniValue depingetmsginfo(const JSONRPCRequest& request)
     obj.push_back(Pair("token", pDepinMsgPool->GetActiveToken()));
     obj.push_back(Pair("port", (int)pDepinMsgPool->GetPort()));
     obj.push_back(Pair("maxrecipients", (int)pDepinMsgPool->GetMaxRecipients()));
+    obj.push_back(Pair("maxmessagesize", (int)pDepinMsgPool->GetMaxMessageSize()));
+    obj.push_back(Pair("messageexpiryhours", (int)pDepinMsgPool->GetMessageExpiryHours()));
+    obj.push_back(Pair("maxpoolsizemb", (int)pDepinMsgPool->GetMaxPoolSizeMB()));
     obj.push_back(Pair("messages", (int)pDepinMsgPool->Size()));
-    obj.push_back(Pair("memoryusage", (int)pDepinMsgPool->DynamicMemoryUsage()));
+
+    size_t memoryUsage = pDepinMsgPool->DynamicMemoryUsage();
+    obj.push_back(Pair("memoryusage", (int)memoryUsage));
+    obj.push_back(Pair("memoryusagemb", (double)memoryUsage / (1024.0 * 1024.0)));
 
     int64_t oldest = pDepinMsgPool->GetOldestMessageTime();
     int64_t newest = pDepinMsgPool->GetNewestMessageTime();
@@ -1042,7 +1052,7 @@ UniValue depingetmsg(const JSONRPCRequest& request)
                     msgObj.push_back(Pair("timestamp", msg.timestamp));
                     msgObj.push_back(Pair("date", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", msg.timestamp)));
                     msgObj.push_back(Pair("expires", DateTimeStrFormat("%Y-%m-%d %H:%M:%S",
-                                                                       msg.timestamp + DEPIN_MESSAGE_EXPIRY_TIME)));
+                                                                       msg.timestamp + pDepinMsgPool->GetMessageExpiryTime())));
                     result.push_back(msgObj);
                     decrypted = true;
                     break;  // Only add once per message
@@ -1152,7 +1162,7 @@ UniValue depingetmsg(const JSONRPCRequest& request)
                 msgObj.push_back(Pair("timestamp", msg.timestamp));
                 msgObj.push_back(Pair("date", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", msg.timestamp)));
                 msgObj.push_back(Pair("expires", DateTimeStrFormat("%Y-%m-%d %H:%M:%S",
-                                                                   msg.timestamp + DEPIN_MESSAGE_EXPIRY_TIME)));
+                                                                   msg.timestamp + pDepinMsgPool->GetMessageExpiryTime())));
                 result.push_back(msgObj);
                 processedMessages.insert(msgHash);
                 decrypted = true;
@@ -1343,7 +1353,7 @@ UniValue depingetpoolcontent(const JSONRPCRequest& request)
         msgObj.push_back(Pair("timestamp", msg.timestamp));
         msgObj.push_back(Pair("date", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", msg.timestamp)));
         msgObj.push_back(Pair("expires", DateTimeStrFormat("%Y-%m-%d %H:%M:%S",
-                                                    msg.timestamp + DEPIN_MESSAGE_EXPIRY_TIME)));
+                                                    msg.timestamp + pDepinMsgPool->GetMessageExpiryTime())));
 
         if (fVerbose) {
             // Verbose mode: show ECIES shared encryption details
@@ -1438,7 +1448,7 @@ UniValue depinpoolstats(const JSONRPCRequest& request)
         if (age < 604800) messagesLastWeek++;
 
         // Count expiring soon
-        int64_t timeToExpiry = (msg.timestamp + DEPIN_MESSAGE_EXPIRY_TIME) - now;
+        int64_t timeToExpiry = (msg.timestamp + pDepinMsgPool->GetMessageExpiryTime()) - now;
         if (timeToExpiry < 86400 && timeToExpiry > 0) expiringIn24h++;
 
         // Track senders
