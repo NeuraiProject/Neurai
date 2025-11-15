@@ -253,6 +253,42 @@ void CDepinMsgPool::RemoveExpiredMessages(int64_t currentTime) {
     }
 }
 
+void CDepinMsgPool::RemoveMessagesOlderThan(int64_t currentTime, int64_t ageThresholdSeconds) {
+    LOCK(cs_depinmsgpool);
+
+    std::vector<uint256> toRemove;
+
+    for (const auto& entry : mapMessages) {
+        int64_t messageAge = currentTime - entry.second.timestamp;
+        if (messageAge > ageThresholdSeconds) {
+            toRemove.push_back(entry.first);
+        }
+    }
+
+    for (const auto& hash : toRemove) {
+        auto it = mapMessages.find(hash);
+        if (it != mapMessages.end()) {
+            int64_t timestamp = it->second.timestamp;
+            mapMessages.erase(it);
+
+            // Remove from mapByTime
+            auto range = mapByTime.equal_range(timestamp);
+            for (auto timeIt = range.first; timeIt != range.second; ) {
+                if (timeIt->second == hash) {
+                    timeIt = mapByTime.erase(timeIt);
+                } else {
+                    ++timeIt;
+                }
+            }
+        }
+    }
+
+    if (!toRemove.empty()) {
+        int64_t hoursThreshold = ageThresholdSeconds / 3600;
+        LogPrint(BCLog::MEMPOOL, "Removed %d messages older than %d hours\n", toRemove.size(), hoursThreshold);
+    }
+}
+
 void CDepinMsgPool::Clear() {
     LOCK(cs_depinmsgpool);
     mapMessages.clear();

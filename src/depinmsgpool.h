@@ -121,6 +121,7 @@ public:
 
     // Cleanup
     void RemoveExpiredMessages(int64_t currentTime);
+    void RemoveMessagesOlderThan(int64_t currentTime, int64_t ageThresholdSeconds);
     void Clear();
 
     // Stats

@@ -1203,10 +1203,15 @@ UniValue depingetmsg(const JSONRPCRequest& request)
 
 UniValue depinclearmsg(const JSONRPCRequest& request)
 {
-    if (request.fHelp || request.params.size() != 0)
+    if (request.fHelp || request.params.size() > 1)
         throw std::runtime_error(
-                "depinclearmsg\n"
-                "\nRemove all expired messages from DePIN messaging system\n"
+                "depinclearmsg ( \"all\" | hours )\n"
+                "\nRemove messages from DePIN messaging pool\n"
+                "\nArguments:\n"
+                "1. mode    (string or numeric, optional) Cleanup mode:\n"
+                "           - omitted: Remove only expired messages (default)\n"
+                "           - \"all\": Remove ALL messages from pool\n"
+                "           - <hours>: Remove messages older than specified hours (numeric)\n"
                 "\nResult:\n"
                 "{\n"
                 "  \"removed\": n,        (numeric) Number of messages removed\n"
@@ -1214,7 +1219,11 @@ UniValue depinclearmsg(const JSONRPCRequest& request)
                 "}\n"
                 "\nExamples:\n"
                 + HelpExampleCli("depinclearmsg", "")
+                + HelpExampleCli("depinclearmsg", "\"all\"")
+                + HelpExampleCli("depinclearmsg", "7")
                 + HelpExampleRpc("depinclearmsg", "")
+                + HelpExampleRpc("depinclearmsg", "\"all\"")
+                + HelpExampleRpc("depinclearmsg", "7")
         );
 
     if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
@@ -1222,7 +1231,30 @@ UniValue depinclearmsg(const JSONRPCRequest& request)
     }
 
     size_t sizeBefore = pDepinMsgPool->Size();
-    pDepinMsgPool->RemoveExpiredMessages(GetTime());
+    int64_t currentTime = GetTime();
+
+    // Determine cleanup mode
+    if (request.params.size() == 0) {
+        // Default: Remove only expired messages
+        pDepinMsgPool->RemoveExpiredMessages(currentTime);
+    } else if (request.params.size() == 1) {
+        if (request.params[0].isStr() && request.params[0].get_str() == "all") {
+            // Mode: Remove ALL messages
+            pDepinMsgPool->Clear();
+        } else if (request.params[0].isNum()) {
+            // Mode: Remove messages older than X hours
+            int64_t hoursThreshold = request.params[0].get_int64();
+            if (hoursThreshold < 0) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Hours threshold must be positive");
+            }
+
+            int64_t ageThreshold = hoursThreshold * 3600; // Convert hours to seconds
+            pDepinMsgPool->RemoveMessagesOlderThan(currentTime, ageThreshold);
+        } else {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter. Use \"all\" or a numeric value for hours");
+        }
+    }
+
     size_t sizeAfter = pDepinMsgPool->Size();
 
     UniValue result(UniValue::VOBJ);
