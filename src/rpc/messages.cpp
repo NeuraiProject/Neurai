@@ -1035,31 +1035,58 @@ UniValue depingetmsg(const JSONRPCRequest& request)
         // Decrypt received messages
         UniValue result(UniValue::VARR);
 
-        for (const CDepinMessage& msg : remoteMessages) {
-            // Try to decrypt with each owned address
-            bool decrypted = false;
-            for (const std::string& myAddress : myAddresses) {
-                std::string decryptedMessage;
-                std::string decryptError;
+        // For remote queries, use local pool expiry time if available, otherwise use default
+        int64_t expiryTime = DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS * 3600;
+        if (pDepinMsgPool) {
+            expiryTime = pDepinMsgPool->GetMessageExpiryTime();
+        }
 
-                // ECIES shared message contains an AES key encrypted for each holder
-                // DecryptMessageForAddress will find and decrypt the key for myAddress
-                if (DecryptMessageForAddress(msg.encryptedPayload, myAddress, decryptedMessage, decryptError)) {
-                    UniValue msgObj(UniValue::VOBJ);
-                    msgObj.push_back(Pair("recipient", myAddress));
-                    msgObj.push_back(Pair("sender", msg.senderAddress));
-                    msgObj.push_back(Pair("message", decryptedMessage));
-                    msgObj.push_back(Pair("timestamp", msg.timestamp));
-                    msgObj.push_back(Pair("date", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", msg.timestamp)));
-                    msgObj.push_back(Pair("expires", DateTimeStrFormat("%Y-%m-%d %H:%M:%S",
-                                                                       msg.timestamp + pDepinMsgPool->GetMessageExpiryTime())));
-                    result.push_back(msgObj);
-                    decrypted = true;
-                    break;  // Only add once per message
+        // Process each remote message with robust error handling
+        for (size_t i = 0; i < remoteMessages.size(); i++) {
+            try {
+                const CDepinMessage& msg = remoteMessages[i];
+
+                // Validate message fields before processing
+                if (msg.token.empty() || msg.senderAddress.empty() || msg.encryptedPayload.empty()) {
+                    LogPrintf("Warning: Skipping invalid remote message (index %d): missing required fields\n", i);
+                    continue;
                 }
-            }
-            if (!decrypted) {
-                LogPrintf("Warning: Could not decrypt message from %s with any owned address\n", msg.senderAddress);
+
+                // Try to decrypt with each owned address
+                bool decrypted = false;
+                for (const std::string& myAddress : myAddresses) {
+                    std::string decryptedMessage;
+                    std::string decryptError;
+
+                    // ECIES shared message contains an AES key encrypted for each holder
+                    // DecryptMessageForAddress will find and decrypt the key for myAddress
+                    try {
+                        if (DecryptMessageForAddress(msg.encryptedPayload, myAddress, decryptedMessage, decryptError)) {
+                            UniValue msgObj(UniValue::VOBJ);
+                            msgObj.push_back(Pair("recipient", myAddress));
+                            msgObj.push_back(Pair("sender", msg.senderAddress));
+                            msgObj.push_back(Pair("message", decryptedMessage));
+                            msgObj.push_back(Pair("timestamp", msg.timestamp));
+                            msgObj.push_back(Pair("date", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", msg.timestamp)));
+                            msgObj.push_back(Pair("expires", DateTimeStrFormat("%Y-%m-%d %H:%M:%S",
+                                                                               msg.timestamp + expiryTime)));
+                            result.push_back(msgObj);
+                            decrypted = true;
+                            break;  // Only add once per message
+                        }
+                    } catch (const std::exception& e) {
+                        LogPrintf("Error: Exception while decrypting message from %s for address %s: %s\n",
+                                 msg.senderAddress.c_str(), myAddress.c_str(), e.what());
+                        // Continue trying other addresses
+                    }
+                }
+
+                if (!decrypted) {
+                    LogPrint(BCLog::NET, "Warning: Could not decrypt message from %s with any owned address\n", msg.senderAddress.c_str());
+                }
+            } catch (const std::exception& e) {
+                LogPrintf("Error: Exception while processing remote message (index %d): %s\n", i, e.what());
+                // Continue with next message
             }
         }
 

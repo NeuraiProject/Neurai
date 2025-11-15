@@ -407,19 +407,27 @@ std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request, cons
         // Obtener mensajes para esas direcciones
         std::vector<CDepinMessage> messages;
 
-        for (const std::string& address : addresses) {
-            std::vector<CDepinMessage> addrMessages = pDepinMsgPool->GetMessagesForAddress(address);
-            messages.insert(messages.end(), addrMessages.begin(), addrMessages.end());
+        try {
+            for (const std::string& address : addresses) {
+                std::vector<CDepinMessage> addrMessages = pDepinMsgPool->GetMessagesForAddress(address);
+                messages.insert(messages.end(), addrMessages.begin(), addrMessages.end());
+            }
+
+            // Serializar mensajes con manejo de excepciones
+            CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
+            ss << messages;
+
+            // Convertir a hex
+            std::string hex = HexStr(ss.begin(), ss.end());
+
+            LogPrint(BCLog::NET, "GETMESSAGES: Successfully serialized %d messages for %d addresses\n",
+                    messages.size(), addresses.size());
+
+            return "OK|" + hex;
+        } catch (const std::exception& e) {
+            LogPrintf("ERROR: Failed to serialize messages for GETMESSAGES: %s\n", e.what());
+            return strprintf("ERROR|Failed to serialize messages: %s", e.what());
         }
-
-        // Serializar mensajes
-        CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
-        ss << messages;
-
-        // Convertir a hex
-        std::string hex = HexStr(ss.begin(), ss.end());
-
-        return "OK|" + hex;
     }
 
     return "ERROR|Unknown command: " + cmd;

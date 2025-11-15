@@ -476,6 +476,7 @@ std::string HelpMessage(HelpMessageMode mode)
     strUsage += HelpMessageOpt("-depinmsgsize=<n>", strprintf(_("Maximum DePIN message size in bytes (default: %u, max: %u)"), DEFAULT_DEPIN_MESSAGE_SIZE, MAX_DEPIN_MESSAGE_SIZE));
     strUsage += HelpMessageOpt("-depinmsgexpire=<n>", strprintf(_("DePIN message expiry time in hours (default: %u, max: %u)"), DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS, MAX_DEPIN_MESSAGE_EXPIRY_HOURS));
     strUsage += HelpMessageOpt("-depinpoolsize=<n>", strprintf(_("Maximum DePIN pool size in MB (default: %u, max: %u)"), DEFAULT_DEPIN_POOL_SIZE_MB, MAX_DEPIN_POOL_SIZE_MB));
+    strUsage += HelpMessageOpt("-depinmsgcleanupinterval=<n>", _("Interval in seconds to automatically remove expired DePIN messages (default: 300)"));
     strUsage += HelpMessageOpt("-blockreconstructionextratxn=<n>", strprintf(_("Extra transactions to keep in memory for compact block reconstructions (default: %u)"), DEFAULT_BLOCK_RECONSTRUCTION_EXTRA_TXN));
     strUsage += HelpMessageOpt("-par=<n>", strprintf(_("Set the number of script verification threads (%u to %d, 0 = auto, <0 = leave that many cores free, default: %d)"),
         -GetNumCores(), MAX_SCRIPTCHECK_THREADS, DEFAULT_SCRIPTCHECK_THREADS));
@@ -1939,6 +1940,23 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
         }
 
         LogPrintf("DePIN messaging server started on port %d\n", port);
+
+        // Schedule automatic cleanup of expired messages
+        // Default: check every 5 minutes (300 seconds)
+        int64_t cleanupIntervalSeconds = gArgs.GetArg("-depinmsgcleanupinterval", 300);
+        scheduler.scheduleEvery([&]() {
+            if (pDepinMsgPool) {
+                size_t sizeBefore = pDepinMsgPool->Size();
+                pDepinMsgPool->RemoveExpiredMessages(GetTime());
+                size_t sizeAfter = pDepinMsgPool->Size();
+                if (sizeBefore != sizeAfter) {
+                    LogPrintf("DePIN: Automatic cleanup removed %d expired messages (%d remaining)\n",
+                             sizeBefore - sizeAfter, sizeAfter);
+                }
+            }
+        }, cleanupIntervalSeconds * 1000);  // Convert seconds to milliseconds
+
+        LogPrintf("DePIN automatic cleanup scheduled every %d seconds\n", cleanupIntervalSeconds);
     }
 
     if (gArgs.GetBoolArg("-listenonion", DEFAULT_LISTEN_ONION))
