@@ -29,6 +29,7 @@
 #define DEFAULT_IPFS ""
 #define MIN_ASSET_LENGTH 3
 #define MAX_ASSET_LENGTH 32
+#define MAX_ASSET_LENGTH_TESTNET 121  // 120 characters + 1 for null terminator
 #define OWNER_TAG "!"
 #define OWNER_LENGTH 1
 #define OWNER_UNITS 0
@@ -36,6 +37,13 @@
 #define UNIQUE_ASSET_AMOUNT 1 * COIN
 #define UNIQUE_ASSET_UNITS 0
 #define UNIQUE_ASSETS_REISSUABLE 0
+
+/**
+ * Get maximum asset name length based on network
+ * Returns 120 characters for testnet, 31 for mainnet/regtest
+ * This does not include the OWNER_TAG ('!') character
+ */
+int GetMaxAssetNameLength();
 
 #define RESTRICTED_CHAR '$'
 #define QUALIFIER_CHAR '#'

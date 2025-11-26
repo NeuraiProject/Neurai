@@ -97,7 +97,7 @@ bool ReadWriteAssetHash(Stream &s, Operation ser_action, std::string &strIPFSHas
 class CNewAsset
 {
 public:
-    std::string strName; // MAX 31 Bytes
+    std::string strName; // MAX 31 Bytes (mainnet), 120 Bytes (testnet)
     CAmount nAmount;     // 8 Bytes
     int8_t units;        // 1 Byte
     int8_t nReissuable;  // 1 Byte
