@@ -76,7 +76,7 @@ bool IsStandard(const CScript& scriptPubKey, txnouttype& whichType, const bool w
     } else if (whichType == TX_NULL_DATA &&
                (!fAcceptDatacarrier || scriptPubKey.size() > nMaxDatacarrierBytes))
         return false;
-    else if (whichType == TX_RESTRICTED_ASSET_DATA && scriptPubKey.size() > MAX_OP_RETURN_RELAY)
+    else if (whichType == TX_RESTRICTED_ASSET_DATA && scriptPubKey.size() > GetMaxOPReturnRelay())
         return false;
     else if (!witnessEnabled && (whichType == TX_WITNESS_V0_KEYHASH || whichType == TX_WITNESS_V0_SCRIPTHASH))
         return false;

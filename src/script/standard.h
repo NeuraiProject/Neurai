@@ -28,16 +28,22 @@ public:
     CScriptID(const uint160& in) : uint160(in) {}
 };
 
-/** Extend OP_Return size
-Need to change OP_Return to more Space in Future 
-static const unsigned int MAX_OP_RETURN_RELAY = 83;
+/**
+ * Default setting for nMaxDatacarrierBytes.
+ * Mainnet: 80 bytes of data, +1 for OP_RETURN, +2 for the pushdata opcodes = 83 bytes
+ * Testnet: 512 bytes for testing purposes
  */
+static const unsigned int MAX_OP_RETURN_RELAY = 83;
+static const unsigned int MAX_OP_RETURN_RELAY_TESTNET = 512;
+
+// Forward declaration
+class CChainParams;
 
 /**
- * Default setting for nMaxDatacarrierBytes. 80 bytes of data, +1 for OP_RETURN,
- * +2 for the pushdata opcodes.
+ * Get maximum OP_RETURN relay size based on network
+ * Returns 512 bytes for testnet, 83 bytes for mainnet/regtest
  */
-static const unsigned int MAX_OP_RETURN_RELAY = 83;
+unsigned int GetMaxOPReturnRelay();
 
 /**
  * A data carrying output is an unspendable output containing data. The script

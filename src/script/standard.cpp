@@ -8,6 +8,7 @@
 #include <assets/assets.h>
 #include <validation.h>
 #include "script/standard.h"
+#include "chainparams.h"
 
 #include "pubkey.h"
 #include "script/script.h"
@@ -18,6 +19,15 @@ typedef std::vector<unsigned char> valtype;
 
 bool fAcceptDatacarrier = DEFAULT_ACCEPT_DATACARRIER;
 unsigned nMaxDatacarrierBytes = MAX_OP_RETURN_RELAY;
+
+unsigned int GetMaxOPReturnRelay()
+{
+    // Use larger OP_RETURN size in testnet for testing purposes
+    if (Params().NetworkIDString() == "test") {
+        return MAX_OP_RETURN_RELAY_TESTNET;
+    }
+    return MAX_OP_RETURN_RELAY;
+}
 
 CScriptID::CScriptID(const CScript& in) : uint160(Hash160(in.begin(), in.end())) {}
 
