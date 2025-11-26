@@ -12,6 +12,7 @@
 #include "crypto/sha256.h"
 #include "pubkey.h"
 #include "script/script.h"
+#include "chainparams.h"
 
 typedef std::vector<unsigned char> valtype;
 
@@ -326,7 +327,26 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
             if (opcode > OP_16 && ++nOpCount > MAX_OPS_PER_SCRIPT)
                 return set_error(serror, SCRIPT_ERR_OP_COUNT);
 
-            if (opcode == OP_CAT ||
+            // OP_CAT implementation (enabled only on testnet for safety)
+            if (opcode == OP_CAT && Params().NetworkIDString() == "test") {
+                // (x1 x2 -- x1+x2)
+                if (stack.size() < 2)
+                    return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+                valtype& vch1 = stacktop(-2);
+                valtype& vch2 = stacktop(-1);
+
+                // Security: Check that concatenation won't exceed MAX_SCRIPT_ELEMENT_SIZE (520 bytes)
+                if (vch1.size() + vch2.size() > MAX_SCRIPT_ELEMENT_SIZE)
+                    return set_error(serror, SCRIPT_ERR_PUSH_SIZE);
+
+                // Concatenate vch2 onto vch1
+                vch1.insert(vch1.end(), vch2.begin(), vch2.end());
+
+                // Remove vch2 from stack
+                popstack(stack);
+            }
+            else if (opcode == OP_CAT ||
                 opcode == OP_SUBSTR ||
                 opcode == OP_LEFT ||
                 opcode == OP_RIGHT ||
