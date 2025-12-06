@@ -3145,7 +3145,11 @@ UniValue checkdepinvalidity(const JSONRPCRequest& request)
 
     // Check if address has the asset
     CAmount balance = 0;
-    bool hasAsset = passets->GetAssetBalance(assetName, address, balance) && balance > 0;
+    bool hasAsset = GetBestAssetAddressAmount(*passets, assetName, address);
+    if (hasAsset) {
+        balance = passets->mapAssetsAddressAmount.at(std::make_pair(assetName, address));
+        hasAsset = balance > 0;
+    }
 
     UniValue obj(UniValue::VOBJ);
     obj.push_back(Pair("has_asset", hasAsset));
@@ -3278,10 +3282,13 @@ UniValue selfrevokedepin(const JSONRPCRequest& request)
     for (const auto& dest : destinations) {
         std::string address = EncodeDestination(dest);
         CAmount addrBalance = 0;
-        if (passets->GetAssetBalance(assetName, address, addrBalance) && addrBalance > 0) {
-            holderAddress = address;
-            balance = addrBalance;
-            break;
+        if (GetBestAssetAddressAmount(*passets, assetName, address)) {
+            addrBalance = passets->mapAssetsAddressAmount.at(std::make_pair(assetName, address));
+            if (addrBalance > 0) {
+                holderAddress = address;
+                balance = addrBalance;
+                break;
+            }
         }
     }
 
