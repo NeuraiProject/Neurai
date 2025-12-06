@@ -3032,6 +3032,304 @@ UniValue purgesnapshot(const JSONRPCRequest& request)
     return NullUniValue;
 }
 
+// ***************** DEPIN ASSETS (Soulbound Assets) *****************
+
+UniValue listdepinholders(const JSONRPCRequest& request)
+{
+    if (!fAssetIndex) {
+        return "_This rpc call is not functional unless -assetindex is enabled. To enable, please run the wallet with -assetindex, this will require a reindex to occur";
+    }
+
+    if (request.fHelp || !AreAssetsDeployed() || request.params.size() != 1)
+        throw std::runtime_error(
+            "listdepinholders \"asset_name\"\n"
+            + AssetActivationWarning() +
+            "\nReturns all addresses holding a DEPIN asset with validity status\n"
+            "\nDEPIN assets are soulbound (non-transferable except by owner) and can be frozen/revoked\n"
+
+            "\nArguments:\n"
+            "1. \"asset_name\"      (string, required) The DEPIN asset name (must start with &)\n"
+
+            "\nResult:\n"
+            "[\n"
+            "  {\n"
+            "    \"address\": \"address\",     (string) The address\n"
+            "    \"amount\": n,                (numeric) The amount (always 1 for DEPIN)\n"
+            "    \"valid\": 1|0                (numeric) 1 = active/valid, 0 = blocked/revoked\n"
+            "  },\n"
+            "  ...\n"
+            "]\n"
+
+            "\nExamples:\n"
+            + HelpExampleCli("listdepinholders", "\"&FRANCE\"")
+            + HelpExampleRpc("listdepinholders", "\"&FRANCE\"")
+        );
+
+    LOCK(cs_main);
+
+    std::string assetName = request.params[0].get_str();
+
+    // Verify it's a DEPIN asset
+    AssetType type;
+    if (!IsAssetNameValid(assetName, type) || type != AssetType::DEPIN) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Not a valid DEPIN asset (must start with &)");
+    }
+
+    // Get all holders
+    std::vector<std::pair<std::string, CAmount>> vecAddressAmounts;
+    int nTotalEntries = 0;
+    if (!passetsdb->AssetAddressDir(vecAddressAmounts, nTotalEntries, false, assetName, INT_MAX, 0))
+        throw JSONRPCError(RPC_DATABASE_ERROR, "couldn't retrieve asset holders.");
+
+    UniValue result(UniValue::VARR);
+
+    for (const auto& pair : vecAddressAmounts) {
+        std::string address = pair.first;
+        CAmount amount = pair.second;
+
+        // Check if blocked (owner freeze OR self-revoke)
+        bool isBlocked = passets->CheckForDEPINRestriction(assetName, address);
+
+        UniValue obj(UniValue::VOBJ);
+        obj.push_back(Pair("address", address));
+        obj.push_back(Pair("amount", ValueFromAmount(amount)));
+        obj.push_back(Pair("valid", isBlocked ? 0 : 1));  // 1 = active, 0 = blocked
+
+        result.push_back(obj);
+    }
+
+    return result;
+}
+
+UniValue checkdepinvalidity(const JSONRPCRequest& request)
+{
+    if (request.fHelp || !AreAssetsDeployed() || request.params.size() != 2)
+        throw std::runtime_error(
+            "checkdepinvalidity \"asset_name\" \"address\"\n"
+            + AssetActivationWarning() +
+            "\nCheck if a DEPIN asset is valid/active for a specific address\n"
+
+            "\nArguments:\n"
+            "1. \"asset_name\"      (string, required) The DEPIN asset name (must start with &)\n"
+            "2. \"address\"         (string, required) The address to check\n"
+
+            "\nResult:\n"
+            "{\n"
+            "  \"has_asset\": true|false,      (boolean) Whether the address holds the asset\n"
+            "  \"amount\": n,                  (numeric) The amount (if has_asset is true)\n"
+            "  \"valid\": 1|0,                 (numeric) 1 = active/valid, 0 = blocked/revoked (if has_asset is true)\n"
+            "  \"blocked\": true|false         (boolean) Whether the asset is blocked (if has_asset is true)\n"
+            "}\n"
+
+            "\nExamples:\n"
+            + HelpExampleCli("checkdepinvalidity", "\"&FRANCE\" \"address\"")
+            + HelpExampleRpc("checkdepinvalidity", "\"&FRANCE\" \"address\"")
+        );
+
+    LOCK(cs_main);
+
+    std::string assetName = request.params[0].get_str();
+    std::string address = request.params[1].get_str();
+
+    // Verify it's a DEPIN asset
+    AssetType type;
+    if (!IsAssetNameValid(assetName, type) || type != AssetType::DEPIN) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Not a valid DEPIN asset (must start with &)");
+    }
+
+    // Verify address is valid
+    CTxDestination dest = DecodeDestination(address);
+    if (!IsValidDestination(dest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Neurai address: ") + address);
+    }
+
+    // Check if address has the asset
+    CAmount balance = 0;
+    bool hasAsset = passets->GetAssetBalance(assetName, address, balance) && balance > 0;
+
+    UniValue obj(UniValue::VOBJ);
+    obj.push_back(Pair("has_asset", hasAsset));
+
+    if (hasAsset) {
+        // Check if blocked
+        bool isBlocked = passets->CheckForDEPINRestriction(assetName, address);
+
+        obj.push_back(Pair("amount", ValueFromAmount(balance)));
+        obj.push_back(Pair("valid", isBlocked ? 0 : 1));
+        obj.push_back(Pair("blocked", isBlocked));
+    }
+
+    return obj;
+}
+
+#ifdef ENABLE_WALLET
+UniValue freezedepin(const JSONRPCRequest& request)
+{
+    if (request.fHelp || !AreAssetsDeployed() || request.params.size() < 2 || request.params.size() > 3)
+        throw std::runtime_error(
+            "freezedepin \"asset_name\" \"address\" (\"change_address\")\n"
+            + AssetActivationWarning() +
+            "\nFreeze a DEPIN asset for a specific address (owner only)\n"
+            "\nThe address will still hold the asset but it will be marked as invalid\n"
+            "\nRequires the owner token (&ASSET!) in the wallet\n"
+
+            "\nArguments:\n"
+            "1. \"asset_name\"       (string, required) The DEPIN asset name (must start with &)\n"
+            "2. \"address\"          (string, required) The address to freeze\n"
+            "3. \"change_address\"   (string, optional) The change address for the owner token\n"
+
+            "\nResult:\n"
+            "\"txid\"                (string) The transaction id\n"
+
+            "\nExamples:\n"
+            + HelpExampleCli("freezedepin", "\"&FRANCE\" \"address\"")
+            + HelpExampleRpc("freezedepin", "\"&FRANCE\" \"address\"")
+        );
+
+    // Reuse the existing freeze logic from restricted assets
+    // The owner must have the owner token (&ASSET!)
+    // This will call AddRestrictedAddress with FREEZE_ADDRESS type
+    return UpdateAddressRestriction(request, 1);  // 1 = Freeze
+}
+
+UniValue unfreezedepin(const JSONRPCRequest& request)
+{
+    if (request.fHelp || !AreAssetsDeployed() || request.params.size() < 2 || request.params.size() > 3)
+        throw std::runtime_error(
+            "unfreezedepin \"asset_name\" \"address\" (\"change_address\")\n"
+            + AssetActivationWarning() +
+            "\nUnfreeze a DEPIN asset for a specific address (owner only)\n"
+            "\nThe asset will be marked as valid again\n"
+            "\nRequires the owner token (&ASSET!) in the wallet\n"
+
+            "\nArguments:\n"
+            "1. \"asset_name\"       (string, required) The DEPIN asset name (must start with &)\n"
+            "2. \"address\"          (string, required) The address to unfreeze\n"
+            "3. \"change_address\"   (string, optional) The change address for the owner token\n"
+
+            "\nResult:\n"
+            "\"txid\"                (string) The transaction id\n"
+
+            "\nExamples:\n"
+            + HelpExampleCli("unfreezedepin", "\"&FRANCE\" \"address\"")
+            + HelpExampleRpc("unfreezedepin", "\"&FRANCE\" \"address\"")
+        );
+
+    // Reuse the existing unfreeze logic from restricted assets
+    return UpdateAddressRestriction(request, 0);  // 0 = Unfreeze
+}
+
+UniValue selfrevokedepin(const JSONRPCRequest& request)
+{
+    if (request.fHelp || !AreAssetsDeployed() || request.params.size() != 1)
+        throw std::runtime_error(
+            "selfrevokedepin \"asset_name\"\n"
+            + AssetActivationWarning() +
+            "\nSelf-revoke a DEPIN asset held in this wallet\n"
+            "\nThe asset will be marked as invalid but will remain in the address\n"
+            "\nThis action can only be undone by the asset owner\n"
+
+            "\nArguments:\n"
+            "1. \"asset_name\"       (string, required) The DEPIN asset name (must start with &)\n"
+
+            "\nResult:\n"
+            "\"txid\"                (string) The transaction id\n"
+
+            "\nExamples:\n"
+            + HelpExampleCli("selfrevokedepin", "\"&FRANCE\"")
+            + HelpExampleRpc("selfrevokedepin", "\"&FRANCE\"")
+        );
+
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+
+    ObserveSafeMode();
+    LOCK2(cs_main, pwallet->cs_wallet);
+    EnsureWalletIsUnlocked(pwallet);
+
+    std::string assetName = request.params[0].get_str();
+
+    // Verify it's a DEPIN asset
+    AssetType type;
+    if (!IsAssetNameValid(assetName, type) || type != AssetType::DEPIN) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Not a valid DEPIN asset (must start with &)");
+    }
+
+    // Find which address in the wallet holds this DEPIN asset
+    std::string holderAddress = "";
+    CAmount balance = 0;
+
+    // Get all addresses in the wallet
+    std::set<CTxDestination> destinations;
+    for (const auto& entry : pwallet->mapWallet) {
+        const CWalletTx& wtx = entry.second;
+        for (unsigned int i = 0; i < wtx.tx->vout.size(); ++i) {
+            const CTxOut& txout = wtx.tx->vout[i];
+            CTxDestination dest;
+            if (ExtractDestination(txout.scriptPubKey, dest)) {
+                destinations.insert(dest);
+            }
+        }
+    }
+
+    // Check each address for the DEPIN asset
+    for (const auto& dest : destinations) {
+        std::string address = EncodeDestination(dest);
+        CAmount addrBalance = 0;
+        if (passets->GetAssetBalance(assetName, address, addrBalance) && addrBalance > 0) {
+            holderAddress = address;
+            balance = addrBalance;
+            break;
+        }
+    }
+
+    if (holderAddress.empty()) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "This wallet does not hold the specified DEPIN asset");
+    }
+
+    // Check if already self-revoked
+    if (passets->CheckForDEPINRestriction(assetName, holderAddress)) {
+        throw JSONRPCError(RPC_INVALID_REQUEST, "This DEPIN asset is already revoked (either self-revoked or owner-freezed)");
+    }
+
+    CReserveKey reservekey(pwallet);
+    CWalletTx transaction;
+    CAmount nRequiredFee;
+    CCoinControl ctrl;
+
+    // Create change address
+    CKeyID keyID;
+    std::string strFailReason;
+    if (!pwallet->CreateNewChangeAddress(reservekey, keyID, strFailReason))
+        throw JSONRPCError(RPC_WALLET_ERROR, strFailReason);
+
+    std::string change_address = EncodeDestination(keyID);
+
+    std::pair<int, std::string> error;
+    std::vector< std::pair<CAssetTransfer, std::string> > vTransfers;
+
+    // Create the null asset data with flag=1 (self-revoke)
+    std::vector< std::pair<CNullAssetTxData, std::string> > vecAssetData;
+    vecAssetData.push_back(std::make_pair(CNullAssetTxData(assetName, 1), holderAddress));
+
+    // Create the Transaction (no asset transfers needed, just the null data)
+    if (!CreateTransferAssetTransaction(pwallet, ctrl, vTransfers, "", error, transaction, reservekey, nRequiredFee, &vecAssetData))
+        throw JSONRPCError(error.first, error.second);
+
+    // Send the Transaction to the network
+    std::string txid;
+    if (!SendAssetTransaction(pwallet, transaction, reservekey, error, txid))
+        throw JSONRPCError(error.first, error.second);
+
+    // Display the transaction id
+    UniValue result(UniValue::VARR);
+    result.push_back(txid);
+    return result;
+}
+#endif
+
 static const CRPCCommand commands[] =
 { //  category    name                          actor (function)             argNames
   //  ----------- ------------------------      -----------------------      ----------
@@ -3076,6 +3374,15 @@ static const CRPCCommand commands[] =
 
     { "assets",   "getsnapshot",                &getsnapshot,                {"asset_name", "block_height"}},
     { "assets",   "purgesnapshot",              &purgesnapshot,              {"asset_name", "block_height"}},
+
+    // DEPIN Assets (Soulbound Assets)
+    { "depin",    "listdepinholders",           &listdepinholders,           {"asset_name"}},
+    { "depin",    "checkdepinvalidity",         &checkdepinvalidity,         {"asset_name", "address"}},
+#ifdef ENABLE_WALLET
+    { "depin",    "freezedepin",                &freezedepin,                {"asset_name", "address", "change_address"}},
+    { "depin",    "unfreezedepin",              &unfreezedepin,              {"asset_name", "address", "change_address"}},
+    { "depin",    "selfrevokedepin",            &selfrevokedepin,            {"asset_name"}},
+#endif
 };
 
 void RegisterAssetRPCCommands(CRPCTable &t)

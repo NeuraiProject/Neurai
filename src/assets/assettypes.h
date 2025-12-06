@@ -31,7 +31,8 @@ enum class AssetType
     REISSUE = 8,
     OWNER = 9,
     NULL_ADD_QUALIFIER = 10,
-    INVALID = 11
+    INVALID = 11,
+    DEPIN = 12  // Soulbound assets (testnet only)
 };
 
 enum class QualifierType
@@ -532,6 +533,39 @@ struct CAssetCacheRestrictedVerifiers
     {
         return assetName < rhs.assetName;
     }
+};
+
+struct CAssetCacheSelfRestriction
+{
+    std::string assetName;
+    std::string address;
+    bool isSelfRevoke;  // true = self-revoke, false = un-self-revoke (by owner)
+
+    CAssetCacheSelfRestriction()
+    {
+        SetNull();
+    }
+
+    CAssetCacheSelfRestriction(const std::string& assetName, const std::string& address, bool isSelfRevoke)
+    {
+        this->assetName = assetName;
+        this->address = address;
+        this->isSelfRevoke = isSelfRevoke;
+    }
+
+    void SetNull()
+    {
+        assetName = "";
+        address = "";
+        isSelfRevoke = false;
+    }
+
+    bool operator<(const CAssetCacheSelfRestriction& rhs) const
+    {
+        return assetName < rhs.assetName || (assetName == rhs.assetName && address < rhs.address);
+    }
+
+    uint256 GetHash() const;
 };
 
 // Least Recently Used Cache

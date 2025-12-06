@@ -2164,6 +2164,13 @@ static DisconnectResult DisconnectBlock(const CBlock& block, const CBlockIndex* 
                                           __func__, data.asset_name, data.flag, address);
                                     return DISCONNECT_FAILED;
                                 }
+                            // Handle DEPIN self-restrictions
+                            } else if (type == AssetType::DEPIN) {
+                                if (!assetsCache->RemoveSelfRestriction(data.asset_name, address, data.flag ? true : false)) {
+                                    error("%s : Failed to remove DEPIN self-restriction from address, Asset : %s, Flag Removing : %d, Address : %s",
+                                          __func__, data.asset_name, data.flag, address);
+                                    return DISCONNECT_FAILED;
+                                }
                             }
                         } else if (script.IsNullGlobalRestrictionAssetTxDataScript()) {
                             CNullAssetTxData data;

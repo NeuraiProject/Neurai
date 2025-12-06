@@ -47,10 +47,14 @@ int GetMaxAssetNameLength();
 
 #define RESTRICTED_CHAR '$'
 #define QUALIFIER_CHAR '#'
+#define DEPIN_CHAR '&'  // Soulbound assets (testnet only)
 
 #define QUALIFIER_ASSET_MIN_AMOUNT 1 * COIN
 #define QUALIFIER_ASSET_MAX_AMOUNT 10 * COIN
 #define QUALIFIER_ASSET_UNITS 0
+
+#define DEPIN_ASSET_AMOUNT 1 * COIN  // DEPIN assets are always 1 coin (binary: has or doesn't have)
+#define DEPIN_ASSET_UNITS 0
 
 #define ASSET_TRANSFER_STRING "transfer_asset"
 #define ASSET_NEW_STRING "new_asset"
@@ -174,6 +178,10 @@ public :
     std::set<CAssetCacheRestrictedVerifiers> setNewRestrictedVerifierToAdd;
     std::set<CAssetCacheRestrictedVerifiers> setNewRestrictedVerifierToRemove;
 
+    //! DEPIN Self-Restriction Caches
+    std::set<CAssetCacheSelfRestriction> setNewSelfRestrictionToAdd;
+    std::set<CAssetCacheSelfRestriction> setNewSelfRestrictionToRemove;
+
     //! Root Qualifier Address Map
     std::map<CAssetCacheRootQualifierChecker, std::set<std::string> > mapRootQualifierAddressesAdd;
     std::map<CAssetCacheRootQualifierChecker, std::set<std::string> > mapRootQualifierAddressesRemove;
@@ -222,6 +230,10 @@ public :
         this->setNewRestrictedVerifierToAdd = cache.setNewRestrictedVerifierToAdd;
         this->setNewRestrictedVerifierToRemove = cache.setNewRestrictedVerifierToRemove;
 
+        //! DEPIN Self-Restriction Caches
+        this->setNewSelfRestrictionToAdd = cache.setNewSelfRestrictionToAdd;
+        this->setNewSelfRestrictionToRemove = cache.setNewSelfRestrictionToRemove;
+
         //! Root Qualifier Address Map
         this->mapRootQualifierAddressesAdd = cache.mapRootQualifierAddressesAdd;
         this->mapRootQualifierAddressesRemove = cache.mapRootQualifierAddressesRemove;
@@ -268,6 +280,10 @@ public :
         this->setNewRestrictedVerifierToAdd = cache.setNewRestrictedVerifierToAdd;
         this->setNewRestrictedVerifierToRemove = cache.setNewRestrictedVerifierToRemove;
 
+        //! DEPIN Self-Restriction Caches
+        this->setNewSelfRestrictionToAdd = cache.setNewSelfRestrictionToAdd;
+        this->setNewSelfRestrictionToRemove = cache.setNewSelfRestrictionToRemove;
+
         //! Root Qualifier Address Map
         this->mapRootQualifierAddressesAdd = cache.mapRootQualifierAddressesAdd;
         this->mapRootQualifierAddressesRemove = cache.mapRootQualifierAddressesRemove;
@@ -284,6 +300,7 @@ public :
     bool RemoveQualifierAddress(const std::string& assetName, const std::string& address, const QualifierType type);
     bool RemoveRestrictedAddress(const std::string& assetName, const std::string& address, const RestrictedType type);
     bool RemoveGlobalRestricted(const std::string& assetName, const RestrictedType type);
+    bool RemoveSelfRestriction(const std::string& assetName, const std::string& address, bool isSelfRevoke);
     bool RemoveRestrictedVerifier(const std::string& assetName, const std::string& verifier, const bool fUndoingReissue = false);
 
     //! Cache only add asset functions
@@ -294,6 +311,7 @@ public :
     bool AddQualifierAddress(const std::string& assetName, const std::string& address, const QualifierType type);
     bool AddRestrictedAddress(const std::string& assetName, const std::string& address, const RestrictedType type);
     bool AddGlobalRestricted(const std::string& assetName, const RestrictedType type);
+    bool AddSelfRestriction(const std::string& assetName, const std::string& address, bool isSelfRevoke);
     bool AddRestrictedVerifier(const std::string& assetName, const std::string& verifier);
 
     //! Cache only validation functions
@@ -321,6 +339,9 @@ public :
 
     //! Return true if the restricted asset is globally freezing trading
     bool CheckForGlobalRestriction(const std::string &restricted_name, bool fSkipTempCache = false);
+
+    //! Return true if the DEPIN asset is blocked (owner freeze OR self-revoke)
+    bool CheckForDEPINRestriction(const std::string &assetName, const std::string& address, bool fSkipTempCache = false);
 
     //! Calculate the size of the CAssets (in bytes)
     size_t DynamicMemoryUsage() const;
@@ -367,6 +388,9 @@ public :
 
         setNewRestrictedVerifierToAdd.clear();
         setNewRestrictedVerifierToRemove.clear();
+
+        setNewSelfRestrictionToAdd.clear();
+        setNewSelfRestrictionToRemove.clear();
 
         mapRootQualifierAddressesAdd.clear();
         mapRootQualifierAddressesRemove.clear();
@@ -425,6 +449,12 @@ bool IsAssetNameASubQualifier(const std::string& name);
 
 //! Check if an asset is a message channel
 bool IsAssetNameAnMsgChannel(const std::string& name);
+
+//! Check if an asset is a DEPIN (soulbound) asset (testnet only)
+bool IsAssetNameADEPIN(const std::string& name);
+
+//! Check if an asset is a sub-DEPIN asset
+bool IsAssetNameASubDEPIN(const std::string& name);
 
 bool IsAssetNameARoot(const std::string& name);
 

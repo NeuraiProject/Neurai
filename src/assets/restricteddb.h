@@ -41,6 +41,11 @@ public:
     bool ReadGlobalRestriction(const std::string& assetName);
     bool EraseGlobalRestriction(const std::string& assetName);
 
+    // Database of Self-Restrictions (DEPIN self-revocation)
+    bool WriteSelfRestriction(const std::string& address, const std::string& assetName);
+    bool ReadSelfRestriction(const std::string& address, const std::string& assetName);
+    bool EraseSelfRestriction(const std::string& address, const std::string& assetName);
+
     // Write / Read Database flags
     bool WriteFlag(const std::string &name, bool fValue);
     bool ReadFlag(const std::string &name, bool &fValue);

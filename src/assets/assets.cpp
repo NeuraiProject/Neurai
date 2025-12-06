@@ -66,6 +66,10 @@ static const std::regex QUALIFIER_NAME_CHARACTERS("#[A-Z0-9._]{3,}$");
 static const std::regex SUB_QUALIFIER_NAME_CHARACTERS("#[A-Z0-9._]+$");
 static const std::regex RESTRICTED_NAME_CHARACTERS("\\$[A-Z0-9._]{3,}$");
 
+// DEPIN assets (soulbound, testnet only)
+static const std::regex DEPIN_NAME_CHARACTERS("&[A-Z0-9._]{3,}$");
+static const std::regex SUB_DEPIN_NAME_CHARACTERS("&[A-Z0-9._/]+$");
+
 static const std::regex DOUBLE_PUNCTUATION("^.*[._]{2,}.*$");
 static const std::regex LEADING_PUNCTUATION("^[._].*$");
 static const std::regex TRAILING_PUNCTUATION("^.*[._]$");
@@ -85,6 +89,8 @@ static const std::regex VOTE_INDICATOR(R"(^[^^~#!]+\^[^~#!\/]+$)");
 static const std::regex QUALIFIER_INDICATOR("^[#][A-Z0-9._]{3,}$"); // Starts with #
 static const std::regex SUB_QUALIFIER_INDICATOR("^#[A-Z0-9._]+\\/#[A-Z0-9._]+$"); // Starts with #
 static const std::regex RESTRICTED_INDICATOR("^[\\$][A-Z0-9._]{3,}$"); // Starts with $
+static const std::regex DEPIN_INDICATOR("^[&][A-Z0-9._]{3,}$"); // Starts with & (testnet only)
+static const std::regex SUB_DEPIN_INDICATOR("^&[A-Z0-9._]+\\/[A-Z0-9._/]+$"); // Sub-DEPIN with /
 
 static const std::regex NEURAI_NAMES("^XNA$|^NEURAI$|^NEURAICOIN$|^#XNA$|^#NEURAI$|^#NEURAICOIN$");
 
@@ -282,6 +288,20 @@ bool IsAssetNameValid(const std::string& name, AssetType& assetType, std::string
 
         return ret;
     }
+    else if (std::regex_match(name, DEPIN_INDICATOR) || std::regex_match(name, SUB_DEPIN_INDICATOR))
+    {
+        // DEPIN assets are only enabled in testnet
+        if (Params().NetworkIDString() != "test") {
+            error = "DEPIN assets are only available in testnet";
+            return false;
+        }
+
+        bool ret = IsTypeCheckNameValid(AssetType::DEPIN, name, error);
+        if (ret)
+            assetType = AssetType::DEPIN;
+
+        return ret;
+    }
     else
     {
         auto type = IsAssetNameASubasset(name) ? AssetType::SUB : AssetType::ROOT;
@@ -336,6 +356,16 @@ bool IsAssetNameAnMsgChannel(const std::string& name)
     return IsAssetNameValid(name) && std::regex_match(name, MSG_CHANNEL_INDICATOR);
 }
 
+bool IsAssetNameADEPIN(const std::string& name)
+{
+    return IsAssetNameValid(name) && (std::regex_match(name, DEPIN_INDICATOR) || std::regex_match(name, SUB_DEPIN_INDICATOR));
+}
+
+bool IsAssetNameASubDEPIN(const std::string& name)
+{
+    return IsAssetNameValid(name) && std::regex_match(name, SUB_DEPIN_INDICATOR);
+}
+
 // TODO get the string translated below
 bool IsTypeCheckNameValid(const AssetType type, const std::string& name, std::string& error)
 {
@@ -377,6 +407,43 @@ bool IsTypeCheckNameValid(const AssetType type, const std::string& name, std::st
         if (name.size() > maxLength) { error = "Name is greater than max length of " + std::to_string(maxLength); return false; }
         bool valid = IsRestrictedNameValid(name);
         if (!valid) { error = "Restricted name contains invalid characters (Valid characters are: A-Z 0-9 _ .) ($ must be the first character, _ . special characters can't be the first or last characters)";  return false; }
+        return true;
+    } else if (type == AssetType::DEPIN) {
+        // DEPIN assets (testnet only)
+        if (name.size() > maxLength) { error = "Name is greater than max length of " + std::to_string(maxLength); return false; }
+
+        // Check if sub-DEPIN (contains /)
+        if (name.find('/') != std::string::npos) {
+            // Sub-DEPIN validation
+            std::vector<std::string> parts;
+            boost::split(parts, name, boost::is_any_of("/"));
+
+            // First part must be valid DEPIN name (starts with &)
+            if (parts[0][0] != DEPIN_CHAR) {
+                error = "DEPIN name must start with &";
+                return false;
+            }
+
+            // All parts must be valid
+            for (const auto& part : parts) {
+                if (part.size() < MIN_ASSET_LENGTH) {
+                    error = "Each DEPIN sub-part must be at least " + std::to_string(MIN_ASSET_LENGTH) + " characters";
+                    return false;
+                }
+            }
+        } else {
+            // Root DEPIN validation
+            if (name[0] != DEPIN_CHAR) {
+                error = "DEPIN name must start with &";
+                return false;
+            }
+
+            if (name.size() < MIN_ASSET_LENGTH + 1) {  // +1 for &
+                error = "DEPIN name must be at least " + std::to_string(MIN_ASSET_LENGTH) + " characters (excluding &)";
+                return false;
+            }
+        }
+
         return true;
     } else {
         if (name.size() > maxLength - 1) { error = "Name is greater than max length of " + std::to_string(maxLength - 1); return false; }  //Assets and sub-assets need to leave one extra char for OWNER indicator
@@ -2209,6 +2276,48 @@ bool CAssetsCache::RemoveRestrictedAddress(const std::string& assetName, const s
 }
 
 //! Changes Memory Only, this only called when adding a block to the chain
+bool CAssetsCache::AddSelfRestriction(const std::string& assetName, const std::string& address, bool isSelfRevoke)
+{
+    CAssetCacheSelfRestriction newSelfRestriction(assetName, address, isSelfRevoke);
+
+    // We are adding a self-restriction that was in a transaction, so, if the set of self-restrictions
+    // to undo contains the same self-restriction, erase it
+    if (setNewSelfRestrictionToRemove.count(newSelfRestriction)) {
+        setNewSelfRestrictionToRemove.erase(newSelfRestriction);
+    }
+
+    // If the set of self-restrictions from transactions contains our self-restriction already, we need to overwrite it
+    if (setNewSelfRestrictionToAdd.count(newSelfRestriction)) {
+        setNewSelfRestrictionToAdd.erase(newSelfRestriction);
+    }
+
+    setNewSelfRestrictionToAdd.insert(newSelfRestriction);
+
+    return true;
+}
+
+//! Changes Memory Only, this is only called when undoing a block from the chain
+bool CAssetsCache::RemoveSelfRestriction(const std::string& assetName, const std::string& address, bool isSelfRevoke)
+{
+    CAssetCacheSelfRestriction newSelfRestriction(assetName, address, isSelfRevoke);
+
+    // We are undoing a self-restriction transaction, so if the set that contains self-restrictions from new block
+    // contains this self-restriction, erase it.
+    if (setNewSelfRestrictionToAdd.count(newSelfRestriction)) {
+        setNewSelfRestrictionToAdd.erase(newSelfRestriction);
+    }
+
+    // If the set of self-restrictions to undo contains our self-restriction already, we need to overwrite it
+    if (setNewSelfRestrictionToRemove.count(newSelfRestriction)) {
+        setNewSelfRestrictionToRemove.erase(newSelfRestriction);
+    }
+
+    setNewSelfRestrictionToRemove.insert(newSelfRestriction);
+
+    return true;
+}
+
+//! Changes Memory Only, this only called when adding a block to the chain
 bool CAssetsCache::AddGlobalRestricted(const std::string& assetName, const RestrictedType type)
 {
     CAssetCacheRestrictedGlobal newGlobalRestriction(assetName, type);
@@ -2748,6 +2857,52 @@ bool CAssetsCache::DumpCacheToDatabase()
             }
         }
 
+        // Add new DEPIN self-restriction commands
+        for (const auto& selfRestriction : setNewSelfRestrictionToAdd) {
+            if (selfRestriction.isSelfRevoke) {
+                // Holder is self-revoking
+                passetsRestrictionCache->Put(selfRestriction.GetHash().GetHex(), 1);
+                if (!prestricteddb->WriteSelfRestriction(selfRestriction.address, selfRestriction.assetName)) {
+                    dirty = true;
+                    message = "_Failed writing self-restriction to database";
+                }
+            } else {
+                // Owner is un-revoking a self-restriction
+                passetsRestrictionCache->Erase(selfRestriction.GetHash().GetHex());
+                if (!prestricteddb->EraseSelfRestriction(selfRestriction.address, selfRestriction.assetName)) {
+                    dirty = true;
+                    message = "_Failed erasing self-restriction from database";
+                }
+            }
+
+            if (dirty) {
+                return error("%s : %s", __func__, message);
+            }
+        }
+
+        // Undo the DEPIN self-restriction commands
+        for (const auto& selfRestriction : setNewSelfRestrictionToRemove) {
+            if (selfRestriction.isSelfRevoke) {
+                // Undoing a self-revoke, we need to erase it
+                passetsRestrictionCache->Erase(selfRestriction.GetHash().GetHex());
+                if (!prestricteddb->EraseSelfRestriction(selfRestriction.address, selfRestriction.assetName)) {
+                    dirty = true;
+                    message = "_Failed undoing a self-restriction from database";
+                }
+            } else {
+                // Undoing an un-revoke, we need to write it back
+                passetsRestrictionCache->Put(selfRestriction.GetHash().GetHex(), 1);
+                if (!prestricteddb->WriteSelfRestriction(selfRestriction.address, selfRestriction.assetName)) {
+                    dirty = true;
+                    message = "_Failed undoing an un-self-restriction to database";
+                }
+            }
+
+            if (dirty) {
+                return error("%s : %s", __func__, message);
+            }
+        }
+
         if (fAssetIndex) {
             // Undo the asset spends by updating there balance in the database
             for (auto undoSpend : vUndoAssetAmount) {
@@ -2984,6 +3139,30 @@ bool CAssetsCache::Flush()
             }
 
             passets->setNewRestrictedVerifierToRemove.insert(item);
+        }
+
+        for (auto &item : setNewSelfRestrictionToAdd) {
+            if (passets->setNewSelfRestrictionToRemove.count(item)) {
+                passets->setNewSelfRestrictionToRemove.erase(item);
+            }
+
+            if (passets->setNewSelfRestrictionToAdd.count(item)) {
+                passets->setNewSelfRestrictionToAdd.erase(item);
+            }
+
+            passets->setNewSelfRestrictionToAdd.insert(item);
+        }
+
+        for (auto &item : setNewSelfRestrictionToRemove) {
+            if (passets->setNewSelfRestrictionToAdd.count(item)) {
+                passets->setNewSelfRestrictionToAdd.erase(item);
+            }
+
+            if (passets->setNewSelfRestrictionToRemove.count(item)) {
+                passets->setNewSelfRestrictionToRemove.erase(item);
+            }
+
+            passets->setNewSelfRestrictionToRemove.insert(item);
         }
 
         for (auto &item : mapRootQualifierAddressesAdd) {
@@ -4859,6 +5038,53 @@ bool CAssetsCache::CheckForGlobalRestriction(const std::string &restricted_name,
     return false;
 }
 
+bool CAssetsCache::CheckForDEPINRestriction(const std::string &assetName, const std::string& address, bool fSkipTempCache)
+{
+    /** Check if a DEPIN asset is blocked (frozen) for an address.
+     * This can happen in two ways:
+     * 1. Owner freeze (using existing CheckForAddressRestriction - flag 'R')
+     * 2. Self-revocation by holder (new flag 'S')
+     * Returns true if the asset is blocked/invalid, false if active/valid
+    **/
+
+    // LEVEL 1: Check dirty cache for self-restrictions
+    if (!fSkipTempCache) {
+        CAssetCacheSelfRestriction selfCache(assetName, address, true);
+
+        auto it = setNewSelfRestrictionToAdd.find(selfCache);
+        if (it != setNewSelfRestrictionToAdd.end()) {
+            return it->isSelfRevoke;  // true = blocked
+        }
+    }
+
+    // Check global dirty cache for self-restrictions
+    CAssetCacheSelfRestriction selfCacheGlobal(assetName, address, true);
+    auto itGlobal = passets->setNewSelfRestrictionToAdd.find(selfCacheGlobal);
+    if (itGlobal != passets->setNewSelfRestrictionToAdd.end()) {
+        return itGlobal->isSelfRevoke;  // true = blocked
+    }
+
+    // LEVEL 2 & 3: Reuse existing CheckForAddressRestriction for owner freeze
+    // (This already checks dirty cache → LRU cache → database for 'R' flag)
+    if (CheckForAddressRestriction(assetName, address, fSkipTempCache)) {
+        return true;  // Owner freezed
+    }
+
+    // LEVEL 3: Check database for self-restriction ('S' flag)
+    if (prestricteddb) {
+        if (prestricteddb->ReadSelfRestriction(address, assetName)) {
+            // Cache result in LRU cache (reuse passetsRestrictionCache)
+            if (passetsRestrictionCache) {
+                CAssetCacheSelfRestriction cacheEntry(assetName, address, true);
+                passetsRestrictionCache->Put(cacheEntry.GetHash().GetHex(), 1);
+            }
+            return true;  // Self-revoked
+        }
+    }
+
+    return false;  // Not blocked - asset is ACTIVE
+}
+
 void ExtractVerifierStringQualifiers(const std::string& verifier, std::set<std::string>& qualifiers)
 {
     std::string s(verifier);
@@ -5022,6 +5248,33 @@ bool VerifyRestrictedAddressChange(CAssetsCache& cache, const CNullAssetTxData& 
     return true;
 }
 
+bool VerifySelfRestrictionChange(CAssetsCache& cache, const CNullAssetTxData& data, const std::string& address, std::string& strError)
+{
+    // DEPIN self-restriction validation
+    // flag = 1: self-revoke (holder marks their own asset as invalid)
+    // flag = 0: NOT ALLOWED (only owner can un-revoke via freeze/unfreeze)
+
+    // Check the flag (must be 1 for self-revoke)
+    if (data.flag != 1) {
+        strError = "bad-txns-depin-self-restriction-invalid-flag";
+        return false;
+    }
+
+    // Check if already self-revoked
+    if (prestricteddb && prestricteddb->ReadSelfRestriction(address, data.asset_name)) {
+        strError = "bad-txns-depin-already-self-revoked";
+        return false;
+    }
+
+    // Check if owner-freezed (cannot self-revoke if already owner-freezed)
+    if (prestricteddb && prestricteddb->ReadRestrictedAddress(address, data.asset_name)) {
+        strError = "bad-txns-depin-cannot-self-revoke-when-owner-freezed";
+        return false;
+    }
+
+    return true;
+}
+
 bool VerifyGlobalRestrictedChange(CAssetsCache& cache, const CNullAssetTxData& data, std::string& strError)
 {
     // Check the flag
@@ -5098,6 +5351,10 @@ bool ContextualCheckNullAssetTxOut(const CTxOut& txout, CAssetsCache* assetCache
 
         } else if (IsAssetNameAnRestricted(data.asset_name)) {
             if (!VerifyRestrictedAddressChange(*assetCache, data, address, strError))
+                return false;
+        } else if (IsAssetNameADEPIN(data.asset_name)) {
+            // DEPIN self-restriction validation
+            if (!VerifySelfRestrictionChange(*assetCache, data, address, strError))
                 return false;
         } else {
             strError = "bad-txns-null-asset-data-on-non-restricted-or-qualifier-asset";
@@ -5299,6 +5556,24 @@ bool ContextualCheckTransferAsset(CAssetsCache* assetCache, const CAssetTransfer
             return false;
         }
     }
+
+    // DEPIN assets validation (testnet only)
+    if (assetType == AssetType::DEPIN) {
+        // DEPIN assets can only be used in testnet
+        if (Params().NetworkIDString() != "test") {
+            strError = "bad-txns-depin-not-enabled: DEPIN assets are only available in testnet";
+            return false;
+        }
+
+        // DEPIN assets are soulbound (non-transferable except by owner)
+        // Full validation with owner token check happens in CheckTxAssets
+        // This is a basic validation
+        if (transfer.nAmount != DEPIN_ASSET_AMOUNT) {
+            strError = "bad-txns-depin-invalid-amount: DEPIN assets must be exactly " + std::to_string(DEPIN_ASSET_AMOUNT / COIN) + " coin";
+            return false;
+        }
+    }
+
     return true;
 }
 

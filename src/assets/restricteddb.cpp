@@ -13,6 +13,7 @@ static const char ADDRESS_QULAIFIER_FLAG = 'T';
 static const char QULAIFIER_ADDRESS_FLAG = 'Q';
 static const char RESTRICTED_ADDRESS_FLAG = 'R';
 static const char GLOBAL_RESTRICTION_FLAG = 'G';
+static const char SELF_RESTRICTED_FLAG = 'S';  // DEPIN self-revocation
 
 
 
@@ -235,4 +236,22 @@ bool CRestrictedDB::GetGlobalRestrictions(std::vector<std::string>& restrictions
     }
 
     return true;
+}
+
+// Self-Restriction (DEPIN self-revocation)
+bool CRestrictedDB::WriteSelfRestriction(const std::string& address, const std::string& assetName)
+{
+    int8_t i = 1;
+    return Write(std::make_pair(SELF_RESTRICTED_FLAG, std::make_pair(address, assetName)), i);
+}
+
+bool CRestrictedDB::ReadSelfRestriction(const std::string& address, const std::string& assetName)
+{
+    int8_t i;
+    return Read(std::make_pair(SELF_RESTRICTED_FLAG, std::make_pair(address, assetName)), i);
+}
+
+bool CRestrictedDB::EraseSelfRestriction(const std::string& address, const std::string& assetName)
+{
+    return Erase(std::make_pair(SELF_RESTRICTED_FLAG, std::make_pair(address, assetName)));
 }

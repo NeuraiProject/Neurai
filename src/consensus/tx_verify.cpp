@@ -692,6 +692,35 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
             if (!ContextualCheckTransferAsset(assetCache, transfer, address, strError))
                 return state.DoS(100, false, REJECT_INVALID, strError, false, "", tx.GetHash());
 
+            // DEPIN assets: Verify that only the owner can transfer (soulbound)
+            AssetType transferAssetType;
+            if (IsAssetNameValid(transfer.strName, transferAssetType) && transferAssetType == AssetType::DEPIN) {
+                // Check if any input contains the owner token for this DEPIN asset
+                std::string ownerTokenName = transfer.strName + OWNER_TAG;
+                bool hasOwnerToken = false;
+
+                for (const auto& txin : tx.vin) {
+                    const Coin& coin = inputs.AccessCoin(txin.prevout);
+                    if (coin.IsSpent())
+                        continue;
+
+                    CAssetTransfer inputTransfer;
+                    std::string inputAddress;
+                    if (TransferAssetFromScript(coin.out.scriptPubKey, inputTransfer, inputAddress)) {
+                        if (inputTransfer.strName == ownerTokenName) {
+                            hasOwnerToken = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!hasOwnerToken) {
+                    return state.DoS(100, false, REJECT_INVALID,
+                                   "bad-txns-depin-transfer-not-by-owner: DEPIN assets can only be transferred by the owner",
+                                   false, "", tx.GetHash());
+                }
+            }
+
             // Add to the total value of assets in the outputs
             if (totalOutputs.count(transfer.strName))
                 totalOutputs.at(transfer.strName) += transfer.nAmount;
