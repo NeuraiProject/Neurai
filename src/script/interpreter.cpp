@@ -328,7 +328,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                 return set_error(serror, SCRIPT_ERR_OP_COUNT);
 
             // OP_CAT implementation (enabled only on testnet for safety)
-            if (opcode == OP_CAT && Params().NetworkIDString() == "test") {
+            if (opcode == OP_CAT && GetParams().NetworkIDString() == "test") {
                 // (x1 x2 -- x1+x2)
                 if (stack.size() < 2)
                     return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);

@@ -48,7 +48,7 @@ static const auto MAX_CHANNEL_NAME_LENGTH = 12;
 int GetMaxAssetNameLength()
 {
     // Use larger asset name length in testnet for testing purposes
-    if (Params().NetworkIDString() == "test") {
+    if (GetParams().NetworkIDString() == "test") {
         return MAX_NAME_LENGTH_TESTNET;
     }
     return MAX_NAME_LENGTH;
@@ -291,7 +291,7 @@ bool IsAssetNameValid(const std::string& name, AssetType& assetType, std::string
     else if (std::regex_match(name, DEPIN_INDICATOR) || std::regex_match(name, SUB_DEPIN_INDICATOR))
     {
         // DEPIN assets are only enabled in testnet
-        if (Params().NetworkIDString() != "test") {
+        if (GetParams().NetworkIDString() != "test") {
             error = "DEPIN assets are only available in testnet";
             return false;
         }
@@ -5560,7 +5560,7 @@ bool ContextualCheckTransferAsset(CAssetsCache* assetCache, const CAssetTransfer
     // DEPIN assets validation (testnet only)
     if (assetType == AssetType::DEPIN) {
         // DEPIN assets can only be used in testnet
-        if (Params().NetworkIDString() != "test") {
+        if (GetParams().NetworkIDString() != "test") {
             strError = "bad-txns-depin-not-enabled: DEPIN assets are only available in testnet";
             return false;
         }

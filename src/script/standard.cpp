@@ -23,7 +23,7 @@ unsigned nMaxDatacarrierBytes = MAX_OP_RETURN_RELAY;
 unsigned int GetMaxOPReturnRelay()
 {
     // Use larger OP_RETURN size in testnet for testing purposes
-    if (Params().NetworkIDString() == "test") {
+    if (GetParams().NetworkIDString() == "test") {
         return MAX_OP_RETURN_RELAY_TESTNET;
     }
     return MAX_OP_RETURN_RELAY;
