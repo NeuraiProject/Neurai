@@ -751,10 +751,30 @@ void CreateAssetDialog::onNameChanged(QString name)
             ui->availabilityButton->setDisabled(true);
         }
 
+    } else if (type == IntFromAssetType(AssetType::DEPIN)) {
+        if (name.size() == 0) {
+            hideMessage();
+            ui->availabilityButton->setDisabled(true);
+        }
+
+        std::string error;
+        auto strName = GetAssetName();
+        if (IsTypeCheckNameValid(AssetType::DEPIN, strName.toStdString(), error)) {
+            hideMessage();
+            ui->availabilityButton->setDisabled(false);
+        } else {
+            ui->nameText->setStyleSheet(STYLE_INVALID);
+            showMessage(tr(error.c_str()));
+            ui->availabilityButton->setDisabled(true);
+        }
     }
 
     // Set the assetName
-    updatePresentedAssetName(format.arg(type == IntFromAssetType(AssetType::ROOT) ? "" : ui->assetList->currentText(), identifier, name));
+    if (type == IntFromAssetType(AssetType::DEPIN)) {
+        updatePresentedAssetName("&" + name);
+    } else {
+        updatePresentedAssetName(format.arg(type == IntFromAssetType(AssetType::ROOT) ? "" : ui->assetList->currentText(), identifier, name));
+    }
 
     checkedAvailablity = false;
     disableCreateButton();
@@ -1087,6 +1107,8 @@ QString CreateAssetDialog::GetAssetName()
         return ui->nameText->text();
     else if (type == IntFromAssetType(AssetType::SUB_QUALIFIER))
         return ui->assetList->currentText() + "/" + ui->nameText->text();
+    else if (type == IntFromAssetType(AssetType::DEPIN))
+        return "&" + ui->nameText->text();
     return "";
 }
 
@@ -1094,6 +1116,8 @@ void CreateAssetDialog::UpdateAssetNameMaxSize()
 {
     if (type == IntFromAssetType(AssetType::ROOT) || type == IntFromAssetType(AssetType::QUALIFIER) || type == IntFromAssetType(AssetType::RESTRICTED)) {
         ui->nameText->setMaxLength(30);
+    } else if (type == IntFromAssetType(AssetType::DEPIN)) {
+        ui->nameText->setMaxLength(30);  // DEPIN uses same max length as ROOT (& prefix is added automatically)
     } else if (type == IntFromAssetType(AssetType::SUB) || type == IntFromAssetType(AssetType::UNIQUE) || type == IntFromAssetType(AssetType::SUB_QUALIFIER)) {
         ui->nameText->setMaxLength(30 - (ui->assetList->currentText().size() + 1));
     }
@@ -1101,7 +1125,7 @@ void CreateAssetDialog::UpdateAssetNameMaxSize()
 
 void CreateAssetDialog::UpdateAssetNameToUpper()
 {
-    if (type == IntFromAssetType(AssetType::ROOT) || type == IntFromAssetType(AssetType::SUB) || type == IntFromAssetType(AssetType::RESTRICTED) || type == IntFromAssetType(AssetType::QUALIFIER) || type == IntFromAssetType(AssetType::SUB_QUALIFIER) || type == IntFromAssetType(AssetType::MSGCHANNEL)) {
+    if (type == IntFromAssetType(AssetType::ROOT) || type == IntFromAssetType(AssetType::SUB) || type == IntFromAssetType(AssetType::RESTRICTED) || type == IntFromAssetType(AssetType::QUALIFIER) || type == IntFromAssetType(AssetType::SUB_QUALIFIER) || type == IntFromAssetType(AssetType::MSGCHANNEL) || type == IntFromAssetType(AssetType::DEPIN)) {
         ui->nameText->setText(ui->nameText->text().toUpper());
     }
 }
