@@ -532,7 +532,7 @@ UniValue issue(const JSONRPCRequest& request)
     if (request.params.size() > 4)
         units = request.params[4].get_int();
 
-    bool reissuable = assetType != AssetType::UNIQUE && assetType != AssetType::MSGCHANNEL && assetType != AssetType::QUALIFIER && assetType != AssetType::SUB_QUALIFIER;
+    bool reissuable = assetType != AssetType::UNIQUE && assetType != AssetType::MSGCHANNEL && assetType != AssetType::QUALIFIER && assetType != AssetType::SUB_QUALIFIER && assetType != AssetType::DEPIN;
     if (request.params.size() > 5)
         reissuable = request.params[5].get_bool();
 
@@ -563,6 +563,11 @@ UniValue issue(const JSONRPCRequest& request)
     // check for required unique asset params
     if ((assetType == AssetType::QUALIFIER || assetType == AssetType::SUB_QUALIFIER) && (nAmount < QUALIFIER_ASSET_MIN_AMOUNT || nAmount > QUALIFIER_ASSET_MAX_AMOUNT  || units != 0 || reissuable)) {
         throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid parameters for issuing a qualifier asset."));
+    }
+
+    // check for required depin asset params (soulbound: 1 coin, 0 units, not reissuable)
+    if (assetType == AssetType::DEPIN && (nAmount != COIN || units != 0 || reissuable)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid parameters for issuing a depin asset. DEPIN assets must have amount=1, units=0, and reissuable=false."));
     }
 
     CNewAsset asset(assetName, nAmount, units, reissuable ? 1 : 0, has_ipfs ? 1 : 0, DecodeAssetData(ipfs_hash));
