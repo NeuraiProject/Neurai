@@ -278,14 +278,16 @@ void CreateAssetDialog::setUpValues()
     // Setup the asset types
     QStringList list;
     int displayUnit = model->getOptionsModel()->getDisplayUnit();
-    list.append(tr("Main Asset") + " (" + NeuraiUnits::format(displayUnit, GetBurnAmount(AssetType::ROOT), false, NeuraiUnits::separatorStandard, 0) + " " + NeuraiUnits::name(displayUnit) + ")");
-    list.append(tr("Sub Asset") + " (" + NeuraiUnits::format(displayUnit, GetBurnAmount(AssetType::SUB), false, NeuraiUnits::separatorStandard, 0) + " " + NeuraiUnits::name(displayUnit) + ")");
-    list.append(tr("Unique Asset") + " (" + NeuraiUnits::format(displayUnit, GetBurnAmount(AssetType::UNIQUE), false, NeuraiUnits::separatorStandard, 0) + " " + NeuraiUnits::name(displayUnit) + ")");
-    list.append(tr("Messaging Channel Asset") + " (" + NeuraiUnits::format(displayUnit, GetBurnAmount(AssetType::MSGCHANNEL), false, NeuraiUnits::separatorStandard, 0) + " " + NeuraiUnits::name(displayUnit) + ")");
-    list.append(tr("Qualifier Asset") + " (" + NeuraiUnits::format(displayUnit, GetBurnAmount(AssetType::QUALIFIER), false, NeuraiUnits::separatorStandard, 0) + " " + NeuraiUnits::name(displayUnit) + ")");
-    list.append(tr("Sub Qualifier Asset") + " (" + NeuraiUnits::format(displayUnit, GetBurnAmount(AssetType::SUB_QUALIFIER), false, NeuraiUnits::separatorStandard, 0) + " " + NeuraiUnits::name(displayUnit) + ")");
-    list.append(tr("Restricted Asset") + " (" + NeuraiUnits::format(displayUnit, GetBurnAmount(AssetType::RESTRICTED), false, NeuraiUnits::separatorStandard, 0) + " " + NeuraiUnits::name(displayUnit) + ")");
-    list.append(tr("DEPIN Asset (Testnet)") + " (" + NeuraiUnits::format(displayUnit, GetBurnAmount(AssetType::DEPIN), false, NeuraiUnits::separatorStandard, 0) + " " + NeuraiUnits::name(displayUnit) + ")");
+    // Format burn amounts as integers (divide by factor and take whole part only)
+    qint64 factor = NeuraiUnits::factor(displayUnit);
+    list.append(tr("Main Asset") + " (" + QString::number(GetBurnAmount(AssetType::ROOT) / factor) + " " + NeuraiUnits::name(displayUnit) + ")");
+    list.append(tr("Sub Asset") + " (" + QString::number(GetBurnAmount(AssetType::SUB) / factor) + " " + NeuraiUnits::name(displayUnit) + ")");
+    list.append(tr("Unique Asset") + " (" + QString::number(GetBurnAmount(AssetType::UNIQUE) / factor) + " " + NeuraiUnits::name(displayUnit) + ")");
+    list.append(tr("Messaging Channel Asset") + " (" + QString::number(GetBurnAmount(AssetType::MSGCHANNEL) / factor) + " " + NeuraiUnits::name(displayUnit) + ")");
+    list.append(tr("Qualifier Asset") + " (" + QString::number(GetBurnAmount(AssetType::QUALIFIER) / factor) + " " + NeuraiUnits::name(displayUnit) + ")");
+    list.append(tr("Sub Qualifier Asset") + " (" + QString::number(GetBurnAmount(AssetType::SUB_QUALIFIER) / factor) + " " + NeuraiUnits::name(displayUnit) + ")");
+    list.append(tr("Restricted Asset") + " (" + QString::number(GetBurnAmount(AssetType::RESTRICTED) / factor) + " " + NeuraiUnits::name(displayUnit) + ")");
+    list.append(tr("DEPIN Asset (Testnet)") + " (" + QString::number(GetBurnAmount(AssetType::DEPIN) / factor) + " " + NeuraiUnits::name(displayUnit) + ")");
 
     ui->assetType->addItems(list);
     type = IntFromAssetType(AssetType::ROOT);
