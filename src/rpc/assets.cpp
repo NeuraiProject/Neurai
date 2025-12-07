@@ -3383,12 +3383,12 @@ static const CRPCCommand commands[] =
     { "assets",   "purgesnapshot",              &purgesnapshot,              {"asset_name", "block_height"}},
 
     // DEPIN Assets (Soulbound Assets)
-    { "depin",    "listdepinholders",           &listdepinholders,           {"asset_name"}},
-    { "depin",    "checkdepinvalidity",         &checkdepinvalidity,         {"asset_name", "address"}},
+    { "depin asset",    "listdepinholders",           &listdepinholders,           {"asset_name"}},
+    { "depin asset",    "checkdepinvalidity",         &checkdepinvalidity,         {"asset_name", "address"}},
 #ifdef ENABLE_WALLET
-    { "depin",    "freezedepin",                &freezedepin,                {"asset_name", "address", "change_address"}},
-    { "depin",    "unfreezedepin",              &unfreezedepin,              {"asset_name", "address", "change_address"}},
-    { "depin",    "selfrevokedepin",            &selfrevokedepin,            {"asset_name"}},
+    { "depin asset",    "freezedepin",                &freezedepin,                {"asset_name", "address", "change_address"}},
+    { "depin asset",    "unfreezedepin",              &unfreezedepin,              {"asset_name", "address", "change_address"}},
+    { "depin asset",    "selfrevokedepin",            &selfrevokedepin,            {"asset_name"}},
 #endif
 };
 

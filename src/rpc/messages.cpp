@@ -1579,14 +1579,14 @@ static const CRPCCommand commands[] =
 #endif
             { "messages",       "clearmessages",              &clearmessages,              {}},
             // DePIN Messaging Commands
-            { "depin",          "depingetmsginfo",            &depingetmsginfo,            {}},
-            { "depin",          "depingetpoolcontent",        &depingetpoolcontent,        {}},
-            { "depin",          "depinpoolstats",             &depinpoolstats,             {}},
-            { "depin",          "depinsubmitmsg",             &depinsubmitmsg,             {"hexmessage"}},
+            { "depin messaging",          "depingetmsginfo",            &depingetmsginfo,            {}},
+            { "depin messaging",          "depingetpoolcontent",        &depingetpoolcontent,        {}},
+            { "depin messaging",          "depinpoolstats",             &depinpoolstats,             {}},
+            { "depin messaging",          "depinsubmitmsg",             &depinsubmitmsg,             {"hexmessage"}},
 #ifdef ENABLE_WALLET
-            { "depin",          "depinsendmsg",               &depinsendmsg,               {"token", "ip", "message", "fromaddress", "port"}},
-            { "depin",          "depingetmsg",                &depingetmsg,                {"token"}},
-            { "depin",          "depinclearmsg",              &depinclearmsg,              {}},
+            { "depin messaging",          "depinsendmsg",               &depinsendmsg,               {"token", "ip", "message", "fromaddress", "port"}},
+            { "depin messaging",          "depingetmsg",                &depingetmsg,                {"token"}},
+            { "depin messaging",          "depinclearmsg",              &depinclearmsg,              {}},
 #endif
     };
 
