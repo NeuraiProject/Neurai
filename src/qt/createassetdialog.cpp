@@ -284,6 +284,7 @@ void CreateAssetDialog::setUpValues()
     list.append(tr("Qualifier Asset") + " (" + NeuraiUnits::formatWithUnit(model->getOptionsModel()->getDisplayUnit(), GetBurnAmount(AssetType::QUALIFIER)) + ")");
     list.append(tr("Sub Qualifier Asset") + " (" + NeuraiUnits::formatWithUnit(model->getOptionsModel()->getDisplayUnit(), GetBurnAmount(AssetType::SUB_QUALIFIER)) + ")");
     list.append(tr("Restricted Asset") + " (" + NeuraiUnits::formatWithUnit(model->getOptionsModel()->getDisplayUnit(), GetBurnAmount(AssetType::RESTRICTED)) + ")");
+    list.append(tr("DEPIN Asset (Testnet)") + " (" + NeuraiUnits::formatWithUnit(model->getOptionsModel()->getDisplayUnit(), GetBurnAmount(AssetType::DEPIN)) + ")");
 
     ui->assetType->addItems(list);
     type = IntFromAssetType(AssetType::ROOT);
@@ -964,11 +965,12 @@ void CreateAssetDialog::onAssetTypeActivated(int index)
 
     bool fOrginalTypeAsset = type == IntFromAssetType(AssetType::ROOT) || type == IntFromAssetType(AssetType::SUB) || type == IntFromAssetType(AssetType::UNIQUE) || type == IntFromAssetType(AssetType::MSGCHANNEL);
     bool fRestrictedTypeAsset = type == IntFromAssetType(AssetType::QUALIFIER) || type == IntFromAssetType(AssetType::SUB_QUALIFIER) || type == IntFromAssetType(AssetType::RESTRICTED);
+    bool fDepinTypeAsset = type == IntFromAssetType(AssetType::DEPIN);
 
     bool fShowList = type == IntFromAssetType(AssetType::SUB) || type == IntFromAssetType(AssetType::UNIQUE) || type == IntFromAssetType(AssetType::SUB_QUALIFIER) || type == IntFromAssetType(AssetType::RESTRICTED) || type == IntFromAssetType(AssetType::MSGCHANNEL);
 
     // Make sure the type is only the the supported issue types
-    if(!(fOrginalTypeAsset || fRestrictedTypeAsset)) {
+    if(!(fOrginalTypeAsset || fRestrictedTypeAsset || fDepinTypeAsset)) {
         type = IntFromAssetType(AssetType::ROOT);
     }
 
@@ -977,6 +979,8 @@ void CreateAssetDialog::onAssetTypeActivated(int index)
         setUniqueSelected();
     } else if (type == IntFromAssetType(AssetType::QUALIFIER) || type == IntFromAssetType(AssetType::SUB_QUALIFIER)) {
         setQualifierSelected();
+    } else if (type == IntFromAssetType(AssetType::DEPIN)) {
+        setDepinSelected();
     } else {
         clearSelected();
     }
@@ -1010,6 +1014,10 @@ void CreateAssetDialog::onAssetTypeActivated(int index)
     if (fRestrictedTypeAsset) {
         bool fSingleName = type != IntFromAssetType(AssetType::SUB_QUALIFIER);
         updatePresentedAssetName(format.arg(fSingleName ? "" : ui->assetList->currentText(), identifier, ui->nameText->text()));
+    }
+
+    if (fDepinTypeAsset) {
+        updatePresentedAssetName(format.arg("", identifier, ui->nameText->text()));
     }
 
     if (ui->nameText->text().size()) {
@@ -1393,10 +1401,25 @@ void CreateAssetDialog::setQualifierSelected()
     ui->quantitySpinBox->setValue(1);
     ui->quantitySpinBox->setMaximum(10);
     ui->quantitySpinBox->setDisabled(false);
-    
+
     ui->unitBox->setValue(0);
     ui->unitBox->setDisabled(true);
 
+    ui->reissuableBox->setChecked(false);
+    ui->reissuableBox->setDisabled(true);
+}
+
+void CreateAssetDialog::setDepinSelected()
+{
+    // DEPIN assets are always 1 coin (soulbound)
+    ui->quantitySpinBox->setValue(1);
+    ui->quantitySpinBox->setDisabled(true);
+
+    // DEPIN assets have 0 decimals
+    ui->unitBox->setValue(0);
+    ui->unitBox->setDisabled(true);
+
+    // DEPIN assets are not reissuable
     ui->reissuableBox->setChecked(false);
     ui->reissuableBox->setDisabled(true);
 }

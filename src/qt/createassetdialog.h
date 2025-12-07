@@ -85,6 +85,7 @@ private:
     void UpdateAssetNameToUpper();
     void setUniqueSelected();
     void setQualifierSelected();
+    void setDepinSelected();
     void clearSelected();
 
     //CoinControl

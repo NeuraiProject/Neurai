@@ -3859,6 +3859,8 @@ CAmount GetBurnAmount(const AssetType type)
             return 0;
         case AssetType::UNIQUE:
             return GetIssueUniqueAssetBurnAmount();
+        case AssetType::DEPIN:
+            return GetIssueUniqueAssetBurnAmount();  // DEPIN assets use same burn as unique assets
         case AssetType::VOTE:
             return 0;
         case AssetType::REISSUE:
@@ -3894,6 +3896,8 @@ std::string GetBurnAddress(const AssetType type)
             return "";
         case AssetType::UNIQUE:
             return GetParams().IssueUniqueAssetBurnAddress();
+        case AssetType::DEPIN:
+            return GetParams().IssueUniqueAssetBurnAddress();  // DEPIN assets use same burn address as unique assets
         case AssetType::VOTE:
             return "";
         case AssetType::REISSUE:
