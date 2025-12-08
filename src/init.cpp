@@ -516,6 +516,8 @@ std::string HelpMessage(HelpMessageMode mode)
     strUsage += HelpMessageOpt("-depinmsgexpire=<n>", strprintf(_("DePIN message expiry time in hours (default: %u, max: %u)"), DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS, MAX_DEPIN_MESSAGE_EXPIRY_HOURS));
     strUsage += HelpMessageOpt("-depinpoolsize=<n>", strprintf(_("Maximum DePIN pool size in MB (default: %u, max: %u)"), DEFAULT_DEPIN_POOL_SIZE_MB, MAX_DEPIN_POOL_SIZE_MB));
     strUsage += HelpMessageOpt("-depinmsgcleanupinterval=<n>", _("Interval in seconds to automatically remove expired DePIN messages (default: 300)"));
+
+    strUsage += HelpMessageGroup(_("DePIN MCP options:"));
     strUsage += HelpMessageOpt("-depinmcp", _("Enable DePIN MCP worker for AI integration (default: 0)"));
     strUsage += HelpMessageOpt("-depinmcpurl=<url>", _("URL of the MCP server (default: http://localhost:1234)"));
     strUsage += HelpMessageOpt("-depinmcpendpoint=<endpoint>", _("MCP API endpoint (default: /v1/chat/completions)"));
