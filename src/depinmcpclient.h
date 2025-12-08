@@ -21,6 +21,7 @@ private:
     std::string endpoint;       // API endpoint (e.g., /v1/chat/completions)
     std::string apiKey;         // Optional API key for authentication
     int timeout;                // Request timeout in seconds
+    std::string modelName;      // Name of the loaded model
 
     /**
      * Make HTTP POST request to MCP server
@@ -83,6 +84,18 @@ public:
      * @return true if server is reachable, false otherwise
      */
     bool TestConnection();
+
+    /**
+     * Fetch and store the model name from MCP server
+     * @return true if model name was fetched successfully
+     */
+    bool FetchModelName();
+
+    /**
+     * Get the name of the currently loaded model
+     * @return Model name or "unknown" if not available
+     */
+    std::string GetModelName() const { return modelName.empty() ? "unknown" : modelName; }
 };
 
 #endif // NEURAI_DEPINMCPCLIENT_H

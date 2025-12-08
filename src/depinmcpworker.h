@@ -196,6 +196,7 @@ public:
     std::string GetPoolHost() const { return poolHost; }
     int GetPoolPort() const { return poolPort; }
     bool IsUsingRemotePool() const { return poolHost != "localhost" && poolHost != "127.0.0.1"; }
+    std::string GetModelName() const;
 };
 
 // Global instance

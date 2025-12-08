@@ -1577,6 +1577,7 @@ UniValue depinmcpstatus(const JSONRPCRequest& request)
                 "  \"enabled\": true|false,         (boolean) Whether MCP worker is enabled\n"
                 "  \"running\": true|false,         (boolean) Whether MCP worker is running\n"
                 "  \"mcp_url\": \"url\",              (string) MCP server URL\n"
+                "  \"model_name\": \"name\",          (string) Name of the loaded AI model\n"
                 "  \"command_key\": \"key\",          (string) Command prefix (e.g. /ai)\n"
                 "  \"depin_token\": \"token\",        (string) DePIN token being monitored\n"
                 "  \"poll_interval\": n,            (numeric) Polling interval in seconds\n"
@@ -1600,6 +1601,7 @@ UniValue depinmcpstatus(const JSONRPCRequest& request)
     result.push_back(Pair("enabled", true));
     result.push_back(Pair("running", g_depinMCPWorker->IsRunning()));
     result.push_back(Pair("mcp_url", g_depinMCPWorker->GetMCPUrl()));
+    result.push_back(Pair("model_name", g_depinMCPWorker->GetModelName()));
     result.push_back(Pair("command_key", g_depinMCPWorker->GetCommandKey()));
     result.push_back(Pair("depin_token", g_depinMCPWorker->GetDepinToken()));
     result.push_back(Pair("node_address", g_depinMCPWorker->GetNodeAddress()));

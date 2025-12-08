@@ -103,6 +103,14 @@ bool CDepinMCPWorker::Initialize(const std::string& url, const std::string& endp
     // Create MCP client
     mcpClient = std::make_unique<CDepinMCPClient>(url, endpoint, apiKey, timeout);
 
+    // Fetch model name from MCP server
+    LogPrintf("MCPWorker: Fetching model information from MCP server...\n");
+    if (mcpClient->FetchModelName()) {
+        LogPrintf("MCPWorker: AI Model loaded: %s\n", mcpClient->GetModelName());
+    } else {
+        LogPrintf("MCPWorker: WARNING - Could not fetch model name. Will try to get it from responses.\n");
+    }
+
     // Test connection to MCP server
     LogPrintf("MCPWorker: Testing connection to MCP server...\n");
     if (!mcpClient->TestConnection()) {
@@ -394,10 +402,12 @@ bool CDepinMCPWorker::ProcessMessage(const CDepinMessage& msg)
 bool CDepinMCPWorker::SendResponse(const std::string& response, const std::string& originalSender)
 {
     try {
-        // Add prefix if configured
+        // Add prefix and model info if configured
         std::string finalResponse = response;
         if (!responsePrefix.empty()) {
-            finalResponse = responsePrefix + " " + response;
+            // Include model name in the response prefix
+            std::string modelInfo = mcpClient ? mcpClient->GetModelName() : "unknown";
+            finalResponse = responsePrefix + " [" + modelInfo + "] " + response;
         }
 
         // Limit response length
@@ -633,4 +643,12 @@ bool CDepinMCPWorker::SaveProcessedMessages()
         LogPrintf("MCPWorker: Exception saving processed messages: %s\n", e.what());
         return false;
     }
+}
+
+std::string CDepinMCPWorker::GetModelName() const
+{
+    if (mcpClient) {
+        return mcpClient->GetModelName();
+    }
+    return "unknown";
 }

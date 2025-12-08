@@ -16,7 +16,7 @@
 
 CDepinMCPClient::CDepinMCPClient(const std::string& url, const std::string& ep,
                                  const std::string& key, int to)
-    : baseUrl(url), endpoint(ep), apiKey(key), timeout(to)
+    : baseUrl(url), endpoint(ep), apiKey(key), timeout(to), modelName("")
 {
 }
 
@@ -66,6 +66,13 @@ bool CDepinMCPClient::ParseResponse(const std::string& jsonResponse, std::string
         if (!response.read(jsonResponse)) {
             LogPrintf("MCPClient: Failed to parse JSON response\n");
             return false;
+        }
+
+        // Extract model name if present
+        const UniValue& model = find_value(response, "model");
+        if (model.isStr()) {
+            modelName = model.get_str();
+            LogPrintf("MCPClient: Model name from response: %s\n", modelName);
         }
 
         // OpenAI format: response.choices[0].message.content
@@ -259,4 +266,115 @@ bool CDepinMCPClient::TestConnection()
     }
 
     return success;
+}
+
+bool CDepinMCPClient::FetchModelName()
+{
+    LogPrintf("MCPClient: Fetching model name from %s/v1/models\n", baseUrl);
+
+    // Try to get model list from /v1/models endpoint (OpenAI-compatible)
+    std::string modelsUrl = baseUrl + "/v1/models";
+    std::string response;
+
+    // Create a simple GET request - we'll use a minimal payload
+    struct event_base* base = event_base_new();
+    if (!base) {
+        LogPrintf("MCPClient: Failed to create event base for model fetch\n");
+        return false;
+    }
+
+    struct evhttp_uri* uri = evhttp_uri_parse(modelsUrl.c_str());
+    if (!uri) {
+        LogPrintf("MCPClient: Invalid URL: %s\n", modelsUrl);
+        event_base_free(base);
+        return false;
+    }
+
+    const char* host = evhttp_uri_get_host(uri);
+    int port = evhttp_uri_get_port(uri);
+    if (port == -1) port = 80;
+
+    struct evhttp_connection* conn = evhttp_connection_base_new(base, NULL, host, port);
+    if (!conn) {
+        LogPrintf("MCPClient: Failed to create connection for model fetch\n");
+        evhttp_uri_free(uri);
+        event_base_free(base);
+        return false;
+    }
+
+    evhttp_connection_set_timeout(conn, 10); // Short timeout for model query
+
+    struct evhttp_request* req = evhttp_request_new([](struct evhttp_request* req, void* ctx) {
+        std::string* responsePtr = static_cast<std::string*>(ctx);
+        if (!req) return;
+
+        struct evbuffer* buf = evhttp_request_get_input_buffer(req);
+        size_t len = evbuffer_get_length(buf);
+        if (len > 0) {
+            char* data = new char[len + 1];
+            evbuffer_copyout(buf, data, len);
+            data[len] = '\0';
+            *responsePtr = std::string(data, len);
+            delete[] data;
+        }
+    }, &response);
+
+    if (!req) {
+        evhttp_connection_free(conn);
+        evhttp_uri_free(uri);
+        event_base_free(base);
+        return false;
+    }
+
+    struct evkeyvalq* headers = evhttp_request_get_output_headers(req);
+    evhttp_add_header(headers, "Host", host);
+    if (!apiKey.empty()) {
+        std::string authHeader = "Bearer " + apiKey;
+        evhttp_add_header(headers, "Authorization", authHeader.c_str());
+    }
+
+    int result = evhttp_make_request(conn, req, EVHTTP_REQ_GET, "/v1/models");
+    if (result != 0) {
+        evhttp_uri_free(uri);
+        event_base_free(base);
+        return false;
+    }
+
+    event_base_dispatch(base);
+    evhttp_connection_free(conn);
+    evhttp_uri_free(uri);
+    event_base_free(base);
+
+    if (response.empty()) {
+        LogPrintf("MCPClient: Empty response from /v1/models\n");
+        return false;
+    }
+
+    // Parse response to get model name
+    try {
+        UniValue models;
+        if (!models.read(response)) {
+            LogPrintf("MCPClient: Failed to parse models JSON\n");
+            return false;
+        }
+
+        // LM Studio format: {"data": [{"id": "model-name", ...}]}
+        const UniValue& data = find_value(models, "data");
+        if (data.isArray() && data.size() > 0) {
+            const UniValue& firstModel = data[0];
+            const UniValue& id = find_value(firstModel, "id");
+            if (id.isStr()) {
+                modelName = id.get_str();
+                LogPrintf("MCPClient: Loaded model: %s\n", modelName);
+                return true;
+            }
+        }
+
+        LogPrintf("MCPClient: Could not extract model name from response\n");
+        return false;
+
+    } catch (const std::exception& e) {
+        LogPrintf("MCPClient: Exception parsing models: %s\n", e.what());
+        return false;
+    }
 }
