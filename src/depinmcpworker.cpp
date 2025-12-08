@@ -41,7 +41,8 @@ bool CDepinMCPWorker::Initialize(const std::string& url, const std::string& endp
                                  const std::string& apiKey, const std::string& key,
                                  const std::string& address, const std::string& token,
                                  int interval, const std::string& prefix,
-                                 int timeout, int rateLimit)
+                                 int timeout, int rateLimit,
+                                 const std::string& pHost, int pPort)
 {
     LogPrintf("MCPWorker: Initializing with URL=%s, endpoint=%s, key=%s, token=%s\n",
               url, endpoint, key, token);
@@ -86,6 +87,15 @@ bool CDepinMCPWorker::Initialize(const std::string& url, const std::string& endp
     pollInterval = interval;
     responsePrefix = prefix;
     rateLimitPerMinute = rateLimit;
+    poolHost = pHost;
+    poolPort = pPort;
+
+    // Log pool source
+    if (poolHost == "localhost" || poolHost == "127.0.0.1") {
+        LogPrintf("MCPWorker: Using LOCAL DePIN message pool\n");
+    } else {
+        LogPrintf("MCPWorker: Using REMOTE DePIN message pool at %s:%d\n", poolHost, poolPort);
+    }
 
     // Create MCP client
     mcpClient = std::make_unique<CDepinMCPClient>(url, endpoint, apiKey, timeout);
@@ -144,23 +154,46 @@ void CDepinMCPWorker::WorkerLoop()
 {
     LogPrintf("MCPWorker: Worker loop started (interval=%d seconds)\n", pollInterval);
 
+    bool useRemotePool = (poolHost != "localhost" && poolHost != "127.0.0.1");
+
     while (!shouldStop.load()) {
         try {
             lastPollTime.store(GetTime());
 
-            LogPrint(BCLog::NET, "MCPWorker: Polling for new messages (token=%s, key=%s)...\n",
-                     depinToken, commandKey);
+            LogPrintf("MCPWorker: Polling for new messages (token=%s, key=%s, source=%s)...\n",
+                     depinToken, commandKey, useRemotePool ? poolHost : "local");
 
-            // Get all messages from pool
-            if (!pDepinMsgPool) {
-                LogPrint(BCLog::NET, "MCPWorker: DePIN message pool not initialized\n");
-                std::this_thread::sleep_for(std::chrono::seconds(pollInterval));
-                continue;
+            std::vector<CDepinMessage> messages;
+
+            if (useRemotePool) {
+                // Query remote DePIN message pool
+                if (vpwallets.empty() || !vpwallets[0]) {
+                    LogPrintf("MCPWorker: No wallet available for remote pool query\n");
+                    std::this_thread::sleep_for(std::chrono::seconds(pollInterval));
+                    continue;
+                }
+
+                std::vector<std::string> addressList;
+                addressList.push_back(nodeAddress);
+
+                std::string error;
+                if (!QueryRemoteDepinMsgPool(vpwallets[0], poolHost, poolPort, depinToken,
+                                            addressList, messages, error)) {
+                    LogPrintf("MCPWorker: Failed to query remote pool: %s\n", error);
+                    std::this_thread::sleep_for(std::chrono::seconds(pollInterval));
+                    continue;
+                }
+            } else {
+                // Use local pool
+                if (!pDepinMsgPool) {
+                    LogPrintf("MCPWorker: DePIN message pool not initialized\n");
+                    std::this_thread::sleep_for(std::chrono::seconds(pollInterval));
+                    continue;
+                }
+                messages = pDepinMsgPool->GetAllMessages();
             }
 
-            std::vector<CDepinMessage> messages = pDepinMsgPool->GetAllMessages();
-
-            LogPrint(BCLog::NET, "MCPWorker: Found %d total messages in pool\n", messages.size());
+            LogPrintf("MCPWorker: Found %d total messages in pool\n", messages.size());
 
             int processedThisCycle = 0;
 
@@ -210,6 +243,7 @@ bool CDepinMCPWorker::ValidateMessage(const CDepinMessage& msg)
 {
     // Check if message is for our token
     if (msg.token != depinToken) {
+        LogPrintf("MCPWorker: Message token '%s' != our token '%s', skipping\n", msg.token, depinToken);
         return false;
     }
 
@@ -217,15 +251,18 @@ bool CDepinMCPWorker::ValidateMessage(const CDepinMessage& msg)
     int64_t now = GetTime();
     int64_t maxAge = 24 * 60 * 60; // 24 hours
     if (now - msg.timestamp > maxAge) {
-        LogPrint(BCLog::NET, "MCPWorker: Skipping old message (age=%d seconds)\n",
+        LogPrintf("MCPWorker: Skipping old message (age=%d seconds)\n",
                  now - msg.timestamp);
         return false;
     }
 
     // Don't process our own messages (from the bot)
     if (msg.senderAddress == nodeAddress) {
+        LogPrintf("MCPWorker: Skipping own message from %s\n", msg.senderAddress);
         return false;
     }
+
+    LogPrintf("MCPWorker: Checking message from %s (token=%s)\n", msg.senderAddress, msg.token);
 
     // Try to decrypt the message to check if it starts with command key
     // We need to decrypt it here to validate, then decrypt again in ProcessMessage
@@ -234,16 +271,19 @@ bool CDepinMCPWorker::ValidateMessage(const CDepinMessage& msg)
     std::string error;
 
     if (!DecryptMessageForAddress(msg.encryptedPayload, nodeAddress, decryptedMessage, error)) {
-        LogPrint(BCLog::NET, "MCPWorker: Could not decrypt message: %s\n", error);
+        LogPrintf("MCPWorker: Could not decrypt message from %s: %s\n", msg.senderAddress, error);
         return false;
     }
+
+    LogPrintf("MCPWorker: Decrypted message: '%s'\n", decryptedMessage);
 
     // Check if message starts with command key
     if (decryptedMessage.find(commandKey) != 0) {
+        LogPrintf("MCPWorker: Message does not start with command key '%s'\n", commandKey);
         return false;
     }
 
-    LogPrint(BCLog::NET, "MCPWorker: Valid message from %s: %s\n",
+    LogPrintf("MCPWorker: Valid AI command from %s: %s\n",
              msg.senderAddress, decryptedMessage);
 
     return true;

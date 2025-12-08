@@ -1577,7 +1577,7 @@ UniValue depinmcpstatus(const JSONRPCRequest& request)
                 "  \"enabled\": true|false,         (boolean) Whether MCP worker is enabled\n"
                 "  \"running\": true|false,         (boolean) Whether MCP worker is running\n"
                 "  \"mcp_url\": \"url\",              (string) MCP server URL\n"
-                "  \"command_key\": \"key\",          (string) Command prefix (e.g. /ia)\n"
+                "  \"command_key\": \"key\",          (string) Command prefix (e.g. /ai)\n"
                 "  \"depin_token\": \"token\",        (string) DePIN token being monitored\n"
                 "  \"poll_interval\": n,            (numeric) Polling interval in seconds\n"
                 "  \"commands_processed\": n,       (numeric) Total commands processed\n"
@@ -1602,7 +1602,11 @@ UniValue depinmcpstatus(const JSONRPCRequest& request)
     result.push_back(Pair("mcp_url", g_depinMCPWorker->GetMCPUrl()));
     result.push_back(Pair("command_key", g_depinMCPWorker->GetCommandKey()));
     result.push_back(Pair("depin_token", g_depinMCPWorker->GetDepinToken()));
+    result.push_back(Pair("node_address", g_depinMCPWorker->GetNodeAddress()));
     result.push_back(Pair("poll_interval", g_depinMCPWorker->GetPollInterval()));
+    result.push_back(Pair("pool_host", g_depinMCPWorker->GetPoolHost()));
+    result.push_back(Pair("pool_port", g_depinMCPWorker->GetPoolPort()));
+    result.push_back(Pair("using_remote_pool", g_depinMCPWorker->IsUsingRemotePool()));
     result.push_back(Pair("commands_processed", (uint64_t)g_depinMCPWorker->GetCommandsProcessed()));
     result.push_back(Pair("total_errors", (uint64_t)g_depinMCPWorker->GetTotalErrors()));
     result.push_back(Pair("last_poll_time", g_depinMCPWorker->GetLastPollTime()));

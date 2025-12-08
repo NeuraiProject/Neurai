@@ -24,7 +24,7 @@ struct CDepinMessage;
  *
  * This class runs a background thread that:
  * 1. Polls the DePIN message pool every N seconds
- * 2. Filters messages with the configured command prefix (e.g., "/ia")
+ * 2. Filters messages with the configured command prefix (e.g., "/ai")
  * 3. Sends prompts to the MCP server (AI model)
  * 4. Sends AI responses back to the DePIN channel
  *
@@ -45,12 +45,14 @@ private:
     // Configuration
     std::string mcpUrl;
     std::string mcpEndpoint;
-    std::string commandKey;         // e.g., "/ia"
+    std::string commandKey;         // e.g., "/ai"
     std::string nodeAddress;        // Address for signing responses
     std::string depinToken;         // Token to monitor
     int pollInterval;               // Seconds between polls
     std::string responsePrefix;     // e.g., "[BOT]:"
     int rateLimitPerMinute;
+    std::string poolHost;           // DePIN pool host (localhost = local pool)
+    int poolPort;                   // DePIN pool port
 
     // Message processing
     std::set<uint256> processedMessages;
@@ -129,20 +131,23 @@ public:
      * @param url MCP server base URL
      * @param endpoint MCP API endpoint
      * @param apiKey Optional API key
-     * @param key Command prefix (e.g., "/ia")
+     * @param key Command prefix (e.g., "/ai")
      * @param address Node address for signing
      * @param token DePIN token to monitor
      * @param interval Poll interval in seconds
      * @param prefix Response prefix (e.g., "[BOT]:")
      * @param timeout HTTP timeout in seconds
      * @param rateLimit Rate limit per minute (0 = no limit)
+     * @param poolHost DePIN pool host (localhost = local pool)
+     * @param poolPort DePIN pool port
      * @return true if initialization succeeded
      */
     bool Initialize(const std::string& url, const std::string& endpoint,
                    const std::string& apiKey, const std::string& key,
                    const std::string& address, const std::string& token,
                    int interval, const std::string& prefix,
-                   int timeout, int rateLimit);
+                   int timeout, int rateLimit,
+                   const std::string& poolHost = "localhost", int poolPort = 19002);
 
     /**
      * Start the worker thread
@@ -170,6 +175,9 @@ public:
     std::string GetDepinToken() const { return depinToken; }
     std::string GetNodeAddress() const { return nodeAddress; }
     int GetPollInterval() const { return pollInterval; }
+    std::string GetPoolHost() const { return poolHost; }
+    int GetPoolPort() const { return poolPort; }
+    bool IsUsingRemotePool() const { return poolHost != "localhost" && poolHost != "127.0.0.1"; }
 };
 
 // Global instance

@@ -521,13 +521,15 @@ std::string HelpMessage(HelpMessageMode mode)
     strUsage += HelpMessageOpt("-depinmcp", _("Enable DePIN MCP worker for AI integration (default: 0)"));
     strUsage += HelpMessageOpt("-depinmcpurl=<url>", _("URL of the MCP server (default: http://localhost:1234)"));
     strUsage += HelpMessageOpt("-depinmcpendpoint=<endpoint>", _("MCP API endpoint (default: /v1/chat/completions)"));
-    strUsage += HelpMessageOpt("-depinmcpkey=<prefix>", _("Command prefix to trigger AI (default: /ia)"));
+    strUsage += HelpMessageOpt("-depinmcpkey=<prefix>", _("Command prefix to trigger AI (default: /ai)"));
     strUsage += HelpMessageOpt("-depinmcpaddress=<address>", _("Neurai address to sign bot responses (required when -depinmcp=1)"));
     strUsage += HelpMessageOpt("-depinmcpinterval=<n>", _("Polling interval in seconds (default: 10)"));
     strUsage += HelpMessageOpt("-depinmcpprefix=<prefix>", _("Prefix added to bot responses (default: [BOT]:)"));
     strUsage += HelpMessageOpt("-depinmcptimeout=<n>", _("HTTP timeout for MCP requests in seconds (default: 30)"));
     strUsage += HelpMessageOpt("-depinmcpapikey=<key>", _("Optional API key for MCP server authentication"));
     strUsage += HelpMessageOpt("-depinmcpratelimit=<n>", _("Max commands per minute per user, 0=unlimited (default: 0)"));
+    strUsage += HelpMessageOpt("-depinmcppoolhost=<host>", _("DePIN message pool host to read from (default: localhost = local pool)"));
+    strUsage += HelpMessageOpt("-depinmcppoolport=<port>", strprintf(_("DePIN message pool port to read from (default: %u)"), DEFAULT_DEPIN_MSG_PORT));
 
     strUsage += HelpMessageGroup(_("Connection options:"));
     strUsage += HelpMessageOpt("-addnode=<ip>", _("Add a node to connect to and attempt to keep the connection open (see the `addnode` RPC command help for more info)"));
@@ -1992,12 +1994,14 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
             std::string mcpUrl = gArgs.GetArg("-depinmcpurl", "http://localhost:1234");
             std::string mcpEndpoint = gArgs.GetArg("-depinmcpendpoint", "/v1/chat/completions");
             std::string mcpApiKey = gArgs.GetArg("-depinmcpapikey", "");
-            std::string mcpKey = gArgs.GetArg("-depinmcpkey", "/ia");
+            std::string mcpKey = gArgs.GetArg("-depinmcpkey", "/ai");
             std::string mcpAddress = gArgs.GetArg("-depinmcpaddress", "");
             int mcpInterval = gArgs.GetArg("-depinmcpinterval", 10);
             std::string mcpPrefix = gArgs.GetArg("-depinmcpprefix", "[BOT]:");
             int mcpTimeout = gArgs.GetArg("-depinmcptimeout", 30);
             int mcpRateLimit = gArgs.GetArg("-depinmcpratelimit", 0);
+            std::string poolHost = gArgs.GetArg("-depinmcppoolhost", "localhost");
+            int poolPort = gArgs.GetArg("-depinmcppoolport", DEFAULT_DEPIN_MSG_PORT);
 
             if (mcpAddress.empty()) {
                 return InitError(_("DePIN MCP enabled but no address specified. Use -depinmcpaddress=ADDRESS"));
@@ -2007,7 +2011,7 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
             g_depinMCPWorker = std::make_unique<CDepinMCPWorker>();
             if (!g_depinMCPWorker->Initialize(mcpUrl, mcpEndpoint, mcpApiKey, mcpKey,
                                              mcpAddress, token, mcpInterval, mcpPrefix,
-                                             mcpTimeout, mcpRateLimit)) {
+                                             mcpTimeout, mcpRateLimit, poolHost, poolPort)) {
                 return InitError(_("Failed to initialize DePIN MCP worker"));
             }
 
