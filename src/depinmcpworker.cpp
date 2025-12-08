@@ -9,8 +9,14 @@
 #include "wallet/wallet.h"
 #include "base58.h"
 #include "key.h"
+#include "wallet/rpcwallet.h"
+#include "validation.h"
+#include "script/standard.h"
 
 #include <algorithm>
+
+// External declarations
+extern std::vector<CWalletRef> vpwallets;
 
 // Global instance
 std::unique_ptr<CDepinMCPWorker> g_depinMCPWorker = nullptr;
@@ -142,19 +148,19 @@ void CDepinMCPWorker::WorkerLoop()
         try {
             lastPollTime.store(GetTime());
 
-            LogPrint(BCLog::DEPIN, "MCPWorker: Polling for new messages (token=%s, key=%s)...\n",
+            LogPrint(BCLog::NET, "MCPWorker: Polling for new messages (token=%s, key=%s)...\n",
                      depinToken, commandKey);
 
             // Get all messages from pool
             if (!pDepinMsgPool) {
-                LogPrint(BCLog::DEPIN, "MCPWorker: DePIN message pool not initialized\n");
+                LogPrint(BCLog::NET, "MCPWorker: DePIN message pool not initialized\n");
                 std::this_thread::sleep_for(std::chrono::seconds(pollInterval));
                 continue;
             }
 
             std::vector<CDepinMessage> messages = pDepinMsgPool->GetAllMessages();
 
-            LogPrint(BCLog::DEPIN, "MCPWorker: Found %d total messages in pool\n", messages.size());
+            LogPrint(BCLog::NET, "MCPWorker: Found %d total messages in pool\n", messages.size());
 
             int processedThisCycle = 0;
 
@@ -211,13 +217,8 @@ bool CDepinMCPWorker::ValidateMessage(const CDepinMessage& msg)
     int64_t now = GetTime();
     int64_t maxAge = 24 * 60 * 60; // 24 hours
     if (now - msg.timestamp > maxAge) {
-        LogPrint(BCLog::DEPIN, "MCPWorker: Skipping old message (age=%d seconds)\n",
+        LogPrint(BCLog::NET, "MCPWorker: Skipping old message (age=%d seconds)\n",
                  now - msg.timestamp);
-        return false;
-    }
-
-    // Check if message starts with command key
-    if (msg.message.find(commandKey) != 0) {
         return false;
     }
 
@@ -226,8 +227,24 @@ bool CDepinMCPWorker::ValidateMessage(const CDepinMessage& msg)
         return false;
     }
 
-    LogPrint(BCLog::DEPIN, "MCPWorker: Valid message from %s: %s\n",
-             msg.senderAddress, msg.message);
+    // Try to decrypt the message to check if it starts with command key
+    // We need to decrypt it here to validate, then decrypt again in ProcessMessage
+    // This is necessary because messages are stored encrypted
+    std::string decryptedMessage;
+    std::string error;
+
+    if (!DecryptMessageForAddress(msg.encryptedPayload, nodeAddress, decryptedMessage, error)) {
+        LogPrint(BCLog::NET, "MCPWorker: Could not decrypt message: %s\n", error);
+        return false;
+    }
+
+    // Check if message starts with command key
+    if (decryptedMessage.find(commandKey) != 0) {
+        return false;
+    }
+
+    LogPrint(BCLog::NET, "MCPWorker: Valid message from %s: %s\n",
+             msg.senderAddress, decryptedMessage);
 
     return true;
 }
@@ -262,7 +279,7 @@ bool CDepinMCPWorker::ExtractCommand(const std::string& message, std::string& co
         command = command.substr(0, 1000);
     }
 
-    LogPrint(BCLog::DEPIN, "MCPWorker: Extracted command: %s\n", command);
+    LogPrint(BCLog::NET, "MCPWorker: Extracted command: %s\n", command);
 
     return true;
 }
@@ -282,9 +299,18 @@ bool CDepinMCPWorker::ProcessMessage(const CDepinMessage& msg)
         return false;
     }
 
+    // Decrypt message first
+    std::string decryptedMessage;
+    std::string error;
+
+    if (!DecryptMessageForAddress(msg.encryptedPayload, nodeAddress, decryptedMessage, error)) {
+        LogPrintf("MCPWorker: Failed to decrypt message: %s\n", error);
+        return false;
+    }
+
     // Extract command
     std::string command;
-    if (!ExtractCommand(msg.message, command)) {
+    if (!ExtractCommand(decryptedMessage, command)) {
         LogPrintf("MCPWorker: Failed to extract command from message\n");
         return false;
     }
@@ -330,24 +356,27 @@ bool CDepinMCPWorker::SendResponse(const std::string& response, const std::strin
 
         LogPrintf("MCPWorker: Sending response to channel (length=%d)\n", finalResponse.length());
 
-        // Get wallet for signing
-        CWallet* pwallet = GetWallets().empty() ? nullptr : GetWallets()[0];
-        if (!pwallet) {
+        // Get wallet
+        if (vpwallets.empty() || !vpwallets[0]) {
             LogPrintf("MCPWorker: No wallet available\n");
             return false;
         }
 
-        // Get private key for node address
-        CKeyID keyID;
-        CNeuraiAddress address(nodeAddress);
-        if (!address.IsValid() || !address.GetKeyID(keyID)) {
+        CWallet* pwallet = vpwallets[0];
+
+        // Validate node address
+        CTxDestination dest = DecodeDestination(nodeAddress);
+        if (!IsValidDestination(dest)) {
             LogPrintf("MCPWorker: Invalid node address: %s\n", nodeAddress);
             return false;
         }
 
-        CKey privateKey;
-        if (!pwallet->GetKey(keyID, privateKey)) {
-            LogPrintf("MCPWorker: No private key for address %s\n", nodeAddress);
+        // Get token holders for encryption
+        std::string error;
+        std::vector<std::string> holders = GetTokenHolders(depinToken, MAX_DEPIN_RECIPIENTS, error);
+
+        if (holders.empty()) {
+            LogPrintf("MCPWorker: Failed to get token holders: %s\n", error);
             return false;
         }
 
@@ -356,24 +385,26 @@ bool CDepinMCPWorker::SendResponse(const std::string& response, const std::strin
         newMsg.token = depinToken;
         newMsg.senderAddress = nodeAddress;
         newMsg.timestamp = GetTime();
-        newMsg.message = finalResponse;
 
-        // Get public key for signing
-        CPubKey pubKey = privateKey.GetPubKey();
-        newMsg.senderPubKey = std::vector<unsigned char>(pubKey.begin(), pubKey.end());
+        // Encrypt message for all token holders
+        if (!EncryptMessageForAllRecipients(finalResponse, holders, newMsg.encryptedPayload, error)) {
+            LogPrintf("MCPWorker: Failed to encrypt message: %s\n", error);
+            return false;
+        }
 
-        // Sign message
-        uint256 messageHash = newMsg.GetHash();
-        std::vector<unsigned char> signature;
-        if (!privateKey.SignCompact(messageHash, signature)) {
+        LogPrintf("MCPWorker: Encrypted message for %d recipients, size: %d bytes\n",
+                  holders.size(), newMsg.encryptedPayload.size());
+
+        // Sign message using wallet
+        if (!SignDepinMessage(newMsg, nodeAddress)) {
             LogPrintf("MCPWorker: Failed to sign message\n");
             return false;
         }
-        newMsg.signature = signature;
 
-        // Add to pool
-        if (!pDepinMsgPool->AddMessage(newMsg)) {
-            LogPrintf("MCPWorker: Failed to add message to pool\n");
+        // Add to pool (requires 3 parameters)
+        std::string addError;
+        if (!pDepinMsgPool->AddMessage(newMsg, addError, false)) {
+            LogPrintf("MCPWorker: Failed to add message to pool: %s\n", addError);
             return false;
         }
 
@@ -427,7 +458,7 @@ bool CDepinMCPWorker::CheckRateLimit(const std::string& address)
 
     // Check if limit exceeded
     if (timestamps.size() >= static_cast<size_t>(rateLimitPerMinute)) {
-        LogPrint(BCLog::DEPIN, "MCPWorker: Rate limit exceeded for %s (%d/%d)\n",
+        LogPrint(BCLog::NET, "MCPWorker: Rate limit exceeded for %s (%d/%d)\n",
                  address, timestamps.size(), rateLimitPerMinute);
         return false;
     }

@@ -215,7 +215,7 @@ bool CDepinMCPClient::SendWithContext(const std::string& prompt,
     std::string payload = BuildPayload(prompt, context);
 
     LogPrintf("MCPClient: Sending request to %s%s\n", baseUrl, endpoint);
-    LogPrint(BCLog::DEPIN, "MCPClient: Payload: %s\n", payload);
+    LogPrint(BCLog::NET, "MCPClient: Payload: %s\n", payload);
 
     // Make HTTP request
     std::string fullUrl = baseUrl + endpoint;
@@ -226,7 +226,7 @@ bool CDepinMCPClient::SendWithContext(const std::string& prompt,
         return false;
     }
 
-    LogPrint(BCLog::DEPIN, "MCPClient: Raw response: %s\n", rawResponse);
+    LogPrint(BCLog::NET, "MCPClient: Raw response: %s\n", rawResponse);
 
     // Parse response
     if (!ParseResponse(rawResponse, response)) {
