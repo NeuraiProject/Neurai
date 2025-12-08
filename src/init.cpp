@@ -481,11 +481,30 @@ std::string HelpMessage(HelpMessageMode mode)
         strUsage += HelpMessageOpt("-minimumchainwork=<hex>", strprintf("Minimum work assumed to exist on a valid chain in hex (default: %s, testnet: %s)", defaultChainParams->GetConsensus().nMinimumChainWork.GetHex(), testnetChainParams->GetConsensus().nMinimumChainWork.GetHex()));
     }
     strUsage += HelpMessageOpt("-persistmempool", strprintf(_("Whether to save the mempool on shutdown and load on restart (default: %u)"), DEFAULT_PERSIST_MEMPOOL));
+
+    // DePIN Messaging options
+    strUsage += HelpMessageOpt("-depinmsg", _("Enable DePIN messaging system (default: 0)"));
+    strUsage += HelpMessageOpt("-depinmsgtoken=<token>", _("DePIN token name to monitor for messaging (required when -depinmsg=1)"));
+    strUsage += HelpMessageOpt("-depinmsgport=<port>", strprintf(_("DePIN messaging network port (default: %u)"), DEFAULT_DEPIN_MSG_PORT));
+    strUsage += HelpMessageOpt("-depinmsgmaxusers=<n>", strprintf(_("Maximum number of DePIN message recipients (default: %u)"), DEFAULT_MAX_DEPIN_RECIPIENTS));
     strUsage += HelpMessageOpt("-depinpoolpersist", strprintf(_("Whether to save the DePIN message pool on shutdown and load on restart (default: %u)"), DEFAULT_DEPINPOOL_PERSIST));
     strUsage += HelpMessageOpt("-depinmsgsize=<n>", strprintf(_("Maximum DePIN message size in bytes (default: %u, max: %u)"), DEFAULT_DEPIN_MESSAGE_SIZE, MAX_DEPIN_MESSAGE_SIZE));
     strUsage += HelpMessageOpt("-depinmsgexpire=<n>", strprintf(_("DePIN message expiry time in hours (default: %u, max: %u)"), DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS, MAX_DEPIN_MESSAGE_EXPIRY_HOURS));
     strUsage += HelpMessageOpt("-depinpoolsize=<n>", strprintf(_("Maximum DePIN pool size in MB (default: %u, max: %u)"), DEFAULT_DEPIN_POOL_SIZE_MB, MAX_DEPIN_POOL_SIZE_MB));
     strUsage += HelpMessageOpt("-depinmsgcleanupinterval=<n>", _("Interval in seconds to automatically remove expired DePIN messages (default: 300)"));
+
+    // DePIN MCP Integration options
+    strUsage += HelpMessageOpt("-depinmcp", _("Enable DePIN MCP worker for AI integration (default: 0)"));
+    strUsage += HelpMessageOpt("-depinmcpurl=<url>", _("URL of the MCP server (default: http://localhost:1234)"));
+    strUsage += HelpMessageOpt("-depinmcpendpoint=<endpoint>", _("MCP API endpoint (default: /v1/chat/completions)"));
+    strUsage += HelpMessageOpt("-depinmcpkey=<prefix>", _("Command prefix to trigger AI (default: /ia)"));
+    strUsage += HelpMessageOpt("-depinmcpaddress=<address>", _("Neurai address to sign bot responses (required when -depinmcp=1)"));
+    strUsage += HelpMessageOpt("-depinmcpinterval=<n>", _("Polling interval in seconds (default: 10)"));
+    strUsage += HelpMessageOpt("-depinmcpprefix=<prefix>", _("Prefix added to bot responses (default: [BOT]:)"));
+    strUsage += HelpMessageOpt("-depinmcptimeout=<n>", _("HTTP timeout for MCP requests in seconds (default: 30)"));
+    strUsage += HelpMessageOpt("-depinmcpapikey=<key>", _("Optional API key for MCP server authentication"));
+    strUsage += HelpMessageOpt("-depinmcpratelimit=<n>", _("Max commands per minute per user, 0=unlimited (default: 0)"));
+
     strUsage += HelpMessageOpt("-blockreconstructionextratxn=<n>", strprintf(_("Extra transactions to keep in memory for compact block reconstructions (default: %u)"), DEFAULT_BLOCK_RECONSTRUCTION_EXTRA_TXN));
     strUsage += HelpMessageOpt("-par=<n>", strprintf(_("Set the number of script verification threads (%u to %d, 0 = auto, <0 = leave that many cores free, default: %d)"),
         -GetNumCores(), MAX_SCRIPTCHECK_THREADS, DEFAULT_SCRIPTCHECK_THREADS));
