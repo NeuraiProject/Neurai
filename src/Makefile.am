@@ -215,6 +215,8 @@ NEURAI_CORE_H = \
   depinmsgpool.h \
   depinmsgpoolnet.h \
   depinecies.h \
+  depinmcpclient.h \
+  depinmcpworker.h \
   ui_interface.h \
   undo.h \
   util.h \
@@ -301,6 +303,8 @@ libneurai_server_a_SOURCES = \
   depinmsgpool.cpp \
   depinmsgpoolnet.cpp \
   depinecies.cpp \
+  depinmcpclient.cpp \
+  depinmcpworker.cpp \
   ui_interface.cpp \
   validation.cpp \
   validationinterface.cpp \

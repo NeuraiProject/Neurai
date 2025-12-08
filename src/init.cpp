@@ -50,6 +50,7 @@
 #include "assets/snapshotrequestdb.h"
 #include "depinmsgpool.h"
 #include "depinmsgpoolnet.h"
+#include "depinmcpworker.h"
 #ifdef ENABLE_WALLET
 #include "wallet/init.h"
 #include <wallet/wallet.h>
@@ -219,6 +220,14 @@ void PrepareShutdown()
 
     if (fDumpMempoolLater && gArgs.GetArg("-persistmempool", DEFAULT_PERSIST_MEMPOOL)) {
         DumpMempool();
+    }
+
+    // Stop DePIN MCP worker if running
+    if (g_depinMCPWorker) {
+        LogPrintf("Stopping DePIN MCP worker...\n");
+        g_depinMCPWorker->Stop();
+        g_depinMCPWorker.reset();
+        LogPrintf("DePIN MCP worker stopped\n");
     }
 
     // Save DePIN pool to disk if enabled
@@ -1958,6 +1967,39 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
         }, cleanupIntervalSeconds * 1000);  // Convert seconds to milliseconds
 
         LogPrintf("DePIN automatic cleanup scheduled every %d seconds\n", cleanupIntervalSeconds);
+
+        // ********************************************************* Initialize DePIN MCP Worker (AI Integration)
+        if (gArgs.GetBoolArg("-depinmcp", false)) {
+            std::string mcpUrl = gArgs.GetArg("-depinmcpurl", "http://localhost:1234");
+            std::string mcpEndpoint = gArgs.GetArg("-depinmcpendpoint", "/v1/chat/completions");
+            std::string mcpApiKey = gArgs.GetArg("-depinmcpapikey", "");
+            std::string mcpKey = gArgs.GetArg("-depinmcpkey", "/ia");
+            std::string mcpAddress = gArgs.GetArg("-depinmcpaddress", "");
+            int mcpInterval = gArgs.GetArg("-depinmcpinterval", 10);
+            std::string mcpPrefix = gArgs.GetArg("-depinmcpprefix", "[BOT]:");
+            int mcpTimeout = gArgs.GetArg("-depinmcptimeout", 30);
+            int mcpRateLimit = gArgs.GetArg("-depinmcpratelimit", 0);
+
+            if (mcpAddress.empty()) {
+                return InitError(_("DePIN MCP enabled but no address specified. Use -depinmcpaddress=ADDRESS"));
+            }
+
+            // Create and initialize MCP worker
+            g_depinMCPWorker = std::make_unique<CDepinMCPWorker>();
+            if (!g_depinMCPWorker->Initialize(mcpUrl, mcpEndpoint, mcpApiKey, mcpKey,
+                                             mcpAddress, token, mcpInterval, mcpPrefix,
+                                             mcpTimeout, mcpRateLimit)) {
+                return InitError(_("Failed to initialize DePIN MCP worker"));
+            }
+
+            // Start worker thread
+            if (!g_depinMCPWorker->Start()) {
+                return InitError(_("Failed to start DePIN MCP worker"));
+            }
+
+            LogPrintf("DePIN MCP worker started: URL=%s, endpoint=%s, key=%s, interval=%d seconds\n",
+                     mcpUrl, mcpEndpoint, mcpKey, mcpInterval);
+        }
     }
 
     if (gArgs.GetBoolArg("-listenonion", DEFAULT_LISTEN_ONION))

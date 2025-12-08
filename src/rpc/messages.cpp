@@ -27,6 +27,7 @@
 #include "policy/policy.h"
 #include "policy/rbf.h"
 #include "depinmsgpoolnet.h"
+#include "depinmcpworker.h"
 #include "rpc/mining.h"
 #include "rpc/safemode.h"
 #include "rpc/server.h"
@@ -1565,6 +1566,54 @@ UniValue depinpoolstats(const JSONRPCRequest& request)
     return result;
 }
 
+UniValue depinmcpstatus(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 0)
+        throw std::runtime_error(
+                "depinmcpstatus\n"
+                "\nGet status information about the DePIN MCP (AI) worker\n"
+                "\nResult:\n"
+                "{\n"
+                "  \"enabled\": true|false,         (boolean) Whether MCP worker is enabled\n"
+                "  \"running\": true|false,         (boolean) Whether MCP worker is running\n"
+                "  \"mcp_url\": \"url\",              (string) MCP server URL\n"
+                "  \"command_key\": \"key\",          (string) Command prefix (e.g. /ia)\n"
+                "  \"depin_token\": \"token\",        (string) DePIN token being monitored\n"
+                "  \"poll_interval\": n,            (numeric) Polling interval in seconds\n"
+                "  \"commands_processed\": n,       (numeric) Total commands processed\n"
+                "  \"total_errors\": n,             (numeric) Total errors encountered\n"
+                "  \"last_poll_time\": n            (numeric) Unix timestamp of last poll\n"
+                "}\n"
+                "\nExamples:\n"
+                + HelpExampleCli("depinmcpstatus", "")
+                + HelpExampleRpc("depinmcpstatus", "")
+        );
+
+    UniValue result(UniValue::VOBJ);
+
+    if (!g_depinMCPWorker) {
+        result.push_back(Pair("enabled", false));
+        result.push_back(Pair("running", false));
+        return result;
+    }
+
+    result.push_back(Pair("enabled", true));
+    result.push_back(Pair("running", g_depinMCPWorker->IsRunning()));
+    result.push_back(Pair("mcp_url", g_depinMCPWorker->GetMCPUrl()));
+    result.push_back(Pair("command_key", g_depinMCPWorker->GetCommandKey()));
+    result.push_back(Pair("depin_token", g_depinMCPWorker->GetDepinToken()));
+    result.push_back(Pair("poll_interval", g_depinMCPWorker->GetPollInterval()));
+    result.push_back(Pair("commands_processed", (uint64_t)g_depinMCPWorker->GetCommandsProcessed()));
+    result.push_back(Pair("total_errors", (uint64_t)g_depinMCPWorker->GetTotalErrors()));
+    result.push_back(Pair("last_poll_time", g_depinMCPWorker->GetLastPollTime()));
+
+    if (g_depinMCPWorker->GetLastPollTime() > 0) {
+        result.push_back(Pair("last_poll_time_str", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", g_depinMCPWorker->GetLastPollTime())));
+    }
+
+    return result;
+}
+
 static const CRPCCommand commands[] =
     {           //  category    name                          actor (function)             argNames
                 //  ----------- ------------------------      -----------------------      ----------
@@ -1583,6 +1632,7 @@ static const CRPCCommand commands[] =
             { "depin messaging",          "depingetpoolcontent",        &depingetpoolcontent,        {}},
             { "depin messaging",          "depinpoolstats",             &depinpoolstats,             {}},
             { "depin messaging",          "depinsubmitmsg",             &depinsubmitmsg,             {"hexmessage"}},
+            { "depin messaging",          "depinmcpstatus",             &depinmcpstatus,             {}},
 #ifdef ENABLE_WALLET
             { "depin messaging",          "depinsendmsg",               &depinsendmsg,               {"token", "ip", "message", "fromaddress", "port"}},
             { "depin messaging",          "depingetmsg",                &depingetmsg,                {"token"}},
