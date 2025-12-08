@@ -525,7 +525,7 @@ std::string HelpMessage(HelpMessageMode mode)
     strUsage += HelpMessageOpt("-depinmcpaddress=<address>", _("Neurai address to sign bot responses (required when -depinmcp=1)"));
     strUsage += HelpMessageOpt("-depinmcpinterval=<n>", _("Polling interval in seconds (default: 10)"));
     strUsage += HelpMessageOpt("-depinmcpprefix=<prefix>", _("Prefix added to bot responses (default: [BOT]:)"));
-    strUsage += HelpMessageOpt("-depinmcptimeout=<n>", _("HTTP timeout for MCP requests in seconds (default: 30)"));
+    strUsage += HelpMessageOpt("-depinmcptimeout=<n>", _("HTTP timeout for MCP requests in seconds (default: 600)"));
     strUsage += HelpMessageOpt("-depinmcpapikey=<key>", _("Optional API key for MCP server authentication"));
     strUsage += HelpMessageOpt("-depinmcpratelimit=<n>", _("Max commands per minute per user, 0=unlimited (default: 0)"));
     strUsage += HelpMessageOpt("-depinmcppoolhost=<host>", _("DePIN message pool host to read from (default: localhost = local pool)"));
@@ -1998,7 +1998,7 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
             std::string mcpAddress = gArgs.GetArg("-depinmcpaddress", "");
             int mcpInterval = gArgs.GetArg("-depinmcpinterval", 10);
             std::string mcpPrefix = gArgs.GetArg("-depinmcpprefix", "[BOT]:");
-            int mcpTimeout = gArgs.GetArg("-depinmcptimeout", 30);
+            int mcpTimeout = gArgs.GetArg("-depinmcptimeout", 600);
             int mcpRateLimit = gArgs.GetArg("-depinmcpratelimit", 0);
             std::string poolHost = gArgs.GetArg("-depinmcppoolhost", "localhost");
             int poolPort = gArgs.GetArg("-depinmcppoolport", DEFAULT_DEPIN_MSG_PORT);

@@ -34,7 +34,7 @@ std::string CDepinMCPClient::BuildPayload(const std::string& prompt,
     // System message
     UniValue systemMsg(UniValue::VOBJ);
     systemMsg.push_back(Pair("role", "system"));
-    systemMsg.push_back(Pair("content", "Eres un asistente útil para la comunidad de Neurai."));
+    systemMsg.push_back(Pair("content", "You are a helpful assistant for the Neurai community."));
     messages.push_back(systemMsg);
 
     // Add context messages if provided
@@ -135,18 +135,16 @@ bool CDepinMCPClient::MakeHTTPRequest(const std::string& url, const std::string&
         std::string* responsePtr = static_cast<std::string*>(ctx);
 
         if (!req) {
-            LogPrintf("MCPClient: Request failed (null)\n");
+            LogPrintf("MCPClient: Request failed (null request in callback)\n");
             return;
         }
 
         int code = evhttp_request_get_response_code(req);
-        if (code != 200) {
-            LogPrintf("MCPClient: HTTP error %d\n", code);
-            return;
-        }
+        LogPrintf("MCPClient: HTTP response code: %d\n", code);
 
         struct evbuffer* buf = evhttp_request_get_input_buffer(req);
         size_t len = evbuffer_get_length(buf);
+        LogPrintf("MCPClient: Response buffer length: %d\n", (int)len);
 
         if (len > 0) {
             char* data = new char[len + 1];
@@ -154,6 +152,11 @@ bool CDepinMCPClient::MakeHTTPRequest(const std::string& url, const std::string&
             data[len] = '\0';
             *responsePtr = std::string(data, len);
             delete[] data;
+            LogPrintf("MCPClient: Captured response data\n");
+        }
+
+        if (code != 200) {
+            LogPrintf("MCPClient: HTTP error %d, body: %s\n", code, responsePtr->substr(0, 200));
         }
     }, &response);
 
@@ -198,6 +201,7 @@ bool CDepinMCPClient::MakeHTTPRequest(const std::string& url, const std::string&
     evhttp_uri_free(uri);
     event_base_free(base);
 
+    LogPrintf("MCPClient: MakeHTTPRequest finished, response length: %d\n", (int)response.length());
     return !response.empty();
 }
 
@@ -215,7 +219,7 @@ bool CDepinMCPClient::SendWithContext(const std::string& prompt,
     std::string payload = BuildPayload(prompt, context);
 
     LogPrintf("MCPClient: Sending request to %s%s\n", baseUrl, endpoint);
-    LogPrint(BCLog::NET, "MCPClient: Payload: %s\n", payload);
+    LogPrintf("MCPClient: Payload: %s\n", payload);
 
     // Make HTTP request
     std::string fullUrl = baseUrl + endpoint;
@@ -226,7 +230,7 @@ bool CDepinMCPClient::SendWithContext(const std::string& prompt,
         return false;
     }
 
-    LogPrint(BCLog::NET, "MCPClient: Raw response: %s\n", rawResponse);
+    LogPrintf("MCPClient: Raw response (%d bytes): %s\n", rawResponse.length(), rawResponse.substr(0, 500));
 
     // Parse response
     if (!ParseResponse(rawResponse, response)) {

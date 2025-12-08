@@ -12,8 +12,11 @@
 #include "wallet/rpcwallet.h"
 #include "validation.h"
 #include "script/standard.h"
+#include "streams.h"
+#include "clientversion.h"
 
 #include <algorithm>
+#include <fstream>
 
 // External declarations
 extern std::vector<CWalletRef> vpwallets;
@@ -110,6 +113,12 @@ bool CDepinMCPWorker::Initialize(const std::string& url, const std::string& endp
     }
 
     LogPrintf("MCPWorker: Initialization complete\n");
+
+    // Load previously processed messages from disk
+    if (!LoadProcessedMessages()) {
+        LogPrintf("MCPWorker: WARNING - Could not load processed messages from disk\n");
+    }
+
     return true;
 }
 
@@ -146,6 +155,9 @@ void CDepinMCPWorker::Stop()
     }
 
     running.store(false);
+
+    // Save processed messages before exiting
+    SaveProcessedMessages();
 
     LogPrintf("MCPWorker: Worker thread stopped\n");
 }
@@ -465,16 +477,21 @@ bool CDepinMCPWorker::IsMessageProcessed(const uint256& hash)
 
 void CDepinMCPWorker::MarkAsProcessed(const uint256& hash)
 {
-    LOCK(cs_processed);
-    processedMessages.insert(hash);
+    {
+        LOCK(cs_processed);
+        processedMessages.insert(hash);
 
-    // Limit cache size to prevent memory growth
-    // Keep only the most recent 1000 entries
-    if (processedMessages.size() > 1000) {
-        // Remove oldest entry (first in set)
-        auto it = processedMessages.begin();
-        processedMessages.erase(it);
+        // Limit cache size to prevent memory growth
+        // Keep only the most recent 10000 entries
+        if (processedMessages.size() > 10000) {
+            // Remove oldest entry (first in set)
+            auto it = processedMessages.begin();
+            processedMessages.erase(it);
+        }
     }
+
+    // Persist to disk after each processed message
+    SaveProcessedMessages();
 }
 
 bool CDepinMCPWorker::CheckRateLimit(const std::string& address)
@@ -507,4 +524,113 @@ bool CDepinMCPWorker::CheckRateLimit(const std::string& address)
     timestamps.push_back(now);
 
     return true;
+}
+
+fs::path CDepinMCPWorker::GetProcessedMessagesPath() const
+{
+    return GetDataDir() / "mcp_processed.dat";
+}
+
+bool CDepinMCPWorker::LoadProcessedMessages()
+{
+    fs::path path = GetProcessedMessagesPath();
+
+    if (!fs::exists(path)) {
+        LogPrintf("MCPWorker: No processed messages file found (first run)\n");
+        return true;
+    }
+
+    try {
+        std::ifstream file(path.string(), std::ios::binary);
+        if (!file.is_open()) {
+            LogPrintf("MCPWorker: Could not open processed messages file\n");
+            return false;
+        }
+
+        // Read version
+        uint32_t version = 0;
+        file.read(reinterpret_cast<char*>(&version), sizeof(version));
+        if (version != 1) {
+            LogPrintf("MCPWorker: Unknown processed messages file version: %u\n", version);
+            return false;
+        }
+
+        // Read count
+        uint32_t count = 0;
+        file.read(reinterpret_cast<char*>(&count), sizeof(count));
+
+        // Sanity check
+        if (count > 100000) {
+            LogPrintf("MCPWorker: Processed messages file has too many entries: %u\n", count);
+            return false;
+        }
+
+        LOCK(cs_processed);
+        processedMessages.clear();
+
+        // Read hashes
+        for (uint32_t i = 0; i < count; i++) {
+            uint256 hash;
+            file.read(reinterpret_cast<char*>(hash.begin()), 32);
+            if (!file.good()) {
+                LogPrintf("MCPWorker: Error reading processed messages file at entry %u\n", i);
+                return false;
+            }
+            processedMessages.insert(hash);
+        }
+
+        file.close();
+        LogPrintf("MCPWorker: Loaded %u processed message hashes from disk\n", count);
+        return true;
+
+    } catch (const std::exception& e) {
+        LogPrintf("MCPWorker: Exception loading processed messages: %s\n", e.what());
+        return false;
+    }
+}
+
+bool CDepinMCPWorker::SaveProcessedMessages()
+{
+    fs::path path = GetProcessedMessagesPath();
+
+    try {
+        // Use temp file and rename for atomicity
+        fs::path tempPath = path.string() + ".tmp";
+
+        std::ofstream file(tempPath.string(), std::ios::binary | std::ios::trunc);
+        if (!file.is_open()) {
+            LogPrintf("MCPWorker: Could not open temp file for saving\n");
+            return false;
+        }
+
+        LOCK(cs_processed);
+
+        // Write version
+        uint32_t version = 1;
+        file.write(reinterpret_cast<const char*>(&version), sizeof(version));
+
+        // Write count
+        uint32_t count = processedMessages.size();
+        file.write(reinterpret_cast<const char*>(&count), sizeof(count));
+
+        // Write hashes
+        for (const uint256& hash : processedMessages) {
+            file.write(reinterpret_cast<const char*>(hash.begin()), 32);
+        }
+
+        file.close();
+
+        // Atomic rename
+        if (fs::exists(path)) {
+            fs::remove(path);
+        }
+        fs::rename(tempPath, path);
+
+        LogPrint(BCLog::NET, "MCPWorker: Saved %u processed message hashes to disk\n", count);
+        return true;
+
+    } catch (const std::exception& e) {
+        LogPrintf("MCPWorker: Exception saving processed messages: %s\n", e.what());
+        return false;
+    }
 }

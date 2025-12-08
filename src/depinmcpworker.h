@@ -8,6 +8,7 @@
 #include "depinmcpclient.h"
 #include "uint256.h"
 #include "sync.h"
+#include "fs.h"
 
 #include <thread>
 #include <atomic>
@@ -113,6 +114,23 @@ private:
      * @return true if within rate limit, false if exceeded
      */
     bool CheckRateLimit(const std::string& address);
+
+    /**
+     * Load processed messages from disk
+     * @return true if loaded successfully (or file doesn't exist)
+     */
+    bool LoadProcessedMessages();
+
+    /**
+     * Save processed messages to disk
+     * @return true if saved successfully
+     */
+    bool SaveProcessedMessages();
+
+    /**
+     * Get path to processed messages file
+     */
+    fs::path GetProcessedMessagesPath() const;
 
     /**
      * Send AI response back to DePIN channel
