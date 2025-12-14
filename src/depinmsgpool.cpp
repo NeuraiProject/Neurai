@@ -374,6 +374,7 @@ bool CheckAddressHasPublicKey(const std::string& address, CPubKey& pubkey, std::
 
 bool VerifyDepinMessageSignature(const CDepinMessage& message) {
     if (message.signature.empty()) {
+        LogPrintf("VerifyDepinMessageSignature: Signature is empty (size=%d)\n", message.signature.size());
         return false;
     }
 
@@ -381,7 +382,8 @@ bool VerifyDepinMessageSignature(const CDepinMessage& message) {
     CPubKey senderPubKey;
     std::string error;
     if (!CheckAddressHasPublicKey(message.senderAddress, senderPubKey, error)) {
-        LogPrintf("VerifyDepinMessageSignature: %s\n", error);
+        LogPrintf("VerifyDepinMessageSignature: Public key lookup failed for %s: %s\n",
+                  message.senderAddress, error);
         return false;
     }
 
@@ -397,6 +399,14 @@ bool VerifyDepinMessageSignature(const CDepinMessage& message) {
     // Verify signature
     if (!senderPubKey.Verify(messageHash, message.signature)) {
         LogPrintf("VerifyDepinMessageSignature: Signature verification failed\n");
+        LogPrintf("  Sender: %s\n", message.senderAddress);
+        LogPrintf("  Token: %s\n", message.token);
+        LogPrintf("  Timestamp: %d\n", message.timestamp);
+        LogPrintf("  Signature size: %d bytes\n", message.signature.size());
+        LogPrintf("  Signature hex: %s\n", HexStr(message.signature));
+        LogPrintf("  Message hash: %s\n", messageHash.ToString());
+        LogPrintf("  Sender pubkey: %s\n", HexStr(senderPubKey));
+        LogPrintf("  EncryptedPayload size: %d bytes\n", message.encryptedPayload.size());
         return false;
     }
 

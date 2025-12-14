@@ -850,7 +850,13 @@ UniValue depinsubmitmsg(const JSONRPCRequest& request)
 
     // ALWAYS verify signature (critical security check)
     if (!VerifyDepinMessageSignature(chatMsg)) {
-        throw JSONRPCError(RPC_VERIFY_ERROR, "Invalid message signature");
+        throw JSONRPCError(RPC_VERIFY_ERROR,
+                          strprintf("Invalid message signature for sender %s. "
+                                   "Check debug.log for details. Common causes: "
+                                   "1) Sender address has no public key in blockchain (never spent coins), "
+                                   "2) Signature format incorrect, "
+                                   "3) Message hash calculated incorrectly",
+                                   chatMsg.senderAddress));
     }
 
     // Verify sender owns the token
@@ -872,6 +878,92 @@ UniValue depinsubmitmsg(const JSONRPCRequest& request)
     result.push_back(Pair("result", "success"));
     result.push_back(Pair("hash", chatMsg.GetHash().ToString()));
     result.push_back(Pair("timestamp", chatMsg.timestamp));
+
+    return result;
+}
+
+// New non-wallet endpoint: retrieves encrypted pool messages (no decryption)
+UniValue depinreceivemsg(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 2 || request.params.size() > 3)
+        throw std::runtime_error(
+                "depinreceivemsg \"token\" \"address\" (timestamp)\n"
+                "\nRetrieve encrypted DePIN messages from the pool\n"
+                "\nThis endpoint returns the raw encrypted message contents (ECIES payload + signature)\n"
+                "as JSON. The client is responsible for decrypting messages it can decrypt.\n"
+                "\nArguments:\n"
+                "1. \"token\"      (string, required) Token name\n"
+                "2. \"address\"    (string, required) Neurai address (used as an access selector)\n"
+                "3. timestamp    (numeric, optional) Unix time. Return only messages with timestamp >= (timestamp-1 if timestamp>0)\n"
+                "\nResult:\n"
+                "[\n"
+                "  {\n"
+                "    \"hash\": \"...\",                 (string) Message hash\n"
+                "    \"token\": \"...\",                (string) Token\n"
+                "    \"sender\": \"...\",               (string) Sender address\n"
+                "    \"timestamp\": n,                 (numeric) Unix timestamp\n"
+                "    \"encrypted_payload_hex\": \"...\", (string) Encrypted payload (hex)\n"
+                "    \"signature_hex\": \"...\"         (string) Message signature (hex)\n"
+                "  },\n"
+                "  ...\n"
+                "]\n"
+                "\nExamples:\n"
+                + HelpExampleCli("depinreceivemsg", "\"TOKEN\" \"NeuraiAddress\"")
+                + HelpExampleCli("depinreceivemsg", "\"TOKEN\" \"NeuraiAddress\" 1730000000")
+                + HelpExampleRpc("depinreceivemsg", "\"TOKEN\", \"NeuraiAddress\"")
+        );
+
+    if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
+        throw JSONRPCError(RPC_MISC_ERROR, "DePIN messaging pool is not enabled");
+    }
+
+    const std::string token = request.params[0].get_str();
+    const std::string address = request.params[1].get_str();
+
+    // Verify token matches pool configuration
+    if (token != pDepinMsgPool->GetActiveToken()) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER,
+                          strprintf("Token '%s' does not match configured token '%s'",
+                                   token, pDepinMsgPool->GetActiveToken()));
+    }
+
+    // Validate address (network + base58)
+    const CTxDestination dest = DecodeDestination(address);
+    if (!IsValidDestination(dest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
+    }
+
+    int64_t fromTimestamp = 0;
+    if (request.params.size() >= 3 && !request.params[2].isNull()) {
+        fromTimestamp = request.params[2].get_int64();
+        if (fromTimestamp < 0) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "timestamp must be >= 0");
+        }
+        if (fromTimestamp > 0) {
+            fromTimestamp -= 1;
+        }
+    }
+
+    // Fetch pool contents (encrypted)
+    // NOTE: Pool storage is not recipient-filtered; clients should decrypt and discard what they can't decrypt.
+    std::vector<CDepinMessage> messages = pDepinMsgPool->GetAllMessages();
+
+    UniValue result(UniValue::VARR);
+
+    for (const CDepinMessage& msg : messages) {
+        if (msg.timestamp < fromTimestamp) {
+            continue;
+        }
+
+        UniValue msgObj(UniValue::VOBJ);
+        msgObj.push_back(Pair("hash", msg.GetHash().ToString()));
+        msgObj.push_back(Pair("token", msg.token));
+        msgObj.push_back(Pair("sender", msg.senderAddress));
+        msgObj.push_back(Pair("timestamp", msg.timestamp));
+        msgObj.push_back(Pair("encrypted_payload_hex", HexStr(msg.encryptedPayload)));
+        msgObj.push_back(Pair("signature_hex", HexStr(msg.signature)));
+        result.push_back(msgObj);
+    }
 
     return result;
 }
@@ -1638,6 +1730,7 @@ static const CRPCCommand commands[] =
             { "depin messaging",          "depingetpoolcontent",        &depingetpoolcontent,        {}},
             { "depin messaging",          "depinpoolstats",             &depinpoolstats,             {}},
             { "depin messaging",          "depinsubmitmsg",             &depinsubmitmsg,             {"hexmessage"}},
+            { "depin messaging",          "depinreceivemsg",            &depinreceivemsg,            {"token", "address", "timestamp"}},
             { "depin messaging",          "depinmcpstatus",             &depinmcpstatus,             {}},
 #ifdef ENABLE_WALLET
             { "depin messaging",          "depinsendmsg",               &depinsendmsg,               {"token", "ip", "message", "fromaddress", "port"}},
