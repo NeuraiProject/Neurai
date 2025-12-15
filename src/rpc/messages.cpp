@@ -506,6 +506,7 @@ UniValue depingetmsginfo(const JSONRPCRequest& request)
                 "  \"enabled\": true|false,        (boolean) Whether DePIN messaging is enabled\n"
                 "  \"token\": \"name\",              (string) Active token name\n"
                 "  \"port\": n,                    (numeric) Listening port\n"
+                "  \"cipher\": \"name\",            (string) Encryption cipher used by the pool\n"
                 "  \"maxrecipients\": n,           (numeric) Maximum recipients per message\n"
                 "  \"maxmessagesize\": n,          (numeric) Maximum message size in bytes\n"
                 "  \"messageexpiryhours\": n,      (numeric) Message expiry time in hours\n"
@@ -529,6 +530,7 @@ UniValue depingetmsginfo(const JSONRPCRequest& request)
     obj.push_back(Pair("enabled", pDepinMsgPool->IsEnabled()));
     obj.push_back(Pair("token", pDepinMsgPool->GetActiveToken()));
     obj.push_back(Pair("port", (int)pDepinMsgPool->GetPort()));
+    obj.push_back(Pair("cipher", pDepinMsgPool->GetEncryptionCipher()));
     obj.push_back(Pair("maxrecipients", (int)pDepinMsgPool->GetMaxRecipients()));
     obj.push_back(Pair("maxmessagesize", (int)pDepinMsgPool->GetMaxMessageSize()));
     obj.push_back(Pair("messageexpiryhours", (int)pDepinMsgPool->GetMessageExpiryHours()));

@@ -105,6 +105,9 @@ public:
                    unsigned int maxMessageSize, unsigned int messageExpiryHours, unsigned int maxPoolSizeMB);
     bool IsEnabled() const { return fEnabled; }
     std::string GetActiveToken() const { return activeToken; }
+    // Encryption used by the pool for message payloads.
+    // Kept as a dedicated getter so future algorithms can be switched centrally.
+    std::string GetEncryptionCipher() const { return "AES-256-GCM"; }
     unsigned int GetPort() const { return nPort; }
     unsigned int GetMaxRecipients() const { return nMaxRecipients; }
     unsigned int GetMaxMessageSize() const { return nMaxMessageSize; }
