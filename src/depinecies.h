@@ -19,21 +19,22 @@
  *
  * Encryption scheme:
  * 1. Generate ephemeral key pair (one per message)
- * 2. Encrypt plaintext once with AES-256-CBC using key derived from ephemeral private key
+ * 2. Encrypt plaintext once with AES-256-GCM using key derived from ephemeral private key
  * 3. For each recipient:
  *    - Compute shared secret: ECDH(ephemeral_privkey, recipient_pubkey)
  *    - Derive encryption key from shared secret (SHA256)
- *    - Encrypt the AES key used in step 2
- *    - Package: [ephemeral_pubkey, encrypted_aes_key, hmac]
+ *    - Encrypt the AES key used in step 2 with AES-256-GCM
+ *    - Package: [nonce, encrypted_aes_key, auth_tag]
  * 4. Attach single encrypted message payload to all recipients
  *
  * Decryption:
  * 1. Extract ephemeral public key
  * 2. Compute shared secret: ECDH(recipient_privkey, ephemeral_pubkey)
  * 3. Derive decryption key from shared secret
- * 4. Decrypt AES key
- * 5. Verify HMAC
- * 6. Decrypt message with recovered AES key
+ * 4. Decrypt AES key (GCM tag verified automatically)
+ * 5. Decrypt message with recovered AES key (GCM tag verified automatically)
+ *
+ * Note: GCM provides authenticated encryption, eliminating the need for separate HMAC
  */
 
 // Estructura del mensaje cifrado con ECIES híbrido
@@ -136,6 +137,48 @@ bool AES256_CBC_Decrypt(const std::vector<unsigned char>& ciphertext,
                         const std::vector<unsigned char>& key,
                         const std::vector<unsigned char>& iv,
                         std::vector<unsigned char>& plaintext);
+
+/**
+ * AES-256-GCM encryption using OpenSSL EVP API
+ *
+ * GCM (Galois/Counter Mode) is an AEAD (Authenticated Encryption with Associated Data)
+ * mode that provides both confidentiality and authenticity in a single operation.
+ *
+ * @param plaintext Data to encrypt
+ * @param key AES key (must be exactly 32 bytes)
+ * @param nonce Nonce/IV (must be exactly 12 bytes for GCM)
+ * @param ciphertext Output encrypted data (same size as plaintext, no padding)
+ * @param tag Output authentication tag (16 bytes)
+ * @param aad Additional Authenticated Data (optional, can be empty)
+ * @return true if successful, false otherwise
+ */
+bool AES256_GCM_Encrypt(const std::vector<unsigned char>& plaintext,
+                        const std::vector<unsigned char>& key,
+                        const std::vector<unsigned char>& nonce,
+                        std::vector<unsigned char>& ciphertext,
+                        std::vector<unsigned char>& tag,
+                        const std::vector<unsigned char>& aad = std::vector<unsigned char>());
+
+/**
+ * AES-256-GCM decryption using OpenSSL EVP API
+ *
+ * Decrypts data encrypted with AES-256-GCM and verifies the authentication tag.
+ * The tag verification is performed automatically during decryption.
+ *
+ * @param ciphertext Data to decrypt
+ * @param key AES key (must be exactly 32 bytes)
+ * @param nonce Nonce/IV (must be exactly 12 bytes)
+ * @param tag Authentication tag to verify (must be exactly 16 bytes)
+ * @param plaintext Output decrypted data
+ * @param aad Additional Authenticated Data (must match encryption AAD)
+ * @return true if successful AND tag verification passed, false otherwise
+ */
+bool AES256_GCM_Decrypt(const std::vector<unsigned char>& ciphertext,
+                        const std::vector<unsigned char>& key,
+                        const std::vector<unsigned char>& nonce,
+                        const std::vector<unsigned char>& tag,
+                        std::vector<unsigned char>& plaintext,
+                        const std::vector<unsigned char>& aad = std::vector<unsigned char>());
 
 /**
  * Compute ECDH shared secret

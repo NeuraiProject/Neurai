@@ -181,6 +181,189 @@ bool AES256_CBC_Decrypt(const std::vector<unsigned char>& ciphertext,
     return true;
 }
 
+// AES-256-GCM encryption using OpenSSL
+bool AES256_GCM_Encrypt(const std::vector<unsigned char>& plaintext,
+                        const std::vector<unsigned char>& key,
+                        const std::vector<unsigned char>& nonce,
+                        std::vector<unsigned char>& ciphertext,
+                        std::vector<unsigned char>& tag,
+                        const std::vector<unsigned char>& aad) {
+    // Validate input parameters
+    if (key.size() != 32) {
+        LogPrintf("AES256_GCM_Encrypt: Invalid key size %d (expected 32)\n", key.size());
+        return false;
+    }
+    if (nonce.size() != 12) {
+        LogPrintf("AES256_GCM_Encrypt: Invalid nonce size %d (expected 12)\n", nonce.size());
+        return false;
+    }
+    if (plaintext.empty()) {
+        LogPrintf("AES256_GCM_Encrypt: Empty plaintext\n");
+        return false;
+    }
+
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) {
+        LogPrintf("AES256_GCM_Encrypt: Failed to create cipher context\n");
+        return false;
+    }
+
+    bool success = false;
+    do {
+        // Initialize GCM encryption
+        if (EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr) != 1) {
+            LogPrintf("AES256_GCM_Encrypt: EVP_EncryptInit_ex failed\n");
+            break;
+        }
+
+        // Set nonce length (12 bytes is standard for GCM)
+        if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, 12, nullptr) != 1) {
+            LogPrintf("AES256_GCM_Encrypt: Failed to set IV length\n");
+            break;
+        }
+
+        // Set key and nonce
+        if (EVP_EncryptInit_ex(ctx, nullptr, nullptr, key.data(), nonce.data()) != 1) {
+            LogPrintf("AES256_GCM_Encrypt: Failed to set key and nonce\n");
+            break;
+        }
+
+        // Process AAD if present
+        if (!aad.empty()) {
+            int len;
+            if (EVP_EncryptUpdate(ctx, nullptr, &len, aad.data(), aad.size()) != 1) {
+                LogPrintf("AES256_GCM_Encrypt: Failed to process AAD\n");
+                break;
+            }
+        }
+
+        // Encrypt data (GCM does not add padding, ciphertext size = plaintext size)
+        ciphertext.resize(plaintext.size());
+        int len = 0;
+        int ciphertext_len = 0;
+        if (EVP_EncryptUpdate(ctx, ciphertext.data(), &len, plaintext.data(), plaintext.size()) != 1) {
+            LogPrintf("AES256_GCM_Encrypt: EVP_EncryptUpdate failed\n");
+            break;
+        }
+        ciphertext_len = len;
+
+        // Finalize encryption
+        if (EVP_EncryptFinal_ex(ctx, ciphertext.data() + len, &len) != 1) {
+            LogPrintf("AES256_GCM_Encrypt: EVP_EncryptFinal_ex failed\n");
+            break;
+        }
+        ciphertext_len += len;
+        ciphertext.resize(ciphertext_len);
+
+        // Get authentication tag (128 bits = 16 bytes)
+        tag.resize(16);
+        if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, 16, tag.data()) != 1) {
+            LogPrintf("AES256_GCM_Encrypt: Failed to get authentication tag\n");
+            break;
+        }
+
+        success = true;
+    } while (false);
+
+    EVP_CIPHER_CTX_free(ctx);
+    return success;
+}
+
+// AES-256-GCM decryption using OpenSSL
+bool AES256_GCM_Decrypt(const std::vector<unsigned char>& ciphertext,
+                        const std::vector<unsigned char>& key,
+                        const std::vector<unsigned char>& nonce,
+                        const std::vector<unsigned char>& tag,
+                        std::vector<unsigned char>& plaintext,
+                        const std::vector<unsigned char>& aad) {
+    // Validate input parameters
+    if (key.size() != 32) {
+        LogPrintf("AES256_GCM_Decrypt: Invalid key size %d (expected 32)\n", key.size());
+        return false;
+    }
+    if (nonce.size() != 12) {
+        LogPrintf("AES256_GCM_Decrypt: Invalid nonce size %d (expected 12)\n", nonce.size());
+        return false;
+    }
+    if (tag.size() != 16) {
+        LogPrintf("AES256_GCM_Decrypt: Invalid tag size %d (expected 16)\n", tag.size());
+        return false;
+    }
+    if (ciphertext.empty()) {
+        LogPrintf("AES256_GCM_Decrypt: Empty ciphertext\n");
+        return false;
+    }
+
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) {
+        LogPrintf("AES256_GCM_Decrypt: Failed to create cipher context\n");
+        return false;
+    }
+
+    bool success = false;
+    do {
+        // Initialize GCM decryption
+        if (EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr) != 1) {
+            LogPrintf("AES256_GCM_Decrypt: EVP_DecryptInit_ex failed\n");
+            break;
+        }
+
+        // Set nonce length
+        if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, 12, nullptr) != 1) {
+            LogPrintf("AES256_GCM_Decrypt: Failed to set IV length\n");
+            break;
+        }
+
+        // Set key and nonce
+        if (EVP_DecryptInit_ex(ctx, nullptr, nullptr, key.data(), nonce.data()) != 1) {
+            LogPrintf("AES256_GCM_Decrypt: Failed to set key and nonce\n");
+            break;
+        }
+
+        // Process AAD if present
+        if (!aad.empty()) {
+            int len;
+            if (EVP_DecryptUpdate(ctx, nullptr, &len, aad.data(), aad.size()) != 1) {
+                LogPrintf("AES256_GCM_Decrypt: Failed to process AAD\n");
+                break;
+            }
+        }
+
+        // Decrypt data
+        plaintext.resize(ciphertext.size());
+        int len = 0;
+        int plaintext_len = 0;
+        if (EVP_DecryptUpdate(ctx, plaintext.data(), &len, ciphertext.data(), ciphertext.size()) != 1) {
+            LogPrintf("AES256_GCM_Decrypt: EVP_DecryptUpdate failed\n");
+            break;
+        }
+        plaintext_len = len;
+
+        // Set expected authentication tag for verification
+        // Make a mutable copy of the tag for EVP_CIPHER_CTX_ctrl
+        std::vector<unsigned char> tag_copy = tag;
+        if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, 16, tag_copy.data()) != 1) {
+            LogPrintf("AES256_GCM_Decrypt: Failed to set authentication tag\n");
+            break;
+        }
+
+        // Finalize decryption - this verifies the tag automatically
+        // If the tag does not match, EVP_DecryptFinal_ex will return an error
+        if (EVP_DecryptFinal_ex(ctx, plaintext.data() + len, &len) != 1) {
+            LogPrintf("AES256_GCM_Decrypt: Authentication tag verification FAILED\n");
+            plaintext.clear(); // Clear potentially corrupted data
+            break;
+        }
+        plaintext_len += len;
+        plaintext.resize(plaintext_len);
+
+        success = true;
+    } while (false);
+
+    EVP_CIPHER_CTX_free(ctx);
+    return success;
+}
+
 // Hybrid ECIES encryption for multiple recipients
 bool ECIESEncryptMessage(const std::string& plaintext,
                          const std::map<std::string, CPubKey>& recipientPubKeys,
@@ -212,27 +395,26 @@ bool ECIESEncryptMessage(const std::string& plaintext,
     std::vector<unsigned char> ephemeralSecret(ephemeralPrivKey.begin(), ephemeralPrivKey.end());
     std::vector<unsigned char> aesKey = KDF_SHA256(ephemeralSecret, 32);
 
-    // Generate random IV for AES
-    std::vector<unsigned char> iv(16);
-    GetStrongRandBytes(iv.data(), 16);
+    // Generate random nonce for AES-GCM (12 bytes)
+    std::vector<unsigned char> nonce(12);
+    GetStrongRandBytes(nonce.data(), 12);
 
-    // Step 3: Encrypt plaintext once with AES-256-CBC
+    // Step 3: Encrypt plaintext once with AES-256-GCM
     std::vector<unsigned char> plaintextVec(plaintext.begin(), plaintext.end());
     std::vector<unsigned char> ciphertext;
+    std::vector<unsigned char> tag;
 
-    if (!AES256_CBC_Encrypt(plaintextVec, aesKey, iv, ciphertext)) {
-        error = "AES encryption failed";
+    if (!AES256_GCM_Encrypt(plaintextVec, aesKey, nonce, ciphertext, tag)) {
+        error = "AES-GCM encryption failed";
         return false;
     }
 
-    // Step 4: Compute HMAC of ciphertext
-    std::vector<unsigned char> hmac = HMAC_SHA256(aesKey, ciphertext);
-
-    // Step 5: Package encrypted payload: [IV || ciphertext || HMAC]
+    // Step 4: Package encrypted payload: [Nonce (12) || ciphertext || Tag (16)]
+    // GCM provides authenticated encryption, no separate HMAC needed
     encryptedMsg.encryptedPayload.clear();
-    encryptedMsg.encryptedPayload.insert(encryptedMsg.encryptedPayload.end(), iv.begin(), iv.end());
+    encryptedMsg.encryptedPayload.insert(encryptedMsg.encryptedPayload.end(), nonce.begin(), nonce.end());
     encryptedMsg.encryptedPayload.insert(encryptedMsg.encryptedPayload.end(), ciphertext.begin(), ciphertext.end());
-    encryptedMsg.encryptedPayload.insert(encryptedMsg.encryptedPayload.end(), hmac.begin(), hmac.end());
+    encryptedMsg.encryptedPayload.insert(encryptedMsg.encryptedPayload.end(), tag.begin(), tag.end());
 
     // Step 6: For each recipient, encrypt the AES key using ECDH
     for (const auto& recipient : recipientPubKeys) {
@@ -254,25 +436,24 @@ bool ECIESEncryptMessage(const std::string& plaintext,
         // Derive encryption key from shared secret
         std::vector<unsigned char> encKey = KDF_SHA256(sharedSecret, 32);
 
-        // Generate random IV for this recipient's key encryption
-        std::vector<unsigned char> recipientIV(16);
-        GetStrongRandBytes(recipientIV.data(), 16);
+        // Generate random nonce for this recipient's key encryption (12 bytes)
+        std::vector<unsigned char> recipientNonce(12);
+        GetStrongRandBytes(recipientNonce.data(), 12);
 
-        // Encrypt the AES key
+        // Encrypt the AES key with GCM
         std::vector<unsigned char> encryptedAESKey;
-        if (!AES256_CBC_Encrypt(aesKey, encKey, recipientIV, encryptedAESKey)) {
+        std::vector<unsigned char> recipientTag;
+        if (!AES256_GCM_Encrypt(aesKey, encKey, recipientNonce, encryptedAESKey, recipientTag)) {
             LogPrintf("Warning: Failed to encrypt AES key for recipient %s, skipping\n", address);
             continue;
         }
 
-        // Compute HMAC of encrypted AES key
-        std::vector<unsigned char> recipientHMAC = HMAC_SHA256(encKey, encryptedAESKey);
-
-        // Package for this recipient: [IV || encrypted_aes_key || HMAC]
+        // Package for this recipient: [Nonce (12) || encrypted_aes_key || Tag (16)]
+        // GCM provides authenticated encryption, no separate HMAC needed
         std::vector<unsigned char> recipientPackage;
-        recipientPackage.insert(recipientPackage.end(), recipientIV.begin(), recipientIV.end());
+        recipientPackage.insert(recipientPackage.end(), recipientNonce.begin(), recipientNonce.end());
         recipientPackage.insert(recipientPackage.end(), encryptedAESKey.begin(), encryptedAESKey.end());
-        recipientPackage.insert(recipientPackage.end(), recipientHMAC.begin(), recipientHMAC.end());
+        recipientPackage.insert(recipientPackage.end(), recipientTag.begin(), recipientTag.end());
 
         // Get address hash160 for key lookup
         CTxDestination dest = DecodeDestination(address);
@@ -328,21 +509,21 @@ bool ECIESDecryptMessage(const CECIESEncryptedMessage& encryptedMsg,
 
     const std::vector<unsigned char>& recipientPackage = it->second;
 
-    // Package format: [IV (16) || encrypted_aes_key (32+padding) || HMAC (32)]
-    // Minimum size: 16 + 32 + 32 = 80 bytes (but with AES padding, encrypted key will be larger)
-    if (recipientPackage.size() < 80) {
+    // Package format: [Nonce (12) || encrypted_aes_key (32, no padding in GCM) || Tag (16)]
+    // Minimum size: 12 + 32 + 16 = 60 bytes
+    if (recipientPackage.size() < 60) {
         error = "Recipient key package is too small";
         return false;
     }
 
-    // Extract IV (first 16 bytes)
-    std::vector<unsigned char> recipientIV(recipientPackage.begin(), recipientPackage.begin() + 16);
+    // Extract Nonce (first 12 bytes)
+    std::vector<unsigned char> recipientNonce(recipientPackage.begin(), recipientPackage.begin() + 12);
 
-    // Extract HMAC (last 32 bytes)
-    std::vector<unsigned char> recipientHMAC(recipientPackage.end() - 32, recipientPackage.end());
+    // Extract Tag (last 16 bytes)
+    std::vector<unsigned char> recipientTag(recipientPackage.end() - 16, recipientPackage.end());
 
-    // Extract encrypted AES key (everything between IV and HMAC)
-    std::vector<unsigned char> encryptedAESKey(recipientPackage.begin() + 16, recipientPackage.end() - 32);
+    // Extract encrypted AES key (everything between Nonce and Tag)
+    std::vector<unsigned char> encryptedAESKey(recipientPackage.begin() + 12, recipientPackage.end() - 16);
 
     // Step 1: Compute shared secret using recipient's private key and ephemeral public key
     std::vector<unsigned char> sharedSecret;
@@ -354,17 +535,10 @@ bool ECIESDecryptMessage(const CECIESEncryptedMessage& encryptedMsg,
     // Step 2: Derive decryption key from shared secret
     std::vector<unsigned char> decKey = KDF_SHA256(sharedSecret, 32);
 
-    // Step 3: Verify HMAC of encrypted AES key
-    std::vector<unsigned char> computedHMAC = HMAC_SHA256(decKey, encryptedAESKey);
-    if (computedHMAC != recipientHMAC) {
-        error = "HMAC verification failed for recipient key";
-        return false;
-    }
-
-    // Step 4: Decrypt AES key
+    // Step 3: Decrypt AES key (GCM tag verified automatically)
     std::vector<unsigned char> aesKey;
-    if (!AES256_CBC_Decrypt(encryptedAESKey, decKey, recipientIV, aesKey)) {
-        error = "Failed to decrypt AES key";
+    if (!AES256_GCM_Decrypt(encryptedAESKey, decKey, recipientNonce, recipientTag, aesKey)) {
+        error = "Failed to decrypt AES key (authentication failed)";
         return false;
     }
 
@@ -373,31 +547,24 @@ bool ECIESDecryptMessage(const CECIESEncryptedMessage& encryptedMsg,
         return false;
     }
 
-    // Step 5: Extract IV, ciphertext, and HMAC from encrypted payload
-    // Payload format: [IV (16) || ciphertext || HMAC (32)]
-    if (encryptedMsg.encryptedPayload.size() < 48) { // 16 + 0 + 32
+    // Step 4: Extract Nonce, ciphertext, and Tag from encrypted payload
+    // Payload format: [Nonce (12) || ciphertext || Tag (16)]
+    if (encryptedMsg.encryptedPayload.size() < 28) { // 12 + 0 + 16
         error = "Encrypted payload is too small";
         return false;
     }
 
-    std::vector<unsigned char> payloadIV(encryptedMsg.encryptedPayload.begin(),
-                                          encryptedMsg.encryptedPayload.begin() + 16);
-    std::vector<unsigned char> payloadHMAC(encryptedMsg.encryptedPayload.end() - 32,
-                                            encryptedMsg.encryptedPayload.end());
-    std::vector<unsigned char> payloadCiphertext(encryptedMsg.encryptedPayload.begin() + 16,
-                                                  encryptedMsg.encryptedPayload.end() - 32);
+    std::vector<unsigned char> payloadNonce(encryptedMsg.encryptedPayload.begin(),
+                                             encryptedMsg.encryptedPayload.begin() + 12);
+    std::vector<unsigned char> payloadTag(encryptedMsg.encryptedPayload.end() - 16,
+                                           encryptedMsg.encryptedPayload.end());
+    std::vector<unsigned char> payloadCiphertext(encryptedMsg.encryptedPayload.begin() + 12,
+                                                  encryptedMsg.encryptedPayload.end() - 16);
 
-    // Step 6: Verify HMAC of ciphertext
-    std::vector<unsigned char> computedPayloadHMAC = HMAC_SHA256(aesKey, payloadCiphertext);
-    if (computedPayloadHMAC != payloadHMAC) {
-        error = "HMAC verification failed for message payload";
-        return false;
-    }
-
-    // Step 7: Decrypt message
+    // Step 5: Decrypt message (GCM tag verified automatically)
     std::vector<unsigned char> plaintextVec;
-    if (!AES256_CBC_Decrypt(payloadCiphertext, aesKey, payloadIV, plaintextVec)) {
-        error = "Failed to decrypt message";
+    if (!AES256_GCM_Decrypt(payloadCiphertext, aesKey, payloadNonce, payloadTag, plaintextVec)) {
+        error = "Failed to decrypt message (authentication failed)";
         return false;
     }
 
