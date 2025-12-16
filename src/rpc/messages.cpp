@@ -1714,6 +1714,139 @@ UniValue depinmcpstatus(const JSONRPCRequest& request)
     return result;
 }
 
+#ifdef ENABLE_WALLET
+UniValue depinpoolpkey(const JSONRPCRequest& request)
+{
+    // Define BIP32 hardened key limit constant
+    const uint32_t BIP32_HARDENED_KEY_LIMIT = 0x80000000;
+
+    if (request.fHelp || request.params.size() != 0)
+        throw std::runtime_error(
+                "depinpoolpkey\n"
+                "\nReturns the public key of the DePIN pool address from the internal wallet.\n"
+                "This command only works if the wallet is loaded and unlocked at node startup.\n"
+                "\nDerived path:\n"
+                "  Mainnet:  m/44'/0'/200'/0/0\n"
+                "  Testnet:  m/44'/0'/200'/1/0\n"
+                "\nResult:\n"
+                "{\n"
+                "  \"pubkey\": \"hex\",           (string) Public key in hex format\n"
+                "  \"address\": \"address\",      (string) Corresponding Neurai address\n"
+                "  \"path\": \"derivation_path\"  (string) BIP44 derivation path used\n"
+                "}\n"
+                "\nExamples:\n"
+                + HelpExampleCli("depinpoolpkey", "")
+                + HelpExampleRpc("depinpoolpkey", "")
+        );
+
+    // Check wallet availability
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Wallet is not loaded or available");
+    }
+
+    LOCK2(cs_main, pwallet->cs_wallet);
+
+    // Check if wallet is unlocked
+    if (pwallet->IsLocked()) {
+        throw JSONRPCError(RPC_WALLET_UNLOCK_NEEDED, 
+            "Wallet is locked. This command requires the wallet to be unlocked at startup.");
+    }
+
+    // Check if wallet uses BIP44
+    const CHDChain& hdChain = pwallet->GetHDChain();
+    if (!hdChain.IsBip44()) {
+        throw JSONRPCError(RPC_WALLET_ERROR, 
+            "Wallet does not use BIP44. This command requires a BIP44-enabled wallet.");
+    }
+
+    // Derive the DePIN pool key
+    // Path: m/44'/coin_type'/200'/change/0
+    // - coin_type: 0 for mainnet, 0 for testnet (Neurai uses 0 for both)
+    // - account: 200 (fixed for DePIN pool)
+    // - change: 0 for mainnet, 1 for testnet
+    // - address_index: 0 (always first address)
+
+    CExtKey masterKey;
+    CExtKey purposeKey;      // m/44'
+    CExtKey coinTypeKey;     // m/44'/0'
+    CExtKey accountKey;      // m/44'/0'/200'
+    CExtKey changeKey;       // m/44'/0'/200'/change
+    CExtKey addressKey;      // m/44'/0'/200'/change/0
+
+    // Get the master seed using the appropriate method based on BIP44 status
+    if (hdChain.IsBip44()) {
+        // For BIP44 wallets, get the seed via GetBip39Data
+        uint256 hash;
+        std::vector<unsigned char> vchWords;
+        std::vector<unsigned char> vchPassphrase;
+        std::vector<unsigned char> vchSeed;
+        
+        pwallet->GetBip39Data(hash, vchWords, vchPassphrase, vchSeed);
+        
+        if (vchSeed.empty()) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "HD seed not available");
+        }
+        
+        masterKey.SetSeed(vchSeed.data(), vchSeed.size());
+    } else {
+        // For non-BIP44 wallets, use the seed_id method
+        CKey seed;
+        if (!pwallet->GetKey(hdChain.seed_id, seed)) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "HD seed not found");
+        }
+        masterKey.SetSeed(seed.begin(), seed.size());
+    }
+
+    // Determine if testnet
+    bool isTestnet = (GetParams().NetworkIDString() == CBaseChainParams::TESTNET);
+    uint32_t changeIndex = isTestnet ? 1 : 0;
+
+    // Build derivation path string
+    std::string derivationPath = strprintf("m/44'/0'/200'/%d/0", changeIndex);
+
+    try {
+        // Derive m/44'
+        masterKey.Derive(purposeKey, 44 | BIP32_HARDENED_KEY_LIMIT);
+        
+        // Derive m/44'/0' (coin_type = 0 for Neurai)
+        purposeKey.Derive(coinTypeKey, GetParams().ExtCoinType() | BIP32_HARDENED_KEY_LIMIT);
+        
+        // Derive m/44'/0'/200' (account = 200 for DePIN pool)
+        coinTypeKey.Derive(accountKey, 200 | BIP32_HARDENED_KEY_LIMIT);
+        
+        // Derive m/44'/0'/200'/change (0=mainnet, 1=testnet)
+        accountKey.Derive(changeKey, changeIndex);
+        
+        // Derive m/44'/0'/200'/change/0 (address_index = 0)
+        changeKey.Derive(addressKey, 0);
+        
+    } catch (const std::exception& e) {
+        throw JSONRPCError(RPC_WALLET_ERROR, 
+            strprintf("Failed to derive key: %s", e.what()));
+    }
+
+    // Get the public key
+    CPubKey pubkey = addressKey.key.GetPubKey();
+    if (!pubkey.IsValid()) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Derived public key is invalid");
+    }
+
+    // Get the address
+    CKeyID keyID = pubkey.GetID();
+    CTxDestination dest = keyID;
+    std::string address = EncodeDestination(dest);
+
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    result.push_back(Pair("pubkey", HexStr(pubkey.begin(), pubkey.end())));
+    result.push_back(Pair("address", address));
+    result.push_back(Pair("path", derivationPath));
+
+    return result;
+}
+#endif
+
 static const CRPCCommand commands[] =
     {           //  category    name                          actor (function)             argNames
                 //  ----------- ------------------------      -----------------------      ----------
@@ -1735,6 +1868,7 @@ static const CRPCCommand commands[] =
             { "depin messaging",          "depinreceivemsg",            &depinreceivemsg,            {"token", "address", "timestamp"}},
             { "depin messaging",          "depinmcpstatus",             &depinmcpstatus,             {}},
 #ifdef ENABLE_WALLET
+            { "depin messaging",          "depinpoolpkey",              &depinpoolpkey,              {}},
             { "depin messaging",          "depinsendmsg",               &depinsendmsg,               {"token", "ip", "message", "fromaddress", "port"}},
             { "depin messaging",          "depingetmsg",                &depingetmsg,                {"token"}},
             { "depin messaging",          "depinclearmsg",              &depinclearmsg,              {}},
