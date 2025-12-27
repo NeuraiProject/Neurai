@@ -553,6 +553,7 @@ UniValue depingetmsginfo(const JSONRPCRequest& request)
 }
 
 #ifdef ENABLE_WALLET
+#ifdef ENABLE_DEPIN_GATEWAY
 UniValue depinsendmsg(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() < 3 || request.params.size() > 5)
@@ -793,6 +794,7 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
 
     return result;
 }
+#endif
 
 // New secure endpoint: receives pre-encrypted and signed messages
 UniValue depinsubmitmsg(const JSONRPCRequest& request)
@@ -970,6 +972,7 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
     return result;
 }
 
+#ifdef ENABLE_DEPIN_GATEWAY
 UniValue depingetmsg(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() < 1 || request.params.size() > 3)
@@ -1301,6 +1304,7 @@ UniValue depingetmsg(const JSONRPCRequest& request)
 
     return result;
 }
+#endif
 
 UniValue depinclearmsg(const JSONRPCRequest& request)
 {
@@ -1869,8 +1873,10 @@ static const CRPCCommand commands[] =
             { "depin messaging",          "depinmcpstatus",             &depinmcpstatus,             {}},
 #ifdef ENABLE_WALLET
             { "depin messaging",          "depinpoolpkey",              &depinpoolpkey,              {}},
+#ifdef ENABLE_DEPIN_GATEWAY
             { "depin messaging",          "depinsendmsg",               &depinsendmsg,               {"token", "ip", "message", "fromaddress", "port"}},
             { "depin messaging",          "depingetmsg",                &depingetmsg,                {"token"}},
+#endif
             { "depin messaging",          "depinclearmsg",              &depinclearmsg,              {}},
 #endif
     };

@@ -20,8 +20,10 @@
 #include <sstream>
 
 // Forward declarations of RPC functions
+#ifdef ENABLE_DEPIN_GATEWAY
 UniValue depinsendmsg(const JSONRPCRequest& request);
 UniValue depingetmsg(const JSONRPCRequest& request);
+#endif
 UniValue depinsubmitmsg(const JSONRPCRequest& request);
 #include <cstdlib>
 #include <algorithm>
@@ -83,8 +85,10 @@ inline const char* InetNtopCompat(int af, const void* src, char* dst, socklen_t 
 std::unique_ptr<CDepinMsgPoolServer> pDepinMsgPoolServer;
 
 #ifdef ENABLE_WALLET
+#ifdef ENABLE_DEPIN_GATEWAY
 extern UniValue depinsendmsg(const JSONRPCRequest& request);
 extern UniValue depingetmsg(const JSONRPCRequest& request);
+#endif
 #endif
 
 // ===== Servidor =====
@@ -556,6 +560,7 @@ std::string CDepinMsgPoolServer::ProcessJsonRpcRequest(const UniValue& valReques
 
     try {
 #ifdef ENABLE_WALLET
+#ifdef ENABLE_DEPIN_GATEWAY
         if (jsonRequest.strMethod == "depinsubmitmsg") {
             // NEW SECURE PROTOCOL: Receives pre-encrypted and signed messages
             // Message signature is ALWAYS verified in depinsubmitmsg
@@ -571,6 +576,13 @@ std::string CDepinMsgPoolServer::ProcessJsonRpcRequest(const UniValue& valReques
         } else {
             throw JSONRPCError(RPC_METHOD_NOT_FOUND, "Method not allowed on DePIN port");
         }
+#else
+        if (jsonRequest.strMethod == "depinsubmitmsg") {
+            result = depinsubmitmsg(jsonRequest);
+        } else {
+             throw JSONRPCError(RPC_METHOD_NOT_FOUND, "DePIN gateway commands are disabled in this build");
+        }
+#endif
 #else
         throw JSONRPCError(RPC_METHOD_NOT_FOUND, "Wallet RPC not available in this build");
 #endif
