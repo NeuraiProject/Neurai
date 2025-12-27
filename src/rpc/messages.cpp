@@ -39,6 +39,8 @@
 #include "wallet/feebumper.h"
 #include "wallet/wallet.h"
 #include "wallet/walletdb.h"
+#include "depinecies.h"
+#include "depinmsgpool.h"
 
 std::string MessageActivationWarning()
 {
@@ -497,7 +499,8 @@ UniValue viewmyrestrictedaddresses(const JSONRPCRequest& request) {
 #ifdef ENABLE_WALLET
 class CWallet;
 class CPubKey;
-bool DeriveDepinPoolPubKey(CWallet* pwallet, CPubKey& pubkey, std::string& derivationPath, std::string& error);
+class CKey;
+bool DeriveDepinPoolKeys(CWallet* pwallet, CKey& privKey, CPubKey& pubkey, std::string& derivationPath, std::string& error);
 #endif
 
 UniValue depingetmsginfo(const JSONRPCRequest& request)
@@ -558,9 +561,10 @@ UniValue depingetmsginfo(const JSONRPCRequest& request)
     CWallet* const pwallet = GetWalletForJSONRPCRequest(request);
     if (pwallet && !pwallet->IsCrypted()) {
         CPubKey pubkey;
+        CKey privKey;
         std::string derivationPath;
         std::string error;
-        if (DeriveDepinPoolPubKey(pwallet, pubkey, derivationPath, error)) {
+        if (DeriveDepinPoolKeys(pwallet, privKey, pubkey, derivationPath, error)) {
             poolPKey = HexStr(pubkey.begin(), pubkey.end());
         }
     }
@@ -819,29 +823,76 @@ UniValue depinsubmitmsg(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() != 1)
         throw std::runtime_error(
-                "depinsubmitmsg \"hexmessage\"\n"
+                "depinsubmitmsg \"hexmessage\"|{\"sender\":\"...\",\"encrypted\":\"...\"}\n"
                 "\nSubmit a pre-encrypted and signed DePIN message to the pool\n"
                 "\nThis is the secure protocol where the client prepares the complete message\n"
                 "(encryption + signature) and the server only validates and stores it.\n"
+                "\nThis command also supports an optional privacy layer where the entire message\n"
+                "is wrapped in a second layer of encryption for the server's pool key.\n"
                 "\nArguments:\n"
-                "1. \"hexmessage\"   (string, required) Hex-encoded serialized CDepinMessage\n"
+                "1. \"hexmessage\"     (string) Hex-encoded serialized CDepinMessage\n"
+                "   OR\n"
+                "   {                  (json object) Wrapped encrypted message\n"
+                "     \"sender\": \"...\", (string, required) Sender address\n"
+                "     \"encrypted\": \"...\" (string, required) Hex-encoded ECIES wrapper\n"
+                "   }\n"
                 "\nResult:\n"
                 "{\n"
                 "  \"result\": \"success\",           (string) Status\n"
                 "  \"hash\": \"hash\",                (string) Message hash\n"
                 "  \"timestamp\": n                  (numeric) Unix timestamp\n"
                 "}\n"
-                "\nNote: This endpoint is typically called by remote nodes after challenge/response authentication.\n"
                 "\nExamples:\n"
                 + HelpExampleCli("depinsubmitmsg", "\"0a3f2e...\"")
-                + HelpExampleRpc("depinsubmitmsg", "\"0a3f2e...\"")
+                + HelpExampleRpc("depinsubmitmsg", "{\"sender\":\"NX...\",\"encrypted\":\"...\"}")
         );
 
     if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
         throw JSONRPCError(RPC_MISC_ERROR, "DePIN messaging pool is not enabled");
     }
 
-    std::string hexMessage = request.params[0].get_str();
+    std::string hexMessage;
+    if (request.params[0].isObject()) {
+        UniValue wrapped = request.params[0].get_obj();
+        if (!wrapped.exists("sender") || !wrapped.exists("encrypted")) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Wrapped message must contain 'sender' and 'encrypted'");
+        }
+        std::string encryptedHex = wrapped["encrypted"].get_str();
+        
+#ifdef ENABLE_WALLET
+        // Get server's private key
+        CWallet* const pwallet = GetWalletForJSONRPCRequest(request);
+        CPubKey serverPubKey;
+        CKey serverPrivKey;
+        std::string derivationPath;
+        std::string error;
+        if (!pwallet || !DeriveDepinPoolKeys(pwallet, serverPrivKey, serverPubKey, derivationPath, error)) {
+             throw JSONRPCError(RPC_WALLET_ERROR, "Server privacy layer requires an active and unlocked wallet with a DePIN pool key");
+        }
+        
+        // Deserialize ECIES message
+        if (!IsHex(encryptedHex)) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Encrypted data must be hex-encoded");
+        }
+        
+        CECIESEncryptedMessage eciesMsg;
+        try {
+            CDataStream ss(ParseHex(encryptedHex), SER_NETWORK, PROTOCOL_VERSION);
+            ss >> eciesMsg;
+        } catch (const std::exception& e) {
+            throw JSONRPCError(RPC_DESERIALIZATION_ERROR, strprintf("Failed to deserialize ECIES wrapper: %s", e.what()));
+        }
+        
+        // Decrypt using server's private key
+        if (!ECIESDecryptMessage(eciesMsg, serverPrivKey, EncodeDestination(serverPubKey.GetID()), hexMessage, error)) {
+            throw JSONRPCError(RPC_VERIFY_ERROR, strprintf("Failed to decrypt outer privacy shell: %s", error));
+        }
+#else
+        throw JSONRPCError(RPC_MISC_ERROR, "Server privacy layer requires ENABLE_WALLET");
+#endif
+    } else {
+        hexMessage = request.params[0].get_str();
+    }
 
     // Decode hex
     if (!IsHex(hexMessage)) {
@@ -874,10 +925,7 @@ UniValue depinsubmitmsg(const JSONRPCRequest& request)
     if (!VerifyDepinMessageSignature(chatMsg)) {
         throw JSONRPCError(RPC_VERIFY_ERROR,
                           strprintf("Invalid message signature for sender %s. "
-                                   "Check debug.log for details. Common causes: "
-                                   "1) Sender address has no public key in blockchain (never spent coins), "
-                                   "2) Signature format incorrect, "
-                                   "3) Message hash calculated incorrectly",
+                                   "Check debug.log for details.",
                                    chatMsg.senderAddress));
     }
 
@@ -910,14 +958,15 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
     if (request.fHelp || request.params.size() < 2 || request.params.size() > 3)
         throw std::runtime_error(
                 "depinreceivemsg \"token\" \"address\" (timestamp)\n"
-                "\nRetrieve encrypted DePIN messages from the pool\n"
-                "\nThis endpoint returns the raw encrypted message contents (ECIES payload + signature)\n"
-                "as JSON. The client is responsible for decrypting messages it can decrypt.\n"
+                "\nRetrieve DePIN messages from the pool\n"
+                "\nThis endpoint returns the messages. If the server has a DePIN pool key\n"
+                "and the requester's address has a revealed public key, the response will be\n"
+                "fully encrypted using the privacy layer.\n"
                 "\nArguments:\n"
                 "1. \"token\"      (string, required) Token name\n"
-                "2. \"address\"    (string, required) Neurai address (used as an access selector)\n"
+                "2. \"address\"    (string, required) Neurai address (used as access selector and encryption target)\n"
                 "3. timestamp    (numeric, optional) Unix time. Return only messages with timestamp >= (timestamp-1 if timestamp>0)\n"
-                "\nResult:\n"
+                "\nResult (standard):\n"
                 "[\n"
                 "  {\n"
                 "    \"hash\": \"...\",                 (string) Message hash\n"
@@ -929,6 +978,10 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
                 "  },\n"
                 "  ...\n"
                 "]\n"
+                "\nResult (privacy layer active):\n"
+                "{\n"
+                "  \"encrypted\": \"hex_blob\"        (string) Full JSON array encrypted with ECIES\n"
+                "}\n"
                 "\nExamples:\n"
                 + HelpExampleCli("depinreceivemsg", "\"TOKEN\" \"NeuraiAddress\"")
                 + HelpExampleCli("depinreceivemsg", "\"TOKEN\" \"NeuraiAddress\" 1730000000")
@@ -986,6 +1039,33 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
         msgObj.push_back(Pair("signature_hex", HexStr(msg.signature)));
         result.push_back(msgObj);
     }
+
+    // Privacy Layer: Encrypt the whole JSON array if server has wallet and client has pubkey
+#ifdef ENABLE_WALLET
+    CWallet* const pwallet = GetWalletForJSONRPCRequest(request);
+    CPubKey clientPubKey;
+    std::string errorEncryption;
+    if (pwallet && CheckAddressHasPublicKey(address, clientPubKey, errorEncryption)) {
+        CPubKey serverPubKey;
+        CKey serverPrivKey;
+        std::string derivationPath;
+        std::string error;
+        if (DeriveDepinPoolKeys(pwallet, serverPrivKey, serverPubKey, derivationPath, error)) {
+            // Encrypt for client using server's private key and client's public key
+            std::map<std::string, CPubKey> recipients;
+            recipients[address] = clientPubKey;
+            
+            CECIESEncryptedMessage eciesMsg;
+            if (ECIESEncryptMessage(result.write(), recipients, eciesMsg, error)) {
+                CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
+                ss << eciesMsg;
+                UniValue encryptedRes(UniValue::VOBJ);
+                encryptedRes.push_back(Pair("encrypted", HexStr(ss.begin(), ss.end())));
+                return encryptedRes;
+            }
+        }
+    }
+#endif
 
     return result;
 }
@@ -1737,7 +1817,7 @@ UniValue depinmcpstatus(const JSONRPCRequest& request)
 }
 
 #ifdef ENABLE_WALLET
-bool DeriveDepinPoolPubKey(CWallet* pwallet, CPubKey& pubkey, std::string& derivationPath, std::string& error)
+bool DeriveDepinPoolKeys(CWallet* pwallet, CKey& privKey, CPubKey& pubkey, std::string& derivationPath, std::string& error)
 {
     const uint32_t BIP32_HARDENED_KEY_LIMIT = 0x80000000;
 
@@ -1804,7 +1884,8 @@ bool DeriveDepinPoolPubKey(CWallet* pwallet, CPubKey& pubkey, std::string& deriv
         return false;
     }
 
-    pubkey = addressKey.key.GetPubKey();
+    privKey = addressKey.key;
+    pubkey = privKey.GetPubKey();
     if (!pubkey.IsValid()) {
         error = "Derived public key is invalid";
         return false;
@@ -1844,10 +1925,11 @@ UniValue depinpoolpkey(const JSONRPCRequest& request)
     }
 
     CPubKey pubkey;
+    CKey privKey;
     std::string derivationPath;
     std::string error;
 
-    if (!DeriveDepinPoolPubKey(pwallet, pubkey, derivationPath, error)) {
+    if (!DeriveDepinPoolKeys(pwallet, privKey, pubkey, derivationPath, error)) {
         throw JSONRPCError(RPC_WALLET_ERROR, error);
     }
 

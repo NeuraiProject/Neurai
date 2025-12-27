@@ -17,6 +17,7 @@
 #ifdef ENABLE_WALLET
 class CWallet;
 #endif
+class CPubKey;
 
 // Configuration defaults
 static const unsigned int DEFAULT_DEPIN_MSG_PORT = 19002;
@@ -145,6 +146,7 @@ extern std::unique_ptr<CDepinMsgPool> pDepinMsgPool;
 bool VerifyDepinMessageSignature(const CDepinMessage& message);
 bool SignDepinMessage(CDepinMessage& message, const std::string& senderAddress);
 bool CheckTokenOwnership(const std::string& address, const std::string& token, std::string& error);
+bool CheckAddressHasPublicKey(const std::string& address, CPubKey& pubkey, std::string& error);
 std::vector<std::string> GetTokenHolders(const std::string& token, unsigned int maxHolders, std::string& error);
 
 // Encrypt message for ALL recipients at once (ECIES hybrid encryption)

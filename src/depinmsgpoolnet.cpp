@@ -35,7 +35,7 @@ UniValue depinsubmitmsg(const JSONRPCRequest& request);
 #ifdef ENABLE_WALLET
 #include "wallet/wallet.h"
 extern std::vector<CWalletRef> vpwallets;
-bool DeriveDepinPoolPubKey(CWallet* pwallet, CPubKey& pubkey, std::string& derivationPath, std::string& error);
+bool DeriveDepinPoolKeys(CWallet* pwallet, CKey& privKey, CPubKey& pubkey, std::string& derivationPath, std::string& error);
 #endif
 #include <cstdlib>
 #include <algorithm>
@@ -394,9 +394,10 @@ std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request, cons
 #ifdef ENABLE_WALLET
         if (!vpwallets.empty() && vpwallets[0] && !vpwallets[0]->IsCrypted()) {
             CPubKey pubkey;
+            CKey privKey;
             std::string derivationPath;
             std::string error;
-            if (DeriveDepinPoolPubKey(vpwallets[0], pubkey, derivationPath, error)) {
+            if (DeriveDepinPoolKeys(vpwallets[0], privKey, pubkey, derivationPath, error)) {
                 poolPKey = HexStr(pubkey.begin(), pubkey.end());
             }
         }
