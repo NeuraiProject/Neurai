@@ -32,6 +32,11 @@ UniValue depinmcpstatus(const JSONRPCRequest& request);
 UniValue depinclearmsg(const JSONRPCRequest& request);
 UniValue depinpoolpkey(const JSONRPCRequest& request);
 UniValue depinsubmitmsg(const JSONRPCRequest& request);
+#ifdef ENABLE_WALLET
+#include "wallet/wallet.h"
+extern std::vector<CWalletRef> vpwallets;
+bool DeriveDepinPoolPubKey(CWallet* pwallet, CPubKey& pubkey, std::string& derivationPath, std::string& error);
+#endif
 #include <cstdlib>
 #include <algorithm>
 #include <cctype>
@@ -384,10 +389,23 @@ std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request, cons
         std::string oldestStr = (oldest > 0) ? DateTimeStrFormat("%Y-%m-%d %H:%M:%S", oldest) : "N/A";
         std::string newestStr = (newest > 0) ? DateTimeStrFormat("%Y-%m-%d %H:%M:%S", newest) : "N/A";
 
-        return strprintf("OK|%s|%d|%s|%d|%d|%d|%d|%d|%d|%s|%s",
+        // depinpoolpkey integration
+        std::string poolPKey = "0";
+#ifdef ENABLE_WALLET
+        if (!vpwallets.empty() && vpwallets[0] && !vpwallets[0]->IsCrypted()) {
+            CPubKey pubkey;
+            std::string derivationPath;
+            std::string error;
+            if (DeriveDepinPoolPubKey(vpwallets[0], pubkey, derivationPath, error)) {
+                poolPKey = HexStr(pubkey.begin(), pubkey.end());
+            }
+        }
+#endif
+
+        return strprintf("OK|%s|%d|%s|%d|%d|%d|%d|%d|%d|%s|%s|%s",
                         token, port, cipher, maxRecipients, maxMessageSize,
                         messageExpiryHours, maxPoolSizeMB, messageCount,
-                        (int)memoryUsage, oldestStr, newestStr);
+                        (int)memoryUsage, oldestStr, newestStr, poolPKey);
     }
 
     // GETMESSAGES

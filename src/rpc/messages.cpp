@@ -492,8 +492,13 @@ UniValue viewmyrestrictedaddresses(const JSONRPCRequest& request) {
 
 #endif
 
-// DePIN Messaging RPC Commands
 #include "depinmsgpool.h"
+
+#ifdef ENABLE_WALLET
+class CWallet;
+class CPubKey;
+bool DeriveDepinPoolPubKey(CWallet* pwallet, CPubKey& pubkey, std::string& derivationPath, std::string& error);
+#endif
 
 UniValue depingetmsginfo(const JSONRPCRequest& request)
 {
@@ -544,10 +549,23 @@ UniValue depingetmsginfo(const JSONRPCRequest& request)
     int64_t oldest = pDepinMsgPool->GetOldestMessageTime();
     int64_t newest = pDepinMsgPool->GetNewestMessageTime();
 
-    if (oldest > 0)
-        obj.push_back(Pair("oldestmessage", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", oldest)));
     if (newest > 0)
         obj.push_back(Pair("newestmessage", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", newest)));
+
+    // depinpoolpkey integration
+    std::string poolPKey = "0";
+#ifdef ENABLE_WALLET
+    CWallet* const pwallet = GetWalletForJSONRPCRequest(request);
+    if (pwallet && !pwallet->IsCrypted()) {
+        CPubKey pubkey;
+        std::string derivationPath;
+        std::string error;
+        if (DeriveDepinPoolPubKey(pwallet, pubkey, derivationPath, error)) {
+            poolPKey = HexStr(pubkey.begin(), pubkey.end());
+        }
+    }
+#endif
+    obj.push_back(Pair("depinpoolpkey", poolPKey));
 
     return obj;
 }
@@ -1719,6 +1737,82 @@ UniValue depinmcpstatus(const JSONRPCRequest& request)
 }
 
 #ifdef ENABLE_WALLET
+bool DeriveDepinPoolPubKey(CWallet* pwallet, CPubKey& pubkey, std::string& derivationPath, std::string& error)
+{
+    const uint32_t BIP32_HARDENED_KEY_LIMIT = 0x80000000;
+
+    if (!pwallet) {
+        error = "Wallet is not available";
+        return false;
+    }
+
+    LOCK2(cs_main, pwallet->cs_wallet);
+
+    if (pwallet->IsLocked()) {
+        error = "Wallet is locked";
+        return false;
+    }
+
+    const CHDChain& hdChain = pwallet->GetHDChain();
+    if (!hdChain.IsBip44()) {
+        error = "Wallet does not use BIP44";
+        return false;
+    }
+
+    CExtKey masterKey;
+    CExtKey purposeKey;      // m/44'
+    CExtKey coinTypeKey;     // m/44'/0'
+    CExtKey accountKey;      // m/44'/0'/200'
+    CExtKey changeKey;       // m/44'/0'/200'/change
+    CExtKey addressKey;      // m/44'/0'/200'/change/0
+
+    if (hdChain.IsBip44()) {
+        uint256 hash;
+        std::vector<unsigned char> vchWords;
+        std::vector<unsigned char> vchPassphrase;
+        std::vector<unsigned char> vchSeed;
+        
+        pwallet->GetBip39Data(hash, vchWords, vchPassphrase, vchSeed);
+        
+        if (vchSeed.empty()) {
+            error = "HD seed not available";
+            return false;
+        }
+        
+        masterKey.SetSeed(vchSeed.data(), vchSeed.size());
+    } else {
+        CKey seed;
+        if (!pwallet->GetKey(hdChain.seed_id, seed)) {
+            error = "HD seed not found";
+            return false;
+        }
+        masterKey.SetSeed(seed.begin(), seed.size());
+    }
+
+    bool isTestnet = (GetParams().NetworkIDString() == CBaseChainParams::TESTNET);
+    uint32_t changeIndex = isTestnet ? 1 : 0;
+    derivationPath = strprintf("m/44'/0'/200'/%d/0", changeIndex);
+
+    try {
+        masterKey.Derive(purposeKey, 44 | BIP32_HARDENED_KEY_LIMIT);
+        purposeKey.Derive(coinTypeKey, GetParams().ExtCoinType() | BIP32_HARDENED_KEY_LIMIT);
+        coinTypeKey.Derive(accountKey, 200 | BIP32_HARDENED_KEY_LIMIT);
+        accountKey.Derive(changeKey, changeIndex);
+        changeKey.Derive(addressKey, 0);
+    } catch (const std::exception& e) {
+        error = strprintf("Failed to derive key: %s", e.what());
+        return false;
+    }
+
+    pubkey = addressKey.key.GetPubKey();
+    if (!pubkey.IsValid()) {
+        error = "Derived public key is invalid";
+        return false;
+    }
+
+    return true;
+}
+
 UniValue depinpoolpkey(const JSONRPCRequest& request)
 {
     // Define BIP32 hardened key limit constant
@@ -1749,91 +1843,12 @@ UniValue depinpoolpkey(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_WALLET_ERROR, "Wallet is not loaded or available");
     }
 
-    LOCK2(cs_main, pwallet->cs_wallet);
+    CPubKey pubkey;
+    std::string derivationPath;
+    std::string error;
 
-    // Check if wallet is unlocked
-    if (pwallet->IsLocked()) {
-        throw JSONRPCError(RPC_WALLET_UNLOCK_NEEDED, 
-            "Wallet is locked. This command requires the wallet to be unlocked at startup.");
-    }
-
-    // Check if wallet uses BIP44
-    const CHDChain& hdChain = pwallet->GetHDChain();
-    if (!hdChain.IsBip44()) {
-        throw JSONRPCError(RPC_WALLET_ERROR, 
-            "Wallet does not use BIP44. This command requires a BIP44-enabled wallet.");
-    }
-
-    // Derive the DePIN pool key
-    // Path: m/44'/coin_type'/200'/change/0
-    // - coin_type: 0 for mainnet, 0 for testnet (Neurai uses 0 for both)
-    // - account: 200 (fixed for DePIN pool)
-    // - change: 0 for mainnet, 1 for testnet
-    // - address_index: 0 (always first address)
-
-    CExtKey masterKey;
-    CExtKey purposeKey;      // m/44'
-    CExtKey coinTypeKey;     // m/44'/0'
-    CExtKey accountKey;      // m/44'/0'/200'
-    CExtKey changeKey;       // m/44'/0'/200'/change
-    CExtKey addressKey;      // m/44'/0'/200'/change/0
-
-    // Get the master seed using the appropriate method based on BIP44 status
-    if (hdChain.IsBip44()) {
-        // For BIP44 wallets, get the seed via GetBip39Data
-        uint256 hash;
-        std::vector<unsigned char> vchWords;
-        std::vector<unsigned char> vchPassphrase;
-        std::vector<unsigned char> vchSeed;
-        
-        pwallet->GetBip39Data(hash, vchWords, vchPassphrase, vchSeed);
-        
-        if (vchSeed.empty()) {
-            throw JSONRPCError(RPC_WALLET_ERROR, "HD seed not available");
-        }
-        
-        masterKey.SetSeed(vchSeed.data(), vchSeed.size());
-    } else {
-        // For non-BIP44 wallets, use the seed_id method
-        CKey seed;
-        if (!pwallet->GetKey(hdChain.seed_id, seed)) {
-            throw JSONRPCError(RPC_WALLET_ERROR, "HD seed not found");
-        }
-        masterKey.SetSeed(seed.begin(), seed.size());
-    }
-
-    // Determine if testnet
-    bool isTestnet = (GetParams().NetworkIDString() == CBaseChainParams::TESTNET);
-    uint32_t changeIndex = isTestnet ? 1 : 0;
-
-    // Build derivation path string
-    std::string derivationPath = strprintf("m/44'/0'/200'/%d/0", changeIndex);
-
-    try {
-        // Derive m/44'
-        masterKey.Derive(purposeKey, 44 | BIP32_HARDENED_KEY_LIMIT);
-        
-        // Derive m/44'/0' (coin_type = 0 for Neurai)
-        purposeKey.Derive(coinTypeKey, GetParams().ExtCoinType() | BIP32_HARDENED_KEY_LIMIT);
-        
-        // Derive m/44'/0'/200' (account = 200 for DePIN pool)
-        coinTypeKey.Derive(accountKey, 200 | BIP32_HARDENED_KEY_LIMIT);
-        
-        // Derive m/44'/0'/200'/change (0=mainnet, 1=testnet)
-        accountKey.Derive(changeKey, changeIndex);
-        
-        // Derive m/44'/0'/200'/change/0 (address_index = 0)
-        changeKey.Derive(addressKey, 0);
-        
-    } catch (const std::exception& e) {
-        throw JSONRPCError(RPC_WALLET_ERROR, 
-            strprintf("Failed to derive key: %s", e.what()));
-    }
-
-    // Get the public key
-    CPubKey pubkey = addressKey.key.GetPubKey();
-    if (!pubkey.IsValid()) {
-        throw JSONRPCError(RPC_WALLET_ERROR, "Derived public key is invalid");
+    if (!DeriveDepinPoolPubKey(pwallet, pubkey, derivationPath, error)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, error);
     }
 
     // Get the address
