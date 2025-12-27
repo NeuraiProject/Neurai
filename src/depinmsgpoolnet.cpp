@@ -511,38 +511,25 @@ std::string CDepinMsgPoolServer::ProcessJsonRpcRequest(const UniValue& valReques
         jsonRequest.params.setArray();
     }
 
-    if (jsonRequest.params.isNull()) {
-        jsonRequest.params.setArray();
+    // Check if it's a DePIN command
+    if (jsonRequest.strMethod.find("depin") != 0) {
+        return JSONRPCReply(NullUniValue, JSONRPCError(RPC_METHOD_NOT_FOUND, "Only DePIN commands are allowed on this port"), id);
     }
 
-    if (!jsonRequest.params.isArray()) {
-        UniValue reply = JSONRPCReplyObj(NullUniValue,
-                                         JSONRPCError(RPC_INVALID_REQUEST, "Parameters must be an array"),
-                                         id);
-        return reply.write();
-    }
-
-    if (jsonRequest.strMethod == "depinsendmsg") {
+    // 1. Mandatory Pre-auth for Legacy/Gateway commands
+#ifdef ENABLE_DEPIN_GATEWAY
+    if (jsonRequest.strMethod == "depinsendmsg" || jsonRequest.strMethod == "depingetmsg") {
         size_t paramCount = jsonRequest.params.size();
-        if (paramCount < 6) {
+        if (paramCount < 4) {
             UniValue reply = JSONRPCReplyObj(NullUniValue,
-                                             JSONRPCError(RPC_INVALID_PARAMETER,
-                                                          "Remote depinsendmsg requires fromaddress, challenge and signature"),
-                                             id);
-            return reply.write();
-        }
-
-        if (!jsonRequest.params[0].isStr()) {
-            UniValue reply = JSONRPCReplyObj(NullUniValue,
-                                             JSONRPCError(RPC_INVALID_PARAMETER, "Token must be a string"),
+                                             JSONRPCError(RPC_INVALID_PARAMETER, "Insufficient parameters for remote call"),
                                              id);
             return reply.write();
         }
 
         if (!jsonRequest.params[3].isStr()) {
             UniValue reply = JSONRPCReplyObj(NullUniValue,
-                                             JSONRPCError(RPC_INVALID_PARAMETER,
-                                                          "fromaddress is required for remote depinsendmsg"),
+                                             JSONRPCError(RPC_INVALID_PARAMETER, "fromaddress is required for remote call"),
                                              id);
             return reply.write();
         }
@@ -554,21 +541,23 @@ std::string CDepinMsgPoolServer::ProcessJsonRpcRequest(const UniValue& valReques
 
         if (challenge.empty() || signature.empty()) {
             UniValue reply = JSONRPCReplyObj(NullUniValue,
-                                             JSONRPCError(RPC_INVALID_PARAMETER,
-                                                          "Challenge and signature cannot be empty"),
+                                             JSONRPCError(RPC_INVALID_PARAMETER, "Challenge and signature cannot be empty"),
                                              id);
             return reply.write();
         }
 
         std::string authError;
-        if (!ValidateChallenge(token, fromAddress, clientIP, challenge, DepinChallengeType::SEND, authError)) {
+        DepinChallengeType challengeType = (jsonRequest.strMethod == "depinsendmsg") ? DepinChallengeType::SEND : DepinChallengeType::RECEIVE;
+        if (!ValidateChallenge(token, fromAddress, clientIP, challenge, challengeType, authError)) {
             UniValue reply = JSONRPCReplyObj(NullUniValue,
                                              JSONRPCError(RPC_INVALID_PARAMETER, authError),
                                              id);
             return reply.write();
         }
 
-        std::string messageToSign = strprintf("DEPIN-SEND|%s|%s|%s", token, fromAddress, challenge);
+        std::string messageToSign = strprintf("DEPIN-%s|%s|%s|%s",
+                                              (jsonRequest.strMethod == "depinsendmsg" ? "SEND" : "GET"),
+                                              token, fromAddress, challenge);
         if (!VerifyChallengeSignature(fromAddress, signature, messageToSign, authError)) {
             UniValue reply = JSONRPCReplyObj(NullUniValue,
                                              JSONRPCError(RPC_INVALID_PARAMETER, authError),
@@ -576,12 +565,15 @@ std::string CDepinMsgPoolServer::ProcessJsonRpcRequest(const UniValue& valReques
             return reply.write();
         }
 
+        // Trim challenge and signature from params for the actual RPC call
         UniValue trimmed(UniValue::VARR);
         for (size_t i = 0; i < paramCount - 2; ++i) {
             trimmed.push_back(jsonRequest.params[i]);
         }
         jsonRequest.params = trimmed;
+        jsonRequest.fSkipWalletCheck = true; // Skip wallet check for authenticated gateway calls
     }
+#endif
 
     UniValue result = NullUniValue;
     UniValue error = NullUniValue;
@@ -608,7 +600,6 @@ std::string CDepinMsgPoolServer::ProcessJsonRpcRequest(const UniValue& valReques
         }
 #ifdef ENABLE_DEPIN_GATEWAY
         else if (jsonRequest.strMethod == "depinsendmsg") {
-            jsonRequest.fSkipWalletCheck = true;
             result = depinsendmsg(jsonRequest);
         } else if (jsonRequest.strMethod == "depingetmsg") {
             result = depingetmsg(jsonRequest);
@@ -969,6 +960,7 @@ bool CDepinMsgPoolClient::SubmitRemoteMessage(const std::string& host, int port,
     result = reply["result"];
     return true;
 }
+#endif
 
 bool CDepinMsgPoolClient::SubmitSerializedMessage(const std::string& host, int port,
                                                    const std::string& hexMessage,

@@ -185,6 +185,7 @@ void CDepinMCPWorker::WorkerLoop()
 
             std::vector<CDepinMessage> messages;
 
+#ifdef ENABLE_DEPIN_GATEWAY
             if (useRemotePool) {
                 // Query remote DePIN message pool
                 if (vpwallets.empty() || !vpwallets[0]) {
@@ -204,6 +205,13 @@ void CDepinMCPWorker::WorkerLoop()
                     continue;
                 }
             } else {
+#else
+            if (useRemotePool) {
+                LogPrintf("MCPWorker: Remote pool query is disabled in this build (requires ENABLE_DEPIN_GATEWAY)\n");
+                std::this_thread::sleep_for(std::chrono::seconds(pollInterval));
+                continue;
+            } else {
+#endif
                 // Use local pool
                 if (!pDepinMsgPool) {
                     LogPrintf("MCPWorker: DePIN message pool not initialized\n");

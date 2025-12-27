@@ -655,7 +655,7 @@ bool DecryptMessageForAddress(const std::vector<unsigned char>& encryptedData,
 #endif
 }
 
-#ifdef ENABLE_WALLET
+#ifdef ENABLE_DEPIN_GATEWAY
 bool QueryRemoteDepinMsgPool(CWallet* pwallet,
                             const std::string& ipAddress, int port,
                             const std::string& token,
