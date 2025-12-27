@@ -369,10 +369,25 @@ std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request, cons
         }
 
         std::string token = pDepinMsgPool->GetActiveToken();
-        size_t messageCount = pDepinMsgPool->Size();
-        unsigned int messageExpiryHours = pDepinMsgPool->GetMessageExpiryHours();
+        int port = (int)pDepinMsgPool->GetPort();
+        std::string cipher = pDepinMsgPool->GetEncryptionCipher();
+        int maxRecipients = (int)pDepinMsgPool->GetMaxRecipients();
+        int maxMessageSize = (int)pDepinMsgPool->GetMaxMessageSize();
+        int messageExpiryHours = (int)pDepinMsgPool->GetMessageExpiryHours();
+        int maxPoolSizeMB = (int)pDepinMsgPool->GetMaxPoolSizeMB();
+        int messageCount = (int)pDepinMsgPool->Size();
+        size_t memoryUsage = pDepinMsgPool->DynamicMemoryUsage();
 
-        return strprintf("OK|%s|%d|%d", token, messageCount, messageExpiryHours);
+        int64_t oldest = pDepinMsgPool->GetOldestMessageTime();
+        int64_t newest = pDepinMsgPool->GetNewestMessageTime();
+
+        std::string oldestStr = (oldest > 0) ? DateTimeStrFormat("%Y-%m-%d %H:%M:%S", oldest) : "N/A";
+        std::string newestStr = (newest > 0) ? DateTimeStrFormat("%Y-%m-%d %H:%M:%S", newest) : "N/A";
+
+        return strprintf("OK|%s|%d|%s|%d|%d|%d|%d|%d|%d|%s|%s",
+                        token, port, cipher, maxRecipients, maxMessageSize,
+                        messageExpiryHours, maxPoolSizeMB, messageCount,
+                        (int)memoryUsage, oldestStr, newestStr);
     }
 
     // GETMESSAGES
