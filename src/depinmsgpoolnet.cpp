@@ -24,6 +24,13 @@
 UniValue depinsendmsg(const JSONRPCRequest& request);
 UniValue depingetmsg(const JSONRPCRequest& request);
 #endif
+UniValue depinreceivemsg(const JSONRPCRequest& request);
+UniValue depingetmsginfo(const JSONRPCRequest& request);
+UniValue depingetpoolcontent(const JSONRPCRequest& request);
+UniValue depinpoolstats(const JSONRPCRequest& request);
+UniValue depinmcpstatus(const JSONRPCRequest& request);
+UniValue depinclearmsg(const JSONRPCRequest& request);
+UniValue depinpoolpkey(const JSONRPCRequest& request);
 UniValue depinsubmitmsg(const JSONRPCRequest& request);
 #include <cstdlib>
 #include <algorithm>
@@ -89,6 +96,13 @@ std::unique_ptr<CDepinMsgPoolServer> pDepinMsgPoolServer;
 extern UniValue depinsendmsg(const JSONRPCRequest& request);
 extern UniValue depingetmsg(const JSONRPCRequest& request);
 #endif
+extern UniValue depinreceivemsg(const JSONRPCRequest& request);
+extern UniValue depingetmsginfo(const JSONRPCRequest& request);
+extern UniValue depingetpoolcontent(const JSONRPCRequest& request);
+extern UniValue depinpoolstats(const JSONRPCRequest& request);
+extern UniValue depinmcpstatus(const JSONRPCRequest& request);
+extern UniValue depinclearmsg(const JSONRPCRequest& request);
+extern UniValue depinpoolpkey(const JSONRPCRequest& request);
 #endif
 
 // ===== Servidor =====
@@ -573,33 +587,47 @@ std::string CDepinMsgPoolServer::ProcessJsonRpcRequest(const UniValue& valReques
     UniValue error = NullUniValue;
 
     try {
-#ifdef ENABLE_WALLET
-#ifdef ENABLE_DEPIN_GATEWAY
         if (jsonRequest.strMethod == "depinsubmitmsg") {
-            // NEW SECURE PROTOCOL: Receives pre-encrypted and signed messages
-            // Message signature is ALWAYS verified in depinsubmitmsg
             result = depinsubmitmsg(jsonRequest);
-        } else if (jsonRequest.strMethod == "depinsendmsg") {
-            // LEGACY PROTOCOL: Server encrypts and signs (less secure, deprecated)
-            // Mark request as pre-authenticated by DePIN server
-            // This skips wallet ownership check since signature was already verified
+        } else if (jsonRequest.strMethod == "depinreceivemsg") {
+            result = depinreceivemsg(jsonRequest);
+        } else if (jsonRequest.strMethod == "depingetmsginfo") {
+            result = depingetmsginfo(jsonRequest);
+        } else if (jsonRequest.strMethod == "depingetpoolcontent") {
+            result = depingetpoolcontent(jsonRequest);
+        } else if (jsonRequest.strMethod == "depinpoolstats") {
+            result = depinpoolstats(jsonRequest);
+        } else if (jsonRequest.strMethod == "depinmcpstatus") {
+            result = depinmcpstatus(jsonRequest);
+        }
+#ifdef ENABLE_WALLET
+        else if (jsonRequest.strMethod == "depinclearmsg") {
+            result = depinclearmsg(jsonRequest);
+        } else if (jsonRequest.strMethod == "depinpoolpkey") {
+            result = depinpoolpkey(jsonRequest);
+        }
+#ifdef ENABLE_DEPIN_GATEWAY
+        else if (jsonRequest.strMethod == "depinsendmsg") {
             jsonRequest.fSkipWalletCheck = true;
             result = depinsendmsg(jsonRequest);
         } else if (jsonRequest.strMethod == "depingetmsg") {
             result = depingetmsg(jsonRequest);
-        } else {
-            throw JSONRPCError(RPC_METHOD_NOT_FOUND, "Method not allowed on DePIN port");
-        }
-#else
-        if (jsonRequest.strMethod == "depinsubmitmsg") {
-            result = depinsubmitmsg(jsonRequest);
-        } else {
-             throw JSONRPCError(RPC_METHOD_NOT_FOUND, "DePIN gateway commands are disabled in this build");
         }
 #endif
-#else
-        throw JSONRPCError(RPC_METHOD_NOT_FOUND, "Wallet RPC not available in this build");
 #endif
+        else {
+            if (jsonRequest.strMethod == "depinsendmsg" || jsonRequest.strMethod == "depingetmsg") {
+#ifndef ENABLE_DEPIN_GATEWAY
+                throw JSONRPCError(RPC_METHOD_NOT_FOUND, "DePIN gateway commands are disabled in this build");
+#else
+                throw JSONRPCError(RPC_METHOD_NOT_FOUND, "Wallet RPC not available in this build");
+#endif
+            } else if (jsonRequest.strMethod == "depinclearmsg" || jsonRequest.strMethod == "depinpoolpkey") {
+                throw JSONRPCError(RPC_METHOD_NOT_FOUND, "Wallet RPC not available in this build");
+            } else {
+                throw JSONRPCError(RPC_METHOD_NOT_FOUND, "Method not allowed on DePIN port");
+            }
+        }
     } catch (const UniValue& e) {
         error = e;
     } catch (const std::exception& e) {
