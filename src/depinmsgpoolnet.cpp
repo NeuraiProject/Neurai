@@ -286,7 +286,9 @@ void CDepinMsgPoolServer::HandleClient(int clientSocket, std::string clientIP) {
 }
 
 std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request, const std::string& clientIP) {
+#ifdef ENABLE_DEPIN_GATEWAY
     CleanupExpiredChallenges();
+#endif
     std::string jsonResponse;
     if (TryProcessJsonRpc(request, jsonResponse, clientIP)) {
         return jsonResponse;
@@ -310,6 +312,7 @@ std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request, cons
     std::string cmd = parts[0];
 
     // AUTH - request challenge
+#ifdef ENABLE_DEPIN_GATEWAY
     if (cmd == DEPIN_CMD_AUTH) {
         if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
             return "ERROR|Chat mempool not enabled";
@@ -334,6 +337,11 @@ std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request, cons
 
         return strprintf("CHALLENGE|%s|%d", challenge, DEPIN_CHALLENGE_TIMEOUT);
     }
+#else
+    if (cmd == DEPIN_CMD_AUTH) {
+        return "ERROR|AUTH command is disabled in this build";
+    }
+#endif
 
     // PING
     if (cmd == DEPIN_CMD_PING) {
@@ -354,6 +362,7 @@ std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request, cons
     }
 
     // GETMESSAGES
+#ifdef ENABLE_DEPIN_GATEWAY
     if (cmd == DEPIN_CMD_GETMESSAGES) {
         if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
             return "ERROR|Chat mempool not enabled";
@@ -434,6 +443,11 @@ std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request, cons
             return strprintf("ERROR|Failed to serialize messages: %s", e.what());
         }
     }
+#else
+    if (cmd == DEPIN_CMD_GETMESSAGES) {
+        return "ERROR|GETMESSAGES command is disabled in this build";
+    }
+#endif
 
     return "ERROR|Unknown command: " + cmd;
 }
@@ -598,6 +612,8 @@ std::string CDepinMsgPoolServer::ProcessJsonRpcRequest(const UniValue& valReques
     return reply.write();
 }
 
+// Helper to issue a challenge with rate limiting and verification
+#ifdef ENABLE_DEPIN_GATEWAY
 std::string CDepinMsgPoolServer::IssueChallenge(const std::string& token, const std::string& address,
                                                 const std::string& clientIP, DepinChallengeType type,
                                                 std::string& error) {
@@ -764,9 +780,11 @@ bool CDepinMsgPoolServer::VerifyChallengeSignature(const std::string& address,
 
     return true;
 }
+#endif
 
 // ===== Cliente =====
 
+#ifdef ENABLE_DEPIN_GATEWAY
 bool CDepinMsgPoolClient::RequestChallenge(const std::string& host, int port,
                                            const std::string& token,
                                            const std::string& address,

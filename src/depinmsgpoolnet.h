@@ -34,6 +34,7 @@ static const int DEPIN_SOCKET_TIMEOUT = 30; // segundos
 static const size_t DEPIN_MAX_PROTOCOL_SIZE = 10 * 1024 * 1024; // 10MB
 static const int DEPIN_CHALLENGE_TIMEOUT = 30; // segundos
 
+#ifdef ENABLE_DEPIN_GATEWAY
 enum class DepinChallengeType {
     RECEIVE,
     SEND
@@ -47,6 +48,7 @@ struct CDepinChallenge {
     int64_t expiry;
     DepinChallengeType type;
 };
+#endif
 
 // Servidor de DePIN messaging
 class CDepinMsgPoolServer {
@@ -62,6 +64,7 @@ private:
     std::string ProcessRequest(const std::string& request, const std::string& clientIP);
     bool TryProcessJsonRpc(const std::string& request, std::string& response, const std::string& clientIP);
     std::string ProcessJsonRpcRequest(const UniValue& valRequest, const std::string& clientIP);
+#ifdef ENABLE_DEPIN_GATEWAY
     std::string IssueChallenge(const std::string& token, const std::string& address,
                                const std::string& clientIP, DepinChallengeType type,
                                std::string& error);
@@ -75,6 +78,7 @@ private:
 
     std::map<std::string, CDepinChallenge> mapChallenges;
     mutable CCriticalSection cs_challenges;
+#endif
 
 public:
     CDepinMsgPoolServer();
@@ -89,6 +93,7 @@ public:
 // Cliente de chat mempool
 class CDepinMsgPoolClient {
 public:
+#ifdef ENABLE_DEPIN_GATEWAY
     static bool RequestChallenge(const std::string& host, int port,
                                  const std::string& token,
                                  const std::string& address,
@@ -116,6 +121,7 @@ public:
                                     const std::string& signature,
                                     UniValue& result,
                                     std::string& error);
+#endif
 
     // Submit pre-encrypted and signed message (new secure protocol)
     // hexMessage: hex-encoded serialized CDepinMessage (already encrypted & signed)
