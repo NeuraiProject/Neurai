@@ -973,11 +973,13 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
                 "    \"token\": \"...\",                (string) Token\n"
                 "    \"sender\": \"...\",               (string) Sender address\n"
                 "    \"timestamp\": n,                 (numeric) Unix timestamp\n"
+                "    \"message_type\": \"private|group\", (string) Message type (private=1-to-1, group=broadcast)\n"
                 "    \"encrypted_payload_hex\": \"...\", (string) Encrypted payload (hex)\n"
                 "    \"signature_hex\": \"...\"         (string) Message signature (hex)\n"
                 "  },\n"
                 "  ...\n"
                 "]\n"
+                "\nNote: Private messages are only returned if the address is sender or can decrypt the message.\n"
                 "\nResult (privacy layer active):\n"
                 "{\n"
                 "  \"encrypted\": \"hex_blob\"        (string) Full JSON array encrypted with ECIES\n"
@@ -1019,9 +1021,10 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
         }
     }
 
-    // Fetch pool contents (encrypted)
-    // NOTE: Pool storage is not recipient-filtered; clients should decrypt and discard what they can't decrypt.
-    std::vector<CDepinMessage> messages = pDepinMsgPool->GetAllMessages();
+    // Fetch pool contents with filtering
+    // Group messages (0x02): accessible to all token holders
+    // Private messages (0x01): filtered by decryption capability (only sender/recipient can access)
+    std::vector<CDepinMessage> messages = pDepinMsgPool->GetMessagesForAddress(address);
 
     UniValue result(UniValue::VARR);
 
@@ -1092,6 +1095,7 @@ UniValue depingetmsg(const JSONRPCRequest& request)
                 "    \"recipient\": \"address\",      (string) Recipient address (your address)\n"
                 "    \"sender\": \"address\",         (string) Sender address\n"
                 "    \"message\": \"text\",           (string) Decrypted message\n"
+                "    \"message_type\": \"private|group\", (string) Message type (private=1-to-1, group=broadcast)\n"
                 "    \"timestamp\": n,              (numeric) Unix timestamp\n"
                 "    \"date\": \"YYYY-MM-DD HH:MM:SS\", (string) Formatted date\n"
                 "    \"expires\": \"YYYY-MM-DD HH:MM:SS\" (string) Expiration date\n"
@@ -1493,6 +1497,7 @@ UniValue depingetpoolcontent(const JSONRPCRequest& request)
             "  {\n"
             "    \"hash\": \"hex\",\n"
             "    \"sender\": \"address\",\n"
+            "    \"message_type\": \"private|group\",\n"
             "    \"timestamp\": n,\n"
             "    \"date\": \"YYYY-MM-DD HH:MM:SS\",\n"
             "    \"expires\": \"YYYY-MM-DD HH:MM:SS\",\n"
@@ -1506,6 +1511,7 @@ UniValue depingetpoolcontent(const JSONRPCRequest& request)
             "  {\n"
             "    \"hash\": \"hex\",\n"
             "    \"sender\": \"address\",\n"
+            "    \"message_type\": \"private|group\",\n"
             "    \"timestamp\": n,\n"
             "    \"date\": \"YYYY-MM-DD HH:MM:SS\",\n"
             "    \"expires\": \"YYYY-MM-DD HH:MM:SS\",\n"

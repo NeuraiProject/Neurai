@@ -218,19 +218,38 @@ std::vector<CDepinMessage> CDepinMsgPool::GetMessagesForAddress(const std::strin
             continue;
         }
 
-        // Private messages (0x01): filter by decryption capability
-        // Only include if the address can decrypt the message
+        // Private messages (0x01): accessible to sender OR recipient
         if (msg.IsPrivateMessage()) {
-            // Try to decrypt the message to determine if it's for this address
-            // This is secure (doesn't reveal recipient metadata) but more expensive
-            std::string decrypted;
-            std::string decryptError;
-
-            if (DecryptMessageForAddress(msg.encryptedPayload, address, decrypted, decryptError)) {
-                // Successfully decrypted - this message is for this address
+            // Always include messages sent by this address
+            if (msg.senderAddress == address) {
                 result.push_back(msg);
+                continue;
             }
-            // If decryption failed, the message is not for this address - skip it
+
+            // For messages from other senders, check if address is a recipient
+            // by verifying if its hash160 is in the ECIES recipientKeys map
+            // NO decryption needed - just check if the key exists
+            try {
+                // Deserialize ECIES message to access recipientKeys map
+                CECIESEncryptedMessage eciesMsg;
+                CDataStream ss(msg.encryptedPayload, SER_NETWORK, PROTOCOL_VERSION);
+                ss >> eciesMsg;
+
+                // Convert address to hash160
+                CTxDestination dest = DecodeDestination(address);
+                const CKeyID* keyID = boost::get<CKeyID>(&dest);
+                if (keyID) {
+                    uint160 addressHash160(*keyID);
+
+                    // Check if this address is in the recipient list
+                    if (eciesMsg.recipientKeys.count(addressHash160) > 0) {
+                        result.push_back(msg);
+                    }
+                }
+            } catch (const std::exception& e) {
+                // If deserialization fails, skip this message
+                LogPrint(BCLog::NET, "GetMessagesForAddress: Failed to deserialize ECIES message: %s\n", e.what());
+            }
         }
     }
 
