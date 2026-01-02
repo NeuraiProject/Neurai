@@ -49,6 +49,7 @@ public:
     std::string token;                      // Required token
     std::string senderAddress;              // Sender address
     int64_t timestamp;                      // UNIX time
+    uint8_t messageType;                    // Message type: 0x01 = private, 0x02 = group
     std::vector<unsigned char> signature;   // Sender signature
 
     // ECIES encrypted message (serialized CECIESEncryptedMessage)
@@ -63,9 +64,14 @@ public:
         token = "";
         senderAddress = "";
         timestamp = 0;
+        messageType = 0x02;  // Default: group (for backward compatibility)
         signature.clear();
         encryptedPayload.clear();
     }
+
+    // Helper methods to check message type
+    bool IsPrivateMessage() const { return messageType == 0x01; }
+    bool IsGroupMessage() const { return messageType == 0x02; }
 
     uint256 GetHash() const;
     bool IsExpired(int64_t currentTime, int64_t expiryTimeSeconds) const;
@@ -77,8 +83,9 @@ public:
         READWRITE(token);
         READWRITE(senderAddress);
         READWRITE(timestamp);
-        READWRITE(signature);
+        READWRITE(messageType);
         READWRITE(encryptedPayload);
+        READWRITE(signature);
     }
 };
 

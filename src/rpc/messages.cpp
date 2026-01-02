@@ -1035,6 +1035,8 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
         msgObj.push_back(Pair("token", msg.token));
         msgObj.push_back(Pair("sender", msg.senderAddress));
         msgObj.push_back(Pair("timestamp", msg.timestamp));
+        std::string msgTypeStr = (msg.messageType == 0x01) ? "private" : "group";
+        msgObj.push_back(Pair("message_type", msgTypeStr));
         msgObj.push_back(Pair("encrypted_payload_hex", HexStr(msg.encryptedPayload)));
         msgObj.push_back(Pair("signature_hex", HexStr(msg.signature)));
         result.push_back(msgObj);
@@ -1268,6 +1270,8 @@ UniValue depingetmsg(const JSONRPCRequest& request)
                             msgObj.push_back(Pair("recipient", myAddress));
                             msgObj.push_back(Pair("sender", msg.senderAddress));
                             msgObj.push_back(Pair("message", decryptedMessage));
+                            std::string msgTypeStr = (msg.messageType == 0x01) ? "private" : "group";
+                            msgObj.push_back(Pair("message_type", msgTypeStr));
                             msgObj.push_back(Pair("timestamp", msg.timestamp));
                             msgObj.push_back(Pair("date", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", msg.timestamp)));
                             msgObj.push_back(Pair("expires", DateTimeStrFormat("%Y-%m-%d %H:%M:%S",
@@ -1388,6 +1392,8 @@ UniValue depingetmsg(const JSONRPCRequest& request)
                 msgObj.push_back(Pair("recipient", myAddress));
                 msgObj.push_back(Pair("sender", msg.senderAddress));
                 msgObj.push_back(Pair("message", decryptedMessage));
+                std::string msgTypeStr = (msg.messageType == 0x01) ? "private" : "group";
+                msgObj.push_back(Pair("message_type", msgTypeStr));
                 msgObj.push_back(Pair("timestamp", msg.timestamp));
                 msgObj.push_back(Pair("date", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", msg.timestamp)));
                 msgObj.push_back(Pair("expires", DateTimeStrFormat("%Y-%m-%d %H:%M:%S",
@@ -1612,6 +1618,8 @@ UniValue depingetpoolcontent(const JSONRPCRequest& request)
         UniValue msgObj(UniValue::VOBJ);
         msgObj.push_back(Pair("hash", msg.GetHash().GetHex()));
         msgObj.push_back(Pair("sender", msg.senderAddress));
+        std::string msgTypeStr = (msg.messageType == 0x01) ? "private" : "group";
+        msgObj.push_back(Pair("message_type", msgTypeStr));
         msgObj.push_back(Pair("timestamp", msg.timestamp));
         msgObj.push_back(Pair("date", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", msg.timestamp)));
         msgObj.push_back(Pair("expires", DateTimeStrFormat("%Y-%m-%d %H:%M:%S",

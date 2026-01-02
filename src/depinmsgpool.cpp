@@ -30,7 +30,7 @@ std::unique_ptr<CDepinMsgPool> pDepinMsgPool;
 
 uint256 CDepinMessage::GetHash() const {
     CHashWriter ss(SER_GETHASH, 0);
-    ss << token << senderAddress << timestamp;
+    ss << token << senderAddress << timestamp << messageType << encryptedPayload;
     return ss.GetHash();
 }
 
@@ -119,6 +119,13 @@ bool CDepinMsgPool::AddMessage(const CDepinMessage& message, std::string& error,
         return false;
     }
 
+    // Verify messageType is valid
+    if (message.messageType != 0x01 && message.messageType != 0x02) {
+        error = strprintf("Invalid messageType: 0x%02x (must be 0x01 for private or 0x02 for group)",
+                         message.messageType);
+        return false;
+    }
+
     // Verify timestamp (do not accept messages from the future)
     int64_t currentTime = GetTime();
     if (message.timestamp > currentTime + 60) { // +60s tolerance
@@ -199,9 +206,35 @@ bool CDepinMsgPool::GetDepinMessage(const uint256& hash, CDepinMessage& message)
 }
 
 std::vector<CDepinMessage> CDepinMsgPool::GetMessagesForAddress(const std::string& address) const {
-    // With ECIES hybrid encryption, we cannot determine recipients without decrypting
-    // Return all messages - caller will attempt decryption with their private key
-    return GetAllMessages();
+    LOCK(cs_depinmsgpool);
+    std::vector<CDepinMessage> result;
+
+    for (const auto& entry : mapMessages) {
+        const CDepinMessage& msg = entry.second;
+
+        // Group messages (0x02): accessible to all token holders
+        if (msg.IsGroupMessage()) {
+            result.push_back(msg);
+            continue;
+        }
+
+        // Private messages (0x01): filter by decryption capability
+        // Only include if the address can decrypt the message
+        if (msg.IsPrivateMessage()) {
+            // Try to decrypt the message to determine if it's for this address
+            // This is secure (doesn't reveal recipient metadata) but more expensive
+            std::string decrypted;
+            std::string decryptError;
+
+            if (DecryptMessageForAddress(msg.encryptedPayload, address, decrypted, decryptError)) {
+                // Successfully decrypted - this message is for this address
+                result.push_back(msg);
+            }
+            // If decryption failed, the message is not for this address - skip it
+        }
+    }
+
+    return result;
 }
 
 std::vector<CDepinMessage> CDepinMsgPool::GetAllMessages() const {
@@ -388,29 +421,47 @@ bool VerifyDepinMessageSignature(const CDepinMessage& message) {
     }
 
     // Construct message hash for verification
-    // Hash format: SHA256(token || senderAddress || timestamp || encryptedPayload)
+    // Hash format (v2.1.3+): SHA256(token || senderAddress || timestamp || messageType || encryptedPayload)
     CHashWriter ss(SER_GETHASH, 0);
     ss << message.token;
     ss << message.senderAddress;
     ss << message.timestamp;
+    ss << message.messageType;
     ss << message.encryptedPayload;
     uint256 messageHash = ss.GetHash();
 
-    // Verify signature
-    if (!senderPubKey.Verify(messageHash, message.signature)) {
-        LogPrintf("VerifyDepinMessageSignature: Signature verification failed\n");
-        LogPrintf("  Sender: %s\n", message.senderAddress);
-        LogPrintf("  Token: %s\n", message.token);
-        LogPrintf("  Timestamp: %d\n", message.timestamp);
-        LogPrintf("  Signature size: %d bytes\n", message.signature.size());
-        LogPrintf("  Signature hex: %s\n", HexStr(message.signature));
-        LogPrintf("  Message hash: %s\n", messageHash.ToString());
-        LogPrintf("  Sender pubkey: %s\n", HexStr(senderPubKey));
-        LogPrintf("  EncryptedPayload size: %d bytes\n", message.encryptedPayload.size());
-        return false;
+    // Try to verify with new format (includes messageType)
+    if (senderPubKey.Verify(messageHash, message.signature)) {
+        return true;  // New format verified successfully
     }
 
-    return true;
+    // Fallback for backward compatibility: try old format without messageType
+    // This supports messages created before v2.1.3
+    CHashWriter ssOld(SER_GETHASH, 0);
+    ssOld << message.token;
+    ssOld << message.senderAddress;
+    ssOld << message.timestamp;
+    ssOld << message.encryptedPayload;
+    uint256 messageHashOld = ssOld.GetHash();
+
+    if (senderPubKey.Verify(messageHashOld, message.signature)) {
+        LogPrintf("VerifyDepinMessageSignature: Verified with old format (pre-v2.1.3)\n");
+        return true;  // Old format verified successfully
+    }
+
+    // Both formats failed
+    LogPrintf("VerifyDepinMessageSignature: Signature verification failed (tried both formats)\n");
+    LogPrintf("  Sender: %s\n", message.senderAddress);
+    LogPrintf("  Token: %s\n", message.token);
+    LogPrintf("  Timestamp: %d\n", message.timestamp);
+    LogPrintf("  MessageType: 0x%02x\n", message.messageType);
+    LogPrintf("  Signature size: %d bytes\n", message.signature.size());
+    LogPrintf("  Signature hex: %s\n", HexStr(message.signature));
+    LogPrintf("  Message hash (new): %s\n", messageHash.ToString());
+    LogPrintf("  Message hash (old): %s\n", messageHashOld.ToString());
+    LogPrintf("  Sender pubkey: %s\n", HexStr(senderPubKey));
+    LogPrintf("  EncryptedPayload size: %d bytes\n", message.encryptedPayload.size());
+    return false;
 }
 
 bool SignDepinMessage(CDepinMessage& message, const std::string& senderAddress) {
