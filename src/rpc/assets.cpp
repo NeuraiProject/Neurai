@@ -35,6 +35,8 @@
 #include "wallet/feebumper.h"
 #include "wallet/wallet.h"
 #include "wallet/walletdb.h"
+#include "pubkeyindex.h"
+#include "txdb.h"
 
 void CheckRestrictedAssetTransferInputs(const CWalletTx& transaction, const std::string& asset_name) {
     // Do a validity check before commiting the transaction
@@ -1146,6 +1148,96 @@ UniValue listaddressesbyasset(const JSONRPCRequest &request)
 
     return result;
 }
+
+UniValue listdepinaddresses(const JSONRPCRequest &request)
+{
+    if (!fAssetIndex) {
+        return "_This rpc call is not functional unless -assetindex is enabled. To enable, please run the wallet with -assetindex, this will require a reindex to occur";
+    }
+
+    if (!fPubKeyIndex) {
+        return "_This rpc call is not functional unless -pubkeyindex is enabled. To enable, please run the wallet with -pubkeyindex, this will require a reindex to occur";
+    }
+
+    if (request.fHelp || !AreAssetsDeployed() || request.params.size() > 3 || request.params.size() < 1)
+        throw std::runtime_error(
+                "listdepinaddresses \"asset_name\" (count) (start)\n"
+                + AssetActivationWarning() +
+                "\nReturns a list of addresses that own the given asset AND have a revealed public key on the blockchain.\n"
+                "This is useful for DePIN messaging systems where only addresses with revealed public keys can participate.\n"
+
+                "\nArguments:\n"
+                "1. \"asset_name\"               (string, required) name of asset\n"
+                "2. \"count\"                    (integer, optional, default=50000, MAX=50000) truncates results to include only the first _count_ addresses found\n"
+                "3. \"start\"                    (integer, optional, default=0) results skip over the first _start_ addresses found (if negative it skips back from the end)\n"
+
+                "\nResult:\n"
+                "[\n"
+                "  {\n"
+                "    \"address\": \"address\",     (string) The Neurai address\n"
+                "    \"pubkey\": \"pubkey_hex\"    (string) The public key in hex format\n"
+                "  },\n"
+                "  ...\n"
+                "]\n"
+
+                "\nExamples:\n"
+                + HelpExampleCli("listdepinaddresses", "\"ASSET_NAME\"")
+                + HelpExampleCli("listdepinaddresses", "\"ASSET_NAME\" 10 0")
+                + HelpExampleRpc("listdepinaddresses", "\"ASSET_NAME\"")
+        );
+
+    LOCK(cs_main);
+
+    std::string asset_name = request.params[0].get_str();
+
+    size_t count = INT_MAX;
+    if (request.params.size() > 1) {
+        if (request.params[1].get_int() < 1)
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "count must be greater than 1.");
+        count = request.params[1].get_int();
+    }
+
+    long start = 0;
+    if (request.params.size() > 2) {
+        start = request.params[2].get_int();
+    }
+
+    if (!IsAssetNameValid(asset_name))
+        return "_Not a valid asset name";
+
+    // Get all addresses that own this asset
+    std::vector<std::pair<std::string, CAmount> > vecAddressAmounts;
+    int nTotalEntries = 0;
+    if (!passetsdb->AssetAddressDir(vecAddressAmounts, nTotalEntries, false, asset_name, count, start))
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "couldn't retrieve address asset directory.");
+
+    // Filter addresses that have a revealed pubkey
+    UniValue result(UniValue::VARR);
+
+    for (const auto& pair : vecAddressAmounts) {
+        const std::string& address = pair.first;
+
+        // Convert address to hash160
+        CTxDestination dest = DecodeDestination(address);
+        const CKeyID* keyID = boost::get<CKeyID>(&dest);
+        if (!keyID) continue;  // Skip non-P2PKH addresses
+
+        uint160 addressHash(*keyID);
+        CPubKeyIndexValue pubkeyValue;
+
+        // Check if this address has a revealed pubkey
+        if (pblocktree->ReadPubKeyIndex(addressHash, pubkeyValue)) {
+            UniValue entry(UniValue::VOBJ);
+            entry.pushKV("address", address);
+            entry.pushKV("pubkey", HexStr(pubkeyValue.pubkey.begin(), pubkeyValue.pubkey.end()));
+
+            result.push_back(entry);
+        }
+    }
+
+    return result;
+}
+
 #ifdef ENABLE_WALLET
 
 UniValue transfer(const JSONRPCRequest& request)
@@ -3353,6 +3445,7 @@ static const CRPCCommand commands[] =
     { "assets",   "listassetbalancesbyaddress", &listassetbalancesbyaddress, {"address", "onlytotal", "count", "start"} },
     { "assets",   "getassetdata",               &getassetdata,               {"asset_name"}},
     { "assets",   "listaddressesbyasset",       &listaddressesbyasset,       {"asset_name", "onlytotal", "count", "start"}},
+    { "depin messaging",   "listdepinaddresses",         &listdepinaddresses,         {"asset_name", "count", "start"}},
 #ifdef ENABLE_WALLET
     { "assets",   "transferfromaddress",        &transferfromaddress,        {"asset_name", "from_address", "qty", "to_address", "message", "expire_time", "xna_change_address", "asset_change_address"}},
     { "assets",   "transferfromaddresses",      &transferfromaddresses,      {"asset_name", "from_addresses", "qty", "to_address", "message", "expire_time", "xna_change_address", "asset_change_address"}},
