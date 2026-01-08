@@ -955,10 +955,10 @@ UniValue depinsubmitmsg(const JSONRPCRequest& request)
 // New non-wallet endpoint: retrieves encrypted pool messages (no decryption)
 UniValue depinreceivemsg(const JSONRPCRequest& request)
 {
-    if (request.fHelp || request.params.size() < 2 || request.params.size() > 3)
+    if (request.fHelp || request.params.size() < 2 || request.params.size() > 5)
         throw std::runtime_error(
-                "depinreceivemsg \"token\" \"address\" (timestamp)\n"
-                "\nRetrieve DePIN messages from the pool\n"
+                "depinreceivemsg \"token\" \"address\" (timestamp) (\"after_hash\") (limit)\n"
+                "\nRetrieve DePIN messages from the pool with optional pagination\n"
                 "\nThis endpoint returns the messages. If the server has a DePIN pool key\n"
                 "and the requester's address has a revealed public key, the response will be\n"
                 "fully encrypted using the privacy layer.\n"
@@ -966,7 +966,9 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
                 "1. \"token\"      (string, required) Token name\n"
                 "2. \"address\"    (string, required) Neurai address (used as access selector and encryption target)\n"
                 "3. timestamp    (numeric, optional) Unix time. Return only messages with timestamp >= (timestamp-1 if timestamp>0)\n"
-                "\nResult (standard):\n"
+                "4. \"after_hash\" (string, optional) Hash of last received message for pagination. Empty \"\" starts from beginning\n"
+                "5. limit        (numeric, optional) Maximum messages to return. 0 or omitted = no limit (return all)\n"
+                "\nResult (without pagination - backward compatible):\n"
                 "[\n"
                 "  {\n"
                 "    \"hash\": \"...\",                 (string) Message hash\n"
@@ -979,15 +981,22 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
                 "  },\n"
                 "  ...\n"
                 "]\n"
+                "\nResult (with pagination - when limit > 0):\n"
+                "{\n"
+                "  \"messages\": [...],               (array) Array of message objects (same structure as above)\n"
+                "  \"has_more\": true|false           (boolean) Whether more messages are available\n"
+                "}\n"
                 "\nNote: Private messages are only returned if the address is sender or can decrypt the message.\n"
                 "\nResult (privacy layer active):\n"
                 "{\n"
-                "  \"encrypted\": \"hex_blob\"        (string) Full JSON array encrypted with ECIES\n"
+                "  \"encrypted\": \"hex_blob\"        (string) Full JSON response encrypted with ECIES\n"
                 "}\n"
                 "\nExamples:\n"
                 + HelpExampleCli("depinreceivemsg", "\"TOKEN\" \"NeuraiAddress\"")
                 + HelpExampleCli("depinreceivemsg", "\"TOKEN\" \"NeuraiAddress\" 1730000000")
-                + HelpExampleRpc("depinreceivemsg", "\"TOKEN\", \"NeuraiAddress\"")
+                + HelpExampleCli("depinreceivemsg", "\"TOKEN\" \"NeuraiAddress\" 0 \"\" 5")
+                + HelpExampleCli("depinreceivemsg", "\"TOKEN\" \"NeuraiAddress\" 0 \"abc123...\" 5")
+                + HelpExampleRpc("depinreceivemsg", "\"TOKEN\", \"NeuraiAddress\", 0, \"\", 5")
         );
 
     if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
@@ -1021,18 +1030,69 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
         }
     }
 
+    // Parse after_hash parameter (cursor for pagination)
+    std::string afterHash = "";
+    if (request.params.size() >= 4 && !request.params[3].isNull()) {
+        afterHash = request.params[3].get_str();
+        // Validate hash format (64 hex chars)
+        if (!afterHash.empty() && !IsHex(afterHash)) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "after_hash must be a valid hex string");
+        }
+        if (!afterHash.empty() && afterHash.length() != 64) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "after_hash must be 64 characters (256-bit hash)");
+        }
+    }
+
+    // Parse limit parameter
+    int64_t limit = 0;  // 0 = no limit
+    if (request.params.size() >= 5 && !request.params[4].isNull()) {
+        limit = request.params[4].get_int64();
+        if (limit < 0) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "limit must be >= 0");
+        }
+        // Limit maximum to prevent abuse
+        if (limit > 1000) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "limit cannot exceed 1000");
+        }
+    }
+
     // Fetch pool contents with filtering
     // Group messages (0x02): accessible to all token holders
     // Private messages (0x01): filtered by decryption capability (only sender/recipient can access)
     std::vector<CDepinMessage> messages = pDepinMsgPool->GetMessagesForAddress(address);
 
-    UniValue result(UniValue::VARR);
+    UniValue resultArray(UniValue::VARR);
+    bool foundAnchor = afterHash.empty();  // If no hash, start from beginning
+    int64_t totalAvailable = 0;
+
+    // Convert afterHash string to uint256 if provided
+    uint256 afterHashObj;
+    if (!afterHash.empty()) {
+        afterHashObj.SetHex(afterHash);
+    }
 
     for (const CDepinMessage& msg : messages) {
+        // Filter 1: Timestamp (existing logic)
         if (msg.timestamp < fromTimestamp) {
             continue;
         }
 
+        totalAvailable++;  // Count messages that pass timestamp filter
+
+        // Filter 2: Pagination cursor (after_hash)
+        if (!foundAnchor) {
+            if (msg.GetHash() == afterHashObj) {
+                foundAnchor = true;  // Found the anchor, NEXT messages go to result
+            }
+            continue;  // Skip this message and all previous ones
+        }
+
+        // Filter 3: Limit (pagination size)
+        if (limit > 0 && resultArray.size() >= (size_t)limit) {
+            break;  // Already have enough messages
+        }
+
+        // Build message JSON object (existing logic)
         UniValue msgObj(UniValue::VOBJ);
         msgObj.push_back(Pair("hash", msg.GetHash().ToString()));
         msgObj.push_back(Pair("token", msg.token));
@@ -1042,10 +1102,52 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
         msgObj.push_back(Pair("message_type", msgTypeStr));
         msgObj.push_back(Pair("encrypted_payload_hex", HexStr(msg.encryptedPayload)));
         msgObj.push_back(Pair("signature_hex", HexStr(msg.signature)));
-        result.push_back(msgObj);
+        resultArray.push_back(msgObj);
     }
 
-    // Privacy Layer: Encrypt the whole JSON array if server has wallet and client has pubkey
+    // Validate that after_hash was found if specified
+    if (!afterHash.empty() && !foundAnchor) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER,
+            strprintf("after_hash '%s' not found in available messages", afterHash));
+    }
+
+    // Build response object
+    UniValue result;
+
+    // If limit was used, wrap in object with metadata
+    if (limit > 0) {
+        result = UniValue(UniValue::VOBJ);
+        result.push_back(Pair("messages", resultArray));
+
+        // Calculate if there are more messages available
+        bool hasMore = false;
+        if (resultArray.size() == (size_t)limit) {
+            // We filled the limit, check if there's at least one more
+            size_t processed = 0;
+            bool countingAfterAnchor = afterHash.empty();
+            for (const CDepinMessage& msg : messages) {
+                if (msg.timestamp < fromTimestamp) continue;
+                if (!countingAfterAnchor) {
+                    if (msg.GetHash() == afterHashObj) {
+                        countingAfterAnchor = true;
+                    }
+                    continue;
+                }
+                processed++;
+                if (processed > (size_t)limit) {
+                    hasMore = true;
+                    break;
+                }
+            }
+        }
+
+        result.push_back(Pair("has_more", hasMore));
+    } else {
+        // No limit specified, return array directly (backward compatible)
+        result = resultArray;
+    }
+
+    // Privacy Layer: Encrypt the whole JSON response if server has wallet and client has pubkey
 #ifdef ENABLE_WALLET
     CWallet* const pwallet = GetWalletForJSONRPCRequest(request);
     CPubKey clientPubKey;

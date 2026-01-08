@@ -209,8 +209,17 @@ std::vector<CDepinMessage> CDepinMsgPool::GetMessagesForAddress(const std::strin
     LOCK(cs_depinmsgpool);
     std::vector<CDepinMessage> result;
 
-    for (const auto& entry : mapMessages) {
-        const CDepinMessage& msg = entry.second;
+    // Iterate over mapByTime (chronological order, oldest first) instead of mapMessages (hash order)
+    for (const auto& timeEntry : mapByTime) {
+        const uint256& msgHash = timeEntry.second;
+
+        // Get the actual message from mapMessages
+        auto it = mapMessages.find(msgHash);
+        if (it == mapMessages.end()) {
+            continue;  // Should not happen, but be defensive
+        }
+
+        const CDepinMessage& msg = it->second;
 
         // Group messages (0x02): accessible to all token holders
         if (msg.IsGroupMessage()) {
