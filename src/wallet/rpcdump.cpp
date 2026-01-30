@@ -580,6 +580,14 @@ UniValue dumpprivkey(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Neurai address");
     }
     const CKeyID *keyID = boost::get<CKeyID>(&dest);
+    CKeyID keyID_val;
+    if (!keyID) {
+        const WitnessV1KeyHash *pqKeyID = boost::get<WitnessV1KeyHash>(&dest);
+        if (pqKeyID) {
+            keyID_val = CKeyID(*pqKeyID);
+            keyID = &keyID_val;
+        }
+    }
     if (!keyID) {
         throw JSONRPCError(RPC_TYPE_ERROR, "Address does not refer to a key");
     }

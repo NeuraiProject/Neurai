@@ -312,7 +312,7 @@ CKey CNeuraiSecret::GetKey()
 
 bool CNeuraiSecret::IsValid() const
 {
-    bool fExpectedFormat = vchData.size() == 32 || (vchData.size() == 33 && vchData[32] == 1);
+    bool fExpectedFormat = vchData.size() == 32 || (vchData.size() == 33 && vchData[32] == 1) || vchData.size() == 3872;
     bool fCorrectVersion = vchVersion == GetParams().Base58Prefix(CChainParams::SECRET_KEY);
     return fExpectedFormat && fCorrectVersion;
 }
