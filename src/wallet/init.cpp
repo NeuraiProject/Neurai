@@ -31,6 +31,9 @@ std::string GetWalletHelpString(bool showDebug)
     strUsage += HelpMessageOpt("-mnemonic=<word-list>", strprintf(_("A space separated list of 12-words used to import a bip44 wallet")));
     strUsage += HelpMessageOpt("-mnemonicpassphrase=<passphrase>", strprintf(_("Passphrase securing your 12-word mnemonic word-list")));
     strUsage += HelpMessageOpt("-paytxfee=<amt>", strprintf(_("Fee (in %s/kB) to add to transactions you send (default: %s)"), CURRENCY_UNIT, FormatMoney(payTxFee.GetFeePerK())));
+    strUsage += HelpMessageOpt("-pqwallet", _("Create a Post-Quantum wallet using ML-DSA-44 (FIPS 204) instead of secp256k1. "
+                                              "This option only takes effect when creating a new wallet. "
+                                              "PQ wallets can only generate PQ addresses (nq1...), Legacy wallets can only generate legacy addresses."));
     strUsage += HelpMessageOpt("-rescan", _("Rescan the block chain for missing wallet transactions on startup"));
     strUsage += HelpMessageOpt("-salvagewallet", _("Attempt to recover private keys from a corrupt wallet on startup"));
     strUsage += HelpMessageOpt("-spendzeroconfchange", strprintf(_("Spend unconfirmed change when sending transactions (default: %u)"), DEFAULT_SPEND_ZEROCONF_CHANGE));

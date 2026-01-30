@@ -106,6 +106,7 @@ class CMainParams : public CChainParams {
 public:
     CMainParams() {
          strNetworkID = "main";
+         strBech32HRP = "nq";
         consensus.nSubsidyHalvingInterval = 14400;  // Micro halving every 14400 blocks
         consensus.nBIP34Enabled = true;
         consensus.nBIP65Enabled = true;
@@ -196,7 +197,7 @@ public:
         base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x88, 0xAD, 0xE4};
 
         // Neurai BIP44 cointype in mainnet is '0'
-        nExtCoinType = 0;
+        nExtCoinType = 1900;
 
         vFixedSeeds = std::vector<SeedSpec6>(pnSeed6_main, pnSeed6_main + ARRAYLEN(pnSeed6_main));
 
@@ -286,6 +287,7 @@ class CTestNetParams : public CChainParams {
 public:
     CTestNetParams() {
         strNetworkID = "test";
+        strBech32HRP = "tnq";
         consensus.nSubsidyHalvingInterval = 14400;  // Micro halving every 14400 blocks
         consensus.nBIP34Enabled = true;
         consensus.nBIP65Enabled = true;
@@ -443,6 +445,7 @@ class CRegTestParams : public CChainParams {
 public:
     CRegTestParams() {
         strNetworkID = "regtest";
+        strBech32HRP = "rnq";
         consensus.nSubsidyHalvingInterval = 14400;  // Micro halving every 14400 blocks
         consensus.nBIP34Enabled = true;
         consensus.nBIP65Enabled = true;

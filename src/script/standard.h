@@ -28,6 +28,13 @@ public:
     CScriptID(const uint160& in) : uint160(in) {}
 };
 
+class WitnessV1KeyHash : public uint160
+{
+public:
+    WitnessV1KeyHash() : uint160() {}
+    WitnessV1KeyHash(const uint160& in) : uint160(in) {}
+};
+
 /**
  * Default setting for nMaxDatacarrierBytes.
  * Mainnet: 80 bytes of data, +1 for OP_RETURN, +2 for the pushdata opcodes = 83 bytes
@@ -76,6 +83,7 @@ enum txnouttype
     TX_NULL_DATA = 5, //!< unspendable OP_RETURN script that carries data
     TX_WITNESS_V0_SCRIPTHASH = 6,
     TX_WITNESS_V0_KEYHASH = 7,
+    TX_WITNESS_V1_KEYHASH = 12, // Neurai PQ
     /** XNA START */
     TX_NEW_ASSET = 8,
     TX_REISSUE_ASSET = 9,
@@ -95,9 +103,10 @@ public:
  *  * CNoDestination: no destination set
  *  * CKeyID: TX_PUBKEYHASH destination
  *  * CScriptID: TX_SCRIPTHASH destination
+ *  * WitnessV1KeyHash: TX_WITNESS_V1_KEYHASH destination (PQ)
  *  A CTxDestination is the internal data type encoded in a neurai address
  */
-typedef boost::variant<CNoDestination, CKeyID, CScriptID> CTxDestination;
+typedef boost::variant<CNoDestination, CKeyID, CScriptID, WitnessV1KeyHash> CTxDestination;
 
 /** Check whether a CTxDestination is a CNoDestination. */
 bool IsValidDestination(const CTxDestination& dest);

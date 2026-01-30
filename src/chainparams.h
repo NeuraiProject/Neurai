@@ -79,6 +79,7 @@ public:
     const std::vector<SeedSpec6>& FixedSeeds() const { return vFixedSeeds; }
     const CCheckpointData& Checkpoints() const { return checkpointData; }
     const ChainTxData& TxData() const { return chainTxData; }
+    const std::string& Bech32HRP() const { return strBech32HRP; }
     void UpdateVersionBitsParameters(Consensus::DeploymentPos d, int64_t nStartTime, int64_t nTimeout);
     void TurnOffSegwit();
     void TurnOffCSV();
@@ -163,6 +164,7 @@ protected:
     bool fMiningRequiresPeers;
     CCheckpointData checkpointData;
     ChainTxData chainTxData;
+    std::string strBech32HRP;
 
     /** XNA Start **/
     // Burn Amounts

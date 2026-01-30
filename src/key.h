@@ -47,15 +47,21 @@ private:
     //! The actual byte data
     std::vector<unsigned char, secure_allocator<unsigned char> > keydata;
 
-    //! Check whether the 32-byte array pointed to by vch is valid keydata.
-    bool static Check(const unsigned char* vch);
+
+    // ML-DSA-44 (FIPS 204) constants - formerly Dilithium2
+    // Note: ML-DSA-44 secret key is 2560 bytes (not 2528 like Dilithium2 round 3)
+    static const unsigned int DILITHIUM2_PRIVKEY_SIZE = 2560;
+    static const unsigned int DILITHIUM2_PUBKEY_SIZE = 1312;
+    static const unsigned int DILITHIUM2_SIG_SIZE = 2420;
+
+    //! Check whether the array pointed to by vch is valid keydata.
+    bool static Check(const unsigned char* vch, unsigned int len);
 
 public:
     //! Construct an invalid private key.
     CKey() : fValid(false), fCompressed(false)
     {
-        // Important: vch must be 32 bytes in length to not break serialization
-        keydata.resize(32);
+        // keydata is empty for invalid
     }
 
     friend bool operator==(const CKey& a, const CKey& b)
@@ -69,14 +75,15 @@ public:
     template <typename T>
     void Set(const T pbegin, const T pend, bool fCompressedIn)
     {
-        if (size_t(pend - pbegin) != keydata.size()) {
-            fValid = false;
-        } else if (Check(&pbegin[0])) {
-            memcpy(keydata.data(), (unsigned char*)&pbegin[0], keydata.size());
+        size_t len = pend - pbegin;
+        if (Check(&pbegin[0], len)) {
+            keydata.resize(len);
+            memcpy(keydata.data(), (unsigned char*)&pbegin[0], len);
             fValid = true;
             fCompressed = fCompressedIn;
         } else {
             fValid = false;
+            keydata.clear();
         }
     }
 
@@ -91,8 +98,13 @@ public:
     //! Check whether the public key corresponding to this private key is (to be) compressed.
     bool IsCompressed() const { return fCompressed; }
 
+    //! Check if this is a Post-Quantum key
+    bool IsPQ() const { return keydata.size() > 32; }
+
     //! Generate a new private key using a cryptographic PRNG.
     void MakeNewKey(bool fCompressed);
+    void MakeNewKeyPQ(); // New PQ key generation (random)
+    void MakeNewKeyPQ(const std::vector<unsigned char>& seed); // New PQ key generation (deterministic)
 
     /**
      * Convert the private key to a CPrivKey (serialized OpenSSL private key data).

@@ -55,6 +55,7 @@ const uint32_t BIP32_HARDENED_KEY_LIMIT = 0x80000000;
 
 std::string my_words;
 std::string my_passphrase;
+bool my_pqwallet = false;
 
 /**
  * Fees smaller than this (in satoshi) are considered zero fee (for transaction creation)
@@ -144,6 +145,12 @@ const CWalletTx* CWallet::GetWalletTx(const uint256& hash) const
 CPubKey CWallet::GenerateNewKey(CWalletDB &walletdb, bool internal)
 {
     AssertLockHeld(cs_wallet); // mapKeyMetadata
+
+    // If this is a PQ wallet, always generate PQ keys
+    if (IsPQEnabled()) {
+        return GenerateNewKeyPQ(walletdb, internal);
+    }
+
     bool fCompressed = CanSupportFeature(FEATURE_COMPRPUBKEY); // default to compressed public keys if we want 0.6.0 wallets
 
     CKey secret;
@@ -165,7 +172,9 @@ CPubKey CWallet::GenerateNewKey(CWalletDB &walletdb, bool internal)
     }
 
     CPubKey pubkey = secret.GetPubKey();
-    assert(secret.VerifyPubKey(pubkey));
+    if (!secret.VerifyPubKey(pubkey)) {
+        throw std::runtime_error(std::string(__func__) + ": VerifyPubKey failed");
+    }
 
     mapKeyMetadata[pubkey.GetID()] = metadata;
     UpdateTimeFirstKey(nCreationTime);
@@ -176,7 +185,40 @@ CPubKey CWallet::GenerateNewKey(CWalletDB &walletdb, bool internal)
     return pubkey;
 }
 
-void CWallet::DeriveNewChildKey(CWalletDB &walletdb, CKeyMetadata& metadata, CKey& secret, bool internal)
+// Generate new PQ Key
+CPubKey CWallet::GenerateNewKeyPQ(CWalletDB &walletdb, bool internal)
+{
+    AssertLockHeld(cs_wallet); // mapKeyMetadata
+    // PQ keys ignore fCompressed flag (managed internally)
+
+    CKey secret;
+
+    // Create new metadata
+    int64_t nCreationTime = GetTime();
+    CKeyMetadata metadata(nCreationTime);
+
+    // use HD key derivation if HD was enabled during wallet creation
+    if (IsHDEnabled()) {
+        DeriveNewChildKey(walletdb, metadata, secret, internal, true);
+    } else {
+        secret.MakeNewKeyPQ();
+    }
+
+    CPubKey pubkey = secret.GetPubKey();
+    if (!secret.VerifyPubKey(pubkey)) {
+        throw std::runtime_error(std::string(__func__) + ": PQ VerifyPubKey failed");
+    }
+
+    mapKeyMetadata[pubkey.GetID()] = metadata;
+    UpdateTimeFirstKey(nCreationTime);
+
+    if (!AddKeyPubKeyWithDB(walletdb, secret, pubkey)) {
+        throw std::runtime_error(std::string(__func__) + ": AddKey failed");
+    }
+    return pubkey;
+}
+
+void CWallet::DeriveNewChildKey(CWalletDB &walletdb, CKeyMetadata& metadata, CKey& secret, bool internal, bool pq)
 {
     // for now we use a fixed keypath scheme of m/0'/0'/k
     CExtKey masterKey;             //hd master key
@@ -198,48 +240,96 @@ void CWallet::DeriveNewChildKey(CWalletDB &walletdb, CKeyMetadata& metadata, CKe
             throw std::runtime_error(std::string(__func__) + ": seed not found");
         masterKey.SetSeed(seed.begin(), seed.size());
     } else {
+        LogPrintf("DEBUG DeriveNewChildKey: g_vchSeed size=%d, first bytes=%s\n",
+                  g_vchSeed.size(),
+                  HexStr(std::vector<unsigned char>(g_vchSeed.begin(), g_vchSeed.begin() + std::min((size_t)8, g_vchSeed.size()))));
         masterKey.SetSeed(g_vchSeed.data(), g_vchSeed.size());
     }
 
     // Select which chain we are using depending on if this is a change address or not
     uint32_t& nChildIndex = internal ? hdChain.nInternalChainCounter : hdChain.nExternalChainCounter;
 
+    // For PQ keys, use separate counters (not persisted yet - TODO: add to CHDChain)
+    // For PQ keys, use separate counters (not persisted - will scan for existing keys)
+    static uint32_t nPQExternalCounter = 0;
+    static uint32_t nPQInternalCounter = 0;
+
+    // For PQ keys, we need to check if we already have the PQ key, not the secp256k1 key
+    CKey pqSecret;  // Will hold the PQ key if pq=true
+    uint32_t actualPQIndex = 0;
+
     do {
+        if(pq) {
+            // PQ Path: m/100'/coin_type'/account'/change/address_index
+            uint32_t pqIndex = internal ? nPQInternalCounter : nPQExternalCounter;
+            masterKey.Derive(purposeKey, 100 | BIP32_HARDENED_KEY_LIMIT);
+            purposeKey.Derive(coinTypeKey, GetParams().ExtCoinType() | BIP32_HARDENED_KEY_LIMIT);
+            coinTypeKey.Derive(accountKey, nAccountIndex | BIP32_HARDENED_KEY_LIMIT);
+            accountKey.Derive(chainChildKey, internal ? 1 : 0);
+            chainChildKey.Derive(childKey, pqIndex);
 
-			if(hdChain.IsBip44())
-			{
-				// Use BIP44 keypath scheme i.e. m / purpose' / coin_type' / account' / change / address_index
+            // Transform to PQ key immediately so we can check for duplicates
+            std::vector<unsigned char> derivedSeed(childKey.key.begin(), childKey.key.end());
+            pqSecret = childKey.key;
+            pqSecret.MakeNewKeyPQ(derivedSeed);
 
-				// derive m/purpose'
-				masterKey.Derive(purposeKey, 44 | BIP32_HARDENED_KEY_LIMIT);
-				// derive m/purpose'/coin_type'
-				purposeKey.Derive(coinTypeKey, GetParams().ExtCoinType() | BIP32_HARDENED_KEY_LIMIT);
-				// derive m/purpose'/coin_type'/account'
-				coinTypeKey.Derive(accountKey, nAccountIndex | BIP32_HARDENED_KEY_LIMIT);
-				// derive m/purpose'/coin_type'/account'/change
-				accountKey.Derive(chainChildKey, internal ? 1 : 0);
-				// derive m/purpose'/coin_type'/account'/change/address_index
-				chainChildKey.Derive(childKey, nChildIndex);
-			}
-			else
-			{
-				// Use BIP32 keypath scheme i.e. m / account' / change' / address_index'
+            actualPQIndex = pqIndex;
+            // Increment PQ counter
+            if (internal) nPQInternalCounter++; else nPQExternalCounter++;
 
-				// derive m/account'
-				masterKey.Derive(accountKey, nAccountIndex | BIP32_HARDENED_KEY_LIMIT);
-				// derive m/account'/change
-				accountKey.Derive(chainChildKey, BIP32_HARDENED_KEY_LIMIT + (internal ? 1 : 0));
-				// derive m/account'/change/address_index
-				chainChildKey.Derive(childKey, BIP32_HARDENED_KEY_LIMIT |  nChildIndex);
-			}
+            // Check if we already have this PQ key
+            if (!HaveKey(pqSecret.GetPubKey().GetID())) {
+                LogPrintf("DEBUG PQ: Derived secp256k1 seed for PQ key: %s\n", HexStr(derivedSeed));
+                LogPrintf("DEBUG PQ: Path m/100'/%d'/%d'/%d/%d\n", GetParams().ExtCoinType(), nAccountIndex, internal ? 1 : 0, actualPQIndex);
+                CPubKey pqPubKey = pqSecret.GetPubKey();
+                LogPrintf("DEBUG PQ: Generated PQ pubkey size=%d, first 32 bytes: %s\n",
+                          pqPubKey.size(),
+                          HexStr(std::vector<unsigned char>(pqPubKey.begin(), pqPubKey.begin() + std::min(32, (int)pqPubKey.size()))));
+                break;  // Found unused key
+            }
+            // Key already exists, loop will continue to try next index
+        }
+        else if(hdChain.IsBip44())
+        {
+            // Use BIP44 keypath scheme i.e. m / purpose' / coin_type' / account' / change / address_index
 
-        // increment childkey index
-        nChildIndex++;
-    } while (HaveKey(childKey.key.GetPubKey().GetID()));
+            // derive m/purpose'
+            masterKey.Derive(purposeKey, 44 | BIP32_HARDENED_KEY_LIMIT);
+            // derive m/purpose'/coin_type'
+            purposeKey.Derive(coinTypeKey, GetParams().ExtCoinType() | BIP32_HARDENED_KEY_LIMIT);
+            // derive m/purpose'/coin_type'/account'
+            coinTypeKey.Derive(accountKey, nAccountIndex | BIP32_HARDENED_KEY_LIMIT);
+            // derive m/purpose'/coin_type'/account'/change
+            accountKey.Derive(chainChildKey, internal ? 1 : 0);
+            // derive m/purpose'/coin_type'/account'/change/address_index
+            chainChildKey.Derive(childKey, nChildIndex);
+        }
+        else
+        {
+            // Use BIP32 keypath scheme i.e. m / account' / change' / address_index'
 
-    secret = childKey.key;
+            // derive m/account'
+            masterKey.Derive(accountKey, nAccountIndex | BIP32_HARDENED_KEY_LIMIT);
+            // derive m/account'/change
+            accountKey.Derive(chainChildKey, BIP32_HARDENED_KEY_LIMIT + (internal ? 1 : 0));
+            // derive m/account'/change/address_index
+            chainChildKey.Derive(childKey, BIP32_HARDENED_KEY_LIMIT |  nChildIndex);
+        }
 
-    if(hdChain.IsBip44())
+        // increment childkey index (only for non-PQ keys)
+        if (!pq) nChildIndex++;
+    } while (!pq && HaveKey(childKey.key.GetPubKey().GetID()));
+
+    // Set the secret - either PQ key or secp256k1 key
+    if (pq) {
+        secret = pqSecret;
+    } else {
+        secret = childKey.key;
+    }
+
+    if (pq)
+        metadata.hdKeypath = strprintf("m/100'/%d'/%d'/%d/%d", GetParams().ExtCoinType(), nAccountIndex, internal ? 1 : 0, actualPQIndex);
+    else if(hdChain.IsBip44())
         metadata.hdKeypath = strprintf("m/44'/%d'/%d'/%d/%d", GetParams().ExtCoinType(), nAccountIndex, internal, nChildIndex - 1);
     else
         metadata.hdKeypath = strprintf("m/%d'/%d'/%d'", nAccountIndex, internal, nChildIndex - 1);
@@ -1534,6 +1624,7 @@ CPubKey CWallet::GenerateNewSeed()
 
     CHDChain newHdChain(this);
 	newHdChain.UseBip44(hdChain.IsBip44());
+	newHdChain.UsePQ(hdChain.IsPQ());  // Preserve PQ wallet mode
 
 	// NOTE: empty mnemonic means "generate a new one for me"
 	std::string strMnemonic = gArgs.GetArg("-mnemonic", "");
@@ -1564,6 +1655,7 @@ CPubKey CWallet::GenerateNewSeed()
 
 	my_passphrase.clear();
 	my_words.clear();
+	my_pqwallet = false;  // Reset after use
 
 	return seed;
 
@@ -1628,6 +1720,11 @@ bool CWallet::IsHDEnabled() const
 bool CWallet::IsBip44Enabled() const
 {
     return IsHDEnabled() && hdChain.bUse_bip44;
+}
+
+bool CWallet::IsPQEnabled() const
+{
+    return IsHDEnabled() && hdChain.bUsePQ;
 }
 
 int64_t CWalletTx::GetTxTime() const
@@ -4093,6 +4190,12 @@ bool CWallet::TopUpKeyPool(unsigned int kpSize)
         if (IsLocked())
             return false;
 
+        // PQ wallets don't use keypool - keys are generated on-demand
+        if (IsPQEnabled()) {
+            LogPrintf("TopUpKeyPool: PQ wallet - skipping keypool generation\n");
+            return true;
+        }
+
         // Top up key pool
         unsigned int nTargetSize;
         if (kpSize > 0)
@@ -4759,6 +4862,9 @@ CWallet* CWallet:: CreateWalletFromFile(const std::string walletFile)
         LogPrintf("parameter interaction: -bip44 wallet enabled: %s\n", gArgs.GetBoolArg("-bip44", true));
 
         if (!walletInstance->hdChain.IsBip44()) {
+            // For non-BIP44 wallets, set PQ mode from command line only
+            walletInstance->UsePQ(gArgs.GetBoolArg("-pqwallet", false));
+            LogPrintf("parameter interaction: -pqwallet (Post-Quantum) enabled: %s\n", gArgs.GetBoolArg("-pqwallet", false));
             CPubKey seed = walletInstance->GenerateNewSeed();
             if (!walletInstance->SetHDSeed(seed))
                 throw std::runtime_error(std::string(__func__) + ": Storing HD seed failed");
@@ -4768,6 +4874,13 @@ CWallet* CWallet:: CreateWalletFromFile(const std::string walletFile)
         if (walletInstance->hdChain.IsBip44()){
             if (gArgs.GetArg("-mnemonic", "").empty() && gArgs.GetArg("-mnemonicpassphrase", "").empty())
                 uiInterface.ShowMnemonic(CClientUIInterface::MODAL);
+        }
+
+        // After GUI dialog, set PQ mode (from command line or GUI checkbox)
+        if (walletInstance->hdChain.IsBip44()) {
+            bool enablePQ = gArgs.GetBoolArg("-pqwallet", false) || my_pqwallet;
+            walletInstance->UsePQ(enablePQ);
+            LogPrintf("parameter interaction: -pqwallet (Post-Quantum) enabled: %s\n", enablePQ);
         }
 
         // generate a new seed
@@ -4791,6 +4904,21 @@ CWallet* CWallet:: CreateWalletFromFile(const std::string walletFile)
         if (!walletInstance->IsHDEnabled() && useHD) {
             InitError(strprintf(_("Error loading %s: You can't enable HD on an already existing non-HD wallet"), walletFile));
             return nullptr;
+        }
+    }
+
+    // Check for PQ wallet mode mismatch
+    if (!fFirstRun) {
+        bool wantPQ = gArgs.GetBoolArg("-pqwallet", false) || my_pqwallet;
+        bool isPQ = walletInstance->hdChain.IsPQ();
+        if (wantPQ && !isPQ) {
+            InitError(strprintf(_("Error loading %s: -pqwallet is set but this is a Legacy wallet. "
+                                  "You cannot change an existing wallet to PQ mode. "
+                                  "Create a new wallet with -pqwallet to use Post-Quantum addresses."), walletFile));
+            return nullptr;
+        }
+        if (!wantPQ && isPQ) {
+            LogPrintf("Note: Loading a Post-Quantum wallet. All addresses will be PQ (nq1...).\n");
         }
     }
 

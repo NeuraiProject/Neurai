@@ -190,6 +190,8 @@ UniValue getnewaddress(const JSONRPCRequest& request)
             "\nReturns a new Neurai address for receiving payments.\n"
             "If 'account' is specified (DEPRECATED), it is added to the address book \n"
             "so payments received with the address will be credited to 'account'.\n"
+            "\nThe type of address (Legacy or Post-Quantum) depends on the wallet type.\n"
+            "Use -pqwallet when creating the wallet for Post-Quantum addresses (nq1...).\n"
             "\nArguments:\n"
             "1. \"account\"        (string, optional) DEPRECATED. The account name for the address to be linked to. If not provided, the default account \"\" is used. It can also be set to the empty string \"\" to represent the default account. The account does not need to exist, it will be created if there is no account by the given name.\n"
             "\nResult:\n"
@@ -211,15 +213,28 @@ UniValue getnewaddress(const JSONRPCRequest& request)
     }
 
     // Generate a new key that is added to wallet
+    // The type of key (Legacy or PQ) is determined by the wallet mode (IsPQEnabled)
     CPubKey newKey;
-    if (!pwallet->GetKeyFromPool(newKey)) {
-        throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
+    if (pwallet->IsPQEnabled()) {
+         CWalletDB walletdb(pwallet->GetDBHandle());
+         newKey = pwallet->GenerateNewKeyPQ(walletdb);
+    } else {
+        if (!pwallet->GetKeyFromPool(newKey)) {
+            throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
+        }
     }
-    CKeyID keyID = newKey.GetID();
 
-    pwallet->SetAddressBook(keyID, strAccount, "receive");
+    CTxDestination dest;
+    // Check if PQ key (header 0x05)
+    if (newKey.size() > 65 && newKey[0] == 0x05) {
+         dest = WitnessV1KeyHash(newKey.GetID());
+    } else {
+         dest = newKey.GetID();
+    }
 
-    return EncodeDestination(keyID);
+    pwallet->SetAddressBook(dest, strAccount, "receive");
+
+    return EncodeDestination(dest);
 }
 
 
@@ -3521,6 +3536,38 @@ extern UniValue removeprunedfunds(const JSONRPCRequest& request);
 extern UniValue importmulti(const JSONRPCRequest& request);
 extern UniValue rescanblockchain(const JSONRPCRequest& request);
 
+UniValue listpqaddresses(const JSONRPCRequest& request)
+{
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+
+    if (request.fHelp || request.params.size() > 0)
+        throw std::runtime_error(
+            "listpqaddresses\n"
+            "\nLists all Post-Quantum addresses in the wallet.\n"
+            "\nResult:\n"
+            "[                     (json array of string)\n"
+            "  \"address\"         (string) a neurai pq address\n"
+            "  ,...\n"
+            "]\n"
+            "\nExamples:\n"
+            + HelpExampleCli("listpqaddresses", "")
+            + HelpExampleRpc("listpqaddresses", "")
+        );
+
+    LOCK2(cs_main, pwallet->cs_wallet);
+
+    UniValue ret(UniValue::VARR);
+    for (const std::pair<CTxDestination, CAddressBookData>& item : pwallet->mapAddressBook) {
+        if (boost::get<WitnessV1KeyHash>(&item.first)) {
+             ret.push_back(EncodeDestination(item.first));
+        }
+    }
+    return ret;
+}
+
 static const CRPCCommand commands[] =
 { //  category              name                        actor (function)           argNames
     //  --------------------- ------------------------    -----------------------  ----------
@@ -3560,6 +3607,7 @@ static const CRPCCommand commands[] =
     { "wallet",             "listlockunspent",          &listlockunspent,          {} },
     { "wallet",             "listreceivedbyaccount",    &listreceivedbyaccount,    {"minconf","include_empty","include_watchonly"} },
     { "wallet",             "listreceivedbyaddress",    &listreceivedbyaddress,    {"minconf","include_empty","include_watchonly"} },
+    { "wallet",             "listpqaddresses",          &listpqaddresses,          {} },
     { "wallet",             "listsinceblock",           &listsinceblock,           {"blockhash","target_confirmations","include_watchonly","include_removed"} },
     { "wallet",             "listtransactions",         &listtransactions,         {"account","count","skip","include_watchonly"} },
     { "wallet",             "listunspent",              &listunspent,              {"minconf","maxconf","addresses","include_unsafe","query_options"} },

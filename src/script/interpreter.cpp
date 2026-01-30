@@ -1531,6 +1531,25 @@ static bool VerifyWitnessProgram(const CScriptWitness &witness, int witversion, 
             return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_WRONG_LENGTH);
         }
     }
+    else if (witversion == 1)
+    {
+        // Neurai Post-Quantum P2WPKH
+        if (program.size() == 20)
+        {
+             if (witness.stack.size() != 2)
+             {
+                 return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH); 
+             }
+             // P2WPKH pattern: OP_DUP OP_HASH160 <keyhash> OP_EQUALVERIFY OP_CHECKSIG
+             scriptPubKey << OP_DUP << OP_HASH160 << program << OP_EQUALVERIFY << OP_CHECKSIG;
+             stack = witness.stack;
+        }
+        else
+        {
+             // For now only support 20-byte program (P2WPKH-PQ)
+             return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_WRONG_LENGTH);
+        }
+    }
     else if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM)
     {
         return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM);

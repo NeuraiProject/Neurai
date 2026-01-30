@@ -45,6 +45,7 @@ extern bool fWalletRbf;
 
 extern std::string my_words;
 extern std::string my_passphrase;
+extern bool my_pqwallet;
 
 static const unsigned int DEFAULT_KEYPOOL_SIZE = 1000;
 //! -paytxfee default
@@ -723,7 +724,7 @@ private:
     CHDChain hdChain;
 
     /* HD derive new child key (on internal or external chain) */
-    void DeriveNewChildKey(CWalletDB &walletdb, CKeyMetadata& metadata, CKey& secret, bool internal = false);
+    void DeriveNewChildKey(CWalletDB &walletdb, CKeyMetadata& metadata, CKey& secret, bool internal = false, bool pq = false);
 
     std::set<int64_t> setInternalKeyPool;
     std::set<int64_t> setExternalKeyPool;
@@ -914,6 +915,8 @@ public:
      * Generate a new key
      */
     CPubKey GenerateNewKey(CWalletDB& walletdb, bool internal = false);
+    //! Generate a new post-quantum key
+    CPubKey GenerateNewKeyPQ(CWalletDB& walletdb, bool internal = false);
     //! Adds a key to the store, and saves it to disk.
     bool AddKeyPubKey(const CKey& key, const CPubKey &pubkey) override;
     bool AddKeyPubKeyWithDB(CWalletDB &walletdb,const CKey& key, const CPubKey &pubkey);
@@ -1185,12 +1188,16 @@ public:
     const CHDChain& GetHDChain() const { return hdChain; }
 
     void UseBip44( bool b = true)    { hdChain.UseBip44(b);}
+    void UsePQ( bool b = true)       { hdChain.UsePQ(b);}
 
     /* Returns true if HD is enabled */
     bool IsHDEnabled() const;
 
     /* Returns true if HD is enabled with Bip44 */
     bool IsBip44Enabled() const;
+
+    /* Returns true if this is a Post-Quantum wallet */
+    bool IsPQEnabled() const;
 
 
     /* Generates a new HD seed (will not be activated) */

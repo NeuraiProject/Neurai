@@ -43,10 +43,10 @@ class CPubKey
 private:
 
     /**
-     * Just store the serialized data.
-     * Its length can very cheaply be computed from the first byte.
+     * Store the serialized data.
+     * Use vector to support variable length PQ keys.
      */
-    unsigned char vch[65];
+    std::vector<unsigned char> vch;
 
     //! Compute the length of a pubkey with a given first byte.
     unsigned int static GetLen(unsigned char chHeader)
@@ -55,13 +55,15 @@ private:
             return 33;
         if (chHeader == 4 || chHeader == 6 || chHeader == 7)
             return 65;
+        if (chHeader == 5) // Dilithium2 (ML-DSA-44)
+            return 1313; // 1 byte header + 1312 bytes key
         return 0;
     }
 
     //! Set this key data to be invalid
     void Invalidate()
     {
-        vch[0] = 0xFF;
+        vch.clear();
     }
 
 public:
@@ -77,7 +79,7 @@ public:
     {
         int len = pend == pbegin ? 0 : GetLen(pbegin[0]);
         if (len && len == (pend - pbegin))
-            memcpy(vch, (unsigned char*)&pbegin[0], len);
+            vch.assign(pbegin, pend);
         else
             Invalidate();
     }
@@ -96,16 +98,15 @@ public:
     }
 
     //! Simple read-only vector-like interface to the pubkey data.
-    unsigned int size() const { return GetLen(vch[0]); }
-    const unsigned char* begin() const { return vch; }
-    const unsigned char* end() const { return vch + size(); }
+    unsigned int size() const { return vch.size(); }
+    const unsigned char* begin() const { return vch.data(); }
+    const unsigned char* end() const { return vch.data() + size(); }
     const unsigned char& operator[](unsigned int pos) const { return vch[pos]; }
 
     //! Comparator implementation.
     friend bool operator==(const CPubKey& a, const CPubKey& b)
     {
-        return a.vch[0] == b.vch[0] &&
-               memcmp(a.vch, b.vch, a.size()) == 0;
+        return a.vch == b.vch;
     }
     friend bool operator!=(const CPubKey& a, const CPubKey& b)
     {
@@ -113,8 +114,7 @@ public:
     }
     friend bool operator<(const CPubKey& a, const CPubKey& b)
     {
-        return a.vch[0] < b.vch[0] ||
-               (a.vch[0] == b.vch[0] && memcmp(a.vch, b.vch, a.size()) < 0);
+        return a.vch < b.vch;
     }
 
     //! Implement serialization, as if this was a byte vector.
@@ -123,14 +123,15 @@ public:
     {
         unsigned int len = size();
         ::WriteCompactSize(s, len);
-        s.write((char*)vch, len);
+        s.write((char*)vch.data(), len);
     }
     template <typename Stream>
     void Unserialize(Stream& s)
     {
         unsigned int len = ::ReadCompactSize(s);
-        if (len <= 65) {
-            s.read((char*)vch, len);
+        if (len <= 1313) {
+            vch.resize(len);
+            s.read((char*)vch.data(), len);
         } else {
             // invalid pubkey, skip available data
             char dummy;
@@ -143,13 +144,13 @@ public:
     //! Get the KeyID of this public key (hash of its serialization)
     CKeyID GetID() const
     {
-        return CKeyID(Hash160(vch, vch + size()));
+        return CKeyID(Hash160(vch.data(), vch.data() + size()));
     }
 
     //! Get the 256-bit hash of this public key.
     uint256 GetHash() const
     {
-        return Hash(vch, vch + size());
+        return Hash(vch.data(), vch.data() + size());
     }
 
     /*

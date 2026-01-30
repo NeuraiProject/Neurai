@@ -756,9 +756,10 @@ UniValue getmasterkeyinfo(const JSONRPCRequest& request)
                 "\nFetches and displays the master private key and the master public key.\n"
                 "\nResult:\n"
                 "{                           (json object)\n"
+                "  \"wallet_type\" : (string) wallet type (PQ, BIP44 HD, or Legacy HD),\n"
                 "  \"bip32_root_private\" : (string) extended master private key,\n"
                 "  \"bip32_root_public\" :  (string) extended master public key,\n"
-                "  \"account_derivation_path\" : (string) The derivation path to the account public/private keys\n"
+                "  \"account_derivation_path\" : (string) Full derivation path with chain level (m/100'/1900'/0'/0 for PQ, m/44'/1900'/0'/0 for BIP44),\n"
                 "  \"account_extended_private_key\" : (string) extended account private key,\n"
                 "  \"account_extended_public_key\" :  (string) extended account public key,\n"
                 "}\n"
@@ -777,6 +778,11 @@ UniValue getmasterkeyinfo(const JSONRPCRequest& request)
     CKeyID seed_id = pwallet->GetHDChain().seed_id;
     if (!seed_id.IsNull())
     {
+        // Show wallet type
+        bool isPQ = pwallet->GetHDChain().IsPQ();
+        bool isBip44 = pwallet->GetHDChain().IsBip44();
+        std::string walletType = isPQ ? "PQ (Post-Quantum)" : (isBip44 ? "BIP44 HD" : "Legacy HD");
+        ret.push_back(std::make_pair("wallet_type", walletType));
 
         if (!pwallet->GetHDChain().IsBip44()) {
             CKey seed;
@@ -856,35 +862,42 @@ UniValue getmasterkeyinfo(const JSONRPCRequest& request)
             // Add the private and public key to the output
             ret.push_back(std::make_pair("bip32_root_private",  b58extkey.ToString()));
             ret.push_back(std::make_pair("bip32_root_public",  b58extpubkey.ToString()));
-            std::string path = strprintf("m/44'/%d'/%d'", GetParams().ExtCoinType(), 0);
+
+            // Determine purpose based on wallet type (PQ uses 100, legacy uses 44)
+            uint32_t purpose = pwallet->GetHDChain().IsPQ() ? 100 : 44;
+            // Path includes chain level (0 for external)
+            std::string path = strprintf("m/%d'/%d'/%d'/0", purpose, GetParams().ExtCoinType(), 0);
             ret.push_back(std::make_pair("account_derivation_path",  path));
 
-            // Lets generate the account private and public keys
+            // Lets generate the chain-level private and public keys
             CExtKey purposeKey;
             CExtKey coinTypeKey;
             CExtKey accountKey;
+            CExtKey chainKey;
             // derive m/purpose'
-            masterKey.Derive(purposeKey, 44 | 0x80000000);
+            masterKey.Derive(purposeKey, purpose | 0x80000000);
             // derive m/purpose'/coin_type'
             purposeKey.Derive(coinTypeKey, GetParams().ExtCoinType() | 0x80000000);
             // derive m/purpose'/coin_type'/account'
             coinTypeKey.Derive(accountKey, 0 | 0x80000000);
+            // derive m/purpose'/coin_type'/account'/chain (0 = external, non-hardened)
+            accountKey.Derive(chainKey, 0);
 
-            // Create the account public key from the account private key
-            CExtPubKey account_extended_public_key;
-            account_extended_public_key = accountKey.Neuter();
+            // Create the chain public key from the chain private key
+            CExtPubKey chain_extended_public_key;
+            chain_extended_public_key = chainKey.Neuter();
 
-            // Create the Neurai Account Ext Private Key
-            CNeuraiExtKey b58accountextprivatekey;
-            b58accountextprivatekey.SetKey(accountKey);
+            // Create the Neurai Chain Ext Private Key
+            CNeuraiExtKey b58chainextprivatekey;
+            b58chainextprivatekey.SetKey(chainKey);
 
-            // Create the Neurai Account Ext Public Key
-            CNeuraiExtPubKey b58actextpubkey;
-            b58actextpubkey.SetKey(account_extended_public_key);
+            // Create the Neurai Chain Ext Public Key
+            CNeuraiExtPubKey b58chainextpubkey;
+            b58chainextpubkey.SetKey(chain_extended_public_key);
 
-            // Add the account extended public and private keys to the return
-            ret.push_back(std::make_pair("account_extended_private_key",  b58accountextprivatekey.ToString()));
-            ret.push_back(std::make_pair("account_extended_public_key",  b58actextpubkey.ToString()));
+            // Add the chain extended public and private keys to the return
+            ret.push_back(std::make_pair("account_extended_private_key",  b58chainextprivatekey.ToString()));
+            ret.push_back(std::make_pair("account_extended_public_key",  b58chainextpubkey.ToString()));
         }
     }
 

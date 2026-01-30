@@ -101,12 +101,24 @@
       <item>
        <widget class="QRadioButton" name="walletOldRadio">
         <property name="text">
-         <string>Re-create an existing wallet using a previously used BIP39 compliant set 
+         <string>Re-create an existing wallet using a previously used BIP39 compliant set
     of 12 seed words which you know.</string>
         </property>
        </widget>
       </item>
      </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QCheckBox" name="pqWalletCheckbox">
+     <property name="text">
+      <string>Create Post-Quantum wallet (ML-DSA-44 / FIPS 204)</string>
+     </property>
+     <property name="toolTip">
+      <string>When enabled, this wallet will use Post-Quantum cryptography (ML-DSA-44) instead of secp256k1.
+PQ wallets generate addresses starting with 'nq1' and are resistant to quantum computer attacks.
+Note: This choice is permanent and cannot be changed after wallet creation.</string>
+     </property>
     </widget>
    </item>
    <item>

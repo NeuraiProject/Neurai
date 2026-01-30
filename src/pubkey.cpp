@@ -6,6 +6,8 @@
 
 #include "pubkey.h"
 
+#include <oqs/oqs.h>
+
 #include <secp256k1.h>
 #include <secp256k1_recovery.h>
 
@@ -168,6 +170,21 @@ static int ecdsa_signature_parse_der_lax(const secp256k1_context* ctx, secp256k1
 bool CPubKey::Verify(const uint256 &hash, const std::vector<unsigned char>& vchSig) const {
     if (!IsValid())
         return false;
+    
+    // Dilithium 2 verification
+    if (size() == 1313 && (*this)[0] == 0x05) {
+        if (vchSig.size() != 2420) return false;
+        
+        OQS_SIG *sig = OQS_SIG_new(OQS_SIG_alg_ml_dsa_44);
+        if (!sig) return false;
+        
+        // Skip header
+        const unsigned char* pubkey_bytes = begin() + 1;
+        bool result = (OQS_SIG_verify(sig, hash.begin(), hash.size(), vchSig.data(), vchSig.size(), pubkey_bytes) == OQS_SUCCESS);
+        OQS_SIG_free(sig);
+        return result;
+    }
+
     secp256k1_pubkey pubkey;
     secp256k1_ecdsa_signature sig;
     if (!secp256k1_ec_pubkey_parse(secp256k1_context_verify, &pubkey, &(*this)[0], size())) {
@@ -205,6 +222,9 @@ bool CPubKey::RecoverCompact(const uint256 &hash, const std::vector<unsigned cha
 bool CPubKey::IsFullyValid() const {
     if (!IsValid())
         return false;
+    
+    if (size() == 1313 && (*this)[0] == 0x05) return true; // Dilithium key
+
     secp256k1_pubkey pubkey;
     return secp256k1_ec_pubkey_parse(secp256k1_context_verify, &pubkey, &(*this)[0], size());
 }
@@ -212,6 +232,8 @@ bool CPubKey::IsFullyValid() const {
 bool CPubKey::Decompress() {
     if (!IsValid())
         return false;
+    if (size() > 65) return true; // PQ keys don't compress
+    
     secp256k1_pubkey pubkey;
     if (!secp256k1_ec_pubkey_parse(secp256k1_context_verify, &pubkey, &(*this)[0], size())) {
         return false;
@@ -227,6 +249,10 @@ bool CPubKey::Derive(CPubKey& pubkeyChild, ChainCode &ccChild, unsigned int nChi
     assert(IsValid());
     assert((nChild >> 31) == 0);
     assert(begin() + 33 == end());
+    
+    // PQ Keys do not support unhardened derivation
+    if (size() > 65) return false;
+
     unsigned char out[64];
     BIP32Hash(cc, nChild, *begin(), begin()+1, out);
     memcpy(ccChild.begin(), out+32, 32);

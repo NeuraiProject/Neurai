@@ -81,6 +81,10 @@ void MnemonicDialog1::on_walletOldRadio_clicked()
 
 void MnemonicDialog1::on_acceptButton_clicked()
 {
+#if !TEST
+    // Set global PQ wallet flag based on checkbox state
+    my_pqwallet = ui->pqWalletCheckbox->isChecked();
+#endif
     if (radioselected == "new")
         Q_EMIT updateMainWindowStackWidget(1);  // "emit" is not supported on older QT revs
     else if (radioselected == "old")

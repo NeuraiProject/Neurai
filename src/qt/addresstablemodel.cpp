@@ -364,23 +364,42 @@ QString AddressTableModel::addRow(const QString &type, const QString &label, con
     else if(type == Receive)
     {
         // Generate a new address to associate with given label
+        // The type of key (Legacy or PQ) is determined by the wallet mode
         CPubKey newKey;
-        if(!wallet->GetKeyFromPool(newKey))
+        if(wallet->IsPQEnabled())
         {
+            // PQ wallet: generate ML-DSA-44 key
             WalletModel::UnlockContext ctx(walletModel->requestUnlock());
             if(!ctx.isValid())
             {
-                // Unlock wallet failed or was cancelled
                 editStatus = WALLET_UNLOCK_FAILURE;
                 return QString();
             }
+            CWalletDB walletdb(wallet->GetDBHandle());
+            newKey = wallet->GenerateNewKeyPQ(walletdb);
+            // PQ address uses WitnessV1KeyHash (bech32m with nq prefix)
+            strAddress = EncodeDestination(WitnessV1KeyHash(newKey.GetID()));
+        }
+        else
+        {
+            // Legacy wallet: use key pool
             if(!wallet->GetKeyFromPool(newKey))
             {
-                editStatus = KEY_GENERATION_FAILURE;
-                return QString();
+                WalletModel::UnlockContext ctx(walletModel->requestUnlock());
+                if(!ctx.isValid())
+                {
+                    // Unlock wallet failed or was cancelled
+                    editStatus = WALLET_UNLOCK_FAILURE;
+                    return QString();
+                }
+                if(!wallet->GetKeyFromPool(newKey))
+                {
+                    editStatus = KEY_GENERATION_FAILURE;
+                    return QString();
+                }
             }
+            strAddress = EncodeDestination(newKey.GetID());
         }
-        strAddress = EncodeDestination(newKey.GetID());
     }
     else
     {

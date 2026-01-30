@@ -8,6 +8,8 @@
 
 #include "hash.h"
 #include "uint256.h"
+#include "bech32.h"
+#include "chainparams.h"
 
 #include <assert.h>
 #include <stdint.h>
@@ -225,6 +227,7 @@ public:
 
     bool operator()(const CKeyID& id) const { return addr->Set(id); }
     bool operator()(const CScriptID& id) const { return addr->Set(id); }
+    bool operator()(const WitnessV1KeyHash& id) const { return false; }
     bool operator()(const CNoDestination& no) const { return false; }
 };
 
@@ -326,6 +329,22 @@ bool CNeuraiSecret::SetString(const std::string& strSecret)
 
 std::string EncodeDestination(const CTxDestination& dest)
 {
+    const WitnessV1KeyHash* pq = boost::get<WitnessV1KeyHash>(&dest);
+    if (pq) {
+        std::vector<uint8_t> program;
+        // WitnessV1KeyHash is uint160 (20 bytes).
+        program.assign(pq->begin(), pq->end());
+
+        std::vector<uint8_t> data_5bit;
+        // Version 1 is integer 1 (BIP173/350)
+        data_5bit.push_back(1);
+
+        // Convert program to 5-bit
+        bech32::ConvertBits<8, 5, true>(program, std::back_inserter(data_5bit));
+
+        return bech32::Encode(GetParams().Bech32HRP(), data_5bit, bech32::Encoding::BECH32M);
+    }
+
     CNeuraiAddress addr(dest);
     if (!addr.IsValid()) return "";
     return addr.ToString();
@@ -333,7 +352,25 @@ std::string EncodeDestination(const CTxDestination& dest)
 
 CTxDestination DecodeDestination(const std::string& str)
 {
-    return CNeuraiAddress(str).Get();
+    CNeuraiAddress addr(str);
+    if (addr.IsValid()) return addr.Get();
+    
+    // Check Bech32
+    bech32::DecodeResult res = bech32::Decode(str);
+    if (res.encoding == bech32::Encoding::BECH32M && res.hrp == GetParams().Bech32HRP()) {
+        if (res.data.empty()) return CNoDestination();
+        int version = res.data[0];
+        if (version == 1 && res.data.size() > 1) {
+             std::vector<uint8_t> program;
+             if (bech32::ConvertBits<5, 8, false>(std::vector<uint8_t>(res.data.begin() + 1, res.data.end()), std::back_inserter(program))) {
+                 if (program.size() == 20) {
+                     return WitnessV1KeyHash(uint160(program));
+                 }
+             }
+        }
+    }
+    
+    return CNoDestination();
 }
 
 bool IsValidDestinationString(const std::string& str, const CChainParams& params)

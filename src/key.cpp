@@ -11,6 +11,9 @@
 #include "crypto/hmac_sha512.h"
 #include "pubkey.h"
 #include "random.h"
+#include "util.h"  // For LogPrintf
+
+#include <oqs/oqs.h>
 
 #include <secp256k1.h>
 #include <secp256k1_recovery.h>
@@ -121,76 +124,208 @@ static int ec_privkey_export_der(const secp256k1_context *ctx, unsigned char *pr
     return 1;
 }
 
-bool CKey::Check(const unsigned char *vch) {
-    return secp256k1_ec_seckey_verify(secp256k1_context_sign, vch);
+bool CKey::Check(const unsigned char *vch, unsigned int len) {
+    if (len == 32)
+        return secp256k1_ec_seckey_verify(secp256k1_context_sign, vch);
+    // ML-DSA-44 (Priv + Pub): 2560 + 1312 = 3872 bytes
+    if (len == DILITHIUM2_PRIVKEY_SIZE + DILITHIUM2_PUBKEY_SIZE) return true;
+    return false;
 }
 
 void CKey::MakeNewKey(bool fCompressedIn) {
+    keydata.resize(32);
     do {
         GetStrongRandBytes(keydata.data(), keydata.size());
-    } while (!Check(keydata.data()));
+    } while (!Check(keydata.data(), 32));
     fValid = true;
     fCompressed = fCompressedIn;
+}
+
+#include "sync.h"
+
+static CCriticalSection cs_OQS;
+static std::vector<unsigned char> g_OQS_Seed;
+static size_t g_OQS_SeedPos;
+
+static void OQS_Random_Deterministic(uint8_t *dest, size_t len) {
+    size_t to_copy = std::min(len, g_OQS_Seed.size() - g_OQS_SeedPos);
+    if (to_copy > 0) {
+        memcpy(dest, &g_OQS_Seed[g_OQS_SeedPos], to_copy);
+        g_OQS_SeedPos += to_copy;
+    }
+    if (to_copy < len) {
+        memset(dest + to_copy, 0, len - to_copy);
+    }
+}
+
+void CKey::MakeNewKeyPQ() {
+    LOCK(cs_OQS);
+    LogPrintf("DEBUG MakeNewKeyPQ: Starting\n");
+    OQS_SIG *sig = OQS_SIG_new(OQS_SIG_alg_ml_dsa_44);
+    if (!sig) throw std::runtime_error("OQS_SIG_new failed for ML-DSA-44 - algorithm may not be compiled");
+    LogPrintf("DEBUG MakeNewKeyPQ: OQS_SIG_new success, sk_len=%zu pk_len=%zu\n", sig->length_secret_key, sig->length_public_key);
+
+    // Verify sizes match our constants (safety check)
+    if (sig->length_secret_key != DILITHIUM2_PRIVKEY_SIZE ||
+        sig->length_public_key != DILITHIUM2_PUBKEY_SIZE) {
+        OQS_SIG_free(sig);
+        throw std::runtime_error("OQS ML-DSA-44 key sizes mismatch - expected sk=" +
+            std::to_string(DILITHIUM2_PRIVKEY_SIZE) + " pk=" + std::to_string(DILITHIUM2_PUBKEY_SIZE) +
+            " got sk=" + std::to_string(sig->length_secret_key) + " pk=" + std::to_string(sig->length_public_key));
+    }
+
+    LogPrintf("DEBUG MakeNewKeyPQ: Resizing keydata to %u\n", DILITHIUM2_PRIVKEY_SIZE + DILITHIUM2_PUBKEY_SIZE);
+    keydata.resize(DILITHIUM2_PRIVKEY_SIZE + DILITHIUM2_PUBKEY_SIZE);
+    LogPrintf("DEBUG MakeNewKeyPQ: Resize done, calling OQS_SIG_keypair\n");
+
+    // Store generated keys directly in keydata
+    if (OQS_SIG_keypair(sig, keydata.data() + DILITHIUM2_PRIVKEY_SIZE, keydata.data()) != OQS_SUCCESS) {
+        OQS_SIG_free(sig);
+        throw std::runtime_error("OQS_SIG_keypair failed");
+    }
+    LogPrintf("DEBUG MakeNewKeyPQ: OQS_SIG_keypair success\n");
+    OQS_SIG_free(sig);
+    fValid = true;
+    fCompressed = false;
+}
+
+void CKey::MakeNewKeyPQ(const std::vector<unsigned char>& seed) {
+    LOCK(cs_OQS);
+    g_OQS_Seed = seed;
+    g_OQS_SeedPos = 0;
+
+    OQS_randombytes_custom_algorithm(OQS_Random_Deterministic);
+
+    try {
+        MakeNewKeyPQ();
+    } catch (...) {
+        OQS_randombytes_switch_algorithm(OQS_RAND_alg_system);
+        g_OQS_Seed.clear();
+        throw;
+    }
+
+    OQS_randombytes_switch_algorithm(OQS_RAND_alg_system);
+    g_OQS_Seed.clear();
 }
 
 CPrivKey CKey::GetPrivKey() const {
     assert(fValid);
     CPrivKey privkey;
-    int ret;
-    size_t privkeylen;
-    privkey.resize(279);
-    privkeylen = 279;
-    ret = ec_privkey_export_der(secp256k1_context_sign, (unsigned char*) privkey.data(), &privkeylen, begin(), fCompressed ? SECP256K1_EC_COMPRESSED : SECP256K1_EC_UNCOMPRESSED);
-    assert(ret);
-    privkey.resize(privkeylen);
+    if (keydata.size() == 32) {
+        int ret;
+        size_t privkeylen;
+        privkey.resize(279);
+        privkeylen = 279;
+        ret = ec_privkey_export_der(secp256k1_context_sign, (unsigned char*) privkey.data(), &privkeylen, begin(), fCompressed ? SECP256K1_EC_COMPRESSED : SECP256K1_EC_UNCOMPRESSED);
+        assert(ret);
+        privkey.resize(privkeylen);
+    } else {
+        // PQ Key: Just return the raw keydata (Priv + Pub)
+        privkey = keydata;
+    }
     return privkey;
 }
 
 CPubKey CKey::GetPubKey() const {
     assert(fValid);
-    secp256k1_pubkey pubkey;
-    size_t clen = 65;
-    CPubKey result;
-    int ret = secp256k1_ec_pubkey_create(secp256k1_context_sign, &pubkey, begin());
-    assert(ret);
-    secp256k1_ec_pubkey_serialize(secp256k1_context_sign, (unsigned char*)result.begin(), &clen, &pubkey, fCompressed ? SECP256K1_EC_COMPRESSED : SECP256K1_EC_UNCOMPRESSED);
-    assert(result.size() == clen);
-    assert(result.IsValid());
-    return result;
+    if (keydata.size() == 32) {
+        secp256k1_pubkey pubkey;
+        size_t clen = 65;
+        CPubKey result;
+        // Make sure CPubKey internal vector is ready? CPubKey ctor handles it or we resize it.
+        // CPubKey default ctor is invalid (empty).
+        // We will construct via vector.
+        std::vector<unsigned char> vch(65);
+        int ret = secp256k1_ec_pubkey_create(secp256k1_context_sign, &pubkey, begin());
+        assert(ret);
+        secp256k1_ec_pubkey_serialize(secp256k1_context_sign, vch.data(), &clen, &pubkey, fCompressed ? SECP256K1_EC_COMPRESSED : SECP256K1_EC_UNCOMPRESSED);
+        vch.resize(clen);
+        return CPubKey(vch);
+    } else {
+        // PQ Key (ML-DSA-44)
+        if (keydata.size() >= DILITHIUM2_PRIVKEY_SIZE + DILITHIUM2_PUBKEY_SIZE) {
+            std::vector<unsigned char> pub(keydata.begin() + DILITHIUM2_PRIVKEY_SIZE, keydata.end());
+            pub.insert(pub.begin(), 0x05); // Header for PQ key
+            return CPubKey(pub);
+        }
+        return CPubKey();
+    }
 }
 
 bool CKey::Sign(const uint256 &hash, std::vector<unsigned char>& vchSig, uint32_t test_case) const {
     if (!fValid)
         return false;
-    vchSig.resize(72);
-    size_t nSigLen = 72;
-    unsigned char extra_entropy[32] = {0};
-    WriteLE32(extra_entropy, test_case);
-    secp256k1_ecdsa_signature sig;
-    int ret = secp256k1_ecdsa_sign(secp256k1_context_sign, &sig, hash.begin(), begin(), secp256k1_nonce_function_rfc6979, test_case ? extra_entropy : nullptr);
-    assert(ret);
-    secp256k1_ecdsa_signature_serialize_der(secp256k1_context_sign, (unsigned char*)vchSig.data(), &nSigLen, &sig);
-    vchSig.resize(nSigLen);
-    return true;
+    
+    if (keydata.size() == 32) {
+        vchSig.resize(72);
+        size_t nSigLen = 72;
+        unsigned char extra_entropy[32] = {0};
+        WriteLE32(extra_entropy, test_case);
+        secp256k1_ecdsa_signature sig;
+        int ret = secp256k1_ecdsa_sign(secp256k1_context_sign, &sig, hash.begin(), begin(), secp256k1_nonce_function_rfc6979, test_case ? extra_entropy : nullptr);
+        assert(ret);
+        secp256k1_ecdsa_signature_serialize_der(secp256k1_context_sign, (unsigned char*)vchSig.data(), &nSigLen, &sig);
+        vchSig.resize(nSigLen);
+        return true;
+    } else {
+        // PQ Sign
+        // Requires full keydata or just privkey part?
+        // OQS_SIG_sign takes secret_key.
+        OQS_SIG *sig = OQS_SIG_new(OQS_SIG_alg_ml_dsa_44);
+        if (!sig) return false;
+        
+        vchSig.resize(DILITHIUM2_SIG_SIZE);
+        size_t sig_len = DILITHIUM2_SIG_SIZE;
+        
+        if (OQS_SIG_sign(sig, vchSig.data(), &sig_len, hash.begin(), hash.size(), keydata.data()) != OQS_SUCCESS) {
+            OQS_SIG_free(sig);
+            return false;
+        }
+        OQS_SIG_free(sig);
+        vchSig.resize(sig_len);
+        return true;
+    }
 }
 
 bool CKey::VerifyPubKey(const CPubKey& pubkey) const {
-    if (pubkey.IsCompressed() != fCompressed) {
-        return false;
+    if (keydata.size() == 32) {
+        if (pubkey.IsCompressed() != fCompressed) {
+            return false;
+        }
+        unsigned char rnd[8];
+        std::string str = "Neurai key verification\n";
+        GetRandBytes(rnd, sizeof(rnd));
+        uint256 hash;
+        CHash256().Write((unsigned char*)str.data(), str.size()).Write(rnd, sizeof(rnd)).Finalize(hash.begin());
+        std::vector<unsigned char> vchSig;
+        Sign(hash, vchSig);
+        return pubkey.Verify(hash, vchSig);
+    } else {
+        // PQ Verification
+        // No "Compressed" check needed.
+        // Just sign random data and verify.
+        unsigned char rnd[8];
+        std::string str = "Neurai key verification\n";
+        GetRandBytes(rnd, sizeof(rnd));
+        uint256 hash;
+        CHash256().Write((unsigned char*)str.data(), str.size()).Write(rnd, sizeof(rnd)).Finalize(hash.begin());
+        std::vector<unsigned char> vchSig;
+        Sign(hash, vchSig);
+        // We assume CPubKey::Verify checks using OQS eventually (need to update CPubKey::Verify too?)
+        // Wait, CPubKey::Verify is in pubkey.cpp (likely) or header?
+        // It's not in pubkey.h (impl not shown in header, declared? No, I don't see Verify in CPubKey decl in previous view).
+        // Let me check pubkey.h again in my memory.
+        // It's likely in pubkey.cpp. I missed it.
+        // VerifyPubKey uses pubkey.Verify. I must update CPubKey::Verify as well!
+        return pubkey.Verify(hash, vchSig);
     }
-    unsigned char rnd[8];
-    std::string str = "Neurai key verification\n";
-    GetRandBytes(rnd, sizeof(rnd));
-    uint256 hash;
-    CHash256().Write((unsigned char*)str.data(), str.size()).Write(rnd, sizeof(rnd)).Finalize(hash.begin());
-    std::vector<unsigned char> vchSig;
-    Sign(hash, vchSig);
-    return pubkey.Verify(hash, vchSig);
 }
 
 bool CKey::SignCompact(const uint256 &hash, std::vector<unsigned char>& vchSig) const {
     if (!fValid)
         return false;
+    if (keydata.size() > 32) return false; // Not supported for PQ
+    
     vchSig.resize(65);
     int rec = -1;
     secp256k1_ecdsa_recoverable_signature sig;
@@ -203,7 +338,17 @@ bool CKey::SignCompact(const uint256 &hash, std::vector<unsigned char>& vchSig) 
     return true;
 }
 
-bool CKey::Load(CPrivKey &privkey, CPubKey &vchPubKey, bool fSkipCheck=false) {
+bool CKey::Load(CPrivKey &privkey, CPubKey &vchPubKey, bool fSkipCheck) {
+    if (privkey.size() > 2000) { // PQ Key
+        keydata = privkey;
+        fCompressed = false;
+        fValid = true;
+        if (fSkipCheck) return true;
+        return VerifyPubKey(vchPubKey);
+    }
+    
+    // Legacy
+    keydata.resize(32);
     if (!ec_privkey_import_der(secp256k1_context_sign, (unsigned char*)begin(), privkey.data(), privkey.size()))
         return false;
     fCompressed = vchPubKey.IsCompressed();
@@ -218,18 +363,20 @@ bool CKey::Load(CPrivKey &privkey, CPubKey &vchPubKey, bool fSkipCheck=false) {
 bool CKey::Derive(CKey& keyChild, ChainCode &ccChild, unsigned int nChild, const ChainCode& cc) const {
     assert(IsValid());
     assert(IsCompressed());
+    assert(keydata.size() == 32); // Must be secp256k1 key, not PQ
     std::vector<unsigned char, secure_allocator<unsigned char>> vout(64);
     if ((nChild >> 31) == 0) {
         CPubKey pubkey = GetPubKey();
         assert(pubkey.begin() + 33 == pubkey.end());
         BIP32Hash(cc, nChild, *pubkey.begin(), pubkey.begin()+1, vout.data());
     } else {
-        assert(begin() + 32 == end());
         BIP32Hash(cc, nChild, 0, begin(), vout.data());
     }
     memcpy(ccChild.begin(), vout.data()+32, 32);
-    memcpy((unsigned char*)keyChild.begin(), begin(), 32);
-    bool ret = secp256k1_ec_privkey_tweak_add(secp256k1_context_sign, (unsigned char*)keyChild.begin(), vout.data());
+    // Resize child keydata before copying (keydata is a vector, not fixed array)
+    keyChild.keydata.resize(32);
+    memcpy(keyChild.keydata.data(), begin(), 32);
+    bool ret = secp256k1_ec_privkey_tweak_add(secp256k1_context_sign, keyChild.keydata.data(), vout.data());
     keyChild.fCompressed = true;
     keyChild.fValid = ret;
     return ret;

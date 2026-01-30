@@ -44,6 +44,7 @@ const char* GetTxnOutputType(txnouttype t)
     case TX_RESTRICTED_ASSET_DATA: return "nullassetdata";
     case TX_WITNESS_V0_KEYHASH: return "witness_v0_keyhash";
     case TX_WITNESS_V0_SCRIPTHASH: return "witness_v0_scripthash";
+    case TX_WITNESS_V1_KEYHASH: return "witness_v1_keyhash";
 
     /** XNA START */
     case TX_NEW_ASSET: return ASSET_NEW_STRING;
@@ -102,6 +103,11 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, std::vector<std::v
         }
         if (witnessversion == 0 && witnessprogram.size() == 32) {
             typeRet = TX_WITNESS_V0_SCRIPTHASH;
+            vSolutionsRet.push_back(witnessprogram);
+            return true;
+        }
+        if (witnessversion == 1 && witnessprogram.size() == 20) {
+            typeRet = TX_WITNESS_V1_KEYHASH;
             vSolutionsRet.push_back(witnessprogram);
             return true;
         }
@@ -243,8 +249,14 @@ bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
     {
         addressRet = CScriptID(uint160(vSolutions[0]));
         return true;
+    }
+    else if (whichType == TX_WITNESS_V1_KEYHASH)
+    {
+        addressRet = WitnessV1KeyHash(uint160(vSolutions[0]));
+        return true;
+    }
     /** XNA START */
-    } else if (whichType == TX_NEW_ASSET || whichType == TX_REISSUE_ASSET || whichType == TX_TRANSFER_ASSET) {
+    else if (whichType == TX_NEW_ASSET || whichType == TX_REISSUE_ASSET || whichType == TX_TRANSFER_ASSET) {
         addressRet = CKeyID(uint160(vSolutions[0]));
         return true;
     } else if (whichType == TX_RESTRICTED_ASSET_DATA) {
@@ -323,6 +335,12 @@ public:
         *script << OP_HASH160 << ToByteVector(scriptID) << OP_EQUAL;
         return true;
     }
+
+    bool operator()(const WitnessV1KeyHash &id) const {
+        script->clear();
+        *script << OP_1 << ToByteVector(id);
+        return true;
+    }
 };
 } // namespace
 
@@ -350,6 +368,15 @@ namespace
             script->clear();
             *script << OP_XNA_ASSET << ToByteVector(scriptID);
             return true;
+        }
+
+        bool operator()(const WitnessV1KeyHash &id) const {
+            script->clear();
+            return false; // Assets not supported on PQ addresses yet? Or should they be? 
+            // Assets usually use P2PKH or P2SH. 
+            // If they support SegWit, they need explicit support. 
+            // Neurai uses OP_XNA_ASSET ...
+            // If we assume NO assets on PQ for now: return false.
         }
     };
 } // namespace

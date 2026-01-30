@@ -642,11 +642,26 @@ void PaymentServer::fetchPaymentACK(CWallet* wallet, const SendCoinsRecipient& r
     }
     else {
         CPubKey newKey;
-        if (wallet->GetKeyFromPool(newKey)) {
-            CKeyID keyID = newKey.GetID();
-            wallet->SetAddressBook(keyID, strAccount, "refund");
+        CTxDestination dest;
+        bool gotKey = false;
 
-            CScript s = GetScriptForDestination(keyID);
+        if (wallet->IsPQEnabled()) {
+            // PQ wallet: generate ML-DSA-44 key
+            CWalletDB walletdb(wallet->GetDBHandle());
+            newKey = wallet->GenerateNewKeyPQ(walletdb);
+            dest = WitnessV1KeyHash(newKey.GetID());
+            gotKey = true;
+        } else {
+            // Legacy wallet: use key pool
+            if (wallet->GetKeyFromPool(newKey)) {
+                dest = newKey.GetID();
+                gotKey = true;
+            }
+        }
+
+        if (gotKey) {
+            wallet->SetAddressBook(dest, strAccount, "refund");
+            CScript s = GetScriptForDestination(dest);
             payments::Output* refund_to = payment.add_refund_to();
             refund_to->set_script(&s[0], s.size());
         }
