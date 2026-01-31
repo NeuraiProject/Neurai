@@ -20,7 +20,9 @@ if [[ ${OS} == "windows" ]]; then
     autotools-dev \
     bsdmainutils \
     build-essential \
+    cmake \
     curl \
+    ninja-build \
     mingw-w64 \
     mingw-w64-x86-64-dev \
     git \
@@ -57,6 +59,7 @@ elif [[ ${OS} == "osx" ]]; then
     libtiff-tools \
     libtool \
     libz-dev \
+    ninja-build \
     p7zip-full \
     pkg-config \
     python3 \
@@ -78,6 +81,7 @@ elif [[ ${OS} == "linux" || ${OS} == "linux-disable-wallet" || ${OS} == "aarch64
     bsdmainutils \
     build-essential \
     ca-certificates \
+    cmake \
     curl \
     g++-aarch64-linux-gnu \
     g++-10-aarch64-linux-gnu \
@@ -87,6 +91,8 @@ elif [[ ${OS} == "linux" || ${OS} == "linux-disable-wallet" || ${OS} == "aarch64
     git \
     gnupg \
     libtool \
+    libssl-dev \
+    ninja-build \
     nsis \
     pbuilder \
     pkg-config \
@@ -108,6 +114,7 @@ elif [[ ${OS} == "arm32v7" || ${OS} == "arm32v7-disable-wallet" ]]; then
     binutils \
     bsdmainutils \
     ca-certificates \
+    cmake \
     curl \
     g++-aarch64-linux-gnu \
     g++-8-aarch64-linux-gnu \
@@ -120,6 +127,7 @@ elif [[ ${OS} == "arm32v7" || ${OS} == "arm32v7-disable-wallet" ]]; then
     git \
     libtool \
     pkg-config \
+    ninja-build \
     python3 \
     bison
 else
