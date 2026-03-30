@@ -348,21 +348,33 @@ public:
         // New testnet genesis — SHA256 mining (no KAWPOW, CPU-friendly)
         uint32_t nGenesisTime = 1774828800; // 2026-03-30
 
-        genesis = CreateGenesisBlock(nGenesisTime, 0, 0x1e00ffff, 2, 50000 * COIN);
+        // -----------------------------------------------------------------------
+        // MINE_GENESIS_BLOCK: set to 1 only to generate the genesis block once.
+        // Steps:
+        //   1. Set MINE_GENESIS_BLOCK to 1
+        //   2. Compile and run the node with -testnet
+        //   3. Copy the printed nonce and hash values below
+        //   4. Set MINE_GENESIS_BLOCK back to 0
+        // -----------------------------------------------------------------------
+#define MINE_GENESIS_BLOCK 0
 
-        // Auto-mine genesis block using SHA256d (fast with this easy target)
+#if MINE_GENESIS_BLOCK
+        genesis = CreateGenesisBlock(nGenesisTime, 0, 0x1e00ffff, 2, 50000 * COIN);
         {
             arith_uint256 hashTarget = arith_uint256().SetCompact(genesis.nBits);
             while (UintToArith256(genesis.GetHash()) > hashTarget) {
                 ++genesis.nNonce;
             }
         }
-        consensus.hashGenesisBlock = genesis.GetHash();
-
-        // After first run, hardcode nonce and hash above, then remove these prints:
         printf("Testnet SHA256 genesis nonce : %u\n", genesis.nNonce);
-        printf("Testnet SHA256 genesis hash  : %s\n", consensus.hashGenesisBlock.ToString().c_str());
+        printf("Testnet SHA256 genesis hash  : %s\n", genesis.GetHash().ToString().c_str());
         printf("Testnet SHA256 merkle root   : %s\n", genesis.hashMerkleRoot.ToString().c_str());
+        assert(false); // Stop here — copy the values above, then set MINE_GENESIS_BLOCK to 0
+#else
+        // TODO: replace with values obtained from MINE_GENESIS_BLOCK run
+        genesis = CreateGenesisBlock(nGenesisTime, 0, 0x1e00ffff, 2, 50000 * COIN);
+        consensus.hashGenesisBlock = genesis.GetHash();
+#endif
 
         assert(genesis.hashMerkleRoot == uint256S("4b28bf93d960cd83d1889757381d5a587208464e9075bdc0739151fbe15f5951"));
 
