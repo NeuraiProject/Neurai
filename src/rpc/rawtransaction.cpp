@@ -596,12 +596,12 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
             + HelpExampleRpc("createrawtransaction", "\"[{\\\"txid\\\":\\\"mycoin\\\",\\\"vout\\\":0}]\", \"{\\\"data\\\":\\\"00010203\\\"}\"")
         );
 
-    RPCTypeCheck(request.params, {UniValue::VARR, UniValue::VOBJ, UniValue::VNUM}, true);
-    if (request.params[0].isNull() || request.params[1].isNull())
-        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, arguments 1 and 2 must be non-null");
+    if (request.params[0].isNull() || !request.params[0].isArray())
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, argument 1 must be a non-null array");
+    if (request.params[1].isNull() || (!request.params[1].isArray() && !request.params[1].isObject()))
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, argument 2 must be a non-null array or object");
 
     UniValue inputs = request.params[0].get_array();
-    UniValue sendTo = request.params[1].get_obj();
 
     CMutableTransaction rawTx;
 
@@ -660,12 +660,39 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
 
     auto currentActiveAssetCache = GetCurrentAssetCache();
 
-    std::set<CTxDestination> destinations;
-    std::vector<std::string> addrList = sendTo.getKeys();
-    for (const std::string& name_ : addrList) {
+    // Build ordered output list.
+    // Object format: enforces no duplicate addresses (backward compatible).
+    // Array format:  allows duplicate addresses — use this when the same address
+    //                needs multiple outputs (e.g. asset issuance + XNA change).
+    std::vector<std::pair<std::string, UniValue>> outputList;
+    if (request.params[1].isArray()) {
+        const UniValue& outputsArr = request.params[1];
+        for (size_t i = 0; i < outputsArr.size(); i++) {
+            const UniValue& entry = outputsArr[i];
+            if (!entry.isObject() || entry.size() != 1)
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, each array output must be an object with exactly one key");
+            const std::string key = entry.getKeys()[0];
+            outputList.emplace_back(key, entry[key]);
+        }
+    } else {
+        UniValue sendTo = request.params[1].get_obj();
+        std::set<CTxDestination> destinations;
+        for (const std::string& key : sendTo.getKeys()) {
+            if (key != "data") {
+                CTxDestination dest = DecodeDestination(key);
+                if (IsValidDestination(dest) && !destinations.insert(dest).second)
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid parameter, duplicated address: ") + key);
+            }
+            outputList.emplace_back(key, sendTo[key]);
+        }
+    }
+
+    for (const auto& outputEntry : outputList) {
+        const std::string& name_ = outputEntry.first;
+        const UniValue& outputValue = outputEntry.second;
 
         if (name_ == "data") {
-            std::vector<unsigned char> data = ParseHexV(sendTo[name_].getValStr(),"Data");
+            std::vector<unsigned char> data = ParseHexV(outputValue.getValStr(),"Data");
 
             CTxOut out(0, CScript() << OP_RETURN << data);
             rawTx.vout.push_back(out);
@@ -675,22 +702,18 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
                 throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Neurai address: ") + name_);
             }
 
-            if (!destinations.insert(destination).second) {
-                throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid parameter, duplicated address: ") + name_);
-            }
-
             CScript scriptPubKey = GetScriptForDestination(destination);
             CScript ownerPubKey = GetScriptForDestination(destination);
 
 
-            if (sendTo[name_].type() == UniValue::VNUM || sendTo[name_].type() == UniValue::VSTR) {
-                CAmount nAmount = AmountFromValue(sendTo[name_]);
+            if (outputValue.type() == UniValue::VNUM || outputValue.type() == UniValue::VSTR) {
+                CAmount nAmount = AmountFromValue(outputValue);
                 CTxOut out(nAmount, scriptPubKey);
                 rawTx.vout.push_back(out);
             }
             /** XNA COIN START **/
-            else if (sendTo[name_].type() == UniValue::VOBJ) {
-                auto asset_ = sendTo[name_].get_obj();
+            else if (outputValue.type() == UniValue::VOBJ) {
+                auto asset_ = outputValue.get_obj();
                 auto assetKey_ = asset_.getKeys()[0];
 
                 if (assetKey_ == "issue")
