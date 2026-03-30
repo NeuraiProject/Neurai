@@ -348,6 +348,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
     if (request.fHelp || request.params.size() < 2 || request.params.size() > 3)
         throw std::runtime_error(
             "createrawtransaction [{\"txid\":\"id\",\"vout\":n},...] {\"address\":(amount or object),\"data\":\"hex\",...}\n"
+            "createrawtransaction [{\"txid\":\"id\",\"vout\":n},...] [{\"address\":(amount or object)},{\"data\":\"hex\"},...]\n"
             "                     ( locktime ) ( replaceable )\n"
             "\nCreate a transaction spending the given inputs and creating new outputs.\n"
             "Outputs are addresses (paired with a XNA amount, data or object specifying an asset operation) or data.\n"
@@ -410,7 +411,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
             "       } \n"
             "       ,...\n"
             "     ]\n"
-            "2. \"outputs\"                               (object, required) a json object with outputs\n"
+            "2. \"outputs\"                               (object or array, required) outputs in object or ordered-array form\n"
             "     {\n"
             "       \"address\":                          (string, required) The destination neurai address.\n"
             "                                               Each output must have a different address.\n"
@@ -424,6 +425,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
             "               ,...\n"
             "             }\n"
             "         }\n"
+            "     }\n"
             "           or\n"
             "         {                                 (object) A json object of describing the transfer and message contents to send\n"
             "           \"transferwithmessage\":\n"
@@ -577,6 +579,14 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
             "       \"data\": \"hex\"                       (string, required) The key is \"data\", the value is hex encoded data\n"
             "       ,...\n"
             "     }\n"
+            "     or\n"
+            "     [\n"
+            "       {\"address\":x.xxx},                  (object, required) exactly one key per entry\n"
+            "       {\"address\":{...}},                  (object, required) ordered form allows duplicate addresses\n"
+            "       {\"data\":\"hex\"},\n"
+            "       ...\n"
+            "     ]\n"
+            "                                               Array form must be non-empty.\n"
             "3. locktime                  (numeric, optional, default=0) Raw locktime. Non-0 value also locktime-activates inputs\n"
 //            "4. replaceable               (boolean, optional, default=false) Marks this transaction as BIP125 replaceable.\n"
 //            "                                        Allows this transaction to be replaced by a transaction with higher fees.\n"
@@ -593,6 +603,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
             + HelpExampleCli("createrawtransaction", "\"[{\\\"txid\\\":\\\"mycoin\\\",\\\"vout\\\":0},{\\\"txid\\\":\\\"myasset\\\",\\\"vout\\\":0}]\" \"{\\\"address\\\":{\\\"transfer\\\":{\\\"MYASSET\\\":50}}}\"")
             + HelpExampleCli("createrawtransaction", "\"[{\\\"txid\\\":\\\"mycoin\\\",\\\"vout\\\":0},{\\\"txid\\\":\\\"myasset\\\",\\\"vout\\\":0}]\" \"{\\\"address\\\":{\\\"transferwithmessage\\\":{\\\"MYASSET\\\":50,\\\"message\\\":\\\"hash\\\",\\\"expire_time\\\": utc_time}}}\"")
             + HelpExampleCli("createrawtransaction", "\"[{\\\"txid\\\":\\\"mycoin\\\",\\\"vout\\\":0},{\\\"txid\\\":\\\"myownership\\\",\\\"vout\\\":0}]\" \"{\\\"issuer_address\\\":{\\\"reissue\\\":{\\\"asset_name\\\":\\\"MYASSET\\\",\\\"asset_quantity\\\":2000000}}}\"")
+            + HelpExampleCli("createrawtransaction", "\"[{\\\"txid\\\":\\\"mycoin\\\",\\\"vout\\\":0}]\" \"[{\\\"address\\\":500},{\\\"address\\\":{\\\"issue\\\":{\\\"asset_name\\\":\\\"MYASSET\\\",\\\"asset_quantity\\\":1000000,\\\"units\\\":1,\\\"reissuable\\\":0,\\\"has_ipfs\\\":0}}}]\"")
             + HelpExampleRpc("createrawtransaction", "\"[{\\\"txid\\\":\\\"mycoin\\\",\\\"vout\\\":0}]\", \"{\\\"data\\\":\\\"00010203\\\"}\"")
         );
 
@@ -667,6 +678,8 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
     std::vector<std::pair<std::string, UniValue>> outputList;
     if (request.params[1].isArray()) {
         const UniValue& outputsArr = request.params[1];
+        if (outputsArr.empty())
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, argument 2 array must be non-empty");
         for (size_t i = 0; i < outputsArr.size(); i++) {
             const UniValue& entry = outputsArr[i];
             if (!entry.isObject() || entry.size() != 1)
