@@ -296,7 +296,7 @@ public:
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days
         consensus.nPowTargetSpacing = 1 * 60;
-        consensus.fPowAllowMinDifficultyBlocks = false;
+        consensus.fPowAllowMinDifficultyBlocks = true;
         consensus.fPowNoRetargeting = false;
         consensus.nRuleChangeActivationThreshold = 1000; // Approx 80% of 2016
         consensus.nMinerConfirmationWindow = 2016; // nPowTargetTimespan / nPowTargetSpacing
@@ -338,21 +338,32 @@ public:
         consensus.defaultAssumeValid = uint256S("0x00");
 
 
-        pchMessageStart[0] = 0x52; // R
-        pchMessageStart[1] = 0x55; // U
-        pchMessageStart[2] = 0x45; // E
-        pchMessageStart[3] = 0x4e; // N
+        pchMessageStart[0] = 0x54; // T
+        pchMessageStart[1] = 0x58; // X
+        pchMessageStart[2] = 0x4e; // N
+        pchMessageStart[3] = 0x41; // A
         nDefaultPort = 19100;
         nPruneAfterHeight = 1000;
 
-        uint32_t nGenesisTime = 1681720840; 
+        // New testnet genesis — SHA256 mining (no KAWPOW, CPU-friendly)
+        uint32_t nGenesisTime = 1774828800; // 2026-03-30
 
+        genesis = CreateGenesisBlock(nGenesisTime, 0, 0x1e00ffff, 2, 50000 * COIN);
 
-        genesis = CreateGenesisBlock(nGenesisTime, 57837983, 0x1e00ffff, 2, 50000 * COIN);
-        consensus.hashGenesisBlock = genesis.GetX16RHash();
+        // Auto-mine genesis block using SHA256d (fast with this easy target)
+        {
+            arith_uint256 hashTarget = arith_uint256().SetCompact(genesis.nBits);
+            while (UintToArith256(genesis.GetHash()) > hashTarget) {
+                ++genesis.nNonce;
+            }
+        }
+        consensus.hashGenesisBlock = genesis.GetHash();
 
-        //Test MerkleRoot and GenesisBlock
-        assert(consensus.hashGenesisBlock == uint256S("0000006af8b8297448605b0283473ec712f9768f81cc7eae6269b875dee3b0cf"));
+        // After first run, hardcode nonce and hash above, then remove these prints:
+        printf("Testnet SHA256 genesis nonce : %u\n", genesis.nNonce);
+        printf("Testnet SHA256 genesis hash  : %s\n", consensus.hashGenesisBlock.ToString().c_str());
+        printf("Testnet SHA256 merkle root   : %s\n", genesis.hashMerkleRoot.ToString().c_str());
+
         assert(genesis.hashMerkleRoot == uint256S("4b28bf93d960cd83d1889757381d5a587208464e9075bdc0739151fbe15f5951"));
 
         vFixedSeeds.clear();
@@ -430,7 +441,8 @@ public:
         nMessagingActivationBlock = 10; // Messaging activated block height
         nRestrictedActivationBlock = 10; // Restricted activated block height
 	    
-        nKAAAWWWPOWActivationTime = nGenesisTime + 1;
+        // SHA256 testnet: KAWPOW never activates — keeps Bitcoin-style 4-byte nNonce format
+        nKAAAWWWPOWActivationTime = 0xFFFFFFFF;
         nKAWPOWActivationTime = nKAAAWWWPOWActivationTime;
         /** XNA End **/
     }

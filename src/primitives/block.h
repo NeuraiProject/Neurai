@@ -27,6 +27,7 @@ public:
     BlockNetwork();
     bool fOnRegtest;
     bool fOnTestnet;
+    bool fSHA256Mining; // Testnet uses Bitcoin-style double-SHA256 instead of KAWPOW
     void SetNetwork(const std::string& network);
 };
 

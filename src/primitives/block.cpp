@@ -24,12 +24,14 @@ BlockNetwork::BlockNetwork()
 {
     fOnTestnet = false;
     fOnRegtest = false;
+    fSHA256Mining = false;
 }
 
 void BlockNetwork::SetNetwork(const std::string& net)
 {
     if (net == "test") {
         fOnTestnet = true;
+        fSHA256Mining = true;
     } else if (net == "regtest") {
         fOnRegtest = true;
     }
@@ -37,6 +39,11 @@ void BlockNetwork::SetNetwork(const std::string& net)
 
 uint256 CBlockHeader::GetHash() const
 {
+    // Testnet uses Bitcoin-style double-SHA256 (easy CPU mining, no KAWPOW/GPU needed)
+    if (bNetwork.fSHA256Mining) {
+        return Hash(BEGIN(nVersion), END(nNonce));
+    }
+
     if (nTime < nKAWPOWActivationTime) {
         uint32_t nTimeToUse = MAINNET_X16RV2ACTIVATIONTIME;
         if (bNetwork.fOnTestnet) {
@@ -56,6 +63,12 @@ uint256 CBlockHeader::GetHash() const
 
 uint256 CBlockHeader::GetHashFull(uint256& mix_hash) const
 {
+    // Testnet uses Bitcoin-style double-SHA256 (easy CPU mining, no KAWPOW/GPU needed)
+    if (bNetwork.fSHA256Mining) {
+        mix_hash = uint256();
+        return Hash(BEGIN(nVersion), END(nNonce));
+    }
+
     if (nTime < nKAWPOWActivationTime) {
         uint32_t nTimeToUse = MAINNET_X16RV2ACTIVATIONTIME;
         if (bNetwork.fOnTestnet) {
