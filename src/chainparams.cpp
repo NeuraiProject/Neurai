@@ -449,10 +449,10 @@ public:
         nMinReorganizationPeers = 6;
         nMinReorganizationAge = 60 * 60 * 12; // 12 hours
 
-        nAssetActivationHeight = 10; // Asset activated block height
-        nMessagingActivationBlock = 10; // Messaging activated block height
-        nRestrictedActivationBlock = 10; // Restricted activated block height
-	    
+        nAssetActivationHeight = 1; // Asset activated block height
+        nMessagingActivationBlock = 1; // Messaging activated block height
+        nRestrictedActivationBlock = 1; // Restricted activated block height
+
         // SHA256 testnet: KAWPOW never activates — keeps Bitcoin-style 4-byte nNonce format
         nKAAAWWWPOWActivationTime = 0xFFFFFFFF;
         nKAWPOWActivationTime = nKAAAWWWPOWActivationTime;

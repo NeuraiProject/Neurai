@@ -5875,9 +5875,14 @@ bool AreCoinbaseCheckAssetsDeployed()
 
 bool AreAssetsDeployed()
 {
-
     if (fAssetsIsActive)
         return true;
+
+    int nAssetActivationHeight = GetParams().GetAssetActivationHeight();
+    if (nAssetActivationHeight > 0 && chainActive.Height() >= nAssetActivationHeight) {
+        fAssetsIsActive = true;
+        return true;
+    }
 
     const ThresholdState thresholdState = VersionBitsTipState(GetParams().GetConsensus(), Consensus::DEPLOYMENT_ASSETS);
     if (thresholdState == THRESHOLD_ACTIVE)
@@ -5890,6 +5895,12 @@ bool IsRip5Active()
 {
     if (fRip5IsActive)
         return true;
+
+    int nMessagingActivationBlock = GetParams().MessagingActivationBlock();
+    if (nMessagingActivationBlock > 0 && chainActive.Height() >= nMessagingActivationBlock) {
+        fRip5IsActive = true;
+        return true;
+    }
 
     const ThresholdState thresholdState = VersionBitsTipState(GetParams().GetConsensus(), Consensus::DEPLOYMENT_MSG_REST_ASSETS);
     if (thresholdState == THRESHOLD_ACTIVE)
