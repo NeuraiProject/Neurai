@@ -345,20 +345,24 @@ public:
         nDefaultPort = 19100;
         nPruneAfterHeight = 1000;
 
-        // New testnet genesis — SHA256 mining (no KAWPOW, CPU-friendly)
-        uint32_t nGenesisTime = 1774828800; // 2026-03-30
+        // Testnet resets every 100,000 blocks — each epoch gets its own deterministic genesis.
+        // Epoch number is stored in <datadir>/testnet_epoch and managed by neuraid/neurai-qt
+        // before SelectParams() is called. SHA256d genesis mining takes only milliseconds.
+        static const uint32_t TESTNET_BASE_TIME = 1774828800; // 2026-03-30 00:00:00 UTC
 
-        // -----------------------------------------------------------------------
-        // MINE_GENESIS_BLOCK: set to 1 only to generate the genesis block once.
-        // Steps:
-        //   1. Set MINE_GENESIS_BLOCK to 1
-        //   2. Compile and run the node with -testnet
-        //   3. Copy the printed nonce and hash values below
-        //   4. Set MINE_GENESIS_BLOCK back to 0
-        // -----------------------------------------------------------------------
-#define MINE_GENESIS_BLOCK 0
+        uint32_t nEpoch = 0;
+        {
+            fs::path epochFile = GetDataDir(false) / "testnet_epoch";
+            if (FILE* f = fopen(epochFile.string().c_str(), "r")) {
+                fscanf(f, "%u", &nEpoch);
+                fclose(f);
+            }
+        }
 
-#if MINE_GENESIS_BLOCK
+        // Each epoch gets a unique genesis time (BASE_TIME + epoch seconds offset)
+        uint32_t nGenesisTime = TESTNET_BASE_TIME + nEpoch;
+
+        // Auto-mine genesis for this epoch (deterministic: same epoch → same nonce → same hash)
         genesis = CreateGenesisBlock(nGenesisTime, 0, 0x1e00ffff, 2, 50000 * COIN);
         {
             arith_uint256 hashTarget = arith_uint256().SetCompact(genesis.nBits);
@@ -366,15 +370,11 @@ public:
                 ++genesis.nNonce;
             }
         }
-        printf("Testnet SHA256 genesis nonce : %u\n", genesis.nNonce);
-        printf("Testnet SHA256 genesis hash  : %s\n", genesis.GetHash().ToString().c_str());
-        printf("Testnet SHA256 merkle root   : %s\n", genesis.hashMerkleRoot.ToString().c_str());
-        assert(false); // Stop here — copy the values above, then set MINE_GENESIS_BLOCK to 0
-#else
-        // TODO: replace with values obtained from MINE_GENESIS_BLOCK run
-        genesis = CreateGenesisBlock(nGenesisTime, 0, 0x1e00ffff, 2, 50000 * COIN);
         consensus.hashGenesisBlock = genesis.GetHash();
-#endif
+
+        LogPrintf("Testnet epoch %u — genesis time: %u  nonce: %u  hash: %s\n",
+            nEpoch, nGenesisTime, genesis.nNonce,
+            consensus.hashGenesisBlock.ToString());
 
         assert(genesis.hashMerkleRoot == uint256S("4b28bf93d960cd83d1889757381d5a587208464e9075bdc0739151fbe15f5951"));
 
