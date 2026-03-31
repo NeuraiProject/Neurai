@@ -381,11 +381,11 @@ public:
         vFixedSeeds.clear();
         vSeeds.clear();
 
-        vSeeds.emplace_back("testnet1.neuracrypt.org", false);
-        vSeeds.emplace_back("testnet2.neuracrypt.org", false);
-        vSeeds.emplace_back("testnet3.neuracrypt.org", false);
         vSeeds.emplace_back("testnet1.neurai.org", false);
-        vSeeds.emplace_back("test-seed.neurai.top", false);
+        vSeeds.emplace_back("testnet2.neurai.org", false);
+        vSeeds.emplace_back("testnet3.neurai.org", false);
+        vSeeds.emplace_back("seed-testnet.neurai.org", false);
+        vSeeds.emplace_back("testnet.neurai.top", false);
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,127); //t
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,196);
