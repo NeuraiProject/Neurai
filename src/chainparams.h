@@ -75,6 +75,7 @@ public:
     std::string NetworkIDString() const { return strNetworkID; }
     const std::vector<CDNSSeedData>& DNSSeeds() const { return vSeeds; }
     const std::vector<unsigned char>& Base58Prefix(Base58Type type) const { return base58Prefixes[type]; }
+    const std::string& Bech32HRP() const { return strBech32HRP; }
     int ExtCoinType() const { return nExtCoinType; }
     const std::vector<SeedSpec6>& FixedSeeds() const { return vFixedSeeds; }
     const CCheckpointData& Checkpoints() const { return checkpointData; }
@@ -153,6 +154,7 @@ protected:
     uint64_t nPruneAfterHeight;
     std::vector<CDNSSeedData> vSeeds;
     std::vector<unsigned char> base58Prefixes[MAX_BASE58_TYPES];
+    std::string strBech32HRP;
     int nExtCoinType;
     std::string strNetworkID;
     CBlock genesis;

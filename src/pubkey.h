@@ -21,11 +21,23 @@
  * const unsigned int PUBLIC_KEY_SIZE  = 65;
  * const unsigned int SIGNATURE_SIZE   = 72;
  *
+ * ML-DSA-44 (FIPS 204 / post-quantum):
+ * const unsigned int PQ_PRIVATE_KEY_SIZE  = 2560;
+ * const unsigned int PQ_PUBLIC_KEY_SIZE   = 1312;  // + 1 header byte = 1313 in CPubKey
+ * const unsigned int PQ_SIGNATURE_SIZE    = 2420;
+ * const unsigned int PQ_KEYDATA_SIZE      = 3872;  // private + public for export
+ *
  * see www.keylength.com
  * script supports up to 75 for single byte push
  */
 
 const unsigned int BIP32_EXTKEY_SIZE = 74;
+
+// ML-DSA-44 constants
+static const unsigned int ML_DSA_44_PRIVKEY_SIZE  = 2560;
+static const unsigned int ML_DSA_44_PUBKEY_SIZE   = 1312;
+static const unsigned int ML_DSA_44_SIG_SIZE      = 2420;
+static const unsigned int ML_DSA_44_KEYDATA_SIZE  = 3872; // priv + pub
 
 /** A reference to a CKey: the Hash160 of its serialized public key */
 class CKeyID : public uint160
@@ -43,10 +55,14 @@ class CPubKey
 private:
 
     /**
-     * Just store the serialized data.
-     * Its length can very cheaply be computed from the first byte.
+     * Variable-length storage for the serialized pubkey.
+     * Length is determined by the first (header) byte:
+     *   0x02, 0x03          -> 33 bytes  (compressed secp256k1)
+     *   0x04, 0x06, 0x07    -> 65 bytes  (uncompressed secp256k1)
+     *   0x05                -> 1313 bytes (ML-DSA-44 post-quantum: 1 header + 1312 pubkey)
+     *   0xFF or empty       -> invalid
      */
-    unsigned char vch[65];
+    std::vector<unsigned char> vch;
 
     //! Compute the length of a pubkey with a given first byte.
     unsigned int static GetLen(unsigned char chHeader)
@@ -55,13 +71,15 @@ private:
             return 33;
         if (chHeader == 4 || chHeader == 6 || chHeader == 7)
             return 65;
+        if (chHeader == 5)
+            return 1 + ML_DSA_44_PUBKEY_SIZE; // 1313
         return 0;
     }
 
     //! Set this key data to be invalid
     void Invalidate()
     {
-        vch[0] = 0xFF;
+        vch.assign(1, 0xFF);
     }
 
 public:
@@ -77,7 +95,7 @@ public:
     {
         int len = pend == pbegin ? 0 : GetLen(pbegin[0]);
         if (len && len == (pend - pbegin))
-            memcpy(vch, (unsigned char*)&pbegin[0], len);
+            vch.assign(pbegin, pend);
         else
             Invalidate();
     }
@@ -96,16 +114,15 @@ public:
     }
 
     //! Simple read-only vector-like interface to the pubkey data.
-    unsigned int size() const { return GetLen(vch[0]); }
-    const unsigned char* begin() const { return vch; }
-    const unsigned char* end() const { return vch + size(); }
+    unsigned int size() const { return vch.empty() ? 0 : GetLen(vch[0]); }
+    const unsigned char* begin() const { return vch.data(); }
+    const unsigned char* end() const { return vch.data() + size(); }
     const unsigned char& operator[](unsigned int pos) const { return vch[pos]; }
 
     //! Comparator implementation.
     friend bool operator==(const CPubKey& a, const CPubKey& b)
     {
-        return a.vch[0] == b.vch[0] &&
-               memcmp(a.vch, b.vch, a.size()) == 0;
+        return a.vch == b.vch;
     }
     friend bool operator!=(const CPubKey& a, const CPubKey& b)
     {
@@ -113,8 +130,7 @@ public:
     }
     friend bool operator<(const CPubKey& a, const CPubKey& b)
     {
-        return a.vch[0] < b.vch[0] ||
-               (a.vch[0] == b.vch[0] && memcmp(a.vch, b.vch, a.size()) < 0);
+        return a.vch < b.vch;
     }
 
     //! Implement serialization, as if this was a byte vector.
@@ -123,16 +139,22 @@ public:
     {
         unsigned int len = size();
         ::WriteCompactSize(s, len);
-        s.write((char*)vch, len);
+        s.write((char*)vch.data(), len);
     }
     template <typename Stream>
     void Unserialize(Stream& s)
     {
         unsigned int len = ::ReadCompactSize(s);
-        if (len <= 65) {
-            s.read((char*)vch, len);
+        // Accept EC keys (<=65) and ML-DSA-44 keys (1313)
+        if (len > 0 && len <= 1 + ML_DSA_44_PUBKEY_SIZE) {
+            vch.resize(len);
+            s.read((char*)vch.data(), len);
+            if (size() != len) {
+                // Header byte does not match expected length
+                Invalidate();
+            }
         } else {
-            // invalid pubkey, skip available data
+            // Invalid pubkey, skip available data
             char dummy;
             while (len--)
                 s.read(&dummy, 1);
@@ -143,13 +165,13 @@ public:
     //! Get the KeyID of this public key (hash of its serialization)
     CKeyID GetID() const
     {
-        return CKeyID(Hash160(vch, vch + size()));
+        return CKeyID(Hash160(vch.data(), vch.data() + size()));
     }
 
     //! Get the 256-bit hash of this public key.
     uint256 GetHash() const
     {
-        return Hash(vch, vch + size());
+        return Hash(vch.data(), vch.data() + size());
     }
 
     /*
@@ -164,6 +186,12 @@ public:
 
     //! fully validate whether this is a valid public key (more expensive than IsValid())
     bool IsFullyValid() const;
+
+    //! Check whether this is a post-quantum (ML-DSA-44) public key.
+    bool IsPQ() const
+    {
+        return !vch.empty() && vch[0] == 0x05;
+    }
 
     //! Check whether this is a compressed public key.
     bool IsCompressed() const

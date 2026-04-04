@@ -215,11 +215,12 @@ UniValue getnewaddress(const JSONRPCRequest& request)
     if (!pwallet->GetKeyFromPool(newKey)) {
         throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
     }
-    CKeyID keyID = newKey.GetID();
+    CTxDestination dest = newKey.IsPQ() ? CTxDestination(WitnessV1KeyHash(newKey.GetID()))
+                                        : CTxDestination(newKey.GetID());
 
-    pwallet->SetAddressBook(keyID, strAccount, "receive");
+    pwallet->SetAddressBook(dest, strAccount, "receive");
 
-    return EncodeDestination(keyID);
+    return EncodeDestination(dest);
 }
 
 
@@ -230,6 +231,8 @@ CTxDestination GetAccountAddress(CWallet* const pwallet, std::string strAccount,
         throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
     }
 
+    if (pubKey.IsPQ())
+        return WitnessV1KeyHash(pubKey.GetID());
     return pubKey.GetID();
 }
 
@@ -299,9 +302,10 @@ UniValue getrawchangeaddress(const JSONRPCRequest& request)
 
     reservekey.KeepKey();
 
-    CKeyID keyID = vchPubKey.GetID();
+    CTxDestination dest = vchPubKey.IsPQ() ? CTxDestination(WitnessV1KeyHash(vchPubKey.GetID()))
+                                           : CTxDestination(vchPubKey.GetID());
 
-    return EncodeDestination(keyID);
+    return EncodeDestination(dest);
 }
 
 
@@ -3508,6 +3512,45 @@ UniValue rescanblockchain(const JSONRPCRequest& request)
     return response;
 }
 
+UniValue listpqaddresses(const JSONRPCRequest& request)
+{
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+
+    if (request.fHelp || request.params.size() != 0)
+        throw std::runtime_error(
+            "listpqaddresses\n"
+            "\nReturns the list of post-quantum (ML-DSA-44) Bech32m addresses in the wallet.\n"
+            "\nResult:\n"
+            "[                        (json array of strings)\n"
+            "  \"address\"             (string) A post-quantum Bech32m address (nq1...)\n"
+            "  ...\n"
+            "]\n"
+            "\nExamples:\n"
+            + HelpExampleCli("listpqaddresses", "")
+            + HelpExampleRpc("listpqaddresses", "")
+        );
+
+    LOCK2(cs_main, pwallet->cs_wallet);
+
+    UniValue ret(UniValue::VARR);
+
+    std::set<CKeyID> keyIDs = pwallet->GetKeys();
+    for (const CKeyID& keyID : keyIDs) {
+        CPubKey pubkey;
+        if (!pwallet->GetPubKey(keyID, pubkey))
+            continue;
+        if (!pubkey.IsPQ())
+            continue;
+        WitnessV1KeyHash witHash(pubkey.GetID());
+        ret.push_back(EncodeDestination(witHash));
+    }
+
+    return ret;
+}
+
 extern UniValue abortrescan(const JSONRPCRequest& request); // in rpcdump.cpp
 extern UniValue dumpprivkey(const JSONRPCRequest& request); // in rpcdump.cpp
 extern UniValue importprivkey(const JSONRPCRequest& request);
@@ -3563,6 +3606,7 @@ static const CRPCCommand commands[] =
     { "wallet",             "listsinceblock",           &listsinceblock,           {"blockhash","target_confirmations","include_watchonly","include_removed"} },
     { "wallet",             "listtransactions",         &listtransactions,         {"account","count","skip","include_watchonly"} },
     { "wallet",             "listunspent",              &listunspent,              {"minconf","maxconf","addresses","include_unsafe","query_options"} },
+    { "wallet",             "listpqaddresses",          &listpqaddresses,          {} },
     { "wallet",             "listwallets",              &listwallets,              {} },
     { "wallet",             "lockunspent",              &lockunspent,              {"unlock","transactions"} },
     { "wallet",             "move",                     &movecmd,                  {"fromaccount","toaccount","amount","minconf","comment"} },

@@ -43,6 +43,7 @@ share/qt/Info.plist
 doc/depin
 doc/docker/bin
 NIP
+artifacts
 
 
 src/qt/*.moc

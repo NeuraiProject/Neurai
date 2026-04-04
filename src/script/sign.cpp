@@ -24,8 +24,8 @@ bool TransactionSignatureCreator::CreateSig(std::vector<unsigned char>& vchSig, 
     if (!keystore->GetKey(address, key))
         return false;
 
-    // Signing with uncompressed keys is disabled in witness scripts
-    if (sigversion == SIGVERSION_WITNESS_V0 && !key.IsCompressed())
+    // Signing with uncompressed keys is disabled in witness scripts (PQ keys are exempt)
+    if (sigversion == SIGVERSION_WITNESS_V0 && !key.IsCompressed() && !key.IsPQ())
         return false;
 
     uint256 hash = SignatureHash(scriptCode, *txTo, nIn, nHashType, amount, sigversion);
@@ -148,6 +148,10 @@ static bool SignStep(const BaseSignatureCreator& creator, const CScript& scriptP
         ret.push_back(vSolutions[0]);
         return true;
 
+    case TX_WITNESS_V1_KEYHASH:
+        ret.push_back(vSolutions[0]);
+        return true;
+
     case TX_WITNESS_V0_SCRIPTHASH:
         CRIPEMD160().Write(&vSolutions[0][0], vSolutions[0].size()).Finalize(h160.begin());
         if (creator.KeyStore().GetCScript(h160, scriptRet)) {
@@ -203,6 +207,28 @@ bool ProduceSignature(const BaseSignatureCreator& creator, const CScript& fromPu
         txnouttype subType;
         solved = solved && SignStep(creator, witnessscript, result, subType, SIGVERSION_WITNESS_V0);
         sigdata.scriptWitness.stack = result;
+        result.clear();
+    }
+    else if (solved && whichType == TX_WITNESS_V1_KEYHASH)
+    {
+        // PQ witness v1: result[0] is the 20-byte witness program (Hash160 of pq pubkey)
+        CKeyID keyID{uint160(result[0])};
+        CPubKey pubkey;
+        if (!creator.KeyStore().GetPubKey(keyID, pubkey) || !pubkey.IsPQ()) {
+            solved = false;
+        } else {
+            // scriptCode matches what VerifyWitnessProgram uses for sighash
+            CScript witnessscript;
+            witnessscript << OP_DUP << OP_HASH160 << ToByteVector(result[0]) << OP_EQUALVERIFY << OP_CHECKSIG;
+            std::vector<unsigned char> vchSig;
+            solved = creator.CreateSig(vchSig, keyID, witnessscript, SIGVERSION_WITNESS_V0);
+            if (solved) {
+                // witness stack: [sig_with_hashtype, serialized_pq_pubkey]
+                sigdata.scriptWitness.stack.clear();
+                sigdata.scriptWitness.stack.push_back(vchSig);
+                sigdata.scriptWitness.stack.push_back(ToByteVector(pubkey));
+            }
+        }
         result.clear();
     }
     else if (solved && whichType == TX_WITNESS_V0_SCRIPTHASH)

@@ -1,0 +1,41 @@
+# docker build -f doc/docker/Dockerfile-Linux64-qc -t neurai-linux64-bin .
+
+FROM debian:11
+
+LABEL maintainer="Asimov"
+
+LABEL version="1.0.5"
+
+LABEL description="Neurai 1.0.5 | Docker for linux x64 bin"
+
+ARG DEBIAN_FRONTEND=nointeractive
+
+RUN apt update
+
+RUN apt-get install -y unzip wget
+
+WORKDIR /root
+
+COPY . /root/Neurai
+
+WORKDIR /root/Neurai
+
+RUN scripts/00-install-deps.sh linux
+
+WORKDIR /root/Neurai/depends
+
+RUN make HOST=x86_64-pc-linux-gnu -j2
+
+WORKDIR /root/Neurai
+
+RUN ./autogen.sh
+
+RUN contrib/install_db4.sh ../
+
+ENV BDB_PREFIX=/root/db4
+
+RUN CONFIG_SITE=$PWD/depends/x86_64-pc-linux-gnu/share/config.site ./configure LIBS="-lm -ldl -lpthread" BDB_LIBS="-L${BDB_PREFIX}/lib -ldb_cxx-4.8" BDB_CFLAGS="-I${BDB_PREFIX}/include" --prefix=$PWD/depends/x86_64-pc-linux-gnu --enable-cxx --disable-shared --disable-tests --disable-gui-tests --disable-maintainer-mode --with-pic
+
+RUN make -j2
+
+CMD ["tail", "-f", "/dev/null"]

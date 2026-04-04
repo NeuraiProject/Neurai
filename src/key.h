@@ -69,12 +69,22 @@ public:
     template <typename T>
     void Set(const T pbegin, const T pend, bool fCompressedIn)
     {
-        if (size_t(pend - pbegin) != keydata.size()) {
-            fValid = false;
-        } else if (Check(&pbegin[0])) {
-            memcpy(keydata.data(), (unsigned char*)&pbegin[0], keydata.size());
+        size_t len = pend - pbegin;
+        if (len == 32) {
+            // secp256k1 private key
+            keydata.resize(32);
+            if (Check(&pbegin[0])) {
+                memcpy(keydata.data(), (unsigned char*)&pbegin[0], 32);
+                fValid = true;
+                fCompressed = fCompressedIn;
+            } else {
+                fValid = false;
+            }
+        } else if (len == ML_DSA_44_KEYDATA_SIZE) {
+            // ML-DSA-44: 2560 priv + 1312 pub stored together
+            keydata.assign(pbegin, pend);
             fValid = true;
-            fCompressed = fCompressedIn;
+            fCompressed = true;
         } else {
             fValid = false;
         }
@@ -91,8 +101,17 @@ public:
     //! Check whether the public key corresponding to this private key is (to be) compressed.
     bool IsCompressed() const { return fCompressed; }
 
-    //! Generate a new private key using a cryptographic PRNG.
+    //! Check whether this is a post-quantum (ML-DSA-44) private key.
+    bool IsPQ() const { return keydata.size() > 32; }
+
+    //! Generate a new secp256k1 private key using a cryptographic PRNG.
     void MakeNewKey(bool fCompressed);
+
+    //! Generate a new ML-DSA-44 (post-quantum) private key using a cryptographic PRNG.
+    void MakeNewKeyPQ();
+
+    //! Generate a deterministic ML-DSA-44 key from a seed (e.g. HD derivation path bytes).
+    void MakeNewKeyPQ(const std::vector<unsigned char>& seed);
 
     /**
      * Convert the private key to a CPrivKey (serialized OpenSSL private key data).

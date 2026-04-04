@@ -579,12 +579,19 @@ UniValue dumpprivkey(const JSONRPCRequest& request)
     if (!IsValidDestination(dest)) {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Neurai address");
     }
-    const CKeyID *keyID = boost::get<CKeyID>(&dest);
-    if (!keyID) {
+
+    // Support both legacy (CKeyID) and post-quantum (WitnessV1KeyHash) addresses
+    CKeyID keyID;
+    if (const CKeyID* pkeyID = boost::get<CKeyID>(&dest)) {
+        keyID = *pkeyID;
+    } else if (const WitnessV1KeyHash* pWitness = boost::get<WitnessV1KeyHash>(&dest)) {
+        keyID = CKeyID(static_cast<const uint160&>(*pWitness));
+    } else {
         throw JSONRPCError(RPC_TYPE_ERROR, "Address does not refer to a key");
     }
+
     CKey vchSecret;
-    if (!pwallet->GetKey(*keyID, vchSecret)) {
+    if (!pwallet->GetKey(keyID, vchSecret)) {
         throw JSONRPCError(RPC_WALLET_ERROR, "Private key for address " + strAddress + " is not known");
     }
     return CNeuraiSecret(vchSecret).ToString();
@@ -777,8 +784,15 @@ UniValue getmasterkeyinfo(const JSONRPCRequest& request)
     CKeyID seed_id = pwallet->GetHDChain().seed_id;
     if (!seed_id.IsNull())
     {
+        // Report wallet type
+        if (pwallet->IsPQEnabled())
+            ret.push_back(std::make_pair("wallet_type", "PQ (ML-DSA-44)"));
+        else if (pwallet->IsBip44Enabled())
+            ret.push_back(std::make_pair("wallet_type", "BIP44"));
+        else
+            ret.push_back(std::make_pair("wallet_type", "Legacy"));
 
-        if (!pwallet->GetHDChain().IsBip44()) {
+        if (!pwallet->GetHDChain().IsBip44() && !pwallet->IsPQEnabled()) {
             CKey seed;
             if (pwallet->GetKey(seed_id, seed)) {
 
@@ -885,6 +899,16 @@ UniValue getmasterkeyinfo(const JSONRPCRequest& request)
             // Add the account extended public and private keys to the return
             ret.push_back(std::make_pair("account_extended_private_key",  b58accountextprivatekey.ToString()));
             ret.push_back(std::make_pair("account_extended_public_key",  b58actextpubkey.ToString()));
+        }
+
+        if (pwallet->IsPQEnabled())
+        {
+            uint32_t nChain = (GetParams().NetworkIDString() == "main") ? 0 : 1;
+            std::string path = strprintf("m/100'/1900'/0'/%d", nChain);
+            ret.push_back(std::make_pair("account_derivation_path", path));
+            ret.push_back(std::make_pair("pq_algorithm", "ML-DSA-44 (FIPS 204)"));
+            ret.push_back(std::make_pair("pq_key_count",
+                            (uint64_t)pwallet->GetHDChain().nExternalChainCounter));
         }
     }
 

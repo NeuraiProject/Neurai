@@ -193,7 +193,11 @@ UniValue UpdateAddressTag(const JSONRPCRequest &request, const int8_t &flag)
         if (!pwallet->CreateNewChangeAddress(reservekey, keyID, strFailReason))
             throw JSONRPCError(RPC_WALLET_ERROR, strFailReason);
 
-        change_address = EncodeDestination(keyID);
+        CPubKey pubkey;
+        if (pwallet->GetPubKey(keyID, pubkey) && pubkey.IsPQ())
+            change_address = EncodeDestination(WitnessV1KeyHash(keyID));
+        else
+            change_address = EncodeDestination(keyID);
     }
 
     std::pair<int, std::string> error;
@@ -291,7 +295,11 @@ UniValue UpdateAddressRestriction(const JSONRPCRequest &request, const int8_t &f
         if (!pwallet->CreateNewChangeAddress(reservekey, keyID, strFailReason))
             throw JSONRPCError(RPC_WALLET_ERROR, strFailReason);
 
-        change_address = EncodeDestination(keyID);
+        CPubKey pubkey;
+        if (pwallet->GetPubKey(keyID, pubkey) && pubkey.IsPQ())
+            change_address = EncodeDestination(WitnessV1KeyHash(keyID));
+        else
+            change_address = EncodeDestination(keyID);
     }
 
     std::pair<int, std::string> error;
@@ -388,7 +396,11 @@ UniValue UpdateGlobalRestrictedAsset(const JSONRPCRequest &request, const int8_t
         if (!pwallet->CreateNewChangeAddress(reservekey, keyID, strFailReason))
             throw JSONRPCError(RPC_WALLET_ERROR, strFailReason);
 
-        change_address = EncodeDestination(keyID);
+        CPubKey pubkey;
+        if (pwallet->GetPubKey(keyID, pubkey) && pubkey.IsPQ())
+            change_address = EncodeDestination(WitnessV1KeyHash(keyID));
+        else
+            change_address = EncodeDestination(keyID);
     }
 
     std::pair<int, std::string> error;
@@ -511,11 +523,12 @@ UniValue issue(const JSONRPCRequest& request)
         if (!pwallet->GetKeyFromPool(newKey)) {
             throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
         }
-        CKeyID keyID = newKey.GetID();
+        CTxDestination dest = newKey.IsPQ() ? CTxDestination(WitnessV1KeyHash(newKey.GetID()))
+                                            : CTxDestination(newKey.GetID());
 
-        pwallet->SetAddressBook(keyID, strAccount, "receive");
+        pwallet->SetAddressBook(dest, strAccount, "receive");
 
-        address = EncodeDestination(keyID);
+        address = EncodeDestination(dest);
     }
 
     std::string change_address = "";
@@ -678,11 +691,12 @@ UniValue issueunique(const JSONRPCRequest& request)
         if (!pwallet->GetKeyFromPool(newKey)) {
             throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
         }
-        CKeyID keyID = newKey.GetID();
+        CTxDestination dest = newKey.IsPQ() ? CTxDestination(WitnessV1KeyHash(newKey.GetID()))
+                                            : CTxDestination(newKey.GetID());
 
-        pwallet->SetAddressBook(keyID, strAccount, "receive");
+        pwallet->SetAddressBook(dest, strAccount, "receive");
 
-        address = EncodeDestination(keyID);
+        address = EncodeDestination(dest);
     }
 
     std::string changeAddress = "";
@@ -2514,11 +2528,12 @@ UniValue issuequalifierasset(const JSONRPCRequest& request)
         if (!pwallet->GetKeyFromPool(newKey)) {
             throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
         }
-        CKeyID keyID = newKey.GetID();
+        CTxDestination dest = newKey.IsPQ() ? CTxDestination(WitnessV1KeyHash(newKey.GetID()))
+                                            : CTxDestination(newKey.GetID());
 
-        pwallet->SetAddressBook(keyID, strAccount, "receive");
+        pwallet->SetAddressBook(dest, strAccount, "receive");
 
-        address = EncodeDestination(keyID);
+        address = EncodeDestination(dest);
     }
 
     std::string change_address = "";
@@ -3409,7 +3424,12 @@ UniValue selfrevokedepin(const JSONRPCRequest& request)
     if (!pwallet->CreateNewChangeAddress(reservekey, keyID, strFailReason))
         throw JSONRPCError(RPC_WALLET_ERROR, strFailReason);
 
-    std::string change_address = EncodeDestination(keyID);
+    CPubKey pubkey;
+    std::string change_address;
+    if (pwallet->GetPubKey(keyID, pubkey) && pubkey.IsPQ())
+        change_address = EncodeDestination(WitnessV1KeyHash(keyID));
+    else
+        change_address = EncodeDestination(keyID);
 
     std::pair<int, std::string> error;
     std::vector< std::pair<CAssetTransfer, std::string> > vTransfers;

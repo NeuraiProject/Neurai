@@ -886,6 +886,9 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         if (!chainparams.RequireStandard()) {
             scriptVerifyFlags = gArgs.GetArg("-promiscuousmempoolflags", scriptVerifyFlags);
         }
+        if (chainparams.GetConsensus().nPQWitnessEnabled) {
+            scriptVerifyFlags |= SCRIPT_VERIFY_PQ_WITNESS_V1;
+        }
 
         // Check against previous transactions
         // This is done last to help prevent CPU exhaustion denial-of-service attacks.
@@ -2401,6 +2404,11 @@ static unsigned int GetBlockScriptFlags(const CBlockIndex* pindex, const Consens
     if (IsWitnessEnabled(pindex->pprev, consensusparams)) {
     		flags |= SCRIPT_VERIFY_WITNESS;
     		flags |= SCRIPT_VERIFY_NULLDUMMY;
+    }
+
+    // Enable post-quantum (ML-DSA-44) witness v1 verification on testnet/regtest.
+    if (consensusparams.nPQWitnessEnabled) {
+        flags |= SCRIPT_VERIFY_PQ_WITNESS_V1;
     }
 
     return flags;

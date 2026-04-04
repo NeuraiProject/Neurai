@@ -6,6 +6,7 @@
 
 #include "base58.h"
 
+#include "bech32.h"
 #include "hash.h"
 #include "uint256.h"
 
@@ -225,6 +226,7 @@ public:
 
     bool operator()(const CKeyID& id) const { return addr->Set(id); }
     bool operator()(const CScriptID& id) const { return addr->Set(id); }
+    bool operator()(const WitnessV1KeyHash& id) const { return false; } // Bech32m, not Base58
     bool operator()(const CNoDestination& no) const { return false; }
 };
 
@@ -295,7 +297,7 @@ void CNeuraiSecret::SetKey(const CKey& vchSecret)
 {
     assert(vchSecret.IsValid());
     SetData(GetParams().Base58Prefix(CChainParams::SECRET_KEY), vchSecret.begin(), vchSecret.size());
-    if (vchSecret.IsCompressed())
+    if (!vchSecret.IsPQ() && vchSecret.IsCompressed())
         vchData.push_back(1);
 }
 
@@ -303,13 +305,20 @@ CKey CNeuraiSecret::GetKey()
 {
     CKey ret;
     assert(vchData.size() >= 32);
-    ret.Set(vchData.begin(), vchData.begin() + 32, vchData.size() > 32 && vchData[32] == 1);
+    if (vchData.size() == ML_DSA_44_KEYDATA_SIZE) {
+        // ML-DSA-44 PQ key: full 3872 bytes (2560 priv + 1312 pub)
+        ret.Set(vchData.begin(), vchData.end(), true);
+    } else {
+        ret.Set(vchData.begin(), vchData.begin() + 32, vchData.size() > 32 && vchData[32] == 1);
+    }
     return ret;
 }
 
 bool CNeuraiSecret::IsValid() const
 {
-    bool fExpectedFormat = vchData.size() == 32 || (vchData.size() == 33 && vchData[32] == 1);
+    bool fExpectedFormat = vchData.size() == 32
+                        || (vchData.size() == 33 && vchData[32] == 1)
+                        || vchData.size() == ML_DSA_44_KEYDATA_SIZE;
     bool fCorrectVersion = vchVersion == GetParams().Base58Prefix(CChainParams::SECRET_KEY);
     return fExpectedFormat && fCorrectVersion;
 }
@@ -324,24 +333,67 @@ bool CNeuraiSecret::SetString(const std::string& strSecret)
     return SetString(strSecret.c_str());
 }
 
+namespace {
+
+class DestinationEncoder : public boost::static_visitor<std::string>
+{
+public:
+    std::string operator()(const CKeyID& id) const {
+        CNeuraiAddress addr(id);
+        return addr.ToString();
+    }
+    std::string operator()(const CScriptID& id) const {
+        CNeuraiAddress addr(id);
+        return addr.ToString();
+    }
+    std::string operator()(const WitnessV1KeyHash& id) const {
+        // Bech32m: witness version 1 + HASH160(PQ pubkey)
+        std::vector<uint8_t> data = {1}; // witness version
+        std::vector<uint8_t> hash_bytes(id.begin(), id.end());
+        std::vector<uint8_t> conv;
+        if (!bech32::ConvertBits<8, 5, true>(hash_bytes, conv)) return "";
+        data.insert(data.end(), conv.begin(), conv.end());
+        return bech32::Encode(GetParams().Bech32HRP(), data, bech32::Encoding::BECH32M);
+    }
+    std::string operator()(const CNoDestination& dest) const { return ""; }
+};
+
+} // namespace
+
 std::string EncodeDestination(const CTxDestination& dest)
 {
-    CNeuraiAddress addr(dest);
-    if (!addr.IsValid()) return "";
-    return addr.ToString();
+    return boost::apply_visitor(DestinationEncoder(), dest);
 }
 
 CTxDestination DecodeDestination(const std::string& str)
 {
+    // Try Bech32/Bech32m first
+    bech32::DecodeResult dec = bech32::Decode(str);
+    if (dec.encoding != bech32::Encoding::INVALID) {
+        if (dec.hrp == GetParams().Bech32HRP() &&
+            dec.encoding == bech32::Encoding::BECH32M &&
+            !dec.data.empty() && dec.data[0] == 1) {
+            // Witness v1: decode 5-bit payload back to bytes
+            std::vector<uint8_t> conv;
+            std::vector<uint8_t> payload(dec.data.begin() + 1, dec.data.end());
+            if (bech32::ConvertBits<5, 8, false>(payload, conv) && conv.size() == 20) {
+                return WitnessV1KeyHash(uint160(conv));
+            }
+        }
+        return CNoDestination();
+    }
+    // Fall back to Base58 (legacy addresses)
     return CNeuraiAddress(str).Get();
 }
 
 bool IsValidDestinationString(const std::string& str, const CChainParams& params)
 {
+    CTxDestination dest = DecodeDestination(str);
+    if (boost::get<WitnessV1KeyHash>(&dest)) return true;
     return CNeuraiAddress(str).IsValid(params);
 }
 
 bool IsValidDestinationString(const std::string& str)
 {
-    return CNeuraiAddress(str).IsValid();
+    return IsValidDestinationString(str, GetParams());
 }

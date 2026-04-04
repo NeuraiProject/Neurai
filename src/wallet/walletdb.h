@@ -67,6 +67,7 @@ public:
     CKeyID seed_id; //!< seed hash160
 
     bool bUse_bip44;
+    bool bUsePQ;     //!< true = post-quantum wallet (ML-DSA-44), false = legacy secp256k1
     SecureVector vchMnemonic;
     SecureVector vchMnemonicPassphrase;
     SecureVector vchSeed;
@@ -74,7 +75,8 @@ public:
     static const int VERSION_HD_BASE        = 1;
     static const int VERSION_HD_CHAIN_SPLIT = 2;
     static const int VERSION_HD_BIP44_BIP39 = 3;
-    static const int CURRENT_VERSION        = VERSION_HD_BIP44_BIP39;
+    static const int VERSION_HD_PQ          = 4; //!< added bUsePQ flag
+    static const int CURRENT_VERSION        = VERSION_HD_PQ;
     int nVersion;
 
     CWallet* pwallet;
@@ -91,9 +93,11 @@ public:
         if (this->nVersion >= VERSION_HD_CHAIN_SPLIT) {
             READWRITE(nInternalChainCounter);
         }
-
-        if(VERSION_HD_BIP44_BIP39 == this->nVersion) {
+        if (this->nVersion >= VERSION_HD_BIP44_BIP39) {
             READWRITE(bUse_bip44);
+        }
+        if (this->nVersion >= VERSION_HD_PQ) {
+            READWRITE(bUsePQ);
         }
     }
 
@@ -106,13 +110,16 @@ public:
         nInternalChainCounter = 0;
         seed_id.SetNull();
         bUse_bip44 = false;
+        bUsePQ = false;
     }
 
     bool IsNull() { return seed_id.IsNull();}
 
+    void UseBip44(bool b = true)    { bUse_bip44 = b; }
+    bool IsBip44() const            { return bUse_bip44; }
 
-    void UseBip44( bool b = true)   { bUse_bip44 = b;}
-    bool IsBip44() const            { return bUse_bip44 == true;}
+    void UsePQ(bool b = true)       { bUsePQ = b; }
+    bool IsPQEnabled() const        { return bUsePQ; }
 
 
     bool SetMnemonic(const SecureString& ssMnemonic, const SecureString& ssMnemonicPassphrase, SecureVector& vchSeed);

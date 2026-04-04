@@ -78,6 +78,9 @@ struct Params {
     uint256 defaultAssumeValid;
     bool nSegwitEnabled;
     bool nCSVEnabled;
+    /** Enable post-quantum (ML-DSA-44) witness v1 verification.
+     *  true on testnet/regtest; false on mainnet until future activation. */
+    bool nPQWitnessEnabled;
 };
 } // namespace Consensus
 

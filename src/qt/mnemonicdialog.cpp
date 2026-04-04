@@ -146,6 +146,10 @@ void MnemonicDialog2::on_acceptButton_clicked()
         return;
     }
 
+#if !TEST
+    my_pq = MnemonicDialog2::ui->pqWalletCheckBox->isChecked();
+#endif
+
     Q_EMIT allCloseRequested();
 };
 

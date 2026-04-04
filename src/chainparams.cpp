@@ -112,6 +112,7 @@ public:
         consensus.nBIP66Enabled = true;
         consensus.nSegwitEnabled = true;
         consensus.nCSVEnabled = true;
+        consensus.nPQWitnessEnabled = false; // PQ not yet active on mainnet
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days
@@ -194,6 +195,7 @@ public:
         base58Prefixes[SECRET_KEY] =     std::vector<unsigned char>(1,128);
         base58Prefixes[EXT_PUBLIC_KEY] = {0x04, 0x88, 0xB2, 0x1E};
         base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x88, 0xAD, 0xE4};
+        strBech32HRP = "nq";
 
         // Neurai BIP44 cointype in mainnet is '0'
         nExtCoinType = 0;
@@ -292,6 +294,7 @@ public:
         consensus.nBIP66Enabled = true;
         consensus.nSegwitEnabled = true;
         consensus.nCSVEnabled = true;
+        consensus.nPQWitnessEnabled = true; // PQ (ML-DSA-44) active on testnet
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days
@@ -392,6 +395,7 @@ public:
         base58Prefixes[SECRET_KEY] =     std::vector<unsigned char>(1,239);
         base58Prefixes[EXT_PUBLIC_KEY] = {0x04, 0x35, 0x87, 0xCF};
         base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x35, 0x83, 0x94};
+        strBech32HRP = "tnq";
 
         // Neurai BIP44 cointype in testnet
         nExtCoinType = 1;
@@ -473,6 +477,7 @@ public:
         consensus.nBIP66Enabled = true;
         consensus.nSegwitEnabled = true;
         consensus.nCSVEnabled = true;
+        consensus.nPQWitnessEnabled = true; // PQ (ML-DSA-44) active on regtest
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days
@@ -558,6 +563,7 @@ public:
         base58Prefixes[SECRET_KEY] =     std::vector<unsigned char>(1,239);
         base58Prefixes[EXT_PUBLIC_KEY] = {0x04, 0x35, 0x87, 0xCF};
         base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x35, 0x83, 0x94};
+        strBech32HRP = "rnq";
 
         // Neurai BIP44 cointype in regtest
         nExtCoinType = 1;

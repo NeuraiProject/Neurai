@@ -8,6 +8,7 @@
 
 #include <secp256k1.h>
 #include <secp256k1_recovery.h>
+#include <oqs/oqs.h>
 
 namespace
 {
@@ -168,6 +169,19 @@ static int ecdsa_signature_parse_der_lax(const secp256k1_context* ctx, secp256k1
 bool CPubKey::Verify(const uint256 &hash, const std::vector<unsigned char>& vchSig) const {
     if (!IsValid())
         return false;
+
+    if (IsPQ()) {
+        // ML-DSA-44 verification: pubkey bytes are at vch[1..1312]
+        OQS_SIG* sig_alg = OQS_SIG_new(OQS_SIG_alg_ml_dsa_44);
+        if (!sig_alg) return false;
+        OQS_STATUS rc = OQS_SIG_verify(sig_alg,
+                                        hash.begin(), 32,
+                                        vchSig.data(), vchSig.size(),
+                                        vch.data() + 1);
+        OQS_SIG_free(sig_alg);
+        return rc == OQS_SUCCESS;
+    }
+
     secp256k1_pubkey pubkey;
     secp256k1_ecdsa_signature sig;
     if (!secp256k1_ec_pubkey_parse(secp256k1_context_verify, &pubkey, &(*this)[0], size())) {
@@ -205,6 +219,10 @@ bool CPubKey::RecoverCompact(const uint256 &hash, const std::vector<unsigned cha
 bool CPubKey::IsFullyValid() const {
     if (!IsValid())
         return false;
+    if (IsPQ()) {
+        // PQ keys are valid if size and header are correct; no deeper validation needed
+        return size() == 1 + ML_DSA_44_PUBKEY_SIZE;
+    }
     secp256k1_pubkey pubkey;
     return secp256k1_ec_pubkey_parse(secp256k1_context_verify, &pubkey, &(*this)[0], size());
 }
@@ -212,6 +230,8 @@ bool CPubKey::IsFullyValid() const {
 bool CPubKey::Decompress() {
     if (!IsValid())
         return false;
+    if (IsPQ())
+        return false; // PQ keys have no compressed/uncompressed distinction
     secp256k1_pubkey pubkey;
     if (!secp256k1_ec_pubkey_parse(secp256k1_context_verify, &pubkey, &(*this)[0], size())) {
         return false;
@@ -225,6 +245,8 @@ bool CPubKey::Decompress() {
 
 bool CPubKey::Derive(CPubKey& pubkeyChild, ChainCode &ccChild, unsigned int nChild, const ChainCode& cc) const {
     assert(IsValid());
+    if (IsPQ())
+        return false; // BIP32 derivation not supported for PQ keys
     assert((nChild >> 31) == 0);
     assert(begin() + 33 == end());
     unsigned char out[64];

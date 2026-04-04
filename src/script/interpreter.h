@@ -111,6 +111,13 @@ enum
     // Public keys in segregated witness scripts must be compressed
     //
             SCRIPT_VERIFY_WITNESS_PUBKEYTYPE = (1U << 15),
+
+    // Enable post-quantum (ML-DSA-44) witness v1 program verification.
+    // When set, witness v1 programs with a 20-byte hash are verified using
+    // ML-DSA-44 signatures instead of being treated as upgradable/unknown.
+    // Enabled on testnet/regtest only until mainnet activation.
+    //
+            SCRIPT_VERIFY_PQ_WITNESS_V1 = (1U << 16),
 };
 
 bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, unsigned int flags, ScriptError *serror);
@@ -149,6 +156,13 @@ public:
         return false;
     }
 
+    // Compute the signature hash for a given scriptCode, hashtype and sigversion.
+    // Used by PQ witness v1 verification to get the BIP143 sighash directly.
+    virtual uint256 GetSigHash(const CScript& scriptCode, int nHashType, SigVersion sigversion) const
+    {
+        return uint256();
+    }
+
     virtual ~BaseSignatureChecker() {}
 };
 
@@ -173,6 +187,8 @@ public:
     bool CheckLockTime(const CScriptNum &nLockTime) const override;
 
     bool CheckSequence(const CScriptNum &nSequence) const override;
+
+    uint256 GetSigHash(const CScript& scriptCode, int nHashType, SigVersion sigversion) const override;
 };
 
 class MutableTransactionSignatureChecker : public TransactionSignatureChecker

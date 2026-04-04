@@ -45,6 +45,7 @@ extern bool fWalletRbf;
 
 extern std::string my_words;
 extern std::string my_passphrase;
+extern bool my_pq;
 
 static const unsigned int DEFAULT_KEYPOOL_SIZE = 1000;
 //! -paytxfee default
@@ -914,6 +915,9 @@ public:
      * Generate a new key
      */
     CPubKey GenerateNewKey(CWalletDB& walletdb, bool internal = false);
+
+    //! Generate a new ML-DSA-44 post-quantum key and add it to the wallet.
+    CPubKey GenerateNewKeyPQ(CWalletDB& walletdb);
     //! Adds a key to the store, and saves it to disk.
     bool AddKeyPubKey(const CKey& key, const CPubKey &pubkey) override;
     bool AddKeyPubKeyWithDB(CWalletDB &walletdb,const CKey& key, const CPubKey &pubkey);
@@ -1191,6 +1195,12 @@ public:
 
     /* Returns true if HD is enabled with Bip44 */
     bool IsBip44Enabled() const;
+
+    /* Returns true if this is a post-quantum (ML-DSA-44) wallet */
+    bool IsPQEnabled() const;
+
+    /* Enable/disable PQ mode on the HD chain */
+    void UsePQ(bool b = true) { hdChain.UsePQ(b); }
 
 
     /* Generates a new HD seed (will not be activated) */

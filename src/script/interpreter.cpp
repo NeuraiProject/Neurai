@@ -13,6 +13,7 @@
 #include "pubkey.h"
 #include "script/script.h"
 #include "chainparams.h"
+#include <oqs/oqs.h>
 
 typedef std::vector<unsigned char> valtype;
 
@@ -1413,6 +1414,11 @@ bool TransactionSignatureChecker::CheckSig(const std::vector<unsigned char> &vch
     return true;
 }
 
+uint256 TransactionSignatureChecker::GetSigHash(const CScript& scriptCode, int nHashType, SigVersion sigversion) const
+{
+    return SignatureHash(scriptCode, *txTo, nIn, nHashType, amount, sigversion, this->txdata);
+}
+
 bool TransactionSignatureChecker::CheckLockTime(const CScriptNum &nLockTime) const
 {
     // There are two kinds of nLockTime: lock-by-blockheight
@@ -1530,6 +1536,53 @@ static bool VerifyWitnessProgram(const CScriptWitness &witness, int witversion, 
         {
             return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_WRONG_LENGTH);
         }
+    }
+    else if (witversion == 1 && program.size() == 20 && (flags & SCRIPT_VERIFY_PQ_WITNESS_V1))
+    {
+        // Post-quantum witness v1: OP_1 <20-byte-hash>
+        // Witness stack must be exactly [<ml_dsa_44_sig_with_hashtype>, <ml_dsa_44_pubkey>]
+        if (witness.stack.size() != 2)
+            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+
+        const std::vector<unsigned char>& vchPubKey = witness.stack[1];
+        const std::vector<unsigned char>& vchSigWithHashtype = witness.stack[0];
+
+        // Pubkey must be 1 + ML_DSA_44_PUBKEY_SIZE bytes with header 0x05
+        if (vchPubKey.size() != 1 + ML_DSA_44_PUBKEY_SIZE || vchPubKey[0] != 0x05)
+            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+
+        // Signature must be ML_DSA_44_SIG_SIZE bytes + 1 hashtype byte
+        if (vchSigWithHashtype.size() != ML_DSA_44_SIG_SIZE + 1)
+            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+
+        // Verify pubkey hashes to the witness program
+        uint160 pubkeyHash = Hash160(vchPubKey.begin(), vchPubKey.end());
+        if (memcmp(pubkeyHash.begin(), program.data(), 20) != 0)
+            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+
+        // Strip hashtype byte (last byte) and compute BIP143 sighash
+        int nHashType = vchSigWithHashtype.back();
+        CScript scriptCode;
+        scriptCode << OP_DUP << OP_HASH160 << program << OP_EQUALVERIFY << OP_CHECKSIG;
+        uint256 sighash = checker.GetSigHash(scriptCode, nHashType, SIGVERSION_WITNESS_V0);
+
+        // Verify ML-DSA-44 signature
+        OQS_SIG* sig_alg = OQS_SIG_new(OQS_SIG_alg_ml_dsa_44);
+        if (!sig_alg)
+            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+
+        OQS_STATUS result = OQS_SIG_verify(
+            sig_alg,
+            sighash.begin(), 32,
+            vchSigWithHashtype.data(), ML_DSA_44_SIG_SIZE,  // raw sig without hashtype byte
+            vchPubKey.data() + 1  // skip 0x05 header
+        );
+        OQS_SIG_free(sig_alg);
+
+        if (result != OQS_SUCCESS)
+            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+
+        return set_success(serror);
     }
     else if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM)
     {

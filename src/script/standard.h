@@ -82,6 +82,7 @@ enum txnouttype
     TX_TRANSFER_ASSET = 10,
     TX_RESTRICTED_ASSET_DATA = 11, //!< unspendable OP_NEURAI_ASSET script that carries data
     /** XNA END */
+    TX_WITNESS_V1_KEYHASH = 12, //!< post-quantum pay-to-witness-v1-keyhash (ML-DSA-44, Bech32m)
 };
 
 class CNoDestination {
@@ -91,13 +92,26 @@ public:
 };
 
 /**
+ * WitnessV1KeyHash: a 20-byte hash of an ML-DSA-44 public key.
+ * Encoded as a Bech32m address with HRP "nq" (mainnet), "tnq" (testnet), "rnq" (regtest).
+ * scriptPubKey: OP_1 <20-byte-hash>
+ */
+class WitnessV1KeyHash : public uint160
+{
+public:
+    WitnessV1KeyHash() : uint160() {}
+    explicit WitnessV1KeyHash(const uint160& in) : uint160(in) {}
+};
+
+/**
  * A txout script template with a specific destination. It is either:
  *  * CNoDestination: no destination set
- *  * CKeyID: TX_PUBKEYHASH destination
- *  * CScriptID: TX_SCRIPTHASH destination
+ *  * CKeyID: TX_PUBKEYHASH destination (Base58, secp256k1)
+ *  * CScriptID: TX_SCRIPTHASH destination (Base58, P2SH)
+ *  * WitnessV1KeyHash: TX_WITNESS_V1_KEYHASH destination (Bech32m, ML-DSA-44)
  *  A CTxDestination is the internal data type encoded in a neurai address
  */
-typedef boost::variant<CNoDestination, CKeyID, CScriptID> CTxDestination;
+typedef boost::variant<CNoDestination, CKeyID, CScriptID, WitnessV1KeyHash> CTxDestination;
 
 /** Check whether a CTxDestination is a CNoDestination. */
 bool IsValidDestination(const CTxDestination& dest);

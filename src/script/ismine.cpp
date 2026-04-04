@@ -99,6 +99,13 @@ isminetype IsMine(const CKeyStore &keystore, const CScript& scriptPubKey, bool& 
             if (keystore.HaveKey(keyID))
                 return ISMINE_SPENDABLE;
             break;
+        case TX_WITNESS_V1_KEYHASH: {
+            keyID = CKeyID(uint160(vSolutions[0]));
+            CPubKey pubkey;
+            if (keystore.GetPubKey(keyID, pubkey) && pubkey.IsPQ() && keystore.HaveKey(keyID))
+                return ISMINE_SPENDABLE;
+            break;
+        }
         case TX_SCRIPTHASH: {
             CScriptID scriptID = CScriptID(uint160(vSolutions[0]));
             CScript subscript;

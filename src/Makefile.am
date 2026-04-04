@@ -140,6 +140,7 @@ NEURAI_CORE_H = \
   assets/assetsnapshotdb.h \
   assets/rewards.h \
   base58.h \
+  bech32.h \
   bloom.h \
   blockencodings.h \
   chain.h \
@@ -432,6 +433,7 @@ libneurai_common_a_CPPFLAGS = $(AM_CPPFLAGS) $(NEURAI_INCLUDES)
 libneurai_common_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 libneurai_common_a_SOURCES = \
   base58.cpp \
+  bech32.cpp \
   chainparams.cpp \
   coins.cpp \
   compressor.cpp \
@@ -511,7 +513,7 @@ neuraid_LDADD = \
   $(LIBMEMENV) \
   $(LIBSECP256K1)
 
-neuraid_LDADD += $(BOOST_LIBS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS)
+neuraid_LDADD += $(BOOST_LIBS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS) $(OQS_LIBS)
 
 # neurai-cli binary #
 neurai_cli_SOURCES = neurai-cli.cpp
@@ -529,7 +531,7 @@ neurai_cli_LDADD = \
   $(LIBNEURAI_UTIL) \
   $(LIBNEURAI_CRYPTO)
 
-neurai_cli_LDADD += $(BOOST_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(EVENT_LIBS)
+neurai_cli_LDADD += $(BOOST_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(EVENT_LIBS) $(OQS_LIBS)
 #
 
 # neurai-tx binary #
@@ -550,7 +552,7 @@ neurai_tx_LDADD = \
   $(LIBNEURAI_CRYPTO) \
   $(LIBSECP256K1)
 
-neurai_tx_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS)
+neurai_tx_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS) $(OQS_LIBS)
 #
 
 # neuraiconsensus library #

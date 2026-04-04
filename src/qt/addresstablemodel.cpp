@@ -380,7 +380,10 @@ QString AddressTableModel::addRow(const QString &type, const QString &label, con
                 return QString();
             }
         }
-        strAddress = EncodeDestination(newKey.GetID());
+        if (newKey.IsPQ())
+            strAddress = EncodeDestination(WitnessV1KeyHash(newKey.GetID()));
+        else
+            strAddress = EncodeDestination(newKey.GetID());
     }
     else
     {

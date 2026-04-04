@@ -55,6 +55,7 @@ const uint32_t BIP32_HARDENED_KEY_LIMIT = 0x80000000;
 
 std::string my_words;
 std::string my_passphrase;
+bool my_pq = false;
 
 /**
  * Fees smaller than this (in satoshi) are considered zero fee (for transaction creation)
@@ -141,10 +142,72 @@ const CWalletTx* CWallet::GetWalletTx(const uint256& hash) const
     return &(it->second);
 }
 
+CPubKey CWallet::GenerateNewKeyPQ(CWalletDB& walletdb)
+{
+    AssertLockHeld(cs_wallet);
+
+    int64_t nCreationTime = GetTime();
+    CKeyMetadata metadata(nCreationTime);
+
+    // Derive a deterministic seed for the PQ key using BIP32 path:
+    //   Mainnet: m/100'/1900'/0'/0/index
+    //   Testnet: m/100'/1900'/0'/1/index
+    // The resulting 32-byte EC child key is used as the OQS DRBG seed, making PQ keys deterministic.
+    const uint32_t PQ_PURPOSE   = 100;
+    const uint32_t PQ_COIN_TYPE = 1900;
+    const uint32_t nAccountIndex = 0;
+    // chain=0 for mainnet, chain=1 for testnet/regtest
+    const uint32_t nChain = (GetParams().NetworkIDString() == "main") ? 0 : 1;
+    uint32_t& nChildIndex = hdChain.nExternalChainCounter;
+
+    CExtKey masterKey;
+    masterKey.SetSeed(g_vchSeed.data(), g_vchSeed.size());
+
+    CExtKey purposeKey, coinTypeKey, accountKey, chainKey, childKey;
+    masterKey.Derive(purposeKey,   PQ_PURPOSE   | BIP32_HARDENED_KEY_LIMIT);
+    purposeKey.Derive(coinTypeKey, PQ_COIN_TYPE | BIP32_HARDENED_KEY_LIMIT);
+    coinTypeKey.Derive(accountKey, nAccountIndex | BIP32_HARDENED_KEY_LIMIT);
+    accountKey.Derive(chainKey, nChain);
+    chainKey.Derive(childKey, nChildIndex);
+    nChildIndex++;
+
+    // Feed the 32-byte EC key as the OQS DRBG seed
+    std::vector<unsigned char> pq_seed(childKey.key.begin(), childKey.key.end());
+    CKey secret;
+    secret.MakeNewKeyPQ(pq_seed);
+
+    metadata.hdKeypath = strprintf("m/%d'/%d'/%d'/%d/%d",
+                                    PQ_PURPOSE,
+                                    PQ_COIN_TYPE,
+                                    nAccountIndex,
+                                    nChain,
+                                    nChildIndex - 1);
+    metadata.hd_seed_id = hdChain.seed_id;
+
+    if (!walletdb.WriteHDChain(hdChain))
+        throw std::runtime_error(std::string(__func__) + ": Writing HD chain model failed");
+
+    CPubKey pubkey = secret.GetPubKey();
+    assert(secret.VerifyPubKey(pubkey));
+
+    mapKeyMetadata[pubkey.GetID()] = metadata;
+    UpdateTimeFirstKey(nCreationTime);
+
+    if (!AddKeyPubKeyWithDB(walletdb, secret, pubkey))
+        throw std::runtime_error(std::string(__func__) + ": AddKey failed");
+
+    return pubkey;
+}
+
 CPubKey CWallet::GenerateNewKey(CWalletDB &walletdb, bool internal)
 {
     AssertLockHeld(cs_wallet); // mapKeyMetadata
     bool fCompressed = CanSupportFeature(FEATURE_COMPRPUBKEY); // default to compressed public keys if we want 0.6.0 wallets
+
+    // PQ wallets generate keys via a separate path (no keypool, no internal/external split)
+    if (IsPQEnabled()) {
+        return GenerateNewKeyPQ(walletdb);
+    }
 
     CKey secret;
 
@@ -1560,10 +1623,14 @@ CPubKey CWallet::GenerateNewSeed()
 	CPubKey seed(vchSeed.begin(), vchSeed.end());
 	newHdChain.seed_id = seed.GetID();
 
+    if (my_pq || hdChain.IsPQEnabled())
+        newHdChain.UsePQ(true);
+
 	SetHDChain(newHdChain, false);
 
 	my_passphrase.clear();
 	my_words.clear();
+    my_pq = false;
 
 	return seed;
 
@@ -1628,6 +1695,11 @@ bool CWallet::IsHDEnabled() const
 bool CWallet::IsBip44Enabled() const
 {
     return IsHDEnabled() && hdChain.bUse_bip44;
+}
+
+bool CWallet::IsPQEnabled() const
+{
+    return IsHDEnabled() && hdChain.IsPQEnabled();
 }
 
 int64_t CWalletTx::GetTxTime() const
@@ -4757,6 +4829,11 @@ CWallet* CWallet:: CreateWalletFromFile(const std::string walletFile)
 
         walletInstance->UseBip44(gArgs.GetBoolArg("-bip44", true));
         LogPrintf("parameter interaction: -bip44 wallet enabled: %s\n", gArgs.GetBoolArg("-bip44", true));
+
+        if (gArgs.GetBoolArg("-pqwallet", false)) {
+            walletInstance->UsePQ(true);
+            LogPrintf("parameter interaction: -pqwallet (ML-DSA-44) enabled\n");
+        }
 
         if (!walletInstance->hdChain.IsBip44()) {
             CPubKey seed = walletInstance->GenerateNewSeed();
