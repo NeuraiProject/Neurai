@@ -9,7 +9,6 @@
 #include "arith_uint256.h"
 #include "crypto/common.h"
 #include "crypto/hmac_sha512.h"
-#include "crypto/sha256.h"
 #include "pubkey.h"
 #include "random.h"
 
@@ -153,25 +152,24 @@ void CKey::MakeNewKeyPQ() {
 // Thread-local seed state for deterministic PQ key generation.
 // Only valid during MakeNewKeyPQ(seed) — reset to nullptr afterwards.
 static thread_local const std::vector<unsigned char>* g_pq_det_seed = nullptr;
-static thread_local uint32_t g_pq_det_counter = 0;
+static thread_local size_t g_pq_det_offset = 0;
+static thread_local bool g_pq_det_overread = false;
 
-// SHA256 counter-mode expander: deterministically fills `out` with `len`
-// bytes derived from g_pq_det_seed, without requiring OpenSSL.
+// liboqs ML-DSA key generation consumes external randomness as a 32-byte seed
+// which it expands internally. To match the bip39 generator, expose the raw
+// BIP32-derived seed bytes directly instead of pre-expanding them here.
 static void pq_deterministic_randombytes(uint8_t* out, size_t len)
 {
     assert(g_pq_det_seed != nullptr);
-    size_t written = 0;
-    while (written < len) {
-        CSHA256 hasher;
-        hasher.Write(g_pq_det_seed->data(), g_pq_det_seed->size());
-        hasher.Write(reinterpret_cast<const uint8_t*>(&g_pq_det_counter),
-                     sizeof(g_pq_det_counter));
-        uint8_t block[CSHA256::OUTPUT_SIZE];
-        hasher.Finalize(block);
-        size_t to_copy = std::min(static_cast<size_t>(CSHA256::OUTPUT_SIZE), len - written);
-        memcpy(out + written, block, to_copy);
-        written += to_copy;
-        ++g_pq_det_counter;
+    const size_t remaining = g_pq_det_seed->size() - g_pq_det_offset;
+    const size_t to_copy = std::min(len, remaining);
+    if (to_copy > 0) {
+        memcpy(out, g_pq_det_seed->data() + g_pq_det_offset, to_copy);
+        g_pq_det_offset += to_copy;
+    }
+    if (to_copy < len) {
+        g_pq_det_overread = true;
+        memset(out + to_copy, 0, len - to_copy);
     }
 }
 
@@ -179,10 +177,17 @@ void CKey::MakeNewKeyPQ(const std::vector<unsigned char>& seed) {
     OQS_SIG* sig = OQS_SIG_new(OQS_SIG_alg_ml_dsa_44);
     assert(sig != nullptr);
 
-    // Install deterministic RNG backed by SHA256(seed || counter).
-    // Works with OQS_USE_OPENSSL=OFF — no NIST KAT DRBG required.
+    if (seed.size() != 32) {
+        OQS_SIG_free(sig);
+        throw std::runtime_error("CKey::MakeNewKeyPQ requires a 32-byte seed");
+    }
+
+    // Install deterministic RNG that exposes the raw seed bytes expected by
+    // the ML-DSA keygen implementation. This matches the bip39 generator's
+    // ml_dsa44.keygen(seed) behavior.
     g_pq_det_seed    = &seed;
-    g_pq_det_counter = 0;
+    g_pq_det_offset  = 0;
+    g_pq_det_overread = false;
     OQS_randombytes_custom_algorithm(pq_deterministic_randombytes);
 
     keydata.resize(sig->length_secret_key + sig->length_public_key);
@@ -194,8 +199,14 @@ void CKey::MakeNewKeyPQ(const std::vector<unsigned char>& seed) {
     // Restore system randomness and clear seed pointer
     OQS_randombytes_switch_algorithm(OQS_RAND_alg_system);
     g_pq_det_seed = nullptr;
+    g_pq_det_offset = 0;
 
     OQS_SIG_free(sig);
+    if (g_pq_det_overread) {
+        g_pq_det_overread = false;
+        throw std::runtime_error("CKey::MakeNewKeyPQ seed length mismatch with liboqs ML-DSA keygen");
+    }
+    g_pq_det_overread = false;
     fValid = true;
     fCompressed = true;
 }
