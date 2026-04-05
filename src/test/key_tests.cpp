@@ -186,4 +186,25 @@ BOOST_FIXTURE_TEST_SUITE(key_tests, BasicTestingSetup)
             "nq1p7hqf8nunx8sf87pf0dfw6k9gy9zz0pfg0hqs6y");
     }
 
+    BOOST_AUTO_TEST_CASE(pq_privkey_wallet_roundtrip)
+    {
+        const std::vector<unsigned char> pqSeed = ParseHex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+        CKey originalKey;
+        originalKey.MakeNewKeyPQ(pqSeed);
+
+        const CPubKey originalPubKey = originalKey.GetPubKey();
+        const CPrivKey serializedPrivKey = originalKey.GetPrivKey();
+
+        BOOST_CHECK(originalPubKey.IsPQ());
+        BOOST_CHECK_EQUAL(serializedPrivKey.size(), (size_t)ML_DSA_44_KEYDATA_SIZE);
+
+        CKey loadedKey;
+        CPubKey mutablePubKey = originalPubKey;
+        CPrivKey mutablePrivKey = serializedPrivKey;
+        BOOST_CHECK(loadedKey.Load(mutablePrivKey, mutablePubKey, false));
+        BOOST_CHECK(loadedKey.IsValid());
+        BOOST_CHECK(loadedKey.IsPQ());
+        BOOST_CHECK(loadedKey.GetPubKey() == originalPubKey);
+    }
+
 BOOST_AUTO_TEST_SUITE_END()

@@ -136,10 +136,15 @@ static bool DecryptKey(const CKeyingMaterial& vMasterKey, const std::vector<unsi
     if(!DecryptSecret(vMasterKey, vchCryptedSecret, vchPubKey.GetHash(), vchSecret))
         return false;
 
-    if (vchSecret.size() != 32)
-        return false;
-
-    key.Set(vchSecret.begin(), vchSecret.end(), vchPubKey.IsCompressed());
+    if (vchPubKey.IsPQ()) {
+        if (vchSecret.size() != ML_DSA_44_KEYDATA_SIZE)
+            return false;
+        key.Set(vchSecret.begin(), vchSecret.end(), true);
+    } else {
+        if (vchSecret.size() != 32)
+            return false;
+        key.Set(vchSecret.begin(), vchSecret.end(), vchPubKey.IsCompressed());
+    }
     return key.VerifyPubKey(vchPubKey);
 }
 

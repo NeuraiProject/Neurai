@@ -213,6 +213,11 @@ void CKey::MakeNewKeyPQ(const std::vector<unsigned char>& seed) {
 
 CPrivKey CKey::GetPrivKey() const {
     assert(fValid);
+
+    if (IsPQ()) {
+        return CPrivKey(keydata.begin(), keydata.end());
+    }
+
     CPrivKey privkey;
     int ret;
     size_t privkeylen;
@@ -322,10 +327,11 @@ bool CKey::SignCompact(const uint256 &hash, std::vector<unsigned char>& vchSig) 
 }
 
 bool CKey::Load(CPrivKey &privkey, CPubKey &vchPubKey, bool fSkipCheck=false) {
-    if (IsPQ()) {
-        // PQ keys are already loaded directly via Set(); no DER import needed
-        fValid = true;
-        fCompressed = true;
+    if (vchPubKey.IsPQ()) {
+        Set(privkey.begin(), privkey.end(), true);
+        if (!fValid || !IsPQ()) {
+            return false;
+        }
         if (fSkipCheck)
             return true;
         return VerifyPubKey(vchPubKey);
