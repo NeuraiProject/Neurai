@@ -72,6 +72,17 @@ std::string DecodeDumpString(const std::string &str) {
     return ret.str();
 }
 
+static CTxDestination GetDestinationForPubKey(const CPubKey& pubkey)
+{
+    return pubkey.IsPQ() ? CTxDestination(WitnessV1KeyHash(pubkey.GetID()))
+                         : CTxDestination(pubkey.GetID());
+}
+
+static std::string EncodeDestinationForPubKey(const CPubKey& pubkey)
+{
+    return EncodeDestination(GetDestinationForPubKey(pubkey));
+}
+
 UniValue importprivkey(const JSONRPCRequest& request)
 {
     CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
@@ -130,9 +141,10 @@ UniValue importprivkey(const JSONRPCRequest& request)
     CPubKey pubkey = key.GetPubKey();
     assert(key.VerifyPubKey(pubkey));
     CKeyID vchAddress = pubkey.GetID();
+    CTxDestination dest = GetDestinationForPubKey(pubkey);
     {
         pwallet->MarkDirty();
-        pwallet->SetAddressBook(vchAddress, strLabel, "receive");
+        pwallet->SetAddressBook(dest, strLabel, "receive");
 
         // Don't throw error in case a key is already there
         if (pwallet->HaveKey(vchAddress)) {
@@ -507,8 +519,9 @@ UniValue importwallet(const JSONRPCRequest& request)
         CPubKey pubkey = key.GetPubKey();
         assert(key.VerifyPubKey(pubkey));
         CKeyID keyid = pubkey.GetID();
+        std::string strAddr = EncodeDestinationForPubKey(pubkey);
         if (pwallet->HaveKey(keyid)) {
-            LogPrintf("Skipping import of %s (key already present)\n", EncodeDestination(keyid));
+            LogPrintf("Skipping import of %s (key already present)\n", strAddr);
             continue;
         }
         int64_t nTime = DecodeDumpTime(vstr[1]);
@@ -526,14 +539,14 @@ UniValue importwallet(const JSONRPCRequest& request)
                 fLabel = true;
             }
         }
-        LogPrintf("Importing %s...\n", EncodeDestination(keyid));
+        LogPrintf("Importing %s...\n", strAddr);
         if (!pwallet->AddKeyPubKey(key, pubkey)) {
             fGood = false;
             continue;
         }
         pwallet->mapKeyMetadata[keyid].nCreateTime = nTime;
         if (fLabel)
-            pwallet->SetAddressBook(keyid, strLabel, "receive");
+            pwallet->SetAddressBook(GetDestinationForPubKey(pubkey), strLabel, "receive");
         nTimeBegin = std::min(nTimeBegin, nTime);
     }
     file.close();
@@ -722,12 +735,14 @@ UniValue dumpwallet(const JSONRPCRequest& request)
     for (std::vector<std::pair<int64_t, CKeyID> >::const_iterator it = vKeyBirth.begin(); it != vKeyBirth.end(); it++) {
         const CKeyID &keyid = it->second;
         std::string strTime = EncodeDumpTime(it->first);
-        std::string strAddr = EncodeDestination(keyid);
         CKey key;
         if (pwallet->GetKey(keyid, key)) {
+            CPubKey pubkey = key.GetPubKey();
+            std::string strAddr = EncodeDestinationForPubKey(pubkey);
+            CTxDestination dest = GetDestinationForPubKey(pubkey);
             file << strprintf("%s %s ", CNeuraiSecret(key).ToString(), strTime);
-            if (pwallet->mapAddressBook.count(keyid)) {
-                file << strprintf("label=%s", EncodeDumpString(pwallet->mapAddressBook[keyid].name));
+            if (pwallet->mapAddressBook.count(dest)) {
+                file << strprintf("label=%s", EncodeDumpString(pwallet->mapAddressBook[dest].name));
             } else if (keyid == seed_id) {
                 file << "hdseed=1";
             } else if (mapKeyPool.count(keyid)) {
@@ -1048,8 +1063,9 @@ UniValue ProcessImport(CWallet * const pwallet, const UniValue& data, const int6
                     assert(key.VerifyPubKey(pubkey));
 
                     CKeyID vchAddress = pubkey.GetID();
+                    CTxDestination pubkey_dest = GetDestinationForPubKey(pubkey);
                     pwallet->MarkDirty();
-                    pwallet->SetAddressBook(vchAddress, label, "receive");
+                    pwallet->SetAddressBook(pubkey_dest, label, "receive");
 
                     if (pwallet->HaveKey(vchAddress)) {
                         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Already have this key");
@@ -1172,8 +1188,9 @@ UniValue ProcessImport(CWallet * const pwallet, const UniValue& data, const int6
                 }
 
                 CKeyID vchAddress = pubKey.GetID();
+                CTxDestination wallet_dest = GetDestinationForPubKey(pubKey);
                 pwallet->MarkDirty();
-                pwallet->SetAddressBook(vchAddress, label, "receive");
+                pwallet->SetAddressBook(wallet_dest, label, "receive");
 
                 if (pwallet->HaveKey(vchAddress)) {
                     throw JSONRPCError(RPC_WALLET_ERROR, "The wallet already contains the private key for this address or script");
