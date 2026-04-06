@@ -249,6 +249,7 @@ bool CScript::IsAssetScript(int& nType, bool& isOwner) const
 bool CScript::IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex) const
 {
     int assetOpIndex = -1;
+    fIsOwner = false;
     if (this->size() > 31 &&
         (*this)[0] == OP_DUP &&
         (*this)[1] == OP_HASH160 &&
@@ -264,10 +265,10 @@ bool CScript::IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex) con
         return false;
     }
 
-    CScript::const_iterator pc = begin() + assetOpIndex;
+    CScript::const_iterator pc = begin() + assetOpIndex + 1;
     opcodetype opcode;
     std::vector<unsigned char> assetMessage;
-    if (!GetOp(pc, opcode) || opcode != OP_XNA_ASSET) {
+    if ((*this)[assetOpIndex] != OP_XNA_ASSET) {
         return false;
     }
 
@@ -283,7 +284,8 @@ bool CScript::IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex) con
         return false;
     }
 
-    nStartingIndex = static_cast<int>((pc - begin()) - 1 - assetMessage.size()) + 4;
+    const int assetDataStartIndex = static_cast<int>((pc - begin()) - 1 - assetMessage.size());
+    nStartingIndex = assetDataStartIndex + 4;
     if (assetMessage[3] == XNA_T) {
         nType = TX_TRANSFER_ASSET;
         return true;
@@ -615,4 +617,3 @@ bool AmountFromReissueScript(const CScript& scriptPubKey, CAmount& nAmount)
     return true;
 }
 //!--------------------------------------------------------------------------------------------------------------------------!//
-

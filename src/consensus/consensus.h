@@ -25,6 +25,7 @@ static const unsigned int MAX_BLOCK_SERIALIZED_SIZE_RIP2 = 8000000;
 static const int64_t MAX_BLOCK_SIGOPS_COST = 80000;
 /** Coinbase transaction outputs can only be spent after this number of new blocks (network rule) */
 static const int COINBASE_MATURITY = 100;
+static const int COINBASE_MATURITY_TESTNET = 5;
 
 static const int WITNESS_SCALE_FACTOR = 4;
 
@@ -42,6 +43,7 @@ UNUSED_VAR static bool fCheckCoinbaseAssetsIsActive = false;
 
 unsigned int GetMaxBlockWeight();
 unsigned int GetMaxBlockSerializedSize();
+int GetCoinbaseMaturity();
 
 /** Flags for nSequence and nLockTime locks */
 enum {

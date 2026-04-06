@@ -4,6 +4,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "consensus.h"
+#include "chainparams.h"
 #include <validation.h>
 
 unsigned int GetMaxBlockWeight()
@@ -26,4 +27,13 @@ unsigned int GetMaxBlockSerializedSize()
 
     // Old block serialized size for when assets weren't activated
 //    return MAX_BLOCK_SERIALIZED_SIZE;
+}
+
+int GetCoinbaseMaturity()
+{
+    if (Params().NetworkIDString() == CBaseChainParams::TESTNET) {
+        return COINBASE_MATURITY_TESTNET;
+    }
+
+    return COINBASE_MATURITY;
 }
