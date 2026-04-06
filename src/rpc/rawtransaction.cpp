@@ -6,6 +6,7 @@
 
 #include "base58.h"
 #include "chain.h"
+#include "chainparams.h"
 #include "coins.h"
 #include "consensus/validation.h"
 #include "core_io.h"
@@ -2058,7 +2059,11 @@ UniValue signrawtransaction(const JSONRPCRequest& request)
         UpdateTransaction(mtx, i, sigdata);
 
         ScriptError serror = SCRIPT_ERR_OK;
-        if (!VerifyScript(txin.scriptSig, prevPubKey, &txin.scriptWitness, STANDARD_SCRIPT_VERIFY_FLAGS, TransactionSignatureChecker(&txConst, i, amount), &serror)) {
+        unsigned int verify_flags = STANDARD_SCRIPT_VERIFY_FLAGS;
+        if (GetParams().GetConsensus().nPQWitnessEnabled) {
+            verify_flags |= SCRIPT_VERIFY_PQ_WITNESS_V1;
+        }
+        if (!VerifyScript(txin.scriptSig, prevPubKey, &txin.scriptWitness, verify_flags, TransactionSignatureChecker(&txConst, i, amount), &serror)) {
             if (serror == SCRIPT_ERR_INVALID_STACK_OPERATION) {
                 // Unable to sign input and verification failed (possible attempt to partially sign).
                 TxInErrorToJSON(txin, vErrors, "Unable to sign input, invalid stack size (possibly missing key)");

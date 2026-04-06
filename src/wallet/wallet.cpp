@@ -2961,7 +2961,7 @@ bool CWallet::SelectCoins(const std::vector<COutput>& vAvailableCoins, const CAm
 }
 
 /** XNA START */
-bool CWallet::CreateNewChangeAddress(CReserveKey& reservekey, CKeyID& keyID, std::string& strFailReason)
+bool CWallet::CreateNewChangeAddress(CReserveKey& reservekey, CTxDestination& dest, std::string& strFailReason)
 {
     // Called with coin control doesn't have a change_address
     // no coin control: send change to newly generated address
@@ -2982,7 +2982,11 @@ bool CWallet::CreateNewChangeAddress(CReserveKey& reservekey, CKeyID& keyID, std
         return false;
     }
 
-    keyID = vchPubKey.GetID();
+    if (vchPubKey.IsPQ()) {
+        dest = CTxDestination(WitnessV1KeyHash(vchPubKey.GetID()));
+    } else {
+        dest = CTxDestination(CKeyID(vchPubKey.GetID()));
+    }
     return true;
 }
 
@@ -3444,11 +3448,11 @@ bool CWallet::CreateTransactionAll(const std::vector<CRecipient>& vecSend, CWall
             } else {
 
                 // no coin control: send change to newly generated address
-                CKeyID keyID;
-                if (!CreateNewChangeAddress(reservekey, keyID, strFailReason))
+                CTxDestination changeDest;
+                if (!CreateNewChangeAddress(reservekey, changeDest, strFailReason))
                     return false;
 
-                scriptChange = GetScriptForDestination(keyID);
+                scriptChange = GetScriptForDestination(changeDest);
             }
 
             /** XNA START */

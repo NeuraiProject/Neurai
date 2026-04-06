@@ -7,6 +7,7 @@
 #include "amount.h"
 #include "base58.h"
 #include "chain.h"
+#include "chainparams.h"
 #include "consensus/validation.h"
 #include "core_io.h"
 #include "httpserver.h"
@@ -1338,8 +1339,12 @@ public:
             // This check is to make sure that the script we created can actually be solved for and signed by us
             // if we were to have the private keys. This is just to make sure that the script is valid and that,
             // if found in a transaction, we would still accept and relay that transaction.
+            unsigned int verify_flags = MANDATORY_SCRIPT_VERIFY_FLAGS | SCRIPT_VERIFY_WITNESS_PUBKEYTYPE;
+            if (GetParams().GetConsensus().nPQWitnessEnabled) {
+                verify_flags |= SCRIPT_VERIFY_PQ_WITNESS_V1;
+            }
             if (!ProduceSignature(DummySignatureCreator(pwallet), witscript, sigs) ||
-                !VerifyScript(sigs.scriptSig, witscript, &sigs.scriptWitness, MANDATORY_SCRIPT_VERIFY_FLAGS | SCRIPT_VERIFY_WITNESS_PUBKEYTYPE, DummySignatureCreator(pwallet).Checker())) {
+                !VerifyScript(sigs.scriptSig, witscript, &sigs.scriptWitness, verify_flags, DummySignatureCreator(pwallet).Checker())) {
                 return false;
             }
             pwallet->AddCScript(witscript);
@@ -1363,8 +1368,12 @@ public:
             // This check is to make sure that the script we created can actually be solved for and signed by us
             // if we were to have the private keys. This is just to make sure that the script is valid and that,
             // if found in a transaction, we would still accept and relay that transaction.
+            unsigned int verify_flags = MANDATORY_SCRIPT_VERIFY_FLAGS | SCRIPT_VERIFY_WITNESS_PUBKEYTYPE;
+            if (GetParams().GetConsensus().nPQWitnessEnabled) {
+                verify_flags |= SCRIPT_VERIFY_PQ_WITNESS_V1;
+            }
             if (!ProduceSignature(DummySignatureCreator(pwallet), witscript, sigs) ||
-                !VerifyScript(sigs.scriptSig, witscript, &sigs.scriptWitness, MANDATORY_SCRIPT_VERIFY_FLAGS | SCRIPT_VERIFY_WITNESS_PUBKEYTYPE, DummySignatureCreator(pwallet).Checker())) {
+                !VerifyScript(sigs.scriptSig, witscript, &sigs.scriptWitness, verify_flags, DummySignatureCreator(pwallet).Checker())) {
                 return false;
             }
             pwallet->AddCScript(witscript);

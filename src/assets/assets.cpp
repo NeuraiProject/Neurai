@@ -4072,14 +4072,14 @@ bool CreateAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, const s
         }
     } else {
         // no coin control: send change to newly generated address
-        CKeyID keyID;
+        CTxDestination change_dest;
         std::string strFailReason;
-        if (!pwallet->CreateNewChangeAddress(reservekey, keyID, strFailReason)) {
+        if (!pwallet->CreateNewChangeAddress(reservekey, change_dest, strFailReason)) {
             error = std::make_pair(RPC_WALLET_KEYPOOL_RAN_OUT, strFailReason);
             return false;
         }
 
-        change_address = EncodeDestination(keyID);
+        change_address = EncodeDestination(change_dest);
         coinControl.destChange = DecodeDestination(change_address);
     }
 
@@ -4245,14 +4245,14 @@ bool CreateReissueAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, 
             return false;
         }
     } else {
-        CKeyID keyID;
+        CTxDestination change_dest;
         std::string strFailReason;
-        if (!pwallet->CreateNewChangeAddress(reservekey, keyID, strFailReason)) {
+        if (!pwallet->CreateNewChangeAddress(reservekey, change_dest, strFailReason)) {
             error = std::make_pair(RPC_WALLET_KEYPOOL_RAN_OUT, strFailReason);
             return false;
         }
 
-        change_address = EncodeDestination(keyID);
+        change_address = EncodeDestination(change_dest);
         coinControl.destChange = DecodeDestination(change_address);
     }
 

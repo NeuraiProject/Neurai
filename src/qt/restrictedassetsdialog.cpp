@@ -216,16 +216,16 @@ void RestrictedAssetsDialog::freezeAddressClicked()
 
     // If the optional change address wasn't given create a new change address for this wallet
     if (change_address == "") {
-        CKeyID keyID;
+        CTxDestination change_dest;
         std::string strFailReason;
-        if (!model->getWallet()->CreateNewChangeAddress(reservekey, keyID, strFailReason)) {
+        if (!model->getWallet()->CreateNewChangeAddress(reservekey, change_dest, strFailReason)) {
             QMessageBox changeAddressBox;
             changeAddressBox.setText(tr("Failed to create a change address"));
             changeAddressBox.exec();
             return;
         }
 
-        change_address = EncodeDestination(keyID);
+        change_address = EncodeDestination(change_dest);
     }
 
     ctrl.destChange = DecodeDestination(change_address);
@@ -367,16 +367,16 @@ void RestrictedAssetsDialog::assignQualifierClicked()
 
     // If the optional change address wasn't given create a new change address for this wallet
     if (change_address == "") {
-        CKeyID keyID;
+        CTxDestination change_dest;
         std::string strFailReason;
-        if (!model->getWallet()->CreateNewChangeAddress(reservekey, keyID, strFailReason)) {
+        if (!model->getWallet()->CreateNewChangeAddress(reservekey, change_dest, strFailReason)) {
             QMessageBox changeAddressBox;
             changeAddressBox.setText(tr("Failed to create a change address"));
             changeAddressBox.exec();
             return;
         }
 
-        change_address = EncodeDestination(keyID);
+        change_address = EncodeDestination(change_dest);
     }
 
     ctrl.destChange = DecodeDestination(change_address);
@@ -460,7 +460,6 @@ void RestrictedAssetsDialog::assignQualifierClicked()
 
     widget->clear();
 }
-
 
 
 

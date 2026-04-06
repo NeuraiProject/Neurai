@@ -9,6 +9,7 @@
 #endif
 
 #include "base58.h"
+#include "chainparams.h"
 #include "clientversion.h"
 #include "coins.h"
 #include "consensus/consensus.h"
@@ -652,7 +653,11 @@ static void MutateTxSign(CMutableTransaction& tx, const std::string& flagStr)
             sigdata = CombineSignatures(prevPubKey, MutableTransactionSignatureChecker(&mergedTx, i, amount), sigdata, DataFromTransaction(txv, i));
         UpdateTransaction(mergedTx, i, sigdata);
 
-        if (!VerifyScript(txin.scriptSig, prevPubKey, &txin.scriptWitness, STANDARD_SCRIPT_VERIFY_FLAGS, MutableTransactionSignatureChecker(&mergedTx, i, amount)))
+        unsigned int verify_flags = STANDARD_SCRIPT_VERIFY_FLAGS;
+        if (GetParams().GetConsensus().nPQWitnessEnabled) {
+            verify_flags |= SCRIPT_VERIFY_PQ_WITNESS_V1;
+        }
+        if (!VerifyScript(txin.scriptSig, prevPubKey, &txin.scriptWitness, verify_flags, MutableTransactionSignatureChecker(&mergedTx, i, amount)))
             fComplete = false;
     }
 

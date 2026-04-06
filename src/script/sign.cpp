@@ -6,6 +6,7 @@
 
 #include "script/sign.h"
 
+#include "chainparams.h"
 #include "key.h"
 #include "keystore.h"
 #include "policy/policy.h"
@@ -15,6 +16,15 @@
 
 
 typedef std::vector<unsigned char> valtype;
+
+static unsigned int LocalScriptVerifyFlags()
+{
+    unsigned int flags = STANDARD_SCRIPT_VERIFY_FLAGS;
+    if (GetParams().GetConsensus().nPQWitnessEnabled) {
+        flags |= SCRIPT_VERIFY_PQ_WITNESS_V1;
+    }
+    return flags;
+}
 
 TransactionSignatureCreator::TransactionSignatureCreator(const CKeyStore* keystoreIn, const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, int nHashTypeIn) : BaseSignatureCreator(keystoreIn), txTo(txToIn), nIn(nInIn), nHashType(nHashTypeIn), amount(amountIn), checker(txTo, nIn, amountIn) {}
 
@@ -247,7 +257,7 @@ bool ProduceSignature(const BaseSignatureCreator& creator, const CScript& fromPu
     sigdata.scriptSig = PushAll(result);
 
     // Test solution
-    return solved && VerifyScript(sigdata.scriptSig, fromPubKey, &sigdata.scriptWitness, STANDARD_SCRIPT_VERIFY_FLAGS, creator.Checker());
+    return solved && VerifyScript(sigdata.scriptSig, fromPubKey, &sigdata.scriptWitness, LocalScriptVerifyFlags(), creator.Checker());
 }
 
 SignatureData DataFromTransaction(const CMutableTransaction& tx, unsigned int nIn)
