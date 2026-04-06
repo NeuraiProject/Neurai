@@ -99,6 +99,17 @@ bool static IsPostQuantumPubKey(const valtype &vchPubKey)
     return vchPubKey.size() == 1 + ML_DSA_44_PUBKEY_SIZE && !vchPubKey.empty() && vchPubKey[0] == 0x05;
 }
 
+bool static IsAllowedStackPushSize(const valtype& data)
+{
+    if (data.size() <= MAX_SCRIPT_ELEMENT_SIZE) {
+        return true;
+    }
+
+    // Asset scripts currently spend through scriptSig, so PQ signatures and
+    // pubkeys must be allowed to exceed the legacy 520-byte element limit.
+    return data.size() == ML_DSA_44_SIG_SIZE + 1 || IsPostQuantumPubKey(data);
+}
+
 bool static IsCompressedPubKey(const valtype &vchPubKey)
 {
     if (vchPubKey.size() != 33)
@@ -349,7 +360,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
             //
             if (!script.GetOp(pc, opcode, vchPushValue))
                 return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
-            if (vchPushValue.size() > MAX_SCRIPT_ELEMENT_SIZE)
+            if (!IsAllowedStackPushSize(vchPushValue))
                 return set_error(serror, SCRIPT_ERR_PUSH_SIZE);
 
             // Note how OP_RESERVED does not count towards the opcode limit.

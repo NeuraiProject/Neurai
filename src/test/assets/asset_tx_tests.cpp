@@ -11,6 +11,7 @@
 #include <amount.h>
 #include <key.h>
 #include <keystore.h>
+#include <policy/policy.h>
 #include <script/standard.h>
 #include <script/interpreter.h>
 #include <script/sign.h>
@@ -704,6 +705,64 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
                                  flags, MutableTransactionSignatureChecker(&txTo, 0, 0), &err));
         BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OK);
         BOOST_CHECK(txTo.vin[0].scriptWitness.stack.empty());
+    }
+
+    BOOST_AUTO_TEST_CASE(asset_owner_pq_signs_with_standard_policy_test)
+    {
+        BOOST_TEST_MESSAGE("Running Asset PQ owner signing policy test");
+
+        SelectParams(CBaseChainParams::TESTNET);
+
+        CBasicKeyStore keystore;
+        CKey key;
+        key.MakeNewKeyPQ();
+        CPubKey pubkey = key.GetPubKey();
+        BOOST_CHECK(pubkey.IsPQ());
+        BOOST_CHECK(keystore.AddKeyPubKey(key, pubkey));
+
+        CTxDestination pqDestination = WitnessV1KeyHash(pubkey.GetID());
+        CNewAsset asset("PQOWNER", 100 * COIN, 0, 1, 0, "");
+        CScript ownerScript = GetScriptForDestination(pqDestination);
+        asset.ConstructOwnerTransaction(ownerScript);
+
+        CMutableTransaction txFrom;
+        txFrom.nVersion = 1;
+        txFrom.nLockTime = 0;
+        txFrom.vin.resize(1);
+        txFrom.vout.resize(1);
+        txFrom.vin[0].prevout.SetNull();
+        txFrom.vin[0].scriptSig = CScript() << CScriptNum(0) << CScriptNum(0);
+        txFrom.vin[0].nSequence = CTxIn::SEQUENCE_FINAL;
+        txFrom.vout[0].scriptPubKey = ownerScript;
+        txFrom.vout[0].nValue = 0;
+
+        CMutableTransaction txTo;
+        txTo.nVersion = 1;
+        txTo.nLockTime = 0;
+        txTo.vin.resize(1);
+        txTo.vout.resize(1);
+        txTo.vin[0].prevout.hash = txFrom.GetHash();
+        txTo.vin[0].prevout.n = 0;
+        txTo.vin[0].nSequence = CTxIn::SEQUENCE_FINAL;
+        txTo.vout[0].scriptPubKey = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
+        txTo.vout[0].nValue = 1 * COIN;
+
+        const CTransaction fundingTx(txFrom);
+        BOOST_CHECK(SignSignature(keystore, fundingTx, txTo, 0, SIGHASH_ALL));
+        BOOST_CHECK(txTo.vin[0].scriptSig.size() > 1650);
+
+        ScriptError err = SCRIPT_ERR_UNKNOWN_ERROR;
+        const unsigned int flags = SCRIPT_VERIFY_P2SH |
+                                   SCRIPT_VERIFY_STRICTENC |
+                                   SCRIPT_VERIFY_DERSIG |
+                                   SCRIPT_VERIFY_LOW_S;
+
+        BOOST_CHECK(VerifyScript(txTo.vin[0].scriptSig, ownerScript, &txTo.vin[0].scriptWitness,
+                                 flags, MutableTransactionSignatureChecker(&txTo, 0, 0), &err));
+        BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OK);
+
+        std::string reason;
+        BOOST_CHECK(IsStandardTx(CTransaction(txTo), reason, true));
     }
 
     BOOST_AUTO_TEST_CASE(pq_witness_dummy_signature_test)

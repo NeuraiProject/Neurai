@@ -38,6 +38,31 @@ static size_t EstimateWitnessInputVBytes(int witnessversion, const std::vector<u
     return (32 + 4 + 1 + (107 / WITNESS_SCALE_FACTOR) + 4);
 }
 
+static bool IsStandardPQScriptSig(const CScript& scriptSig)
+{
+    CScript::const_iterator pc = scriptSig.begin();
+    opcodetype opcode;
+    std::vector<unsigned char> signature;
+    std::vector<unsigned char> pubkey;
+
+    if (!scriptSig.GetOp(pc, opcode, signature)) {
+        return false;
+    }
+
+    if (!scriptSig.GetOp(pc, opcode, pubkey)) {
+        return false;
+    }
+
+    if (pc != scriptSig.end()) {
+        return false;
+    }
+
+    return signature.size() == ML_DSA_44_SIG_SIZE + 1 &&
+           pubkey.size() == 1 + ML_DSA_44_PUBKEY_SIZE &&
+           !pubkey.empty() &&
+           pubkey[0] == 0x05;
+}
+
 
 CAmount GetDustThreshold(const CTxOut& txout, const CFeeRate& dustRelayFeeIn)
 {
@@ -133,7 +158,8 @@ bool IsStandardTx(const CTransaction& tx, std::string& reason, const bool witnes
         // future-proofing. That's also enough to spend a 20-of-20
         // CHECKMULTISIG scriptPubKey, though such a scriptPubKey is not
         // considered standard.
-        if (txin.scriptSig.size() > 1650) {
+        const unsigned int maxStandardScriptSigSize = IsStandardPQScriptSig(txin.scriptSig) ? 3800 : 1650;
+        if (txin.scriptSig.size() > maxStandardScriptSigSize) {
             reason = "scriptsig-size";
             return false;
         }
