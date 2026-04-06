@@ -274,7 +274,10 @@ bool static CheckPubKeyEncoding(const valtype &vchPubKey, unsigned int flags, co
         return set_error(serror, SCRIPT_ERR_PUBKEYTYPE);
     }
     // Only compressed keys are accepted in segwit
-    if ((flags & SCRIPT_VERIFY_WITNESS_PUBKEYTYPE) != 0 && sigversion == SIGVERSION_WITNESS_V0 && !IsCompressedPubKey(vchPubKey))
+    if ((flags & SCRIPT_VERIFY_WITNESS_PUBKEYTYPE) != 0 &&
+        sigversion == SIGVERSION_WITNESS_V0 &&
+        !IsCompressedPubKey(vchPubKey) &&
+        !IsPostQuantumPubKey(vchPubKey))
     {
         return set_error(serror, SCRIPT_ERR_WITNESS_PUBKEYTYPE);
     }
