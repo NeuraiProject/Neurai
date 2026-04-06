@@ -99,21 +99,27 @@ void AddCoins(CCoinsViewCache& cache, const CTransaction &tx, int nHeight, uint2
     const uint256& txid = tx.GetHash();
 
     /** XNA START */
-    if (AreAssetsDeployed()) {
-        if (assetsCache) {
-            if (tx.IsNewAsset()) { // This works are all new root assets, sub asset, and restricted assets
-                CNewAsset asset;
-                std::string strAddress;
-                AssetFromTransaction(tx, asset, strAddress);
+        if (AreAssetsDeployed()) {
+            if (assetsCache) {
+                if (tx.IsNewAsset()) { // This works are all new root assets, sub asset, and restricted assets
+                    CNewAsset asset;
+                    std::string strAddress;
+                    if (!AssetFromTransaction(tx, asset, strAddress)) {
+                        error("%s : Failed to get new asset from transaction while connecting block. TXID : %s",
+                              __func__, tx.GetHash().GetHex());
+                    }
 
-                std::string ownerName;
-                std::string ownerAddress;
-                OwnerFromTransaction(tx, ownerName, ownerAddress);
+                    std::string ownerName;
+                    std::string ownerAddress;
+                    if (!OwnerFromTransaction(tx, ownerName, ownerAddress)) {
+                        error("%s : Failed to get owner asset from transaction while connecting block. TXID : %s",
+                              __func__, tx.GetHash().GetHex());
+                    }
 
-                // Add the new asset to cache
-                if (!assetsCache->AddNewAsset(asset, strAddress, nHeight, blockHash))
-                    error("%s : Failed at adding a new asset to our cache. asset: %s", __func__,
-                          asset.strName);
+                    // Add the new asset to cache
+                    if (!assetsCache->AddNewAsset(asset, strAddress, nHeight, blockHash))
+                        error("%s : Failed at adding a new asset to our cache. asset: %s", __func__,
+                              asset.strName);
 
                 // Add the owner asset to cache
                 if (!assetsCache->AddOwnerAsset(ownerName, ownerAddress))
@@ -123,7 +129,10 @@ void AddCoins(CCoinsViewCache& cache, const CTransaction &tx, int nHeight, uint2
             } else if (tx.IsReissueAsset()) {
                 CReissueAsset reissue;
                 std::string strAddress;
-                ReissueAssetFromTransaction(tx, reissue, strAddress);
+                if (!ReissueAssetFromTransaction(tx, reissue, strAddress)) {
+                    error("%s : Failed to get reissue asset from transaction while connecting block. TXID : %s",
+                          __func__, tx.GetHash().GetHex());
+                }
 
                 int reissueIndex = tx.vout.size() - 1;
 

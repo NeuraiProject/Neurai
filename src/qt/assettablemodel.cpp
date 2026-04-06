@@ -21,6 +21,39 @@
 #include <QDebug>
 #include <QStringList>
 
+namespace {
+
+bool RecoverAssetMetadataFromOutputs(const std::vector<COutput>& outputs, uint8_t& units, std::string& ipfsHash)
+{
+    for (const auto& output : outputs) {
+        const CScript& scriptPubKey = output.tx->tx->vout[output.i].scriptPubKey;
+
+        CNewAsset newAsset;
+        std::string address;
+        if (AssetFromScript(scriptPubKey, newAsset, address) ||
+            MsgChannelAssetFromScript(scriptPubKey, newAsset, address) ||
+            QualifierAssetFromScript(scriptPubKey, newAsset, address) ||
+            RestrictedAssetFromScript(scriptPubKey, newAsset, address)) {
+            units = newAsset.units;
+            ipfsHash = newAsset.strIPFSHash;
+            return true;
+        }
+
+        CReissueAsset reissueAsset;
+        if (ReissueAssetFromScript(scriptPubKey, reissueAsset, address)) {
+            if (reissueAsset.nUnits != -1) {
+                units = reissueAsset.nUnits;
+            }
+            ipfsHash = reissueAsset.strIPFSHash;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+} // namespace
+
 
 
 class AssetTablePriv {
@@ -64,11 +97,13 @@ public:
                         // Asset is not an administrator asset
                         CNewAsset assetData;
                         if (!currentActiveAssetCache->GetAssetMetaDataIfExists(bal->first, assetData)) {
-                            qWarning("AssetTablePriv::refreshWallet: Error retrieving asset data");
-                            return;
+                            if (!RecoverAssetMetadataFromOutputs(outputs[bal->first], units, ipfsHash)) {
+                                qWarning("AssetTablePriv::refreshWallet: Error retrieving asset data for %s", bal->first.c_str());
+                            }
+                        } else {
+                            units = assetData.units;
+                            ipfsHash = assetData.strIPFSHash;
                         }
-                        units = assetData.units;
-                        ipfsHash = assetData.strIPFSHash;
                         // If we have the administrator asset, add it to the skip listå
                         if (balances.count(bal->first + OWNER_TAG)) {
                             setAssetsToSkip.insert(bal->first + OWNER_TAG);

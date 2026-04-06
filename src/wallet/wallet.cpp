@@ -3849,6 +3849,15 @@ bool CWallet::CreateTransactionAll(const std::vector<CRecipient>& vecSend, CWall
                     if (!ProduceSignature(
                             TransactionSignatureCreator(this, &txNewConst, nIn, asset.txout.nValue, SIGHASH_ALL),
                             scriptPubKey, sigdata)) {
+                        int assetType = -1;
+                        bool isOwner = false;
+                        int assetWitnessVersion = 0;
+                        std::vector<unsigned char> assetWitnessProgram;
+                        const bool assetUsesWitness = GetAssetScriptWitnessProgram(scriptPubKey, assetWitnessVersion, assetWitnessProgram);
+                        scriptPubKey.IsAssetScript(assetType, isOwner);
+                        LogPrintf("%s : Failed to sign asset input %s type=%d owner=%d witness=%d witnessVersion=%d scriptPubKey=%s\n",
+                                  __func__, asset.outpoint.ToString(), assetType, isOwner, assetUsesWitness,
+                                  assetWitnessVersion, HexStr(scriptPubKey));
                         strFailReason = _("Signing asset transaction failed");
                         return false;
                     } else {
