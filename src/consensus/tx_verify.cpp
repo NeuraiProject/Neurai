@@ -24,6 +24,43 @@
 #include "coins.h"
 #include "utilmoneystr.h"
 
+namespace {
+
+bool HasAssetOpcodeInExpectedPosition(const CScript& scriptPubKey)
+{
+    if (scriptPubKey.empty()) {
+        return false;
+    }
+
+    // Null/restricted asset metadata scripts start directly with OP_XNA_ASSET.
+    if (scriptPubKey[0] == OP_XNA_ASSET) {
+        return true;
+    }
+
+    // Legacy asset spendable script: P2PKH prefix + OP_XNA_ASSET ...
+    if (scriptPubKey.size() > 25 &&
+        scriptPubKey[0] == OP_DUP &&
+        scriptPubKey[1] == OP_HASH160 &&
+        scriptPubKey[2] == 0x14 &&
+        scriptPubKey[23] == OP_EQUALVERIFY &&
+        scriptPubKey[24] == OP_CHECKSIG &&
+        scriptPubKey[25] == OP_XNA_ASSET) {
+        return true;
+    }
+
+    // PQ asset spendable script: OP_1 <20-byte-program> + OP_XNA_ASSET ...
+    if (scriptPubKey.size() > 22 &&
+        scriptPubKey[0] == OP_1 &&
+        scriptPubKey[1] == 0x14 &&
+        scriptPubKey[22] == OP_XNA_ASSET) {
+        return true;
+    }
+
+    return false;
+}
+
+} // namespace
+
 bool IsFinalTx(const CTransaction &tx, int nBlockHeight, int64_t nBlockTime)
 {
     if (tx.nLockTime == 0)
@@ -535,10 +572,11 @@ bool CheckTransaction(const CTransaction& tx, CValidationState &state, bool fChe
                 }
             } else {
                 if (out.scriptPubKey.Find(OP_XNA_ASSET)) {
-                    if (out.scriptPubKey[0] != OP_XNA_ASSET) {
+                    if (!HasAssetOpcodeInExpectedPosition(out.scriptPubKey)) {
                         return state.DoS(100, false, REJECT_INVALID,
                                          "bad-txns-op-xna-asset-not-in-right-script-location");
                     }
+                    return state.DoS(100, false, REJECT_INVALID, "bad-txns-bad-asset-script");
                 }
             }
         }
@@ -865,10 +903,11 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
                 } else {
                     if (out.scriptPubKey.Find(OP_XNA_ASSET)) {
                         if (AreRestrictedAssetsDeployed()) {
-                            if (out.scriptPubKey[0] != OP_XNA_ASSET) {
+                            if (!HasAssetOpcodeInExpectedPosition(out.scriptPubKey)) {
                                 return state.DoS(100, false, REJECT_INVALID,
                                                  "bad-txns-op-xna-asset-not-in-right-script-location", false, "", tx.GetHash());
                             }
+                            return state.DoS(100, false, REJECT_INVALID, "bad-txns-bad-asset-script", false, "", tx.GetHash());
                         } else {
                             return state.DoS(100, false, REJECT_INVALID, "bad-txns-bad-asset-script", false, "", tx.GetHash());
                         }
