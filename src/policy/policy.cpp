@@ -11,9 +11,32 @@
 #include "consensus/validation.h"
 #include "validation.h"
 #include "coins.h"
+#include "pubkey.h"
+#include "serialize.h"
 #include "tinyformat.h"
 #include "util.h"
 #include "utilstrencodings.h"
+
+static size_t EstimateWitnessInputVBytes(int witnessversion, const std::vector<unsigned char>& witnessprogram)
+{
+    // Native segwit v0 keyhash spend, kept as the historical baseline.
+    if (witnessversion == 0) {
+        return (32 + 4 + 1 + (107 / WITNESS_SCALE_FACTOR) + 4);
+    }
+
+    // PQ witness v1 spends carry a much larger witness stack:
+    //   [ signature_with_hashtype, serialized_pq_pubkey ]
+    if (witnessversion == 1 && witnessprogram.size() == 20) {
+        const size_t base_bytes = 32 + 4 + 1 + 4;
+        const size_t witness_bytes =
+                GetSizeOfCompactSize(ML_DSA_44_SIG_SIZE + 1) + (ML_DSA_44_SIG_SIZE + 1) +
+                GetSizeOfCompactSize(1 + ML_DSA_44_PUBKEY_SIZE) + (1 + ML_DSA_44_PUBKEY_SIZE);
+
+        return base_bytes + (witness_bytes / WITNESS_SCALE_FACTOR);
+    }
+
+    return (32 + 4 + 1 + (107 / WITNESS_SCALE_FACTOR) + 4);
+}
 
 
 CAmount GetDustThreshold(const CTxOut& txout, const CFeeRate& dustRelayFeeIn)
@@ -42,7 +65,7 @@ CAmount GetDustThreshold(const CTxOut& txout, const CFeeRate& dustRelayFeeIn)
     if (txout.scriptPubKey.IsWitnessProgram(witnessversion, witnessprogram)) {
         // sum the sizes of the parts of a transaction input
         // with 75% segwit discount applied to the script size.
-        nSize += (32 + 4 + 1 + (107 / WITNESS_SCALE_FACTOR) + 4);
+        nSize += EstimateWitnessInputVBytes(witnessversion, witnessprogram);
     } else {
         nSize += (32 + 4 + 1 + 107 + 4); // the 148 mentioned above
     }

@@ -78,6 +78,22 @@ static const std::regex QUALIFIER_LEADING_PUNCTUATION("^[#\\$][._].*$"); // Used
 static const std::string SUB_NAME_DELIMITER = "/";
 static const std::string UNIQUE_TAG_DELIMITER = "#";
 static const std::string MSG_CHANNEL_TAG_DELIMITER = "~";
+
+static void NormalizeAssetDestinationScript(CScript& script)
+{
+    int witnessVersion = 0;
+    std::vector<unsigned char> witnessProgram;
+
+    // Asset scripts append payload after the destination prefix, so the prefix
+    // must remain an executable script template. A bare witness program with
+    // appended asset data would not be parsed or spent correctly later.
+    if (script.IsWitnessProgram(witnessVersion, witnessProgram) && witnessVersion == 1 && witnessProgram.size() == 20) {
+        CScript legacyStyleScript;
+        legacyStyleScript << OP_DUP << OP_HASH160 << witnessProgram << OP_EQUALVERIFY << OP_CHECKSIG;
+        script = legacyStyleScript;
+    }
+}
+
 static const std::string VOTE_TAG_DELIMITER = "^";
 static const std::string RESTRICTED_TAG_DELIMITER = "$";
 
@@ -598,6 +614,8 @@ CDatabasedAssetData::CDatabasedAssetData()
  */
 void CNewAsset::ConstructTransaction(CScript& script) const
 {
+    NormalizeAssetDestinationScript(script);
+
     CDataStream ssAsset(SER_NETWORK, PROTOCOL_VERSION);
     ssAsset << *this;
 
@@ -613,6 +631,8 @@ void CNewAsset::ConstructTransaction(CScript& script) const
 
 void CNewAsset::ConstructOwnerTransaction(CScript& script) const
 {
+    NormalizeAssetDestinationScript(script);
+
     CDataStream ssOwner(SER_NETWORK, PROTOCOL_VERSION);
     ssOwner << std::string(this->strName + OWNER_TAG);
 
@@ -1695,6 +1715,8 @@ bool CAssetTransfer::ContextualCheckAgainstVerifyString(CAssetsCache *assetCache
 
 void CAssetTransfer::ConstructTransaction(CScript& script) const
 {
+    NormalizeAssetDestinationScript(script);
+
     CDataStream ssTransfer(SER_NETWORK, PROTOCOL_VERSION);
     ssTransfer << *this;
 
@@ -1721,6 +1743,8 @@ CReissueAsset::CReissueAsset(const std::string &strAssetName, const CAmount &nAm
 
 void CReissueAsset::ConstructTransaction(CScript& script) const
 {
+    NormalizeAssetDestinationScript(script);
+
     CDataStream ssReissue(SER_NETWORK, PROTOCOL_VERSION);
     ssReissue << *this;
 

@@ -9,7 +9,11 @@
 #include <boost/test/unit_test.hpp>
 
 #include <amount.h>
+#include <key.h>
+#include <keystore.h>
 #include <script/standard.h>
+#include <script/interpreter.h>
+#include <script/sign.h>
 #include <base58.h>
 #include <consensus/validation.h>
 #include <consensus/tx_verify.h>
@@ -606,5 +610,100 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         bitdb.Reset();
     }
 #endif
+
+    BOOST_AUTO_TEST_CASE(asset_scripts_normalize_pq_destinations_test)
+    {
+        BOOST_TEST_MESSAGE("Running Asset PQ destination normalization test");
+
+        SelectParams(CBaseChainParams::TESTNET);
+
+        uint160 witnessHash;
+        witnessHash.SetHex("00112233445566778899aabbccddeeff00112233");
+        CTxDestination pqDestination = WitnessV1KeyHash(witnessHash);
+
+        CNewAsset newAsset("PQASSET", 1000 * COIN, 0, 1, 0, "");
+        CScript newAssetScript = GetScriptForDestination(pqDestination);
+        newAsset.ConstructTransaction(newAssetScript);
+
+        int type = 0;
+        bool isOwner = false;
+        int startIndex = 0;
+        BOOST_CHECK(newAssetScript.IsAssetScript(type, isOwner, startIndex));
+        BOOST_CHECK_EQUAL(type, TX_NEW_ASSET);
+        BOOST_CHECK(!isOwner);
+        BOOST_CHECK_EQUAL(newAssetScript[0], OP_DUP);
+        BOOST_CHECK_EQUAL(newAssetScript[25], OP_XNA_ASSET);
+
+        int witnessVersion = 0;
+        std::vector<unsigned char> witnessProgram;
+        BOOST_CHECK(!newAssetScript.IsWitnessProgram(witnessVersion, witnessProgram));
+
+        CAssetTransfer transferAsset("PQASSET", 1 * COIN);
+        CScript transferScript = GetScriptForDestination(pqDestination);
+        transferAsset.ConstructTransaction(transferScript);
+        BOOST_CHECK(transferScript.IsAssetScript(type, isOwner, startIndex));
+        BOOST_CHECK_EQUAL(type, TX_TRANSFER_ASSET);
+
+        CReissueAsset reissueAsset("PQASSET", 10 * COIN, 0, 1, "");
+        CScript reissueScript = GetScriptForDestination(pqDestination);
+        reissueAsset.ConstructTransaction(reissueScript);
+        BOOST_CHECK(reissueScript.IsAssetScript(type, isOwner, startIndex));
+        BOOST_CHECK_EQUAL(type, TX_REISSUE_ASSET);
+    }
+
+    BOOST_AUTO_TEST_CASE(asset_transfer_pq_signs_with_standard_flags_test)
+    {
+        BOOST_TEST_MESSAGE("Running Asset PQ transfer signing test");
+
+        SelectParams(CBaseChainParams::TESTNET);
+
+        CBasicKeyStore keystore;
+        CKey key;
+        key.MakeNewKeyPQ();
+        CPubKey pubkey = key.GetPubKey();
+        BOOST_CHECK(pubkey.IsPQ());
+        BOOST_CHECK(keystore.AddKeyPubKey(key, pubkey));
+
+        CTxDestination pqDestination = WitnessV1KeyHash(pubkey.GetID());
+        CAssetTransfer asset("PQASSET", 1 * COIN);
+        CScript assetScript = GetScriptForDestination(pqDestination);
+        asset.ConstructTransaction(assetScript);
+
+        CMutableTransaction txFrom;
+        txFrom.nVersion = 1;
+        txFrom.nLockTime = 0;
+        txFrom.vin.resize(1);
+        txFrom.vout.resize(1);
+        txFrom.vin[0].prevout.SetNull();
+        txFrom.vin[0].scriptSig = CScript() << CScriptNum(0) << CScriptNum(0);
+        txFrom.vin[0].nSequence = CTxIn::SEQUENCE_FINAL;
+        txFrom.vout[0].scriptPubKey = assetScript;
+        txFrom.vout[0].nValue = 0;
+
+        CMutableTransaction txTo;
+        txTo.nVersion = 1;
+        txTo.nLockTime = 0;
+        txTo.vin.resize(1);
+        txTo.vout.resize(1);
+        txTo.vin[0].prevout.hash = txFrom.GetHash();
+        txTo.vin[0].prevout.n = 0;
+        txTo.vin[0].nSequence = CTxIn::SEQUENCE_FINAL;
+        txTo.vout[0].scriptPubKey = CScript();
+        txTo.vout[0].nValue = 0;
+
+        const CTransaction fundingTx(txFrom);
+        BOOST_CHECK(SignSignature(keystore, fundingTx, txTo, 0, SIGHASH_ALL));
+
+        ScriptError err = SCRIPT_ERR_UNKNOWN_ERROR;
+        const unsigned int flags = SCRIPT_VERIFY_P2SH |
+                                   SCRIPT_VERIFY_STRICTENC |
+                                   SCRIPT_VERIFY_DERSIG |
+                                   SCRIPT_VERIFY_LOW_S;
+
+        BOOST_CHECK(VerifyScript(txTo.vin[0].scriptSig, assetScript, &txTo.vin[0].scriptWitness,
+                                 flags, MutableTransactionSignatureChecker(&txTo, 0, 0), &err));
+        BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OK);
+        BOOST_CHECK(txTo.vin[0].scriptWitness.stack.empty());
+    }
 
 BOOST_AUTO_TEST_SUITE_END()

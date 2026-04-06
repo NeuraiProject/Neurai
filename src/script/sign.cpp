@@ -503,6 +503,14 @@ const BaseSignatureChecker& DummySignatureCreator::Checker() const
 
 bool DummySignatureCreator::CreateSig(std::vector<unsigned char>& vchSig, const CKeyID& keyid, const CScript& scriptCode, SigVersion sigversion) const
 {
+    CPubKey pubkey;
+    if (KeyStore().GetPubKey(keyid, pubkey) && pubkey.IsPQ()) {
+        // PQ signatures are fixed-size ML-DSA-44 signatures plus the sighash byte.
+        vchSig.assign(ML_DSA_44_SIG_SIZE + 1, '\000');
+        vchSig.back() = SIGHASH_ALL;
+        return true;
+    }
+
     // Create a dummy signature that is a valid DER-encoding
     vchSig.assign(72, '\000');
     vchSig[0] = 0x30;

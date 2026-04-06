@@ -11,6 +11,8 @@
 #include "guiutil.h"
 #include "optionsmodel.h"
 #include "platformstyle.h"
+#include "pubkey.h"
+#include "serialize.h"
 #include "txmempool.h"
 #include "walletmodel.h"
 
@@ -36,6 +38,27 @@
 QList<CAmount> CoinControlDialog::payAmounts;
 CCoinControl* CoinControlDialog::coinControl = new CCoinControl();
 bool CoinControlDialog::fSubtractFeeFromAmount = false;
+
+static unsigned int EstimateWitnessInputVBytes(int witnessversion, const std::vector<unsigned char>& witnessprogram)
+{
+    // Native segwit v0 keyhash input, kept as the historical UI estimate.
+    if (witnessversion == 0) {
+        return (32 + 4 + 1 + (107 / WITNESS_SCALE_FACTOR) + 4);
+    }
+
+    // PQ witness v1 uses a much larger witness stack:
+    //   [ signature_with_hashtype, serialized_pq_pubkey ]
+    if (witnessversion == 1 && witnessprogram.size() == 20) {
+        const unsigned int base_bytes = 32 + 4 + 1 + 4;
+        const unsigned int witness_bytes =
+                GetSizeOfCompactSize(ML_DSA_44_SIG_SIZE + 1) + (ML_DSA_44_SIG_SIZE + 1) +
+                GetSizeOfCompactSize(1 + ML_DSA_44_PUBKEY_SIZE) + (1 + ML_DSA_44_PUBKEY_SIZE);
+
+        return base_bytes + (witness_bytes / WITNESS_SCALE_FACTOR);
+    }
+
+    return (32 + 4 + 1 + (107 / WITNESS_SCALE_FACTOR) + 4);
+}
 
 bool CCoinControlWidgetItem::operator<(const QTreeWidgetItem &other) const {
     int column = treeWidget()->sortColumn();
@@ -475,7 +498,7 @@ void CoinControlDialog::updateLabels(WalletModel *model, QDialog* dialog)
         std::vector<unsigned char> witnessprogram;
         if (out.tx->tx->vout[out.i].scriptPubKey.IsWitnessProgram(witnessversion, witnessprogram))
         {
-            nBytesInputs += (32 + 4 + 1 + (107 / WITNESS_SCALE_FACTOR) + 4);
+            nBytesInputs += EstimateWitnessInputVBytes(witnessversion, witnessprogram);
             fWitness = true;
         }
         else if(ExtractDestination(out.tx->tx->vout[out.i].scriptPubKey, address))

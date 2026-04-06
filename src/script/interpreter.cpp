@@ -96,6 +96,11 @@ bool static IsCompressedOrUncompressedPubKey(const valtype &vchPubKey)
     return true;
 }
 
+bool static IsPostQuantumPubKey(const valtype &vchPubKey)
+{
+    return vchPubKey.size() == 1 + ML_DSA_44_PUBKEY_SIZE && !vchPubKey.empty() && vchPubKey[0] == 0x05;
+}
+
 bool static IsCompressedPubKey(const valtype &vchPubKey)
 {
     if (vchPubKey.size() != 33)
@@ -238,9 +243,34 @@ bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, unsigned i
     return true;
 }
 
+bool static CheckSignatureEncodingForPubKey(const std::vector<unsigned char> &vchSig, const valtype& vchPubKey, unsigned int flags, ScriptError *serror)
+{
+    if (!IsPostQuantumPubKey(vchPubKey)) {
+        return CheckSignatureEncoding(vchSig, flags, serror);
+    }
+
+    // Empty signatures remain allowed to support deliberately-invalid CHECKSIG paths.
+    if (vchSig.empty()) {
+        return true;
+    }
+
+    if ((flags & (SCRIPT_VERIFY_DERSIG | SCRIPT_VERIFY_LOW_S | SCRIPT_VERIFY_STRICTENC)) != 0 &&
+        vchSig.size() != ML_DSA_44_SIG_SIZE + 1) {
+        return set_error(serror, SCRIPT_ERR_SIG_DER);
+    }
+
+    if ((flags & SCRIPT_VERIFY_STRICTENC) != 0 && !IsDefinedHashtypeSignature(vchSig)) {
+        return set_error(serror, SCRIPT_ERR_SIG_HASHTYPE);
+    }
+
+    return true;
+}
+
 bool static CheckPubKeyEncoding(const valtype &vchPubKey, unsigned int flags, const SigVersion &sigversion, ScriptError *serror)
 {
-    if ((flags & SCRIPT_VERIFY_STRICTENC) != 0 && !IsCompressedOrUncompressedPubKey(vchPubKey))
+    if ((flags & SCRIPT_VERIFY_STRICTENC) != 0 &&
+        !IsCompressedOrUncompressedPubKey(vchPubKey) &&
+        !IsPostQuantumPubKey(vchPubKey))
     {
         return set_error(serror, SCRIPT_ERR_PUBKEYTYPE);
     }
@@ -998,7 +1028,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             scriptCode.FindAndDelete(CScript(vchSig));
                         }
 
-                        if (!CheckSignatureEncoding(vchSig, flags, serror) ||
+                        if (!CheckSignatureEncodingForPubKey(vchSig, vchPubKey, flags, serror) ||
                             !CheckPubKeyEncoding(vchPubKey, flags, sigversion, serror))
                         {
                             //serror is set
@@ -1075,7 +1105,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             // Note how this makes the exact order of pubkey/signature evaluation
                             // distinguishable by CHECKMULTISIG NOT if the STRICTENC flag is set.
                             // See the script_(in)valid tests for details.
-                            if (!CheckSignatureEncoding(vchSig, flags, serror) ||
+                            if (!CheckSignatureEncodingForPubKey(vchSig, vchPubKey, flags, serror) ||
                                 !CheckPubKeyEncoding(vchPubKey, flags, sigversion, serror))
                             {
                                 // serror is set

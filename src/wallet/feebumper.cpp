@@ -17,8 +17,8 @@
 #include "util.h"
 #include "net.h"
 
-// Calculate the size of the transaction assuming all signatures are max size
-// Use DummySignatureCreator, which inserts 72 byte signatures everywhere.
+// Calculate the size of the transaction assuming all signatures are max size.
+// Use DummySignatureCreator, which inserts algorithm-appropriate dummy signatures.
 // TODO: re-use this in CWallet::CreateTransaction (right now
 // CreateTransaction uses the constructed dummy-signed tx to do a priority
 // calculation, but we should be able to refactor after priority is removed).
@@ -289,4 +289,3 @@ bool CFeeBumper::commit(CWallet *pWallet)
     }
     return true;
 }
-

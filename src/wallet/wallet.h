@@ -1278,7 +1278,7 @@ public:
     }
 };
 
-// Helper for producing a bunch of max-sized low-S signatures (eg 72 bytes)
+// Helper for producing a bunch of max-sized signatures for fee estimation.
 // ContainerType is meant to hold pair<CWalletTx *, int>, and be iterable
 // so that each entry corresponds to each vIn, in order.
 // Returns true if all inputs could be signed normally, false if any were padded out for sizing purposes.
