@@ -31,7 +31,7 @@ unsigned int GetMaxBlockSerializedSize()
 
 int GetCoinbaseMaturity()
 {
-    if (Params().NetworkIDString() == CBaseChainParams::TESTNET) {
+    if (GetParams().NetworkIDString() == CBaseChainParams::TESTNET) {
         return COINBASE_MATURITY_TESTNET;
     }
 
