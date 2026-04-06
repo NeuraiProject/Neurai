@@ -55,6 +55,63 @@ const char* GetTxnOutputType(txnouttype t)
     return nullptr;
 }
 
+namespace {
+bool ExtractAssetDestinationData(const CScript& scriptPubKey, CTxDestination* destinationRet, std::vector<unsigned char>* hashBytesRet, int* prefixSizeRet, int* witnessversionRet, std::vector<unsigned char>* witnessprogramRet)
+{
+    if (witnessversionRet) {
+        *witnessversionRet = 0;
+    }
+    if (witnessprogramRet) {
+        witnessprogramRet->clear();
+    }
+
+    if (scriptPubKey.size() >= 25 &&
+        scriptPubKey[0] == OP_DUP &&
+        scriptPubKey[1] == OP_HASH160 &&
+        scriptPubKey[2] == 0x14 &&
+        scriptPubKey[23] == OP_EQUALVERIFY &&
+        scriptPubKey[24] == OP_CHECKSIG) {
+        std::vector<unsigned char> hashBytes(scriptPubKey.begin() + 3, scriptPubKey.begin() + 23);
+        if (destinationRet) {
+            *destinationRet = CKeyID(uint160(hashBytes));
+        }
+        if (hashBytesRet) {
+            *hashBytesRet = hashBytes;
+        }
+        if (prefixSizeRet) {
+            *prefixSizeRet = 25;
+        }
+        return true;
+    }
+
+    if (scriptPubKey.size() >= 22) {
+        CScript prefix(scriptPubKey.begin(), scriptPubKey.begin() + 22);
+        int witnessversion = 0;
+        std::vector<unsigned char> witnessprogram;
+        if (prefix.IsWitnessProgram(witnessversion, witnessprogram) && witnessversion == 1 && witnessprogram.size() == 20) {
+            if (destinationRet) {
+                *destinationRet = WitnessV1KeyHash(uint160(witnessprogram));
+            }
+            if (hashBytesRet) {
+                *hashBytesRet = witnessprogram;
+            }
+            if (prefixSizeRet) {
+                *prefixSizeRet = 22;
+            }
+            if (witnessversionRet) {
+                *witnessversionRet = witnessversion;
+            }
+            if (witnessprogramRet) {
+                *witnessprogramRet = witnessprogram;
+            }
+            return true;
+        }
+    }
+
+    return false;
+}
+} // namespace
+
 bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, std::vector<std::vector<unsigned char> >& vSolutionsRet)
 {
     // Templates
@@ -87,7 +144,10 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, std::vector<std::v
     bool fIsOwner = false;
     if (scriptPubKey.IsAssetScript(nType, fIsOwner)) {
         typeRet = (txnouttype)nType;
-        std::vector<unsigned char> hashBytes(scriptPubKey.begin()+3, scriptPubKey.begin()+23);
+        std::vector<unsigned char> hashBytes;
+        if (!ExtractAssetDestinationData(scriptPubKey, nullptr, &hashBytes, nullptr, nullptr, nullptr)) {
+            return false;
+        }
         vSolutionsRet.push_back(hashBytes);
         return true;
     }
@@ -251,8 +311,7 @@ bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
         return true;
     /** XNA START */
     } else if (whichType == TX_NEW_ASSET || whichType == TX_REISSUE_ASSET || whichType == TX_TRANSFER_ASSET) {
-        addressRet = CKeyID(uint160(vSolutions[0]));
-        return true;
+        return ExtractAssetDestination(scriptPubKey, addressRet);
     } else if (whichType == TX_RESTRICTED_ASSET_DATA) {
         if (vSolutions.size()) {
             addressRet = CKeyID(uint160(vSolutions[0]));
@@ -266,6 +325,109 @@ bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
     }
     // Multisig txns have more than one address...
     return false;
+}
+
+bool ExtractAssetDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
+{
+    return ExtractAssetDestinationData(scriptPubKey, &addressRet, nullptr, nullptr, nullptr, nullptr);
+}
+
+bool GetAssetScriptWitnessProgram(const CScript& scriptPubKey, int& witnessversion, std::vector<unsigned char>& witnessprogram, CScript* witnessScript)
+{
+    int nType = 0;
+    bool fIsOwner = false;
+    if (!scriptPubKey.IsAssetScript(nType, fIsOwner)) {
+        return false;
+    }
+
+    int prefixSize = 0;
+    if (!ExtractAssetDestinationData(scriptPubKey, nullptr, nullptr, &prefixSize, &witnessversion, &witnessprogram)) {
+        return false;
+    }
+
+    if (witnessversion != 1 || witnessprogram.size() != 20) {
+        return false;
+    }
+
+    if (witnessScript) {
+        witnessScript->clear();
+        *witnessScript << OP_DUP << OP_HASH160 << witnessprogram << OP_EQUALVERIFY << OP_CHECKSIG;
+        witnessScript->insert(witnessScript->end(), scriptPubKey.begin() + prefixSize, scriptPubKey.end());
+    }
+
+    return true;
+}
+
+bool GetDestinationIndexKey(const CTxDestination& dest, uint160& hashBytes, int& type)
+{
+    if (const CKeyID* keyID = boost::get<CKeyID>(&dest)) {
+        hashBytes = *keyID;
+        type = DEST_INDEX_KEY;
+        return true;
+    }
+    if (const CScriptID* scriptID = boost::get<CScriptID>(&dest)) {
+        hashBytes = *scriptID;
+        type = DEST_INDEX_SCRIPT;
+        return true;
+    }
+    if (const WitnessV1KeyHash* witnessKeyID = boost::get<WitnessV1KeyHash>(&dest)) {
+        hashBytes = *witnessKeyID;
+        type = DEST_INDEX_WITNESS_V1_KEY;
+        return true;
+    }
+
+    hashBytes.SetNull();
+    type = DEST_INDEX_NONE;
+    return false;
+}
+
+bool GetScriptDestinationIndexKey(const CScript& scriptPubKey, uint160& hashBytes, int& type)
+{
+    std::vector<valtype> vSolutions;
+    txnouttype whichType;
+    if (!Solver(scriptPubKey, whichType, vSolutions)) {
+        hashBytes.SetNull();
+        type = DEST_INDEX_NONE;
+        return false;
+    }
+
+    CTxDestination destination;
+    switch (whichType) {
+    case TX_PUBKEY: {
+        CPubKey pubKey(vSolutions[0]);
+        if (!pubKey.IsValid()) {
+            hashBytes.SetNull();
+            type = DEST_INDEX_NONE;
+            return false;
+        }
+        destination = pubKey.GetID();
+        break;
+    }
+    case TX_PUBKEYHASH:
+        destination = CKeyID(uint160(vSolutions[0]));
+        break;
+    case TX_SCRIPTHASH:
+        destination = CScriptID(uint160(vSolutions[0]));
+        break;
+    case TX_WITNESS_V1_KEYHASH:
+        destination = WitnessV1KeyHash(uint160(vSolutions[0]));
+        break;
+    case TX_NEW_ASSET:
+    case TX_REISSUE_ASSET:
+    case TX_TRANSFER_ASSET:
+        if (!ExtractAssetDestination(scriptPubKey, destination)) {
+            hashBytes.SetNull();
+            type = DEST_INDEX_NONE;
+            return false;
+        }
+        break;
+    default:
+        hashBytes.SetNull();
+        type = DEST_INDEX_NONE;
+        return false;
+    }
+
+    return GetDestinationIndexKey(destination, hashBytes, type);
 }
 
 bool ExtractDestinations(const CScript& scriptPubKey, txnouttype& typeRet, std::vector<CTxDestination>& addressRet, int& nRequiredRet)

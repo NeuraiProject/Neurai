@@ -99,17 +99,6 @@ bool static IsPostQuantumPubKey(const valtype &vchPubKey)
     return vchPubKey.size() == 1 + ML_DSA_44_PUBKEY_SIZE && !vchPubKey.empty() && vchPubKey[0] == 0x05;
 }
 
-bool static IsAllowedStackPushSize(const valtype& data)
-{
-    if (data.size() <= MAX_SCRIPT_ELEMENT_SIZE) {
-        return true;
-    }
-
-    // Asset scripts currently spend through scriptSig, so PQ signatures and
-    // pubkeys must be allowed to exceed the legacy 520-byte element limit.
-    return data.size() == ML_DSA_44_SIG_SIZE + 1 || IsPostQuantumPubKey(data);
-}
-
 bool static IsCompressedPubKey(const valtype &vchPubKey)
 {
     if (vchPubKey.size() != 33)
@@ -360,7 +349,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
             //
             if (!script.GetOp(pc, opcode, vchPushValue))
                 return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
-            if (!IsAllowedStackPushSize(vchPushValue))
+            if (vchPushValue.size() > MAX_SCRIPT_ELEMENT_SIZE)
                 return set_error(serror, SCRIPT_ERR_PUSH_SIZE);
 
             // Note how OP_RESERVED does not count towards the opcode limit.
@@ -1642,6 +1631,53 @@ static bool VerifyWitnessProgram(const CScriptWitness &witness, int witversion, 
     return true;
 }
 
+static bool VerifyAssetWitnessProgram(const CScriptWitness& witness, int witversion, const std::vector<unsigned char>& program, const CScript& assetScriptCode, unsigned int flags, const BaseSignatureChecker& checker, ScriptError* serror)
+{
+    if (witversion == 1 && program.size() == 20 && (flags & SCRIPT_VERIFY_PQ_WITNESS_V1)) {
+        if (witness.stack.size() != 2) {
+            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+        }
+
+        const std::vector<unsigned char>& vchPubKey = witness.stack[1];
+        const std::vector<unsigned char>& vchSigWithHashtype = witness.stack[0];
+        if (vchPubKey.size() != 1 + ML_DSA_44_PUBKEY_SIZE || vchPubKey[0] != 0x05) {
+            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+        }
+        if (vchSigWithHashtype.size() != ML_DSA_44_SIG_SIZE + 1) {
+            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+        }
+
+        uint160 pubkeyHash = Hash160(vchPubKey.begin(), vchPubKey.end());
+        if (memcmp(pubkeyHash.begin(), program.data(), 20) != 0) {
+            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+        }
+
+        int nHashType = vchSigWithHashtype.back();
+        if ((nHashType & (~SIGHASH_ANYONECANPAY)) < SIGHASH_ALL ||
+            (nHashType & (~SIGHASH_ANYONECANPAY)) > SIGHASH_SINGLE) {
+            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+        }
+
+        std::vector<std::vector<unsigned char> > stack = witness.stack;
+        if (!EvalScript(stack, assetScriptCode, flags, checker, SIGVERSION_WITNESS_V0, serror)) {
+            return false;
+        }
+        if (stack.size() != 1) {
+            return set_error(serror, SCRIPT_ERR_EVAL_FALSE);
+        }
+        if (!CastToBool(stack.back())) {
+            return set_error(serror, SCRIPT_ERR_EVAL_FALSE);
+        }
+        return set_success(serror);
+    }
+
+    if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM) {
+        return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM);
+    }
+
+    return set_success(serror);
+}
+
 
 bool VerifyScript(const CScript &scriptSig, const CScript &scriptPubKey, const CScriptWitness *witness, unsigned int flags, const BaseSignatureChecker &checker, ScriptError *serror)
 {
@@ -1657,6 +1693,22 @@ bool VerifyScript(const CScript &scriptSig, const CScript &scriptPubKey, const C
     if ((flags & SCRIPT_VERIFY_SIGPUSHONLY) != 0 && !scriptSig.IsPushOnly())
     {
         return set_error(serror, SCRIPT_ERR_SIG_PUSHONLY);
+    }
+
+    int assetWitnessVersion = 0;
+    std::vector<unsigned char> assetWitnessProgram;
+    CScript assetWitnessScript;
+    if (GetAssetScriptWitnessProgram(scriptPubKey, assetWitnessVersion, assetWitnessProgram, &assetWitnessScript)) {
+        if ((flags & SCRIPT_VERIFY_WITNESS) == 0) {
+            return set_error(serror, SCRIPT_ERR_WITNESS_UNEXPECTED);
+        }
+        if (scriptSig.size() != 0) {
+            return set_error(serror, SCRIPT_ERR_WITNESS_MALLEATED);
+        }
+        if (!VerifyAssetWitnessProgram(*witness, assetWitnessVersion, assetWitnessProgram, assetWitnessScript, flags, checker, serror)) {
+            return false;
+        }
+        return set_success(serror);
     }
 
     std::vector<std::vector<unsigned char> > stack, stackCopy;
@@ -1796,6 +1848,10 @@ size_t static WitnessSigOps(int witversion, const std::vector<unsigned char> &wi
         }
     }
 
+    if (witversion == 1 && witprogram.size() == 20 && (flags & SCRIPT_VERIFY_PQ_WITNESS_V1)) {
+        return 1;
+    }
+
     // Future flags may be implemented here.
     return 0;
 }
@@ -1814,6 +1870,10 @@ size_t CountWitnessSigOps(const CScript &scriptSig, const CScript &scriptPubKey,
     std::vector<unsigned char> witnessprogram;
     if (scriptPubKey.IsWitnessProgram(witnessversion, witnessprogram))
     {
+        return WitnessSigOps(witnessversion, witnessprogram, witness ? *witness : witnessEmpty, flags);
+    }
+
+    if (GetAssetScriptWitnessProgram(scriptPubKey, witnessversion, witnessprogram)) {
         return WitnessSigOps(witnessversion, witnessprogram, witness ? *witness : witnessEmpty, flags);
     }
 

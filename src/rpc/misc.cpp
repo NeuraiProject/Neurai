@@ -653,10 +653,12 @@ UniValue echo(const JSONRPCRequest& request)
 
 bool getAddressFromIndex(const int &type, const uint160 &hash, std::string &address)
 {
-    if (type == 2) {
-        address = CNeuraiAddress(CScriptID(hash)).ToString();
-    } else if (type == 1) {
-        address = CNeuraiAddress(CKeyID(hash)).ToString();
+    if (type == DEST_INDEX_SCRIPT) {
+        address = EncodeDestination(CScriptID(hash));
+    } else if (type == DEST_INDEX_KEY) {
+        address = EncodeDestination(CKeyID(hash));
+    } else if (type == DEST_INDEX_WITNESS_V1_KEY) {
+        address = EncodeDestination(WitnessV1KeyHash(hash));
     } else {
         return false;
     }
@@ -666,10 +668,10 @@ bool getAddressFromIndex(const int &type, const uint160 &hash, std::string &addr
 bool getAddressesFromParams(const UniValue& params, std::vector<std::pair<uint160, int> > &addresses)
 {
     if (params[0].isStr()) {
-        CNeuraiAddress address(params[0].get_str());
         uint160 hashBytes;
-        int type = 0;
-        if (!address.GetIndexKey(hashBytes, type)) {
+        int type = DEST_INDEX_NONE;
+        CTxDestination dest = DecodeDestination(params[0].get_str());
+        if (!IsValidDestination(dest) || !GetDestinationIndexKey(dest, hashBytes, type)) {
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
         }
         addresses.push_back(std::make_pair(hashBytes, type));
@@ -683,11 +685,10 @@ bool getAddressesFromParams(const UniValue& params, std::vector<std::pair<uint16
         std::vector<UniValue> values = addressValues.getValues();
 
         for (std::vector<UniValue>::iterator it = values.begin(); it != values.end(); ++it) {
-
-            CNeuraiAddress address(it->get_str());
             uint160 hashBytes;
-            int type = 0;
-            if (!address.GetIndexKey(hashBytes, type)) {
+            int type = DEST_INDEX_NONE;
+            CTxDestination dest = DecodeDestination(it->get_str());
+            if (!IsValidDestination(dest) || !GetDestinationIndexKey(dest, hashBytes, type)) {
                 throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
             }
             addresses.push_back(std::make_pair(hashBytes, type));
@@ -1353,12 +1354,12 @@ UniValue getpubkey(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
     }
 
-    const CKeyID* keyID = boost::get<CKeyID>(&dest);
-    if (!keyID) {
+    uint160 addressHash;
+    int addressType = DEST_INDEX_NONE;
+    if (!GetDestinationIndexKey(dest, addressHash, addressType) ||
+        (addressType != DEST_INDEX_KEY && addressType != DEST_INDEX_WITNESS_V1_KEY)) {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address does not refer to a key");
     }
-
-    uint160 addressHash(*keyID);
     CPubKeyIndexValue value;
     UniValue result(UniValue::VOBJ);
 

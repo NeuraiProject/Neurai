@@ -113,6 +113,14 @@ public:
  */
 typedef boost::variant<CNoDestination, CKeyID, CScriptID, WitnessV1KeyHash> CTxDestination;
 
+enum DestinationIndexType
+{
+    DEST_INDEX_NONE = 0,
+    DEST_INDEX_KEY = 1,
+    DEST_INDEX_SCRIPT = 2,
+    DEST_INDEX_WITNESS_V1_KEY = 3,
+};
+
 /** Check whether a CTxDestination is a CNoDestination. */
 bool IsValidDestination(const CTxDestination& dest);
 
@@ -139,6 +147,18 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, std::vector<std::v
  * P2PKH, and P2SH scripts.
  */
 bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet);
+
+/** Extract the spend destination encoded in an asset script. */
+bool ExtractAssetDestination(const CScript& scriptPubKey, CTxDestination& addressRet);
+
+/** Detect asset scripts that use a witness destination and reconstruct the executable witness script. */
+bool GetAssetScriptWitnessProgram(const CScript& scriptPubKey, int& witnessversion, std::vector<unsigned char>& witnessprogram, CScript* witnessScript = nullptr);
+
+/** Convert a destination into the hash/type pair used by address and pubkey indexes. */
+bool GetDestinationIndexKey(const CTxDestination& dest, uint160& hashBytes, int& type);
+
+/** Extract the hash/type pair used by address and pubkey indexes from a spendable script. */
+bool GetScriptDestinationIndexKey(const CScript& scriptPubKey, uint160& hashBytes, int& type);
 
 /**
  * Parse a standard scriptPubKey with one or more destination addresses. For

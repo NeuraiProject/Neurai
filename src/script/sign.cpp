@@ -192,6 +192,28 @@ static CScript PushAll(const std::vector<valtype>& values)
 
 bool ProduceSignature(const BaseSignatureCreator& creator, const CScript& fromPubKey, SignatureData& sigdata)
 {
+    int assetWitnessVersion = 0;
+    std::vector<unsigned char> assetWitnessProgram;
+    CScript assetWitnessScript;
+    if (GetAssetScriptWitnessProgram(fromPubKey, assetWitnessVersion, assetWitnessProgram, &assetWitnessScript)) {
+        CKeyID keyID{uint160(assetWitnessProgram)};
+        CPubKey pubkey;
+        if (!creator.KeyStore().GetPubKey(keyID, pubkey) || !pubkey.IsPQ()) {
+            return false;
+        }
+
+        std::vector<unsigned char> vchSig;
+        if (!creator.CreateSig(vchSig, keyID, assetWitnessScript, SIGVERSION_WITNESS_V0)) {
+            return false;
+        }
+
+        sigdata.scriptSig = CScript();
+        sigdata.scriptWitness.stack.clear();
+        sigdata.scriptWitness.stack.push_back(vchSig);
+        sigdata.scriptWitness.stack.push_back(ToByteVector(pubkey));
+        return VerifyScript(sigdata.scriptSig, fromPubKey, &sigdata.scriptWitness, LocalScriptVerifyFlags(), creator.Checker());
+    }
+
     CScript script = fromPubKey;
     std::vector<valtype> result;
     txnouttype whichType;
@@ -380,6 +402,10 @@ static Stacks CombineSignatures(const CScript& scriptPubKey, const BaseSignature
                                  const txnouttype txType, const std::vector<valtype>& vSolutions,
                                  Stacks sigs1, Stacks sigs2, SigVersion sigversion)
 {
+    int assetWitnessVersion = 0;
+    std::vector<unsigned char> assetWitnessProgram;
+    const bool assetUsesWitness = GetAssetScriptWitnessProgram(scriptPubKey, assetWitnessVersion, assetWitnessProgram);
+
     switch (txType)
     {
     case TX_NONSTANDARD:
@@ -451,17 +477,29 @@ static Stacks CombineSignatures(const CScript& scriptPubKey, const BaseSignature
             return result;
         }
     case TX_TRANSFER_ASSET:
-        // Signatures are bigger than placeholders or empty scripts:
+        if (assetUsesWitness) {
+            if (sigs1.witness.empty() || sigs1.witness[0].empty())
+                return sigs2;
+            return sigs1;
+        }
         if (sigs1.script.empty() || sigs1.script[0].empty())
             return sigs2;
         return sigs1;
     case TX_NEW_ASSET:
-        // Signatures are bigger than placeholders or empty scripts:
+        if (assetUsesWitness) {
+            if (sigs1.witness.empty() || sigs1.witness[0].empty())
+                return sigs2;
+            return sigs1;
+        }
         if (sigs1.script.empty() || sigs1.script[0].empty())
             return sigs2;
         return sigs1;
     case TX_REISSUE_ASSET:
-        // Signatures are bigger than placeholders or empty scripts:
+        if (assetUsesWitness) {
+            if (sigs1.witness.empty() || sigs1.witness[0].empty())
+                return sigs2;
+            return sigs1;
+        }
         if (sigs1.script.empty() || sigs1.script[0].empty())
             return sigs2;
         return sigs1;

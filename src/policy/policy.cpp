@@ -38,32 +38,6 @@ static size_t EstimateWitnessInputVBytes(int witnessversion, const std::vector<u
     return (32 + 4 + 1 + (107 / WITNESS_SCALE_FACTOR) + 4);
 }
 
-static bool IsStandardPQScriptSig(const CScript& scriptSig)
-{
-    CScript::const_iterator pc = scriptSig.begin();
-    opcodetype opcode;
-    std::vector<unsigned char> signature;
-    std::vector<unsigned char> pubkey;
-
-    if (!scriptSig.GetOp(pc, opcode, signature)) {
-        return false;
-    }
-
-    if (!scriptSig.GetOp(pc, opcode, pubkey)) {
-        return false;
-    }
-
-    if (pc != scriptSig.end()) {
-        return false;
-    }
-
-    return signature.size() == ML_DSA_44_SIG_SIZE + 1 &&
-           pubkey.size() == 1 + ML_DSA_44_PUBKEY_SIZE &&
-           !pubkey.empty() &&
-           pubkey[0] == 0x05;
-}
-
-
 CAmount GetDustThreshold(const CTxOut& txout, const CFeeRate& dustRelayFeeIn)
 {
     // "Dust" is defined in terms of dustRelayFee,
@@ -112,6 +86,12 @@ bool IsStandard(const CScript& scriptPubKey, txnouttype& whichType, const bool w
     if (!Solver(scriptPubKey, whichType, vSolutions))
         return false;
 
+    int assetWitnessVersion = 0;
+    std::vector<unsigned char> assetWitnessProgram;
+    if (!witnessEnabled && GetAssetScriptWitnessProgram(scriptPubKey, assetWitnessVersion, assetWitnessProgram)) {
+        return false;
+    }
+
 
     if (whichType == TX_MULTISIG) {
         unsigned char m = vSolutions.front()[0];
@@ -158,8 +138,7 @@ bool IsStandardTx(const CTransaction& tx, std::string& reason, const bool witnes
         // future-proofing. That's also enough to spend a 20-of-20
         // CHECKMULTISIG scriptPubKey, though such a scriptPubKey is not
         // considered standard.
-        const unsigned int maxStandardScriptSigSize = IsStandardPQScriptSig(txin.scriptSig) ? 3800 : 1650;
-        if (txin.scriptSig.size() > maxStandardScriptSigSize) {
+        if (txin.scriptSig.size() > 1650) {
             reason = "scriptsig-size";
             return false;
         }
@@ -289,7 +268,8 @@ bool IsWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs)
         std::vector<unsigned char> witnessprogram;
 
         // Non-witness program must not be associated with any witness
-        if (!prevScript.IsWitnessProgram(witnessversion, witnessprogram))
+        if (!prevScript.IsWitnessProgram(witnessversion, witnessprogram) &&
+            !GetAssetScriptWitnessProgram(prevScript, witnessversion, witnessprogram))
             return false;
 
         // Check P2WSH standard limits

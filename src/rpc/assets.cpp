@@ -1216,12 +1216,13 @@ UniValue listdepinaddresses(const JSONRPCRequest &request)
     for (const auto& pair : vecAddressAmounts) {
         const std::string& address = pair.first;
 
-        // Convert address to hash160
         CTxDestination dest = DecodeDestination(address);
-        const CKeyID* keyID = boost::get<CKeyID>(&dest);
-        if (!keyID) continue;  // Skip non-P2PKH addresses
-
-        uint160 addressHash(*keyID);
+        uint160 addressHash;
+        int addressType = DEST_INDEX_NONE;
+        if (!IsValidDestination(dest) || !GetDestinationIndexKey(dest, addressHash, addressType) ||
+            (addressType != DEST_INDEX_KEY && addressType != DEST_INDEX_WITNESS_V1_KEY)) {
+            continue;
+        }
         CPubKeyIndexValue pubkeyValue;
 
         // Check if this address has a revealed pubkey

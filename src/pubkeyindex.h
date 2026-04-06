@@ -13,8 +13,9 @@
  * Public Key Index
  *
  * This index tracks addresses that have revealed their public keys by spending.
- * When an address spends (creates a transaction input), the scriptSig reveals
- * the public key, which can then be used for encryption purposes (e.g., ECIES).
+ * When an address spends, the pubkey is revealed either in scriptSig (legacy)
+ * or in scriptWitness (PQ witness), and can then be used for encryption
+ * purposes (e.g., ECIES).
  *
  * The index maps: address hash (uint160) -> public key + metadata
  */
@@ -43,7 +44,7 @@ struct CPubKeyIndexKey {
 };
 
 struct CPubKeyIndexValue {
-    CPubKey pubkey;      // The revealed public key (33 or 65 bytes)
+    CPubKey pubkey;      // The revealed public key (legacy secp256k1 or PQ)
     int nHeight;         // Block height where pubkey was first revealed
     uint256 txid;        // Transaction ID where it was revealed
 

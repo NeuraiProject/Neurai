@@ -528,7 +528,8 @@ void AssetControlDialog::updateLabels(WalletModel *model, QDialog* dialog)
         CTxDestination address;
         int witnessversion = 0;
         std::vector<unsigned char> witnessprogram;
-        if (out.tx->tx->vout[out.i].scriptPubKey.IsWitnessProgram(witnessversion, witnessprogram))
+        if (out.tx->tx->vout[out.i].scriptPubKey.IsWitnessProgram(witnessversion, witnessprogram) ||
+            GetAssetScriptWitnessProgram(out.tx->tx->vout[out.i].scriptPubKey, witnessversion, witnessprogram))
         {
             nBytesInputs += EstimateWitnessInputVBytes(witnessversion, witnessprogram);
             fWitness = true;

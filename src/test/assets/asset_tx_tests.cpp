@@ -16,6 +16,7 @@
 #include <script/interpreter.h>
 #include <script/sign.h>
 #include <base58.h>
+#include <coins.h>
 #include <consensus/validation.h>
 #include <consensus/tx_verify.h>
 #include <validation.h>
@@ -614,7 +615,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
 
     BOOST_AUTO_TEST_CASE(asset_scripts_normalize_pq_destinations_test)
     {
-        BOOST_TEST_MESSAGE("Running Asset PQ destination normalization test");
+        BOOST_TEST_MESSAGE("Running Asset PQ witness destination test");
 
         SelectParams(CBaseChainParams::TESTNET);
 
@@ -632,24 +633,38 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         BOOST_CHECK(newAssetScript.IsAssetScript(type, isOwner, startIndex));
         BOOST_CHECK_EQUAL(type, TX_NEW_ASSET);
         BOOST_CHECK(!isOwner);
-        BOOST_CHECK_EQUAL(newAssetScript[0], OP_DUP);
-        BOOST_CHECK_EQUAL(newAssetScript[25], OP_XNA_ASSET);
+        BOOST_CHECK_EQUAL(newAssetScript[0], OP_1);
+        BOOST_CHECK_EQUAL(newAssetScript[22], OP_XNA_ASSET);
 
         int witnessVersion = 0;
         std::vector<unsigned char> witnessProgram;
-        BOOST_CHECK(!newAssetScript.IsWitnessProgram(witnessVersion, witnessProgram));
+        BOOST_CHECK(GetAssetScriptWitnessProgram(newAssetScript, witnessVersion, witnessProgram));
+        BOOST_CHECK_EQUAL(witnessVersion, 1);
+        BOOST_CHECK_EQUAL(witnessProgram.size(), 20U);
+
+        uint160 indexHash;
+        int indexType = DEST_INDEX_NONE;
+        BOOST_CHECK(GetScriptDestinationIndexKey(newAssetScript, indexHash, indexType));
+        BOOST_CHECK_EQUAL(indexType, DEST_INDEX_WITNESS_V1_KEY);
+        BOOST_CHECK(indexHash == witnessHash);
 
         CAssetTransfer transferAsset("PQASSET", 1 * COIN);
         CScript transferScript = GetScriptForDestination(pqDestination);
         transferAsset.ConstructTransaction(transferScript);
         BOOST_CHECK(transferScript.IsAssetScript(type, isOwner, startIndex));
         BOOST_CHECK_EQUAL(type, TX_TRANSFER_ASSET);
+        BOOST_CHECK(GetAssetScriptWitnessProgram(transferScript, witnessVersion, witnessProgram));
+        BOOST_CHECK(GetScriptDestinationIndexKey(transferScript, indexHash, indexType));
+        BOOST_CHECK_EQUAL(indexType, DEST_INDEX_WITNESS_V1_KEY);
 
         CReissueAsset reissueAsset("PQASSET", 10 * COIN, 0, 1, "");
         CScript reissueScript = GetScriptForDestination(pqDestination);
         reissueAsset.ConstructTransaction(reissueScript);
         BOOST_CHECK(reissueScript.IsAssetScript(type, isOwner, startIndex));
         BOOST_CHECK_EQUAL(type, TX_REISSUE_ASSET);
+        BOOST_CHECK(GetAssetScriptWitnessProgram(reissueScript, witnessVersion, witnessProgram));
+        BOOST_CHECK(GetScriptDestinationIndexKey(reissueScript, indexHash, indexType));
+        BOOST_CHECK_EQUAL(indexType, DEST_INDEX_WITNESS_V1_KEY);
     }
 
     BOOST_AUTO_TEST_CASE(asset_transfer_pq_signs_with_standard_flags_test)
@@ -699,12 +714,16 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         const unsigned int flags = SCRIPT_VERIFY_P2SH |
                                    SCRIPT_VERIFY_STRICTENC |
                                    SCRIPT_VERIFY_DERSIG |
-                                   SCRIPT_VERIFY_LOW_S;
+                                   SCRIPT_VERIFY_LOW_S |
+                                   SCRIPT_VERIFY_WITNESS |
+                                   SCRIPT_VERIFY_WITNESS_PUBKEYTYPE |
+                                   SCRIPT_VERIFY_PQ_WITNESS_V1;
 
         BOOST_CHECK(VerifyScript(txTo.vin[0].scriptSig, assetScript, &txTo.vin[0].scriptWitness,
                                  flags, MutableTransactionSignatureChecker(&txTo, 0, 0), &err));
         BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OK);
-        BOOST_CHECK(txTo.vin[0].scriptWitness.stack.empty());
+        BOOST_CHECK(txTo.vin[0].scriptSig.empty());
+        BOOST_CHECK_EQUAL(txTo.vin[0].scriptWitness.stack.size(), 2U);
     }
 
     BOOST_AUTO_TEST_CASE(asset_owner_pq_signs_with_standard_policy_test)
@@ -749,13 +768,17 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
 
         const CTransaction fundingTx(txFrom);
         BOOST_CHECK(SignSignature(keystore, fundingTx, txTo, 0, SIGHASH_ALL));
-        BOOST_CHECK(txTo.vin[0].scriptSig.size() > 1650);
+        BOOST_CHECK(txTo.vin[0].scriptSig.empty());
+        BOOST_CHECK_EQUAL(txTo.vin[0].scriptWitness.stack.size(), 2U);
 
         ScriptError err = SCRIPT_ERR_UNKNOWN_ERROR;
         const unsigned int flags = SCRIPT_VERIFY_P2SH |
                                    SCRIPT_VERIFY_STRICTENC |
                                    SCRIPT_VERIFY_DERSIG |
-                                   SCRIPT_VERIFY_LOW_S;
+                                   SCRIPT_VERIFY_LOW_S |
+                                   SCRIPT_VERIFY_WITNESS |
+                                   SCRIPT_VERIFY_WITNESS_PUBKEYTYPE |
+                                   SCRIPT_VERIFY_PQ_WITNESS_V1;
 
         BOOST_CHECK(VerifyScript(txTo.vin[0].scriptSig, ownerScript, &txTo.vin[0].scriptWitness,
                                  flags, MutableTransactionSignatureChecker(&txTo, 0, 0), &err));
@@ -763,6 +786,11 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
 
         std::string reason;
         BOOST_CHECK(IsStandardTx(CTransaction(txTo), reason, true));
+
+        CCoinsView view;
+        CCoinsViewCache coins(&view);
+        coins.AddCoin(COutPoint(txFrom.GetHash(), 0), Coin(CTxOut(0, ownerScript), 1, false), true);
+        BOOST_CHECK(IsWitnessStandard(CTransaction(txTo), coins));
     }
 
     BOOST_AUTO_TEST_CASE(pq_witness_dummy_signature_test)

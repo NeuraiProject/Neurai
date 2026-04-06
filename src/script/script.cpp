@@ -248,40 +248,58 @@ bool CScript::IsAssetScript(int& nType, bool& isOwner) const
 
 bool CScript::IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex) const
 {
-    if (this->size() > 31) {
-        if ((*this)[25] == OP_XNA_ASSET) { // OP_XNA_ASSET is always in the 25 index of the script if it exists
-            int index = -1;
-            if ((*this)[27] == XNA_R) { // Check to see if XNA starts at 27 ( this->size() < 105)
-                if ((*this)[28] == XNA_V)
-                    if ((*this)[29] == XNA_N)
-                        index = 30;
-            } else {
-                if ((*this)[28] == XNA_R) // Check to see if XNA starts at 28 ( this->size() >= 105)
-                    if ((*this)[29] == XNA_V)
-                        if ((*this)[30] == XNA_N)
-                            index = 31;
-            }
-
-            if (index > 0) {
-                nStartingIndex = index + 1; // Set the index where the asset data begins. Use to serialize the asset data into asset objects
-                if ((*this)[index] == XNA_T) { // Transfer first anticipating more transfers than other assets operations
-                    nType = TX_TRANSFER_ASSET;
-                    return true;
-                } else if ((*this)[index] == XNA_Q && this->size() > 39) {
-                    nType = TX_NEW_ASSET;
-                    fIsOwner = false;
-                    return true;
-                } else if ((*this)[index] == XNA_O) {
-                    nType = TX_NEW_ASSET;
-                    fIsOwner = true;
-                    return true;
-                } else if ((*this)[index] == XNA_R) {
-                    nType = TX_REISSUE_ASSET;
-                    return true;
-                }
-            }
-        }
+    int assetOpIndex = -1;
+    if (this->size() > 31 &&
+        (*this)[0] == OP_DUP &&
+        (*this)[1] == OP_HASH160 &&
+        (*this)[2] == 0x14 &&
+        (*this)[23] == OP_EQUALVERIFY &&
+        (*this)[24] == OP_CHECKSIG) {
+        assetOpIndex = 25;
+    } else if (this->size() > 28 &&
+               (*this)[0] == OP_1 &&
+               (*this)[1] == 0x14) {
+        assetOpIndex = 22;
+    } else {
+        return false;
     }
+
+    CScript::const_iterator pc = begin() + assetOpIndex;
+    opcodetype opcode;
+    std::vector<unsigned char> assetMessage;
+    if (!GetOp(pc, opcode) || opcode != OP_XNA_ASSET) {
+        return false;
+    }
+
+    if (!GetOp(pc, opcode, assetMessage)) {
+        return false;
+    }
+
+    if (assetMessage.size() < 4 || assetMessage[0] != XNA_R || assetMessage[1] != XNA_V || assetMessage[2] != XNA_N) {
+        return false;
+    }
+
+    if (!GetOp(pc, opcode) || opcode != OP_DROP || pc != end()) {
+        return false;
+    }
+
+    nStartingIndex = static_cast<int>((pc - begin()) - 1 - assetMessage.size()) + 4;
+    if (assetMessage[3] == XNA_T) {
+        nType = TX_TRANSFER_ASSET;
+        return true;
+    } else if (assetMessage[3] == XNA_Q && this->size() > 39) {
+        nType = TX_NEW_ASSET;
+        fIsOwner = false;
+        return true;
+    } else if (assetMessage[3] == XNA_O) {
+        nType = TX_NEW_ASSET;
+        fIsOwner = true;
+        return true;
+    } else if (assetMessage[3] == XNA_R) {
+        nType = TX_REISSUE_ASSET;
+        return true;
+    }
+
     return false;
 }
 
@@ -597,5 +615,4 @@ bool AmountFromReissueScript(const CScript& scriptPubKey, CAmount& nAmount)
     return true;
 }
 //!--------------------------------------------------------------------------------------------------------------------------!//
-
 

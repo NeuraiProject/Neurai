@@ -62,10 +62,12 @@ void TxToJSON(const CTransaction& tx, const uint256 hashBlock, UniValue& entry, 
                 if (GetSpentIndex(spentKey, spentInfo)) {
                     in.pushKV("value", ValueFromAmount(spentInfo.satoshis));
                     in.pushKV("valueSat", spentInfo.satoshis);
-                    if (spentInfo.addressType == 1) {
-                        in.pushKV("address", CNeuraiAddress(CKeyID(spentInfo.addressHash)).ToString());
-                    } else if (spentInfo.addressType == 2) {
-                        in.pushKV("address", CNeuraiAddress(CScriptID(spentInfo.addressHash)).ToString());
+                    if (spentInfo.addressType == DEST_INDEX_KEY) {
+                        in.pushKV("address", EncodeDestination(CKeyID(spentInfo.addressHash)));
+                    } else if (spentInfo.addressType == DEST_INDEX_SCRIPT) {
+                        in.pushKV("address", EncodeDestination(CScriptID(spentInfo.addressHash)));
+                    } else if (spentInfo.addressType == DEST_INDEX_WITNESS_V1_KEY) {
+                        in.pushKV("address", EncodeDestination(WitnessV1KeyHash(spentInfo.addressHash)));
                     }
                 }
                 newVin.push_back(in);

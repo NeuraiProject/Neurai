@@ -81,17 +81,7 @@ static const std::string MSG_CHANNEL_TAG_DELIMITER = "~";
 
 static void NormalizeAssetDestinationScript(CScript& script)
 {
-    int witnessVersion = 0;
-    std::vector<unsigned char> witnessProgram;
-
-    // Asset scripts append payload after the destination prefix, so the prefix
-    // must remain an executable script template. A bare witness program with
-    // appended asset data would not be parsed or spent correctly later.
-    if (script.IsWitnessProgram(witnessVersion, witnessProgram) && witnessVersion == 1 && witnessProgram.size() == 20) {
-        CScript legacyStyleScript;
-        legacyStyleScript << OP_DUP << OP_HASH160 << witnessProgram << OP_EQUALVERIFY << OP_CHECKSIG;
-        script = legacyStyleScript;
-    }
+    (void)script;
 }
 
 static const std::string VOTE_TAG_DELIMITER = "^";
@@ -4709,8 +4699,19 @@ bool ParseAssetScript(CScript scriptPubKey, uint160 &hashBytes, std::string &ass
     }
     if (isAsset) {
 //        LogPrintf("%s : Found assets in script at address %s : %s (%s)", __func__, _strAddress, assetName, assetAmount);
-        hashBytes = uint160(std::vector <unsigned char>(scriptPubKey.begin()+3, scriptPubKey.begin()+23));
-        return true;
+        CTxDestination destination;
+        if (!ExtractAssetDestination(scriptPubKey, destination)) {
+            return false;
+        }
+
+        if (const CKeyID* keyID = boost::get<CKeyID>(&destination)) {
+            hashBytes = uint160(*keyID);
+            return true;
+        }
+        if (const WitnessV1KeyHash* witnessKeyHash = boost::get<WitnessV1KeyHash>(&destination)) {
+            hashBytes = uint160(*witnessKeyHash);
+            return true;
+        }
     }
     return false;
 }
