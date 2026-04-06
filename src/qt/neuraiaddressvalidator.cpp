@@ -66,12 +66,13 @@ QValidator::State NeuraiAddressEntryValidator::validate(QString &input, int &pos
     {
         int ch = input.at(idx).unicode();
 
-        if (((ch >= '0' && ch<='9') ||
+        if ((ch >= '0' && ch<='9') ||
             (ch >= 'a' && ch<='z') ||
-            (ch >= 'A' && ch<='Z')) &&
-            ch != 'l' && ch != 'I' && ch != '0' && ch != 'O')
+            (ch >= 'A' && ch<='Z'))
         {
-            // Alphanumeric and not a 'forbidden' character
+            // Allow the union of Base58 and Bech32/Bech32m character sets.
+            // The strict validator below still rejects any address that is not
+            // a real Neurai destination.
         }
         else
         {

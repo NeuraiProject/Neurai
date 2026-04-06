@@ -433,8 +433,8 @@ void SendCoinsDialog::on_sendButton_clicked()
         questionString.append("</span> ");
         questionString.append(tr("added as transaction fee"));
 
-        // append transaction size
-        questionString.append(" (" + QString::number((double)currentTransaction.getTransactionSize() / 1000) + " kB)");
+        // Show virtual size here; transaction details later display raw serialized bytes.
+        questionString.append(" (" + tr("virtual size: %1 kVB").arg(QString::number((double)currentTransaction.getTransactionSize() / 1000, 'f', 3)) + ")");
     }
 
     // add total amount in all subdivision units

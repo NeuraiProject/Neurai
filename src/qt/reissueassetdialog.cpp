@@ -1017,7 +1017,7 @@ void ReissueAssetDialog::onReissueAssetClicked()
         questionString.append(tr("added as transaction fee"));
 
         // append transaction size
-        questionString.append(" (" + QString::number((double)GetVirtualTransactionSize(tx) / 1000) + " kB)");
+        questionString.append(" (" + tr("virtual size: %1 kVB").arg(QString::number((double)GetVirtualTransactionSize(tx) / 1000, 'f', 3)) + ")");
     }
 
     // add total amount in all subdivision units
@@ -1490,5 +1490,4 @@ void ReissueAssetDialog::hideInvalidVerifierStringMessage()
     ui->labelReissueVerifierStringErrorMessage->clear();
     ui->labelReissueVerifierStringErrorMessage->hide();
 }
-
 

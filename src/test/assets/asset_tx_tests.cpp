@@ -706,4 +706,27 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         BOOST_CHECK(txTo.vin[0].scriptWitness.stack.empty());
     }
 
+    BOOST_AUTO_TEST_CASE(pq_witness_dummy_signature_test)
+    {
+        BOOST_TEST_MESSAGE("Running PQ witness dummy signature test");
+
+        SelectParams(CBaseChainParams::TESTNET);
+
+        CBasicKeyStore keystore;
+        CKey key;
+        key.MakeNewKeyPQ();
+        CPubKey pubkey = key.GetPubKey();
+        BOOST_CHECK(pubkey.IsPQ());
+        BOOST_CHECK(keystore.AddKeyPubKey(key, pubkey));
+
+        CScript witnessScript = GetScriptForDestination(WitnessV1KeyHash(pubkey.GetID()));
+        SignatureData sigdata;
+
+        BOOST_CHECK(ProduceSignature(DummySignatureCreator(&keystore), witnessScript, sigdata));
+        BOOST_CHECK(sigdata.scriptSig.empty());
+        BOOST_CHECK_EQUAL(sigdata.scriptWitness.stack.size(), 2U);
+        BOOST_CHECK_EQUAL(sigdata.scriptWitness.stack[0].size(), ML_DSA_44_SIG_SIZE + 1);
+        BOOST_CHECK_EQUAL(sigdata.scriptWitness.stack[1].size(), 1U + ML_DSA_44_PUBKEY_SIZE);
+    }
+
 BOOST_AUTO_TEST_SUITE_END()
