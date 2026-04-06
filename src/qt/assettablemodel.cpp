@@ -47,6 +47,13 @@ bool RecoverAssetMetadataFromOutputs(const std::vector<COutput>& outputs, uint8_
             ipfsHash = reissueAsset.strIPFSHash;
             return true;
         }
+
+        CAssetTransfer transferAsset;
+        if (TransferAssetFromScript(scriptPubKey, transferAsset, address)) {
+            units = MAX_UNIT;
+            ipfsHash.clear();
+            return true;
+        }
     }
 
     return false;

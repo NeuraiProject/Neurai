@@ -28,6 +28,43 @@
 #include <QSortFilterProxyModel>
 #include <QCompleter>
 
+namespace {
+
+bool RecoverAssetUnitsFromOutputs(const std::vector<COutput>& outputs, int& units)
+{
+    for (const auto& output : outputs) {
+        const CScript& scriptPubKey = output.tx->tx->vout[output.i].scriptPubKey;
+
+        std::string address;
+        CNewAsset newAsset;
+        if (AssetFromScript(scriptPubKey, newAsset, address) ||
+            MsgChannelAssetFromScript(scriptPubKey, newAsset, address) ||
+            QualifierAssetFromScript(scriptPubKey, newAsset, address) ||
+            RestrictedAssetFromScript(scriptPubKey, newAsset, address)) {
+            units = newAsset.units;
+            return true;
+        }
+
+        CReissueAsset reissueAsset;
+        if (ReissueAssetFromScript(scriptPubKey, reissueAsset, address)) {
+            if (reissueAsset.nUnits != -1) {
+                units = reissueAsset.nUnits;
+            }
+            return true;
+        }
+
+        CAssetTransfer transferAsset;
+        if (TransferAssetFromScript(scriptPubKey, transferAsset, address)) {
+            units = MAX_UNIT;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+} // namespace
+
 SendAssetsEntry::SendAssetsEntry(const PlatformStyle *_platformStyle, const QStringList myAssetsNames, QWidget *parent) :
     QStackedWidget(parent),
     ui(new Ui::SendAssetsEntry),
@@ -397,17 +434,7 @@ void SendAssetsEntry::onAssetSelected(int index)
     LOCK(cs_main);
     auto currentActiveAssetCache = GetCurrentAssetCache();
     CNewAsset asset;
-
-    // Get the asset metadata if it exists. This isn't called on the administrator token because that doesn't have metadata
-    if (!currentActiveAssetCache->GetAssetMetaDataIfExists(name.toStdString(), asset)) {
-        // This should only happen if the user, selected an asset that was issued from assetcontrol and tries to transfer it before it is mined.
-        clear();
-        ui->messageLabel->show();
-        ui->messageTextLabel->show();
-        ui->messageTextLabel->setText(tr("Failed to get asset metadata for: ") + name + "." + tr(" The transaction in which the asset was issued must be mined into a block before you can transfer it"));
-        ui->assetAmountLabel->clear();
-        return;
-    }
+    int recoveredUnits = MAX_UNIT;
 
     CAmount amount = 0;
 
@@ -432,6 +459,17 @@ void SendAssetsEntry::onAssetSelected(int index)
 
     auto vec = mapAssets.at(name.toStdString());
 
+    if (!fIsOwnerAsset && currentActiveAssetCache && currentActiveAssetCache->GetAssetMetaDataIfExists(name.toStdString(), asset)) {
+        recoveredUnits = asset.units;
+    } else if (!fIsOwnerAsset && !RecoverAssetUnitsFromOutputs(vec, recoveredUnits)) {
+        clear();
+        ui->messageLabel->show();
+        ui->messageTextLabel->show();
+        ui->messageTextLabel->setText(tr("Failed to get asset metadata for: ") + name + "." + tr(" The transaction in which the asset was issued must be mined into a block before you can transfer it"));
+        ui->assetAmountLabel->clear();
+        return;
+    }
+
     // Go through all of the mapAssets to get the total count of assets
     for (auto txout : vec) {
         CAssetOutputEntry data;
@@ -439,7 +477,7 @@ void SendAssetsEntry::onAssetSelected(int index)
             amount += data.nAmount;
     }
 
-    int units = fIsOwnerAsset ? OWNER_UNITS : asset.units;
+    int units = fIsOwnerAsset ? OWNER_UNITS : recoveredUnits;
 
     QString displayBalance = AssetControlDialog::assetControl->HasAssetSelected() ? tr("Selected Balance") : tr("Wallet Balance");
 
@@ -451,14 +489,14 @@ void SendAssetsEntry::onAssetSelected(int index)
 
     // If it is not an ownership asset unlock the amount
     if (!fIsOwnerAsset) {
-        ui->payAssetAmount->setUnit(asset.units);
+        ui->payAssetAmount->setUnit(units);
         ui->payAssetAmount->setSingleStep(1);
         ui->payAssetAmount->setDisabled(false);
         ui->payAssetAmount->setValue(0);
     }
     // If it is messanger channel set amount to 1 and keep locked.
     if (fIsMessengerAsset) {
-        ui->payAssetAmount->setUnit(asset.units);
+        ui->payAssetAmount->setUnit(units);
         ui->payAssetAmount->setDisabled(true);
         ui->payAssetAmount->setValue(1);
     }
