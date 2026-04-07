@@ -42,7 +42,7 @@ std::map<std::string, uint256> mapReissuedAssets;
 
 // excluding owner tag ('!')
 static const auto MAX_NAME_LENGTH = 31;
-static const auto MAX_NAME_LENGTH_TESTNET = 120;
+static const auto MAX_NAME_LENGTH_TESTNET = 121;
 static const auto MAX_CHANNEL_NAME_LENGTH = 12;
 
 int GetMaxAssetNameLength()
@@ -227,9 +227,13 @@ bool IsAssetNameASubQualifier(const std::string& name)
 bool IsAssetNameValid(const std::string& name, AssetType& assetType, std::string& error)
 {
     // Do a max length check first to stop the possibility of a stack exhaustion.
-    // We check for a value that is larger than the max asset name
-    if (name.length() > 40)
+    // Use the network-specific asset-name limit so testnet can exercise the
+    // longer names without changing mainnet behavior.
+    if (name.length() > static_cast<size_t>(GetMaxAssetNameLength()))
+    {
+        error = "Name is greater than max length of " + std::to_string(GetMaxAssetNameLength());
         return false;
+    }
 
     assetType = AssetType::INVALID;
     if (std::regex_match(name, UNIQUE_INDICATOR))
