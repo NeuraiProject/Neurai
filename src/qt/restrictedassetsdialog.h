@@ -30,6 +30,11 @@ class QLineEdit;
 class QPushButton;
 class QRadioButton;
 class QValidatedLineEdit;
+class QDoubleSpinBox;
+class QButtonGroup;
+class QFrame;
+class QValueComboBox;
+class NeuraiAmountField;
 
 
 namespace Ui {
@@ -78,6 +83,7 @@ private:
 
     MyRestrictedAssetsTableModel *myRestrictedAssetsModel;
     QWidget *depinTab;
+    QWidget *depinCreateTab;
     QComboBox *depinAssetComboBox;
     QLabel *depinAssetLabel;
     QLabel *depinAddressLabel;
@@ -91,12 +97,39 @@ private:
     QRadioButton *depinFreezeAddressRadio;
     QRadioButton *depinUnfreezeAddressRadio;
     QRadioButton *depinSelfRevokeRadio;
+    QComboBox *depinCreateAssetComboBox;
+    QLineEdit *depinCreateAddressEdit;
+    QDoubleSpinBox *depinCreateQuantitySpinBox;
+    QCheckBox *depinCreateReissuableCheckBox;
+    QLabel *depinCreateUnitsLabel;
+    QCheckBox *depinCreateChangeAddressCheckBox;
+    QValidatedLineEdit *depinCreateChangeAddressEdit;
+    QLabel *depinCreateWarningLabel;
+    QPushButton *depinCreateButton;
+    QPushButton *depinCreateClearButton;
+    QButtonGroup *depinCreateFeeGroup;
+    QRadioButton *depinCreateSmartFeeRadio;
+    QRadioButton *depinCreateCustomFeeRadio;
+    QComboBox *depinCreateConfTargetSelector;
+    QLabel *depinCreateSmartFeeLabel;
+    QLabel *depinCreateFeeEstimationLabel;
+    QCheckBox *depinCreateMinimumFeeCheckBox;
+    NeuraiAmountField *depinCreateCustomFee;
 
     void createDepinTab();
+    void createDepinCreateTab();
     void setDepinWarning(const QString &message, bool failure = true);
     void clearDepinWarning();
     void enableDepinSubmit(const QString &message);
     bool findDepinHolderAddress(const std::string& assetName, std::string& holderAddress, bool& foundOwnerControlledHolding) const;
+    bool findDepinOwnerAddress(const std::string& assetName, std::string& ownerAddress) const;
+    void updateDepinCreateAssets();
+    void updateDepinCreateSelectedAsset();
+    void clearDepinCreateWarning();
+    void setDepinCreateWarning(const QString &message, bool failure = true);
+    void updateDepinCreateMinFeeLabel();
+    bool validateDepinCreateForm(QString *errorMessage = nullptr);
+    void updateDepinCreateCoinControlState(CCoinControl& ctrl) const;
 
 private Q_SLOTS:
     void updateDisplayUnit();
@@ -108,6 +141,15 @@ private Q_SLOTS:
     void depinChangeAddressChanged(int state);
     void depinActionChanged();
     void clearDepinForm();
+    void depinCreateDataChanged();
+    void depinCreateChangeAddressChanged(int state);
+    void depinCreateAssetChanged(int index);
+    void clearDepinCreateForm();
+    void depinCreateClicked();
+    void depinCreateFeeFeatureChanged(bool enabled);
+    void depinCreateSetMinimumFee();
+    void updateDepinCreateFeeSectionControls();
+    void updateDepinCreateSmartFeeLabel();
 
 
     Q_SIGNALS:

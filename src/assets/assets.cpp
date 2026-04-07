@@ -4298,6 +4298,7 @@ bool CreateReissueAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, 
     // Create asset variables
     std::string asset_name = reissueAsset.strName;
     std::string change_address = EncodeDestination(coinControl.destChange);
+    std::string owner_change_address = change_address;
 
     // Get the asset type
     AssetType asset_type = AssetType::INVALID;
@@ -4309,14 +4310,14 @@ bool CreateReissueAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, 
         return false;
     }
 
-    // Build the change address
+    // Validate the optional wallet change address
     if (!change_address.empty()) {
         CTxDestination destination = DecodeDestination(change_address);
         if (!IsValidDestination(destination)) {
             error = std::make_pair(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Neurai address: ") + change_address);
             return false;
         }
-    } else {
+    } else if (asset_type != AssetType::DEPIN) {
         CTxDestination change_dest;
         std::string strFailReason;
         if (!pwallet->CreateNewChangeAddress(reservekey, change_dest, strFailReason)) {
@@ -4335,14 +4336,9 @@ bool CreateReissueAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, 
     }
 
     if (asset_type == AssetType::DEPIN) {
-        if (!change_address.empty() && change_address != address) {
-            error = std::make_pair(RPC_INVALID_PARAMETER,
-                                   std::string("DEPIN asset reissues must send the owner token and reissued assets to the same address"));
-            return false;
-        }
-
-        change_address = address;
-        coinControl.destChange = DecodeDestination(change_address);
+        owner_change_address = address;
+    } else {
+        owner_change_address = change_address;
     }
 
     // Check to make sure this isn't an owner token
@@ -4407,7 +4403,7 @@ bool CreateReissueAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, 
     }
 
     // Get the script for the destination address for the assets
-    CScript scriptTransferOwnerAsset = GetScriptForDestination(DecodeDestination(change_address));
+    CScript scriptTransferOwnerAsset = GetScriptForDestination(DecodeDestination(owner_change_address));
 
     if (asset_type == AssetType::RESTRICTED) {
         CAssetTransfer assetTransfer(stripped_asset_name + OWNER_TAG, OWNER_ASSET_AMOUNT);

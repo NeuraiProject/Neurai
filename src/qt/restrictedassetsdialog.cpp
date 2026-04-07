@@ -30,10 +30,13 @@
 #include "ui_restrictedfreezeaddress.h"
 #include "sendcoinsdialog.h"
 #include "myrestrictedassettablemodel.h"
+#include "neuraiamountfield.h"
 #include "qvalidatedlineedit.h"
 
+#include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QGraphicsDropShadowEffect>
 #include <QGroupBox>
@@ -51,6 +54,8 @@
 #include <QVBoxLayout>
 #include <QDebug>
 #include <QMessageBox>
+#include <algorithm>
+#include <set>
 
 #include <policy/policy.h>
 #include <core_io.h>
@@ -70,6 +75,7 @@ RestrictedAssetsDialog::RestrictedAssetsDialog(const PlatformStyle *_platformSty
         myRestrictedAssetsFilterProxy(0),
         myRestrictedAssetsModel(0),
         depinTab(0),
+        depinCreateTab(0),
         depinAssetComboBox(0),
         depinAssetLabel(0),
         depinAddressLabel(0),
@@ -82,7 +88,25 @@ RestrictedAssetsDialog::RestrictedAssetsDialog(const PlatformStyle *_platformSty
         depinSubmitButton(0),
         depinFreezeAddressRadio(0),
         depinUnfreezeAddressRadio(0),
-        depinSelfRevokeRadio(0)
+        depinSelfRevokeRadio(0),
+        depinCreateAssetComboBox(0),
+        depinCreateAddressEdit(0),
+        depinCreateQuantitySpinBox(0),
+        depinCreateReissuableCheckBox(0),
+        depinCreateUnitsLabel(0),
+        depinCreateChangeAddressCheckBox(0),
+        depinCreateChangeAddressEdit(0),
+        depinCreateWarningLabel(0),
+        depinCreateButton(0),
+        depinCreateClearButton(0),
+        depinCreateFeeGroup(0),
+        depinCreateSmartFeeRadio(0),
+        depinCreateCustomFeeRadio(0),
+        depinCreateConfTargetSelector(0),
+        depinCreateSmartFeeLabel(0),
+        depinCreateFeeEstimationLabel(0),
+        depinCreateMinimumFeeCheckBox(0),
+        depinCreateCustomFee(0)
 {
 
     ui->setupUi(this);
@@ -93,6 +117,10 @@ RestrictedAssetsDialog::RestrictedAssetsDialog(const PlatformStyle *_platformSty
 void RestrictedAssetsDialog::setClientModel(ClientModel *_clientModel)
 {
     this->clientModel = _clientModel;
+
+    if (_clientModel && pageMode == PageMode::DepinOnly) {
+        connect(_clientModel, SIGNAL(numBlocksChanged(int,QDateTime,double,bool)), this, SLOT(updateDepinCreateSmartFeeLabel()));
+    }
 }
 
 void RestrictedAssetsDialog::setModel(WalletModel *_model)
@@ -151,6 +179,18 @@ void RestrictedAssetsDialog::setModel(WalletModel *_model)
             if (!depinTab) {
                 createDepinTab();
             }
+            if (!depinCreateTab) {
+                createDepinCreateTab();
+            }
+            if (depinCreateCustomFee) {
+                depinCreateCustomFee->setDisplayUnit(_model->getOptionsModel()->getDisplayUnit());
+            }
+            connect(_model->getOptionsModel(), SIGNAL(customFeeFeaturesChanged(bool)), this, SLOT(depinCreateFeeFeatureChanged(bool)));
+            depinCreateFeeFeatureChanged(_model->getOptionsModel()->getCustomFeeFeatures());
+            updateDepinCreateAssets();
+            updateDepinCreateMinFeeLabel();
+            updateDepinCreateFeeSectionControls();
+            updateDepinCreateSmartFeeLabel();
         } else {
             AssignQualifier *assignQualifier = new AssignQualifier(platformStyle, this);
             assignQualifier->setWalletModel(_model);
@@ -256,6 +296,163 @@ void RestrictedAssetsDialog::createDepinTab()
     depinActionChanged();
 }
 
+void RestrictedAssetsDialog::createDepinCreateTab()
+{
+    depinCreateTab = new QWidget(this);
+    depinCreateTab->setObjectName("tab_depin_create");
+
+    QVBoxLayout *mainLayout = new QVBoxLayout(depinCreateTab);
+    mainLayout->setSpacing(12);
+    mainLayout->setContentsMargins(10, 10, 10, 10);
+
+    QFormLayout *formLayout = new QFormLayout();
+    formLayout->setHorizontalSpacing(10);
+    formLayout->setVerticalSpacing(10);
+
+    QLabel *assetLabel = new QLabel(tr("DEPIN Asset:"), depinCreateTab);
+    assetLabel->setStyleSheet(STRING_LABEL_COLOR);
+    assetLabel->setFont(GUIUtil::getTopLabelFont());
+    depinCreateAssetComboBox = new QComboBox(depinCreateTab);
+    formLayout->addRow(assetLabel, depinCreateAssetComboBox);
+
+    QLabel *addressLabel = new QLabel(tr("Recipient Address:"), depinCreateTab);
+    addressLabel->setStyleSheet(STRING_LABEL_COLOR);
+    addressLabel->setFont(GUIUtil::getTopLabelFont());
+    depinCreateAddressEdit = new QLineEdit(depinCreateTab);
+    depinCreateAddressEdit->setReadOnly(true);
+    formLayout->addRow(addressLabel, depinCreateAddressEdit);
+
+    QLabel *quantityLabel = new QLabel(tr("Quantity:"), depinCreateTab);
+    quantityLabel->setStyleSheet(STRING_LABEL_COLOR);
+    quantityLabel->setFont(GUIUtil::getTopLabelFont());
+    depinCreateQuantitySpinBox = new QDoubleSpinBox(depinCreateTab);
+    depinCreateQuantitySpinBox->setDecimals(0);
+    depinCreateQuantitySpinBox->setMinimum(0);
+    depinCreateQuantitySpinBox->setMaximum(21000000000.0);
+    depinCreateQuantitySpinBox->setSingleStep(1.0);
+    formLayout->addRow(quantityLabel, depinCreateQuantitySpinBox);
+
+    QLabel *unitsLabel = new QLabel(tr("Units:"), depinCreateTab);
+    unitsLabel->setStyleSheet(STRING_LABEL_COLOR);
+    unitsLabel->setFont(GUIUtil::getTopLabelFont());
+    depinCreateUnitsLabel = new QLabel(tr("0 (fixed for DEPIN)"), depinCreateTab);
+    depinCreateUnitsLabel->setFont(GUIUtil::getSubLabelFont());
+    formLayout->addRow(unitsLabel, depinCreateUnitsLabel);
+
+    depinCreateReissuableCheckBox = new QCheckBox(tr("Can Reissue"), depinCreateTab);
+    depinCreateReissuableCheckBox->setStyleSheet(QString(".QCheckBox{ %1; }").arg(STRING_LABEL_COLOR));
+    formLayout->addRow(QString(), depinCreateReissuableCheckBox);
+
+    depinCreateChangeAddressCheckBox = new QCheckBox(tr("Custom Change Address"), depinCreateTab);
+    depinCreateChangeAddressCheckBox->setStyleSheet(QString(".QCheckBox{ %1; }").arg(STRING_LABEL_COLOR));
+    depinCreateChangeAddressEdit = new QValidatedLineEdit(depinCreateTab);
+    GUIUtil::setupAddressWidget(depinCreateChangeAddressEdit, this);
+    depinCreateChangeAddressEdit->setEnabled(false);
+    depinCreateChangeAddressEdit->hide();
+    formLayout->addRow(depinCreateChangeAddressCheckBox, depinCreateChangeAddressEdit);
+
+    mainLayout->addLayout(formLayout);
+
+    QGroupBox *feeGroup = new QGroupBox(tr("Transaction Fee"), depinCreateTab);
+    QVBoxLayout *feeLayout = new QVBoxLayout(feeGroup);
+
+    depinCreateFeeGroup = new QButtonGroup(feeGroup);
+    depinCreateSmartFeeRadio = new QRadioButton(tr("Recommended"), feeGroup);
+    depinCreateCustomFeeRadio = new QRadioButton(tr("Custom"), feeGroup);
+    depinCreateFeeGroup->addButton(depinCreateSmartFeeRadio, 0);
+    depinCreateFeeGroup->addButton(depinCreateCustomFeeRadio, 1);
+    depinCreateSmartFeeRadio->setChecked(true);
+
+    QHBoxLayout *feeModeLayout = new QHBoxLayout();
+    feeModeLayout->addWidget(depinCreateSmartFeeRadio);
+    feeModeLayout->addWidget(depinCreateCustomFeeRadio);
+    feeModeLayout->addStretch();
+    feeLayout->addLayout(feeModeLayout);
+
+    QHBoxLayout *smartFeeLayout = new QHBoxLayout();
+    QLabel *targetLabel = new QLabel(tr("Confirmation target:"), feeGroup);
+    smartFeeLayout->addWidget(targetLabel);
+    depinCreateConfTargetSelector = new QComboBox(feeGroup);
+    smartFeeLayout->addWidget(depinCreateConfTargetSelector, 1);
+    depinCreateSmartFeeLabel = new QLabel(feeGroup);
+    smartFeeLayout->addWidget(depinCreateSmartFeeLabel);
+    feeLayout->addLayout(smartFeeLayout);
+
+    depinCreateFeeEstimationLabel = new QLabel(feeGroup);
+    depinCreateFeeEstimationLabel->setWordWrap(true);
+    feeLayout->addWidget(depinCreateFeeEstimationLabel);
+
+    QHBoxLayout *customFeeLayout = new QHBoxLayout();
+    depinCreateMinimumFeeCheckBox = new QCheckBox(feeGroup);
+    depinCreateMinimumFeeCheckBox->setStyleSheet(QString(".QCheckBox{ %1; }").arg(STRING_LABEL_COLOR));
+    customFeeLayout->addWidget(depinCreateMinimumFeeCheckBox);
+    depinCreateCustomFee = new NeuraiAmountField(feeGroup);
+    customFeeLayout->addWidget(depinCreateCustomFee);
+    feeLayout->addLayout(customFeeLayout);
+
+    QSettings settings;
+    if (!settings.contains("nFeeRadio"))
+        settings.setValue("nFeeRadio", 0);
+    if (!settings.contains("nTransactionFee"))
+        settings.setValue("nTransactionFee", (qint64)DEFAULT_TRANSACTION_FEE);
+    if (!settings.contains("fPayOnlyMinFee"))
+        settings.setValue("fPayOnlyMinFee", false);
+    if (!settings.contains("nConfTarget"))
+        settings.setValue("nConfTarget", model ? model->getDefaultConfirmTarget() : confTargets.front());
+
+    for (const int &n : confTargets) {
+        depinCreateConfTargetSelector->addItem(tr("%1 (%2 blocks)").arg(GUIUtil::formatNiceTimeOffset(n * GetParams().GetConsensus().nPowTargetSpacing)).arg(n));
+    }
+
+    if (settings.value("nFeeRadio").toInt() == 1) {
+        depinCreateCustomFeeRadio->setChecked(true);
+    } else {
+        depinCreateSmartFeeRadio->setChecked(true);
+    }
+
+    depinCreateCustomFee->setValue(settings.value("nTransactionFee").toLongLong());
+    depinCreateCustomFee->setSingleStep(GetRequiredFee(1000));
+    depinCreateMinimumFeeCheckBox->setChecked(settings.value("fPayOnlyMinFee").toBool());
+    depinCreateConfTargetSelector->setCurrentIndex(getIndexForConfTarget(settings.value("nConfTarget").toInt()));
+
+    mainLayout->addWidget(feeGroup);
+
+    depinCreateWarningLabel = new QLabel(depinCreateTab);
+    depinCreateWarningLabel->hide();
+    depinCreateWarningLabel->setWordWrap(true);
+    mainLayout->addWidget(depinCreateWarningLabel);
+
+    QHBoxLayout *buttonsLayout = new QHBoxLayout();
+    depinCreateClearButton = new QPushButton(tr("Clear"), depinCreateTab);
+    depinCreateButton = new QPushButton(tr("Reissue"), depinCreateTab);
+    depinCreateButton->setDisabled(true);
+    buttonsLayout->addStretch();
+    buttonsLayout->addWidget(depinCreateClearButton);
+    buttonsLayout->addWidget(depinCreateButton);
+    mainLayout->addLayout(buttonsLayout);
+
+    connect(depinCreateAssetComboBox, SIGNAL(currentIndexChanged(int)), this, SLOT(depinCreateAssetChanged(int)));
+    connect(depinCreateQuantitySpinBox, SIGNAL(valueChanged(double)), this, SLOT(depinCreateDataChanged()));
+    connect(depinCreateReissuableCheckBox, SIGNAL(clicked()), this, SLOT(depinCreateDataChanged()));
+    connect(depinCreateChangeAddressCheckBox, SIGNAL(stateChanged(int)), this, SLOT(depinCreateChangeAddressChanged(int)));
+    connect(depinCreateChangeAddressCheckBox, SIGNAL(stateChanged(int)), this, SLOT(depinCreateDataChanged()));
+    connect(depinCreateChangeAddressEdit, SIGNAL(textChanged(QString)), this, SLOT(depinCreateDataChanged()));
+    connect(depinCreateClearButton, SIGNAL(clicked()), this, SLOT(clearDepinCreateForm()));
+    connect(depinCreateButton, SIGNAL(clicked()), this, SLOT(depinCreateClicked()));
+    connect(depinCreateSmartFeeRadio, SIGNAL(clicked()), this, SLOT(updateDepinCreateFeeSectionControls()));
+    connect(depinCreateCustomFeeRadio, SIGNAL(clicked()), this, SLOT(updateDepinCreateFeeSectionControls()));
+    connect(depinCreateSmartFeeRadio, SIGNAL(clicked()), this, SLOT(depinCreateDataChanged()));
+    connect(depinCreateCustomFeeRadio, SIGNAL(clicked()), this, SLOT(depinCreateDataChanged()));
+    connect(depinCreateConfTargetSelector, SIGNAL(currentIndexChanged(int)), this, SLOT(updateDepinCreateSmartFeeLabel()));
+    connect(depinCreateConfTargetSelector, SIGNAL(currentIndexChanged(int)), this, SLOT(depinCreateDataChanged()));
+    connect(depinCreateMinimumFeeCheckBox, SIGNAL(stateChanged(int)), this, SLOT(depinCreateSetMinimumFee()));
+    connect(depinCreateMinimumFeeCheckBox, SIGNAL(stateChanged(int)), this, SLOT(updateDepinCreateFeeSectionControls()));
+    connect(depinCreateMinimumFeeCheckBox, SIGNAL(stateChanged(int)), this, SLOT(depinCreateDataChanged()));
+    connect(depinCreateCustomFee, SIGNAL(valueChanged()), this, SLOT(depinCreateDataChanged()));
+
+    ui->tabWidget->addTab(depinCreateTab, tr("Create"));
+}
+
 void RestrictedAssetsDialog::setDepinWarning(const QString &message, bool failure)
 {
     if (!depinWarningLabel) {
@@ -300,6 +497,175 @@ void RestrictedAssetsDialog::clearDepinForm()
     depinActionChanged();
 }
 
+void RestrictedAssetsDialog::depinCreateDataChanged()
+{
+    if (!depinCreateButton) {
+        return;
+    }
+
+    depinCreateButton->setDisabled(true);
+    clearDepinCreateWarning();
+
+    if (validateDepinCreateForm()) {
+        depinCreateButton->setEnabled(true);
+    }
+}
+
+void RestrictedAssetsDialog::depinCreateChangeAddressChanged(int state)
+{
+    if (!depinCreateChangeAddressEdit) {
+        return;
+    }
+
+    const bool checked = state == Qt::Checked;
+    depinCreateChangeAddressEdit->setEnabled(checked);
+    depinCreateChangeAddressEdit->setVisible(checked);
+    depinCreateDataChanged();
+}
+
+void RestrictedAssetsDialog::depinCreateAssetChanged(int)
+{
+    updateDepinCreateSelectedAsset();
+}
+
+void RestrictedAssetsDialog::clearDepinCreateForm()
+{
+    if (!depinCreateTab) {
+        return;
+    }
+
+    depinCreateAssetComboBox->setCurrentIndex(0);
+    depinCreateAddressEdit->clear();
+    depinCreateQuantitySpinBox->setValue(0);
+    depinCreateReissuableCheckBox->setChecked(true);
+    depinCreateChangeAddressCheckBox->setChecked(false);
+    depinCreateChangeAddressEdit->clear();
+    depinCreateButton->setDisabled(true);
+    clearDepinCreateWarning();
+}
+
+void RestrictedAssetsDialog::depinCreateClicked()
+{
+    QString validationError;
+    if (!validateDepinCreateForm(&validationError)) {
+        setDepinCreateWarning(validationError);
+        return;
+    }
+
+    WalletModel::UnlockContext ctx(model->requestUnlock());
+    if(!ctx.isValid())
+    {
+        return;
+    }
+
+    const QString qAssetName = depinCreateAssetComboBox->currentData().toString();
+    const QString qAddress = depinCreateAddressEdit->text();
+    const CAmount quantity = static_cast<CAmount>(depinCreateQuantitySpinBox->value()) * COIN;
+    const bool reissuable = depinCreateReissuableCheckBox->isChecked();
+
+    CReissueAsset reissueAsset(qAssetName.toStdString(), quantity, -1, reissuable ? 1 : 0, "");
+    CCoinControl coinControl;
+    updateDepinCreateCoinControlState(coinControl);
+
+    CWalletTx transaction;
+    CReserveKey reservekey(model->getWallet());
+    std::pair<int, std::string> error;
+    CAmount nRequiredFee;
+
+    if (IsInitialBlockDownload()) {
+        GUIUtil::SyncWarningMessage syncWarning(this);
+        bool sendTransaction = syncWarning.showTransactionSyncWarningMessage();
+        if (!sendTransaction)
+            return;
+    }
+
+    if (!CreateReissueAssetTransaction(model->getWallet(), coinControl, reissueAsset, qAddress.toStdString(), error, transaction, reservekey, nRequiredFee)) {
+        setDepinCreateWarning(QString::fromStdString(error.second));
+        return;
+    }
+
+    std::string strError;
+    if (!ContextualCheckReissueAsset(passets, reissueAsset, strError, *transaction.tx.get())) {
+        setDepinCreateWarning(QString::fromStdString(strError));
+        return;
+    }
+
+    QString questionString = tr("Reissuing DEPIN asset <b>%1</b> to address <b>%2</b><br>")
+                                 .arg(qAssetName, qAddress);
+
+    if(nRequiredFee > 0)
+    {
+        questionString.append("<hr /><span style='color:#e82121;'>");
+        questionString.append(NeuraiUnits::formatHtmlWithUnit(model->getOptionsModel()->getDisplayUnit(), nRequiredFee));
+        questionString.append("</span> ");
+        questionString.append(tr("added as transaction fee"));
+        questionString.append(" (" + tr("virtual size: %1 kVB").arg(QString::number((double)GetVirtualTransactionSize(transaction) / 1000, 'f', 3)) + ")");
+    }
+
+    questionString.append("<hr />");
+    const CAmount totalAmount = GetReissueAssetBurnAmount() + nRequiredFee;
+    QStringList alternativeUnits;
+    for (NeuraiUnits::Unit u : NeuraiUnits::availableUnits())
+    {
+        if(u != model->getOptionsModel()->getDisplayUnit())
+            alternativeUnits.append(NeuraiUnits::formatHtmlWithUnit(u, totalAmount));
+    }
+    questionString.append(tr("Total Amount %1")
+                                  .arg(NeuraiUnits::formatHtmlWithUnit(model->getOptionsModel()->getDisplayUnit(), totalAmount)));
+    questionString.append(QString("<span style='font-size:10pt;font-weight:normal;'><br />(=%2)</span>")
+                                  .arg(alternativeUnits.join(" " + tr("or") + "<br />")));
+
+    SendConfirmationDialog confirmationDialog(tr("Confirm DEPIN reissue"),
+                                              questionString, SEND_CONFIRM_DELAY, this);
+    confirmationDialog.exec();
+    QMessageBox::StandardButton retval = (QMessageBox::StandardButton)confirmationDialog.result();
+
+    if(retval != QMessageBox::Yes)
+    {
+        return;
+    }
+
+    std::string txid;
+    if (!SendAssetTransaction(model->getWallet(), transaction, reservekey, error, txid)) {
+        setDepinCreateWarning(QString::fromStdString(error.second));
+        return;
+    }
+
+    QMessageBox txidMsgBox;
+    std::string sentMsg = _("Sent new transaction to the network");
+    std::string totalMsg = strprintf("%s: %s", sentMsg, txid);
+    txidMsgBox.setText(QString::fromStdString(totalMsg));
+    txidMsgBox.exec();
+
+    clearDepinCreateForm();
+    updateDepinCreateAssets();
+}
+
+void RestrictedAssetsDialog::depinCreateFeeFeatureChanged(bool enabled)
+{
+    if (!depinCreateCustomFeeRadio || !depinCreateSmartFeeRadio || !depinCreateMinimumFeeCheckBox || !depinCreateCustomFee) {
+        return;
+    }
+
+    if (!enabled) {
+        depinCreateSmartFeeRadio->setChecked(true);
+    }
+
+    depinCreateCustomFeeRadio->setEnabled(enabled);
+    depinCreateMinimumFeeCheckBox->setEnabled(enabled && depinCreateCustomFeeRadio->isChecked());
+    depinCreateCustomFee->setEnabled(enabled && depinCreateCustomFeeRadio->isChecked() && !depinCreateMinimumFeeCheckBox->isChecked());
+    updateDepinCreateFeeSectionControls();
+}
+
+void RestrictedAssetsDialog::depinCreateSetMinimumFee()
+{
+    if (!depinCreateCustomFee) {
+        return;
+    }
+
+    depinCreateCustomFee->setValue(GetRequiredFee(1000));
+}
+
 bool RestrictedAssetsDialog::findDepinHolderAddress(const std::string& assetName, std::string& holderAddress, bool& foundOwnerControlledHolding) const
 {
     holderAddress.clear();
@@ -338,6 +704,306 @@ bool RestrictedAssetsDialog::findDepinHolderAddress(const std::string& assetName
     }
 
     return false;
+}
+
+bool RestrictedAssetsDialog::findDepinOwnerAddress(const std::string& assetName, std::string& ownerAddress) const
+{
+    ownerAddress.clear();
+
+    if (!model || !model->getWallet()) {
+        return false;
+    }
+
+    LOCK2(cs_main, model->getWallet()->cs_wallet);
+
+    std::set<CTxDestination> destinations;
+    for (const auto& entry : model->getWallet()->mapWallet) {
+        const CWalletTx& wtx = entry.second;
+        for (unsigned int i = 0; i < wtx.tx->vout.size(); ++i) {
+            CTxDestination dest;
+            if (ExtractDestination(wtx.tx->vout[i].scriptPubKey, dest)) {
+                destinations.insert(dest);
+            }
+        }
+    }
+
+    for (const auto& dest : destinations) {
+        const std::string address = EncodeDestination(dest);
+        if (AddressHasDEPINOwnerToken(*passets, assetName, address)) {
+            ownerAddress = address;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void RestrictedAssetsDialog::updateDepinCreateAssets()
+{
+    if (!depinCreateAssetComboBox || !model || !model->getWallet() || !passets) {
+        return;
+    }
+
+    const QString currentAsset = depinCreateAssetComboBox->currentData().toString();
+
+    std::vector<std::string> walletAssets;
+    GetAllMyAssets(model->getWallet(), walletAssets, 0, true, false);
+
+    depinCreateAssetComboBox->clear();
+    depinCreateAssetComboBox->addItem(QString(), QString());
+
+    std::set<std::string> inserted;
+    for (const auto& item : walletAssets) {
+        std::string assetName;
+        if (IsAssetNameADEPIN(item)) {
+            assetName = item;
+        } else if (IsAssetNameAnOwner(item) && !item.empty() && item.front() == '&') {
+            assetName = item.substr(0, item.size() - 1);
+        } else {
+            continue;
+        }
+
+        if (inserted.count(assetName)) {
+            continue;
+        }
+
+        CNewAsset assetData;
+        std::string ownerAddress;
+        if (!passets->GetAssetMetaDataIfExists(assetName, assetData) || !assetData.nReissuable || !findDepinOwnerAddress(assetName, ownerAddress)) {
+            continue;
+        }
+
+        inserted.insert(assetName);
+        depinCreateAssetComboBox->addItem(QString::fromStdString(assetName), QString::fromStdString(assetName));
+    }
+
+    const int existingIndex = depinCreateAssetComboBox->findData(currentAsset);
+    depinCreateAssetComboBox->setCurrentIndex(existingIndex >= 0 ? existingIndex : 0);
+    updateDepinCreateSelectedAsset();
+}
+
+void RestrictedAssetsDialog::updateDepinCreateSelectedAsset()
+{
+    if (!depinCreateAssetComboBox || !depinCreateAddressEdit || !depinCreateQuantitySpinBox) {
+        return;
+    }
+
+    const QString qAssetName = depinCreateAssetComboBox->currentData().toString();
+    if (qAssetName.isEmpty()) {
+        depinCreateAddressEdit->clear();
+        depinCreateQuantitySpinBox->setMaximum(21000000000.0);
+        depinCreateQuantitySpinBox->setValue(0);
+        depinCreateReissuableCheckBox->setChecked(true);
+        depinCreateDataChanged();
+        return;
+    }
+
+    std::string ownerAddress;
+    if (!findDepinOwnerAddress(qAssetName.toStdString(), ownerAddress)) {
+        depinCreateAddressEdit->clear();
+        depinCreateQuantitySpinBox->setValue(0);
+        setDepinCreateWarning(tr("Unable to find the owner address for the selected DEPIN asset"));
+        depinCreateButton->setDisabled(true);
+        return;
+    }
+
+    depinCreateAddressEdit->setText(QString::fromStdString(ownerAddress));
+
+    CNewAsset assetData;
+    if (passets->GetAssetMetaDataIfExists(qAssetName.toStdString(), assetData)) {
+        const double currentAmount = static_cast<double>(assetData.nAmount / COIN);
+        depinCreateQuantitySpinBox->setMaximum(std::max(0.0, 21000000000.0 - currentAmount));
+        depinCreateReissuableCheckBox->setChecked(assetData.nReissuable);
+    } else {
+        depinCreateQuantitySpinBox->setMaximum(21000000000.0);
+        depinCreateReissuableCheckBox->setChecked(true);
+    }
+
+    depinCreateQuantitySpinBox->setValue(0);
+    depinCreateDataChanged();
+}
+
+void RestrictedAssetsDialog::clearDepinCreateWarning()
+{
+    if (!depinCreateWarningLabel) {
+        return;
+    }
+
+    depinCreateWarningLabel->clear();
+    depinCreateWarningLabel->hide();
+}
+
+void RestrictedAssetsDialog::setDepinCreateWarning(const QString &message, bool failure)
+{
+    if (!depinCreateWarningLabel) {
+        return;
+    }
+
+    depinCreateWarningLabel->setStyleSheet(failure ? STRING_LABEL_COLOR_WARNING : "");
+    depinCreateWarningLabel->setText(message);
+    depinCreateWarningLabel->show();
+}
+
+void RestrictedAssetsDialog::updateDepinCreateFeeSectionControls()
+{
+    if (!depinCreateSmartFeeRadio || !depinCreateCustomFeeRadio || !depinCreateConfTargetSelector ||
+        !depinCreateCustomFee || !depinCreateMinimumFeeCheckBox) {
+        return;
+    }
+
+    depinCreateConfTargetSelector->setEnabled(depinCreateSmartFeeRadio->isChecked());
+    depinCreateSmartFeeLabel->setEnabled(depinCreateSmartFeeRadio->isChecked());
+    depinCreateFeeEstimationLabel->setEnabled(depinCreateSmartFeeRadio->isChecked());
+    depinCreateMinimumFeeCheckBox->setEnabled(depinCreateCustomFeeRadio->isChecked());
+    depinCreateCustomFee->setEnabled(depinCreateCustomFeeRadio->isChecked() && !depinCreateMinimumFeeCheckBox->isChecked());
+}
+
+void RestrictedAssetsDialog::updateDepinCreateSmartFeeLabel()
+{
+    if (!model || !model->getOptionsModel() || !depinCreateSmartFeeLabel || !depinCreateFeeEstimationLabel) {
+        return;
+    }
+
+    CCoinControl coinControl;
+    updateDepinCreateCoinControlState(coinControl);
+    coinControl.m_feerate.reset();
+
+    FeeCalculation feeCalc;
+    const CFeeRate feeRate = CFeeRate(GetMinimumFee(1000, coinControl, ::mempool, ::feeEstimator, &feeCalc));
+
+    depinCreateSmartFeeLabel->setText(NeuraiUnits::formatWithUnit(model->getOptionsModel()->getDisplayUnit(), feeRate.GetFeePerK()) + "/kB");
+
+    if (feeCalc.reason == FeeReason::FALLBACK) {
+        depinCreateFeeEstimationLabel->setText(tr("Smart fee not initialized yet. This usually takes a few blocks."));
+    } else {
+        depinCreateFeeEstimationLabel->setText(tr("Estimated to begin confirmation within %n block(s).", "", feeCalc.returnedTarget));
+    }
+}
+
+void RestrictedAssetsDialog::updateDepinCreateMinFeeLabel()
+{
+    if (!model || !model->getOptionsModel() || !depinCreateMinimumFeeCheckBox) {
+        return;
+    }
+
+    depinCreateMinimumFeeCheckBox->setText(tr("Pay only the required fee of %1").arg(
+            NeuraiUnits::formatWithUnit(model->getOptionsModel()->getDisplayUnit(), GetRequiredFee(1000)) + "/kB"));
+}
+
+bool RestrictedAssetsDialog::validateDepinCreateForm(QString *errorMessage)
+{
+    if (!model || !passets || !depinCreateAssetComboBox || !depinCreateAddressEdit || !depinCreateQuantitySpinBox) {
+        if (errorMessage) {
+            *errorMessage = tr("Unable to perform action at this time");
+        }
+        return false;
+    }
+
+    const QString qAssetName = depinCreateAssetComboBox->currentData().toString();
+    if (qAssetName.isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = tr("Must have a DEPIN asset selected");
+        }
+        return false;
+    }
+
+    if (!IsAssetNameADEPIN(qAssetName.toStdString())) {
+        if (errorMessage) {
+            *errorMessage = tr("Selected asset is not a valid DEPIN asset");
+        }
+        return false;
+    }
+
+    std::string ownerAddress;
+    if (!findDepinOwnerAddress(qAssetName.toStdString(), ownerAddress)) {
+        if (errorMessage) {
+            *errorMessage = tr("The selected DEPIN owner token is not held by this wallet");
+        }
+        return false;
+    }
+
+    if (depinCreateAddressEdit->text() != QString::fromStdString(ownerAddress)) {
+        if (errorMessage) {
+            *errorMessage = tr("The DEPIN reissue recipient must be the address holding the owner token");
+        }
+        return false;
+    }
+
+    if (depinCreateQuantitySpinBox->value() <= 0) {
+        if (errorMessage) {
+            *errorMessage = tr("Quantity must be greater than zero");
+        }
+        return false;
+    }
+
+    CNewAsset assetData;
+    if (!passets->GetAssetMetaDataIfExists(qAssetName.toStdString(), assetData)) {
+        if (errorMessage) {
+            *errorMessage = tr("Asset data couldn't be found");
+        }
+        return false;
+    }
+
+    const CAmount quantity = static_cast<CAmount>(depinCreateQuantitySpinBox->value()) * COIN;
+    if (assetData.nAmount + quantity > MAX_MONEY) {
+        if (errorMessage) {
+            *errorMessage = tr("Quantity is to large. Max is 21,000,000,000");
+        }
+        return false;
+    }
+
+    if (depinCreateChangeAddressCheckBox && depinCreateChangeAddressCheckBox->isChecked()) {
+        const QString qChangeAddress = depinCreateChangeAddressEdit->text();
+        if (qChangeAddress.isEmpty()) {
+            if (errorMessage) {
+                *errorMessage = tr("Custom change address is required");
+            }
+            return false;
+        }
+
+        const CTxDestination dest = DecodeDestination(qChangeAddress.toStdString());
+        if (!IsValidDestination(dest)) {
+            if (errorMessage) {
+                *errorMessage = tr("Invalid Neurai change address");
+            }
+            return false;
+        }
+    }
+
+    bool validCustomFee = true;
+    if (depinCreateCustomFee && depinCreateCustomFeeRadio && depinCreateCustomFeeRadio->isChecked()) {
+        validCustomFee = depinCreateCustomFee->validate();
+    }
+
+    if (!validCustomFee) {
+        if (errorMessage) {
+            *errorMessage = tr("Invalid custom fee amount");
+        }
+        return false;
+    }
+
+    return true;
+}
+
+void RestrictedAssetsDialog::updateDepinCreateCoinControlState(CCoinControl& ctrl) const
+{
+    if (depinCreateCustomFeeRadio && depinCreateCustomFeeRadio->isChecked() && depinCreateCustomFee) {
+        ctrl.m_feerate = CFeeRate(depinCreateCustomFee->value());
+    } else {
+        ctrl.m_feerate.reset();
+    }
+
+    if (depinCreateConfTargetSelector) {
+        ctrl.m_confirm_target = getConfTargetForIndex(depinCreateConfTargetSelector->currentIndex());
+    }
+
+    ctrl.destChange = CNoDestination();
+    if (depinCreateChangeAddressCheckBox && depinCreateChangeAddressCheckBox->isChecked() && depinCreateChangeAddressEdit) {
+        const CTxDestination dest = DecodeDestination(depinCreateChangeAddressEdit->text().toStdString());
+        if (IsValidDestination(dest)) {
+            ctrl.destChange = dest;
+        }
+    }
 }
 
 void RestrictedAssetsDialog::setupStyling(const PlatformStyle *platformStyle)
@@ -528,6 +1194,12 @@ void RestrictedAssetsDialog::setBalance(const CAmount& balance, const CAmount& u
 void RestrictedAssetsDialog::updateDisplayUnit()
 {
     setBalance(model->getBalance(), 0, 0, 0, 0, 0);
+
+    if (model && model->getOptionsModel() && depinCreateCustomFee) {
+        depinCreateCustomFee->setDisplayUnit(model->getOptionsModel()->getDisplayUnit());
+        updateDepinCreateMinFeeLabel();
+        updateDepinCreateSmartFeeLabel();
+    }
 }
 
 void RestrictedAssetsDialog::freezeAddressClicked()
