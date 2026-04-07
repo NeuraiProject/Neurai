@@ -38,6 +38,23 @@
 #include <QStringListModel>
 #include <QSortFilterProxyModel>
 #include <QCompleter>
+
+namespace {
+int AssetTypeForCreateDialogIndex(int index)
+{
+    switch (index) {
+        case 0: return IntFromAssetType(AssetType::ROOT);
+        case 1: return IntFromAssetType(AssetType::SUB);
+        case 2: return IntFromAssetType(AssetType::UNIQUE);
+        case 3: return IntFromAssetType(AssetType::MSGCHANNEL);
+        case 4: return IntFromAssetType(AssetType::QUALIFIER);
+        case 5: return IntFromAssetType(AssetType::SUB_QUALIFIER);
+        case 6: return IntFromAssetType(AssetType::RESTRICTED);
+        case 7: return IntFromAssetType(AssetType::DEPIN);
+        default: return IntFromAssetType(AssetType::ROOT);
+    }
+}
+}
 #include <QUrl>
 #include <QDesktopServices>
 
@@ -289,7 +306,9 @@ void CreateAssetDialog::setUpValues()
     list.append(tr("Restricted Asset") + " (" + QString::number(GetBurnAmount(AssetType::RESTRICTED) / factor) + " " + NeuraiUnits::name(displayUnit) + ")");
     list.append(tr("DEPIN Asset (Testnet)") + " (" + QString::number(GetBurnAmount(AssetType::DEPIN) / factor) + " " + NeuraiUnits::name(displayUnit) + ")");
 
-    ui->assetType->addItems(list);
+    for (int i = 0; i < list.size(); ++i) {
+        ui->assetType->addItem(list.at(i), AssetTypeForCreateDialogIndex(i));
+    }
     type = IntFromAssetType(AssetType::ROOT);
     ui->assetTypeLabel->setText(tr("Asset Type") + ":");
 
@@ -547,7 +566,11 @@ void CreateAssetDialog::CheckFormState()
     std::string error;
     bool assetNameValid = IsTypeCheckNameValid(AssetTypeFromInt(type), name.toStdString(), error);
 
-    if (type != IntFromAssetType(AssetType::ROOT) && type != IntFromAssetType(AssetType::QUALIFIER) && type != IntFromAssetType(AssetType::RESTRICTED)) {
+    if (type == IntFromAssetType(AssetType::SUB) ||
+        type == IntFromAssetType(AssetType::UNIQUE) ||
+        type == IntFromAssetType(AssetType::MSGCHANNEL) ||
+        type == IntFromAssetType(AssetType::SUB_QUALIFIER) ||
+        type == IntFromAssetType(AssetType::RESTRICTED)) {
         if (ui->assetList->currentText() == "")
         {
             ui->assetList->lineEdit()->setStyleSheet(STYLE_INVALID);
@@ -984,7 +1007,7 @@ void CreateAssetDialog::onAssetTypeActivated(int index)
 
     int nCurrentType = type;
     // Update the selected type
-    type = index;
+    type = ui->assetType->itemData(index).toInt();
 
     bool fOrginalTypeAsset = type == IntFromAssetType(AssetType::ROOT) || type == IntFromAssetType(AssetType::SUB) || type == IntFromAssetType(AssetType::UNIQUE) || type == IntFromAssetType(AssetType::MSGCHANNEL);
     bool fRestrictedTypeAsset = type == IntFromAssetType(AssetType::QUALIFIER) || type == IntFromAssetType(AssetType::SUB_QUALIFIER) || type == IntFromAssetType(AssetType::RESTRICTED);
@@ -1090,6 +1113,8 @@ QString CreateAssetDialog::GetSpecialCharacter()
         return "#";
     else if (type == IntFromAssetType(AssetType::MSGCHANNEL))
         return "~";
+    else if (type == IntFromAssetType(AssetType::DEPIN))
+        return "&";
 
     return "";
 }
