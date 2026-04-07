@@ -46,7 +46,12 @@ class RestrictedAssetsDialog : public QDialog
     Q_OBJECT
 
 public:
-    explicit RestrictedAssetsDialog(const PlatformStyle *platformStyle, QWidget *parent = 0);
+    enum class PageMode {
+        RestrictedOnly,
+        DepinOnly
+    };
+
+    explicit RestrictedAssetsDialog(const PlatformStyle *platformStyle, QWidget *parent = 0, PageMode mode = PageMode::RestrictedOnly);
     ~RestrictedAssetsDialog();
 
     void setClientModel(ClientModel *clientModel);
@@ -66,6 +71,7 @@ private:
     ClientModel *clientModel;
     WalletModel *model;
     const PlatformStyle *platformStyle;
+    PageMode pageMode;
     AssetFilterProxy *assetFilterProxy;
     AssetFilterProxy *depinAssetFilterProxy;
     QSortFilterProxyModel *myRestrictedAssetsFilterProxy;

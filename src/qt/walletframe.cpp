@@ -241,3 +241,10 @@ void WalletFrame::gotoRestrictedAssetsPage()
     for (i = mapWalletViews.constBegin(); i != mapWalletViews.constEnd(); ++i)
         i.value()->gotoRestrictedAssetsPage();
 }
+
+void WalletFrame::gotoDepinAssetsPage()
+{
+    QMap<QString, WalletView*>::const_iterator i;
+    for (i = mapWalletViews.constBegin(); i != mapWalletViews.constEnd(); ++i)
+        i.value()->gotoDepinAssetsPage();
+}

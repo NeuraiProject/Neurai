@@ -103,6 +103,7 @@ public Q_SLOTS:
     void gotoCreateAssetsPage();
     void gotoManageAssetsPage();
     void gotoRestrictedAssetsPage();
+    void gotoDepinAssetsPage();
     /** XNA END */
 };
 

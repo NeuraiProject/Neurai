@@ -58,12 +58,13 @@
 #include <wallet/wallet.h>
 #include <wallet/coincontrol.h>
 
-RestrictedAssetsDialog::RestrictedAssetsDialog(const PlatformStyle *_platformStyle, QWidget *parent) :
+RestrictedAssetsDialog::RestrictedAssetsDialog(const PlatformStyle *_platformStyle, QWidget *parent, PageMode mode) :
         QDialog(parent),
         ui(new Ui::RestrictedAssetsDialog),
         clientModel(0),
         model(0),
         platformStyle(_platformStyle),
+        pageMode(mode),
         assetFilterProxy(0),
         depinAssetFilterProxy(0),
         myRestrictedAssetsFilterProxy(0),
@@ -85,7 +86,7 @@ RestrictedAssetsDialog::RestrictedAssetsDialog(const PlatformStyle *_platformSty
 {
 
     ui->setupUi(this);
-    setWindowTitle("Manage Assets");
+    setWindowTitle(pageMode == PageMode::DepinOnly ? "DePIN" : "Manage Restricted Assets");
     setupStyling(_platformStyle);
 }
 
@@ -137,27 +138,31 @@ void RestrictedAssetsDialog::setModel(WalletModel *_model)
         ui->myAddressList->setSortingEnabled(true);
         ui->myAddressList->verticalHeader()->hide();
 
-        ui->listAssets->setModel(assetFilterProxy);
+        ui->listAssets->setModel(pageMode == PageMode::DepinOnly ? depinAssetFilterProxy : assetFilterProxy);
         ui->listAssets->horizontalHeader()->setStretchLastSection(true);
         ui->listAssets->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
         ui->listAssets->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         ui->listAssets->setAlternatingRowColors(true);
         ui->listAssets->verticalHeader()->hide();
 
-        AssignQualifier *assignQualifier = new AssignQualifier(platformStyle, this);
-        assignQualifier->setWalletModel(_model);
-        assignQualifier->setObjectName("tab_assign_qualifier");
-        connect(assignQualifier->getUI()->buttonSubmit, SIGNAL(clicked()), this, SLOT(assignQualifierClicked()));
-        ui->tabWidget->addTab(assignQualifier, "Assign/Remove Qualifier");
+        if (pageMode == PageMode::DepinOnly) {
+            ui->frameAddressList->hide();
+            ui->labelAssetBalance->setText(tr("DEPIN Balances"));
+            if (!depinTab) {
+                createDepinTab();
+            }
+        } else {
+            AssignQualifier *assignQualifier = new AssignQualifier(platformStyle, this);
+            assignQualifier->setWalletModel(_model);
+            assignQualifier->setObjectName("tab_assign_qualifier");
+            connect(assignQualifier->getUI()->buttonSubmit, SIGNAL(clicked()), this, SLOT(assignQualifierClicked()));
+            ui->tabWidget->addTab(assignQualifier, "Assign/Remove Qualifier");
 
-        FreezeAddress *freezeAddress = new FreezeAddress(platformStyle, this);
-        freezeAddress->setWalletModel(_model);
-        freezeAddress->setObjectName("tab_freeze_address");
-        connect(freezeAddress->getUI()->buttonSubmit, SIGNAL(clicked()), this, SLOT(freezeAddressClicked()));
-        ui->tabWidget->addTab(freezeAddress, "Restrict Addresses/Global");
-
-        if (!depinTab) {
-            createDepinTab();
+            FreezeAddress *freezeAddress = new FreezeAddress(platformStyle, this);
+            freezeAddress->setWalletModel(_model);
+            freezeAddress->setObjectName("tab_freeze_address");
+            connect(freezeAddress->getUI()->buttonSubmit, SIGNAL(clicked()), this, SLOT(freezeAddressClicked()));
+            ui->tabWidget->addTab(freezeAddress, "Restrict Addresses/Global");
         }
     }
 }

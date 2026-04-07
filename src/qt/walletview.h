@@ -81,6 +81,7 @@ private:
     CreateAssetDialog *createAssetsPage;
     ReissueAssetDialog *manageAssetsPage;
     RestrictedAssetsDialog *restrictedAssetsPage;
+    RestrictedAssetsDialog *depinAssetsPage;
     /** XNA END */
 
 public Q_SLOTS:
@@ -137,6 +138,7 @@ public Q_SLOTS:
     void gotoCreateAssetsPage();
     void gotoManageAssetsPage();
     void gotoRestrictedAssetsPage();
+    void gotoDepinAssetsPage();
 
     /** XNA END */
 

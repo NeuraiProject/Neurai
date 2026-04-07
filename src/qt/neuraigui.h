@@ -142,6 +142,7 @@ private:
     QAction *messagingAction = nullptr;
     QAction *votingAction = nullptr;
     QAction *restrictedAssetAction = nullptr;
+    QAction *depinAssetAction = nullptr;
     QWidget *headerWidget = nullptr;
     QLabel *labelCurrentMarket = nullptr;
     QLabel *labelCurrentPrice = nullptr;
@@ -283,6 +284,7 @@ private Q_SLOTS:
     void gotoCreateAssetsPage();
     void gotoManageAssetsPage();
     void gotoRestrictedAssetsPage();
+    void gotoDepinAssetsPage();
     /** XNA END */
 
 #endif // ENABLE_WALLET

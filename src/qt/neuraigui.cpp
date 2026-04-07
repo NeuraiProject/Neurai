@@ -411,6 +411,14 @@ void NeuraiGUI::createActions()
     restrictedAssetAction->setFont(font);
     tabGroup->addAction(restrictedAssetAction);
 
+    depinAssetAction = new QAction(platformStyle->SingleColorIconOnOff(":/icons/restricted_asset_selected", ":/icons/restricted_asset"), tr("&DePIN"), this);
+    depinAssetAction->setStatusTip(tr("Manage DePIN assets"));
+    depinAssetAction->setToolTip(depinAssetAction->statusTip());
+    depinAssetAction->setCheckable(true);
+    depinAssetAction->setShortcut(QKeySequence(Qt::ALT + Qt::Key_9));
+    depinAssetAction->setFont(font);
+    tabGroup->addAction(depinAssetAction);
+
     /** XNA END */
 
 #ifdef ENABLE_WALLET
@@ -436,6 +444,8 @@ void NeuraiGUI::createActions()
     connect(manageAssetAction, SIGNAL(triggered()), this, SLOT(gotoManageAssetsPage()));
     connect(restrictedAssetAction, SIGNAL(triggered()), this, SLOT(showNormalIfMinimized()));
     connect(restrictedAssetAction, SIGNAL(triggered()), this, SLOT(gotoRestrictedAssetsPage()));
+    connect(depinAssetAction, SIGNAL(triggered()), this, SLOT(showNormalIfMinimized()));
+    connect(depinAssetAction, SIGNAL(triggered()), this, SLOT(gotoDepinAssetsPage()));
     // TODO add messaging actions to go to messaging page when clicked
     // TODO add voting actions to go to voting page when clicked
 #endif // ENABLE_WALLET
@@ -656,6 +666,7 @@ void NeuraiGUI::createToolBars()
 //        m_toolbar->addAction(messagingAction);
 //        m_toolbar->addAction(votingAction);
         m_toolbar->addAction(restrictedAssetAction);
+        m_toolbar->addAction(depinAssetAction);
 
         QString openSansFontString = "font: normal 22pt \"Open Sans\";";
         QString normalString = "font: normal 22pt \"Arial\";";
@@ -1075,6 +1086,7 @@ void NeuraiGUI::setWalletActionsEnabled(bool enabled)
     messagingAction->setEnabled(false);
     votingAction->setEnabled(false);
     restrictedAssetAction->setEnabled(false);
+    depinAssetAction->setEnabled(false);
     /** XNA END */
 }
 
@@ -1249,6 +1261,12 @@ void NeuraiGUI::gotoRestrictedAssetsPage()
 {
     restrictedAssetAction->setChecked(true);
     if (walletFrame) walletFrame->gotoRestrictedAssetsPage();
+};
+
+void NeuraiGUI::gotoDepinAssetsPage()
+{
+    depinAssetAction->setChecked(true);
+    if (walletFrame) walletFrame->gotoDepinAssetsPage();
 };
 /** XNA END */
 #endif // ENABLE_WALLET
@@ -1562,10 +1580,14 @@ void NeuraiGUI::checkAssets()
     if (AreRestrictedAssetsDeployed()) {
         restrictedAssetAction->setDisabled(false);
         restrictedAssetAction->setToolTip(tr("Manage restricted assets"));
+        depinAssetAction->setDisabled(false);
+        depinAssetAction->setToolTip(tr("Manage DePIN assets"));
 
     } else {
         restrictedAssetAction->setDisabled(true);
         restrictedAssetAction->setToolTip(tr("Restricted Assets not yet active"));
+        depinAssetAction->setDisabled(true);
+        depinAssetAction->setToolTip(tr("DePIN not yet active"));
     }
 }
 #endif // ENABLE_WALLET
