@@ -737,26 +737,49 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
             // DEPIN assets: Verify that only the owner can transfer (soulbound)
             AssetType transferAssetType;
             if (IsAssetNameValid(transfer.strName, transferAssetType) && transferAssetType == AssetType::DEPIN) {
-                // Check if any input contains the owner token for this DEPIN asset
+                // Authorize the transfer if:
+                // 1. The transaction spends the DEPIN owner token directly, or
+                // 2. The DEPIN input being spent comes from an address that currently holds the owner token.
                 std::string ownerTokenName = transfer.strName + OWNER_TAG;
-                bool hasOwnerToken = false;
+                bool hasOwnerAuthority = false;
 
                 for (const auto& txin : tx.vin) {
                     const Coin& coin = inputs.AccessCoin(txin.prevout);
                     if (coin.IsSpent())
                         continue;
 
+                    int inputType = 0;
+                    bool fInputIsOwner = false;
+                    if (!coin.out.scriptPubKey.IsAssetScript(inputType, fInputIsOwner))
+                        continue;
+
+                    if (inputType == TX_NEW_ASSET && fInputIsOwner) {
+                        std::string inputOwnerName;
+                        std::string inputOwnerAddress;
+                        if (OwnerAssetFromScript(coin.out.scriptPubKey, inputOwnerName, inputOwnerAddress) && inputOwnerName == ownerTokenName) {
+                            hasOwnerAuthority = true;
+                            break;
+                        }
+                    }
+
                     CAssetTransfer inputTransfer;
                     std::string inputAddress;
                     if (TransferAssetFromScript(coin.out.scriptPubKey, inputTransfer, inputAddress)) {
                         if (inputTransfer.strName == ownerTokenName) {
-                            hasOwnerToken = true;
+                            hasOwnerAuthority = true;
+                            break;
+                        }
+
+                        if (inputTransfer.strName == transfer.strName &&
+                            assetCache &&
+                            AddressHasDEPINOwnerToken(*assetCache, transfer.strName, inputAddress)) {
+                            hasOwnerAuthority = true;
                             break;
                         }
                     }
                 }
 
-                if (!hasOwnerToken) {
+                if (!hasOwnerAuthority) {
                     return state.DoS(100, false, REJECT_INVALID,
                                    "bad-txns-depin-transfer-not-by-owner: DEPIN assets can only be transferred by the owner",
                                    false, "", tx.GetHash());

@@ -1582,12 +1582,14 @@ bool CTransaction::VerifyReissueAsset(std::string& strError) const
 
     // Check that there is an asset transfer, this will be the owner asset change
     bool fOwnerOutFound = false;
+    std::string ownerTransferAddress;
     for (auto out : vout) {
         CAssetTransfer transfer;
         std::string transferAddress;
         if (TransferAssetFromScript(out.scriptPubKey, transfer, transferAddress)) {
             if (asset_name_to_check + OWNER_TAG == transfer.strName) {
                 fOwnerOutFound = true;
+                ownerTransferAddress = transferAddress;
                 break;
             }
         }
@@ -1595,6 +1597,11 @@ bool CTransaction::VerifyReissueAsset(std::string& strError) const
 
     if (!fOwnerOutFound) {
         strError  = "bad-txns-reissue-owner-outpoint-not-found";
+        return false;
+    }
+
+    if (asset_type == AssetType::DEPIN && ownerTransferAddress != address) {
+        strError = "bad-txns-depin-reissue-owner-address-mismatch";
         return false;
     }
 
@@ -4325,6 +4332,17 @@ bool CreateReissueAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, 
     if (!IsAssetNameValid(asset_name)) {
         error = std::make_pair(RPC_INVALID_PARAMS, std::string("Invalid asset name: ") + asset_name);
         return false;
+    }
+
+    if (asset_type == AssetType::DEPIN) {
+        if (!change_address.empty() && change_address != address) {
+            error = std::make_pair(RPC_INVALID_PARAMETER,
+                                   std::string("DEPIN asset reissues must send the owner token and reissued assets to the same address"));
+            return false;
+        }
+
+        change_address = address;
+        coinControl.destChange = DecodeDestination(change_address);
     }
 
     // Check to make sure this isn't an owner token
