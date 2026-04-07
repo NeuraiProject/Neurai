@@ -570,6 +570,10 @@ bool CheckTransaction(const CTransaction& tx, CValidationState &state, bool fChe
                 if (nType != TX_TRANSFER_ASSET) {
                     return state.DoS(100, false, REJECT_INVALID, "bad-txns-bad-asset-transaction");
                 }
+            } else if (out.scriptPubKey.IsNullAsset()) {
+                // Restricted asset control transactions legitimately include
+                // OP_XNA_ASSET metadata outputs that are validated separately.
+                continue;
             } else {
                 if (out.scriptPubKey.Find(OP_XNA_ASSET)) {
                     if (!HasAssetOpcodeInExpectedPosition(out.scriptPubKey)) {
@@ -900,6 +904,11 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
                     if (nType != TX_TRANSFER_ASSET) {
                         return state.DoS(100, false, REJECT_INVALID, "bad-txns-bad-asset-transaction", false, "", tx.GetHash());
                     }
+                } else if (out.scriptPubKey.IsNullAsset()) {
+                    // Restricted asset control transactions legitimately include
+                    // OP_XNA_ASSET metadata outputs that are not spendable asset
+                    // transfer scripts. They were already fully validated above.
+                    continue;
                 } else {
                     if (out.scriptPubKey.Find(OP_XNA_ASSET)) {
                         if (AreRestrictedAssetsDeployed()) {
