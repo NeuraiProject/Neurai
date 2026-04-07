@@ -4870,7 +4870,6 @@ CWallet* CWallet:: CreateWalletFromFile(const std::string walletFile)
             return nullptr;
         }
 
-        walletInstance->SetBestChain(chainActive.GetLocator());
     }
     else if (gArgs.IsArgSet("-usehd")) {
         bool useHD = gArgs.GetBoolArg("-usehd", true);
