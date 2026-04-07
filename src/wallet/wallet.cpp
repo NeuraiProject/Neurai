@@ -4925,6 +4925,7 @@ CWallet* CWallet:: CreateWalletFromFile(const std::string walletFile)
     }
 
     CBlockIndex *pindexRescan = chainActive.Genesis();
+    const bool fForceFullRescanOnFirstRun = fFirstRun;
     if (!gArgs.GetBoolArg("-rescan", false))
     {
         CWalletDB walletdb(*walletInstance->dbw);
@@ -4952,10 +4953,15 @@ CWallet* CWallet:: CreateWalletFromFile(const std::string walletFile)
         uiInterface.InitMessage(_("Rescanning..."));
         LogPrintf("Rescanning last %i blocks (from block %i)...\n", chainActive.Height() - pindexRescan->nHeight, pindexRescan->nHeight);
 
-        // No need to read and scan block if block was created before
-        // our wallet birthday (as adjusted for block time variability)
-        while (pindexRescan && walletInstance->nTimeFirstKey && (pindexRescan->GetBlockTime() < (walletInstance->nTimeFirstKey - TIMESTAMP_WINDOW))) {
-            pindexRescan = chainActive.Next(pindexRescan);
+        // On first run, force a full rescan. This is required for mnemonic
+        // restores because the restored wallet's initial key metadata is
+        // created "now", which would otherwise skip historical blocks.
+        if (!fForceFullRescanOnFirstRun) {
+            // No need to read and scan block if block was created before
+            // our wallet birthday (as adjusted for block time variability)
+            while (pindexRescan && walletInstance->nTimeFirstKey && (pindexRescan->GetBlockTime() < (walletInstance->nTimeFirstKey - TIMESTAMP_WINDOW))) {
+                pindexRescan = chainActive.Next(pindexRescan);
+            }
         }
 
         nStart = GetTimeMillis();
