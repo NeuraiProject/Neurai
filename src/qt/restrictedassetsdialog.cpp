@@ -58,6 +58,7 @@
 #include <QDebug>
 #include <QMessageBox>
 #include <algorithm>
+#include <climits>
 #include <set>
 
 #include <policy/policy.h>
@@ -125,6 +126,7 @@ RestrictedAssetsDialog::RestrictedAssetsDialog(const PlatformStyle *_platformSty
         depinTab(0),
         depinCreateTab(0),
         depinTransferTab(0),
+        depinIndexNoticeLabel(0),
         depinAssetComboBox(0),
         depinAssetLabel(0),
         depinAddressLabel(0),
@@ -273,6 +275,21 @@ void RestrictedAssetsDialog::setModel(WalletModel *_model)
             ui->frameAssetBalance->setMaximumWidth(420);
             ui->horizontalLayout->setStretch(0, 2);
             ui->horizontalLayout->setStretch(1, 4);
+
+            if (!depinIndexNoticeLabel) {
+                depinIndexNoticeLabel = new QLabel(ui->tabFrame);
+                depinIndexNoticeLabel->setWordWrap(true);
+                depinIndexNoticeLabel->setFont(GUIUtil::getSubLabelFont());
+                ui->verticalLayout_8->insertWidget(0, depinIndexNoticeLabel);
+            }
+
+            if (fAssetIndex) {
+                depinIndexNoticeLabel->setStyleSheet(STRING_LABEL_COLOR);
+                depinIndexNoticeLabel->setText(tr("DEPIN is running with -assetindex enabled. Network holder addresses are shown from the full asset index."));
+            } else {
+                depinIndexNoticeLabel->setStyleSheet(STRING_LABEL_COLOR_WARNING);
+                depinIndexNoticeLabel->setText(tr("Full DEPIN support requires -assetindex. Enable it to view all holder addresses and manage DEPIN assets correctly."));
+            }
 
             connect(ui->lineEditAssetSearch, SIGNAL(textChanged(QString)), this, SLOT(depinAssetSearchChanged(QString)));
             connect(ui->lineEditAddressSearch, SIGNAL(textChanged(QString)), this, SLOT(depinAddressSearchChanged(QString)));
@@ -1255,10 +1272,23 @@ bool RestrictedAssetsDialog::getDepinAssetMetadata(const std::string& assetName,
     return false;
 }
 
-bool RestrictedAssetsDialog::getWalletAssetBalancesByAddress(const std::string& assetName, std::map<std::string, CAmount>* balances) const
+bool RestrictedAssetsDialog::getDepinBalancesByAddress(const std::string& assetName, std::map<std::string, CAmount>* balances) const
 {
     if (balances) {
         balances->clear();
+    }
+
+    if (fAssetIndex && passetsdb) {
+        std::vector<std::pair<std::string, CAmount>> vecAddressAmounts;
+        int totalEntries = 0;
+        if (passetsdb->AssetAddressDir(vecAddressAmounts, totalEntries, false, assetName, INT_MAX, 0)) {
+            for (const auto& entry : vecAddressAmounts) {
+                if (entry.second > 0 && balances) {
+                    (*balances)[entry.first] = entry.second;
+                }
+            }
+            return balances && !balances->empty();
+        }
     }
 
     if (!model || !model->getWallet()) {
@@ -1430,7 +1460,7 @@ void RestrictedAssetsDialog::updateDepinAddressOverview(const QString& assetName
     }
 
     std::map<std::string, CAmount> balancesByAddress;
-    if (!getWalletAssetBalancesByAddress(assetName.toStdString(), &balancesByAddress)) {
+    if (!getDepinBalancesByAddress(assetName.toStdString(), &balancesByAddress)) {
         return;
     }
 

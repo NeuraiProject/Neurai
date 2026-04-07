@@ -95,6 +95,7 @@ private:
     QWidget *depinTab;
     QWidget *depinCreateTab;
     QWidget *depinTransferTab;
+    QLabel *depinIndexNoticeLabel;
     QComboBox *depinAssetComboBox;
     QLabel *depinAssetLabel;
     QLabel *depinAddressLabel;
@@ -142,7 +143,7 @@ private:
     void clearDepinWarning();
     void enableDepinSubmit(const QString &message);
     bool getDepinAssetMetadata(const std::string& assetName, CNewAsset& assetData) const;
-    bool getWalletAssetBalancesByAddress(const std::string& assetName, std::map<std::string, CAmount>* balances) const;
+    bool getDepinBalancesByAddress(const std::string& assetName, std::map<std::string, CAmount>* balances) const;
     bool getWalletAssetOutputsAtAddress(const std::string& assetName, const std::string& address, std::vector<COutput>* outputs, CAmount* totalAmount = nullptr) const;
     bool getDepinOwnerControlledOutputs(const std::string& assetName, std::string& ownerAddress, std::vector<COutput>* outputs, CAmount* totalAmount = nullptr) const;
     bool findDepinHolderAddress(const std::string& assetName, std::string& holderAddress, bool& foundOwnerControlledHolding) const;
