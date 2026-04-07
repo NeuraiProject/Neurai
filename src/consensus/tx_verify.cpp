@@ -59,6 +59,53 @@ bool HasAssetOpcodeInExpectedPosition(const CScript& scriptPubKey)
     return false;
 }
 
+bool TxContainsOwnerTokenAtAddress(const CTransaction& tx, const std::string& ownerTokenName, const std::string& address)
+{
+    for (const auto& txout : tx.vout) {
+        int nType = 0;
+        bool fIsOwner = false;
+        if (!txout.scriptPubKey.IsAssetScript(nType, fIsOwner)) {
+            continue;
+        }
+
+        if (nType == TX_NEW_ASSET && fIsOwner) {
+            std::string outputOwnerName;
+            std::string outputOwnerAddress;
+            if (OwnerAssetFromScript(txout.scriptPubKey, outputOwnerName, outputOwnerAddress) &&
+                outputOwnerName == ownerTokenName &&
+                outputOwnerAddress == address) {
+                return true;
+            }
+        }
+
+        if (nType == TX_TRANSFER_ASSET) {
+            CAssetTransfer transfer;
+            std::string transferAddress;
+            if (TransferAssetFromScript(txout.scriptPubKey, transfer, transferAddress) &&
+                transfer.strName == ownerTokenName &&
+                transferAddress == address) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+bool AddressHasDEPINOwnerAuthority(CAssetsCache* assetCache, const std::string& assetName, const std::string& address, const uint256& sourceTxHash)
+{
+    if (assetCache && AddressHasDEPINOwnerToken(*assetCache, assetName, address)) {
+        return true;
+    }
+
+    const CTransactionRef parentTx = mempool.get(sourceTxHash);
+    if (!parentTx) {
+        return false;
+    }
+
+    return TxContainsOwnerTokenAtAddress(*parentTx, assetName + OWNER_TAG, address);
+}
+
 } // namespace
 
 bool IsFinalTx(const CTransaction &tx, int nBlockHeight, int64_t nBlockTime)
@@ -762,23 +809,23 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
                         }
                     }
 
-                    if (assetCache && inputType == TX_NEW_ASSET && !fInputIsOwner) {
+                    if (inputType == TX_NEW_ASSET && !fInputIsOwner) {
                         CNewAsset inputAsset;
                         std::string inputAssetAddress;
                         if (AssetFromScript(coin.out.scriptPubKey, inputAsset, inputAssetAddress) &&
                             inputAsset.strName == transfer.strName &&
-                            AddressHasDEPINOwnerToken(*assetCache, transfer.strName, inputAssetAddress)) {
+                            AddressHasDEPINOwnerAuthority(assetCache, transfer.strName, inputAssetAddress, txin.prevout.hash)) {
                             hasOwnerAuthority = true;
                             break;
                         }
                     }
 
-                    if (assetCache && inputType == TX_REISSUE_ASSET) {
+                    if (inputType == TX_REISSUE_ASSET) {
                         CReissueAsset inputReissue;
                         std::string inputReissueAddress;
                         if (ReissueAssetFromScript(coin.out.scriptPubKey, inputReissue, inputReissueAddress) &&
                             inputReissue.strName == transfer.strName &&
-                            AddressHasDEPINOwnerToken(*assetCache, transfer.strName, inputReissueAddress)) {
+                            AddressHasDEPINOwnerAuthority(assetCache, transfer.strName, inputReissueAddress, txin.prevout.hash)) {
                             hasOwnerAuthority = true;
                             break;
                         }
@@ -793,8 +840,7 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
                         }
 
                         if (inputTransfer.strName == transfer.strName &&
-                            assetCache &&
-                            AddressHasDEPINOwnerToken(*assetCache, transfer.strName, inputAddress)) {
+                            AddressHasDEPINOwnerAuthority(assetCache, transfer.strName, inputAddress, txin.prevout.hash)) {
                             hasOwnerAuthority = true;
                             break;
                         }
