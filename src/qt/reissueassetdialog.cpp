@@ -42,6 +42,7 @@
 #include <QCompleter>
 #include <QUrl>
 #include <QDesktopServices>
+#include <set>
 
 #if QT_VERSION < QT_VERSION_CHECK(5, 11, 0)
 #define QTversionPreFiveEleven
@@ -1392,26 +1393,60 @@ void ReissueAssetDialog::onUnitChanged(int value)
 void ReissueAssetDialog::updateAssetsList()
 {
     LOCK(cs_main);
-    std::vector<std::string> assets;
-    GetAllAdministrativeAssets(model->getWallet(), assets, 0);
+    std::vector<std::string> administrativeAssets;
+    std::vector<std::string> walletAssets;
+    GetAllAdministrativeAssets(model->getWallet(), administrativeAssets, 0);
+    GetAllMyAssets(model->getWallet(), walletAssets, 0, true, false);
 
     QStringList list;
     list << "";
+    std::set<std::string> inserted;
 
-    // Load the assets that are reissuable
-    for (auto item : assets) {
-        std::string name = QString::fromStdString(item).split("!").first().toStdString();
-        CNewAsset asset;
-        if (passets->GetAssetMetaDataIfExists(name, asset)) {
-            if (asset.nReissuable)
-                list << QString::fromStdString(asset.strName);
+    auto addAssetIfMissing = [&](const std::string& name) {
+        if (name.empty() || inserted.count(name)) {
+            return;
         }
 
-        if (passets->CheckIfAssetExists(RESTRICTED_CHAR + name)) {
-            list << QString::fromStdString(RESTRICTED_CHAR + name);
+        inserted.insert(name);
+        list << QString::fromStdString(name);
+    };
+
+    auto addReissuableAsset = [&](const std::string& name) {
+        if (name.empty()) {
+            return;
+        }
+
+        CNewAsset assetData;
+        if (!passets->GetAssetMetaDataIfExists(name, assetData) || !assetData.nReissuable) {
+            return;
+        }
+
+        addAssetIfMissing(assetData.strName);
+    };
+
+    // Load reissuable assets that have an administrative token in this wallet.
+    for (const auto& item : administrativeAssets) {
+        std::string name = item;
+        if (IsAssetNameAnOwner(name)) {
+            name.pop_back();
+        }
+
+        addReissuableAsset(name);
+
+        const std::string restrictedName = std::string(1, RESTRICTED_CHAR) + name;
+        if (passets->CheckIfAssetExists(restrictedName)) {
+            addAssetIfMissing(restrictedName);
         }
     }
 
+    // Explicitly include reissuable DEPIN assets with their '&' prefix intact.
+    for (const auto& item : walletAssets) {
+        if (IsAssetNameADEPIN(item)) {
+            addReissuableAsset(item);
+        } else if (IsAssetNameAnOwner(item) && !item.empty() && item.front() == '&') {
+            addReissuableAsset(item.substr(0, item.size() - 1));
+        }
+    }
 
     stringModel->setStringList(list);
 }
@@ -1490,4 +1525,3 @@ void ReissueAssetDialog::hideInvalidVerifierStringMessage()
     ui->labelReissueVerifierStringErrorMessage->clear();
     ui->labelReissueVerifierStringErrorMessage->hide();
 }
-
