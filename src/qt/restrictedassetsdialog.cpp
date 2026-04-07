@@ -50,6 +50,7 @@
 #include <QRadioButton>
 #include <QScrollBar>
 #include <QSettings>
+#include <QStandardItemModel>
 #include <QTextDocument>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -64,6 +65,47 @@
 #include <wallet/wallet.h>
 #include <wallet/coincontrol.h>
 
+namespace {
+
+constexpr int DepinAssetNameRole = Qt::UserRole + 1;
+
+QString FormatDepinWholeAmount(const CAmount amount)
+{
+    return QString::number(amount / COIN);
+}
+
+QString GetDepinAddressStatus(CAssetsCache* cache, const std::string& assetName, const std::string& address)
+{
+    if (!cache) {
+        return QObject::tr("Unknown");
+    }
+
+    const bool frozen = cache->CheckForAddressRestriction(assetName, address, true);
+    const bool selfRevoked = cache->CheckForDEPINSelfRestriction(assetName, address, true);
+
+    if (frozen && selfRevoked) {
+        return QObject::tr("Frozen + Self Revoked");
+    }
+    if (frozen) {
+        return QObject::tr("Frozen");
+    }
+    if (selfRevoked) {
+        return QObject::tr("Self Revoked");
+    }
+
+    return QObject::tr("Active");
+}
+
+void SetReadOnlyItem(QStandardItem *item, const QVariant& sortValue = QVariant())
+{
+    item->setEditable(false);
+    if (sortValue.isValid()) {
+        item->setData(sortValue, Qt::EditRole);
+    }
+}
+
+} // namespace
+
 RestrictedAssetsDialog::RestrictedAssetsDialog(const PlatformStyle *_platformStyle, QWidget *parent, PageMode mode) :
         QWidget(parent),
         ui(new Ui::RestrictedAssetsDialog),
@@ -74,7 +116,11 @@ RestrictedAssetsDialog::RestrictedAssetsDialog(const PlatformStyle *_platformSty
         assetFilterProxy(0),
         depinAssetFilterProxy(0),
         myRestrictedAssetsFilterProxy(0),
+        depinSummaryFilterProxy(0),
+        depinAddressFilterProxy(0),
         myRestrictedAssetsModel(0),
+        depinSummaryModel(0),
+        depinAddressModel(0),
         depinTab(0),
         depinCreateTab(0),
         depinTransferTab(0),
@@ -168,24 +214,63 @@ void RestrictedAssetsDialog::setModel(WalletModel *_model)
 
         myRestrictedAssetsFilterProxy->setSortRole(Qt::EditRole);
 
-        ui->myAddressList->setModel(myRestrictedAssetsFilterProxy);
-        ui->myAddressList->horizontalHeader()->setStretchLastSection(true);
-        ui->myAddressList->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-        ui->myAddressList->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-        ui->myAddressList->setAlternatingRowColors(true);
-        ui->myAddressList->setSortingEnabled(true);
-        ui->myAddressList->verticalHeader()->hide();
-
-        ui->listAssets->setModel(pageMode == PageMode::DepinOnly ? depinAssetFilterProxy : assetFilterProxy);
-        ui->listAssets->horizontalHeader()->setStretchLastSection(true);
-        ui->listAssets->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-        ui->listAssets->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        ui->listAssets->setAlternatingRowColors(true);
-        ui->listAssets->verticalHeader()->hide();
-
         if (pageMode == PageMode::DepinOnly) {
-            ui->frameAddressList->hide();
-            ui->labelAssetBalance->setText(tr("DEPIN Balances"));
+            depinSummaryModel = new QStandardItemModel(this);
+            depinSummaryModel->setHorizontalHeaderLabels(QStringList() << tr("!") << tr("Name") << tr("Amount"));
+            depinSummaryFilterProxy = new QSortFilterProxyModel(this);
+            depinSummaryFilterProxy->setSourceModel(depinSummaryModel);
+            depinSummaryFilterProxy->setDynamicSortFilter(true);
+            depinSummaryFilterProxy->setSortCaseSensitivity(Qt::CaseInsensitive);
+            depinSummaryFilterProxy->setFilterCaseSensitivity(Qt::CaseInsensitive);
+            depinSummaryFilterProxy->setFilterKeyColumn(-1);
+
+            depinAddressModel = new QStandardItemModel(this);
+            depinAddressModel->setHorizontalHeaderLabels(QStringList() << tr("Address") << tr("Amount") << tr("Status"));
+            depinAddressFilterProxy = new QSortFilterProxyModel(this);
+            depinAddressFilterProxy->setSourceModel(depinAddressModel);
+            depinAddressFilterProxy->setDynamicSortFilter(true);
+            depinAddressFilterProxy->setSortCaseSensitivity(Qt::CaseInsensitive);
+            depinAddressFilterProxy->setFilterCaseSensitivity(Qt::CaseInsensitive);
+            depinAddressFilterProxy->setFilterKeyColumn(-1);
+
+            ui->listAssets->setModel(depinSummaryFilterProxy);
+            ui->listAssets->setSelectionBehavior(QAbstractItemView::SelectRows);
+            ui->listAssets->setSelectionMode(QAbstractItemView::SingleSelection);
+            ui->listAssets->horizontalHeader()->setStretchLastSection(false);
+            ui->listAssets->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+            ui->listAssets->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+            ui->listAssets->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+            ui->listAssets->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+            ui->listAssets->setAlternatingRowColors(true);
+            ui->listAssets->setSortingEnabled(true);
+            ui->listAssets->verticalHeader()->hide();
+
+            ui->myAddressList->setModel(depinAddressFilterProxy);
+            ui->myAddressList->setSelectionBehavior(QAbstractItemView::SelectRows);
+            ui->myAddressList->setSelectionMode(QAbstractItemView::SingleSelection);
+            ui->myAddressList->horizontalHeader()->setStretchLastSection(false);
+            ui->myAddressList->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+            ui->myAddressList->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+            ui->myAddressList->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+            ui->myAddressList->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+            ui->myAddressList->setAlternatingRowColors(true);
+            ui->myAddressList->setSortingEnabled(true);
+            ui->myAddressList->verticalHeader()->hide();
+
+            ui->labelAssetBalance->setText(tr("DEPIN Assets"));
+            ui->labelAddressList->setText(tr("Address Status"));
+            ui->lineEditAssetSearch->setPlaceholderText(tr("Search assets"));
+            ui->lineEditAddressSearch->setPlaceholderText(tr("Search addresses"));
+            ui->frameAddressList->show();
+            ui->frameAssetBalance->setMinimumWidth(320);
+            ui->frameAssetBalance->setMaximumWidth(420);
+            ui->horizontalLayout->setStretch(0, 2);
+            ui->horizontalLayout->setStretch(1, 4);
+
+            connect(ui->lineEditAssetSearch, SIGNAL(textChanged(QString)), this, SLOT(depinAssetSearchChanged(QString)));
+            connect(ui->lineEditAddressSearch, SIGNAL(textChanged(QString)), this, SLOT(depinAddressSearchChanged(QString)));
+            connect(ui->listAssets->selectionModel(), SIGNAL(currentRowChanged(QModelIndex,QModelIndex)), this, SLOT(depinAssetSummarySelectionChanged(QModelIndex,QModelIndex)));
+
             if (!depinTab) {
                 createDepinTab();
             }
@@ -200,12 +285,43 @@ void RestrictedAssetsDialog::setModel(WalletModel *_model)
             }
             connect(_model->getOptionsModel(), SIGNAL(customFeeFeaturesChanged(bool)), this, SLOT(depinCreateFeeFeatureChanged(bool)));
             depinCreateFeeFeatureChanged(_model->getOptionsModel()->getCustomFeeFeatures());
+            connect(_model->getAssetTableModel(), &QAbstractItemModel::layoutChanged, this, [this]() {
+                updateDepinOverview();
+                updateDepinCreateAssets();
+                updateDepinTransferAssets();
+            });
+            connect(_model->getAssetTableModel(), &QAbstractItemModel::modelReset, this, [this]() {
+                updateDepinOverview();
+                updateDepinCreateAssets();
+                updateDepinTransferAssets();
+            });
+            connect(_model->getAssetTableModel(), &QAbstractItemModel::dataChanged, this, [this](const QModelIndex&, const QModelIndex&, const QVector<int>&) {
+                updateDepinOverview();
+                updateDepinCreateAssets();
+                updateDepinTransferAssets();
+            });
+            updateDepinOverview();
             updateDepinCreateAssets();
             updateDepinTransferAssets();
             updateDepinCreateMinFeeLabel();
             updateDepinCreateFeeSectionControls();
             updateDepinCreateSmartFeeLabel();
         } else {
+            ui->myAddressList->setModel(myRestrictedAssetsFilterProxy);
+            ui->myAddressList->horizontalHeader()->setStretchLastSection(true);
+            ui->myAddressList->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+            ui->myAddressList->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+            ui->myAddressList->setAlternatingRowColors(true);
+            ui->myAddressList->setSortingEnabled(true);
+            ui->myAddressList->verticalHeader()->hide();
+
+            ui->listAssets->setModel(assetFilterProxy);
+            ui->listAssets->horizontalHeader()->setStretchLastSection(true);
+            ui->listAssets->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+            ui->listAssets->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+            ui->listAssets->setAlternatingRowColors(true);
+            ui->listAssets->verticalHeader()->hide();
+
             AssignQualifier *assignQualifier = new AssignQualifier(platformStyle, this);
             assignQualifier->setWalletModel(_model);
             assignQualifier->setObjectName("tab_assign_qualifier");
@@ -721,7 +837,9 @@ void RestrictedAssetsDialog::depinCreateClicked()
     txidMsgBox.exec();
 
     clearDepinCreateForm();
+    updateDepinOverview();
     updateDepinCreateAssets();
+    updateDepinTransferAssets();
 }
 
 void RestrictedAssetsDialog::depinCreateFeeFeatureChanged(bool enabled)
@@ -793,6 +911,64 @@ void RestrictedAssetsDialog::clearDepinTransferForm()
     depinTransferBatchEdit->clear();
     depinTransferButton->setDisabled(true);
     clearDepinTransferWarning();
+}
+
+void RestrictedAssetsDialog::depinAssetSummarySelectionChanged(const QModelIndex &current, const QModelIndex &previous)
+{
+    Q_UNUSED(previous);
+
+    const QString assetName = current.isValid() ? current.sibling(current.row(), 1).data(DepinAssetNameRole).toString() : QString();
+    updateDepinAddressOverview(assetName);
+
+    if (assetName.isEmpty()) {
+        return;
+    }
+
+    if (depinAssetComboBox) {
+        const int index = depinAssetComboBox->findData(assetName, AssetTableModel::RoleIndex::AssetNameRole);
+        if (index >= 0 && depinAssetComboBox->currentIndex() != index) {
+            depinAssetComboBox->setCurrentIndex(index);
+        }
+    }
+
+    if (depinCreateAssetComboBox) {
+        const int index = depinCreateAssetComboBox->findData(assetName);
+        if (index >= 0 && depinCreateAssetComboBox->currentIndex() != index) {
+            depinCreateAssetComboBox->setCurrentIndex(index);
+        }
+    }
+
+    if (depinTransferAssetComboBox) {
+        const int index = depinTransferAssetComboBox->findData(assetName);
+        if (index >= 0 && depinTransferAssetComboBox->currentIndex() != index) {
+            depinTransferAssetComboBox->setCurrentIndex(index);
+        }
+    }
+}
+
+void RestrictedAssetsDialog::depinAssetSearchChanged(const QString &text)
+{
+    if (!depinSummaryFilterProxy) {
+        return;
+    }
+
+    QString currentAsset;
+    const QModelIndex currentIndex = ui->listAssets->currentIndex();
+    if (currentIndex.isValid()) {
+        currentAsset = currentIndex.sibling(currentIndex.row(), 1).data(DepinAssetNameRole).toString();
+    }
+
+    depinSummaryFilterProxy->setFilterFixedString(text);
+    syncDepinSelection(currentAsset);
+}
+
+void RestrictedAssetsDialog::depinAddressSearchChanged(const QString &text)
+{
+    if (!depinAddressFilterProxy) {
+        return;
+    }
+
+    depinAddressFilterProxy->setFilterFixedString(text);
 }
 
 void RestrictedAssetsDialog::depinTransferClicked()
@@ -916,6 +1092,7 @@ void RestrictedAssetsDialog::depinTransferClicked()
     txidMsgBox.exec();
 
     clearDepinTransferForm();
+    updateDepinOverview();
     updateDepinTransferAssets();
 }
 
@@ -1034,6 +1211,43 @@ bool RestrictedAssetsDialog::getDepinAssetMetadata(const std::string& assetName,
     return false;
 }
 
+bool RestrictedAssetsDialog::getWalletAssetBalancesByAddress(const std::string& assetName, std::map<std::string, CAmount>* balances) const
+{
+    if (balances) {
+        balances->clear();
+    }
+
+    if (!model || !model->getWallet()) {
+        return false;
+    }
+
+    std::map<std::string, std::vector<COutput>> mapAssetCoins;
+    model->getWallet()->AvailableAssets(mapAssetCoins, true, nullptr, 1, MAX_MONEY, MAX_MONEY, 0, 0);
+
+    const auto it = mapAssetCoins.find(assetName);
+    if (it == mapAssetCoins.end()) {
+        return false;
+    }
+
+    for (const auto& output : it->second) {
+        if (!output.tx || !output.tx->tx || output.i >= output.tx->tx->vout.size()) {
+            continue;
+        }
+
+        CAssetOutputEntry outputData;
+        if (!GetAssetData(output.tx->tx->vout[output.i].scriptPubKey, outputData) ||
+            outputData.assetName != assetName) {
+            continue;
+        }
+
+        if (balances) {
+            (*balances)[EncodeDestination(outputData.destination)] += outputData.nAmount;
+        }
+    }
+
+    return balances && !balances->empty();
+}
+
 bool RestrictedAssetsDialog::getWalletAssetOutputsAtAddress(const std::string& assetName, const std::string& address, std::vector<COutput>* outputs, CAmount* totalAmount) const
 {
     if (outputs) {
@@ -1095,6 +1309,137 @@ bool RestrictedAssetsDialog::getDepinOwnerControlledOutputs(const std::string& a
     }
 
     return getWalletAssetOutputsAtAddress(assetName, ownerAddress, outputs, totalAmount);
+}
+
+void RestrictedAssetsDialog::updateDepinOverview()
+{
+    if (!depinSummaryModel || !depinAddressModel || !model || !model->getWallet()) {
+        return;
+    }
+
+    QString selectedAsset;
+    const QModelIndex currentIndex = ui->listAssets->currentIndex();
+    if (currentIndex.isValid()) {
+        selectedAsset = currentIndex.sibling(currentIndex.row(), 1).data(DepinAssetNameRole).toString();
+    }
+
+    depinSummaryModel->removeRows(0, depinSummaryModel->rowCount());
+
+    std::map<std::string, std::vector<COutput>> mapAssetCoins;
+    model->getWallet()->AvailableAssets(mapAssetCoins, true, nullptr, 1, MAX_MONEY, MAX_MONEY, 0, 0);
+
+    for (const auto& entry : mapAssetCoins) {
+        if (!IsAssetNameADEPIN(entry.first)) {
+            continue;
+        }
+
+        CAmount totalAmount = 0;
+        for (const auto& output : entry.second) {
+            if (!output.tx || !output.tx->tx || output.i >= output.tx->tx->vout.size()) {
+                continue;
+            }
+
+            CAssetOutputEntry outputData;
+            if (!GetAssetData(output.tx->tx->vout[output.i].scriptPubKey, outputData) ||
+                outputData.assetName != entry.first) {
+                continue;
+            }
+
+            totalAmount += outputData.nAmount;
+        }
+
+        if (totalAmount <= 0) {
+            continue;
+        }
+
+        std::string ownerAddress;
+        const bool hasOwnerToken = findDepinOwnerAddress(entry.first, ownerAddress);
+
+        QStandardItem *ownerItem = new QStandardItem(hasOwnerToken ? "!" : "");
+        QStandardItem *nameItem = new QStandardItem(QString::fromStdString(entry.first));
+        QStandardItem *amountItem = new QStandardItem(FormatDepinWholeAmount(totalAmount));
+
+        ownerItem->setTextAlignment(Qt::AlignCenter);
+        amountItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        nameItem->setData(QString::fromStdString(entry.first), DepinAssetNameRole);
+        SetReadOnlyItem(ownerItem, hasOwnerToken ? 1 : 0);
+        SetReadOnlyItem(nameItem, QString::fromStdString(entry.first).toLower());
+        SetReadOnlyItem(amountItem, static_cast<qlonglong>(totalAmount / COIN));
+
+        depinSummaryModel->appendRow(QList<QStandardItem*>() << ownerItem << nameItem << amountItem);
+    }
+
+    ui->listAssets->sortByColumn(1, Qt::AscendingOrder);
+    syncDepinSelection(selectedAsset);
+}
+
+void RestrictedAssetsDialog::updateDepinAddressOverview(const QString& assetName)
+{
+    if (!depinAddressModel) {
+        return;
+    }
+
+    depinAddressModel->removeRows(0, depinAddressModel->rowCount());
+
+    if (assetName.isEmpty()) {
+        return;
+    }
+
+    std::map<std::string, CAmount> balancesByAddress;
+    if (!getWalletAssetBalancesByAddress(assetName.toStdString(), &balancesByAddress)) {
+        return;
+    }
+
+    for (const auto& entry : balancesByAddress) {
+        if (entry.second <= 0) {
+            continue;
+        }
+
+        const QString status = GetDepinAddressStatus(passets, assetName.toStdString(), entry.first);
+
+        QStandardItem *addressItem = new QStandardItem(QString::fromStdString(entry.first));
+        QStandardItem *amountItem = new QStandardItem(FormatDepinWholeAmount(entry.second));
+        QStandardItem *statusItem = new QStandardItem(status);
+
+        amountItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        statusItem->setTextAlignment(Qt::AlignCenter);
+        SetReadOnlyItem(addressItem, QString::fromStdString(entry.first));
+        SetReadOnlyItem(amountItem, static_cast<qlonglong>(entry.second / COIN));
+        SetReadOnlyItem(statusItem, status.toLower());
+
+        depinAddressModel->appendRow(QList<QStandardItem*>() << addressItem << amountItem << statusItem);
+    }
+
+    ui->myAddressList->sortByColumn(0, Qt::AscendingOrder);
+}
+
+void RestrictedAssetsDialog::syncDepinSelection(const QString& assetName)
+{
+    if (!depinSummaryFilterProxy || !ui->listAssets) {
+        return;
+    }
+
+    QModelIndex targetIndex;
+    for (int row = 0; row < depinSummaryFilterProxy->rowCount(); ++row) {
+        const QModelIndex index = depinSummaryFilterProxy->index(row, 1);
+        if (index.data(DepinAssetNameRole).toString() == assetName) {
+            targetIndex = index;
+            break;
+        }
+    }
+
+    if (!targetIndex.isValid() && depinSummaryFilterProxy->rowCount() > 0) {
+        targetIndex = depinSummaryFilterProxy->index(0, 1);
+    }
+
+    if (targetIndex.isValid()) {
+        ui->listAssets->setCurrentIndex(targetIndex);
+        ui->listAssets->selectRow(targetIndex.row());
+        updateDepinAddressOverview(targetIndex.data(DepinAssetNameRole).toString());
+        return;
+    }
+
+    updateDepinAddressOverview(QString());
 }
 
 void RestrictedAssetsDialog::updateDepinCreateAssets()
@@ -2025,6 +2370,8 @@ void RestrictedAssetsDialog::depinClicked()
     txidMsgBox.exec();
 
     clearDepinForm();
+    updateDepinOverview();
+    updateDepinTransferAssets();
 }
 
 void RestrictedAssetsDialog::assignQualifierClicked()

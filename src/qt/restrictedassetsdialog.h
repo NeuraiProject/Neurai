@@ -12,6 +12,7 @@
 #include <QMessageBox>
 #include <QString>
 #include <QWidget>
+#include <map>
 
 class ClientModel;
 class PlatformStyle;
@@ -37,6 +38,8 @@ class QFrame;
 class QValueComboBox;
 class NeuraiAmountField;
 class QPlainTextEdit;
+class QStandardItemModel;
+class QModelIndex;
 
 
 namespace Ui {
@@ -82,8 +85,12 @@ private:
     AssetFilterProxy *assetFilterProxy;
     AssetFilterProxy *depinAssetFilterProxy;
     QSortFilterProxyModel *myRestrictedAssetsFilterProxy;
+    QSortFilterProxyModel *depinSummaryFilterProxy;
+    QSortFilterProxyModel *depinAddressFilterProxy;
 
     MyRestrictedAssetsTableModel *myRestrictedAssetsModel;
+    QStandardItemModel *depinSummaryModel;
+    QStandardItemModel *depinAddressModel;
     QWidget *depinTab;
     QWidget *depinCreateTab;
     QWidget *depinTransferTab;
@@ -134,10 +141,14 @@ private:
     void clearDepinWarning();
     void enableDepinSubmit(const QString &message);
     bool getDepinAssetMetadata(const std::string& assetName, CNewAsset& assetData) const;
+    bool getWalletAssetBalancesByAddress(const std::string& assetName, std::map<std::string, CAmount>* balances) const;
     bool getWalletAssetOutputsAtAddress(const std::string& assetName, const std::string& address, std::vector<COutput>* outputs, CAmount* totalAmount = nullptr) const;
     bool getDepinOwnerControlledOutputs(const std::string& assetName, std::string& ownerAddress, std::vector<COutput>* outputs, CAmount* totalAmount = nullptr) const;
     bool findDepinHolderAddress(const std::string& assetName, std::string& holderAddress, bool& foundOwnerControlledHolding) const;
     bool findDepinOwnerAddress(const std::string& assetName, std::string& ownerAddress) const;
+    void updateDepinOverview();
+    void updateDepinAddressOverview(const QString& assetName);
+    void syncDepinSelection(const QString& assetName);
     void updateDepinCreateAssets();
     void updateDepinCreateSelectedAsset();
     void updateDepinTransferAssets();
@@ -174,6 +185,9 @@ private Q_SLOTS:
     void depinTransferBatchModeChanged(int state);
     void clearDepinTransferForm();
     void depinTransferClicked();
+    void depinAssetSummarySelectionChanged(const QModelIndex &current, const QModelIndex &previous);
+    void depinAssetSearchChanged(const QString &text);
+    void depinAddressSearchChanged(const QString &text);
 
 
     Q_SIGNALS:
