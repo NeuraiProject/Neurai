@@ -22,6 +22,7 @@
 // TODO remove the following dependencies
 #include "chain.h"
 #include "coins.h"
+#include "txmempool.h"
 #include "utilmoneystr.h"
 
 namespace {
