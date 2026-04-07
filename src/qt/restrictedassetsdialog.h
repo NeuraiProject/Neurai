@@ -132,6 +132,7 @@ private:
     void setDepinWarning(const QString &message, bool failure = true);
     void clearDepinWarning();
     void enableDepinSubmit(const QString &message);
+    bool getDepinAssetMetadata(const std::string& assetName, CNewAsset& assetData) const;
     bool findDepinHolderAddress(const std::string& assetName, std::string& holderAddress, bool& foundOwnerControlledHolding) const;
     bool findDepinOwnerAddress(const std::string& assetName, std::string& ownerAddress) const;
     void updateDepinCreateAssets();

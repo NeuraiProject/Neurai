@@ -107,6 +107,70 @@ bool AddressHasDEPINOwnerAuthority(CAssetsCache* assetCache, const std::string& 
     return TxContainsOwnerTokenAtAddress(*parentTx, assetName + OWNER_TAG, address);
 }
 
+bool GetAssetMetadataFromNewAssetTx(const CTransaction& tx, const std::string& assetName, CNewAsset& asset)
+{
+    for (const auto& txout : tx.vout) {
+        int nType = 0;
+        bool fIsOwner = false;
+        if (!txout.scriptPubKey.IsAssetScript(nType, fIsOwner) || nType != TX_NEW_ASSET || fIsOwner) {
+            continue;
+        }
+
+        std::string address;
+        if (AssetFromScript(txout.scriptPubKey, asset, address) && asset.strName == assetName) {
+            return true;
+        }
+
+        if (MsgChannelAssetFromScript(txout.scriptPubKey, asset, address) && asset.strName == assetName) {
+            return true;
+        }
+
+        if (QualifierAssetFromScript(txout.scriptPubKey, asset, address) && asset.strName == assetName) {
+            return true;
+        }
+
+        if (RestrictedAssetFromScript(txout.scriptPubKey, asset, address) && asset.strName == assetName) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool GetAssetMetadataForTransfer(CAssetsCache* assetCache, const CTransaction& tx, const CCoinsViewCache& inputs, const std::string& assetName, CNewAsset& asset)
+{
+    if (assetCache && assetCache->GetAssetMetaDataIfExists(assetName, asset)) {
+        return true;
+    }
+
+    for (const auto& txin : tx.vin) {
+        const Coin& coin = inputs.AccessCoin(txin.prevout);
+        if (coin.IsSpent()) {
+            continue;
+        }
+
+        int inputType = 0;
+        bool fInputIsOwner = false;
+        if (!coin.out.scriptPubKey.IsAssetScript(inputType, fInputIsOwner) || inputType != TX_NEW_ASSET || fInputIsOwner) {
+            continue;
+        }
+
+        std::string inputAddress;
+        if (AssetFromScript(coin.out.scriptPubKey, asset, inputAddress) && asset.strName == assetName) {
+            return true;
+        }
+    }
+
+    if (mempool.mapAssetToHash.count(assetName)) {
+        const CTransactionRef issueTx = mempool.get(mempool.mapAssetToHash.at(assetName));
+        if (issueTx && GetAssetMetadataFromNewAssetTx(*issueTx, assetName, asset)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 } // namespace
 
 bool IsFinalTx(const CTransaction &tx, int nBlockHeight, int64_t nBlockTime)
@@ -868,7 +932,7 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
                 } else {
                     // For all other types of assets, make sure they are sending the right type of units
                     CNewAsset asset;
-                    if (!assetCache->GetAssetMetaDataIfExists(transfer.strName, asset))
+                    if (!GetAssetMetadataForTransfer(assetCache, tx, inputs, transfer.strName, asset))
                         return state.DoS(100, false, REJECT_INVALID, "bad-txns-transfer-asset-not-exist", false, "", tx.GetHash());
 
                     if (asset.strName != transfer.strName)

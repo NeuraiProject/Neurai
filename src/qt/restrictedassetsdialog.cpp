@@ -928,23 +928,66 @@ bool RestrictedAssetsDialog::findDepinOwnerAddress(const std::string& assetName,
         return false;
     }
 
-    LOCK2(cs_main, model->getWallet()->cs_wallet);
+    const std::string ownerTokenName = assetName + OWNER_TAG;
+    std::map<std::string, std::vector<COutput>> mapAssetCoins;
+    model->getWallet()->AvailableAssets(mapAssetCoins, true, nullptr, 1, MAX_MONEY, MAX_MONEY, 0, 0);
 
-    std::set<CTxDestination> destinations;
-    for (const auto& entry : model->getWallet()->mapWallet) {
-        const CWalletTx& wtx = entry.second;
-        for (unsigned int i = 0; i < wtx.tx->vout.size(); ++i) {
-            CTxDestination dest;
-            if (ExtractDestination(wtx.tx->vout[i].scriptPubKey, dest)) {
-                destinations.insert(dest);
-            }
+    const auto it = mapAssetCoins.find(ownerTokenName);
+    if (it == mapAssetCoins.end()) {
+        return false;
+    }
+
+    for (const auto& output : it->second) {
+        if (!output.tx || !output.tx->tx || output.i >= output.tx->tx->vout.size()) {
+            continue;
+        }
+
+        const CScript& script = output.tx->tx->vout[output.i].scriptPubKey;
+        std::string parsedOwnerName;
+        std::string parsedOwnerAddress;
+        if (OwnerAssetFromScript(script, parsedOwnerName, parsedOwnerAddress) &&
+            parsedOwnerName == ownerTokenName) {
+            ownerAddress = parsedOwnerAddress;
+            return true;
+        }
+
+        CAssetTransfer transfer;
+        if (TransferAssetFromScript(script, transfer, parsedOwnerAddress) &&
+            transfer.strName == ownerTokenName) {
+            ownerAddress = parsedOwnerAddress;
+            return true;
         }
     }
 
-    for (const auto& dest : destinations) {
-        const std::string address = EncodeDestination(dest);
-        if (AddressHasDEPINOwnerToken(*passets, assetName, address)) {
-            ownerAddress = address;
+    return false;
+}
+
+bool RestrictedAssetsDialog::getDepinAssetMetadata(const std::string& assetName, CNewAsset& assetData) const
+{
+    if (passets && passets->GetAssetMetaDataIfExists(assetName, assetData)) {
+        return true;
+    }
+
+    if (!model || !model->getWallet()) {
+        return false;
+    }
+
+    std::map<std::string, std::vector<COutput>> mapAssetCoins;
+    model->getWallet()->AvailableAssets(mapAssetCoins, true, nullptr, 1, MAX_MONEY, MAX_MONEY, 0, 0);
+
+    const auto it = mapAssetCoins.find(assetName);
+    if (it == mapAssetCoins.end()) {
+        return false;
+    }
+
+    for (const auto& output : it->second) {
+        if (!output.tx || !output.tx->tx || output.i >= output.tx->tx->vout.size()) {
+            continue;
+        }
+
+        std::string address;
+        if (AssetFromScript(output.tx->tx->vout[output.i].scriptPubKey, assetData, address) &&
+            assetData.strName == assetName) {
             return true;
         }
     }
@@ -983,7 +1026,7 @@ void RestrictedAssetsDialog::updateDepinCreateAssets()
 
         CNewAsset assetData;
         std::string ownerAddress;
-        if (!passets->GetAssetMetaDataIfExists(assetName, assetData) || !assetData.nReissuable || !findDepinOwnerAddress(assetName, ownerAddress)) {
+        if (!getDepinAssetMetadata(assetName, assetData) || !assetData.nReissuable || !findDepinOwnerAddress(assetName, ownerAddress)) {
             continue;
         }
 
@@ -1024,7 +1067,7 @@ void RestrictedAssetsDialog::updateDepinCreateSelectedAsset()
     depinCreateAddressEdit->setText(QString::fromStdString(ownerAddress));
 
     CNewAsset assetData;
-    if (passets->GetAssetMetaDataIfExists(qAssetName.toStdString(), assetData)) {
+    if (getDepinAssetMetadata(qAssetName.toStdString(), assetData)) {
         const double currentAmount = static_cast<double>(assetData.nAmount / COIN);
         depinCreateQuantitySpinBox->setMaximum(std::max(0.0, 21000000000.0 - currentAmount));
         depinCreateReissuableCheckBox->setChecked(assetData.nReissuable);
@@ -1198,7 +1241,7 @@ bool RestrictedAssetsDialog::validateDepinCreateForm(QString *errorMessage)
     }
 
     CNewAsset assetData;
-    if (!passets->GetAssetMetaDataIfExists(qAssetName.toStdString(), assetData)) {
+    if (!getDepinAssetMetadata(qAssetName.toStdString(), assetData)) {
         if (errorMessage) {
             *errorMessage = tr("Asset data couldn't be found");
         }
