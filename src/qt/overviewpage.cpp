@@ -18,6 +18,7 @@
 #include "assettablemodel.h"
 #include "walletmodel.h"
 #include "assetrecord.h"
+#include "assets/assets.h"
 
 #include <QAbstractItemDelegate>
 #include <QDateTime>
@@ -201,6 +202,10 @@ public:
         // Create the gradient for the asset items
         QLinearGradient gradient(mainRect.topLeft(), mainRect.bottomRight());
 
+        QString name = index.data(AssetTableModel::AssetNameRole).toString();
+        QString amountText = index.data(AssetTableModel::FormattedAmountRole).toString();
+        bool fDepinAsset = IsAssetNameADEPIN(name.toStdString());
+
         // Select the color of the gradient
         if (admin) {
             if (darkModeEnabled) {
@@ -211,7 +216,15 @@ public:
                 gradient.setColorAt(1, COLOR_LIGHT_ORANGE);
             }
         } else {
-            if (darkModeEnabled) {
+            if (fDepinAsset) {
+                if (darkModeEnabled) {
+                    gradient.setColorAt(0, QColor("#0f3b2a"));
+                    gradient.setColorAt(1, QColor("#14543a"));
+                } else {
+                    gradient.setColorAt(0, QColor("#35c97d"));
+                    gradient.setColorAt(1, QColor("#168f52"));
+                }
+            } else if (darkModeEnabled) {
                 gradient.setColorAt(0, COLOR_REGULAR_CARD_LIGHT_BLUE_DARK_MODE);
                 gradient.setColorAt(1, COLOR_REGULAR_CARD_DARK_BLUE_DARK_MODE);
             } else {
@@ -252,10 +265,6 @@ public:
         amountFont.setPixelSize(14);
         amountFont.setWeight(QFont::Weight::Normal);
         amountFont.setLetterSpacing(QFont::SpacingType::AbsoluteSpacing, -0.3);
-
-        /** Get the name and formatted amount from the data */
-        QString name = index.data(AssetTableModel::AssetNameRole).toString();
-        QString amountText = index.data(AssetTableModel::FormattedAmountRole).toString();
 
         // Setup the pens
         QColor textColor = COLOR_WHITE;

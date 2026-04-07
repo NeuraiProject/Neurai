@@ -19,6 +19,7 @@
 #include "platformstyle.h"
 
 #include <QDebug>
+#include <QBrush>
 #include <QStringList>
 
 namespace {
@@ -245,6 +246,11 @@ QVariant AssetTableModel::data(const QModelIndex &index, int role) const
             else if (index.column() == Quantity)
                 return QString::fromStdString(rec->formattedQuantity());
         }
+        case Qt::ForegroundRole:
+            if (IsAssetNameADEPIN(rec->name)) {
+                return QBrush(QColor("#2fb36f"));
+            }
+            return QVariant();
         case Qt::ToolTipRole:
             return formatTooltip(rec);
         case Qt::TextAlignmentRole:
