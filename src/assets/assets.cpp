@@ -4115,6 +4115,43 @@ std::string EncodeIPFS(std::string decoded){
 };
 
 #ifdef ENABLE_WALLET
+static bool GetWalletOwnerTokenAddress(CWallet* pwallet, const std::string& ownerTokenName, std::string& ownerAddress)
+{
+    ownerAddress.clear();
+
+    if (!pwallet) {
+        return false;
+    }
+
+    std::map<std::string, std::vector<COutput>> mapAssetCoins;
+    pwallet->AvailableAssets(mapAssetCoins, true, nullptr, 1, MAX_MONEY, MAX_MONEY, 0, 0);
+
+    const auto it = mapAssetCoins.find(ownerTokenName);
+    if (it == mapAssetCoins.end()) {
+        return false;
+    }
+
+    for (const auto& output : it->second) {
+        if (!output.tx || !output.tx->tx || output.i >= output.tx->tx->vout.size()) {
+            continue;
+        }
+
+        const CScript& script = output.tx->tx->vout[output.i].scriptPubKey;
+        std::string parsedOwnerName;
+        if (OwnerAssetFromScript(script, parsedOwnerName, ownerAddress) && parsedOwnerName == ownerTokenName) {
+            return true;
+        }
+
+        CAssetTransfer transfer;
+        if (TransferAssetFromScript(script, transfer, ownerAddress) && transfer.strName == ownerTokenName) {
+            return true;
+        }
+    }
+
+    ownerAddress.clear();
+    return false;
+}
+
 bool CreateAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, const CNewAsset& asset, const std::string& address, std::pair<int, std::string>& error, CWalletTx& wtxNew, CReserveKey& reservekey, CAmount& nFeeRequired, std::string* verifier_string)
 {
     std::vector<CNewAsset> assets;
@@ -4501,8 +4538,45 @@ bool CreateTransferAssetTransaction(CWallet* pwallet, const CCoinControl& coinCo
         return false;
     }
 
+    std::vector<std::pair<CAssetTransfer, std::string>> transfers = vTransfers;
+    std::set<std::string> depinOwnerTransfersAdded;
+
+    for (const auto& transfer : vTransfers) {
+        AssetType assetType = AssetType::INVALID;
+        if (!IsAssetNameValid(transfer.first.strName, assetType) || assetType != AssetType::DEPIN) {
+            continue;
+        }
+
+        const std::string ownerTokenName = transfer.first.strName + OWNER_TAG;
+        if (depinOwnerTransfersAdded.count(ownerTokenName)) {
+            continue;
+        }
+
+        bool fOwnerTransferAlreadyPresent = false;
+        for (const auto& existingTransfer : transfers) {
+            if (existingTransfer.first.strName == ownerTokenName) {
+                fOwnerTransferAlreadyPresent = true;
+                break;
+            }
+        }
+
+        if (fOwnerTransferAlreadyPresent) {
+            depinOwnerTransfersAdded.insert(ownerTokenName);
+            continue;
+        }
+
+        std::string ownerAddress;
+        if (!GetWalletOwnerTokenAddress(pwallet, ownerTokenName, ownerAddress)) {
+            error = std::make_pair(RPC_INVALID_REQUEST, strprintf("Wallet doesn't have owner token for DEPIN asset: %s", transfer.first.strName));
+            return false;
+        }
+
+        transfers.emplace_back(std::make_pair(CAssetTransfer(ownerTokenName, OWNER_ASSET_AMOUNT), ownerAddress));
+        depinOwnerTransfersAdded.insert(ownerTokenName);
+    }
+
     // Loop through all transfers and create scriptpubkeys for them
-    for (auto transfer : vTransfers) {
+    for (auto transfer : transfers) {
         std::string address = transfer.second;
         std::string asset_name = transfer.first.strName;
         std::string message = transfer.first.message;
@@ -4593,7 +4667,7 @@ bool CreateTransferAssetTransaction(CWallet* pwallet, const CCoinControl& coinCo
                 }
             } else if (IsAssetNameADEPIN(pair.first.asset_name)) {
                 bool fHasOwnerTransfer = false;
-                for (const auto& transferPair : vTransfers) {
+                for (const auto& transferPair : transfers) {
                     if (transferPair.first.strName == pair.first.asset_name + OWNER_TAG) {
                         fHasOwnerTransfer = true;
                         break;

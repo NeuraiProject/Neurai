@@ -60,53 +60,6 @@ bool HasAssetOpcodeInExpectedPosition(const CScript& scriptPubKey)
     return false;
 }
 
-bool TxContainsOwnerTokenAtAddress(const CTransaction& tx, const std::string& ownerTokenName, const std::string& address)
-{
-    for (const auto& txout : tx.vout) {
-        int nType = 0;
-        bool fIsOwner = false;
-        if (!txout.scriptPubKey.IsAssetScript(nType, fIsOwner)) {
-            continue;
-        }
-
-        if (nType == TX_NEW_ASSET && fIsOwner) {
-            std::string outputOwnerName;
-            std::string outputOwnerAddress;
-            if (OwnerAssetFromScript(txout.scriptPubKey, outputOwnerName, outputOwnerAddress) &&
-                outputOwnerName == ownerTokenName &&
-                outputOwnerAddress == address) {
-                return true;
-            }
-        }
-
-        if (nType == TX_TRANSFER_ASSET) {
-            CAssetTransfer transfer;
-            std::string transferAddress;
-            if (TransferAssetFromScript(txout.scriptPubKey, transfer, transferAddress) &&
-                transfer.strName == ownerTokenName &&
-                transferAddress == address) {
-                return true;
-            }
-        }
-    }
-
-    return false;
-}
-
-bool AddressHasDEPINOwnerAuthority(CAssetsCache* assetCache, const std::string& assetName, const std::string& address, const uint256& sourceTxHash)
-{
-    if (assetCache && AddressHasDEPINOwnerToken(*assetCache, assetName, address)) {
-        return true;
-    }
-
-    const CTransactionRef parentTx = mempool.get(sourceTxHash);
-    if (!parentTx) {
-        return false;
-    }
-
-    return TxContainsOwnerTokenAtAddress(*parentTx, assetName + OWNER_TAG, address);
-}
-
 bool GetAssetMetadataFromNewAssetTx(const CTransaction& tx, const std::string& assetName, CNewAsset& asset)
 {
     for (const auto& txout : tx.vout) {
@@ -849,11 +802,8 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
             // DEPIN assets: Verify that only the owner can transfer (soulbound)
             AssetType transferAssetType;
             if (IsAssetNameValid(transfer.strName, transferAssetType) && transferAssetType == AssetType::DEPIN) {
-                // Authorize the transfer if:
-                // 1. The transaction spends the DEPIN owner token directly, or
-                // 2. The DEPIN input being spent comes from an address that currently holds the owner token.
                 std::string ownerTokenName = transfer.strName + OWNER_TAG;
-                bool hasOwnerAuthority = false;
+                bool spendsOwnerToken = false;
 
                 for (const auto& txin : tx.vin) {
                     const Coin& coin = inputs.AccessCoin(txin.prevout);
@@ -869,29 +819,7 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
                         std::string inputOwnerName;
                         std::string inputOwnerAddress;
                         if (OwnerAssetFromScript(coin.out.scriptPubKey, inputOwnerName, inputOwnerAddress) && inputOwnerName == ownerTokenName) {
-                            hasOwnerAuthority = true;
-                            break;
-                        }
-                    }
-
-                    if (inputType == TX_NEW_ASSET && !fInputIsOwner) {
-                        CNewAsset inputAsset;
-                        std::string inputAssetAddress;
-                        if (AssetFromScript(coin.out.scriptPubKey, inputAsset, inputAssetAddress) &&
-                            inputAsset.strName == transfer.strName &&
-                            AddressHasDEPINOwnerAuthority(assetCache, transfer.strName, inputAssetAddress, txin.prevout.hash)) {
-                            hasOwnerAuthority = true;
-                            break;
-                        }
-                    }
-
-                    if (inputType == TX_REISSUE_ASSET) {
-                        CReissueAsset inputReissue;
-                        std::string inputReissueAddress;
-                        if (ReissueAssetFromScript(coin.out.scriptPubKey, inputReissue, inputReissueAddress) &&
-                            inputReissue.strName == transfer.strName &&
-                            AddressHasDEPINOwnerAuthority(assetCache, transfer.strName, inputReissueAddress, txin.prevout.hash)) {
-                            hasOwnerAuthority = true;
+                            spendsOwnerToken = true;
                             break;
                         }
                     }
@@ -900,19 +828,14 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
                     std::string inputAddress;
                     if (TransferAssetFromScript(coin.out.scriptPubKey, inputTransfer, inputAddress)) {
                         if (inputTransfer.strName == ownerTokenName) {
-                            hasOwnerAuthority = true;
-                            break;
-                        }
-
-                        if (inputTransfer.strName == transfer.strName &&
-                            AddressHasDEPINOwnerAuthority(assetCache, transfer.strName, inputAddress, txin.prevout.hash)) {
-                            hasOwnerAuthority = true;
+                            spendsOwnerToken = true;
                             break;
                         }
                     }
                 }
 
-                if (!hasOwnerAuthority) {
+                const bool transfersOwnerToken = TxContainsAssetTransfer(tx, ownerTokenName);
+                if (!spendsOwnerToken || !transfersOwnerToken) {
                     return state.DoS(100, false, REJECT_INVALID,
                                    "bad-txns-depin-transfer-not-by-owner: DEPIN assets can only be transferred by the owner",
                                    false, "", tx.GetHash());
