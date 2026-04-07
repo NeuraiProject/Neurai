@@ -78,12 +78,26 @@ QString FormatDepinWholeAmount(const CAmount amount)
 
 QString GetDepinAddressStatus(CAssetsCache* cache, const std::string& assetName, const std::string& address)
 {
-    if (!cache) {
-        return QObject::tr("Unknown");
+    bool frozen = false;
+    bool selfRevoked = false;
+
+    if (prestricteddb) {
+        frozen = prestricteddb->ReadRestrictedAddress(address, assetName);
+        selfRevoked = prestricteddb->ReadSelfRestriction(address, assetName);
     }
 
-    const bool frozen = cache->CheckForAddressRestriction(assetName, address, true);
-    const bool selfRevoked = cache->CheckForDEPINSelfRestriction(assetName, address, true);
+    if (cache) {
+        if (!frozen) {
+            frozen = cache->CheckForAddressRestriction(assetName, address, true);
+        }
+        if (!selfRevoked) {
+            selfRevoked = cache->CheckForDEPINSelfRestriction(assetName, address, true);
+        }
+    }
+
+    if (!cache && !prestricteddb) {
+        return QObject::tr("Unknown");
+    }
 
     if (frozen && selfRevoked) {
         return QObject::tr("Frozen + Self Revoked");
