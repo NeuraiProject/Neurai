@@ -19,6 +19,7 @@ class SendAssetsEntry;
 class SendCoinsRecipient;
 class AssetFilterProxy;
 class AssignQualifier;
+class CNewAsset;
 class MyRestrictedAssetsTableModel;
 class MyRestrictedAssetsFilterProxy;
 class QSortFilterProxyModel;
