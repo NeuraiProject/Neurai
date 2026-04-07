@@ -762,6 +762,28 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
                         }
                     }
 
+                    if (assetCache && inputType == TX_NEW_ASSET && !fInputIsOwner) {
+                        CNewAsset inputAsset;
+                        std::string inputAssetAddress;
+                        if (AssetFromScript(coin.out.scriptPubKey, inputAsset, inputAssetAddress) &&
+                            inputAsset.strName == transfer.strName &&
+                            AddressHasDEPINOwnerToken(*assetCache, transfer.strName, inputAssetAddress)) {
+                            hasOwnerAuthority = true;
+                            break;
+                        }
+                    }
+
+                    if (assetCache && inputType == TX_REISSUE_ASSET) {
+                        CReissueAsset inputReissue;
+                        std::string inputReissueAddress;
+                        if (ReissueAssetFromScript(coin.out.scriptPubKey, inputReissue, inputReissueAddress) &&
+                            inputReissue.strName == transfer.strName &&
+                            AddressHasDEPINOwnerToken(*assetCache, transfer.strName, inputReissueAddress)) {
+                            hasOwnerAuthority = true;
+                            break;
+                        }
+                    }
+
                     CAssetTransfer inputTransfer;
                     std::string inputAddress;
                     if (TransferAssetFromScript(coin.out.scriptPubKey, inputTransfer, inputAddress)) {
