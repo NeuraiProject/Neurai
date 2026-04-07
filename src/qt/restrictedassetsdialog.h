@@ -22,6 +22,14 @@ class AssignQualifier;
 class MyRestrictedAssetsTableModel;
 class MyRestrictedAssetsFilterProxy;
 class QSortFilterProxyModel;
+class QWidget;
+class QComboBox;
+class QLabel;
+class QCheckBox;
+class QLineEdit;
+class QPushButton;
+class QRadioButton;
+class QValidatedLineEdit;
 
 
 namespace Ui {
@@ -59,14 +67,41 @@ private:
     WalletModel *model;
     const PlatformStyle *platformStyle;
     AssetFilterProxy *assetFilterProxy;
+    AssetFilterProxy *depinAssetFilterProxy;
     QSortFilterProxyModel *myRestrictedAssetsFilterProxy;
 
     MyRestrictedAssetsTableModel *myRestrictedAssetsModel;
+    QWidget *depinTab;
+    QComboBox *depinAssetComboBox;
+    QLabel *depinAssetLabel;
+    QLabel *depinAddressLabel;
+    QValidatedLineEdit *depinAddressEdit;
+    QCheckBox *depinChangeAddressCheckBox;
+    QLineEdit *depinChangeAddressEdit;
+    QLabel *depinWarningLabel;
+    QPushButton *depinCheckButton;
+    QPushButton *depinClearButton;
+    QPushButton *depinSubmitButton;
+    QRadioButton *depinFreezeAddressRadio;
+    QRadioButton *depinUnfreezeAddressRadio;
+    QRadioButton *depinSelfRevokeRadio;
+
+    void createDepinTab();
+    void setDepinWarning(const QString &message, bool failure = true);
+    void clearDepinWarning();
+    void enableDepinSubmit(const QString &message);
+    bool findDepinHolderAddress(const std::string& assetName, std::string& holderAddress, bool& foundOwnerControlledHolding) const;
 
 private Q_SLOTS:
     void updateDisplayUnit();
     void assignQualifierClicked();
     void freezeAddressClicked();
+    void depinClicked();
+    void depinCheck();
+    void depinDataChanged();
+    void depinChangeAddressChanged(int state);
+    void depinActionChanged();
+    void clearDepinForm();
 
 
     Q_SIGNALS:
