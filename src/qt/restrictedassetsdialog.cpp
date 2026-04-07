@@ -59,7 +59,7 @@
 #include <wallet/coincontrol.h>
 
 RestrictedAssetsDialog::RestrictedAssetsDialog(const PlatformStyle *_platformStyle, QWidget *parent, PageMode mode) :
-        QDialog(parent),
+        QWidget(parent),
         ui(new Ui::RestrictedAssetsDialog),
         clientModel(0),
         model(0),

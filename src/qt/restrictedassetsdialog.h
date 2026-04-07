@@ -9,9 +9,9 @@
 
 #include "walletmodel.h"
 
-#include <QDialog>
 #include <QMessageBox>
 #include <QString>
+#include <QWidget>
 
 class ClientModel;
 class PlatformStyle;
@@ -41,7 +41,7 @@ class QUrl;
 QT_END_NAMESPACE
 
 /** Dialog for sending neurais */
-class RestrictedAssetsDialog : public QDialog
+class RestrictedAssetsDialog : public QWidget
 {
     Q_OBJECT
 
