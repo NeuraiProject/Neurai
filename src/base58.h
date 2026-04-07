@@ -166,6 +166,9 @@ public:
 typedef CNeuraiExtKeyBase<CExtKey, BIP32_EXTKEY_SIZE, CChainParams::EXT_SECRET_KEY> CNeuraiExtKey;
 typedef CNeuraiExtKeyBase<CExtPubKey, BIP32_EXTKEY_SIZE, CChainParams::EXT_PUBLIC_KEY> CNeuraiExtPubKey;
 
+bool SignMessageHash(const CKey& key, const CTxDestination& dest, const uint256& hash, std::vector<unsigned char>& vchSig);
+bool VerifyMessageHash(const CTxDestination& dest, const uint256& hash, const std::vector<unsigned char>& vchSig);
+
 std::string EncodeDestination(const CTxDestination& dest);
 CTxDestination DecodeDestination(const std::string& str);
 bool IsValidDestinationString(const std::string& str);

@@ -767,13 +767,17 @@ UniValue signmessage(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_TYPE_ERROR, "Invalid address");
     }
 
-    const CKeyID *keyID = boost::get<CKeyID>(&dest);
-    if (!keyID) {
+    CKeyID keyID;
+    if (const CKeyID* destKeyID = boost::get<CKeyID>(&dest)) {
+        keyID = *destKeyID;
+    } else if (const WitnessV1KeyHash* witnessKeyID = boost::get<WitnessV1KeyHash>(&dest)) {
+        keyID = CKeyID(*witnessKeyID);
+    } else {
         throw JSONRPCError(RPC_TYPE_ERROR, "Address does not refer to key");
     }
 
     CKey key;
-    if (!pwallet->GetKey(*keyID, key)) {
+    if (!pwallet->GetKey(keyID, key)) {
         throw JSONRPCError(RPC_WALLET_ERROR, "Private key not available");
     }
 
@@ -782,7 +786,7 @@ UniValue signmessage(const JSONRPCRequest& request)
     ss << strMessage;
 
     std::vector<unsigned char> vchSig;
-    if (!key.SignCompact(ss.GetHash(), vchSig))
+    if (!SignMessageHash(key, dest, ss.GetHash(), vchSig))
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Sign failed");
 
     return EncodeBase64(vchSig.data(), vchSig.size());

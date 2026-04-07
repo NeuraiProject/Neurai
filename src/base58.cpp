@@ -8,11 +8,14 @@
 
 #include "bech32.h"
 #include "hash.h"
+#include "streams.h"
 #include "uint256.h"
+#include "version.h"
 
 #include <assert.h>
 #include <stdint.h>
 #include <string.h>
+#include <ios>
 #include <vector>
 #include <string>
 #include <boost/variant/apply_visitor.hpp>
@@ -20,6 +23,49 @@
 
 /** All alphanumeric characters except for "0", "I", "O", and "l" */
 static const char* pszBase58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+namespace {
+static const unsigned char PQ_MESSAGE_SIGNATURE_PREFIX = 0x35;
+
+bool SerializePQMessageSignature(const CPubKey& pubkey, const std::vector<unsigned char>& signature, std::vector<unsigned char>& payload)
+{
+    if (!pubkey.IsValid() || !pubkey.IsPQ() || signature.empty()) {
+        return false;
+    }
+
+    CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
+    ss << PQ_MESSAGE_SIGNATURE_PREFIX;
+    ss << pubkey;
+    ss << signature;
+    payload.assign(ss.begin(), ss.end());
+    return true;
+}
+
+bool DeserializePQMessageSignature(const std::vector<unsigned char>& payload, CPubKey& pubkey, std::vector<unsigned char>& signature)
+{
+    if (payload.empty() || payload[0] != PQ_MESSAGE_SIGNATURE_PREFIX) {
+        return false;
+    }
+
+    try {
+        CDataStream ss(payload, SER_NETWORK, PROTOCOL_VERSION);
+        unsigned char prefix = 0;
+        ss >> prefix;
+        if (prefix != PQ_MESSAGE_SIGNATURE_PREFIX) {
+            return false;
+        }
+
+        ss >> pubkey;
+        ss >> signature;
+        if (!pubkey.IsValid() || !pubkey.IsPQ() || signature.empty() || !ss.empty()) {
+            return false;
+        }
+        return true;
+    } catch (const std::ios_base::failure&) {
+        return false;
+    }
+}
+} // namespace
 
 bool DecodeBase58(const char* psz, std::vector<unsigned char>& vch)
 {
@@ -331,6 +377,64 @@ bool CNeuraiSecret::SetString(const char* pszSecret)
 bool CNeuraiSecret::SetString(const std::string& strSecret)
 {
     return SetString(strSecret.c_str());
+}
+
+bool SignMessageHash(const CKey& key, const CTxDestination& dest, const uint256& hash, std::vector<unsigned char>& vchSig)
+{
+    if (!key.IsValid()) {
+        return false;
+    }
+
+    const CPubKey pubkey = key.GetPubKey();
+    if (!pubkey.IsValid()) {
+        return false;
+    }
+
+    if (key.IsPQ()) {
+        const WitnessV1KeyHash* witnessKeyID = boost::get<WitnessV1KeyHash>(&dest);
+        if (!witnessKeyID || WitnessV1KeyHash(pubkey.GetID()) != *witnessKeyID) {
+            return false;
+        }
+
+        std::vector<unsigned char> pqSignature;
+        if (!key.Sign(hash, pqSignature)) {
+            return false;
+        }
+
+        return SerializePQMessageSignature(pubkey, pqSignature, vchSig);
+    }
+
+    const CKeyID* keyID = boost::get<CKeyID>(&dest);
+    if (!keyID || pubkey.GetID() != *keyID) {
+        return false;
+    }
+
+    return key.SignCompact(hash, vchSig);
+}
+
+bool VerifyMessageHash(const CTxDestination& dest, const uint256& hash, const std::vector<unsigned char>& vchSig)
+{
+    if (const WitnessV1KeyHash* witnessKeyID = boost::get<WitnessV1KeyHash>(&dest)) {
+        CPubKey pubkey;
+        std::vector<unsigned char> pqSignature;
+        if (!DeserializePQMessageSignature(vchSig, pubkey, pqSignature)) {
+            return false;
+        }
+
+        return WitnessV1KeyHash(pubkey.GetID()) == *witnessKeyID && pubkey.Verify(hash, pqSignature);
+    }
+
+    const CKeyID* keyID = boost::get<CKeyID>(&dest);
+    if (!keyID) {
+        return false;
+    }
+
+    CPubKey pubkey;
+    if (!pubkey.RecoverCompact(hash, vchSig)) {
+        return false;
+    }
+
+    return pubkey.GetID() == *keyID;
 }
 
 namespace {
