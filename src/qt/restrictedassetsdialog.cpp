@@ -45,6 +45,7 @@
 #include <QLineEdit>
 #include <QFontMetrics>
 #include <QMessageBox>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QScrollBar>
@@ -76,6 +77,7 @@ RestrictedAssetsDialog::RestrictedAssetsDialog(const PlatformStyle *_platformSty
         myRestrictedAssetsModel(0),
         depinTab(0),
         depinCreateTab(0),
+        depinTransferTab(0),
         depinAssetComboBox(0),
         depinAssetLabel(0),
         depinAddressLabel(0),
@@ -106,7 +108,15 @@ RestrictedAssetsDialog::RestrictedAssetsDialog(const PlatformStyle *_platformSty
         depinCreateSmartFeeLabel(0),
         depinCreateFeeEstimationLabel(0),
         depinCreateMinimumFeeCheckBox(0),
-        depinCreateCustomFee(0)
+        depinCreateCustomFee(0),
+        depinTransferAssetComboBox(0),
+        depinTransferBatchCheckBox(0),
+        depinTransferAddressEdit(0),
+        depinTransferBatchEdit(0),
+        depinTransferBatchHelpLabel(0),
+        depinTransferWarningLabel(0),
+        depinTransferButton(0),
+        depinTransferClearButton(0)
 {
 
     ui->setupUi(this);
@@ -182,12 +192,16 @@ void RestrictedAssetsDialog::setModel(WalletModel *_model)
             if (!depinCreateTab) {
                 createDepinCreateTab();
             }
+            if (!depinTransferTab) {
+                createDepinTransferTab();
+            }
             if (depinCreateCustomFee) {
                 depinCreateCustomFee->setDisplayUnit(_model->getOptionsModel()->getDisplayUnit());
             }
             connect(_model->getOptionsModel(), SIGNAL(customFeeFeaturesChanged(bool)), this, SLOT(depinCreateFeeFeatureChanged(bool)));
             depinCreateFeeFeatureChanged(_model->getOptionsModel()->getCustomFeeFeatures());
             updateDepinCreateAssets();
+            updateDepinTransferAssets();
             updateDepinCreateMinFeeLabel();
             updateDepinCreateFeeSectionControls();
             updateDepinCreateSmartFeeLabel();
@@ -453,6 +467,75 @@ void RestrictedAssetsDialog::createDepinCreateTab()
     ui->tabWidget->addTab(depinCreateTab, tr("Create"));
 }
 
+void RestrictedAssetsDialog::createDepinTransferTab()
+{
+    depinTransferTab = new QWidget(this);
+    depinTransferTab->setObjectName("tab_depin_transfer");
+
+    QVBoxLayout *mainLayout = new QVBoxLayout(depinTransferTab);
+    mainLayout->setSpacing(12);
+    mainLayout->setContentsMargins(10, 10, 10, 10);
+
+    QFormLayout *formLayout = new QFormLayout();
+    formLayout->setHorizontalSpacing(10);
+    formLayout->setVerticalSpacing(10);
+
+    QLabel *assetLabel = new QLabel(tr("DEPIN Asset:"), depinTransferTab);
+    assetLabel->setStyleSheet(STRING_LABEL_COLOR);
+    assetLabel->setFont(GUIUtil::getTopLabelFont());
+    depinTransferAssetComboBox = new QComboBox(depinTransferTab);
+    formLayout->addRow(assetLabel, depinTransferAssetComboBox);
+
+    depinTransferBatchCheckBox = new QCheckBox(tr("Batch mode"), depinTransferTab);
+    depinTransferBatchCheckBox->setStyleSheet(QString(".QCheckBox{ %1; }").arg(STRING_LABEL_COLOR));
+    formLayout->addRow(QString(), depinTransferBatchCheckBox);
+
+    QLabel *addressLabel = new QLabel(tr("Destination Address:"), depinTransferTab);
+    addressLabel->setStyleSheet(STRING_LABEL_COLOR);
+    addressLabel->setFont(GUIUtil::getTopLabelFont());
+    depinTransferAddressEdit = new QValidatedLineEdit(depinTransferTab);
+    GUIUtil::setupAddressWidget(depinTransferAddressEdit, this);
+    formLayout->addRow(addressLabel, depinTransferAddressEdit);
+
+    QLabel *batchLabel = new QLabel(tr("Batch Addresses:"), depinTransferTab);
+    batchLabel->setStyleSheet(STRING_LABEL_COLOR);
+    batchLabel->setFont(GUIUtil::getTopLabelFont());
+    depinTransferBatchEdit = new QPlainTextEdit(depinTransferTab);
+    depinTransferBatchEdit->setPlaceholderText(tr("One Neurai address per line"));
+    depinTransferBatchEdit->hide();
+    formLayout->addRow(batchLabel, depinTransferBatchEdit);
+
+    depinTransferBatchHelpLabel = new QLabel(tr("Batch mode sends exactly 1 DEPIN asset per address. Maximum 20 addresses."), depinTransferTab);
+    depinTransferBatchHelpLabel->setWordWrap(true);
+    depinTransferBatchHelpLabel->hide();
+    formLayout->addRow(QString(), depinTransferBatchHelpLabel);
+
+    mainLayout->addLayout(formLayout);
+
+    depinTransferWarningLabel = new QLabel(depinTransferTab);
+    depinTransferWarningLabel->hide();
+    depinTransferWarningLabel->setWordWrap(true);
+    mainLayout->addWidget(depinTransferWarningLabel);
+
+    QHBoxLayout *buttonsLayout = new QHBoxLayout();
+    depinTransferClearButton = new QPushButton(tr("Clear"), depinTransferTab);
+    depinTransferButton = new QPushButton(tr("Transfer"), depinTransferTab);
+    depinTransferButton->setDisabled(true);
+    buttonsLayout->addStretch();
+    buttonsLayout->addWidget(depinTransferClearButton);
+    buttonsLayout->addWidget(depinTransferButton);
+    mainLayout->addLayout(buttonsLayout);
+
+    connect(depinTransferAssetComboBox, SIGNAL(currentIndexChanged(int)), this, SLOT(depinTransferDataChanged()));
+    connect(depinTransferBatchCheckBox, SIGNAL(stateChanged(int)), this, SLOT(depinTransferBatchModeChanged(int)));
+    connect(depinTransferAddressEdit, SIGNAL(textChanged(QString)), this, SLOT(depinTransferDataChanged()));
+    connect(depinTransferBatchEdit, SIGNAL(textChanged()), this, SLOT(depinTransferDataChanged()));
+    connect(depinTransferClearButton, SIGNAL(clicked()), this, SLOT(clearDepinTransferForm()));
+    connect(depinTransferButton, SIGNAL(clicked()), this, SLOT(depinTransferClicked()));
+
+    ui->tabWidget->addTab(depinTransferTab, tr("Transfer"));
+}
+
 void RestrictedAssetsDialog::setDepinWarning(const QString &message, bool failure)
 {
     if (!depinWarningLabel) {
@@ -666,6 +749,137 @@ void RestrictedAssetsDialog::depinCreateSetMinimumFee()
     depinCreateCustomFee->setValue(GetRequiredFee(1000));
 }
 
+void RestrictedAssetsDialog::depinTransferDataChanged()
+{
+    if (!depinTransferButton) {
+        return;
+    }
+
+    depinTransferButton->setDisabled(true);
+    clearDepinTransferWarning();
+
+    if (validateDepinTransferForm()) {
+        depinTransferButton->setEnabled(true);
+    }
+}
+
+void RestrictedAssetsDialog::depinTransferBatchModeChanged(int state)
+{
+    const bool batchMode = state == Qt::Checked;
+    if (depinTransferAddressEdit) {
+        depinTransferAddressEdit->setVisible(!batchMode);
+        depinTransferAddressEdit->setEnabled(!batchMode);
+    }
+    if (depinTransferBatchEdit) {
+        depinTransferBatchEdit->setVisible(batchMode);
+        depinTransferBatchEdit->setEnabled(batchMode);
+    }
+    if (depinTransferBatchHelpLabel) {
+        depinTransferBatchHelpLabel->setVisible(batchMode);
+    }
+
+    depinTransferDataChanged();
+}
+
+void RestrictedAssetsDialog::clearDepinTransferForm()
+{
+    if (!depinTransferTab) {
+        return;
+    }
+
+    depinTransferAssetComboBox->setCurrentIndex(0);
+    depinTransferBatchCheckBox->setChecked(false);
+    depinTransferAddressEdit->clear();
+    depinTransferBatchEdit->clear();
+    depinTransferButton->setDisabled(true);
+    clearDepinTransferWarning();
+}
+
+void RestrictedAssetsDialog::depinTransferClicked()
+{
+    QString validationError;
+    if (!validateDepinTransferForm(&validationError)) {
+        setDepinTransferWarning(validationError);
+        return;
+    }
+
+    WalletModel::UnlockContext ctx(model->requestUnlock());
+    if(!ctx.isValid())
+    {
+        return;
+    }
+
+    const QString qAssetName = depinTransferAssetComboBox->currentData().toString();
+    const QStringList recipients = depinTransferRecipients();
+
+    std::vector<std::pair<CAssetTransfer, std::string>> vTransfers;
+    for (const QString& recipient : recipients) {
+        vTransfers.emplace_back(std::make_pair(CAssetTransfer(qAssetName.toStdString(), 1 * COIN), recipient.toStdString()));
+    }
+
+    CCoinControl ctrl;
+    CWalletTx transaction;
+    CReserveKey reservekey(model->getWallet());
+    std::pair<int, std::string> error;
+    CAmount nRequiredFee;
+
+    if (IsInitialBlockDownload()) {
+        GUIUtil::SyncWarningMessage syncWarning(this);
+        bool sendTransaction = syncWarning.showTransactionSyncWarningMessage();
+        if (!sendTransaction)
+            return;
+    }
+
+    if (!CreateTransferAssetTransaction(model->getWallet(), ctrl, vTransfers, "", error, transaction, reservekey, nRequiredFee)) {
+        setDepinTransferWarning(QString::fromStdString(error.second));
+        return;
+    }
+
+    QStringList formatted;
+    for (const QString& recipient : recipients) {
+        const QString amount = "<b>1 " + qAssetName + "</b>";
+        const QString address = "<span style='font-family: monospace;'>" + recipient + "</span>";
+        formatted.append(tr("%1 to %2").arg(amount, address));
+    }
+
+    QString questionString = tr("Confirm DEPIN transfer");
+    questionString.append("<br /><br />%1");
+
+    if(nRequiredFee > 0)
+    {
+        questionString.append("<hr /><span style='color:#e82121;'>");
+        questionString.append(NeuraiUnits::formatHtmlWithUnit(model->getOptionsModel()->getDisplayUnit(), nRequiredFee));
+        questionString.append("</span> ");
+        questionString.append(tr("added as transaction fee"));
+        questionString.append(" (" + tr("virtual size: %1 kVB").arg(QString::number((double)GetVirtualTransactionSize(transaction) / 1000, 'f', 3)) + ")");
+    }
+
+    SendConfirmationDialog confirmationDialog(tr("Confirm DEPIN transfer"),
+                                              questionString.arg(formatted.join("<br />")), SEND_CONFIRM_DELAY, this);
+    confirmationDialog.exec();
+    QMessageBox::StandardButton retval = (QMessageBox::StandardButton)confirmationDialog.result();
+
+    if(retval != QMessageBox::Yes)
+    {
+        return;
+    }
+
+    std::string txid;
+    if (!SendAssetTransaction(model->getWallet(), transaction, reservekey, error, txid)) {
+        setDepinTransferWarning(QString::fromStdString(error.second));
+        return;
+    }
+
+    QMessageBox txidMsgBox;
+    std::string sentMsg = _("Sent new transaction to the network");
+    std::string totalMsg = strprintf("%s: %s", sentMsg, txid);
+    txidMsgBox.setText(QString::fromStdString(totalMsg));
+    txidMsgBox.exec();
+
+    clearDepinTransferForm();
+    updateDepinTransferAssets();
+}
+
 bool RestrictedAssetsDialog::findDepinHolderAddress(const std::string& assetName, std::string& holderAddress, bool& foundOwnerControlledHolding) const
 {
     holderAddress.clear();
@@ -823,6 +1037,32 @@ void RestrictedAssetsDialog::updateDepinCreateSelectedAsset()
     depinCreateDataChanged();
 }
 
+void RestrictedAssetsDialog::updateDepinTransferAssets()
+{
+    if (!depinTransferAssetComboBox || !model || !model->getWallet()) {
+        return;
+    }
+
+    const QString currentAsset = depinTransferAssetComboBox->currentData().toString();
+
+    std::map<std::string, std::vector<COutput>> outputs;
+    std::map<std::string, CAmount> balances;
+    GetAllMyAssetBalances(outputs, balances);
+
+    depinTransferAssetComboBox->clear();
+    depinTransferAssetComboBox->addItem(QString(), QString());
+
+    for (const auto& item : balances) {
+        if (IsAssetNameADEPIN(item.first) && item.second >= 1 * COIN) {
+            depinTransferAssetComboBox->addItem(QString::fromStdString(item.first), QString::fromStdString(item.first));
+        }
+    }
+
+    const int existingIndex = depinTransferAssetComboBox->findData(currentAsset);
+    depinTransferAssetComboBox->setCurrentIndex(existingIndex >= 0 ? existingIndex : 0);
+    depinTransferDataChanged();
+}
+
 void RestrictedAssetsDialog::clearDepinCreateWarning()
 {
     if (!depinCreateWarningLabel) {
@@ -842,6 +1082,27 @@ void RestrictedAssetsDialog::setDepinCreateWarning(const QString &message, bool 
     depinCreateWarningLabel->setStyleSheet(failure ? STRING_LABEL_COLOR_WARNING : "");
     depinCreateWarningLabel->setText(message);
     depinCreateWarningLabel->show();
+}
+
+void RestrictedAssetsDialog::clearDepinTransferWarning()
+{
+    if (!depinTransferWarningLabel) {
+        return;
+    }
+
+    depinTransferWarningLabel->clear();
+    depinTransferWarningLabel->hide();
+}
+
+void RestrictedAssetsDialog::setDepinTransferWarning(const QString &message, bool failure)
+{
+    if (!depinTransferWarningLabel) {
+        return;
+    }
+
+    depinTransferWarningLabel->setStyleSheet(failure ? STRING_LABEL_COLOR_WARNING : "");
+    depinTransferWarningLabel->setText(message);
+    depinTransferWarningLabel->show();
 }
 
 void RestrictedAssetsDialog::updateDepinCreateFeeSectionControls()
@@ -978,6 +1239,99 @@ bool RestrictedAssetsDialog::validateDepinCreateForm(QString *errorMessage)
     if (!validCustomFee) {
         if (errorMessage) {
             *errorMessage = tr("Invalid custom fee amount");
+        }
+        return false;
+    }
+
+    return true;
+}
+
+QStringList RestrictedAssetsDialog::depinTransferRecipients() const
+{
+    QStringList recipients;
+
+    if (!depinTransferBatchCheckBox || !depinTransferBatchCheckBox->isChecked()) {
+        if (depinTransferAddressEdit) {
+            const QString address = depinTransferAddressEdit->text().trimmed();
+            if (!address.isEmpty()) {
+                recipients << address;
+            }
+        }
+        return recipients;
+    }
+
+    if (!depinTransferBatchEdit) {
+        return recipients;
+    }
+
+    const QStringList lines = depinTransferBatchEdit->toPlainText().split('\n');
+    for (const QString& line : lines) {
+        const QString address = line.trimmed();
+        if (!address.isEmpty()) {
+            recipients << address;
+        }
+    }
+
+    return recipients;
+}
+
+bool RestrictedAssetsDialog::validateDepinTransferForm(QString *errorMessage)
+{
+    if (!model || !depinTransferAssetComboBox) {
+        if (errorMessage) {
+            *errorMessage = tr("Unable to perform action at this time");
+        }
+        return false;
+    }
+
+    const QString qAssetName = depinTransferAssetComboBox->currentData().toString();
+    if (qAssetName.isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = tr("Must have a DEPIN asset selected");
+        }
+        return false;
+    }
+
+    if (!IsAssetNameADEPIN(qAssetName.toStdString())) {
+        if (errorMessage) {
+            *errorMessage = tr("Selected asset is not a valid DEPIN asset");
+        }
+        return false;
+    }
+
+    const QStringList recipients = depinTransferRecipients();
+    if (recipients.isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = tr("At least one destination address is required");
+        }
+        return false;
+    }
+
+    if (depinTransferBatchCheckBox && depinTransferBatchCheckBox->isChecked() && recipients.size() > 20) {
+        if (errorMessage) {
+            *errorMessage = tr("Batch mode supports a maximum of 20 addresses");
+        }
+        return false;
+    }
+
+    for (const QString& recipient : recipients) {
+        if (!model->validateAddress(recipient)) {
+            if (errorMessage) {
+                *errorMessage = tr("Invalid Neurai destination address: %1").arg(recipient);
+            }
+            return false;
+        }
+    }
+
+    std::map<std::string, std::vector<COutput>> outputs;
+    std::map<std::string, CAmount> balances;
+    GetAllMyAssetBalances(outputs, balances);
+
+    const CAmount requiredAmount = recipients.size() * COIN;
+    const auto it = balances.find(qAssetName.toStdString());
+    if (it == balances.end() || it->second < requiredAmount) {
+        if (errorMessage) {
+            *errorMessage = tr("Not enough %1 balance to send 1 unit to each destination").arg(qAssetName);
         }
         return false;
     }

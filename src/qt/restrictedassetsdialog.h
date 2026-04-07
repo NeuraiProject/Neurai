@@ -35,6 +35,7 @@ class QButtonGroup;
 class QFrame;
 class QValueComboBox;
 class NeuraiAmountField;
+class QPlainTextEdit;
 
 
 namespace Ui {
@@ -84,6 +85,7 @@ private:
     MyRestrictedAssetsTableModel *myRestrictedAssetsModel;
     QWidget *depinTab;
     QWidget *depinCreateTab;
+    QWidget *depinTransferTab;
     QComboBox *depinAssetComboBox;
     QLabel *depinAssetLabel;
     QLabel *depinAddressLabel;
@@ -115,9 +117,18 @@ private:
     QLabel *depinCreateFeeEstimationLabel;
     QCheckBox *depinCreateMinimumFeeCheckBox;
     NeuraiAmountField *depinCreateCustomFee;
+    QComboBox *depinTransferAssetComboBox;
+    QCheckBox *depinTransferBatchCheckBox;
+    QValidatedLineEdit *depinTransferAddressEdit;
+    QPlainTextEdit *depinTransferBatchEdit;
+    QLabel *depinTransferBatchHelpLabel;
+    QLabel *depinTransferWarningLabel;
+    QPushButton *depinTransferButton;
+    QPushButton *depinTransferClearButton;
 
     void createDepinTab();
     void createDepinCreateTab();
+    void createDepinTransferTab();
     void setDepinWarning(const QString &message, bool failure = true);
     void clearDepinWarning();
     void enableDepinSubmit(const QString &message);
@@ -125,11 +136,16 @@ private:
     bool findDepinOwnerAddress(const std::string& assetName, std::string& ownerAddress) const;
     void updateDepinCreateAssets();
     void updateDepinCreateSelectedAsset();
+    void updateDepinTransferAssets();
     void clearDepinCreateWarning();
     void setDepinCreateWarning(const QString &message, bool failure = true);
     void updateDepinCreateMinFeeLabel();
     bool validateDepinCreateForm(QString *errorMessage = nullptr);
     void updateDepinCreateCoinControlState(CCoinControl& ctrl) const;
+    void clearDepinTransferWarning();
+    void setDepinTransferWarning(const QString &message, bool failure = true);
+    bool validateDepinTransferForm(QString *errorMessage = nullptr);
+    QStringList depinTransferRecipients() const;
 
 private Q_SLOTS:
     void updateDisplayUnit();
@@ -150,6 +166,10 @@ private Q_SLOTS:
     void depinCreateSetMinimumFee();
     void updateDepinCreateFeeSectionControls();
     void updateDepinCreateSmartFeeLabel();
+    void depinTransferDataChanged();
+    void depinTransferBatchModeChanged(int state);
+    void clearDepinTransferForm();
+    void depinTransferClicked();
 
 
     Q_SIGNALS:
