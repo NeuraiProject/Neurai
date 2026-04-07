@@ -13,7 +13,9 @@
 #include "pubkey.h"
 #include "script/script.h"
 #include "script/standard.h"
-#include "chainparams.h"
+#include "uint256.h"
+#include "serialize.h"
+#include "streams.h"
 typedef std::vector<unsigned char> valtype;
 
 namespace
@@ -360,8 +362,8 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
             if (opcode > OP_16 && ++nOpCount > MAX_OPS_PER_SCRIPT)
                 return set_error(serror, SCRIPT_ERR_OP_COUNT);
 
-            // OP_CAT implementation (enabled only on testnet for safety)
-            if (opcode == OP_CAT && GetParams().NetworkIDString() == "test") {
+            // OP_CAT (BIP 347): enabled via SCRIPT_VERIFY_CAT flag
+            if (opcode == OP_CAT && (flags & SCRIPT_VERIFY_CAT)) {
                 // (x1 x2 -- x1+x2)
                 if (stack.size() < 2)
                     return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
@@ -523,8 +525,33 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
 
                         break;
                     }
+                    case OP_CHECKTEMPLATEVERIFY:
+                    {
+                        if (!(flags & SCRIPT_VERIFY_CHECKTEMPLATEVERIFY))
+                        {
+                            // not enabled; treat as a NOP4
+                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
+                            {
+                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+                            }
+                            break;
+                        }
+
+                        if (stack.size() < 1)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+                        // The top stack element must be exactly 32 bytes (a SHA256 hash)
+                        const valtype& vchHash = stacktop(-1);
+                        if (vchHash.size() != 32)
+                            return set_error(serror, SCRIPT_ERR_CHECKTEMPLATEVERIFY);
+
+                        if (!checker.CheckTemplateVerify(vchHash))
+                            return set_error(serror, SCRIPT_ERR_CHECKTEMPLATEVERIFY);
+
+                        // NOP-upgrade semantics: do NOT pop the hash from the stack
+                        break;
+                    }
                     case OP_NOP1:
-                    case OP_NOP4:
                     case OP_NOP5:
                     case OP_NOP6:
                     case OP_NOP7:
@@ -1529,6 +1556,88 @@ bool TransactionSignatureChecker::CheckSequence(const CScriptNum &nSequence) con
         return false;
 
     return true;
+}
+
+// BIP 119: Compute the default check template verify hash.
+// This commits to: nVersion, nLockTime, scriptSigs hash (if any non-empty),
+// number of inputs, sequences hash, number of outputs, outputs hash, input index.
+// Uses single SHA256 (not double).
+static uint256 DefaultCheckTemplateVerifyHash(const CTransaction& tx, uint32_t nIn)
+{
+    CSHA256 ss;
+
+    // 1. nVersion (4 bytes LE)
+    uint32_t nVersion = tx.nVersion;
+    ss.Write((const unsigned char*)&nVersion, 4);
+
+    // 2. nLockTime (4 bytes LE)
+    uint32_t nLockTime = tx.nLockTime;
+    ss.Write((const unsigned char*)&nLockTime, 4);
+
+    // 3. Hash of scriptSigs (only if any is non-empty)
+    bool hasNonEmptyScriptSig = false;
+    for (const auto& txin : tx.vin) {
+        if (txin.scriptSig.size() > 0) {
+            hasNonEmptyScriptSig = true;
+            break;
+        }
+    }
+    if (hasNonEmptyScriptSig) {
+        CSHA256 scriptSigsHash;
+        for (const auto& txin : tx.vin) {
+            CDataStream s(SER_NETWORK, PROTOCOL_VERSION);
+            s << txin.scriptSig;
+            scriptSigsHash.Write((const unsigned char*)s.data(), s.size());
+        }
+        unsigned char scriptSigsResult[CSHA256::OUTPUT_SIZE];
+        scriptSigsHash.Finalize(scriptSigsResult);
+        ss.Write(scriptSigsResult, CSHA256::OUTPUT_SIZE);
+    }
+
+    // 4. Number of inputs (4 bytes LE)
+    uint32_t nInputs = tx.vin.size();
+    ss.Write((const unsigned char*)&nInputs, 4);
+
+    // 5. Hash of sequences
+    CSHA256 sequencesHash;
+    for (const auto& txin : tx.vin) {
+        uint32_t nSequence = txin.nSequence;
+        sequencesHash.Write((const unsigned char*)&nSequence, 4);
+    }
+    unsigned char seqResult[CSHA256::OUTPUT_SIZE];
+    sequencesHash.Finalize(seqResult);
+    ss.Write(seqResult, CSHA256::OUTPUT_SIZE);
+
+    // 6. Number of outputs (4 bytes LE)
+    uint32_t nOutputs = tx.vout.size();
+    ss.Write((const unsigned char*)&nOutputs, 4);
+
+    // 7. Hash of outputs
+    CSHA256 outputsHash;
+    for (const auto& txout : tx.vout) {
+        CDataStream s(SER_NETWORK, PROTOCOL_VERSION);
+        s << txout;
+        outputsHash.Write((const unsigned char*)s.data(), s.size());
+    }
+    unsigned char outResult[CSHA256::OUTPUT_SIZE];
+    outputsHash.Finalize(outResult);
+    ss.Write(outResult, CSHA256::OUTPUT_SIZE);
+
+    // 8. Input index (4 bytes LE)
+    uint32_t inputIndex = nIn;
+    ss.Write((const unsigned char*)&inputIndex, 4);
+
+    uint256 result;
+    ss.Finalize(result.begin());
+    return result;
+}
+
+bool TransactionSignatureChecker::CheckTemplateVerify(const std::vector<unsigned char>& hash) const
+{
+    if (hash.size() != 32)
+        return false;
+    uint256 expectedHash = DefaultCheckTemplateVerifyHash(*txTo, nIn);
+    return memcmp(hash.data(), expectedHash.begin(), 32) == 0;
 }
 
 static bool VerifyWitnessProgram(const CScriptWitness &witness, int witversion, const std::vector<unsigned char> &program, unsigned int flags, const BaseSignatureChecker &checker, ScriptError *serror)

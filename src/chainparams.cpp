@@ -113,6 +113,8 @@ public:
         consensus.nSegwitEnabled = true;
         consensus.nCSVEnabled = true;
         consensus.nPQWitnessEnabled = false; // PQ not yet active on mainnet
+        consensus.nCATEnabled = false;  // OP_CAT (BIP 347) not yet active on mainnet
+        consensus.nCTVEnabled = false;  // OP_CTV (BIP 119) not yet active on mainnet
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days
@@ -295,6 +297,8 @@ public:
         consensus.nSegwitEnabled = true;
         consensus.nCSVEnabled = true;
         consensus.nPQWitnessEnabled = true; // PQ (ML-DSA-44) active on testnet
+        consensus.nCATEnabled = true;  // OP_CAT (BIP 347) active on testnet
+        consensus.nCTVEnabled = true;  // OP_CTV (BIP 119) active on testnet
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days
@@ -478,6 +482,8 @@ public:
         consensus.nSegwitEnabled = true;
         consensus.nCSVEnabled = true;
         consensus.nPQWitnessEnabled = true; // PQ (ML-DSA-44) active on regtest
+        consensus.nCATEnabled = true;  // OP_CAT (BIP 347) active on regtest
+        consensus.nCTVEnabled = true;  // OP_CTV (BIP 119) active on regtest
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days

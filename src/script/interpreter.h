@@ -118,6 +118,16 @@ enum
     // Enabled on testnet/regtest only until mainnet activation.
     //
             SCRIPT_VERIFY_PQ_WITNESS_V1 = (1U << 16),
+
+    // Enable OP_CAT (BIP 347) - stack element concatenation.
+    // When set, OP_CAT is executed instead of returning SCRIPT_ERR_DISABLED_OPCODE.
+    //
+            SCRIPT_VERIFY_CAT = (1U << 17),
+
+    // Enable OP_CHECKTEMPLATEVERIFY (BIP 119) - transaction template verification.
+    // When set, OP_CHECKTEMPLATEVERIFY is executed instead of being treated as OP_NOP4.
+    //
+            SCRIPT_VERIFY_CHECKTEMPLATEVERIFY = (1U << 18),
 };
 
 bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, unsigned int flags, ScriptError *serror);
@@ -163,6 +173,11 @@ public:
         return uint256();
     }
 
+    virtual bool CheckTemplateVerify(const std::vector<unsigned char>& hash) const
+    {
+        return false;
+    }
+
     virtual ~BaseSignatureChecker() {}
 };
 
@@ -187,6 +202,8 @@ public:
     bool CheckLockTime(const CScriptNum &nLockTime) const override;
 
     bool CheckSequence(const CScriptNum &nSequence) const override;
+
+    bool CheckTemplateVerify(const std::vector<unsigned char>& hash) const override;
 
     uint256 GetSigHash(const CScript& scriptCode, int nHashType, SigVersion sigversion) const override;
 };

@@ -81,6 +81,12 @@ struct Params {
     /** Enable post-quantum (ML-DSA-44) witness v1 verification.
      *  true on testnet/regtest; false on mainnet until future activation. */
     bool nPQWitnessEnabled;
+    /** Enable OP_CAT (BIP 347) - stack element concatenation.
+     *  true on testnet/regtest; false on mainnet until future activation. */
+    bool nCATEnabled;
+    /** Enable OP_CHECKTEMPLATEVERIFY (BIP 119) - transaction template verification.
+     *  true on testnet/regtest; false on mainnet until future activation. */
+    bool nCTVEnabled;
 };
 } // namespace Consensus
 
