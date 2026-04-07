@@ -46,6 +46,7 @@
 #include <QFontMetrics>
 #include <QMessageBox>
 #include <QPlainTextEdit>
+#include <QMenu>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QScrollBar>
@@ -176,6 +177,11 @@ void RestrictedAssetsDialog::setClientModel(ClientModel *_clientModel)
 
     if (_clientModel && pageMode == PageMode::DepinOnly) {
         connect(_clientModel, SIGNAL(numBlocksChanged(int,QDateTime,double,bool)), this, SLOT(updateDepinCreateSmartFeeLabel()));
+        connect(_clientModel, &ClientModel::numBlocksChanged, this, [this](int, const QDateTime&, double, bool) {
+            updateDepinOverview();
+            updateDepinCreateAssets();
+            updateDepinTransferAssets();
+        });
     }
 }
 
@@ -256,6 +262,7 @@ void RestrictedAssetsDialog::setModel(WalletModel *_model)
             ui->myAddressList->setAlternatingRowColors(true);
             ui->myAddressList->setSortingEnabled(true);
             ui->myAddressList->verticalHeader()->hide();
+            ui->myAddressList->setContextMenuPolicy(Qt::CustomContextMenu);
 
             ui->labelAssetBalance->setText(tr("DEPIN Assets"));
             ui->labelAddressList->setText(tr("Address Status"));
@@ -270,6 +277,7 @@ void RestrictedAssetsDialog::setModel(WalletModel *_model)
             connect(ui->lineEditAssetSearch, SIGNAL(textChanged(QString)), this, SLOT(depinAssetSearchChanged(QString)));
             connect(ui->lineEditAddressSearch, SIGNAL(textChanged(QString)), this, SLOT(depinAddressSearchChanged(QString)));
             connect(ui->listAssets->selectionModel(), SIGNAL(currentRowChanged(QModelIndex,QModelIndex)), this, SLOT(depinAssetSummarySelectionChanged(QModelIndex,QModelIndex)));
+            connect(ui->myAddressList, SIGNAL(customContextMenuRequested(QPoint)), this, SLOT(showDepinAddressContextMenu(QPoint)));
 
             if (!depinTab) {
                 createDepinTab();
@@ -969,6 +977,42 @@ void RestrictedAssetsDialog::depinAddressSearchChanged(const QString &text)
     }
 
     depinAddressFilterProxy->setFilterFixedString(text);
+}
+
+void RestrictedAssetsDialog::showDepinAddressContextMenu(const QPoint &point)
+{
+    if (pageMode != PageMode::DepinOnly || !ui->myAddressList || !depinAddressFilterProxy) {
+        return;
+    }
+
+    const QModelIndex index = ui->myAddressList->indexAt(point);
+    if (!index.isValid()) {
+        return;
+    }
+
+    ui->myAddressList->setCurrentIndex(index);
+    ui->myAddressList->selectRow(index.row());
+
+    QMenu contextMenu(this);
+    QAction *copyAddressAction = contextMenu.addAction(tr("Copy address"));
+    QAction *selectedAction = contextMenu.exec(ui->myAddressList->viewport()->mapToGlobal(point));
+    if (selectedAction == copyAddressAction) {
+        copySelectedDepinAddress();
+    }
+}
+
+void RestrictedAssetsDialog::copySelectedDepinAddress()
+{
+    if (!ui->myAddressList) {
+        return;
+    }
+
+    const QModelIndex currentIndex = ui->myAddressList->currentIndex();
+    if (!currentIndex.isValid()) {
+        return;
+    }
+
+    GUIUtil::setClipboard(currentIndex.sibling(currentIndex.row(), 0).data(Qt::DisplayRole).toString());
 }
 
 void RestrictedAssetsDialog::depinTransferClicked()

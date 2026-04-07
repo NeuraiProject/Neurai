@@ -40,6 +40,7 @@ class NeuraiAmountField;
 class QPlainTextEdit;
 class QStandardItemModel;
 class QModelIndex;
+class QPoint;
 
 
 namespace Ui {
@@ -188,6 +189,8 @@ private Q_SLOTS:
     void depinAssetSummarySelectionChanged(const QModelIndex &current, const QModelIndex &previous);
     void depinAssetSearchChanged(const QString &text);
     void depinAddressSearchChanged(const QString &text);
+    void showDepinAddressContextMenu(const QPoint &point);
+    void copySelectedDepinAddress();
 
 
     Q_SIGNALS:
