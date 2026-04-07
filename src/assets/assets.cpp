@@ -398,7 +398,8 @@ bool IsTypeCheckNameValid(const AssetType type, const std::string& name, std::st
         return true;
     } else if (type == AssetType::OWNER) {
         if (name.size() > maxLength) { error = "Name is greater than max length of " + std::to_string(maxLength); return false; }
-        bool valid = IsNameValidBeforeTag(name.substr(0, name.size() - 1));
+        const std::string ownerBaseName = name.substr(0, name.size() - 1);
+        bool valid = IsNameValidBeforeTag(ownerBaseName) || IsAssetNameADEPIN(ownerBaseName);
         if (!valid) { error = "Owner name contains invalid characters (Valid characters are: A-Z 0-9 _ .) (special characters can't be the first or last characters)";  return false; }
         return true;
     } else if (type == AssetType::VOTE) {
