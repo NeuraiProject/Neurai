@@ -820,9 +820,15 @@ void RestrictedAssetsDialog::depinTransferClicked()
     CCoinControl ctrl;
     std::string ownerAddress;
     std::vector<COutput> ownerControlledOutputs;
+    std::vector<COutput> ownerTokenOutputs;
     CAmount ownerControlledAmount = 0;
     if (!getDepinOwnerControlledOutputs(qAssetName.toStdString(), ownerAddress, &ownerControlledOutputs, &ownerControlledAmount)) {
         setDepinTransferWarning(tr("Unable to find owner-controlled inputs for the selected DEPIN asset"));
+        return;
+    }
+
+    if (!getWalletAssetOutputsAtAddress(qAssetName.toStdString() + OWNER_TAG, ownerAddress, &ownerTokenOutputs, nullptr)) {
+        setDepinTransferWarning(tr("Unable to find the DEPIN owner token input for the selected asset"));
         return;
     }
 
@@ -848,6 +854,8 @@ void RestrictedAssetsDialog::depinTransferClicked()
         setDepinTransferWarning(tr("Not enough owner-controlled inputs are available for the selected DEPIN asset"));
         return;
     }
+
+    ctrl.SelectAsset(COutPoint(ownerTokenOutputs.front().tx->GetHash(), ownerTokenOutputs.front().i));
 
     CWalletTx transaction;
     CReserveKey reservekey(model->getWallet());
@@ -1026,7 +1034,7 @@ bool RestrictedAssetsDialog::getDepinAssetMetadata(const std::string& assetName,
     return false;
 }
 
-bool RestrictedAssetsDialog::getDepinOwnerControlledOutputs(const std::string& assetName, std::string& ownerAddress, std::vector<COutput>* outputs, CAmount* totalAmount) const
+bool RestrictedAssetsDialog::getWalletAssetOutputsAtAddress(const std::string& assetName, const std::string& address, std::vector<COutput>* outputs, CAmount* totalAmount) const
 {
     if (outputs) {
         outputs->clear();
@@ -1035,7 +1043,7 @@ bool RestrictedAssetsDialog::getDepinOwnerControlledOutputs(const std::string& a
         *totalAmount = 0;
     }
 
-    if (!findDepinOwnerAddress(assetName, ownerAddress) || !model || !model->getWallet()) {
+    if (!model || !model->getWallet()) {
         return false;
     }
 
@@ -1047,7 +1055,6 @@ bool RestrictedAssetsDialog::getDepinOwnerControlledOutputs(const std::string& a
         return false;
     }
 
-    CAmount ownerControlledAmount = 0;
     for (const auto& output : it->second) {
         if (!output.tx || !output.tx->tx || output.i >= output.tx->tx->vout.size()) {
             continue;
@@ -1059,21 +1066,35 @@ bool RestrictedAssetsDialog::getDepinOwnerControlledOutputs(const std::string& a
             continue;
         }
 
-        if (EncodeDestination(outputData.destination) != ownerAddress) {
+        if (EncodeDestination(outputData.destination) != address) {
             continue;
         }
 
-        ownerControlledAmount += outputData.nAmount;
+        CAmount matchingAmount = outputData.nAmount;
         if (outputs) {
             outputs->push_back(output);
         }
+        if (totalAmount) {
+            *totalAmount += matchingAmount;
+        }
     }
 
-    if (totalAmount) {
-        *totalAmount = ownerControlledAmount;
+    return totalAmount ? *totalAmount > 0 : (outputs && !outputs->empty());
+}
+
+bool RestrictedAssetsDialog::getDepinOwnerControlledOutputs(const std::string& assetName, std::string& ownerAddress, std::vector<COutput>* outputs, CAmount* totalAmount) const
+{
+    if (!findDepinOwnerAddress(assetName, ownerAddress)) {
+        if (outputs) {
+            outputs->clear();
+        }
+        if (totalAmount) {
+            *totalAmount = 0;
+        }
+        return false;
     }
 
-    return ownerControlledAmount > 0;
+    return getWalletAssetOutputsAtAddress(assetName, ownerAddress, outputs, totalAmount);
 }
 
 void RestrictedAssetsDialog::updateDepinCreateAssets()
