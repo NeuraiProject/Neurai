@@ -818,6 +818,37 @@ void RestrictedAssetsDialog::depinTransferClicked()
     }
 
     CCoinControl ctrl;
+    std::string ownerAddress;
+    std::vector<COutput> ownerControlledOutputs;
+    CAmount ownerControlledAmount = 0;
+    if (!getDepinOwnerControlledOutputs(qAssetName.toStdString(), ownerAddress, &ownerControlledOutputs, &ownerControlledAmount)) {
+        setDepinTransferWarning(tr("Unable to find owner-controlled inputs for the selected DEPIN asset"));
+        return;
+    }
+
+    ctrl.assetDestChange = DecodeDestination(ownerAddress);
+    ctrl.strAssetSelected = qAssetName.toStdString();
+
+    CAmount selectedAmount = 0;
+    const CAmount requiredAmount = recipients.size() * COIN;
+    for (const auto& output : ownerControlledOutputs) {
+        ctrl.SelectAsset(COutPoint(output.tx->GetHash(), output.i));
+
+        CAssetOutputEntry outputData;
+        if (GetAssetData(output.tx->tx->vout[output.i].scriptPubKey, outputData)) {
+            selectedAmount += outputData.nAmount;
+        }
+
+        if (selectedAmount >= requiredAmount) {
+            break;
+        }
+    }
+
+    if (selectedAmount < requiredAmount) {
+        setDepinTransferWarning(tr("Not enough owner-controlled inputs are available for the selected DEPIN asset"));
+        return;
+    }
+
     CWalletTx transaction;
     CReserveKey reservekey(model->getWallet());
     std::pair<int, std::string> error;
@@ -995,6 +1026,56 @@ bool RestrictedAssetsDialog::getDepinAssetMetadata(const std::string& assetName,
     return false;
 }
 
+bool RestrictedAssetsDialog::getDepinOwnerControlledOutputs(const std::string& assetName, std::string& ownerAddress, std::vector<COutput>* outputs, CAmount* totalAmount) const
+{
+    if (outputs) {
+        outputs->clear();
+    }
+    if (totalAmount) {
+        *totalAmount = 0;
+    }
+
+    if (!findDepinOwnerAddress(assetName, ownerAddress) || !model || !model->getWallet()) {
+        return false;
+    }
+
+    std::map<std::string, std::vector<COutput>> mapAssetCoins;
+    model->getWallet()->AvailableAssets(mapAssetCoins, true, nullptr, 1, MAX_MONEY, MAX_MONEY, 0, 0);
+
+    const auto it = mapAssetCoins.find(assetName);
+    if (it == mapAssetCoins.end()) {
+        return false;
+    }
+
+    CAmount ownerControlledAmount = 0;
+    for (const auto& output : it->second) {
+        if (!output.tx || !output.tx->tx || output.i >= output.tx->tx->vout.size()) {
+            continue;
+        }
+
+        CAssetOutputEntry outputData;
+        if (!GetAssetData(output.tx->tx->vout[output.i].scriptPubKey, outputData) ||
+            outputData.assetName != assetName) {
+            continue;
+        }
+
+        if (EncodeDestination(outputData.destination) != ownerAddress) {
+            continue;
+        }
+
+        ownerControlledAmount += outputData.nAmount;
+        if (outputs) {
+            outputs->push_back(output);
+        }
+    }
+
+    if (totalAmount) {
+        *totalAmount = ownerControlledAmount;
+    }
+
+    return ownerControlledAmount > 0;
+}
+
 void RestrictedAssetsDialog::updateDepinCreateAssets()
 {
     if (!depinCreateAssetComboBox || !model || !model->getWallet() || !passets) {
@@ -1088,16 +1169,23 @@ void RestrictedAssetsDialog::updateDepinTransferAssets()
 
     const QString currentAsset = depinTransferAssetComboBox->currentData().toString();
 
-    std::map<std::string, std::vector<COutput>> outputs;
-    std::map<std::string, CAmount> balances;
-    GetAllMyAssetBalances(outputs, balances);
+    std::vector<std::string> walletAssets;
+    GetAllMyAssets(model->getWallet(), walletAssets, 0, true, false);
 
     depinTransferAssetComboBox->clear();
     depinTransferAssetComboBox->addItem(QString(), QString());
 
-    for (const auto& item : balances) {
-        if (IsAssetNameADEPIN(item.first) && item.second >= 1 * COIN) {
-            depinTransferAssetComboBox->addItem(QString::fromStdString(item.first), QString::fromStdString(item.first));
+    std::set<std::string> inserted;
+    for (const auto& item : walletAssets) {
+        if (!IsAssetNameADEPIN(item) || inserted.count(item)) {
+            continue;
+        }
+
+        std::string ownerAddress;
+        CAmount ownerControlledAmount = 0;
+        if (getDepinOwnerControlledOutputs(item, ownerAddress, nullptr, &ownerControlledAmount) && ownerControlledAmount >= 1 * COIN) {
+            inserted.insert(item);
+            depinTransferAssetComboBox->addItem(QString::fromStdString(item), QString::fromStdString(item));
         }
     }
 
@@ -1366,15 +1454,13 @@ bool RestrictedAssetsDialog::validateDepinTransferForm(QString *errorMessage)
         }
     }
 
-    std::map<std::string, std::vector<COutput>> outputs;
-    std::map<std::string, CAmount> balances;
-    GetAllMyAssetBalances(outputs, balances);
-
     const CAmount requiredAmount = recipients.size() * COIN;
-    const auto it = balances.find(qAssetName.toStdString());
-    if (it == balances.end() || it->second < requiredAmount) {
+    std::string ownerAddress;
+    CAmount ownerControlledAmount = 0;
+    if (!getDepinOwnerControlledOutputs(qAssetName.toStdString(), ownerAddress, nullptr, &ownerControlledAmount) ||
+        ownerControlledAmount < requiredAmount) {
         if (errorMessage) {
-            *errorMessage = tr("Not enough %1 balance to send 1 unit to each destination").arg(qAssetName);
+            *errorMessage = tr("Not enough owner-controlled %1 balance to send 1 unit to each destination").arg(qAssetName);
         }
         return false;
     }
