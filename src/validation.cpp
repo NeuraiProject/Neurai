@@ -2184,7 +2184,18 @@ static DisconnectResult DisconnectBlock(const CBlock& block, const CBlockIndex* 
                                 }
                             // Handle DEPIN self-restrictions
                             } else if (type == AssetType::DEPIN) {
-                                if (!assetsCache->RemoveSelfRestriction(data.asset_name, address, data.flag ? true : false)) {
+                                if (TxContainsDEPINOwnerTokenTransfer(tx, data.asset_name)) {
+                                    if (!assetsCache->RemoveRestrictedAddress(data.asset_name, address, data.flag ? RestrictedType::FREEZE_ADDRESS : RestrictedType::UNFREEZE_ADDRESS)) {
+                                        error("%s : Failed to remove DEPIN owner restriction from address, Asset : %s, Flag Removing : %d, Address : %s",
+                                              __func__, data.asset_name, data.flag, address);
+                                        return DISCONNECT_FAILED;
+                                    }
+                                    if (!data.flag && !assetsCache->RemoveSelfRestriction(data.asset_name, address, false)) {
+                                        error("%s : Failed to remove DEPIN owner un-revoke state from address, Asset : %s, Address : %s",
+                                              __func__, data.asset_name, address);
+                                        return DISCONNECT_FAILED;
+                                    }
+                                } else if (!assetsCache->RemoveSelfRestriction(data.asset_name, address, true)) {
                                     error("%s : Failed to remove DEPIN self-restriction from address, Asset : %s, Flag Removing : %d, Address : %s",
                                           __func__, data.asset_name, data.flag, address);
                                     return DISCONNECT_FAILED;

@@ -53,7 +53,6 @@ int GetMaxAssetNameLength();
 #define QUALIFIER_ASSET_MAX_AMOUNT 10 * COIN
 #define QUALIFIER_ASSET_UNITS 0
 
-#define DEPIN_ASSET_AMOUNT 1 * COIN  // DEPIN assets are always 1 coin (binary: has or doesn't have)
 #define DEPIN_ASSET_UNITS 0
 
 #define ASSET_TRANSFER_STRING "transfer_asset"
@@ -342,6 +341,7 @@ public :
 
     //! Return true if the DEPIN asset is blocked (owner freeze OR self-revoke)
     bool CheckForDEPINRestriction(const std::string &assetName, const std::string& address, bool fSkipTempCache = false);
+    bool CheckForDEPINSelfRestriction(const std::string &assetName, const std::string& address, bool fSkipTempCache = false);
 
     //! Calculate the size of the CAssets (in bytes)
     size_t DynamicMemoryUsage() const;
@@ -555,6 +555,11 @@ bool GetAssetInfoFromScript(const CScript& scriptPubKey, std::string& strName, C
 bool GetAssetData(const CScript& script, CAssetOutputEntry& data);
 
 bool GetBestAssetAddressAmount(CAssetsCache& cache, const std::string& assetName, const std::string& address);
+bool AddressHasAssetToken(CAssetsCache& cache, const std::string& assetName, const std::string& address);
+bool AddressHasDEPINOwnerToken(CAssetsCache& cache, const std::string& assetName, const std::string& address);
+bool TxContainsAssetTransfer(const CTransaction& tx, const std::string& assetName);
+bool TxContainsAssetTransferToAddress(const CTransaction& tx, const std::string& assetName, const std::string& address);
+bool TxContainsDEPINOwnerTokenTransfer(const CTransaction& tx, const std::string& assetName);
 
 
 //! Decode and Encode IPFS hashes, or OIP hashes
@@ -598,6 +603,8 @@ std::string GetStrippedVerifierString(const std::string& verifier);
 bool VerifyNullAssetDataFlag(const int& flag, std::string& strError);
 bool VerifyQualifierChange(CAssetsCache& cache, const CNullAssetTxData& data, const std::string& address, std::string& strError);
 bool VerifyRestrictedAddressChange(CAssetsCache& cache, const CNullAssetTxData& data, const std::string& address, std::string& strError);
+bool VerifyDEPINOwnerChange(CAssetsCache& cache, const CNullAssetTxData& data, const std::string& address, std::string& strError);
+bool VerifySelfRestrictionChange(CAssetsCache& cache, const CNullAssetTxData& data, const std::string& address, std::string& strError);
 bool VerifyGlobalRestrictedChange(CAssetsCache& cache, const CNullAssetTxData& data, std::string& strError);
 
 //// Non Contextual Check functions
@@ -606,7 +613,7 @@ bool CheckNewAsset(const CNewAsset& asset, std::string& strError);
 bool CheckReissueAsset(const CReissueAsset& asset, std::string& strError);
 
 //// Contextual Check functions
-bool ContextualCheckNullAssetTxOut(const CTxOut& txout, CAssetsCache* assetCache, std::string& strError, std::vector<std::pair<std::string, CNullAssetTxData>>* myNullAssetData = nullptr);
+bool ContextualCheckNullAssetTxOut(const CTxOut& txout, const CTransaction* tx, CAssetsCache* assetCache, std::string& strError, std::vector<std::pair<std::string, CNullAssetTxData>>* myNullAssetData = nullptr);
 bool ContextualCheckGlobalAssetTxOut(const CTxOut& txout, CAssetsCache* assetCache, std::string& strError);
 bool ContextualCheckVerifierAssetTxOut(const CTxOut& txout, CAssetsCache* assetCache, std::string& strError);
 bool ContextualCheckVerifierString(CAssetsCache* cache, const std::string& verifier, const std::string& check_address, std::string& strError, ErrorReport* errorReport = nullptr);

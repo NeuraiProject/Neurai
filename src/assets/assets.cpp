@@ -3961,6 +3961,52 @@ bool GetBestAssetAddressAmount(CAssetsCache& cache, const std::string& assetName
     return false;
 }
 
+bool AddressHasAssetToken(CAssetsCache& cache, const std::string& assetName, const std::string& address)
+{
+    if (!GetBestAssetAddressAmount(cache, assetName, address)) {
+        return false;
+    }
+
+    const auto pair = std::make_pair(assetName, address);
+    return cache.mapAssetsAddressAmount.count(pair) && cache.mapAssetsAddressAmount.at(pair) > 0;
+}
+
+bool AddressHasDEPINOwnerToken(CAssetsCache& cache, const std::string& assetName, const std::string& address)
+{
+    return AddressHasAssetToken(cache, assetName + OWNER_TAG, address);
+}
+
+bool TxContainsAssetTransfer(const CTransaction& tx, const std::string& assetName)
+{
+    for (const auto& txout : tx.vout) {
+        CAssetTransfer transfer;
+        std::string address;
+        if (TransferAssetFromScript(txout.scriptPubKey, transfer, address) && transfer.strName == assetName) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool TxContainsAssetTransferToAddress(const CTransaction& tx, const std::string& assetName, const std::string& address)
+{
+    for (const auto& txout : tx.vout) {
+        CAssetTransfer transfer;
+        std::string transferAddress;
+        if (TransferAssetFromScript(txout.scriptPubKey, transfer, transferAddress) && transfer.strName == assetName && transferAddress == address) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool TxContainsDEPINOwnerTokenTransfer(const CTransaction& tx, const std::string& assetName)
+{
+    return TxContainsAssetTransfer(tx, assetName + OWNER_TAG);
+}
+
 #ifdef ENABLE_WALLET
 //! sets _balances_ with the total quantity of each owned asset
 bool GetAllMyAssetBalances(std::map<std::string, std::vector<COutput> >& outputs, std::map<std::string, CAmount>& amounts, const int confirmations, const std::string& prefix) {
@@ -4530,6 +4576,24 @@ bool CreateTransferAssetTransaction(CWallet* pwallet, const CCoinControl& coinCo
                     error = std::make_pair(RPC_INVALID_REQUEST, strError);
                     return false;
                 }
+            } else if (IsAssetNameADEPIN(pair.first.asset_name)) {
+                bool fHasOwnerTransfer = false;
+                for (const auto& transferPair : vTransfers) {
+                    if (transferPair.first.strName == pair.first.asset_name + OWNER_TAG) {
+                        fHasOwnerTransfer = true;
+                        break;
+                    }
+                }
+
+                if (fHasOwnerTransfer) {
+                    if (!VerifyDEPINOwnerChange(*passets, pair.first, pair.second, strError)) {
+                        error = std::make_pair(RPC_INVALID_REQUEST, strError);
+                        return false;
+                    }
+                } else if (!VerifySelfRestrictionChange(*passets, pair.first, pair.second, strError)) {
+                    error = std::make_pair(RPC_INVALID_REQUEST, strError);
+                    return false;
+                }
             }
 
             CScript dataScript = GetScriptForNullAssetDataDestination(DecodeDestination(pair.second));
@@ -4735,8 +4799,8 @@ bool CNullAssetTxData::IsValid(std::string &strError, CAssetsCache &assetCache, 
         return false;
     }
 
-    if (type != AssetType::QUALIFIER && type != AssetType::SUB_QUALIFIER && type != AssetType::RESTRICTED) {
-        strError = _("Asset must be a qualifier, sub qualifier, or a restricted asset");
+    if (type != AssetType::QUALIFIER && type != AssetType::SUB_QUALIFIER && type != AssetType::RESTRICTED && type != AssetType::DEPIN) {
+        strError = _("Asset must be a qualifier, sub qualifier, restricted asset, or DEPIN asset");
         return false;
     }
 
@@ -5080,42 +5144,38 @@ bool CAssetsCache::CheckForDEPINRestriction(const std::string &assetName, const 
      * Returns true if the asset is blocked/invalid, false if active/valid
     **/
 
-    // LEVEL 1: Check dirty cache for self-restrictions
+    return CheckForAddressRestriction(assetName, address, fSkipTempCache) ||
+           CheckForDEPINSelfRestriction(assetName, address, fSkipTempCache);
+}
+
+bool CAssetsCache::CheckForDEPINSelfRestriction(const std::string &assetName, const std::string& address, bool fSkipTempCache)
+{
     if (!fSkipTempCache) {
         CAssetCacheSelfRestriction selfCache(assetName, address, true);
 
         auto it = setNewSelfRestrictionToAdd.find(selfCache);
         if (it != setNewSelfRestrictionToAdd.end()) {
-            return it->isSelfRevoke;  // true = blocked
+            return it->isSelfRevoke;
         }
     }
 
-    // Check global dirty cache for self-restrictions
     CAssetCacheSelfRestriction selfCacheGlobal(assetName, address, true);
     auto itGlobal = passets->setNewSelfRestrictionToAdd.find(selfCacheGlobal);
     if (itGlobal != passets->setNewSelfRestrictionToAdd.end()) {
-        return itGlobal->isSelfRevoke;  // true = blocked
+        return itGlobal->isSelfRevoke;
     }
 
-    // LEVEL 2 & 3: Reuse existing CheckForAddressRestriction for owner freeze
-    // (This already checks dirty cache → LRU cache → database for 'R' flag)
-    if (CheckForAddressRestriction(assetName, address, fSkipTempCache)) {
-        return true;  // Owner freezed
-    }
-
-    // LEVEL 3: Check database for self-restriction ('S' flag)
     if (prestricteddb) {
         if (prestricteddb->ReadSelfRestriction(address, assetName)) {
-            // Cache result in LRU cache (reuse passetsRestrictionCache)
             if (passetsRestrictionCache) {
                 CAssetCacheSelfRestriction cacheEntry(assetName, address, true);
                 passetsRestrictionCache->Put(cacheEntry.GetHash().GetHex(), 1);
             }
-            return true;  // Self-revoked
+            return true;
         }
     }
 
-    return false;  // Not blocked - asset is ACTIVE
+    return false;
 }
 
 void ExtractVerifierStringQualifiers(const std::string& verifier, std::set<std::string>& qualifiers)
@@ -5260,6 +5320,11 @@ bool VerifyRestrictedAddressChange(CAssetsCache& cache, const CNullAssetTxData& 
     if (!VerifyNullAssetDataFlag(data.flag, strError))
         return false;
 
+    if (IsAssetNameADEPIN(data.asset_name) && AddressHasDEPINOwnerToken(cache, data.asset_name, address)) {
+        strError = "bad-txns-depin-owner-holder-address-cannot-be-revoked";
+        return false;
+    }
+
     // Get the current status of the asset and the given address
     bool fIsFrozen = cache.CheckForAddressRestriction(data.asset_name, address, true);
 
@@ -5281,6 +5346,32 @@ bool VerifyRestrictedAddressChange(CAssetsCache& cache, const CNullAssetTxData& 
     return true;
 }
 
+bool VerifyDEPINOwnerChange(CAssetsCache& cache, const CNullAssetTxData& data, const std::string& address, std::string& strError)
+{
+    if (!VerifyNullAssetDataFlag(data.flag, strError))
+        return false;
+
+    if (AddressHasDEPINOwnerToken(cache, data.asset_name, address)) {
+        strError = "bad-txns-depin-owner-holder-address-cannot-be-revoked";
+        return false;
+    }
+
+    const bool fIsOwnerFrozen = cache.CheckForAddressRestriction(data.asset_name, address, true);
+    const bool fIsSelfRevoked = cache.CheckForDEPINSelfRestriction(data.asset_name, address, true);
+
+    if (data.flag) {
+        if (fIsOwnerFrozen) {
+            strError = "bad-txns-null-data-freeze-address-when-already-frozen";
+            return false;
+        }
+    } else if (!fIsOwnerFrozen && !fIsSelfRevoked) {
+        strError = "bad-txns-depin-owner-unrevoke-when-address-is-active";
+        return false;
+    }
+
+    return true;
+}
+
 bool VerifySelfRestrictionChange(CAssetsCache& cache, const CNullAssetTxData& data, const std::string& address, std::string& strError)
 {
     // DEPIN self-restriction validation
@@ -5293,14 +5384,19 @@ bool VerifySelfRestrictionChange(CAssetsCache& cache, const CNullAssetTxData& da
         return false;
     }
 
+    if (AddressHasDEPINOwnerToken(cache, data.asset_name, address)) {
+        strError = "bad-txns-depin-owner-holder-address-cannot-self-revoke";
+        return false;
+    }
+
     // Check if already self-revoked
-    if (prestricteddb && prestricteddb->ReadSelfRestriction(address, data.asset_name)) {
+    if (cache.CheckForDEPINSelfRestriction(data.asset_name, address, true)) {
         strError = "bad-txns-depin-already-self-revoked";
         return false;
     }
 
     // Check if owner-freezed (cannot self-revoke if already owner-freezed)
-    if (prestricteddb && prestricteddb->ReadRestrictedAddress(address, data.asset_name)) {
+    if (cache.CheckForAddressRestriction(data.asset_name, address, true)) {
         strError = "bad-txns-depin-cannot-self-revoke-when-owner-freezed";
         return false;
     }
@@ -5365,7 +5461,7 @@ bool CheckVerifierAssetTxOut(const CTxOut& txout, std::string& strError)
     return true;
 }
 ///////////////
-bool ContextualCheckNullAssetTxOut(const CTxOut& txout, CAssetsCache* assetCache, std::string& strError, std::vector<std::pair<std::string, CNullAssetTxData>>* myNullAssetData)
+bool ContextualCheckNullAssetTxOut(const CTxOut& txout, const CTransaction* tx, CAssetsCache* assetCache, std::string& strError, std::vector<std::pair<std::string, CNullAssetTxData>>* myNullAssetData)
 {
     // Get the data from the script
     CNullAssetTxData data;
@@ -5386,9 +5482,16 @@ bool ContextualCheckNullAssetTxOut(const CTxOut& txout, CAssetsCache* assetCache
             if (!VerifyRestrictedAddressChange(*assetCache, data, address, strError))
                 return false;
         } else if (IsAssetNameADEPIN(data.asset_name)) {
-            // DEPIN self-restriction validation
-            if (!VerifySelfRestrictionChange(*assetCache, data, address, strError))
+            if (tx && TxContainsDEPINOwnerTokenTransfer(*tx, data.asset_name)) {
+                if (TxContainsAssetTransferToAddress(*tx, data.asset_name + OWNER_TAG, address)) {
+                    strError = "bad-txns-depin-owner-holder-address-cannot-be-revoked";
+                    return false;
+                }
+                if (!VerifyDEPINOwnerChange(*assetCache, data, address, strError))
+                    return false;
+            } else if (!VerifySelfRestrictionChange(*assetCache, data, address, strError)) {
                 return false;
+            }
         } else {
             strError = "bad-txns-null-asset-data-on-non-restricted-or-qualifier-asset";
             return false;
@@ -5598,11 +5701,9 @@ bool ContextualCheckTransferAsset(CAssetsCache* assetCache, const CAssetTransfer
             return false;
         }
 
-        // DEPIN assets are soulbound (non-transferable except by owner)
-        // Full validation with owner token check happens in CheckTxAssets
-        // This is a basic validation
-        if (transfer.nAmount != DEPIN_ASSET_AMOUNT) {
-            strError = "bad-txns-depin-invalid-amount: DEPIN assets must be exactly " + std::to_string(DEPIN_ASSET_AMOUNT / COIN) + " coin";
+        // DEPIN assets are soulbound (non-transferable except by owner).
+        if (transfer.nAmount <= 0) {
+            strError = "bad-txns-depin-invalid-amount: DEPIN assets must transfer a positive amount";
             return false;
         }
     }
@@ -5648,6 +5749,11 @@ bool CheckNewAsset(const CNewAsset& asset, std::string& strError)
             strError = _("Invalid parameter: reissuable must be 0");
             return false;
         }
+    }
+
+    if (assetType == AssetType::DEPIN && asset.units != DEPIN_ASSET_UNITS) {
+        strError = _("Invalid parameter: DEPIN assets must use units=0");
+        return false;
     }
 
     if (IsAssetNameAnOwner(std::string(asset.strName))) {
@@ -5766,6 +5872,11 @@ bool CheckReissueAsset(const CReissueAsset& asset, std::string& strError)
 
     AssetType type;
     IsAssetNameValid(asset.strName, type);
+
+    if (type == AssetType::DEPIN && asset.nUnits != -1 && asset.nUnits != DEPIN_ASSET_UNITS) {
+        strError = _("Unable to reissue asset: DEPIN assets must keep units=0");
+        return false;
+    }
 
     if (type == AssetType::RESTRICTED) {
         // TODO Add checks for restricted asset if we can come up with any

@@ -352,8 +352,14 @@ void AddCoins(CCoinsViewCache& cache, const CTransaction &tx, int nHeight, uint2
                         } else if (type == AssetType::QUALIFIER || type == AssetType::SUB_QUALIFIER) {
                             assetsCache->AddQualifierAddress(data.asset_name, address, data.flag ? QualifierType::ADD_QUALIFIER : QualifierType::REMOVE_QUALIFIER);
                         } else if (type == AssetType::DEPIN) {
-                            // DEPIN self-restriction: flag=1 means self-revoke, flag=0 means un-revoke
-                            assetsCache->AddSelfRestriction(data.asset_name, address, data.flag ? true : false);
+                            if (TxContainsDEPINOwnerTokenTransfer(tx, data.asset_name)) {
+                                assetsCache->AddRestrictedAddress(data.asset_name, address, data.flag ? RestrictedType::FREEZE_ADDRESS : RestrictedType::UNFREEZE_ADDRESS);
+                                if (!data.flag) {
+                                    assetsCache->AddSelfRestriction(data.asset_name, address, false);
+                                }
+                            } else {
+                                assetsCache->AddSelfRestriction(data.asset_name, address, true);
+                            }
                         }
                     } else if (script.IsNullGlobalRestrictionAssetTxDataScript()) {
                         CNullAssetTxData data;

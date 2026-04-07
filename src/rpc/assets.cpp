@@ -66,6 +66,86 @@ void CheckRestrictedAssetTransferInputs(const CWalletTx& transaction, const std:
     }
 }
 
+namespace {
+UniValue UpdateDEPINAddressRestriction(const JSONRPCRequest &request, const int8_t &flag)
+{
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+
+    ObserveSafeMode();
+    LOCK2(cs_main, pwallet->cs_wallet);
+
+    EnsureWalletIsUnlocked(pwallet);
+
+    std::string assetName = request.params[0].get_str();
+    AssetType assetType;
+    std::string assetError;
+    if (!IsAssetNameValid(assetName, assetType, assetError) || assetType != AssetType::DEPIN) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid DEPIN asset name: ") + assetName + std::string("\nError: ") + assetError);
+    }
+
+    std::string address = request.params[1].get_str();
+    CTxDestination destination = DecodeDestination(address);
+    if (!IsValidDestination(destination)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Neurai address: ") + address);
+    }
+
+    if (AddressHasDEPINOwnerToken(*passets, assetName, address)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "The address holding the DEPIN owner token cannot be frozen or revoked");
+    }
+
+    std::string change_address = "";
+    if (request.params.size() > 2) {
+        change_address = request.params[2].get_str();
+        if (!change_address.empty()) {
+            CTxDestination change_dest = DecodeDestination(change_address);
+            if (!IsValidDestination(change_dest)) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Neurai change address: ") + change_address);
+            }
+        }
+    }
+
+    CReserveKey reservekey(pwallet);
+    CWalletTx transaction;
+    CAmount nRequiredFee;
+    CCoinControl ctrl;
+
+    if (change_address.empty()) {
+        CTxDestination change_dest;
+        std::string strFailReason;
+        if (!pwallet->CreateNewChangeAddress(reservekey, change_dest, strFailReason))
+            throw JSONRPCError(RPC_WALLET_ERROR, strFailReason);
+        change_address = EncodeDestination(change_dest);
+    }
+
+    if (address == change_address) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "The DEPIN owner token change address cannot be the address being frozen or unrevoked");
+    }
+
+    ctrl.destChange = DecodeDestination(change_address);
+
+    std::pair<int, std::string> error;
+    std::vector<std::pair<CAssetTransfer, std::string>> vTransfers;
+    vTransfers.emplace_back(std::make_pair(CAssetTransfer(assetName + OWNER_TAG, OWNER_ASSET_AMOUNT), change_address));
+
+    std::vector<std::pair<CNullAssetTxData, std::string>> vecAssetData;
+    vecAssetData.push_back(std::make_pair(CNullAssetTxData(assetName, flag), address));
+
+    if (!CreateTransferAssetTransaction(pwallet, ctrl, vTransfers, "", error, transaction, reservekey, nRequiredFee, &vecAssetData))
+        throw JSONRPCError(error.first, error.second);
+
+    std::string txid;
+    if (!SendAssetTransaction(pwallet, transaction, reservekey, error, txid))
+        throw JSONRPCError(error.first, error.second);
+
+    UniValue result(UniValue::VARR);
+    result.push_back(txid);
+    return result;
+}
+}
+
 std::string AssetActivationWarning()
 {
     return AreAssetsDeployed() ? "" : "\nTHIS COMMAND IS NOT YET ACTIVE!\nhttps://github.com/NeuraiProject/rips/blob/master/rip-0002.mediawiki\n";
@@ -532,7 +612,7 @@ UniValue issue(const JSONRPCRequest& request)
     if (request.params.size() > 4)
         units = request.params[4].get_int();
 
-    bool reissuable = assetType != AssetType::UNIQUE && assetType != AssetType::MSGCHANNEL && assetType != AssetType::QUALIFIER && assetType != AssetType::SUB_QUALIFIER && assetType != AssetType::DEPIN;
+    bool reissuable = assetType != AssetType::UNIQUE && assetType != AssetType::MSGCHANNEL && assetType != AssetType::QUALIFIER && assetType != AssetType::SUB_QUALIFIER;
     if (request.params.size() > 5)
         reissuable = request.params[5].get_bool();
 
@@ -565,9 +645,9 @@ UniValue issue(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid parameters for issuing a qualifier asset."));
     }
 
-    // check for required depin asset params (soulbound: 1 coin, 0 units, not reissuable)
-    if (assetType == AssetType::DEPIN && (nAmount != COIN || units != 0 || reissuable)) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid parameters for issuing a depin asset. DEPIN assets must have amount=1, units=0, and reissuable=false."));
+    // check for required depin asset params (units fixed at 0, amount and reissuable are configurable)
+    if (assetType == AssetType::DEPIN && (nAmount <= 0 || units != 0)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid parameters for issuing a depin asset. DEPIN assets must have amount>0 and units=0."));
     }
 
     CNewAsset asset(assetName, nAmount, units, reissuable ? 1 : 0, has_ipfs ? 1 : 0, DecodeAssetData(ipfs_hash));
@@ -3152,7 +3232,7 @@ UniValue listdepinholders(const JSONRPCRequest& request)
             "[\n"
             "  {\n"
             "    \"address\": \"address\",     (string) The address\n"
-            "    \"amount\": n,                (numeric) The amount (always 1 for DEPIN)\n"
+            "    \"amount\": n,                (numeric) The amount held at the address\n"
             "    \"valid\": 1|0                (numeric) 1 = active/valid, 0 = blocked/revoked\n"
             "  },\n"
             "  ...\n"
@@ -3288,10 +3368,7 @@ UniValue freezedepin(const JSONRPCRequest& request)
             + HelpExampleRpc("freezedepin", "\"&FRANCE\" \"address\"")
         );
 
-    // Reuse the existing freeze logic from restricted assets
-    // The owner must have the owner token (&ASSET!)
-    // This will call AddRestrictedAddress with FREEZE_ADDRESS type
-    return UpdateAddressRestriction(request, 1);  // 1 = Freeze
+    return UpdateDEPINAddressRestriction(request, 1);
 }
 
 UniValue unfreezedepin(const JSONRPCRequest& request)
@@ -3317,8 +3394,7 @@ UniValue unfreezedepin(const JSONRPCRequest& request)
             + HelpExampleRpc("unfreezedepin", "\"&FRANCE\" \"address\"")
         );
 
-    // Reuse the existing unfreeze logic from restricted assets
-    return UpdateAddressRestriction(request, 0);  // 0 = Unfreeze
+    return UpdateDEPINAddressRestriction(request, 0);
 }
 
 UniValue selfrevokedepin(const JSONRPCRequest& request)
@@ -3361,7 +3437,7 @@ UniValue selfrevokedepin(const JSONRPCRequest& request)
 
     // Find which address in the wallet holds this DEPIN asset
     std::string holderAddress = "";
-    CAmount balance = 0;
+    bool fFoundOwnerControlledHolding = false;
 
     // Get all addresses in the wallet
     std::set<CTxDestination> destinations;
@@ -3383,14 +3459,20 @@ UniValue selfrevokedepin(const JSONRPCRequest& request)
         if (GetBestAssetAddressAmount(*passets, assetName, address)) {
             addrBalance = passets->mapAssetsAddressAmount.at(std::make_pair(assetName, address));
             if (addrBalance > 0) {
+                if (AddressHasDEPINOwnerToken(*passets, assetName, address)) {
+                    fFoundOwnerControlledHolding = true;
+                    continue;
+                }
                 holderAddress = address;
-                balance = addrBalance;
                 break;
             }
         }
     }
 
     if (holderAddress.empty()) {
+        if (fFoundOwnerControlledHolding) {
+            throw JSONRPCError(RPC_INVALID_REQUEST, "The address holding the DEPIN owner token cannot self-revoke");
+        }
         throw JSONRPCError(RPC_WALLET_ERROR, "This wallet does not hold the specified DEPIN asset");
     }
 

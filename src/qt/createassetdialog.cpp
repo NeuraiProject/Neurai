@@ -1463,17 +1463,15 @@ void CreateAssetDialog::setQualifierSelected()
 
 void CreateAssetDialog::setDepinSelected()
 {
-    // DEPIN assets are always 1 coin (soulbound)
-    ui->quantitySpinBox->setValue(1);
-    ui->quantitySpinBox->setDisabled(true);
+    ui->quantitySpinBox->setMaximum(21000000000);
+    ui->quantitySpinBox->setDisabled(false);
 
     // DEPIN assets have 0 decimals
     ui->unitBox->setValue(0);
     ui->unitBox->setDisabled(true);
 
-    // DEPIN assets are not reissuable
-    ui->reissuableBox->setChecked(false);
-    ui->reissuableBox->setDisabled(true);
+    ui->reissuableBox->setChecked(true);
+    ui->reissuableBox->setDisabled(false);
 }
 
 void CreateAssetDialog::clearSelected()
