@@ -447,6 +447,13 @@ bool CheckTransaction(const CTransaction& tx, CValidationState &state, bool fChe
             if (!setAssetTransferNames.count(ownerToken + OWNER_TAG)) {
                 return state.DoS(100, false, REJECT_INVALID, "bad-txns-tx-contains-restricted-asset-null-tx-without-asset-transfer");
             }
+        } else if (IsAssetNameADEPIN(entry.first.first)) {
+            const bool hasDepinTransfer = setAssetTransferNames.count(entry.first.first);
+            const bool hasOwnerTransfer = setAssetTransferNames.count(entry.first.first + OWNER_TAG);
+            if (!hasDepinTransfer && !hasOwnerTransfer) {
+                return state.DoS(100, false, REJECT_INVALID,
+                                 "bad-txns-tx-contains-depin-asset-null-tx-without-asset-transfer");
+            }
         } else { // must be a qualifier asset QUALIFIER_CHAR
             if (!setAssetTransferNames.count(entry.first.first)) {
                 return state.DoS(100, false, REJECT_INVALID,
