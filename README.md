@@ -88,13 +88,13 @@ public: 0x35
 scripthash: 0x75
 
 TESTNET NETWORK
-BIP32 Derivation Path: m/44'/0'/0'/1
-BIP32 private: 0x043587cf
-BIP32 public:  0x04358394
+BIP32 Derivation Path: m/44'/1'/0'/0
+BIP32 private: 0x04358394
+BIP32 public:  0x043587cf
 
-private: 0x80
+private: 0xef
 public: 0x7f
-scripthash: 0x75
+scripthash: 0xc4
 ```
 
 Code Source
