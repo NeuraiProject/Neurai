@@ -951,8 +951,14 @@ bool AssetNullDataFromScript(const CScript& scriptPubKey, CNullAssetTxData& asse
 
     strAddress = EncodeDestination(destination);
 
+    // PQ format has extra OP_1 byte, so asset data starts at offset 24 instead of 23
+    int dataOffset = OFFSET_TWENTY_THREE;
+    if (scriptPubKey.size() > 24 && scriptPubKey[1] == OP_1) {
+        dataOffset = 24;
+    }
+
     std::vector<unsigned char> vchAssetData;
-    vchAssetData.insert(vchAssetData.end(), scriptPubKey.begin() + OFFSET_TWENTY_THREE, scriptPubKey.end());
+    vchAssetData.insert(vchAssetData.end(), scriptPubKey.begin() + dataOffset, scriptPubKey.end());
     CDataStream ssData(vchAssetData, SER_NETWORK, PROTOCOL_VERSION);
 
     try {

@@ -191,9 +191,16 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, std::vector<std::v
     if (scriptPubKey.size() >= 1 && scriptPubKey[0] == OP_XNA_ASSET && scriptPubKey.IsPushOnly(scriptPubKey.begin()+1)) {
         typeRet = TX_RESTRICTED_ASSET_DATA;
 
-        if (scriptPubKey.size() >= 23 && scriptPubKey[1] != OP_RESERVED) {
+        if (scriptPubKey[1] == 0x14 && scriptPubKey.size() >= 23) {
+            // Legacy: hash at bytes [2..22)
             std::vector<unsigned char> hashBytes(scriptPubKey.begin() + 2, scriptPubKey.begin() + 22);
             vSolutionsRet.push_back(hashBytes);
+            vSolutionsRet.push_back({0x00}); // version 0 = legacy
+        } else if (scriptPubKey[1] == OP_1 && scriptPubKey.size() >= 24 && scriptPubKey[2] == 0x14) {
+            // PQ: hash at bytes [3..23)
+            std::vector<unsigned char> hashBytes(scriptPubKey.begin() + 3, scriptPubKey.begin() + 23);
+            vSolutionsRet.push_back(hashBytes);
+            vSolutionsRet.push_back({0x01}); // version 1 = PQ
         }
         return true;
     }
@@ -313,7 +320,14 @@ bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
     } else if (whichType == TX_NEW_ASSET || whichType == TX_REISSUE_ASSET || whichType == TX_TRANSFER_ASSET) {
         return ExtractAssetDestination(scriptPubKey, addressRet);
     } else if (whichType == TX_RESTRICTED_ASSET_DATA) {
-        if (vSolutions.size()) {
+        if (vSolutions.size() >= 2) {
+            if (vSolutions[1].size() == 1 && vSolutions[1][0] == 0x01) {
+                addressRet = WitnessV1KeyHash(uint160(vSolutions[0]));
+            } else {
+                addressRet = CKeyID(uint160(vSolutions[0]));
+            }
+            return true;
+        } else if (vSolutions.size() == 1) {
             addressRet = CKeyID(uint160(vSolutions[0]));
             return true;
         }
@@ -532,7 +546,7 @@ namespace
 
         bool operator()(const WitnessV1KeyHash &id) const {
             script->clear();
-            *script << OP_XNA_ASSET << ToByteVector(id);
+            *script << OP_XNA_ASSET << OP_1 << ToByteVector(id);
             return true;
         }
     };

@@ -354,9 +354,13 @@ bool CScript::IsNullAsset() const
 
 bool CScript::IsNullAssetTxDataScript() const
 {
-    return (this->size() > 23 &&
-            (*this)[0] == OP_XNA_ASSET &&
-            (*this)[1] == 0x14);
+    // Legacy format: OP_XNA_ASSET 0x14 <20-byte-hash> <asset-data>
+    if (this->size() > 23 && (*this)[0] == OP_XNA_ASSET && (*this)[1] == 0x14)
+        return true;
+    // PQ format: OP_XNA_ASSET OP_1 0x14 <20-byte-hash> <asset-data>
+    if (this->size() > 24 && (*this)[0] == OP_XNA_ASSET && (*this)[1] == OP_1 && (*this)[2] == 0x14)
+        return true;
+    return false;
 }
 
 bool CScript::IsNullGlobalRestrictionAssetTxDataScript() const
