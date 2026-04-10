@@ -142,7 +142,7 @@ const CWalletTx* CWallet::GetWalletTx(const uint256& hash) const
     return &(it->second);
 }
 
-CPubKey CWallet::GenerateNewKeyPQ(CWalletDB& walletdb)
+CPubKey CWallet::GenerateNewKeyPQ(CWalletDB& walletdb, bool internal)
 {
     AssertLockHeld(cs_wallet);
 
@@ -150,15 +150,16 @@ CPubKey CWallet::GenerateNewKeyPQ(CWalletDB& walletdb)
     CKeyMetadata metadata(nCreationTime);
 
     // Derive a deterministic seed for the PQ key using BIP32 path:
-    //   Mainnet: m/100'/1900'/0'/0/index
-    //   Testnet: m/100'/1900'/0'/1/index
+    //   Mainnet external: m/100'/1900'/0'/0/index
+    //   Mainnet change:   m/100'/1900'/0'/1/index
+    //   Test/Reg external: m/100'/1'/0'/0/index
+    //   Test/Reg change:   m/100'/1'/0'/1/index
     // The resulting 32-byte EC child key is used as the OQS DRBG seed, making PQ keys deterministic.
     const uint32_t PQ_PURPOSE   = 100;
-    const uint32_t PQ_COIN_TYPE = 1900;
+    const uint32_t PQ_COIN_TYPE = (GetParams().NetworkIDString() == "main") ? 1900 : 1;
     const uint32_t nAccountIndex = 0;
-    // chain=0 for mainnet, chain=1 for testnet/regtest
-    const uint32_t nChain = (GetParams().NetworkIDString() == "main") ? 0 : 1;
-    uint32_t& nChildIndex = hdChain.nExternalChainCounter;
+    const uint32_t nChain = internal ? 1 : 0;
+    uint32_t& nChildIndex = internal ? hdChain.nInternalChainCounter : hdChain.nExternalChainCounter;
 
     CExtKey masterKey;
     masterKey.SetSeed(g_vchSeed.data(), g_vchSeed.size());
@@ -204,9 +205,9 @@ CPubKey CWallet::GenerateNewKey(CWalletDB &walletdb, bool internal)
     AssertLockHeld(cs_wallet); // mapKeyMetadata
     bool fCompressed = CanSupportFeature(FEATURE_COMPRPUBKEY); // default to compressed public keys if we want 0.6.0 wallets
 
-    // PQ wallets generate keys via a separate path (no keypool, no internal/external split)
+    // PQ wallets generate keys via a separate derivation path while still honoring internal/external selection.
     if (IsPQEnabled()) {
-        return GenerateNewKeyPQ(walletdb);
+        return GenerateNewKeyPQ(walletdb, internal);
     }
 
     CKey secret;

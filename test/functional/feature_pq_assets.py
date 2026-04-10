@@ -38,6 +38,10 @@ class PQAssetTest(NeuraiTestFramework):
         assert_equal(info["isvalid"], True)
         assert_equal(info["script"], expected)
 
+    def assert_hd_path(self, node, address, expected):
+        info = node.validateaddress(address)
+        assert_equal(info["hdkeypath"], expected)
+
     def assert_relayed(self, txid):
         self.sync_all()
         for node in self.nodes:
@@ -60,6 +64,13 @@ class PQAssetTest(NeuraiTestFramework):
         self.assert_script_type(n0, self.legacy_receive, "pubkeyhash")
         self.assert_script_type(n1, self.pq1_receive, "witness_v1_keyhash")
         self.assert_script_type(n2, self.pq2_receive, "witness_v1_keyhash")
+        self.assert_hd_path(n1, self.pq1_receive, "m/100'/1'/0'/0/0")
+        self.assert_hd_path(n2, self.pq2_receive, "m/100'/1'/0'/0/0")
+
+        pq_master_info = n1.getmasterkeyinfo()
+        assert_equal(pq_master_info["account_derivation_path"], "m/100'/1'/0'")
+        assert_equal(pq_master_info["external_derivation_path"], "m/100'/1'/0'/0")
+        assert_equal(pq_master_info["internal_derivation_path"], "m/100'/1'/0'/1")
 
         assert self.pq1_receive in n1.listpqaddresses()
         assert self.pq2_receive in n2.listpqaddresses()
@@ -72,6 +83,18 @@ class PQAssetTest(NeuraiTestFramework):
         pq_to_legacy_txid = n1.sendtoaddress(self.legacy_receive, 10)
         self.assert_relayed(pq_to_legacy_txid)
         self.mine_and_sync(1, 1)
+
+        change_address = None
+        outs = n1.decoderawtransaction(n1.gettransaction(pq_to_legacy_txid)["hex"])["vout"]
+        for out in outs:
+            addresses = out["scriptPubKey"].get("addresses", [])
+            if out["value"] != 10 and addresses:
+                change_address = addresses[0]
+                break
+
+        assert change_address is not None
+        self.assert_script_type(n1, change_address, "witness_v1_keyhash")
+        self.assert_hd_path(n1, change_address, "m/100'/1'/0'/1/0")
 
     def pq_issue_and_reissue(self):
         self.log.info("Issuing and reissuing an asset from a PQ wallet")

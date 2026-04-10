@@ -781,6 +781,8 @@ UniValue getmasterkeyinfo(const JSONRPCRequest& request)
                 "  \"bip32_root_private\" : (string) extended master private key,\n"
                 "  \"bip32_root_public\" :  (string) extended master public key,\n"
                 "  \"account_derivation_path\" : (string) The derivation path to the account public/private keys\n"
+                "  \"external_derivation_path\" : (string) The derivation path prefix for receiving addresses\n"
+                "  \"internal_derivation_path\" : (string) The derivation path prefix for change addresses\n"
                 "  \"account_extended_private_key\" : (string) extended account private key,\n"
                 "  \"account_extended_public_key\" :  (string) extended account public key,\n"
                 "}\n"
@@ -918,12 +920,16 @@ UniValue getmasterkeyinfo(const JSONRPCRequest& request)
 
         if (pwallet->IsPQEnabled())
         {
-            uint32_t nChain = (GetParams().NetworkIDString() == "main") ? 0 : 1;
-            std::string path = strprintf("m/100'/1900'/0'/%d", nChain);
-            ret.push_back(std::make_pair("account_derivation_path", path));
+            uint32_t nCoinType = (GetParams().NetworkIDString() == "main") ? 1900 : 1;
+            std::string accountPath = strprintf("m/100'/%d'/0'", nCoinType);
+            ret.push_back(std::make_pair("account_derivation_path", accountPath));
+            ret.push_back(std::make_pair("external_derivation_path", accountPath + "/0"));
+            ret.push_back(std::make_pair("internal_derivation_path", accountPath + "/1"));
             ret.push_back(std::make_pair("pq_algorithm", "ML-DSA-44 (FIPS 204)"));
-            ret.push_back(std::make_pair("pq_key_count",
+            ret.push_back(std::make_pair("pq_external_key_count",
                             (uint64_t)pwallet->GetHDChain().nExternalChainCounter));
+            ret.push_back(std::make_pair("pq_internal_key_count",
+                            (uint64_t)pwallet->GetHDChain().nInternalChainCounter));
         }
     }
 

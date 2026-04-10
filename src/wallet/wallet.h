@@ -917,7 +917,7 @@ public:
     CPubKey GenerateNewKey(CWalletDB& walletdb, bool internal = false);
 
     //! Generate a new ML-DSA-44 post-quantum key and add it to the wallet.
-    CPubKey GenerateNewKeyPQ(CWalletDB& walletdb);
+    CPubKey GenerateNewKeyPQ(CWalletDB& walletdb, bool internal);
     //! Adds a key to the store, and saves it to disk.
     bool AddKeyPubKey(const CKey& key, const CPubKey &pubkey) override;
     bool AddKeyPubKeyWithDB(CWalletDB &walletdb,const CKey& key, const CPubKey &pubkey);
