@@ -1724,15 +1724,36 @@ bool TransactionSignatureChecker::CheckSigFromStack(const std::vector<unsigned c
     return pubkey.Verify(msgHash, vchSig);
 }
 
-// OP_TXHASH field selector bits
-static const unsigned char TXHASH_VERSION       = (1 << 0);
-static const unsigned char TXHASH_LOCKTIME      = (1 << 1);
-static const unsigned char TXHASH_PREVOUTS      = (1 << 2);
-static const unsigned char TXHASH_SEQUENCES     = (1 << 3);
-static const unsigned char TXHASH_OUTPUTS       = (1 << 4);
-static const unsigned char TXHASH_CUR_PREVOUT   = (1 << 5);
-static const unsigned char TXHASH_CUR_SEQUENCE  = (1 << 6);
-static const unsigned char TXHASH_INPUT_INDEX   = (1 << 7);
+// OP_TXHASH field selector bits.
+//
+// The field selector is a single byte pushed onto the stack before OP_TXHASH.
+// Each bit selects a transaction field to include in the hash:
+//
+//   Bit 0 (0x01): nVersion     - transaction version (4 bytes LE)
+//   Bit 1 (0x02): nLockTime   - transaction locktime (4 bytes LE)
+//   Bit 2 (0x04): prevouts    - double-SHA256 of all input prevouts
+//   Bit 3 (0x08): sequences   - double-SHA256 of all input sequences
+//   Bit 4 (0x10): outputs     - double-SHA256 of all serialized outputs
+//   Bit 5 (0x20): cur_prevout - serialized prevout of current input (nIn)
+//   Bit 6 (0x40): cur_seq     - sequence number of current input (nIn)
+//   Bit 7 (0x80): input_index - index of current input as uint32 LE
+//
+// The selected fields are concatenated in bit order and hashed with
+// double-SHA256 (CHash256), consistent with BIP143/SignatureHash.
+// Sub-hashes for prevouts/sequences/outputs also use double-SHA256,
+// enabling reuse of PrecomputedTransactionData cache (O(1) vs O(n)).
+//
+// Selector 0x00 is invalid (returns false). The hash is deterministic:
+// same selector + same transaction + same input index = same result.
+//
+static const unsigned char TXHASH_VERSION       = (1 << 0);  // 0x01
+static const unsigned char TXHASH_LOCKTIME      = (1 << 1);  // 0x02
+static const unsigned char TXHASH_PREVOUTS      = (1 << 2);  // 0x04
+static const unsigned char TXHASH_SEQUENCES     = (1 << 3);  // 0x08
+static const unsigned char TXHASH_OUTPUTS       = (1 << 4);  // 0x10
+static const unsigned char TXHASH_CUR_PREVOUT   = (1 << 5);  // 0x20
+static const unsigned char TXHASH_CUR_SEQUENCE  = (1 << 6);  // 0x40
+static const unsigned char TXHASH_INPUT_INDEX   = (1 << 7);  // 0x80
 
 bool TransactionSignatureChecker::GetTxFieldHash(unsigned char fieldSelector, std::vector<unsigned char>& result) const
 {
