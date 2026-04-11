@@ -57,9 +57,15 @@ enum
     neuraiconsensus_SCRIPT_FLAGS_VERIFY_CHECKLOCKTIMEVERIFY = (1U << 9), // enable CHECKLOCKTIMEVERIFY (BIP65)
     neuraiconsensus_SCRIPT_FLAGS_VERIFY_CHECKSEQUENCEVERIFY = (1U << 10), // enable CHECKSEQUENCEVERIFY (BIP112)
     neuraiconsensus_SCRIPT_FLAGS_VERIFY_WITNESS             = (1U << 11), // enable WITNESS (BIP141)
+    neuraiconsensus_SCRIPT_FLAGS_VERIFY_CAT                  = (1U << 17), // enable OP_CAT
+    neuraiconsensus_SCRIPT_FLAGS_VERIFY_CHECKTEMPLATEVERIFY   = (1U << 18), // enable OP_CHECKTEMPLATEVERIFY
+    neuraiconsensus_SCRIPT_FLAGS_VERIFY_CHECKSIGFROMSTACK     = (1U << 19), // enable OP_CHECKSIGFROMSTACK
+    neuraiconsensus_SCRIPT_FLAGS_VERIFY_TXHASH               = (1U << 20), // enable OP_TXHASH
     neuraiconsensus_SCRIPT_FLAGS_VERIFY_ALL                 = neuraiconsensus_SCRIPT_FLAGS_VERIFY_P2SH | neuraiconsensus_SCRIPT_FLAGS_VERIFY_DERSIG |
                                                                neuraiconsensus_SCRIPT_FLAGS_VERIFY_NULLDUMMY | neuraiconsensus_SCRIPT_FLAGS_VERIFY_CHECKLOCKTIMEVERIFY |
-                                                               neuraiconsensus_SCRIPT_FLAGS_VERIFY_CHECKSEQUENCEVERIFY | neuraiconsensus_SCRIPT_FLAGS_VERIFY_WITNESS
+                                                               neuraiconsensus_SCRIPT_FLAGS_VERIFY_CHECKSEQUENCEVERIFY | neuraiconsensus_SCRIPT_FLAGS_VERIFY_WITNESS |
+                                                               neuraiconsensus_SCRIPT_FLAGS_VERIFY_CAT | neuraiconsensus_SCRIPT_FLAGS_VERIFY_CHECKTEMPLATEVERIFY |
+                                                               neuraiconsensus_SCRIPT_FLAGS_VERIFY_CHECKSIGFROMSTACK | neuraiconsensus_SCRIPT_FLAGS_VERIFY_TXHASH
 };
 
 /// Returns 1 if the input nIn of the serialized transaction pointed to by

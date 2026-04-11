@@ -540,10 +540,17 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         if (stack.size() < 1)
                             return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
 
-                        // The top stack element must be exactly 32 bytes (a SHA256 hash)
                         const valtype& vchHash = stacktop(-1);
+
+                        // BIP 119: if the argument is not exactly 32 bytes, treat as NOP
+                        // (future upgrade path). Under DISCOURAGE_UPGRADABLE_NOPS, reject
+                        // by policy (standardness) but NOT by consensus.
                         if (vchHash.size() != 32)
-                            return set_error(serror, SCRIPT_ERR_CHECKTEMPLATEVERIFY);
+                        {
+                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
+                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+                            break;
+                        }
 
                         if (!checker.CheckTemplateVerify(vchHash))
                             return set_error(serror, SCRIPT_ERR_CHECKTEMPLATEVERIFY);
@@ -1428,13 +1435,54 @@ namespace
 
 PrecomputedTransactionData::PrecomputedTransactionData(const CTransaction &txTo)
 {
-    // Cache is calculated only for transactions with witness
+    // BIP143 cache: calculated only for transactions with witness
     if (txTo.HasWitness())
     {
         hashPrevouts = GetPrevoutHash(txTo);
         hashSequence = GetSequenceHash(txTo);
         hashOutputs = GetOutputsHash(txTo);
         ready = true;
+    }
+
+    // BIP119 CTV cache: precompute single-SHA256 sub-hashes to avoid
+    // quadratic hashing when multiple inputs each evaluate OP_CTV.
+    {
+        // Sequences hash (single SHA256)
+        CSHA256 seqHasher;
+        for (const auto& txin : txTo.vin) {
+            uint32_t nSequence = txin.nSequence;
+            seqHasher.Write((const unsigned char*)&nSequence, 4);
+        }
+        seqHasher.Finalize(ctvHashSequences.begin());
+
+        // Outputs hash (single SHA256)
+        CSHA256 outHasher;
+        for (const auto& txout : txTo.vout) {
+            CDataStream s(SER_NETWORK, PROTOCOL_VERSION);
+            s << txout;
+            outHasher.Write((const unsigned char*)s.data(), s.size());
+        }
+        outHasher.Finalize(ctvHashOutputs.begin());
+
+        // ScriptSigs hash (single SHA256, only if any is non-empty)
+        ctvHasNonEmptyScriptSig = false;
+        for (const auto& txin : txTo.vin) {
+            if (txin.scriptSig.size() > 0) {
+                ctvHasNonEmptyScriptSig = true;
+                break;
+            }
+        }
+        if (ctvHasNonEmptyScriptSig) {
+            CSHA256 sigHasher;
+            for (const auto& txin : txTo.vin) {
+                CDataStream s(SER_NETWORK, PROTOCOL_VERSION);
+                s << txin.scriptSig;
+                sigHasher.Write((const unsigned char*)s.data(), s.size());
+            }
+            sigHasher.Finalize(ctvHashScriptSigs.begin());
+        }
+
+        ctvReady = true;
     }
 }
 
@@ -1630,8 +1678,14 @@ bool TransactionSignatureChecker::CheckSequence(const CScriptNum &nSequence) con
 // This commits to: nVersion, nLockTime, scriptSigs hash (if any non-empty),
 // number of inputs, sequences hash, number of outputs, outputs hash, input index.
 // Uses single SHA256 (not double).
-static uint256 DefaultCheckTemplateVerifyHash(const CTransaction& tx, uint32_t nIn)
+//
+// When PrecomputedTransactionData is available with ctvReady, the sub-hashes
+// for sequences, outputs, and scriptSigs are read from cache (O(1) per input)
+// instead of recomputed from scratch (O(n) per input), preventing quadratic
+// hashing across multiple inputs.
+static uint256 DefaultCheckTemplateVerifyHash(const CTransaction& tx, uint32_t nIn, const PrecomputedTransactionData* txdata)
 {
+    const bool cacheready = txdata && txdata->ctvReady;
     CSHA256 ss;
 
     // 1. nVersion (4 bytes LE)
@@ -1643,23 +1697,29 @@ static uint256 DefaultCheckTemplateVerifyHash(const CTransaction& tx, uint32_t n
     ss.Write((const unsigned char*)&nLockTime, 4);
 
     // 3. Hash of scriptSigs (only if any is non-empty)
-    bool hasNonEmptyScriptSig = false;
-    for (const auto& txin : tx.vin) {
-        if (txin.scriptSig.size() > 0) {
-            hasNonEmptyScriptSig = true;
-            break;
+    if (cacheready) {
+        if (txdata->ctvHasNonEmptyScriptSig) {
+            ss.Write(txdata->ctvHashScriptSigs.begin(), CSHA256::OUTPUT_SIZE);
         }
-    }
-    if (hasNonEmptyScriptSig) {
-        CSHA256 scriptSigsHash;
+    } else {
+        bool hasNonEmptyScriptSig = false;
         for (const auto& txin : tx.vin) {
-            CDataStream s(SER_NETWORK, PROTOCOL_VERSION);
-            s << txin.scriptSig;
-            scriptSigsHash.Write((const unsigned char*)s.data(), s.size());
+            if (txin.scriptSig.size() > 0) {
+                hasNonEmptyScriptSig = true;
+                break;
+            }
         }
-        unsigned char scriptSigsResult[CSHA256::OUTPUT_SIZE];
-        scriptSigsHash.Finalize(scriptSigsResult);
-        ss.Write(scriptSigsResult, CSHA256::OUTPUT_SIZE);
+        if (hasNonEmptyScriptSig) {
+            CSHA256 scriptSigsHash;
+            for (const auto& txin : tx.vin) {
+                CDataStream s(SER_NETWORK, PROTOCOL_VERSION);
+                s << txin.scriptSig;
+                scriptSigsHash.Write((const unsigned char*)s.data(), s.size());
+            }
+            unsigned char scriptSigsResult[CSHA256::OUTPUT_SIZE];
+            scriptSigsHash.Finalize(scriptSigsResult);
+            ss.Write(scriptSigsResult, CSHA256::OUTPUT_SIZE);
+        }
     }
 
     // 4. Number of inputs (4 bytes LE)
@@ -1667,29 +1727,37 @@ static uint256 DefaultCheckTemplateVerifyHash(const CTransaction& tx, uint32_t n
     ss.Write((const unsigned char*)&nInputs, 4);
 
     // 5. Hash of sequences
-    CSHA256 sequencesHash;
-    for (const auto& txin : tx.vin) {
-        uint32_t nSequence = txin.nSequence;
-        sequencesHash.Write((const unsigned char*)&nSequence, 4);
+    if (cacheready) {
+        ss.Write(txdata->ctvHashSequences.begin(), CSHA256::OUTPUT_SIZE);
+    } else {
+        CSHA256 sequencesHash;
+        for (const auto& txin : tx.vin) {
+            uint32_t nSequence = txin.nSequence;
+            sequencesHash.Write((const unsigned char*)&nSequence, 4);
+        }
+        unsigned char seqResult[CSHA256::OUTPUT_SIZE];
+        sequencesHash.Finalize(seqResult);
+        ss.Write(seqResult, CSHA256::OUTPUT_SIZE);
     }
-    unsigned char seqResult[CSHA256::OUTPUT_SIZE];
-    sequencesHash.Finalize(seqResult);
-    ss.Write(seqResult, CSHA256::OUTPUT_SIZE);
 
     // 6. Number of outputs (4 bytes LE)
     uint32_t nOutputs = tx.vout.size();
     ss.Write((const unsigned char*)&nOutputs, 4);
 
     // 7. Hash of outputs
-    CSHA256 outputsHash;
-    for (const auto& txout : tx.vout) {
-        CDataStream s(SER_NETWORK, PROTOCOL_VERSION);
-        s << txout;
-        outputsHash.Write((const unsigned char*)s.data(), s.size());
+    if (cacheready) {
+        ss.Write(txdata->ctvHashOutputs.begin(), CSHA256::OUTPUT_SIZE);
+    } else {
+        CSHA256 outputsHash;
+        for (const auto& txout : tx.vout) {
+            CDataStream s(SER_NETWORK, PROTOCOL_VERSION);
+            s << txout;
+            outputsHash.Write((const unsigned char*)s.data(), s.size());
+        }
+        unsigned char outResult[CSHA256::OUTPUT_SIZE];
+        outputsHash.Finalize(outResult);
+        ss.Write(outResult, CSHA256::OUTPUT_SIZE);
     }
-    unsigned char outResult[CSHA256::OUTPUT_SIZE];
-    outputsHash.Finalize(outResult);
-    ss.Write(outResult, CSHA256::OUTPUT_SIZE);
 
     // 8. Input index (4 bytes LE)
     uint32_t inputIndex = nIn;
@@ -1704,7 +1772,7 @@ bool TransactionSignatureChecker::CheckTemplateVerify(const std::vector<unsigned
 {
     if (hash.size() != 32)
         return false;
-    uint256 expectedHash = DefaultCheckTemplateVerifyHash(*txTo, nIn);
+    uint256 expectedHash = DefaultCheckTemplateVerifyHash(*txTo, nIn, txdata);
     return memcmp(hash.data(), expectedHash.begin(), 32) == 0;
 }
 
@@ -1721,7 +1789,16 @@ bool TransactionSignatureChecker::CheckSigFromStack(const std::vector<unsigned c
     if (!pubkey.IsValid())
         return false;
 
-    return pubkey.Verify(msgHash, vchSig);
+    // For PQ pubkeys, the signature pushed onto the stack includes a trailing
+    // hashtype byte (required by CheckSignatureEncodingForPubKey under
+    // STRICTENC/DERSIG policy). Strip it before passing to OQS_SIG_verify,
+    // which expects exactly ML_DSA_44_SIG_SIZE bytes.
+    // For ECDSA pubkeys, ecdsa_signature_parse_der_lax tolerates the extra
+    // byte, but we strip it for consistency with CheckSig behavior.
+    std::vector<unsigned char> sig(vchSig);
+    sig.pop_back();
+
+    return pubkey.Verify(msgHash, sig);
 }
 
 // OP_TXHASH field selector bits.

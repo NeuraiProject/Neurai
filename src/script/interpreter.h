@@ -144,8 +144,14 @@ bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, unsigned i
 
 struct PrecomputedTransactionData
 {
+    // BIP143 double-SHA256 hashes (used by SignatureHash and OP_TXHASH)
     uint256 hashPrevouts, hashSequence, hashOutputs;
     bool ready = false;
+
+    // BIP119 CTV single-SHA256 sub-hashes (anti-DoS precomputation)
+    uint256 ctvHashSequences, ctvHashOutputs, ctvHashScriptSigs;
+    bool ctvHasNonEmptyScriptSig = false;
+    bool ctvReady = false;
 
     explicit PrecomputedTransactionData(const CTransaction &tx);
 };

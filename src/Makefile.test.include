@@ -51,6 +51,8 @@ NEURAI_TESTS =\
   test/bswap_tests.cpp \
   test/checkqueue_tests.cpp \
   test/coins_tests.cpp \
+  test/csfs_tests.cpp \
+  test/ctv_tests.cpp \
   test/compress_tests.cpp \
   test/crypto_tests.cpp \
   test/depinecies_tests.cpp \
@@ -68,6 +70,7 @@ NEURAI_TESTS =\
   test/miner_tests.cpp \
   test/multisig_tests.cpp \
   test/net_tests.cpp \
+  test/opcat_tests.cpp \
   test/netbase_tests.cpp \
   test/pmt_tests.cpp \
   test/policyestimator_tests.cpp \
