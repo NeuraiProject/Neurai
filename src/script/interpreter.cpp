@@ -1789,12 +1789,23 @@ bool TransactionSignatureChecker::CheckSigFromStack(const std::vector<unsigned c
     if (!pubkey.IsValid())
         return false;
 
-    // For PQ pubkeys, the signature pushed onto the stack includes a trailing
-    // hashtype byte (required by CheckSignatureEncodingForPubKey under
-    // STRICTENC/DERSIG policy). Strip it before passing to OQS_SIG_verify,
-    // which expects exactly ML_DSA_44_SIG_SIZE bytes.
-    // For ECDSA pubkeys, ecdsa_signature_parse_der_lax tolerates the extra
-    // byte, but we strip it for consistency with CheckSig behavior.
+    // Convention inherited from OP_CHECKSIG: the last byte of every signature
+    // on the stack is a hashtype byte.  OP_CHECKSIG always strips it
+    // (interpreter.cpp:1581-1582) regardless of STRICTENC/DERSIG flags;
+    // STRICTENC merely validates that the byte is a *recognized* hashtype
+    // before CheckSig strips it.
+    //
+    // CSFS follows the same convention: always strip the trailing byte.
+    // For PQ (ML-DSA-44), this is critical because OQS_SIG_verify expects
+    // exactly ML_DSA_44_SIG_SIZE bytes.  For ECDSA, ecdsa_signature_parse_der_lax
+    // tolerates extra trailing bytes, but stripping keeps behavior consistent.
+    //
+    // A signature without a trailing hashtype byte will:
+    // - Under STRICTENC/DERSIG: be rejected earlier by CheckSignatureEncodingForPubKey
+    // - Without STRICTENC/DERSIG: reach here with one fewer byte than expected,
+    //   and pop_back() will shorten it further, causing Verify() to fail
+    //   (ECDSA DER parse failure or PQ size mismatch) -- returning false,
+    //   not crashing.
     std::vector<unsigned char> sig(vchSig);
     sig.pop_back();
 

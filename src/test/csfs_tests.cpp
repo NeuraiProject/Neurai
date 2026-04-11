@@ -61,6 +61,19 @@ std::vector<unsigned char> SignForCsfs(const CKey& key, const std::vector<unsign
     return sig;
 }
 
+// Helper: sign a message for CSFS WITHOUT appending a hashtype byte.
+// This produces a raw signature (DER for ECDSA, ML_DSA_44_SIG_SIZE for PQ).
+std::vector<unsigned char> SignForCsfsRaw(const CKey& key, const std::vector<unsigned char>& msg)
+{
+    uint256 msgHash;
+    CSHA256().Write(msg.data(), msg.size()).Finalize(msgHash.begin());
+
+    std::vector<unsigned char> sig;
+    bool ok = key.Sign(msgHash, sig);
+    assert(ok);
+    return sig;
+}
+
 // Helper: evaluate a bare script
 bool RunBareScript(const CScript& script, unsigned int flags, const CTransaction& tx, ScriptError* err = nullptr)
 {
@@ -290,6 +303,12 @@ BOOST_AUTO_TEST_CASE(csfs_ecdsa_p2wsh)
 
 // ============================================================================
 // PQ via P2WSH wrapper
+// NOTE: This test validates script engine / consensus behavior only.
+// In standard mempool policy, P2WSH witness items are limited to 80 bytes
+// (MAX_STANDARD_P2WSH_STACK_ITEM_SIZE in policy.h), which PQ signatures
+// (~2421 bytes) and PQ pubkeys (~1313 bytes) exceed.  A real PQ CSFS
+// transaction would need a policy exception or a different witness version
+// to be relayed by standard nodes.
 // ============================================================================
 
 BOOST_AUTO_TEST_CASE(csfs_pq_p2wsh)
@@ -377,6 +396,151 @@ BOOST_AUTO_TEST_CASE(csfs_stack_underflow)
     unsigned int flagsNoNullfail = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_CHECKSIGFROMSTACK;
     BOOST_CHECK(!RunBareScript(script, flagsNoNullfail, tx, &err));
     BOOST_CHECK_EQUAL(err, SCRIPT_ERR_INVALID_STACK_OPERATION);
+}
+
+// ============================================================================
+// Regression: ECDSA signature WITHOUT hashtype byte under non-strict flags
+// ============================================================================
+
+BOOST_AUTO_TEST_CASE(csfs_ecdsa_no_hashtype_nonstrict)
+{
+    // Under minimal flags (no STRICTENC/DERSIG), a raw ECDSA signature without
+    // a trailing hashtype byte passes CheckSignatureEncodingForPubKey (which
+    // only enforces encoding under strict flags). However, CheckSigFromStack
+    // unconditionally calls pop_back() — stripping the last DER byte — so the
+    // truncated signature will fail DER parsing in Verify().
+    // This test documents that CSFS requires signatures to carry a trailing
+    // hashtype byte, consistent with OP_CHECKSIG convention.
+    CKey key;
+    key.MakeNewKey(true);
+    CPubKey pubkey = key.GetPubKey();
+
+    std::vector<unsigned char> msg = {'r', 'a', 'w'};
+    std::vector<unsigned char> rawSig = SignForCsfsRaw(key, msg);
+    std::vector<unsigned char> vchPubKey(pubkey.begin(), pubkey.end());
+
+    // Minimal CSFS flags: no STRICTENC, no DERSIG, no NULLFAIL
+    unsigned int minimalFlags = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_CHECKSIGFROMSTACK;
+
+    // Raw sig (no hashtype) should fail verification (pop_back corrupts DER)
+    CScript scriptFail;
+    scriptFail << rawSig << msg << vchPubKey << OP_CHECKSIGFROMSTACK << OP_NOT;
+
+    CMutableTransaction mtx = BuildCsfsTestTx();
+    CTransaction tx(mtx);
+
+    // Without NULLFAIL, failure pushes false; OP_NOT makes script succeed
+    BOOST_CHECK(RunBareScript(scriptFail, minimalFlags, tx));
+
+    // Now verify the same signature WITH hashtype byte succeeds
+    std::vector<unsigned char> sigWithHashtype = rawSig;
+    sigWithHashtype.push_back(SIGHASH_ALL);
+
+    CScript scriptOk;
+    scriptOk << sigWithHashtype << msg << vchPubKey << OP_CHECKSIGFROMSTACK;
+
+    BOOST_CHECK(RunBareScript(scriptOk, minimalFlags, tx));
+}
+
+// ============================================================================
+// Regression: PQ signature WITHOUT hashtype byte under non-strict flags
+// ============================================================================
+
+BOOST_AUTO_TEST_CASE(csfs_pq_no_hashtype_nonstrict)
+{
+    // Same test for PQ: a raw ML-DSA-44 signature (2420 bytes) without hashtype
+    // byte will have its last byte stripped by pop_back(), producing 2419 bytes
+    // which OQS_SIG_verify rejects (expects exactly 2420).
+    const std::vector<unsigned char> pqSeed = ParseHex("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+    CKey pqKey;
+    pqKey.MakeNewKeyPQ(pqSeed);
+    CPubKey pqPubkey = pqKey.GetPubKey();
+    BOOST_CHECK(pqPubkey.IsPQ());
+
+    std::vector<unsigned char> msg = {'p', 'q', 'r', 'a', 'w'};
+    std::vector<unsigned char> rawSig = SignForCsfsRaw(pqKey, msg);
+    std::vector<unsigned char> vchPubKey(pqPubkey.begin(), pqPubkey.end());
+
+    BOOST_CHECK_EQUAL(rawSig.size(), ML_DSA_44_SIG_SIZE); // 2420, no hashtype
+
+    // Minimal CSFS flags: no STRICTENC, no DERSIG, no NULLFAIL
+    unsigned int minimalFlags = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_CHECKSIGFROMSTACK;
+
+    // Raw PQ sig (no hashtype) should fail verification (pop_back corrupts sig)
+    CScript scriptFail;
+    scriptFail << rawSig << msg << vchPubKey << OP_CHECKSIGFROMSTACK << OP_NOT;
+
+    CMutableTransaction mtx = BuildCsfsTestTx();
+    CTransaction tx(mtx);
+
+    // Without NULLFAIL, failure pushes false; OP_NOT makes script succeed
+    BOOST_CHECK(RunBareScript(scriptFail, minimalFlags, tx));
+
+    // Now verify the same signature WITH hashtype byte succeeds
+    std::vector<unsigned char> sigWithHashtype = rawSig;
+    sigWithHashtype.push_back(SIGHASH_ALL);
+
+    CScript scriptOk;
+    scriptOk << sigWithHashtype << msg << vchPubKey << OP_CHECKSIGFROMSTACK;
+
+    BOOST_CHECK(RunBareScript(scriptOk, minimalFlags, tx));
+}
+
+// ============================================================================
+// Regression: ECDSA signature WITHOUT hashtype byte under strict flags
+// ============================================================================
+
+BOOST_AUTO_TEST_CASE(csfs_ecdsa_no_hashtype_strict)
+{
+    // Under strict flags, a raw ECDSA signature without hashtype is rejected
+    // by CheckSignatureEncodingForPubKey before reaching CheckSigFromStack.
+    CKey key;
+    key.MakeNewKey(true);
+    CPubKey pubkey = key.GetPubKey();
+
+    std::vector<unsigned char> msg = {'s', 't', 'r'};
+    std::vector<unsigned char> rawSig = SignForCsfsRaw(key, msg);
+    std::vector<unsigned char> vchPubKey(pubkey.begin(), pubkey.end());
+
+    CScript script;
+    script << rawSig << msg << vchPubKey << OP_CHECKSIGFROMSTACK;
+
+    CMutableTransaction mtx = BuildCsfsTestTx();
+    CTransaction tx(mtx);
+
+    ScriptError err;
+    BOOST_CHECK(!RunBareScript(script, CSFS_FLAGS_STRICT, tx, &err));
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_SIG_HASHTYPE);
+}
+
+// ============================================================================
+// Regression: PQ signature WITHOUT hashtype byte under strict flags
+// ============================================================================
+
+BOOST_AUTO_TEST_CASE(csfs_pq_no_hashtype_strict)
+{
+    // Under strict flags, a raw PQ signature (2420 bytes instead of 2421)
+    // is rejected by CheckSignatureEncodingForPubKey (size != ML_DSA_44_SIG_SIZE + 1).
+    const std::vector<unsigned char> pqSeed = ParseHex("0102030405060708091011121314151617181920212223242526272829303132");
+    CKey pqKey;
+    pqKey.MakeNewKeyPQ(pqSeed);
+    CPubKey pqPubkey = pqKey.GetPubKey();
+
+    std::vector<unsigned char> msg = {'p', 'q', 's'};
+    std::vector<unsigned char> rawSig = SignForCsfsRaw(pqKey, msg);
+    std::vector<unsigned char> vchPubKey(pqPubkey.begin(), pqPubkey.end());
+
+    BOOST_CHECK_EQUAL(rawSig.size(), ML_DSA_44_SIG_SIZE); // no hashtype
+
+    CScript script;
+    script << rawSig << msg << vchPubKey << OP_CHECKSIGFROMSTACK;
+
+    CMutableTransaction mtx = BuildCsfsTestTx();
+    CTransaction tx(mtx);
+
+    ScriptError err;
+    BOOST_CHECK(!RunBareScript(script, CSFS_FLAGS_STRICT, tx, &err));
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_SIG_DER);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
