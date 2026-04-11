@@ -551,9 +551,77 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         // NOP-upgrade semantics: do NOT pop the hash from the stack
                         break;
                     }
+                    case OP_CHECKSIGFROMSTACK:
+                    {
+                        if (!(flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK))
+                        {
+                            // not enabled; treat as a NOP5
+                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
+                            {
+                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+                            }
+                            break;
+                        }
+
+                        // (sig msg pubkey -- bool)
+                        if (stack.size() < 3)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+                        valtype& vchSig = stacktop(-3);
+                        valtype& vchMsg = stacktop(-2);
+                        valtype& vchPubKey = stacktop(-1);
+
+                        // Validate signature and pubkey encoding (same rules as OP_CHECKSIG)
+                        if (!CheckSignatureEncodingForPubKey(vchSig, vchPubKey, flags, serror) ||
+                            !CheckPubKeyEncoding(vchPubKey, flags, sigversion, serror))
+                        {
+                            // serror is set
+                            return false;
+                        }
+
+                        bool fSuccess = checker.CheckSigFromStack(vchSig, vchMsg, vchPubKey);
+
+                        if (!fSuccess && (flags & SCRIPT_VERIFY_NULLFAIL) && vchSig.size())
+                            return set_error(serror, SCRIPT_ERR_SIG_NULLFAIL);
+
+                        popstack(stack);
+                        popstack(stack);
+                        popstack(stack);
+                        stack.push_back(fSuccess ? vchTrue : vchFalse);
+                    }
+                        break;
+
+                    case OP_TXHASH:
+                    {
+                        if (!(flags & SCRIPT_VERIFY_TXHASH))
+                        {
+                            // not enabled; treat as a NOP6
+                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
+                            {
+                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+                            }
+                            break;
+                        }
+
+                        // (field_selector -- hash)
+                        if (stack.size() < 1)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+                        const valtype& vchSelector = stacktop(-1);
+                        if (vchSelector.size() != 1)
+                            return set_error(serror, SCRIPT_ERR_TXHASH);
+
+                        unsigned char fieldSelector = vchSelector[0];
+                        valtype vchHash;
+                        if (!checker.GetTxFieldHash(fieldSelector, vchHash))
+                            return set_error(serror, SCRIPT_ERR_TXHASH);
+
+                        popstack(stack);
+                        stack.push_back(vchHash);
+                    }
+                        break;
+
                     case OP_NOP1:
-                    case OP_NOP5:
-                    case OP_NOP6:
                     case OP_NOP7:
                     case OP_NOP8:
                     case OP_NOP9:
@@ -1638,6 +1706,130 @@ bool TransactionSignatureChecker::CheckTemplateVerify(const std::vector<unsigned
         return false;
     uint256 expectedHash = DefaultCheckTemplateVerifyHash(*txTo, nIn);
     return memcmp(hash.data(), expectedHash.begin(), 32) == 0;
+}
+
+bool TransactionSignatureChecker::CheckSigFromStack(const std::vector<unsigned char>& vchSig, const std::vector<unsigned char>& vchMsg, const std::vector<unsigned char>& vchPubKey) const
+{
+    if (vchSig.empty())
+        return false;
+
+    // Hash the message with SHA256 (single, not double)
+    uint256 msgHash;
+    CSHA256().Write(vchMsg.data(), vchMsg.size()).Finalize(msgHash.begin());
+
+    CPubKey pubkey(vchPubKey);
+    if (!pubkey.IsValid())
+        return false;
+
+    return pubkey.Verify(msgHash, vchSig);
+}
+
+// OP_TXHASH field selector bits
+static const unsigned char TXHASH_VERSION       = (1 << 0);
+static const unsigned char TXHASH_LOCKTIME      = (1 << 1);
+static const unsigned char TXHASH_PREVOUTS      = (1 << 2);
+static const unsigned char TXHASH_SEQUENCES     = (1 << 3);
+static const unsigned char TXHASH_OUTPUTS       = (1 << 4);
+static const unsigned char TXHASH_CUR_PREVOUT   = (1 << 5);
+static const unsigned char TXHASH_CUR_SEQUENCE  = (1 << 6);
+static const unsigned char TXHASH_INPUT_INDEX   = (1 << 7);
+
+bool TransactionSignatureChecker::GetTxFieldHash(unsigned char fieldSelector, std::vector<unsigned char>& result) const
+{
+    if (fieldSelector == 0)
+        return false;
+
+    // Double SHA256 (CHash256) for consistency with BIP143 SignatureHash
+    // and PrecomputedTransactionData cache which also uses double SHA256.
+    CHash256 ss;
+
+    if (fieldSelector & TXHASH_VERSION) {
+        uint32_t nVersion = txTo->nVersion;
+        ss.Write((const unsigned char*)&nVersion, 4);
+    }
+
+    if (fieldSelector & TXHASH_LOCKTIME) {
+        uint32_t nLockTime = txTo->nLockTime;
+        ss.Write((const unsigned char*)&nLockTime, 4);
+    }
+
+    // Use PrecomputedTransactionData cache when available (O(1) vs O(n)).
+    // The cache stores double-SHA256 hashes, matching our CHash256 hasher.
+    const bool cacheready = txdata && txdata->ready;
+
+    if (fieldSelector & TXHASH_PREVOUTS) {
+        if (cacheready) {
+            ss.Write(txdata->hashPrevouts.begin(), CHash256::OUTPUT_SIZE);
+        } else {
+            CHash256 prevoutsHash;
+            for (const auto& txin : txTo->vin) {
+                CDataStream s(SER_NETWORK, PROTOCOL_VERSION);
+                s << txin.prevout;
+                prevoutsHash.Write((const unsigned char*)s.data(), s.size());
+            }
+            unsigned char prevResult[CHash256::OUTPUT_SIZE];
+            prevoutsHash.Finalize(prevResult);
+            ss.Write(prevResult, CHash256::OUTPUT_SIZE);
+        }
+    }
+
+    if (fieldSelector & TXHASH_SEQUENCES) {
+        if (cacheready) {
+            ss.Write(txdata->hashSequence.begin(), CHash256::OUTPUT_SIZE);
+        } else {
+            CHash256 sequencesHash;
+            for (const auto& txin : txTo->vin) {
+                uint32_t nSequence = txin.nSequence;
+                sequencesHash.Write((const unsigned char*)&nSequence, 4);
+            }
+            unsigned char seqResult[CHash256::OUTPUT_SIZE];
+            sequencesHash.Finalize(seqResult);
+            ss.Write(seqResult, CHash256::OUTPUT_SIZE);
+        }
+    }
+
+    if (fieldSelector & TXHASH_OUTPUTS) {
+        if (cacheready) {
+            ss.Write(txdata->hashOutputs.begin(), CHash256::OUTPUT_SIZE);
+        } else {
+            CHash256 outputsHash;
+            for (const auto& txout : txTo->vout) {
+                CDataStream s(SER_NETWORK, PROTOCOL_VERSION);
+                s << txout;
+                outputsHash.Write((const unsigned char*)s.data(), s.size());
+            }
+            unsigned char outResult[CHash256::OUTPUT_SIZE];
+            outputsHash.Finalize(outResult);
+            ss.Write(outResult, CHash256::OUTPUT_SIZE);
+        }
+    }
+
+    if (fieldSelector & TXHASH_CUR_PREVOUT) {
+        if (nIn >= txTo->vin.size())
+            return false;
+        CDataStream s(SER_NETWORK, PROTOCOL_VERSION);
+        s << txTo->vin[nIn].prevout;
+        ss.Write((const unsigned char*)s.data(), s.size());
+    }
+
+    if (fieldSelector & TXHASH_CUR_SEQUENCE) {
+        if (nIn >= txTo->vin.size())
+            return false;
+        uint32_t nSequence = txTo->vin[nIn].nSequence;
+        ss.Write((const unsigned char*)&nSequence, 4);
+    }
+
+    if (fieldSelector & TXHASH_INPUT_INDEX) {
+        if (nIn >= txTo->vin.size())
+            return false;
+        uint32_t inputIndex = nIn;
+        ss.Write((const unsigned char*)&inputIndex, 4);
+    }
+
+    uint256 hash;
+    ss.Finalize(hash.begin());
+    result.assign(hash.begin(), hash.end());
+    return true;
 }
 
 static bool VerifyWitnessProgram(const CScriptWitness &witness, int witversion, const std::vector<unsigned char> &program, unsigned int flags, const BaseSignatureChecker &checker, ScriptError *serror)

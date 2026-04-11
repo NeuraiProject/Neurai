@@ -128,6 +128,16 @@ enum
     // When set, OP_CHECKTEMPLATEVERIFY is executed instead of being treated as OP_NOP4.
     //
             SCRIPT_VERIFY_CHECKTEMPLATEVERIFY = (1U << 18),
+
+    // Enable OP_CHECKSIGFROMSTACK - verify signature against arbitrary message.
+    // When set, OP_CHECKSIGFROMSTACK is executed instead of being treated as OP_NOP5.
+    //
+            SCRIPT_VERIFY_CHECKSIGFROMSTACK = (1U << 19),
+
+    // Enable OP_TXHASH - push hash of selected transaction fields to stack.
+    // When set, OP_TXHASH is executed instead of being treated as OP_NOP6.
+    //
+            SCRIPT_VERIFY_TXHASH = (1U << 20),
 };
 
 bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, unsigned int flags, ScriptError *serror);
@@ -178,6 +188,16 @@ public:
         return false;
     }
 
+    virtual bool CheckSigFromStack(const std::vector<unsigned char>& sig, const std::vector<unsigned char>& msg, const std::vector<unsigned char>& pubkey) const
+    {
+        return false;
+    }
+
+    virtual bool GetTxFieldHash(unsigned char fieldSelector, std::vector<unsigned char>& result) const
+    {
+        return false;
+    }
+
     virtual ~BaseSignatureChecker() {}
 };
 
@@ -204,6 +224,10 @@ public:
     bool CheckSequence(const CScriptNum &nSequence) const override;
 
     bool CheckTemplateVerify(const std::vector<unsigned char>& hash) const override;
+
+    bool CheckSigFromStack(const std::vector<unsigned char>& sig, const std::vector<unsigned char>& msg, const std::vector<unsigned char>& pubkey) const override;
+
+    bool GetTxFieldHash(unsigned char fieldSelector, std::vector<unsigned char>& result) const override;
 
     uint256 GetSigHash(const CScript& scriptCode, int nHashType, SigVersion sigversion) const override;
 };

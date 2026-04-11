@@ -87,6 +87,12 @@ struct Params {
     /** Enable OP_CHECKTEMPLATEVERIFY (BIP 119) - transaction template verification.
      *  true on testnet/regtest; false on mainnet until future activation. */
     bool nCTVEnabled;
+    /** Enable OP_CHECKSIGFROMSTACK - verify signature against arbitrary message.
+     *  true on testnet/regtest; false on mainnet until future activation. */
+    bool nCSFSEnabled;
+    /** Enable OP_TXHASH - push hash of selected transaction fields to stack.
+     *  true on testnet/regtest; false on mainnet until future activation. */
+    bool nTXHASHEnabled;
 };
 } // namespace Consensus
 

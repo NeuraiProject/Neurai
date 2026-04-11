@@ -928,6 +928,12 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         if (chainparams.GetConsensus().nCTVEnabled) {
             scriptVerifyFlags |= SCRIPT_VERIFY_CHECKTEMPLATEVERIFY;
         }
+        if (chainparams.GetConsensus().nCSFSEnabled) {
+            scriptVerifyFlags |= SCRIPT_VERIFY_CHECKSIGFROMSTACK;
+        }
+        if (chainparams.GetConsensus().nTXHASHEnabled) {
+            scriptVerifyFlags |= SCRIPT_VERIFY_TXHASH;
+        }
 
         // Check against previous transactions
         // This is done last to help prevent CPU exhaustion denial-of-service attacks.
@@ -2432,6 +2438,16 @@ static unsigned int GetBlockScriptFlags(const CBlockIndex* pindex, const Consens
     // OP_CHECKTEMPLATEVERIFY (BIP 119)
     if (consensusparams.nCTVEnabled) {
         flags |= SCRIPT_VERIFY_CHECKTEMPLATEVERIFY;
+    }
+
+    // OP_CHECKSIGFROMSTACK
+    if (consensusparams.nCSFSEnabled) {
+        flags |= SCRIPT_VERIFY_CHECKSIGFROMSTACK;
+    }
+
+    // OP_TXHASH
+    if (consensusparams.nTXHASHEnabled) {
+        flags |= SCRIPT_VERIFY_TXHASH;
     }
 
     return flags;

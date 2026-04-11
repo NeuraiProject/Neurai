@@ -93,6 +93,10 @@ const char* ScriptErrorString(const ScriptError serror)
             return "Using non-compressed keys in segwit";
         case SCRIPT_ERR_CHECKTEMPLATEVERIFY:
             return "Script failed an OP_CHECKTEMPLATEVERIFY operation";
+        case SCRIPT_ERR_CHECKSIGFROMSTACK:
+            return "Script failed an OP_CHECKSIGFROMSTACK operation";
+        case SCRIPT_ERR_TXHASH:
+            return "Script failed an OP_TXHASH operation";
         case SCRIPT_ERR_UNKNOWN_ERROR:
         case SCRIPT_ERR_ERROR_COUNT:
         default: break;
