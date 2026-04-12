@@ -920,7 +920,7 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
             scriptVerifyFlags = gArgs.GetArg("-promiscuousmempoolflags", scriptVerifyFlags);
         }
         if (chainparams.GetConsensus().nPQWitnessEnabled) {
-            scriptVerifyFlags |= SCRIPT_VERIFY_PQ_WITNESS_V1;
+            scriptVerifyFlags |= SCRIPT_VERIFY_AUTHSCRIPT;
         }
         if (chainparams.GetConsensus().nCATEnabled) {
             scriptVerifyFlags |= SCRIPT_VERIFY_CAT;
@@ -2427,7 +2427,7 @@ static unsigned int GetBlockScriptFlags(const CBlockIndex* pindex, const Consens
 
     // Enable post-quantum (ML-DSA-44) witness v1 verification on testnet/regtest.
     if (consensusparams.nPQWitnessEnabled) {
-        flags |= SCRIPT_VERIFY_PQ_WITNESS_V1;
+        flags |= SCRIPT_VERIFY_AUTHSCRIPT;
     }
 
     // OP_CAT (BIP 347)
@@ -2704,7 +2704,7 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
 
                     // Extract revealed public keys for pubkey index from scriptSig or witness.
                     if (fPubKeyIndex &&
-                        (addressType == DEST_INDEX_KEY || addressType == DEST_INDEX_WITNESS_V1_KEY) &&
+                        addressType == DEST_INDEX_KEY &&
                         !hashBytes.IsNull()) {
                         CPubKey pubkey;
                         if (ExtractIndexedPubKeyFromInput(input, hashBytes, pubkey)) {

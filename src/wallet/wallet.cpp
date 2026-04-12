@@ -463,6 +463,19 @@ bool CWallet::LoadCScript(const CScript& redeemScript)
     return CCryptoKeyStore::AddCScript(redeemScript);
 }
 
+bool CWallet::AddAuthScriptSpendData(const uint256& commitment, const AuthScriptSpendData& spendData)
+{
+    if (!CCryptoKeyStore::AddAuthScriptSpendData(commitment, spendData)) {
+        return false;
+    }
+    return CWalletDB(*dbw).WriteAuthScriptSpendData(commitment, spendData);
+}
+
+bool CWallet::LoadAuthScriptSpendData(const uint256& commitment, const AuthScriptSpendData& spendData)
+{
+    return CCryptoKeyStore::AddAuthScriptSpendData(commitment, spendData);
+}
+
 bool CWallet::AddWatchOnly(const CScript& dest)
 {
     if (!CCryptoKeyStore::AddWatchOnly(dest))
@@ -998,7 +1011,11 @@ bool CWallet::GetAccountPubkey(CPubKey &pubKey, std::string strAccount, bool bFo
             bForceNew = true;
         else {
             // Check if the current key has been used
-            CScript scriptPubKey = GetScriptForDestination(account.vchPubKey.GetID());
+            CTxDestination accountDest = account.vchPubKey.IsPQ() ? CTxDestination() : CTxDestination(account.vchPubKey.GetID());
+            if (account.vchPubKey.IsPQ() && !GetDefaultAuthScriptDestination(account.vchPubKey, accountDest)) {
+                return false;
+            }
+            CScript scriptPubKey = GetScriptForDestination(accountDest);
             for (std::map<uint256, CWalletTx>::iterator it = mapWallet.begin();
                  it != mapWallet.end() && account.vchPubKey.IsValid();
                  ++it)
@@ -1015,12 +1032,45 @@ bool CWallet::GetAccountPubkey(CPubKey &pubKey, std::string strAccount, bool bFo
         if (!GetKeyFromPool(account.vchPubKey, false))
             return false;
 
-        SetAddressBook(account.vchPubKey.GetID(), strAccount, "receive");
+        CTxDestination accountDest = account.vchPubKey.IsPQ() ? CTxDestination() : CTxDestination(account.vchPubKey.GetID());
+        if (account.vchPubKey.IsPQ() && !GetDefaultAuthScriptDestination(account.vchPubKey, accountDest)) {
+            return false;
+        }
+        SetAddressBook(accountDest, strAccount, "receive");
         walletdb.WriteAccount(strAccount, account);
     }
 
     pubKey = account.vchPubKey;
 
+    return true;
+}
+
+bool CWallet::GetDefaultAuthScriptDestination(const CPubKey& pubKey, CTxDestination& dest, bool persist)
+{
+    if (!pubKey.IsValid() || !pubKey.IsPQ()) {
+        return false;
+    }
+
+    CScript witnessScript;
+    witnessScript << OP_TRUE;
+    const uint256 commitment = GetAuthScriptCommitment(0x01, &pubKey, witnessScript);
+    if (commitment.IsNull()) {
+        return false;
+    }
+
+    if (persist) {
+        AuthScriptSpendData spendData;
+        spendData.auth_type = 0x01;
+        spendData.witnessScript = witnessScript;
+        spendData.pubkey = pubKey;
+        spendData.key_id = pubKey.GetID();
+        spendData.is_default_template = true;
+        if (!AddAuthScriptSpendData(commitment, spendData)) {
+            return false;
+        }
+    }
+
+    dest = CTxDestination(WitnessV1AuthScript(commitment));
     return true;
 }
 
@@ -2984,7 +3034,10 @@ bool CWallet::CreateNewChangeAddress(CReserveKey& reservekey, CTxDestination& de
     }
 
     if (vchPubKey.IsPQ()) {
-        dest = CTxDestination(WitnessV1KeyHash(vchPubKey.GetID()));
+        if (!GetDefaultAuthScriptDestination(vchPubKey, dest)) {
+            strFailReason = _("Failed to derive AuthScript destination for reserved PQ key");
+            return false;
+        }
     } else {
         dest = CTxDestination(CKeyID(vchPubKey.GetID()));
     }

@@ -1486,11 +1486,11 @@ PrecomputedTransactionData::PrecomputedTransactionData(const CTransaction &txTo)
     }
 }
 
-uint256 SignatureHash(const CScript &scriptCode, const CTransaction &txTo, unsigned int nIn, int nHashType, const CAmount &amount, SigVersion sigversion, const PrecomputedTransactionData *cache)
+uint256 SignatureHash(const CScript &scriptCode, const CTransaction &txTo, unsigned int nIn, int nHashType, const CAmount &amount, SigVersion sigversion, const PrecomputedTransactionData *cache, uint8_t authType)
 {
     assert(nIn < txTo.vin.size());
 
-    if (sigversion == SIGVERSION_WITNESS_V0)
+    if (sigversion == SIGVERSION_WITNESS_V0 || sigversion == SIGVERSION_AUTHSCRIPT)
     {
         uint256 hashPrevouts;
         uint256 hashSequence;
@@ -1536,6 +1536,9 @@ uint256 SignatureHash(const CScript &scriptCode, const CTransaction &txTo, unsig
         ss << hashOutputs;
         // Locktime
         ss << txTo.nLockTime;
+        if (sigversion == SIGVERSION_AUTHSCRIPT) {
+            ss << authType;
+        }
         // Sighash type
         ss << nHashType;
 
@@ -1568,7 +1571,7 @@ bool TransactionSignatureChecker::VerifySignature(const std::vector<unsigned cha
     return pubkey.Verify(sighash, vchSig);
 }
 
-bool TransactionSignatureChecker::CheckSig(const std::vector<unsigned char> &vchSigIn, const std::vector<unsigned char> &vchPubKey, const CScript &scriptCode, SigVersion sigversion) const
+bool TransactionSignatureChecker::CheckSig(const std::vector<unsigned char> &vchSigIn, const std::vector<unsigned char> &vchPubKey, const CScript &scriptCode, SigVersion sigversion, uint8_t authType) const
 {
     CPubKey pubkey(vchPubKey);
     if (!pubkey.IsValid())
@@ -1581,7 +1584,7 @@ bool TransactionSignatureChecker::CheckSig(const std::vector<unsigned char> &vch
     int nHashType = vchSig.back();
     vchSig.pop_back();
 
-    uint256 sighash = SignatureHash(scriptCode, *txTo, nIn, nHashType, amount, sigversion, this->txdata);
+    uint256 sighash = SignatureHash(scriptCode, *txTo, nIn, nHashType, amount, sigversion, this->txdata, authType);
 
     if (!VerifySignature(vchSig, pubkey, sighash))
         return false;
@@ -1589,9 +1592,9 @@ bool TransactionSignatureChecker::CheckSig(const std::vector<unsigned char> &vch
     return true;
 }
 
-uint256 TransactionSignatureChecker::GetSigHash(const CScript& scriptCode, int nHashType, SigVersion sigversion) const
+uint256 TransactionSignatureChecker::GetSigHash(const CScript& scriptCode, int nHashType, SigVersion sigversion, uint8_t authType) const
 {
-    return SignatureHash(scriptCode, *txTo, nIn, nHashType, amount, sigversion, this->txdata);
+    return SignatureHash(scriptCode, *txTo, nIn, nHashType, amount, sigversion, this->txdata, authType);
 }
 
 bool TransactionSignatureChecker::CheckLockTime(const CScriptNum &nLockTime) const
@@ -1941,6 +1944,94 @@ bool TransactionSignatureChecker::GetTxFieldHash(unsigned char fieldSelector, st
     return true;
 }
 
+static bool VerifyAuthScriptCore(const CScriptWitness& witness, const std::vector<unsigned char>& program, unsigned int flags, const BaseSignatureChecker& checker, ScriptError* serror)
+{
+    if (program.size() != 32 || (flags & SCRIPT_VERIFY_AUTHSCRIPT) == 0) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+    if (witness.stack.size() < 2) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+    if (witness.stack[0].size() != 1) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+
+    const uint8_t authType = witness.stack[0][0];
+    const valtype& witnessScriptBytes = witness.stack.back();
+    CScript witnessScript(witnessScriptBytes.begin(), witnessScriptBytes.end());
+    CPubKey authPubKey;
+    const valtype* authSig = nullptr;
+    size_t argsOffset = 0;
+
+    switch (authType) {
+    case 0x00:
+        argsOffset = 1;
+        break;
+    case 0x01:
+    case 0x02:
+        if (witness.stack.size() < 4) {
+            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+        }
+        authSig = &witness.stack[1];
+        authPubKey = CPubKey(witness.stack[2]);
+        if (!authPubKey.IsValid()) {
+            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+        }
+        if (authType == 0x01 && !authPubKey.IsPQ()) {
+            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+        }
+        if (authType == 0x02 && authPubKey.IsPQ()) {
+            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+        }
+        argsOffset = 3;
+        break;
+    default:
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+
+    const CPubKey* authPubKeyPtr = (authType == 0x00) ? nullptr : &authPubKey;
+    const uint256 expectedCommitment = GetAuthScriptCommitment(authType, authPubKeyPtr, witnessScript);
+    if (memcmp(expectedCommitment.begin(), program.data(), program.size()) != 0) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+
+    if (authType != 0x00) {
+        if (!CheckPubKeyEncoding(witness.stack[2], flags, SIGVERSION_AUTHSCRIPT, serror) ||
+            !CheckSignatureEncodingForPubKey(*authSig, witness.stack[2], flags, serror)) {
+            return false;
+        }
+        if ((flags & SCRIPT_VERIFY_WITNESS_PUBKEYTYPE) != 0 && authType == 0x02 && !IsCompressedPubKey(witness.stack[2])) {
+            return set_error(serror, SCRIPT_ERR_WITNESS_PUBKEYTYPE);
+        }
+        if (!checker.CheckSig(*authSig, witness.stack[2], witnessScript, SIGVERSION_AUTHSCRIPT, authType)) {
+            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+        }
+    }
+
+    std::vector<std::vector<unsigned char>> stack;
+    stack.reserve(witness.stack.size() - argsOffset);
+    for (size_t i = argsOffset; i + 1 < witness.stack.size(); ++i) {
+        if (witness.stack[i].size() > MAX_SCRIPT_ELEMENT_SIZE) {
+            return set_error(serror, SCRIPT_ERR_PUSH_SIZE);
+        }
+        stack.push_back(witness.stack[i]);
+    }
+
+    if (witnessScript.size() > MAX_SCRIPT_SIZE) {
+        return set_error(serror, SCRIPT_ERR_SCRIPT_SIZE);
+    }
+    if (!EvalScript(stack, witnessScript, flags, checker, SIGVERSION_AUTHSCRIPT, serror)) {
+        return false;
+    }
+    if (stack.size() != 1) {
+        return set_error(serror, SCRIPT_ERR_EVAL_FALSE);
+    }
+    if (!CastToBool(stack.back())) {
+        return set_error(serror, SCRIPT_ERR_EVAL_FALSE);
+    }
+    return set_success(serror);
+}
+
 static bool VerifyWitnessProgram(const CScriptWitness &witness, int witversion, const std::vector<unsigned char> &program, unsigned int flags, const BaseSignatureChecker &checker, ScriptError *serror)
 {
     std::vector<std::vector<unsigned char> > stack;
@@ -1979,41 +2070,9 @@ static bool VerifyWitnessProgram(const CScriptWitness &witness, int witversion, 
             return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_WRONG_LENGTH);
         }
     }
-    else if (witversion == 1 && program.size() == 20 && (flags & SCRIPT_VERIFY_PQ_WITNESS_V1))
+    else if (witversion == 1 && program.size() == 32 && (flags & SCRIPT_VERIFY_AUTHSCRIPT))
     {
-        // Post-quantum witness v1: OP_1 <20-byte-hash>
-        // Witness stack must be exactly [<ml_dsa_44_sig_with_hashtype>, <ml_dsa_44_pubkey>]
-        if (witness.stack.size() != 2)
-            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
-
-        const std::vector<unsigned char>& vchPubKey = witness.stack[1];
-        const std::vector<unsigned char>& vchSigWithHashtype = witness.stack[0];
-
-        // Pubkey must be 1 + ML_DSA_44_PUBKEY_SIZE bytes with header 0x05
-        if (vchPubKey.size() != 1 + ML_DSA_44_PUBKEY_SIZE || vchPubKey[0] != 0x05)
-            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
-
-        // Signature must be ML_DSA_44_SIG_SIZE bytes + 1 hashtype byte
-        if (vchSigWithHashtype.size() != ML_DSA_44_SIG_SIZE + 1)
-            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
-
-        // Verify pubkey hashes to the witness program
-        uint160 pubkeyHash = Hash160(vchPubKey.begin(), vchPubKey.end());
-        if (memcmp(pubkeyHash.begin(), program.data(), 20) != 0)
-            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
-
-        int nHashType = vchSigWithHashtype.back();
-        CScript scriptCode;
-        scriptCode << OP_DUP << OP_HASH160 << program << OP_EQUALVERIFY << OP_CHECKSIG;
-        if ((nHashType & (~SIGHASH_ANYONECANPAY)) < SIGHASH_ALL ||
-            (nHashType & (~SIGHASH_ANYONECANPAY)) > SIGHASH_SINGLE) {
-            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
-        }
-
-        if (!checker.CheckSig(vchSigWithHashtype, vchPubKey, scriptCode, SIGVERSION_WITNESS_V0))
-            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
-
-        return set_success(serror);
+        return VerifyAuthScriptCore(witness, program, flags, checker, serror);
     }
     else if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM)
     {
@@ -2045,44 +2104,11 @@ static bool VerifyWitnessProgram(const CScriptWitness &witness, int witversion, 
     return true;
 }
 
-static bool VerifyAssetWitnessProgram(const CScriptWitness& witness, int witversion, const std::vector<unsigned char>& program, const CScript& assetScriptCode, unsigned int flags, const BaseSignatureChecker& checker, ScriptError* serror)
+static bool VerifyAssetWitnessProgram(const CScriptWitness& witness, int witversion, const std::vector<unsigned char>& program, const std::vector<unsigned char>& assetData, unsigned int flags, const BaseSignatureChecker& checker, ScriptError* serror)
 {
-    if (witversion == 1 && program.size() == 20 && (flags & SCRIPT_VERIFY_PQ_WITNESS_V1)) {
-        if (witness.stack.size() != 2) {
-            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
-        }
-
-        const std::vector<unsigned char>& vchPubKey = witness.stack[1];
-        const std::vector<unsigned char>& vchSigWithHashtype = witness.stack[0];
-        if (vchPubKey.size() != 1 + ML_DSA_44_PUBKEY_SIZE || vchPubKey[0] != 0x05) {
-            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
-        }
-        if (vchSigWithHashtype.size() != ML_DSA_44_SIG_SIZE + 1) {
-            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
-        }
-
-        uint160 pubkeyHash = Hash160(vchPubKey.begin(), vchPubKey.end());
-        if (memcmp(pubkeyHash.begin(), program.data(), 20) != 0) {
-            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
-        }
-
-        int nHashType = vchSigWithHashtype.back();
-        if ((nHashType & (~SIGHASH_ANYONECANPAY)) < SIGHASH_ALL ||
-            (nHashType & (~SIGHASH_ANYONECANPAY)) > SIGHASH_SINGLE) {
-            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
-        }
-
-        std::vector<std::vector<unsigned char> > stack = witness.stack;
-        if (!EvalScript(stack, assetScriptCode, flags, checker, SIGVERSION_WITNESS_V0, serror)) {
-            return false;
-        }
-        if (stack.size() != 1) {
-            return set_error(serror, SCRIPT_ERR_EVAL_FALSE);
-        }
-        if (!CastToBool(stack.back())) {
-            return set_error(serror, SCRIPT_ERR_EVAL_FALSE);
-        }
-        return set_success(serror);
+    if (witversion == 1 && program.size() == 32 && (flags & SCRIPT_VERIFY_AUTHSCRIPT)) {
+        (void)assetData;
+        return VerifyAuthScriptCore(witness, program, flags, checker, serror);
     }
 
     if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM) {
@@ -2111,15 +2137,15 @@ bool VerifyScript(const CScript &scriptSig, const CScript &scriptPubKey, const C
 
     int assetWitnessVersion = 0;
     std::vector<unsigned char> assetWitnessProgram;
-    CScript assetWitnessScript;
-    if (GetAssetScriptWitnessProgram(scriptPubKey, assetWitnessVersion, assetWitnessProgram, &assetWitnessScript)) {
+    std::vector<unsigned char> assetData;
+    if (GetAssetScriptWitnessProgram(scriptPubKey, assetWitnessVersion, assetWitnessProgram, &assetData)) {
         if ((flags & SCRIPT_VERIFY_WITNESS) == 0) {
             return set_error(serror, SCRIPT_ERR_WITNESS_UNEXPECTED);
         }
         if (scriptSig.size() != 0) {
             return set_error(serror, SCRIPT_ERR_WITNESS_MALLEATED);
         }
-        if (!VerifyAssetWitnessProgram(*witness, assetWitnessVersion, assetWitnessProgram, assetWitnessScript, flags, checker, serror)) {
+        if (!VerifyAssetWitnessProgram(*witness, assetWitnessVersion, assetWitnessProgram, assetData, flags, checker, serror)) {
             return false;
         }
         return set_success(serror);
@@ -2262,8 +2288,19 @@ size_t static WitnessSigOps(int witversion, const std::vector<unsigned char> &wi
         }
     }
 
-    if (witversion == 1 && witprogram.size() == 20 && (flags & SCRIPT_VERIFY_PQ_WITNESS_V1)) {
-        return 1;
+    if (witversion == 1 && witprogram.size() == 32 && (flags & SCRIPT_VERIFY_AUTHSCRIPT)) {
+        if (witness.stack.empty()) {
+            return 0;
+        }
+        size_t sigops = 0;
+        if (witness.stack.size() > 1) {
+            CScript subscript(witness.stack.back().begin(), witness.stack.back().end());
+            sigops = subscript.GetSigOpCount(true);
+        }
+        if (witness.stack[0].size() == 1 && witness.stack[0][0] != 0x00) {
+            sigops += 1;
+        }
+        return sigops;
     }
 
     // Future flags may be implemented here.

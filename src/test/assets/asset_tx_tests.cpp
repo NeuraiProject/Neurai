@@ -27,6 +27,26 @@
 
 BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
 
+    static CTxDestination GetDefaultPQAuthScriptDestination(const CPubKey& pubkey)
+    {
+        CScript witnessScript;
+        witnessScript << OP_TRUE;
+        return CTxDestination(WitnessV1AuthScript(GetAuthScriptCommitment(0x01, &pubkey, witnessScript)));
+    }
+
+    static void AddDefaultPQAuthScriptSpendData(CBasicKeyStore& keystore, const CPubKey& pubkey)
+    {
+        CScript witnessScript;
+        witnessScript << OP_TRUE;
+        AuthScriptSpendData spendData;
+        spendData.auth_type = 0x01;
+        spendData.witnessScript = witnessScript;
+        spendData.pubkey = pubkey;
+        spendData.key_id = pubkey.GetID();
+        spendData.is_default_template = true;
+        keystore.AddAuthScriptSpendData(GetAuthScriptCommitment(0x01, &pubkey, witnessScript), spendData);
+    }
+
     BOOST_AUTO_TEST_CASE(asset_tx_valid_test)
     {
         BOOST_TEST_MESSAGE("Running Asset TX Valid Test");
@@ -619,9 +639,8 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
 
         SelectParams(CBaseChainParams::TESTNET);
 
-        uint160 witnessHash;
-        witnessHash.SetHex("00112233445566778899aabbccddeeff00112233");
-        CTxDestination pqDestination = WitnessV1KeyHash(witnessHash);
+        uint256 witnessCommitment(uint256S("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"));
+        CTxDestination pqDestination = WitnessV1AuthScript(witnessCommitment);
 
         CNewAsset newAsset("PQASSET", 1000 * COIN, 0, 1, 0, "");
         CScript newAssetScript = GetScriptForDestination(pqDestination);
@@ -634,19 +653,19 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         BOOST_CHECK_EQUAL(type, TX_NEW_ASSET);
         BOOST_CHECK(!isOwner);
         BOOST_CHECK_EQUAL(newAssetScript[0], OP_1);
-        BOOST_CHECK_EQUAL(newAssetScript[22], OP_XNA_ASSET);
+        BOOST_CHECK_EQUAL(newAssetScript[34], OP_XNA_ASSET);
 
         int witnessVersion = 0;
         std::vector<unsigned char> witnessProgram;
         BOOST_CHECK(GetAssetScriptWitnessProgram(newAssetScript, witnessVersion, witnessProgram));
         BOOST_CHECK_EQUAL(witnessVersion, 1);
-        BOOST_CHECK_EQUAL(witnessProgram.size(), 20U);
+        BOOST_CHECK_EQUAL(witnessProgram.size(), 32U);
 
         uint160 indexHash;
         int indexType = DEST_INDEX_NONE;
         BOOST_CHECK(GetScriptDestinationIndexKey(newAssetScript, indexHash, indexType));
-        BOOST_CHECK_EQUAL(indexType, DEST_INDEX_WITNESS_V1_KEY);
-        BOOST_CHECK(indexHash == witnessHash);
+        BOOST_CHECK_EQUAL(indexType, DEST_INDEX_WITNESS_V1_AUTHSCRIPT);
+        BOOST_CHECK(indexHash == Hash160(witnessCommitment.begin(), witnessCommitment.end()));
 
         CAssetTransfer transferAsset("PQASSET", 1 * COIN);
         CScript transferScript = GetScriptForDestination(pqDestination);
@@ -655,7 +674,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         BOOST_CHECK_EQUAL(type, TX_TRANSFER_ASSET);
         BOOST_CHECK(GetAssetScriptWitnessProgram(transferScript, witnessVersion, witnessProgram));
         BOOST_CHECK(GetScriptDestinationIndexKey(transferScript, indexHash, indexType));
-        BOOST_CHECK_EQUAL(indexType, DEST_INDEX_WITNESS_V1_KEY);
+        BOOST_CHECK_EQUAL(indexType, DEST_INDEX_WITNESS_V1_AUTHSCRIPT);
 
         CReissueAsset reissueAsset("PQASSET", 10 * COIN, 0, 1, "");
         CScript reissueScript = GetScriptForDestination(pqDestination);
@@ -664,7 +683,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         BOOST_CHECK_EQUAL(type, TX_REISSUE_ASSET);
         BOOST_CHECK(GetAssetScriptWitnessProgram(reissueScript, witnessVersion, witnessProgram));
         BOOST_CHECK(GetScriptDestinationIndexKey(reissueScript, indexHash, indexType));
-        BOOST_CHECK_EQUAL(indexType, DEST_INDEX_WITNESS_V1_KEY);
+        BOOST_CHECK_EQUAL(indexType, DEST_INDEX_WITNESS_V1_AUTHSCRIPT);
     }
 
     BOOST_AUTO_TEST_CASE(asset_transfer_pq_signs_with_standard_flags_test)
@@ -679,8 +698,9 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         CPubKey pubkey = key.GetPubKey();
         BOOST_CHECK(pubkey.IsPQ());
         BOOST_CHECK(keystore.AddKeyPubKey(key, pubkey));
+        AddDefaultPQAuthScriptSpendData(keystore, pubkey);
 
-        CTxDestination pqDestination = WitnessV1KeyHash(pubkey.GetID());
+        CTxDestination pqDestination = GetDefaultPQAuthScriptDestination(pubkey);
         CAssetTransfer asset("PQASSET", 1 * COIN);
         CScript assetScript = GetScriptForDestination(pqDestination);
         asset.ConstructTransaction(assetScript);
@@ -717,13 +737,13 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
                                    SCRIPT_VERIFY_LOW_S |
                                    SCRIPT_VERIFY_WITNESS |
                                    SCRIPT_VERIFY_WITNESS_PUBKEYTYPE |
-                                   SCRIPT_VERIFY_PQ_WITNESS_V1;
+                                   SCRIPT_VERIFY_AUTHSCRIPT;
 
         BOOST_CHECK(VerifyScript(txTo.vin[0].scriptSig, assetScript, &txTo.vin[0].scriptWitness,
                                  flags, MutableTransactionSignatureChecker(&txTo, 0, 0), &err));
         BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OK);
         BOOST_CHECK(txTo.vin[0].scriptSig.empty());
-        BOOST_CHECK_EQUAL(txTo.vin[0].scriptWitness.stack.size(), 2U);
+        BOOST_CHECK_EQUAL(txTo.vin[0].scriptWitness.stack.size(), 4U);
     }
 
     BOOST_AUTO_TEST_CASE(asset_owner_pq_signs_with_standard_policy_test)
@@ -738,8 +758,9 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         CPubKey pubkey = key.GetPubKey();
         BOOST_CHECK(pubkey.IsPQ());
         BOOST_CHECK(keystore.AddKeyPubKey(key, pubkey));
+        AddDefaultPQAuthScriptSpendData(keystore, pubkey);
 
-        CTxDestination pqDestination = WitnessV1KeyHash(pubkey.GetID());
+        CTxDestination pqDestination = GetDefaultPQAuthScriptDestination(pubkey);
         CNewAsset asset("PQOWNER", 100 * COIN, 0, 1, 0, "");
         CScript ownerScript = GetScriptForDestination(pqDestination);
         asset.ConstructOwnerTransaction(ownerScript);
@@ -769,7 +790,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         const CTransaction fundingTx(txFrom);
         BOOST_CHECK(SignSignature(keystore, fundingTx, txTo, 0, SIGHASH_ALL));
         BOOST_CHECK(txTo.vin[0].scriptSig.empty());
-        BOOST_CHECK_EQUAL(txTo.vin[0].scriptWitness.stack.size(), 2U);
+        BOOST_CHECK_EQUAL(txTo.vin[0].scriptWitness.stack.size(), 4U);
 
         ScriptError err = SCRIPT_ERR_UNKNOWN_ERROR;
         const unsigned int flags = SCRIPT_VERIFY_P2SH |
@@ -778,7 +799,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
                                    SCRIPT_VERIFY_LOW_S |
                                    SCRIPT_VERIFY_WITNESS |
                                    SCRIPT_VERIFY_WITNESS_PUBKEYTYPE |
-                                   SCRIPT_VERIFY_PQ_WITNESS_V1;
+                                   SCRIPT_VERIFY_AUTHSCRIPT;
 
         BOOST_CHECK(VerifyScript(txTo.vin[0].scriptSig, ownerScript, &txTo.vin[0].scriptWitness,
                                  flags, MutableTransactionSignatureChecker(&txTo, 0, 0), &err));
@@ -805,14 +826,16 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         CPubKey pubkey = key.GetPubKey();
         BOOST_CHECK(pubkey.IsPQ());
         BOOST_CHECK(keystore.AddKeyPubKey(key, pubkey));
+        AddDefaultPQAuthScriptSpendData(keystore, pubkey);
 
-        CScript witnessScript = GetScriptForDestination(WitnessV1KeyHash(pubkey.GetID()));
+        CScript witnessScript = GetScriptForDestination(GetDefaultPQAuthScriptDestination(pubkey));
         SignatureData sigdata;
 
         BOOST_CHECK(ProduceSignature(DummySignatureCreator(&keystore), witnessScript, sigdata));
         BOOST_CHECK(sigdata.scriptSig.empty());
-        BOOST_CHECK_EQUAL(sigdata.scriptWitness.stack.size(), 2U);
-        BOOST_CHECK_EQUAL(sigdata.scriptWitness.stack[0].size(), ML_DSA_44_SIG_SIZE + 1);
+        BOOST_CHECK_EQUAL(sigdata.scriptWitness.stack.size(), 4U);
+        BOOST_CHECK_EQUAL(sigdata.scriptWitness.stack[0].size(), 1U);
+        BOOST_CHECK_EQUAL(sigdata.scriptWitness.stack[1].size(), ML_DSA_44_SIG_SIZE + 1);
         BOOST_CHECK_EQUAL(sigdata.scriptWitness.stack[1].size(), 1U + ML_DSA_44_PUBKEY_SIZE);
     }
 

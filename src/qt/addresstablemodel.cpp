@@ -380,10 +380,16 @@ QString AddressTableModel::addRow(const QString &type, const QString &label, con
                 return QString();
             }
         }
-        if (newKey.IsPQ())
-            strAddress = EncodeDestination(WitnessV1KeyHash(newKey.GetID()));
-        else
+        if (newKey.IsPQ()) {
+            CTxDestination dest;
+            if (!wallet->GetDefaultAuthScriptDestination(newKey, dest)) {
+                editStatus = KEY_GENERATION_FAILURE;
+                return QString();
+            }
+            strAddress = EncodeDestination(dest);
+        } else {
             strAddress = EncodeDestination(newKey.GetID());
+        }
     }
     else
     {

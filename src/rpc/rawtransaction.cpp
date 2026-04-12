@@ -66,8 +66,6 @@ void TxToJSON(const CTransaction& tx, const uint256 hashBlock, UniValue& entry, 
                         in.pushKV("address", EncodeDestination(CKeyID(spentInfo.addressHash)));
                     } else if (spentInfo.addressType == DEST_INDEX_SCRIPT) {
                         in.pushKV("address", EncodeDestination(CScriptID(spentInfo.addressHash)));
-                    } else if (spentInfo.addressType == DEST_INDEX_WITNESS_V1_KEY) {
-                        in.pushKV("address", EncodeDestination(WitnessV1KeyHash(spentInfo.addressHash)));
                     }
                 }
                 newVin.push_back(in);
@@ -2063,7 +2061,7 @@ UniValue signrawtransaction(const JSONRPCRequest& request)
         ScriptError serror = SCRIPT_ERR_OK;
         unsigned int verify_flags = STANDARD_SCRIPT_VERIFY_FLAGS;
         if (GetParams().GetConsensus().nPQWitnessEnabled) {
-            verify_flags |= SCRIPT_VERIFY_PQ_WITNESS_V1;
+            verify_flags |= SCRIPT_VERIFY_AUTHSCRIPT;
         }
         if (!VerifyScript(txin.scriptSig, prevPubKey, &txin.scriptWitness, verify_flags, TransactionSignatureChecker(&txConst, i, amount), &serror)) {
             if (serror == SCRIPT_ERR_INVALID_STACK_OPERATION) {

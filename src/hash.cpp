@@ -12,6 +12,20 @@
 
 #include <crypto/ethash/include/ethash/progpow.hpp>
 
+uint256 TaggedHash(const std::string& tag, const std::vector<unsigned char>& msg)
+{
+    unsigned char tag_hash[CSHA256::OUTPUT_SIZE];
+    CSHA256().Write(reinterpret_cast<const unsigned char*>(tag.data()), tag.size()).Finalize(tag_hash);
+
+    uint256 result;
+    CSHA256()
+        .Write(tag_hash, sizeof(tag_hash))
+        .Write(tag_hash, sizeof(tag_hash))
+        .Write(msg.data(), msg.size())
+        .Finalize(result.begin());
+    return result;
+}
+
 //TODO remove these
 double algoHashTotal[16];
 int algoHashHits[16];
@@ -288,7 +302,6 @@ uint256 KAWPOWHash_OnlyMix(const CBlockHeader& blockHeader)
 
     return uint256S(to_hex(result));
 }
-
 
 
 

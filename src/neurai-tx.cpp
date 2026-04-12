@@ -655,7 +655,7 @@ static void MutateTxSign(CMutableTransaction& tx, const std::string& flagStr)
 
         unsigned int verify_flags = STANDARD_SCRIPT_VERIFY_FLAGS;
         if (GetParams().GetConsensus().nPQWitnessEnabled) {
-            verify_flags |= SCRIPT_VERIFY_PQ_WITNESS_V1;
+            verify_flags |= SCRIPT_VERIFY_AUTHSCRIPT;
         }
         if (!VerifyScript(txin.scriptSig, prevPubKey, &txin.scriptWitness, verify_flags, MutableTransactionSignatureChecker(&mergedTx, i, amount)))
             fComplete = false;

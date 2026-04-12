@@ -942,6 +942,8 @@ public:
     bool LoadVchSeed(const std::vector<unsigned char> &vchSeed);
     bool AddCScript(const CScript& redeemScript) override;
     bool LoadCScript(const CScript& redeemScript);
+    bool AddAuthScriptSpendData(const uint256& commitment, const AuthScriptSpendData& spendData) override;
+    bool LoadAuthScriptSpendData(const uint256& commitment, const AuthScriptSpendData& spendData);
 
     //! Adds a destination data tuple to the store, and saves it to disk
     bool AddDestData(const CTxDestination &dest, const std::string &key, const std::string &value);
@@ -1033,6 +1035,7 @@ public:
                               int& nChangePosInOut, std::string& strFailReason, const CCoinControl& coin_control, bool fNewAsset, const std::vector<CNewAsset> assets, const CTxDestination destination, bool fTransferAsset, bool fReissueAsset, const CReissueAsset& reissueAsset, const AssetType& assetType, bool sign);
 
     bool CreateNewChangeAddress(CReserveKey& reservekey, CTxDestination& dest, std::string& strFailReason);
+    bool GetDefaultAuthScriptDestination(const CPubKey& pubKey, CTxDestination& dest, bool persist = true);
 
     /** XNA END */
 

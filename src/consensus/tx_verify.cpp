@@ -49,11 +49,11 @@ bool HasAssetOpcodeInExpectedPosition(const CScript& scriptPubKey)
         return true;
     }
 
-    // PQ asset spendable script: OP_1 <20-byte-program> + OP_XNA_ASSET ...
-    if (scriptPubKey.size() > 22 &&
+    // AuthScript asset spendable script: OP_1 <32-byte-commitment> + OP_XNA_ASSET ...
+    if (scriptPubKey.size() > 34 &&
         scriptPubKey[0] == OP_1 &&
-        scriptPubKey[1] == 0x14 &&
-        scriptPubKey[22] == OP_XNA_ASSET) {
+        scriptPubKey[1] == 0x20 &&
+        scriptPubKey[34] == OP_XNA_ASSET) {
         return true;
     }
 

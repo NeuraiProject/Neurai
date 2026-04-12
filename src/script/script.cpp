@@ -257,10 +257,10 @@ bool CScript::IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex) con
         (*this)[23] == OP_EQUALVERIFY &&
         (*this)[24] == OP_CHECKSIG) {
         assetOpIndex = 25;
-    } else if (this->size() > 28 &&
+    } else if (this->size() > 40 &&
                (*this)[0] == OP_1 &&
-               (*this)[1] == 0x14) {
-        assetOpIndex = 22;
+               (*this)[1] == 0x20) {
+        assetOpIndex = 34;
     } else {
         return false;
     }
@@ -357,8 +357,8 @@ bool CScript::IsNullAssetTxDataScript() const
     // Legacy format: OP_XNA_ASSET 0x14 <20-byte-hash> <asset-data>
     if (this->size() > 23 && (*this)[0] == OP_XNA_ASSET && (*this)[1] == 0x14)
         return true;
-    // PQ format: OP_XNA_ASSET OP_1 0x14 <20-byte-hash> <asset-data>
-    if (this->size() > 24 && (*this)[0] == OP_XNA_ASSET && (*this)[1] == OP_1 && (*this)[2] == 0x14)
+    // AuthScript format: OP_XNA_ASSET OP_1 0x20 <32-byte-commitment> <asset-data>
+    if (this->size() > 36 && (*this)[0] == OP_XNA_ASSET && (*this)[1] == OP_1 && (*this)[2] == 0x20)
         return true;
     return false;
 }

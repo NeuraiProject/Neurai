@@ -114,6 +114,11 @@ bool CWalletDB::EraseWatchOnly(const CScript &dest)
     return EraseIC(std::make_pair(std::string("watchs"), dest));
 }
 
+bool CWalletDB::WriteAuthScriptSpendData(const uint256& commitment, const AuthScriptSpendData& spendData)
+{
+    return WriteIC(std::make_pair(std::string("authscript"), commitment), spendData);
+}
+
 bool CWalletDB::WriteBestBlock(const CBlockLocator& locator)
 {
     WriteIC(std::string("bestblock"), CBlockLocator()); // Write empty block locator so versions that require a merkle branch automatically rescan
@@ -330,6 +335,18 @@ bool ReadKeyValue(CWallet* pwallet, CDataStream& ssKey, CDataStream& ssValue,
             ssValue >> fYes;
             if (fYes == '1')
                 pwallet->LoadWatchOnly(script);
+        }
+        else if (strType == "authscript")
+        {
+            uint256 commitment;
+            ssKey >> commitment;
+            AuthScriptSpendData spendData;
+            ssValue >> spendData;
+            if (!pwallet->LoadAuthScriptSpendData(commitment, spendData))
+            {
+                strErr = "Error reading wallet database: LoadAuthScriptSpendData failed";
+                return false;
+            }
         }
         else if (strType == "key" || strType == "wkey")
         {

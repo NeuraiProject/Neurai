@@ -216,8 +216,10 @@ UniValue getnewaddress(const JSONRPCRequest& request)
     if (!pwallet->GetKeyFromPool(newKey)) {
         throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
     }
-    CTxDestination dest = newKey.IsPQ() ? CTxDestination(WitnessV1KeyHash(newKey.GetID()))
-                                        : CTxDestination(newKey.GetID());
+    CTxDestination dest = newKey.GetID();
+    if (newKey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(newKey, dest)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive AuthScript destination for new PQ key");
+    }
 
     pwallet->SetAddressBook(dest, strAccount, "receive");
 
@@ -232,8 +234,13 @@ CTxDestination GetAccountAddress(CWallet* const pwallet, std::string strAccount,
         throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
     }
 
-    if (pubKey.IsPQ())
-        return WitnessV1KeyHash(pubKey.GetID());
+    if (pubKey.IsPQ()) {
+        CTxDestination dest;
+        if (!pwallet->GetDefaultAuthScriptDestination(pubKey, dest)) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive AuthScript destination for account PQ key");
+        }
+        return dest;
+    }
     return pubKey.GetID();
 }
 
@@ -303,8 +310,10 @@ UniValue getrawchangeaddress(const JSONRPCRequest& request)
 
     reservekey.KeepKey();
 
-    CTxDestination dest = vchPubKey.IsPQ() ? CTxDestination(WitnessV1KeyHash(vchPubKey.GetID()))
-                                           : CTxDestination(vchPubKey.GetID());
+    CTxDestination dest = vchPubKey.GetID();
+    if (vchPubKey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(vchPubKey, dest)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive AuthScript destination for PQ change key");
+    }
 
     return EncodeDestination(dest);
 }
@@ -770,8 +779,12 @@ UniValue signmessage(const JSONRPCRequest& request)
     CKeyID keyID;
     if (const CKeyID* destKeyID = boost::get<CKeyID>(&dest)) {
         keyID = *destKeyID;
-    } else if (const WitnessV1KeyHash* witnessKeyID = boost::get<WitnessV1KeyHash>(&dest)) {
-        keyID = CKeyID(*witnessKeyID);
+    } else if (const WitnessV1AuthScript* authScriptDest = boost::get<WitnessV1AuthScript>(&dest)) {
+        AuthScriptSpendData spendData;
+        if (!pwallet->GetAuthScriptSpendData(uint256(*authScriptDest), spendData)) {
+            throw JSONRPCError(RPC_TYPE_ERROR, "Address does not refer to wallet AuthScript data");
+        }
+        keyID = spendData.key_id;
     } else {
         throw JSONRPCError(RPC_TYPE_ERROR, "Address does not refer to key");
     }
@@ -1345,7 +1358,7 @@ public:
             // if found in a transaction, we would still accept and relay that transaction.
             unsigned int verify_flags = MANDATORY_SCRIPT_VERIFY_FLAGS | SCRIPT_VERIFY_WITNESS_PUBKEYTYPE;
             if (GetParams().GetConsensus().nPQWitnessEnabled) {
-                verify_flags |= SCRIPT_VERIFY_PQ_WITNESS_V1;
+                verify_flags |= SCRIPT_VERIFY_AUTHSCRIPT;
             }
             if (!ProduceSignature(DummySignatureCreator(pwallet), witscript, sigs) ||
                 !VerifyScript(sigs.scriptSig, witscript, &sigs.scriptWitness, verify_flags, DummySignatureCreator(pwallet).Checker())) {
@@ -1374,7 +1387,7 @@ public:
             // if found in a transaction, we would still accept and relay that transaction.
             unsigned int verify_flags = MANDATORY_SCRIPT_VERIFY_FLAGS | SCRIPT_VERIFY_WITNESS_PUBKEYTYPE;
             if (GetParams().GetConsensus().nPQWitnessEnabled) {
-                verify_flags |= SCRIPT_VERIFY_PQ_WITNESS_V1;
+                verify_flags |= SCRIPT_VERIFY_AUTHSCRIPT;
             }
             if (!ProduceSignature(DummySignatureCreator(pwallet), witscript, sigs) ||
                 !VerifyScript(sigs.scriptSig, witscript, &sigs.scriptWitness, verify_flags, DummySignatureCreator(pwallet).Checker())) {
@@ -3557,8 +3570,10 @@ UniValue listpqaddresses(const JSONRPCRequest& request)
             continue;
         if (!pubkey.IsPQ())
             continue;
-        WitnessV1KeyHash witHash(pubkey.GetID());
-        ret.push_back(EncodeDestination(witHash));
+        CTxDestination dest;
+        if (pwallet->GetDefaultAuthScriptDestination(pubkey, dest, false)) {
+            ret.push_back(EncodeDestination(dest));
+        }
     }
 
     return ret;

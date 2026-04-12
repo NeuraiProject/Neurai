@@ -588,8 +588,10 @@ UniValue issue(const JSONRPCRequest& request)
         if (!pwallet->GetKeyFromPool(newKey)) {
             throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
         }
-        CTxDestination dest = newKey.IsPQ() ? CTxDestination(WitnessV1KeyHash(newKey.GetID()))
-                                            : CTxDestination(newKey.GetID());
+        CTxDestination dest = newKey.GetID();
+        if (newKey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(newKey, dest)) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive AuthScript destination for new PQ key");
+        }
 
         pwallet->SetAddressBook(dest, strAccount, "receive");
 
@@ -756,8 +758,10 @@ UniValue issueunique(const JSONRPCRequest& request)
         if (!pwallet->GetKeyFromPool(newKey)) {
             throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
         }
-        CTxDestination dest = newKey.IsPQ() ? CTxDestination(WitnessV1KeyHash(newKey.GetID()))
-                                            : CTxDestination(newKey.GetID());
+        CTxDestination dest = newKey.GetID();
+        if (newKey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(newKey, dest)) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive AuthScript destination for new PQ key");
+        }
 
         pwallet->SetAddressBook(dest, strAccount, "receive");
 
@@ -1300,7 +1304,7 @@ UniValue listdepinaddresses(const JSONRPCRequest &request)
         uint160 addressHash;
         int addressType = DEST_INDEX_NONE;
         if (!IsValidDestination(dest) || !GetDestinationIndexKey(dest, addressHash, addressType) ||
-            (addressType != DEST_INDEX_KEY && addressType != DEST_INDEX_WITNESS_V1_KEY)) {
+            addressType != DEST_INDEX_KEY) {
             continue;
         }
         CPubKeyIndexValue pubkeyValue;
@@ -2594,8 +2598,10 @@ UniValue issuequalifierasset(const JSONRPCRequest& request)
         if (!pwallet->GetKeyFromPool(newKey)) {
             throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
         }
-        CTxDestination dest = newKey.IsPQ() ? CTxDestination(WitnessV1KeyHash(newKey.GetID()))
-                                            : CTxDestination(newKey.GetID());
+        CTxDestination dest = newKey.GetID();
+        if (newKey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(newKey, dest)) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive AuthScript destination for new PQ key");
+        }
 
         pwallet->SetAddressBook(dest, strAccount, "receive");
 

@@ -82,7 +82,7 @@ enum txnouttype
     TX_TRANSFER_ASSET = 10,
     TX_RESTRICTED_ASSET_DATA = 11, //!< unspendable OP_NEURAI_ASSET script that carries data
     /** XNA END */
-    TX_WITNESS_V1_KEYHASH = 12, //!< post-quantum pay-to-witness-v1-keyhash (ML-DSA-44, Bech32m)
+    TX_WITNESS_V1_AUTHSCRIPT = 12, //!< AuthScript pay-to-witness-v1-commitment (Bech32m)
 };
 
 class CNoDestination {
@@ -92,15 +92,15 @@ public:
 };
 
 /**
- * WitnessV1KeyHash: a 20-byte hash of an ML-DSA-44 public key.
+ * WitnessV1AuthScript: a 32-byte AuthScript commitment.
  * Encoded as a Bech32m address with HRP "nq" (mainnet), "tnq" (testnet), "rnq" (regtest).
- * scriptPubKey: OP_1 <20-byte-hash>
+ * scriptPubKey: OP_1 <32-byte-commitment>
  */
-class WitnessV1KeyHash : public uint160
+class WitnessV1AuthScript : public uint256
 {
 public:
-    WitnessV1KeyHash() : uint160() {}
-    explicit WitnessV1KeyHash(const uint160& in) : uint160(in) {}
+    WitnessV1AuthScript() : uint256() {}
+    explicit WitnessV1AuthScript(const uint256& in) : uint256(in) {}
 };
 
 /**
@@ -108,17 +108,17 @@ public:
  *  * CNoDestination: no destination set
  *  * CKeyID: TX_PUBKEYHASH destination (Base58, secp256k1)
  *  * CScriptID: TX_SCRIPTHASH destination (Base58, P2SH)
- *  * WitnessV1KeyHash: TX_WITNESS_V1_KEYHASH destination (Bech32m, ML-DSA-44)
+ *  * WitnessV1AuthScript: TX_WITNESS_V1_AUTHSCRIPT destination (Bech32m, AuthScript)
  *  A CTxDestination is the internal data type encoded in a neurai address
  */
-typedef boost::variant<CNoDestination, CKeyID, CScriptID, WitnessV1KeyHash> CTxDestination;
+typedef boost::variant<CNoDestination, CKeyID, CScriptID, WitnessV1AuthScript> CTxDestination;
 
 enum DestinationIndexType
 {
     DEST_INDEX_NONE = 0,
     DEST_INDEX_KEY = 1,
     DEST_INDEX_SCRIPT = 2,
-    DEST_INDEX_WITNESS_V1_KEY = 3,
+    DEST_INDEX_WITNESS_V1_AUTHSCRIPT = 3,
 };
 
 /** Check whether a CTxDestination is a CNoDestination. */
@@ -151,8 +151,14 @@ bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
 /** Extract the spend destination encoded in an asset script. */
 bool ExtractAssetDestination(const CScript& scriptPubKey, CTxDestination& addressRet);
 
-/** Detect asset scripts that use a witness destination and reconstruct the executable witness script. */
-bool GetAssetScriptWitnessProgram(const CScript& scriptPubKey, int& witnessversion, std::vector<unsigned char>& witnessprogram, CScript* witnessScript = nullptr);
+/** Detect asset scripts that use a witness destination and extract the witness commitment and asset data suffix. */
+bool GetAssetScriptWitnessProgram(const CScript& scriptPubKey, int& witnessversion, std::vector<unsigned char>& witnessprogram, std::vector<unsigned char>* assetData = nullptr);
+
+/** Derive the AuthScript descriptor bytes for a given auth type and pubkey payload. */
+bool GetAuthScriptDescriptor(uint8_t authType, const CPubKey* pubkey, std::vector<unsigned char>& authDescriptor);
+
+/** Compute the tagged 32-byte commitment for an AuthScript witness v1 destination. */
+uint256 GetAuthScriptCommitment(uint8_t authType, const CPubKey* pubkey, const CScript& witnessScript);
 
 /** Convert a destination into the hash/type pair used by address and pubkey indexes. */
 bool GetDestinationIndexKey(const CTxDestination& dest, uint160& hashBytes, int& type);

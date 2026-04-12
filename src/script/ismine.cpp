@@ -99,11 +99,22 @@ isminetype IsMine(const CKeyStore &keystore, const CScript& scriptPubKey, bool& 
             if (keystore.HaveKey(keyID))
                 return ISMINE_SPENDABLE;
             break;
-        case TX_WITNESS_V1_KEYHASH: {
-            keyID = CKeyID(uint160(vSolutions[0]));
-            CPubKey pubkey;
-            if (keystore.GetPubKey(keyID, pubkey) && pubkey.IsPQ() && keystore.HaveKey(keyID))
+        case TX_WITNESS_V1_AUTHSCRIPT: {
+            if (vSolutions[0].size() != 32) {
+                break;
+            }
+            AuthScriptSpendData spendData;
+            const uint256 commitment(vSolutions[0]);
+            if (!keystore.GetAuthScriptSpendData(commitment, spendData)) {
+                break;
+            }
+            if (spendData.auth_type == 0x00) {
                 return ISMINE_SPENDABLE;
+            }
+            if ((spendData.auth_type == 0x01 || spendData.auth_type == 0x02) &&
+                keystore.HaveKey(spendData.key_id)) {
+                return ISMINE_SPENDABLE;
+            }
             break;
         }
         case TX_SCRIPTHASH: {

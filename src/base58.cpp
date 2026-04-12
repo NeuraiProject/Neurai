@@ -272,7 +272,7 @@ public:
 
     bool operator()(const CKeyID& id) const { return addr->Set(id); }
     bool operator()(const CScriptID& id) const { return addr->Set(id); }
-    bool operator()(const WitnessV1KeyHash& id) const { return false; } // Bech32m, not Base58
+    bool operator()(const WitnessV1AuthScript& id) const { return false; } // Bech32m, not Base58
     bool operator()(const CNoDestination& no) const { return false; }
 };
 
@@ -391,8 +391,10 @@ bool SignMessageHash(const CKey& key, const CTxDestination& dest, const uint256&
     }
 
     if (key.IsPQ()) {
-        const WitnessV1KeyHash* witnessKeyID = boost::get<WitnessV1KeyHash>(&dest);
-        if (!witnessKeyID || WitnessV1KeyHash(pubkey.GetID()) != *witnessKeyID) {
+        const WitnessV1AuthScript* authScriptDest = boost::get<WitnessV1AuthScript>(&dest);
+        CScript defaultScript;
+        defaultScript << OP_TRUE;
+        if (!authScriptDest || WitnessV1AuthScript(GetAuthScriptCommitment(0x01, &pubkey, defaultScript)) != *authScriptDest) {
             return false;
         }
 
@@ -414,14 +416,16 @@ bool SignMessageHash(const CKey& key, const CTxDestination& dest, const uint256&
 
 bool VerifyMessageHash(const CTxDestination& dest, const uint256& hash, const std::vector<unsigned char>& vchSig)
 {
-    if (const WitnessV1KeyHash* witnessKeyID = boost::get<WitnessV1KeyHash>(&dest)) {
+    if (const WitnessV1AuthScript* authScriptDest = boost::get<WitnessV1AuthScript>(&dest)) {
         CPubKey pubkey;
         std::vector<unsigned char> pqSignature;
         if (!DeserializePQMessageSignature(vchSig, pubkey, pqSignature)) {
             return false;
         }
-
-        return WitnessV1KeyHash(pubkey.GetID()) == *witnessKeyID && pubkey.Verify(hash, pqSignature);
+        CScript defaultScript;
+        defaultScript << OP_TRUE;
+        return WitnessV1AuthScript(GetAuthScriptCommitment(0x01, &pubkey, defaultScript)) == *authScriptDest &&
+               pubkey.Verify(hash, pqSignature);
     }
 
     const CKeyID* keyID = boost::get<CKeyID>(&dest);
@@ -450,8 +454,8 @@ public:
         CNeuraiAddress addr(id);
         return addr.ToString();
     }
-    std::string operator()(const WitnessV1KeyHash& id) const {
-        // Bech32m: witness version 1 + HASH160(PQ pubkey)
+    std::string operator()(const WitnessV1AuthScript& id) const {
+        // Bech32m: witness version 1 + 32-byte AuthScript commitment
         std::vector<uint8_t> data = {1}; // witness version
         std::vector<uint8_t> hash_bytes(id.begin(), id.end());
         std::vector<uint8_t> conv;
@@ -480,8 +484,8 @@ CTxDestination DecodeDestination(const std::string& str)
             // Witness v1: decode 5-bit payload back to bytes
             std::vector<uint8_t> conv;
             std::vector<uint8_t> payload(dec.data.begin() + 1, dec.data.end());
-            if (bech32::ConvertBits<5, 8, false>(payload, conv) && conv.size() == 20) {
-                return WitnessV1KeyHash(uint160(conv));
+            if (bech32::ConvertBits<5, 8, false>(payload, conv) && conv.size() == 32) {
+                return WitnessV1AuthScript(uint256(conv));
             }
         }
         return CNoDestination();
@@ -493,7 +497,7 @@ CTxDestination DecodeDestination(const std::string& str)
 bool IsValidDestinationString(const std::string& str, const CChainParams& params)
 {
     CTxDestination dest = DecodeDestination(str);
-    if (boost::get<WitnessV1KeyHash>(&dest)) return true;
+    if (boost::get<WitnessV1AuthScript>(&dest)) return true;
     return CNeuraiAddress(str).IsValid(params);
 }
 

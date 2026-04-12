@@ -40,10 +40,14 @@
 #include <crypto/ethash/helpers.hpp>
 
 #include <vector>
+#include <string>
 
 class CBlockHeader;
 
 typedef uint256 ChainCode;
+
+/** Tagged hash as defined in BIP340: SHA256(SHA256(tag) || SHA256(tag) || msg). */
+uint256 TaggedHash(const std::string& tag, const std::vector<unsigned char>& msg);
 
 /** A hasher class for Bitcoin's 256-bit hash (double SHA-256). */
 class CHash256 {
@@ -610,4 +614,3 @@ uint256 KAWPOWHash_OnlyMix(const CBlockHeader& blockHeader);
 
 
 #endif // NEURAI_HASH_H
-

@@ -4871,8 +4871,8 @@ bool ParseAssetScript(CScript scriptPubKey, uint160 &hashBytes, std::string &ass
             hashBytes = uint160(*keyID);
             return true;
         }
-        if (const WitnessV1KeyHash* witnessKeyHash = boost::get<WitnessV1KeyHash>(&destination)) {
-            hashBytes = uint160(*witnessKeyHash);
+        if (const WitnessV1AuthScript* authScriptDest = boost::get<WitnessV1AuthScript>(&destination)) {
+            hashBytes = Hash160(authScriptDest->begin(), authScriptDest->end());
             return true;
         }
     }

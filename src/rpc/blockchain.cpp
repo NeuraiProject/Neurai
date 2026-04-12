@@ -154,8 +154,6 @@ UniValue blockToDeltasJSON(const CBlock& block, const CBlockIndex* blockindex)
                         delta.push_back(Pair("address", EncodeDestination(CKeyID(spentInfo.addressHash))));
                     } else if (spentInfo.addressType == DEST_INDEX_SCRIPT)  {
                         delta.push_back(Pair("address", EncodeDestination(CScriptID(spentInfo.addressHash))));
-                    } else if (spentInfo.addressType == DEST_INDEX_WITNESS_V1_KEY) {
-                        delta.push_back(Pair("address", EncodeDestination(WitnessV1KeyHash(spentInfo.addressHash))));
                     } else {
                         continue;
                     }

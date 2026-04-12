@@ -113,6 +113,30 @@ bool CBasicKeyStore::HaveWatchOnly() const
     return (!setWatchOnly.empty());
 }
 
+bool CBasicKeyStore::AddAuthScriptSpendData(const uint256& commitment, const AuthScriptSpendData& spendData)
+{
+    LOCK(cs_KeyStore);
+    mapAuthScriptSpendData[commitment] = spendData;
+    return true;
+}
+
+bool CBasicKeyStore::GetAuthScriptSpendData(const uint256& commitment, AuthScriptSpendData& spendData) const
+{
+    LOCK(cs_KeyStore);
+    AuthScriptSpendDataMap::const_iterator it = mapAuthScriptSpendData.find(commitment);
+    if (it == mapAuthScriptSpendData.end()) {
+        return false;
+    }
+    spendData = it->second;
+    return true;
+}
+
+bool CBasicKeyStore::HaveAuthScriptSpendData(const uint256& commitment) const
+{
+    LOCK(cs_KeyStore);
+    return mapAuthScriptSpendData.count(commitment) > 0;
+}
+
 
 bool CBasicKeyStore::AddWords(const uint256& p_hash, const std::vector<unsigned char>& p_vchWords)
 {

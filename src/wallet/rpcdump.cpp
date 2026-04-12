@@ -74,8 +74,12 @@ std::string DecodeDumpString(const std::string &str) {
 
 static CTxDestination GetDestinationForPubKey(const CPubKey& pubkey)
 {
-    return pubkey.IsPQ() ? CTxDestination(WitnessV1KeyHash(pubkey.GetID()))
-                         : CTxDestination(pubkey.GetID());
+    if (!pubkey.IsPQ()) {
+        return CTxDestination(pubkey.GetID());
+    }
+    CScript witnessScript;
+    witnessScript << OP_TRUE;
+    return CTxDestination(WitnessV1AuthScript(GetAuthScriptCommitment(0x01, &pubkey, witnessScript)));
 }
 
 static std::string EncodeDestinationForPubKey(const CPubKey& pubkey)
@@ -142,6 +146,9 @@ UniValue importprivkey(const JSONRPCRequest& request)
     assert(key.VerifyPubKey(pubkey));
     CKeyID vchAddress = pubkey.GetID();
     CTxDestination dest = GetDestinationForPubKey(pubkey);
+    if (pubkey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(pubkey, dest)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Error deriving AuthScript destination for imported PQ key");
+    }
     {
         pwallet->MarkDirty();
         pwallet->SetAddressBook(dest, strLabel, "receive");
@@ -446,7 +453,11 @@ UniValue importpubkey(const JSONRPCRequest& request)
 
     LOCK2(cs_main, pwallet->cs_wallet);
 
-    ImportAddress(pwallet, pubKey.GetID(), strLabel);
+    CTxDestination importDest = pubKey.GetID();
+    if (pubKey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(pubKey, importDest)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Error deriving AuthScript destination for imported PQ pubkey");
+    }
+    ImportAddress(pwallet, importDest, strLabel);
     ImportScript(pwallet, GetScriptForRawPubKey(pubKey), strLabel, false);
 
     if (fRescan)
@@ -544,9 +555,22 @@ UniValue importwallet(const JSONRPCRequest& request)
             fGood = false;
             continue;
         }
+        if (pubkey.IsPQ()) {
+            CTxDestination pqDest;
+            if (!pwallet->GetDefaultAuthScriptDestination(pubkey, pqDest)) {
+                fGood = false;
+                continue;
+            }
+        }
         pwallet->mapKeyMetadata[keyid].nCreateTime = nTime;
-        if (fLabel)
-            pwallet->SetAddressBook(GetDestinationForPubKey(pubkey), strLabel, "receive");
+        if (fLabel) {
+            CTxDestination dest = GetDestinationForPubKey(pubkey);
+            if (pubkey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(pubkey, dest)) {
+                fGood = false;
+                continue;
+            }
+            pwallet->SetAddressBook(dest, strLabel, "receive");
+        }
         nTimeBegin = std::min(nTimeBegin, nTime);
     }
     file.close();
@@ -593,12 +617,16 @@ UniValue dumpprivkey(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Neurai address");
     }
 
-    // Support both legacy (CKeyID) and post-quantum (WitnessV1KeyHash) addresses
+    // Support both legacy (CKeyID) and AuthScript default PQ addresses.
     CKeyID keyID;
     if (const CKeyID* pkeyID = boost::get<CKeyID>(&dest)) {
         keyID = *pkeyID;
-    } else if (const WitnessV1KeyHash* pWitness = boost::get<WitnessV1KeyHash>(&dest)) {
-        keyID = CKeyID(static_cast<const uint160&>(*pWitness));
+    } else if (const WitnessV1AuthScript* pAuthScript = boost::get<WitnessV1AuthScript>(&dest)) {
+        AuthScriptSpendData spendData;
+        if (!pwallet->GetAuthScriptSpendData(uint256(*pAuthScript), spendData)) {
+            throw JSONRPCError(RPC_TYPE_ERROR, "Address does not refer to wallet AuthScript data");
+        }
+        keyID = spendData.key_id;
     } else {
         throw JSONRPCError(RPC_TYPE_ERROR, "Address does not refer to a key");
     }
@@ -1070,6 +1098,9 @@ UniValue ProcessImport(CWallet * const pwallet, const UniValue& data, const int6
 
                     CKeyID vchAddress = pubkey.GetID();
                     CTxDestination pubkey_dest = GetDestinationForPubKey(pubkey);
+                    if (pubkey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(pubkey, pubkey_dest)) {
+                        throw JSONRPCError(RPC_WALLET_ERROR, "Error deriving AuthScript destination for imported PQ key");
+                    }
                     pwallet->MarkDirty();
                     pwallet->SetAddressBook(pubkey_dest, label, "receive");
 
@@ -1195,6 +1226,9 @@ UniValue ProcessImport(CWallet * const pwallet, const UniValue& data, const int6
 
                 CKeyID vchAddress = pubKey.GetID();
                 CTxDestination wallet_dest = GetDestinationForPubKey(pubKey);
+                if (pubKey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(pubKey, wallet_dest)) {
+                    throw JSONRPCError(RPC_WALLET_ERROR, "Error deriving AuthScript destination for imported PQ key");
+                }
                 pwallet->MarkDirty();
                 pwallet->SetAddressBook(wallet_dest, label, "receive");
 

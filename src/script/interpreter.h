@@ -112,12 +112,11 @@ enum
     //
             SCRIPT_VERIFY_WITNESS_PUBKEYTYPE = (1U << 15),
 
-    // Enable post-quantum (ML-DSA-44) witness v1 program verification.
-    // When set, witness v1 programs with a 20-byte hash are verified using
-    // ML-DSA-44 signatures instead of being treated as upgradable/unknown.
-    // Enabled on testnet/regtest only until mainnet activation.
+    // Enable AuthScript witness v1 program verification.
+    // When set, witness v1 programs with a 32-byte commitment are verified
+    // using AuthScript semantics instead of being treated as upgradable/unknown.
     //
-            SCRIPT_VERIFY_PQ_WITNESS_V1 = (1U << 16),
+            SCRIPT_VERIFY_AUTHSCRIPT = (1U << 16),
 
     // Enable OP_CAT (BIP 347) - stack element concatenation.
     // When set, OP_CAT is executed instead of returning SCRIPT_ERR_DISABLED_OPCODE.
@@ -160,14 +159,15 @@ enum SigVersion
 {
     SIGVERSION_BASE = 0,
     SIGVERSION_WITNESS_V0 = 1,
+    SIGVERSION_AUTHSCRIPT = 2,
 };
 
-uint256 SignatureHash(const CScript &scriptCode, const CTransaction &txTo, unsigned int nIn, int nHashType, const CAmount &amount, SigVersion sigversion, const PrecomputedTransactionData *cache = nullptr);
+uint256 SignatureHash(const CScript &scriptCode, const CTransaction &txTo, unsigned int nIn, int nHashType, const CAmount &amount, SigVersion sigversion, const PrecomputedTransactionData *cache = nullptr, uint8_t authType = 0x00);
 
 class BaseSignatureChecker
 {
 public:
-    virtual bool CheckSig(const std::vector<unsigned char> &scriptSig, const std::vector<unsigned char> &vchPubKey, const CScript &scriptCode, SigVersion sigversion) const
+    virtual bool CheckSig(const std::vector<unsigned char> &scriptSig, const std::vector<unsigned char> &vchPubKey, const CScript &scriptCode, SigVersion sigversion, uint8_t authType = 0x00) const
     {
         return false;
     }
@@ -184,7 +184,7 @@ public:
 
     // Compute the signature hash for a given scriptCode, hashtype and sigversion.
     // Used by PQ witness v1 verification to get the BIP143 sighash directly.
-    virtual uint256 GetSigHash(const CScript& scriptCode, int nHashType, SigVersion sigversion) const
+    virtual uint256 GetSigHash(const CScript& scriptCode, int nHashType, SigVersion sigversion, uint8_t authType = 0x00) const
     {
         return uint256();
     }
@@ -223,7 +223,7 @@ public:
 
     TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const PrecomputedTransactionData &txdataIn) : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn) {}
 
-    bool CheckSig(const std::vector<unsigned char> &scriptSig, const std::vector<unsigned char> &vchPubKey, const CScript &scriptCode, SigVersion sigversion) const override;
+    bool CheckSig(const std::vector<unsigned char> &scriptSig, const std::vector<unsigned char> &vchPubKey, const CScript &scriptCode, SigVersion sigversion, uint8_t authType = 0x00) const override;
 
     bool CheckLockTime(const CScriptNum &nLockTime) const override;
 
@@ -235,7 +235,7 @@ public:
 
     bool GetTxFieldHash(unsigned char fieldSelector, std::vector<unsigned char>& result) const override;
 
-    uint256 GetSigHash(const CScript& scriptCode, int nHashType, SigVersion sigversion) const override;
+    uint256 GetSigHash(const CScript& scriptCode, int nHashType, SigVersion sigversion, uint8_t authType = 0x00) const override;
 };
 
 class MutableTransactionSignatureChecker : public TransactionSignatureChecker

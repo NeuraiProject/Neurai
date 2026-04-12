@@ -401,7 +401,7 @@ UniValue verifymessage(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_TYPE_ERROR, "Invalid address");
     }
 
-    if (!boost::get<CKeyID>(&destination) && !boost::get<WitnessV1KeyHash>(&destination)) {
+    if (!boost::get<CKeyID>(&destination) && !boost::get<WitnessV1AuthScript>(&destination)) {
         throw JSONRPCError(RPC_TYPE_ERROR, "Address does not refer to key");
     }
 
@@ -454,8 +454,14 @@ UniValue signmessagewithprivkey(const JSONRPCRequest& request)
     ss << strMessage;
 
     std::vector<unsigned char> vchSig;
-    if (!SignMessageHash(key, key.IsPQ() ? CTxDestination(WitnessV1KeyHash(key.GetPubKey().GetID()))
-                                         : CTxDestination(key.GetPubKey().GetID()),
+    const CPubKey pubkey = key.GetPubKey();
+    CTxDestination signingDest = pubkey.GetID();
+    if (key.IsPQ()) {
+        CScript witnessScript;
+        witnessScript << OP_TRUE;
+        signingDest = CTxDestination(WitnessV1AuthScript(GetAuthScriptCommitment(0x01, &pubkey, witnessScript)));
+    }
+    if (!SignMessageHash(key, signingDest,
                          ss.GetHash(), vchSig))
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Sign failed");
 
@@ -654,8 +660,8 @@ bool getAddressFromIndex(const int &type, const uint160 &hash, std::string &addr
         address = EncodeDestination(CScriptID(hash));
     } else if (type == DEST_INDEX_KEY) {
         address = EncodeDestination(CKeyID(hash));
-    } else if (type == DEST_INDEX_WITNESS_V1_KEY) {
-        address = EncodeDestination(WitnessV1KeyHash(hash));
+    } else if (type == DEST_INDEX_WITNESS_V1_AUTHSCRIPT) {
+        return false;
     } else {
         return false;
     }
@@ -1354,7 +1360,7 @@ UniValue getpubkey(const JSONRPCRequest& request)
     uint160 addressHash;
     int addressType = DEST_INDEX_NONE;
     if (!GetDestinationIndexKey(dest, addressHash, addressType) ||
-        (addressType != DEST_INDEX_KEY && addressType != DEST_INDEX_WITNESS_V1_KEY)) {
+        addressType != DEST_INDEX_KEY) {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address does not refer to a key");
     }
     CPubKeyIndexValue value;

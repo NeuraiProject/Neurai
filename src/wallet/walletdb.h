@@ -11,6 +11,7 @@
 #include "primitives/transaction.h"
 #include "wallet/db.h"
 #include "key.h"
+#include "keystore.h"
 #include "wallet/bip39.h"
 
 #include <list>
@@ -222,6 +223,7 @@ public:
 
     bool WriteWatchOnly(const CScript &script, const CKeyMetadata &keymeta);
     bool EraseWatchOnly(const CScript &script);
+    bool WriteAuthScriptSpendData(const uint256& commitment, const AuthScriptSpendData& spendData);
 
     bool WriteBestBlock(const CBlockLocator& locator);
     bool ReadBestBlock(CBlockLocator& locator);

@@ -14,6 +14,31 @@
 #include "sync.h"
 
 #include <boost/signals2/signal.hpp>
+#include <map>
+#include <vector>
+
+struct AuthScriptSpendData
+{
+    uint8_t auth_type{0x00};
+    CScript witnessScript;
+    CPubKey pubkey;
+    CKeyID key_id;
+    std::vector<std::vector<unsigned char>> functional_args;
+    bool is_default_template{false};
+
+    ADD_SERIALIZE_METHODS;
+
+    template <typename Stream, typename Operation>
+    inline void SerializationOp(Stream& s, Operation ser_action)
+    {
+        READWRITE(auth_type);
+        READWRITE(witnessScript);
+        READWRITE(pubkey);
+        READWRITE(key_id);
+        READWRITE(functional_args);
+        READWRITE(is_default_template);
+    }
+};
 
 /** A virtual base class for key stores */
 class CKeyStore
@@ -44,12 +69,16 @@ public:
     virtual bool RemoveWatchOnly(const CScript &dest) =0;
     virtual bool HaveWatchOnly(const CScript &dest) const =0;
     virtual bool HaveWatchOnly() const =0;
+    virtual bool AddAuthScriptSpendData(const uint256& commitment, const AuthScriptSpendData& spendData) = 0;
+    virtual bool GetAuthScriptSpendData(const uint256& commitment, AuthScriptSpendData& spendData) const = 0;
+    virtual bool HaveAuthScriptSpendData(const uint256& commitment) const = 0;
 };
 
 typedef std::map<CKeyID, CKey> KeyMap;
 typedef std::map<CKeyID, CPubKey> WatchKeyMap;
 typedef std::map<CScriptID, CScript > ScriptMap;
 typedef std::set<CScript> WatchOnlySet;
+typedef std::map<uint256, AuthScriptSpendData> AuthScriptSpendDataMap;
 
 /** Basic key store, that keeps keys in an address->secret map */
 class CBasicKeyStore : public CKeyStore
@@ -59,6 +88,7 @@ protected:
     WatchKeyMap mapWatchKeys;
     ScriptMap mapScripts;
     WatchOnlySet setWatchOnly;
+    AuthScriptSpendDataMap mapAuthScriptSpendData;
 
     uint256 nWordHash;
     std::vector<unsigned char> vchWords;
@@ -107,6 +137,9 @@ public:
     bool RemoveWatchOnly(const CScript &dest) override;
     bool HaveWatchOnly(const CScript &dest) const override;
     bool HaveWatchOnly() const override;
+    bool AddAuthScriptSpendData(const uint256& commitment, const AuthScriptSpendData& spendData) override;
+    bool GetAuthScriptSpendData(const uint256& commitment, AuthScriptSpendData& spendData) const override;
+    bool HaveAuthScriptSpendData(const uint256& commitment) const override;
 
     bool AddWords(const uint256& p_hash, const std::vector<unsigned char>& p_vchWords);
     bool AddPassphrase(const std::vector<unsigned char>& p_vchPassphrase);

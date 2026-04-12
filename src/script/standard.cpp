@@ -6,6 +6,7 @@
 
 #include <base58.h>
 #include <assets/assets.h>
+#include <hash.h>
 #include <validation.h>
 #include "script/standard.h"
 #include "chainparams.h"
@@ -44,7 +45,7 @@ const char* GetTxnOutputType(txnouttype t)
     case TX_RESTRICTED_ASSET_DATA: return "nullassetdata";
     case TX_WITNESS_V0_KEYHASH: return "witness_v0_keyhash";
     case TX_WITNESS_V0_SCRIPTHASH: return "witness_v0_scripthash";
-    case TX_WITNESS_V1_KEYHASH: return "witness_v1_keyhash";
+    case TX_WITNESS_V1_AUTHSCRIPT: return "witness_v1_authscript";
 
     /** XNA START */
     case TX_NEW_ASSET: return ASSET_NEW_STRING;
@@ -84,19 +85,19 @@ bool ExtractAssetDestinationData(const CScript& scriptPubKey, CTxDestination* de
         return true;
     }
 
-    if (scriptPubKey.size() >= 22) {
-        CScript prefix(scriptPubKey.begin(), scriptPubKey.begin() + 22);
+    if (scriptPubKey.size() >= 34) {
+        CScript prefix(scriptPubKey.begin(), scriptPubKey.begin() + 34);
         int witnessversion = 0;
         std::vector<unsigned char> witnessprogram;
-        if (prefix.IsWitnessProgram(witnessversion, witnessprogram) && witnessversion == 1 && witnessprogram.size() == 20) {
+        if (prefix.IsWitnessProgram(witnessversion, witnessprogram) && witnessversion == 1 && witnessprogram.size() == 32) {
             if (destinationRet) {
-                *destinationRet = WitnessV1KeyHash(uint160(witnessprogram));
+                *destinationRet = WitnessV1AuthScript(uint256(witnessprogram));
             }
             if (hashBytesRet) {
                 *hashBytesRet = witnessprogram;
             }
             if (prefixSizeRet) {
-                *prefixSizeRet = 22;
+                *prefixSizeRet = 34;
             }
             if (witnessversionRet) {
                 *witnessversionRet = witnessversion;
@@ -166,8 +167,8 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, std::vector<std::v
             vSolutionsRet.push_back(witnessprogram);
             return true;
         }
-        if (witnessversion == 1 && witnessprogram.size() == 20) {
-            typeRet = TX_WITNESS_V1_KEYHASH;
+        if (witnessversion == 1 && witnessprogram.size() == 32) {
+            typeRet = TX_WITNESS_V1_AUTHSCRIPT;
             vSolutionsRet.push_back(witnessprogram);
             return true;
         }
@@ -196,11 +197,11 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, std::vector<std::v
             std::vector<unsigned char> hashBytes(scriptPubKey.begin() + 2, scriptPubKey.begin() + 22);
             vSolutionsRet.push_back(hashBytes);
             vSolutionsRet.push_back({0x00}); // version 0 = legacy
-        } else if (scriptPubKey[1] == OP_1 && scriptPubKey.size() >= 24 && scriptPubKey[2] == 0x14) {
-            // PQ: hash at bytes [3..23)
-            std::vector<unsigned char> hashBytes(scriptPubKey.begin() + 3, scriptPubKey.begin() + 23);
+        } else if (scriptPubKey[1] == OP_1 && scriptPubKey.size() >= 36 && scriptPubKey[2] == 0x20) {
+            // AuthScript: commitment at bytes [3..35)
+            std::vector<unsigned char> hashBytes(scriptPubKey.begin() + 3, scriptPubKey.begin() + 35);
             vSolutionsRet.push_back(hashBytes);
-            vSolutionsRet.push_back({0x01}); // version 1 = PQ
+            vSolutionsRet.push_back({0x01}); // version 1 = AuthScript
         }
         return true;
     }
@@ -322,7 +323,7 @@ bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
     } else if (whichType == TX_RESTRICTED_ASSET_DATA) {
         if (vSolutions.size() >= 2) {
             if (vSolutions[1].size() == 1 && vSolutions[1][0] == 0x01) {
-                addressRet = WitnessV1KeyHash(uint160(vSolutions[0]));
+                addressRet = WitnessV1AuthScript(uint256(vSolutions[0]));
             } else {
                 addressRet = CKeyID(uint160(vSolutions[0]));
             }
@@ -333,8 +334,8 @@ bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
         }
     }
      /** XNA END */
-    else if (whichType == TX_WITNESS_V1_KEYHASH) {
-        addressRet = WitnessV1KeyHash(uint160(vSolutions[0]));
+    else if (whichType == TX_WITNESS_V1_AUTHSCRIPT) {
+        addressRet = WitnessV1AuthScript(uint256(vSolutions[0]));
         return true;
     }
     // Multisig txns have more than one address...
@@ -346,7 +347,7 @@ bool ExtractAssetDestination(const CScript& scriptPubKey, CTxDestination& addres
     return ExtractAssetDestinationData(scriptPubKey, &addressRet, nullptr, nullptr, nullptr, nullptr);
 }
 
-bool GetAssetScriptWitnessProgram(const CScript& scriptPubKey, int& witnessversion, std::vector<unsigned char>& witnessprogram, CScript* witnessScript)
+bool GetAssetScriptWitnessProgram(const CScript& scriptPubKey, int& witnessversion, std::vector<unsigned char>& witnessprogram, std::vector<unsigned char>* assetData)
 {
     int nType = 0;
     bool fIsOwner = false;
@@ -359,17 +360,59 @@ bool GetAssetScriptWitnessProgram(const CScript& scriptPubKey, int& witnessversi
         return false;
     }
 
-    if (witnessversion != 1 || witnessprogram.size() != 20) {
+    if (witnessversion != 1 || witnessprogram.size() != 32) {
         return false;
     }
 
-    if (witnessScript) {
-        witnessScript->clear();
-        *witnessScript << OP_DUP << OP_HASH160 << witnessprogram << OP_EQUALVERIFY << OP_CHECKSIG;
-        witnessScript->insert(witnessScript->end(), scriptPubKey.begin() + prefixSize, scriptPubKey.end());
+    if (assetData) {
+        assetData->assign(scriptPubKey.begin() + prefixSize, scriptPubKey.end());
     }
 
     return true;
+}
+
+bool GetAuthScriptDescriptor(uint8_t authType, const CPubKey* pubkey, std::vector<unsigned char>& authDescriptor)
+{
+    authDescriptor.clear();
+    switch (authType) {
+    case 0x00:
+        authDescriptor.push_back(0x00);
+        return true;
+    case 0x01:
+    case 0x02: {
+        if (pubkey == nullptr || !pubkey->IsValid()) {
+            return false;
+        }
+        authDescriptor.push_back(authType);
+        const uint160 keyHash = Hash160(pubkey->begin(), pubkey->end());
+        authDescriptor.insert(authDescriptor.end(), keyHash.begin(), keyHash.end());
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
+uint256 GetAuthScriptCommitment(uint8_t authType, const CPubKey* pubkey, const CScript& witnessScript)
+{
+    std::vector<unsigned char> authDescriptor;
+    if (!GetAuthScriptDescriptor(authType, pubkey, authDescriptor)) {
+        return uint256();
+    }
+
+    uint256 witnessScriptHash;
+    if (!witnessScript.empty()) {
+        CSHA256().Write(witnessScript.data(), witnessScript.size()).Finalize(witnessScriptHash.begin());
+    } else {
+        CSHA256().Finalize(witnessScriptHash.begin());
+    }
+
+    std::vector<unsigned char> preimage;
+    preimage.reserve(1 + authDescriptor.size() + witnessScriptHash.size());
+    preimage.push_back(0x01);
+    preimage.insert(preimage.end(), authDescriptor.begin(), authDescriptor.end());
+    preimage.insert(preimage.end(), witnessScriptHash.begin(), witnessScriptHash.end());
+    return TaggedHash("NeuraiAuthScript", preimage);
 }
 
 bool GetDestinationIndexKey(const CTxDestination& dest, uint160& hashBytes, int& type)
@@ -384,9 +427,9 @@ bool GetDestinationIndexKey(const CTxDestination& dest, uint160& hashBytes, int&
         type = DEST_INDEX_SCRIPT;
         return true;
     }
-    if (const WitnessV1KeyHash* witnessKeyID = boost::get<WitnessV1KeyHash>(&dest)) {
-        hashBytes = *witnessKeyID;
-        type = DEST_INDEX_WITNESS_V1_KEY;
+    if (const WitnessV1AuthScript* authScript = boost::get<WitnessV1AuthScript>(&dest)) {
+        hashBytes = Hash160(authScript->begin(), authScript->end());
+        type = DEST_INDEX_WITNESS_V1_AUTHSCRIPT;
         return true;
     }
 
@@ -423,8 +466,8 @@ bool GetScriptDestinationIndexKey(const CScript& scriptPubKey, uint160& hashByte
     case TX_SCRIPTHASH:
         destination = CScriptID(uint160(vSolutions[0]));
         break;
-    case TX_WITNESS_V1_KEYHASH:
-        destination = WitnessV1KeyHash(uint160(vSolutions[0]));
+    case TX_WITNESS_V1_AUTHSCRIPT:
+        destination = WitnessV1AuthScript(uint256(vSolutions[0]));
         break;
     case TX_NEW_ASSET:
     case TX_REISSUE_ASSET:
@@ -510,7 +553,7 @@ public:
         return true;
     }
 
-    bool operator()(const WitnessV1KeyHash &id) const {
+    bool operator()(const WitnessV1AuthScript &id) const {
         script->clear();
         *script << OP_1 << ToByteVector(id);
         return true;
@@ -544,7 +587,7 @@ namespace
             return true;
         }
 
-        bool operator()(const WitnessV1KeyHash &id) const {
+        bool operator()(const WitnessV1AuthScript &id) const {
             script->clear();
             *script << OP_XNA_ASSET << OP_1 << ToByteVector(id);
             return true;

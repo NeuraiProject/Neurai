@@ -21,14 +21,14 @@ static unsigned int LocalScriptVerifyFlags()
 {
     unsigned int flags = STANDARD_SCRIPT_VERIFY_FLAGS;
     if (GetParams().GetConsensus().nPQWitnessEnabled) {
-        flags |= SCRIPT_VERIFY_PQ_WITNESS_V1;
+        flags |= SCRIPT_VERIFY_AUTHSCRIPT;
     }
     return flags;
 }
 
 TransactionSignatureCreator::TransactionSignatureCreator(const CKeyStore* keystoreIn, const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, int nHashTypeIn) : BaseSignatureCreator(keystoreIn), txTo(txToIn), nIn(nInIn), nHashType(nHashTypeIn), amount(amountIn), checker(txTo, nIn, amountIn) {}
 
-bool TransactionSignatureCreator::CreateSig(std::vector<unsigned char>& vchSig, const CKeyID& address, const CScript& scriptCode, SigVersion sigversion) const
+bool TransactionSignatureCreator::CreateSig(std::vector<unsigned char>& vchSig, const CKeyID& address, const CScript& scriptCode, SigVersion sigversion, uint8_t authType) const
 {
     CKey key;
     if (!keystore->GetKey(address, key))
@@ -38,17 +38,17 @@ bool TransactionSignatureCreator::CreateSig(std::vector<unsigned char>& vchSig, 
     if (sigversion == SIGVERSION_WITNESS_V0 && !key.IsCompressed() && !key.IsPQ())
         return false;
 
-    uint256 hash = SignatureHash(scriptCode, *txTo, nIn, nHashType, amount, sigversion);
+    uint256 hash = SignatureHash(scriptCode, *txTo, nIn, nHashType, amount, sigversion, nullptr, authType);
     if (!key.Sign(hash, vchSig))
         return false;
     vchSig.push_back((unsigned char)nHashType);
     return true;
 }
 
-static bool Sign1(const CKeyID& address, const BaseSignatureCreator& creator, const CScript& scriptCode, std::vector<valtype>& ret, SigVersion sigversion)
+static bool Sign1(const CKeyID& address, const BaseSignatureCreator& creator, const CScript& scriptCode, std::vector<valtype>& ret, SigVersion sigversion, uint8_t authType = 0x00)
 {
     std::vector<unsigned char> vchSig;
-    if (!creator.CreateSig(vchSig, address, scriptCode, sigversion))
+    if (!creator.CreateSig(vchSig, address, scriptCode, sigversion, authType))
         return false;
     ret.push_back(vchSig);
     return true;
@@ -158,7 +158,7 @@ static bool SignStep(const BaseSignatureCreator& creator, const CScript& scriptP
         ret.push_back(vSolutions[0]);
         return true;
 
-    case TX_WITNESS_V1_KEYHASH:
+    case TX_WITNESS_V1_AUTHSCRIPT:
         ret.push_back(vSolutions[0]);
         return true;
 
@@ -194,23 +194,38 @@ bool ProduceSignature(const BaseSignatureCreator& creator, const CScript& fromPu
 {
     int assetWitnessVersion = 0;
     std::vector<unsigned char> assetWitnessProgram;
-    CScript assetWitnessScript;
-    if (GetAssetScriptWitnessProgram(fromPubKey, assetWitnessVersion, assetWitnessProgram, &assetWitnessScript)) {
-        CKeyID keyID{uint160(assetWitnessProgram)};
-        CPubKey pubkey;
-        if (!creator.KeyStore().GetPubKey(keyID, pubkey) || !pubkey.IsPQ()) {
-            return false;
-        }
-
-        std::vector<unsigned char> vchSig;
-        if (!creator.CreateSig(vchSig, keyID, assetWitnessScript, SIGVERSION_WITNESS_V0)) {
+    std::vector<unsigned char> assetData;
+    if (GetAssetScriptWitnessProgram(fromPubKey, assetWitnessVersion, assetWitnessProgram, &assetData)) {
+        uint256 commitment(assetWitnessProgram);
+        AuthScriptSpendData spendData;
+        if (!creator.KeyStore().GetAuthScriptSpendData(commitment, spendData)) {
             return false;
         }
 
         sigdata.scriptSig = CScript();
         sigdata.scriptWitness.stack.clear();
-        sigdata.scriptWitness.stack.push_back(vchSig);
-        sigdata.scriptWitness.stack.push_back(ToByteVector(pubkey));
+        switch (spendData.auth_type) {
+        case 0x01:
+        case 0x02: {
+            std::vector<unsigned char> vchSig;
+            if (!creator.CreateSig(vchSig, spendData.key_id, spendData.witnessScript, SIGVERSION_AUTHSCRIPT, spendData.auth_type)) {
+                return false;
+            }
+            sigdata.scriptWitness.stack.push_back({spendData.auth_type});
+            sigdata.scriptWitness.stack.push_back(vchSig);
+            sigdata.scriptWitness.stack.push_back(ToByteVector(spendData.pubkey));
+            break;
+        }
+        case 0x00:
+            sigdata.scriptWitness.stack.push_back({0x00});
+            break;
+        default:
+            return false;
+        }
+        for (const valtype& arg : spendData.functional_args) {
+            sigdata.scriptWitness.stack.push_back(arg);
+        }
+        sigdata.scriptWitness.stack.push_back(std::vector<unsigned char>(spendData.witnessScript.begin(), spendData.witnessScript.end()));
         return VerifyScript(sigdata.scriptSig, fromPubKey, &sigdata.scriptWitness, LocalScriptVerifyFlags(), creator.Checker());
     }
 
@@ -241,24 +256,39 @@ bool ProduceSignature(const BaseSignatureCreator& creator, const CScript& fromPu
         sigdata.scriptWitness.stack = result;
         result.clear();
     }
-    else if (solved && whichType == TX_WITNESS_V1_KEYHASH)
+    else if (solved && whichType == TX_WITNESS_V1_AUTHSCRIPT)
     {
-        // PQ witness v1: result[0] is the 20-byte witness program (Hash160 of pq pubkey)
-        CKeyID keyID{uint160(result[0])};
-        CPubKey pubkey;
-        if (!creator.KeyStore().GetPubKey(keyID, pubkey) || !pubkey.IsPQ()) {
+        uint256 commitment(result[0]);
+        AuthScriptSpendData spendData;
+        if (!creator.KeyStore().GetAuthScriptSpendData(commitment, spendData)) {
             solved = false;
         } else {
-            // scriptCode matches what VerifyWitnessProgram uses for sighash
-            CScript witnessscript;
-            witnessscript << OP_DUP << OP_HASH160 << ToByteVector(result[0]) << OP_EQUALVERIFY << OP_CHECKSIG;
-            std::vector<unsigned char> vchSig;
-            solved = creator.CreateSig(vchSig, keyID, witnessscript, SIGVERSION_WITNESS_V0);
+            sigdata.scriptWitness.stack.clear();
+            switch (spendData.auth_type) {
+            case 0x01:
+            case 0x02: {
+                std::vector<unsigned char> vchSig;
+                solved = creator.CreateSig(vchSig, spendData.key_id, spendData.witnessScript, SIGVERSION_AUTHSCRIPT, spendData.auth_type);
+                if (solved) {
+                    sigdata.scriptWitness.stack.push_back({spendData.auth_type});
+                    sigdata.scriptWitness.stack.push_back(vchSig);
+                    sigdata.scriptWitness.stack.push_back(ToByteVector(spendData.pubkey));
+                }
+                break;
+            }
+            case 0x00:
+                solved = true;
+                sigdata.scriptWitness.stack.push_back({0x00});
+                break;
+            default:
+                solved = false;
+                break;
+            }
             if (solved) {
-                // witness stack: [sig_with_hashtype, serialized_pq_pubkey]
-                sigdata.scriptWitness.stack.clear();
-                sigdata.scriptWitness.stack.push_back(vchSig);
-                sigdata.scriptWitness.stack.push_back(ToByteVector(pubkey));
+                for (const valtype& arg : spendData.functional_args) {
+                    sigdata.scriptWitness.stack.push_back(arg);
+                }
+                sigdata.scriptWitness.stack.push_back(std::vector<unsigned char>(spendData.witnessScript.begin(), spendData.witnessScript.end()));
             }
         }
         result.clear();
@@ -430,6 +460,10 @@ static Stacks CombineSignatures(const CScript& scriptPubKey, const BaseSignature
         if (sigs1.witness.empty() || sigs1.witness[0].empty())
             return sigs2;
         return sigs1;
+    case TX_WITNESS_V1_AUTHSCRIPT:
+        if (sigs1.witness.empty() || sigs1.witness.back().empty())
+            return sigs2;
+        return sigs1;
     case TX_SCRIPTHASH:
         if (sigs1.script.empty() || sigs1.script.back().empty())
             return sigs2;
@@ -526,7 +560,7 @@ class DummySignatureChecker : public BaseSignatureChecker
 public:
     DummySignatureChecker() {}
 
-    bool CheckSig(const std::vector<unsigned char>& scriptSig, const std::vector<unsigned char>& vchPubKey, const CScript& scriptCode, SigVersion sigversion) const override
+    bool CheckSig(const std::vector<unsigned char>& scriptSig, const std::vector<unsigned char>& vchPubKey, const CScript& scriptCode, SigVersion sigversion, uint8_t authType = 0x00) const override
     {
         return true;
     }
@@ -539,7 +573,7 @@ const BaseSignatureChecker& DummySignatureCreator::Checker() const
     return dummyChecker;
 }
 
-bool DummySignatureCreator::CreateSig(std::vector<unsigned char>& vchSig, const CKeyID& keyid, const CScript& scriptCode, SigVersion sigversion) const
+bool DummySignatureCreator::CreateSig(std::vector<unsigned char>& vchSig, const CKeyID& keyid, const CScript& scriptCode, SigVersion sigversion, uint8_t authType) const
 {
     CPubKey pubkey;
     if (KeyStore().GetPubKey(keyid, pubkey) && pubkey.IsPQ()) {
