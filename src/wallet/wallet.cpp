@@ -131,6 +131,8 @@ public:
     }
 
     void operator()(const CNoDestination &none) {}
+
+    void operator()(const WitnessV1AuthScript &authscript) {}
 };
 
 const CWalletTx* CWallet::GetWalletTx(const uint256& hash) const

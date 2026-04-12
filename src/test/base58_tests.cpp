@@ -104,6 +104,11 @@ BOOST_FIXTURE_TEST_SUITE(base58_tests, BasicTestingSetup)
         {
             return (exp_addrType == "none");
         }
+
+        bool operator()(const WitnessV1AuthScript &id) const
+        {
+            return (exp_addrType == "authscript");
+        }
     };
 
     // Visitor to check address payload
@@ -130,6 +135,11 @@ BOOST_FIXTURE_TEST_SUITE(base58_tests, BasicTestingSetup)
         bool operator()(const CNoDestination &no) const
         {
             return exp_payload.size() == 0;
+        }
+
+        bool operator()(const WitnessV1AuthScript &id) const
+        {
+            return uint256(exp_payload) == id;
         }
     };
 
