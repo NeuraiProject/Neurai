@@ -4606,7 +4606,16 @@ void CWallet::GetScriptForMining(std::shared_ptr<CReserveScript> &script)
     }
 
     script = rKey;
-    script->reserveScript = CScript() << ToByteVector(pubkey) << OP_CHECKSIG;
+    if (pubkey.IsPQ()) {
+        CTxDestination dest;
+        if (!GetDefaultAuthScriptDestination(pubkey, dest)) {
+            script.reset();
+            return;
+        }
+        script->reserveScript = GetScriptForDestination(dest);
+    } else {
+        script->reserveScript = CScript() << ToByteVector(pubkey) << OP_CHECKSIG;
+    }
 }
 
 void CWallet::LockCoin(const COutPoint& output)
