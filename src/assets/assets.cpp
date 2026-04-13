@@ -951,28 +951,17 @@ bool AssetNullDataFromScript(const CScript& scriptPubKey, CNullAssetTxData& asse
 
     strAddress = EncodeDestination(destination);
 
+    int dataOffset = -1;
+    if (scriptPubKey.size() > 23 && scriptPubKey[0] == OP_XNA_ASSET && scriptPubKey[1] == 0x14) {
+        dataOffset = 23; // OP_XNA_ASSET + push20 + 20-byte hash + pushdata opcode
+    } else if (scriptPubKey.size() > 36 && scriptPubKey[0] == OP_XNA_ASSET && scriptPubKey[1] == OP_1 && scriptPubKey[2] == 0x20) {
+        dataOffset = 36; // OP_XNA_ASSET + OP_1 + push32 + 32-byte commitment + pushdata opcode
+    } else {
+        return false;
+    }
+
     std::vector<unsigned char> vchAssetData;
-    CScript::const_iterator pc = scriptPubKey.begin();
-    opcodetype opcode;
-    std::vector<unsigned char> vchDestination;
-
-    if (!scriptPubKey.GetOp(pc, opcode) || opcode != OP_XNA_ASSET) {
-        return false;
-    }
-
-    if (!scriptPubKey.GetOp(pc, opcode, vchDestination)) {
-        return false;
-    }
-
-    if (opcode == OP_1) {
-        if (!scriptPubKey.GetOp(pc, opcode, vchDestination)) {
-            return false;
-        }
-    }
-
-    if (!scriptPubKey.GetOp(pc, opcode, vchAssetData)) {
-        return false;
-    }
+    vchAssetData.insert(vchAssetData.end(), scriptPubKey.begin() + dataOffset, scriptPubKey.end());
 
     CDataStream ssData(vchAssetData, SER_NETWORK, PROTOCOL_VERSION);
 
