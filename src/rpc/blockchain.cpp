@@ -158,7 +158,7 @@ UniValue blockToDeltasJSON(const CBlock& block, const CBlockIndex* blockindex)
                         // Reconstruct AuthScript address from the previous output's scriptPubKey
                         CTransactionRef prevTx;
                         uint256 prevHashBlock;
-                        if (GetTransaction(input.prevout.hash, prevTx, Params().GetConsensus(), prevHashBlock, true) &&
+                        if (GetTransaction(input.prevout.hash, prevTx, GetParams().GetConsensus(), prevHashBlock, true) &&
                             input.prevout.n < prevTx->vout.size()) {
                             CTxDestination prevDest;
                             if (ExtractDestination(prevTx->vout[input.prevout.n].scriptPubKey, prevDest)) {
