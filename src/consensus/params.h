@@ -102,6 +102,9 @@ struct Params {
     /** Enable OP_REVERSEBYTES - reverse the top stack item in place.
      *  true on testnet/regtest; false on mainnet until future activation. */
     bool nREVERSEBYTESEnabled;
+    /** Enable OP_OUTPUTVALUE - push the amount of a selected output as raw
+     *  8-byte little-endian data. true on testnet/regtest; false on mainnet. */
+    bool nOUTPUTVALUEEnabled;
 };
 } // namespace Consensus
 

@@ -154,6 +154,11 @@ enum
     // upgradable opcode.
     //
             SCRIPT_VERIFY_REVERSEBYTES = (1U << 23),
+
+    // Enable OP_OUTPUTVALUE - push the amount of a selected output as raw
+    // 8-byte little-endian data.
+    //
+            SCRIPT_VERIFY_OUTPUTVALUE = (1U << 24),
 };
 
 bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, unsigned int flags, ScriptError *serror);
@@ -229,6 +234,11 @@ public:
         return false;
     }
 
+    virtual bool GetOutputValue(unsigned int nOut, std::vector<unsigned char>& result) const
+    {
+        return false;
+    }
+
     virtual ~BaseSignatureChecker() {}
 };
 
@@ -274,6 +284,8 @@ public:
     bool GetTxFieldHash(unsigned char fieldSelector, std::vector<unsigned char>& result) const override;
 
     bool GetTxField(unsigned char selector, std::vector<unsigned char>& result) const override;
+
+    bool GetOutputValue(unsigned int nOut, std::vector<unsigned char>& result) const override;
 
     uint256 GetSigHash(const CScript& scriptCode, int nHashType, SigVersion sigversion, uint8_t authType = 0x00) const override;
 };

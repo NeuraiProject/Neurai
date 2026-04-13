@@ -120,6 +120,7 @@ public:
         consensus.nTXFIELDEnabled = false; // OP_TXFIELD (NOP7) not yet active on mainnet
         consensus.nSPLITEnabled = false;   // OP_SPLIT (NOP8) not yet active on mainnet
         consensus.nREVERSEBYTESEnabled = false; // OP_REVERSEBYTES not yet active on mainnet
+        consensus.nOUTPUTVALUEEnabled = false; // OP_OUTPUTVALUE not yet active on mainnet
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days
@@ -309,6 +310,7 @@ public:
         consensus.nTXFIELDEnabled = true; // OP_TXFIELD (NOP7) active on testnet
         consensus.nSPLITEnabled = true;   // OP_SPLIT (NOP8) active on testnet
         consensus.nREVERSEBYTESEnabled = true; // OP_REVERSEBYTES active on testnet
+        consensus.nOUTPUTVALUEEnabled = true; // OP_OUTPUTVALUE active on testnet
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days
@@ -499,6 +501,7 @@ public:
         consensus.nTXFIELDEnabled = true; // OP_TXFIELD (NOP7) active on regtest
         consensus.nSPLITEnabled = true;   // OP_SPLIT (NOP8) active on regtest
         consensus.nREVERSEBYTESEnabled = true; // OP_REVERSEBYTES active on regtest
+        consensus.nOUTPUTVALUEEnabled = true; // OP_OUTPUTVALUE active on regtest
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days

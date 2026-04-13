@@ -143,6 +143,7 @@ const char* GetOpName(opcodetype opcode)
     case OP_NOP9                   : return "OP_NOP9";
     case OP_NOP10                  : return "OP_NOP10";
     case OP_REVERSEBYTES           : return "OP_REVERSEBYTES";
+    case OP_OUTPUTVALUE            : return "OP_OUTPUTVALUE";
 
     /** XNA START */
     case OP_XNA_ASSET              : return "OP_XNA_ASSET";

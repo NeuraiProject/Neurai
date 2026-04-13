@@ -711,6 +711,31 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                     }
                         break;
 
+                    case OP_OUTPUTVALUE:
+                    {
+                        if (!(flags & SCRIPT_VERIFY_OUTPUTVALUE))
+                        {
+                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
+                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+                            break;
+                        }
+
+                        if (stack.size() < 1)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+                        const int nOut = CScriptNum(stacktop(-1), fRequireMinimal).getint();
+                        if (nOut < 0)
+                            return set_error(serror, SCRIPT_ERR_OUTPUTVALUE);
+
+                        valtype vchValue;
+                        if (!checker.GetOutputValue((unsigned int)nOut, vchValue))
+                            return set_error(serror, SCRIPT_ERR_OUTPUTVALUE);
+
+                        popstack(stack);
+                        stack.push_back(vchValue);
+                    }
+                        break;
+
                     // NOP1, NOP9, NOP10 remain as generic upgradable NOPs.
                     // NOP7 (OP_TXFIELD) and NOP8 (OP_SPLIT) have their own cases above.
                     case OP_NOP1:
@@ -2091,6 +2116,20 @@ bool TransactionSignatureChecker::GetTxField(unsigned char selector,
     default:
         return false;
     }
+}
+
+bool TransactionSignatureChecker::GetOutputValue(unsigned int nOut,
+                                                 std::vector<unsigned char>& result) const
+{
+    if (!txTo)
+        return false;
+    if (nOut >= txTo->vout.size())
+        return false;
+
+    const int64_t nValue = (int64_t)txTo->vout[nOut].nValue;
+    result.resize(8);
+    memcpy(result.data(), &nValue, 8);
+    return true;
 }
 
 static bool VerifyAuthScriptCore(const CScriptWitness& witness, const std::vector<unsigned char>& program, unsigned int flags, const BaseSignatureChecker& checker, ScriptError* serror)
