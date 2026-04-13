@@ -70,7 +70,7 @@ void TxToJSON(const CTransaction& tx, const uint256 hashBlock, UniValue& entry, 
                         // Reconstruct AuthScript address from the previous output's scriptPubKey
                         CTransactionRef prevTx;
                         uint256 prevHashBlock;
-                        if (GetTransaction(txin.prevout.hash, prevTx, Params().GetConsensus(), prevHashBlock, true) &&
+                        if (GetTransaction(txin.prevout.hash, prevTx, GetParams().GetConsensus(), prevHashBlock, true) &&
                             txin.prevout.n < prevTx->vout.size()) {
                             CTxDestination prevDest;
                             if (ExtractDestination(prevTx->vout[txin.prevout.n].scriptPubKey, prevDest)) {
