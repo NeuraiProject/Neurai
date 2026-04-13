@@ -249,9 +249,13 @@ void MnemonicDialog3::on_acceptButton_clicked()
          
         my_words.clear();
         my_passphrase.clear();
+        my_pq = false;
         return;
     }
 
+#if !TEST
+    my_pq = MnemonicDialog3::ui->pqWalletCheckBox->isChecked();
+#endif
+
     Q_EMIT allCloseRequested();
 };
-

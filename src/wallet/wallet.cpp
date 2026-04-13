@@ -132,7 +132,13 @@ public:
 
     void operator()(const CNoDestination &none) {}
 
-    void operator()(const WitnessV1AuthScript &authscript) {}
+    void operator()(const WitnessV1AuthScript &authscript) {
+        AuthScriptSpendData spendData;
+        if (keystore.GetAuthScriptSpendData(uint256(authscript), spendData) &&
+            keystore.HaveKey(spendData.key_id)) {
+            vKeys.push_back(spendData.key_id);
+        }
+    }
 };
 
 const CWalletTx* CWallet::GetWalletTx(const uint256& hash) const
@@ -198,6 +204,10 @@ CPubKey CWallet::GenerateNewKeyPQ(CWalletDB& walletdb, bool internal)
 
     if (!AddKeyPubKeyWithDB(walletdb, secret, pubkey))
         throw std::runtime_error(std::string(__func__) + ": AddKey failed");
+
+    CTxDestination pqDest;
+    if (!GetDefaultAuthScriptDestination(pubkey, pqDest, true))
+        throw std::runtime_error(std::string(__func__) + ": AddAuthScriptSpendData failed");
 
     return pubkey;
 }
