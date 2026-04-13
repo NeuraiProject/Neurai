@@ -2487,6 +2487,11 @@ static unsigned int GetBlockScriptFlags(const CBlockIndex* pindex, const Consens
         flags |= SCRIPT_VERIFY_SPLIT;
     }
 
+    // OP_REVERSEBYTES
+    if (consensusparams.nREVERSEBYTESEnabled) {
+        flags |= SCRIPT_VERIFY_REVERSEBYTES;
+    }
+
     return flags;
 }
 

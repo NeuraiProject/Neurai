@@ -99,6 +99,9 @@ struct Params {
     /** Enable OP_SPLIT (NOP8) - split a byte array into two parts at a given position.
      *  Inverse of OP_CAT. true on testnet/regtest; false on mainnet until future activation. */
     bool nSPLITEnabled;
+    /** Enable OP_REVERSEBYTES - reverse the top stack item in place.
+     *  true on testnet/regtest; false on mainnet until future activation. */
+    bool nREVERSEBYTESEnabled;
 };
 } // namespace Consensus
 

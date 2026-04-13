@@ -16,6 +16,9 @@
 #include "uint256.h"
 #include "serialize.h"
 #include "streams.h"
+
+#include <algorithm>
+
 typedef std::vector<unsigned char> valtype;
 
 namespace
@@ -688,6 +691,23 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         popstack(stack);
                         stack.push_back(vchLeft);
                         stack.push_back(vchRight);
+                    }
+                        break;
+
+                    case OP_REVERSEBYTES:
+                    {
+                        if (!(flags & SCRIPT_VERIFY_REVERSEBYTES))
+                        {
+                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
+                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+                            break;
+                        }
+
+                        if (stack.size() < 1)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+                        valtype& vch = stacktop(-1);
+                        std::reverse(vch.begin(), vch.end());
                     }
                         break;
 

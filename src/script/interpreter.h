@@ -148,6 +148,12 @@ enum
     // Inverse of OP_CAT (BIP 347).
     //
             SCRIPT_VERIFY_SPLIT = (1U << 22),
+
+    // Enable OP_REVERSEBYTES - reverse the top stack element in place.
+    // When set, OP_REVERSEBYTES is executed instead of being treated as an
+    // upgradable opcode.
+    //
+            SCRIPT_VERIFY_REVERSEBYTES = (1U << 23),
 };
 
 bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, unsigned int flags, ScriptError *serror);
