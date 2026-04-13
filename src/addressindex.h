@@ -26,7 +26,7 @@ struct CAddressUnspentKey {
     template<typename Stream>
     void Serialize(Stream& s) const {
         ser_writedata8(s, type);
-        hashBytes.Serialize(s);
+        ::Serialize(s, hashBytes);
         ::Serialize(s, asset);
         txhash.Serialize(s);
         ser_writedata32(s, index);
@@ -34,7 +34,7 @@ struct CAddressUnspentKey {
     template<typename Stream>
     void Unserialize(Stream& s) {
         type = ser_readdata8(s);
-        hashBytes.Unserialize(s);
+        ::Unserialize(s, hashBytes);
         ::Unserialize(s, asset);
         txhash.Unserialize(s);
         index = ser_readdata32(s);
@@ -120,7 +120,7 @@ struct CAddressIndexKey {
     template<typename Stream>
     void Serialize(Stream& s) const {
         ser_writedata8(s, type);
-        hashBytes.Serialize(s);
+        ::Serialize(s, hashBytes);
         ::Serialize(s, asset);
         // Heights are stored big-endian for key sorting in LevelDB
         ser_writedata32be(s, blockHeight);
@@ -133,7 +133,7 @@ struct CAddressIndexKey {
     template<typename Stream>
     void Unserialize(Stream& s) {
         type = ser_readdata8(s);
-        hashBytes.Unserialize(s);
+        ::Unserialize(s, hashBytes);
         ::Unserialize(s, asset);
         blockHeight = ser_readdata32be(s);
         txindex = ser_readdata32be(s);
@@ -194,12 +194,12 @@ struct CAddressIndexIteratorKey {
     template<typename Stream>
     void Serialize(Stream& s) const {
         ser_writedata8(s, type);
-        hashBytes.Serialize(s);
+        ::Serialize(s, hashBytes);
     }
     template<typename Stream>
     void Unserialize(Stream& s) {
         type = ser_readdata8(s);
-        hashBytes.Unserialize(s);
+        ::Unserialize(s, hashBytes);
     }
 
     explicit CAddressIndexIteratorKey(const CDestinationIndexData& destination) {
@@ -228,13 +228,13 @@ struct CAddressIndexIteratorAssetKey {
     template<typename Stream>
     void Serialize(Stream& s) const {
         ser_writedata8(s, type);
-        hashBytes.Serialize(s);
+        ::Serialize(s, hashBytes);
         ::Serialize(s, asset);
     }
     template<typename Stream>
     void Unserialize(Stream& s) {
         type = ser_readdata8(s);
-        hashBytes.Unserialize(s);
+        ::Unserialize(s, hashBytes);
         ::Unserialize(s, asset);
     }
 
@@ -273,14 +273,14 @@ struct CAddressIndexIteratorHeightKey {
     template<typename Stream>
     void Serialize(Stream& s) const {
         ser_writedata8(s, type);
-        hashBytes.Serialize(s);
+        ::Serialize(s, hashBytes);
         ::Serialize(s, asset);
         ser_writedata32be(s, blockHeight);
     }
     template<typename Stream>
     void Unserialize(Stream& s) {
         type = ser_readdata8(s);
-        hashBytes.Unserialize(s);
+        ::Unserialize(s, hashBytes);
         ::Unserialize(s, asset);
         blockHeight = ser_readdata32be(s);
     }
