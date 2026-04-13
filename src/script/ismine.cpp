@@ -162,56 +162,46 @@ isminetype IsMine(const CKeyStore &keystore, const CScript& scriptPubKey, bool& 
                 return ISMINE_SPENDABLE;
             break;
         }
-            /** XNA START */
-        case TX_NEW_ASSET: {
-            if (!AreAssetsDeployed())
-                return ISMINE_NO;
-            keyID = CKeyID(uint160(vSolutions[0]));
-            if (sigversion != SIGVERSION_BASE) {
-                CPubKey pubkey;
-                if (keystore.GetPubKey(keyID, pubkey) && !pubkey.IsCompressed()) {
-                    isInvalid = true;
-                    return ISMINE_NO;
-                }
-            }
-            if (keystore.HaveKey(keyID))
-                return ISMINE_SPENDABLE;
-            break;
-
-        }
-
-        case TX_TRANSFER_ASSET: {
-            if (!AreAssetsDeployed())
-                return ISMINE_NO;
-            keyID = CKeyID(uint160(vSolutions[0]));
-            if (sigversion != SIGVERSION_BASE) {
-                CPubKey pubkey;
-                if (keystore.GetPubKey(keyID, pubkey) && !pubkey.IsCompressed()) {
-                    isInvalid = true;
-                    return ISMINE_NO;
-                }
-            }
-            if (keystore.HaveKey(keyID))
-                return ISMINE_SPENDABLE;
-            break;
-        }
-
+        /** XNA START */
+        case TX_NEW_ASSET:
+        case TX_TRANSFER_ASSET:
         case TX_REISSUE_ASSET: {
             if (!AreAssetsDeployed())
                 return ISMINE_NO;
-            keyID = CKeyID(uint160(vSolutions[0]));
-            if (sigversion != SIGVERSION_BASE) {
-                CPubKey pubkey;
-                if (keystore.GetPubKey(keyID, pubkey) && !pubkey.IsCompressed()) {
-                    isInvalid = true;
-                    return ISMINE_NO;
+
+            CTxDestination assetDestination;
+            if (!ExtractAssetDestination(scriptPubKey, assetDestination))
+                break;
+
+            if (const CKeyID* assetKeyID = boost::get<CKeyID>(&assetDestination)) {
+                keyID = *assetKeyID;
+                if (sigversion != SIGVERSION_BASE) {
+                    CPubKey pubkey;
+                    if (keystore.GetPubKey(keyID, pubkey) && !pubkey.IsCompressed()) {
+                        isInvalid = true;
+                        return ISMINE_NO;
+                    }
+                }
+                if (keystore.HaveKey(keyID))
+                    return ISMINE_SPENDABLE;
+                break;
+            }
+
+            if (const WitnessV1AuthScript* authScript = boost::get<WitnessV1AuthScript>(&assetDestination)) {
+                AuthScriptSpendData spendData;
+                const uint256 commitment(*authScript);
+                if (!keystore.GetAuthScriptSpendData(commitment, spendData))
+                    break;
+                if (spendData.auth_type == 0x00)
+                    return ISMINE_SPENDABLE;
+                if ((spendData.auth_type == 0x01 || spendData.auth_type == 0x02) &&
+                    keystore.HaveKey(spendData.key_id)) {
+                    return ISMINE_SPENDABLE;
                 }
             }
-            if (keystore.HaveKey(keyID))
-                return ISMINE_SPENDABLE;
             break;
         }
-            /** XNA END*/
+        /** XNA END */
     }
 
     if (keystore.HaveWatchOnly(scriptPubKey)) {

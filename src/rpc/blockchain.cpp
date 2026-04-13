@@ -112,6 +112,15 @@ UniValue blockheaderToJSON(const CBlockIndex* blockindex)
 
 UniValue blockToDeltasJSON(const CBlock& block, const CBlockIndex* blockindex)
 {
+    auto addExtractedAddress = [](const CScript& scriptPubKey, UniValue& delta) {
+        CTxDestination dest;
+        if (!ExtractDestination(scriptPubKey, dest)) {
+            return false;
+        }
+        delta.push_back(Pair("address", EncodeDestination(dest)));
+        return true;
+    };
+
     UniValue result(UniValue::VOBJ);
     result.push_back(Pair("hash", block.GetHash().GetHex()));
     int confirmations = -1;
@@ -190,22 +199,8 @@ UniValue blockToDeltasJSON(const CBlock& block, const CBlockIndex* blockindex)
 
             UniValue delta(UniValue::VOBJ);
 
-            if (out.scriptPubKey.IsPayToScriptHash()) {
-                std::vector<unsigned char> hashBytes(out.scriptPubKey.begin()+2, out.scriptPubKey.begin()+22);
-                delta.push_back(Pair("address", CNeuraiAddress(CScriptID(uint160(hashBytes))).ToString()));
-
-            } else if (out.scriptPubKey.IsPayToPublicKeyHash()) {
-                std::vector<unsigned char> hashBytes(out.scriptPubKey.begin()+3, out.scriptPubKey.begin()+23);
-                delta.push_back(Pair("address", CNeuraiAddress(CKeyID(uint160(hashBytes))).ToString()));
-            } else {
-                int witnessversion;
-                std::vector<unsigned char> witnessprogram;
-                if (out.scriptPubKey.IsWitnessProgram(witnessversion, witnessprogram) &&
-                    witnessversion == 1 && witnessprogram.size() == 32) {
-                    delta.push_back(Pair("address", EncodeDestination(WitnessV1AuthScript(uint256(witnessprogram)))));
-                } else {
-                    continue;
-                }
+            if (!addExtractedAddress(out.scriptPubKey, delta)) {
+                continue;
             }
 
             delta.push_back(Pair("satoshis", out.nValue));
