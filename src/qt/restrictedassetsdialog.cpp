@@ -406,14 +406,14 @@ void RestrictedAssetsDialog::createDepinTab()
     depinAddressLabel->setStyleSheet(STRING_LABEL_COLOR);
     depinAddressLabel->setFont(GUIUtil::getTopLabelFont());
     depinAddressEdit = new QValidatedLineEdit(depinTab);
-    depinAddressEdit->setMaxLength(50);
+    depinAddressEdit->setMaxLength(128);
     formLayout->addRow(depinAddressLabel, depinAddressEdit);
 
     depinChangeAddressCheckBox = new QCheckBox(tr("Custom Change Address"), depinTab);
     depinChangeAddressCheckBox->setStyleSheet(QString(".QCheckBox{ %1; }").arg(STRING_LABEL_COLOR));
     depinChangeAddressEdit = new QLineEdit(depinTab);
     depinChangeAddressEdit->setEnabled(false);
-    depinChangeAddressEdit->setMaxLength(50);
+    depinChangeAddressEdit->setMaxLength(128);
     depinChangeAddressEdit->hide();
     formLayout->addRow(depinChangeAddressCheckBox, depinChangeAddressEdit);
 
@@ -2031,8 +2031,8 @@ void RestrictedAssetsDialog::depinCheck()
     const bool fFreezeAddress = depinFreezeAddressRadio->isChecked();
     const bool fUnfreezeAddress = depinUnfreezeAddressRadio->isChecked();
     const bool fSelfRevoke = depinSelfRevokeRadio->isChecked();
-    const QString address = depinAddressEdit->text();
-    const QString changeAddress = depinChangeAddressCheckBox->isChecked() ? depinChangeAddressEdit->text() : "";
+    const QString address = depinAddressEdit->text().trimmed();
+    const QString changeAddress = depinChangeAddressCheckBox->isChecked() ? depinChangeAddressEdit->text().trimmed() : "";
 
     bool failed = false;
     if (!IsAssetNameADEPIN(assetName.toStdString())) {
@@ -2041,8 +2041,7 @@ void RestrictedAssetsDialog::depinCheck()
     }
 
     if (depinChangeAddressCheckBox->isChecked() && !changeAddress.isEmpty()) {
-        CTxDestination changeDest = DecodeDestination(changeAddress.toStdString());
-        if (!IsValidDestination(changeDest)) {
+        if (!IsValidDestinationString(changeAddress.toStdString())) {
             depinChangeAddressEdit->setStyleSheet(STYLE_INVALID);
             failed = true;
         }
@@ -2078,8 +2077,7 @@ void RestrictedAssetsDialog::depinCheck()
         return;
     }
 
-    CTxDestination dest = DecodeDestination(address.toStdString());
-    if (!IsValidDestination(dest)) {
+    if (!IsValidDestinationString(address.toStdString())) {
         depinAddressEdit->setStyleSheet(STYLE_INVALID);
         failed = true;
     }
@@ -2315,8 +2313,8 @@ void RestrictedAssetsDialog::depinClicked()
     const bool fFreezeAddress = depinFreezeAddressRadio->isChecked();
     const bool fUnfreezeAddress = depinUnfreezeAddressRadio->isChecked();
     const bool fSelfRevoke = depinSelfRevokeRadio->isChecked();
-    std::string address = depinAddressEdit->text().toStdString();
-    std::string change_address = depinChangeAddressCheckBox->isChecked() ? depinChangeAddressEdit->text().toStdString() : "";
+    std::string address = depinAddressEdit->text().trimmed().toStdString();
+    std::string change_address = depinChangeAddressCheckBox->isChecked() ? depinChangeAddressEdit->text().trimmed().toStdString() : "";
 
     CReserveKey reservekey(model->getWallet());
     CWalletTx transaction;

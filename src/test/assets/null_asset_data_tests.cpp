@@ -104,3 +104,116 @@ BOOST_FIXTURE_TEST_SUITE(null_asset_data_tests, BasicTestingSetup)
 
 
 BOOST_AUTO_TEST_SUITE_END()
+
+namespace {
+CTxDestination MakePQDestination()
+{
+    CKey key;
+    key.MakeNewKeyPQ();
+    CPubKey pubkey = key.GetPubKey();
+
+    CScript witnessScript;
+    witnessScript << OP_TRUE;
+    return WitnessV1AuthScript(GetAuthScriptCommitment(0x01, &pubkey, witnessScript));
+}
+}
+
+BOOST_FIXTURE_TEST_SUITE(null_asset_data_contextual_tests, TestingSetup)
+
+    BOOST_AUTO_TEST_CASE(depin_owner_freeze_to_pq_contextual_check_test)
+    {
+        BOOST_TEST_MESSAGE("Running DEPIN owner freeze contextual check on PQ destination");
+
+        SelectParams(CBaseChainParams::TESTNET);
+
+        const std::string assetName = "&DEVICE";
+        const CTxDestination targetDest = MakePQDestination();
+        const std::string targetAddress = EncodeDestination(targetDest);
+        const CTxDestination ownerChangeDest = DecodeDestination(GetParams().GlobalBurnAddress());
+
+        CNullAssetTxData nullData(assetName, (int)RestrictedType::FREEZE_ADDRESS);
+        CScript nullDataScript = GetScriptForNullAssetDataDestination(targetDest);
+        nullData.ConstructTransaction(nullDataScript);
+
+        CAssetTransfer ownerTransfer(assetName + OWNER_TAG, OWNER_ASSET_AMOUNT);
+        CScript ownerTransferScript = GetScriptForDestination(ownerChangeDest);
+        ownerTransfer.ConstructTransaction(ownerTransferScript);
+
+        CMutableTransaction muttx;
+        muttx.vout.emplace_back(0, ownerTransferScript);
+        muttx.vout.emplace_back(0, nullDataScript);
+        const CTransaction tx(muttx);
+
+        CAssetsCache cache;
+        const std::string ownerChangeAddress = EncodeDestination(ownerChangeDest);
+        cache.mapAssetsAddressAmount[std::make_pair(assetName + OWNER_TAG, ownerChangeAddress)] = OWNER_ASSET_AMOUNT;
+
+        std::string error;
+        BOOST_CHECK_MESSAGE(ContextualCheckNullAssetTxOut(tx.vout[1], &tx, &cache, error),
+                            "DEPIN owner freeze PQ contextual check failed: " + error);
+        BOOST_CHECK(error.empty());
+        BOOST_CHECK_EQUAL(TxContainsDEPINOwnerTokenTransfer(tx, assetName), true);
+        BOOST_CHECK_EQUAL(TxContainsAssetTransferToAddress(tx, assetName + OWNER_TAG, targetAddress), false);
+    }
+
+    BOOST_AUTO_TEST_CASE(depin_owner_unfreeze_to_pq_contextual_check_test)
+    {
+        BOOST_TEST_MESSAGE("Running DEPIN owner unfreeze contextual check on PQ destination");
+
+        SelectParams(CBaseChainParams::TESTNET);
+
+        const std::string assetName = "&DEVICE";
+        const CTxDestination targetDest = MakePQDestination();
+        const std::string targetAddress = EncodeDestination(targetDest);
+        const CTxDestination ownerChangeDest = DecodeDestination(GetParams().GlobalBurnAddress());
+
+        CNullAssetTxData nullData(assetName, (int)RestrictedType::UNFREEZE_ADDRESS);
+        CScript nullDataScript = GetScriptForNullAssetDataDestination(targetDest);
+        nullData.ConstructTransaction(nullDataScript);
+
+        CAssetTransfer ownerTransfer(assetName + OWNER_TAG, OWNER_ASSET_AMOUNT);
+        CScript ownerTransferScript = GetScriptForDestination(ownerChangeDest);
+        ownerTransfer.ConstructTransaction(ownerTransferScript);
+
+        CMutableTransaction muttx;
+        muttx.vout.emplace_back(0, ownerTransferScript);
+        muttx.vout.emplace_back(0, nullDataScript);
+        const CTransaction tx(muttx);
+
+        CAssetsCache cache;
+        const std::string ownerChangeAddress = EncodeDestination(ownerChangeDest);
+        cache.mapAssetsAddressAmount[std::make_pair(assetName + OWNER_TAG, ownerChangeAddress)] = OWNER_ASSET_AMOUNT;
+        cache.setNewRestrictedAddressToAdd.insert(CAssetCacheRestrictedAddress(assetName, targetAddress, RestrictedType::FREEZE_ADDRESS));
+
+        std::string error;
+        BOOST_CHECK_MESSAGE(ContextualCheckNullAssetTxOut(tx.vout[1], &tx, &cache, error),
+                            "DEPIN owner unfreeze PQ contextual check failed: " + error);
+        BOOST_CHECK(error.empty());
+    }
+
+    BOOST_AUTO_TEST_CASE(depin_self_revoke_to_pq_contextual_check_test)
+    {
+        BOOST_TEST_MESSAGE("Running DEPIN self-revoke contextual check on PQ destination");
+
+        SelectParams(CBaseChainParams::TESTNET);
+
+        const std::string assetName = "&DEVICE";
+        const CTxDestination targetDest = MakePQDestination();
+
+        CNullAssetTxData nullData(assetName, 1);
+        CScript nullDataScript = GetScriptForNullAssetDataDestination(targetDest);
+        nullData.ConstructTransaction(nullDataScript);
+
+        CMutableTransaction muttx;
+        muttx.vout.emplace_back(0, nullDataScript);
+        const CTransaction tx(muttx);
+
+        CAssetsCache cache;
+        std::string error;
+        BOOST_CHECK_MESSAGE(ContextualCheckNullAssetTxOut(tx.vout[0], &tx, &cache, error),
+                            "DEPIN self-revoke PQ contextual check failed: " + error);
+        BOOST_CHECK(error.empty());
+        BOOST_CHECK_EQUAL(TxContainsDEPINOwnerTokenTransfer(tx, assetName), false);
+    }
+
+BOOST_AUTO_TEST_SUITE_END()
