@@ -137,6 +137,17 @@ enum
     // When set, OP_TXHASH is executed instead of being treated as OP_NOP6.
     //
             SCRIPT_VERIFY_TXHASH = (1U << 20),
+
+    // Enable OP_TXFIELD - push raw bytes of spent output fields to stack.
+    // When set, OP_TXFIELD is executed instead of being treated as OP_NOP7.
+    //
+            SCRIPT_VERIFY_TXFIELD = (1U << 21),
+
+    // Enable OP_SPLIT - split a byte array into two parts at a given position.
+    // When set, OP_SPLIT is executed instead of being treated as OP_NOP8.
+    // Inverse of OP_CAT (BIP 347).
+    //
+            SCRIPT_VERIFY_SPLIT = (1U << 22),
 };
 
 bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, unsigned int flags, ScriptError *serror);
@@ -204,6 +215,14 @@ public:
         return false;
     }
 
+    // Push raw bytes of a field from the spent UTXO (the output being spent).
+    // Unlike GetTxFieldHash, this returns unprocessed data, not a hash.
+    // Requires the checker to have been constructed with the spent scriptPubKey.
+    virtual bool GetTxField(unsigned char selector, std::vector<unsigned char>& result) const
+    {
+        return false;
+    }
+
     virtual ~BaseSignatureChecker() {}
 };
 
@@ -214,14 +233,27 @@ private:
     unsigned int nIn;
     const CAmount amount;
     const PrecomputedTransactionData *txdata;
+    const CScript* m_spentScriptPubKey;  // scriptPubKey of the UTXO being spent (for OP_TXFIELD)
 
 protected:
     virtual bool VerifySignature(const std::vector<unsigned char> &vchSig, const CPubKey &vchPubKey, const uint256 &sighash) const;
 
 public:
-    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn) : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(nullptr) {}
+    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn)
+        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(nullptr), m_spentScriptPubKey(nullptr) {}
 
-    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const PrecomputedTransactionData &txdataIn) : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn) {}
+    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const PrecomputedTransactionData &txdataIn)
+        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn), m_spentScriptPubKey(nullptr) {}
+
+    // Constructor with spent scriptPubKey but without precomputed txdata.
+    // Used by RPC signing paths (signrawtransaction, combinesignatures) where
+    // PrecomputedTransactionData is not available but OP_TXFIELD must still work.
+    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const CScript& spentScriptPubKeyIn)
+        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(nullptr), m_spentScriptPubKey(&spentScriptPubKeyIn) {}
+
+    // Constructor with both precomputed txdata and spent scriptPubKey — used by consensus validation.
+    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const PrecomputedTransactionData &txdataIn, const CScript& spentScriptPubKeyIn)
+        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn), m_spentScriptPubKey(&spentScriptPubKeyIn) {}
 
     bool CheckSig(const std::vector<unsigned char> &scriptSig, const std::vector<unsigned char> &vchPubKey, const CScript &scriptCode, SigVersion sigversion, uint8_t authType = 0x00) const override;
 
@@ -235,6 +267,8 @@ public:
 
     bool GetTxFieldHash(unsigned char fieldSelector, std::vector<unsigned char>& result) const override;
 
+    bool GetTxField(unsigned char selector, std::vector<unsigned char>& result) const override;
+
     uint256 GetSigHash(const CScript& scriptCode, int nHashType, SigVersion sigversion, uint8_t authType = 0x00) const override;
 };
 
@@ -245,6 +279,8 @@ private:
 
 public:
     MutableTransactionSignatureChecker(const CMutableTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn) : TransactionSignatureChecker(&txTo, nInIn, amountIn), txTo(*txToIn) {}
+    MutableTransactionSignatureChecker(const CMutableTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const CScript& spentScriptPubKeyIn)
+        : TransactionSignatureChecker(&txTo, nInIn, amountIn, spentScriptPubKeyIn), txTo(*txToIn) {}
 };
 
 bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &script, unsigned int flags, const BaseSignatureChecker &checker, SigVersion sigversion, ScriptError *error = nullptr);

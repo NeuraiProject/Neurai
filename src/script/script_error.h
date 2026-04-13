@@ -75,6 +75,12 @@ typedef enum ScriptError_t
     /* OP_TXHASH */
     SCRIPT_ERR_TXHASH,
 
+    /* OP_TXFIELD */
+    SCRIPT_ERR_TXFIELD,
+
+    /* OP_SPLIT */
+    SCRIPT_ERR_SPLIT,
+
     SCRIPT_ERR_ERROR_COUNT
 } ScriptError;
 

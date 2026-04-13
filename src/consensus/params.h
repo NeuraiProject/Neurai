@@ -93,6 +93,12 @@ struct Params {
     /** Enable OP_TXHASH - push hash of selected transaction fields to stack.
      *  true on testnet/regtest; false on mainnet until future activation. */
     bool nTXHASHEnabled;
+    /** Enable OP_TXFIELD (NOP7) - push raw bytes of spent output fields to stack.
+     *  Required for recursive DEX covenants. true on testnet/regtest; false on mainnet. */
+    bool nTXFIELDEnabled;
+    /** Enable OP_SPLIT (NOP8) - split a byte array into two parts at a given position.
+     *  Inverse of OP_CAT. true on testnet/regtest; false on mainnet until future activation. */
+    bool nSPLITEnabled;
 };
 } // namespace Consensus
 

@@ -97,6 +97,10 @@ const char* ScriptErrorString(const ScriptError serror)
             return "Script failed an OP_CHECKSIGFROMSTACK operation";
         case SCRIPT_ERR_TXHASH:
             return "Script failed an OP_TXHASH operation";
+        case SCRIPT_ERR_TXFIELD:
+            return "OP_TXFIELD failed (invalid selector, field unavailable, or non-AuthScript input)";
+        case SCRIPT_ERR_SPLIT:
+            return "OP_SPLIT failed (split position out of bounds or negative)";
         case SCRIPT_ERR_UNKNOWN_ERROR:
         case SCRIPT_ERR_ERROR_COUNT:
         default: break;

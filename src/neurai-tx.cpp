@@ -650,14 +650,14 @@ static void MutateTxSign(CMutableTransaction& tx, const std::string& flagStr)
 
         // ... and merge in other signatures:
         for (const CTransaction& txv : txVariants)
-            sigdata = CombineSignatures(prevPubKey, MutableTransactionSignatureChecker(&mergedTx, i, amount), sigdata, DataFromTransaction(txv, i));
+            sigdata = CombineSignatures(prevPubKey, MutableTransactionSignatureChecker(&mergedTx, i, amount, prevPubKey), sigdata, DataFromTransaction(txv, i));
         UpdateTransaction(mergedTx, i, sigdata);
 
         unsigned int verify_flags = STANDARD_SCRIPT_VERIFY_FLAGS;
         if (GetParams().GetConsensus().nPQWitnessEnabled) {
             verify_flags |= SCRIPT_VERIFY_AUTHSCRIPT;
         }
-        if (!VerifyScript(txin.scriptSig, prevPubKey, &txin.scriptWitness, verify_flags, MutableTransactionSignatureChecker(&mergedTx, i, amount)))
+        if (!VerifyScript(txin.scriptSig, prevPubKey, &txin.scriptWitness, verify_flags, MutableTransactionSignatureChecker(&mergedTx, i, amount, prevPubKey)))
             fComplete = false;
     }
 

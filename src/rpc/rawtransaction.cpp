@@ -1828,7 +1828,7 @@ UniValue combinerawtransaction(const JSONRPCRequest& request)
         // ... and merge in other signatures:
         for (const CMutableTransaction& txv : txVariants) {
             if (txv.vin.size() > i) {
-                sigdata = CombineSignatures(prevPubKey, TransactionSignatureChecker(&txConst, i, amount), sigdata, DataFromTransaction(txv, i));
+                sigdata = CombineSignatures(prevPubKey, TransactionSignatureChecker(&txConst, i, amount, prevPubKey), sigdata, DataFromTransaction(txv, i));
             }
         }
 
@@ -2065,7 +2065,7 @@ UniValue signrawtransaction(const JSONRPCRequest& request)
         // Only sign SIGHASH_SINGLE if there's a corresponding output:
         if (!fHashSingle || (i < mtx.vout.size()))
             ProduceSignature(MutableTransactionSignatureCreator(&keystore, &mtx, i, amount, nHashType), prevPubKey, sigdata);
-        sigdata = CombineSignatures(prevPubKey, TransactionSignatureChecker(&txConst, i, amount), sigdata, DataFromTransaction(mtx, i));
+        sigdata = CombineSignatures(prevPubKey, TransactionSignatureChecker(&txConst, i, amount, prevPubKey), sigdata, DataFromTransaction(mtx, i));
 
         UpdateTransaction(mtx, i, sigdata);
 
@@ -2074,7 +2074,7 @@ UniValue signrawtransaction(const JSONRPCRequest& request)
         if (GetParams().GetConsensus().nPQWitnessEnabled) {
             verify_flags |= SCRIPT_VERIFY_AUTHSCRIPT;
         }
-        if (!VerifyScript(txin.scriptSig, prevPubKey, &txin.scriptWitness, verify_flags, TransactionSignatureChecker(&txConst, i, amount), &serror)) {
+        if (!VerifyScript(txin.scriptSig, prevPubKey, &txin.scriptWitness, verify_flags, TransactionSignatureChecker(&txConst, i, amount, prevPubKey), &serror)) {
             if (serror == SCRIPT_ERR_INVALID_STACK_OPERATION) {
                 // Unable to sign input and verification failed (possible attempt to partially sign).
                 TxInErrorToJSON(txin, vErrors, "Unable to sign input, invalid stack size (possibly missing key)");

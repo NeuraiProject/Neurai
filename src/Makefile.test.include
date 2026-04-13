@@ -101,6 +101,8 @@ NEURAI_TESTS =\
   test/torcontrol_tests.cpp \
   test/transaction_tests.cpp \
   test/txhash_tests.cpp \
+  test/txfield_tests.cpp \
+  test/split_tests.cpp \
   test/txvalidationcache_tests.cpp \
   test/versionbits_tests.cpp \
   test/uint256_tests.cpp \

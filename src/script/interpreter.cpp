@@ -628,9 +628,72 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                     }
                         break;
 
+                    case OP_TXFIELD:    // NOP7 = 0xb6
+                    {
+                        if (!(flags & SCRIPT_VERIFY_TXFIELD))
+                        {
+                            // Not activated: treat as NOP7
+                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
+                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+                            break;
+                        }
+
+                        // (selector -- raw_field_bytes)
+                        if (stack.size() < 1)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+                        const valtype& vchSelector = stacktop(-1);
+                        if (vchSelector.size() != 1)
+                            return set_error(serror, SCRIPT_ERR_TXFIELD);
+
+                        unsigned char fieldSelector = vchSelector[0];
+                        valtype vchField;
+                        if (!checker.GetTxField(fieldSelector, vchField))
+                            return set_error(serror, SCRIPT_ERR_TXFIELD);
+
+                        popstack(stack);
+                        stack.push_back(vchField);
+                    }
+                        break;
+
+                    case OP_SPLIT:      // NOP8 = 0xb7
+                    {
+                        if (!(flags & SCRIPT_VERIFY_SPLIT))
+                        {
+                            // Not activated: treat as NOP8
+                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
+                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+                            break;
+                        }
+
+                        // (data n -- data[0..n-1] data[n..])
+                        if (stack.size() < 2)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+                        // Read split position as CScriptNum (same as OP_PICK/OP_ROLL)
+                        const int n = CScriptNum(stacktop(-1), fRequireMinimal).getint();
+                        popstack(stack);
+
+                        const valtype& vchData = stacktop(-1);
+
+                        // Validate range: 0 <= n <= len(data)
+                        if (n < 0 || n > (int)vchData.size())
+                            return set_error(serror, SCRIPT_ERR_SPLIT);
+
+                        // Build the two halves
+                        valtype vchLeft(vchData.begin(), vchData.begin() + n);
+                        valtype vchRight(vchData.begin() + n, vchData.end());
+
+                        // Replace data on stack with the two fragments
+                        popstack(stack);
+                        stack.push_back(vchLeft);
+                        stack.push_back(vchRight);
+                    }
+                        break;
+
+                    // NOP1, NOP9, NOP10 remain as generic upgradable NOPs.
+                    // NOP7 (OP_TXFIELD) and NOP8 (OP_SPLIT) have their own cases above.
                     case OP_NOP1:
-                    case OP_NOP7:
-                    case OP_NOP8:
                     case OP_NOP9:
                     case OP_NOP10:
                     {
@@ -1846,6 +1909,22 @@ static const unsigned char TXHASH_CUR_PREVOUT   = (1 << 5);  // 0x20
 static const unsigned char TXHASH_CUR_SEQUENCE  = (1 << 6);  // 0x40
 static const unsigned char TXHASH_INPUT_INDEX   = (1 << 7);  // 0x80
 
+// OP_TXFIELD field selector bytes.
+//
+// Unlike OP_TXHASH (which hashes selected fields of the spending TX),
+// OP_TXFIELD returns the raw bytes of a single field from the UTXO being
+// spent (the spent output). Requires m_spentScriptPubKey to be set.
+//
+//   0x01: nValue of the spent UTXO (int64 little-endian, 8 bytes)
+//   0x02: 32-byte AuthScript commitment from OP_1 <32-byte-program> scriptPubKey
+//   0x03: full scriptPubKey of the spent UTXO (raw bytes, max 520)
+//
+// 0x04-0xff reserved for future extensions.
+//
+static const unsigned char TXFIELD_SPENT_VALUE          = 0x01;
+static const unsigned char TXFIELD_SPENT_AUTHCOMMITMENT = 0x02;
+static const unsigned char TXFIELD_SPENT_FULLSCRIPT     = 0x03;
+
 bool TransactionSignatureChecker::GetTxFieldHash(unsigned char fieldSelector, std::vector<unsigned char>& result) const
 {
     if (fieldSelector == 0)
@@ -1942,6 +2021,56 @@ bool TransactionSignatureChecker::GetTxFieldHash(unsigned char fieldSelector, st
     ss.Finalize(hash.begin());
     result.assign(hash.begin(), hash.end());
     return true;
+}
+
+bool TransactionSignatureChecker::GetTxField(unsigned char selector,
+                                              std::vector<unsigned char>& result) const
+{
+    switch (selector) {
+
+    case TXFIELD_SPENT_VALUE: {
+        // nValue of the UTXO being spent (8 bytes, int64 little-endian).
+        // 'amount' is always available regardless of m_spentScriptPubKey.
+        int64_t nValue = (int64_t)amount;
+        result.resize(8);
+        memcpy(result.data(), &nValue, 8);
+        return true;
+    }
+
+    case TXFIELD_SPENT_AUTHCOMMITMENT: {
+        // Extract the 32-byte AuthScript commitment from the spent scriptPubKey.
+        // The scriptPubKey must begin with OP_1 (0x51) + 0x20 + 32 bytes.
+        // It may have a trailing OP_XNA_ASSET ... OP_DROP suffix (Option B assets).
+        if (!m_spentScriptPubKey)
+            return false;
+        const CScript& spk = *m_spentScriptPubKey;
+        // Minimum: OP_1 (1 byte) + push_32 (1 byte) + 32 bytes = 34 bytes
+        if (spk.size() < 34)
+            return false;
+        const unsigned char* data = spk.data();
+        if (data[0] != 0x51)   // OP_1 (witness version 1)
+            return false;
+        if (data[1] != 0x20)   // push exactly 32 bytes
+            return false;
+        // Bytes [2..33] are the 32-byte AuthScript commitment
+        result.assign(data + 2, data + 34);
+        return true;
+    }
+
+    case TXFIELD_SPENT_FULLSCRIPT: {
+        // Full scriptPubKey of the spent UTXO (raw bytes, max 520).
+        if (!m_spentScriptPubKey)
+            return false;
+        const CScript& spk = *m_spentScriptPubKey;
+        if (spk.size() > MAX_SCRIPT_ELEMENT_SIZE)
+            return false;  // too large to be a valid stack element
+        result.assign(spk.begin(), spk.end());
+        return true;
+    }
+
+    default:
+        return false;
+    }
 }
 
 static bool VerifyAuthScriptCore(const CScriptWitness& witness, const std::vector<unsigned char>& program, unsigned int flags, const BaseSignatureChecker& checker, ScriptError* serror)

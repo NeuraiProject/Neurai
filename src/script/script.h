@@ -182,8 +182,10 @@ enum opcodetype
     OP_NOP5 = OP_CHECKSIGFROMSTACK,
     OP_TXHASH = 0xb5,
     OP_NOP6 = OP_TXHASH,
-    OP_NOP7 = 0xb6,
-    OP_NOP8 = 0xb7,
+    OP_TXFIELD = 0xb6,
+    OP_NOP7 = OP_TXFIELD,
+    OP_SPLIT = 0xb7,
+    OP_NOP8 = OP_SPLIT,
     OP_NOP9 = 0xb8,
     OP_NOP10 = 0xb9,
 

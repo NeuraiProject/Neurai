@@ -48,7 +48,12 @@ private:
     bool store;
 
 public:
-    CachingTransactionSignatureChecker(const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, bool storeIn, PrecomputedTransactionData& txdataIn) : TransactionSignatureChecker(txToIn, nInIn, amountIn, txdataIn), store(storeIn) {}
+    CachingTransactionSignatureChecker(const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, bool storeIn, PrecomputedTransactionData& txdataIn)
+        : TransactionSignatureChecker(txToIn, nInIn, amountIn, txdataIn), store(storeIn) {}
+
+    // Constructor with spent scriptPubKey — enables OP_TXFIELD selectors 0x02 and 0x03.
+    CachingTransactionSignatureChecker(const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, bool storeIn, PrecomputedTransactionData& txdataIn, const CScript& spentScriptPubKeyIn)
+        : TransactionSignatureChecker(txToIn, nInIn, amountIn, txdataIn, spentScriptPubKeyIn), store(storeIn) {}
 
     bool VerifySignature(const std::vector<unsigned char>& vchSig, const CPubKey& vchPubKey, const uint256& sighash) const override;
 };
