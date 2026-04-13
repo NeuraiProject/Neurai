@@ -1304,7 +1304,7 @@ UniValue listdepinaddresses(const JSONRPCRequest &request)
         uint160 addressHash;
         int addressType = DEST_INDEX_NONE;
         if (!IsValidDestination(dest) || !GetDestinationIndexKey(dest, addressHash, addressType) ||
-            addressType != DEST_INDEX_KEY) {
+            (addressType != DEST_INDEX_KEY && addressType != DEST_INDEX_WITNESS_V1_AUTHSCRIPT)) {
             continue;
         }
         CPubKeyIndexValue pubkeyValue;

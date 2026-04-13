@@ -121,8 +121,26 @@ CAmount maxTxFee = DEFAULT_TRANSACTION_MAXFEE;
 
 namespace {
 
-bool ExtractIndexedPubKeyFromInput(const CTxIn& input, const uint160& expectedHash, CPubKey& pubkey)
+bool ExtractIndexedPubKeyFromInput(const CTxIn& input, const uint160& expectedHash, int addressType, CPubKey& pubkey)
 {
+    // For AuthScript witness v1: stack = [auth_type, sig, pubkey, ...args, witnessScript]
+    if (addressType == DEST_INDEX_WITNESS_V1_AUTHSCRIPT) {
+        const auto& stack = input.scriptWitness.stack;
+        if (stack.size() >= 4 && stack[0].size() == 1) {
+            uint8_t authType = stack[0][0];
+            if (authType == 0x01 || authType == 0x02) {
+                // stack[2] is the pubkey
+                CPubKey candidate(stack[2]);
+                if (candidate.IsValid()) {
+                    pubkey = candidate;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // Legacy P2PKH: scriptSig = [sig, pubkey]
     const CScript& scriptSig = input.scriptSig;
     if (!scriptSig.empty()) {
         CScript::const_iterator pc = scriptSig.begin();
@@ -138,6 +156,7 @@ bool ExtractIndexedPubKeyFromInput(const CTxIn& input, const uint160& expectedHa
         }
     }
 
+    // Legacy witness (segwit v0): stack = [..., pubkey]
     if (input.scriptWitness.stack.size() >= 2) {
         const std::vector<unsigned char>& vchPubKey = input.scriptWitness.stack.back();
         CPubKey candidate(vchPubKey);
@@ -2704,10 +2723,10 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
 
                     // Extract revealed public keys for pubkey index from scriptSig or witness.
                     if (fPubKeyIndex &&
-                        addressType == DEST_INDEX_KEY &&
+                        (addressType == DEST_INDEX_KEY || addressType == DEST_INDEX_WITNESS_V1_AUTHSCRIPT) &&
                         !hashBytes.IsNull()) {
                         CPubKey pubkey;
-                        if (ExtractIndexedPubKeyFromInput(input, hashBytes, pubkey)) {
+                        if (ExtractIndexedPubKeyFromInput(input, hashBytes, addressType, pubkey)) {
                             CPubKeyIndexKey key(hashBytes);
                             CPubKeyIndexValue value(pubkey, pindex->nHeight, txhash);
                             pubkeyIndex.push_back(std::make_pair(key, value));

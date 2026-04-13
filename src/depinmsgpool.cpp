@@ -409,13 +409,13 @@ bool CheckAddressHasPublicKey(const std::string& address, CPubKey& pubkey, std::
 
     // Decode address to get hash160
     CTxDestination dest = DecodeDestination(address);
-    const CKeyID* keyID = boost::get<CKeyID>(&dest);
-    if (!keyID) {
+    uint160 addressHash;
+    int addressType = DEST_INDEX_NONE;
+    if (!IsValidDestination(dest) || !GetDestinationIndexKey(dest, addressHash, addressType) ||
+        (addressType != DEST_INDEX_KEY && addressType != DEST_INDEX_WITNESS_V1_AUTHSCRIPT)) {
         error = strprintf("Invalid address format: %s", address);
         return false;
     }
-
-    uint160 addressHash(*keyID);
 
     // Query pubkey index
     CPubKeyIndexValue value;

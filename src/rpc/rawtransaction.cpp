@@ -66,6 +66,17 @@ void TxToJSON(const CTransaction& tx, const uint256 hashBlock, UniValue& entry, 
                         in.pushKV("address", EncodeDestination(CKeyID(spentInfo.addressHash)));
                     } else if (spentInfo.addressType == DEST_INDEX_SCRIPT) {
                         in.pushKV("address", EncodeDestination(CScriptID(spentInfo.addressHash)));
+                    } else if (spentInfo.addressType == DEST_INDEX_WITNESS_V1_AUTHSCRIPT) {
+                        // Reconstruct AuthScript address from the previous output's scriptPubKey
+                        CTransactionRef prevTx;
+                        uint256 prevHashBlock;
+                        if (GetTransaction(txin.prevout.hash, prevTx, Params().GetConsensus(), prevHashBlock, true) &&
+                            txin.prevout.n < prevTx->vout.size()) {
+                            CTxDestination prevDest;
+                            if (ExtractDestination(prevTx->vout[txin.prevout.n].scriptPubKey, prevDest)) {
+                                in.pushKV("address", EncodeDestination(prevDest));
+                            }
+                        }
                     }
                 }
                 newVin.push_back(in);

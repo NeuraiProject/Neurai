@@ -661,13 +661,21 @@ UniValue echo(const JSONRPCRequest& request)
     return request.params;
 }
 
-bool getAddressFromIndex(const int &type, const uint160 &hash, std::string &address)
+bool getAddressFromIndex(const int &type, const uint160 &hash, std::string &address,
+                         const std::map<std::pair<int, uint160>, std::string> *addressLookup = nullptr)
 {
     if (type == DEST_INDEX_SCRIPT) {
         address = EncodeDestination(CScriptID(hash));
     } else if (type == DEST_INDEX_KEY) {
         address = EncodeDestination(CKeyID(hash));
     } else if (type == DEST_INDEX_WITNESS_V1_AUTHSCRIPT) {
+        if (addressLookup) {
+            auto it = addressLookup->find(std::make_pair(type, hash));
+            if (it != addressLookup->end()) {
+                address = it->second;
+                return true;
+            }
+        }
         return false;
     } else {
         return false;
@@ -675,16 +683,21 @@ bool getAddressFromIndex(const int &type, const uint160 &hash, std::string &addr
     return true;
 }
 
-bool getAddressesFromParams(const UniValue& params, std::vector<std::pair<uint160, int> > &addresses)
+bool getAddressesFromParams(const UniValue& params, std::vector<std::pair<uint160, int> > &addresses,
+                            std::map<std::pair<int, uint160>, std::string> *addressLookup = nullptr)
 {
     if (params[0].isStr()) {
+        std::string addrStr = params[0].get_str();
         uint160 hashBytes;
         int type = DEST_INDEX_NONE;
-        CTxDestination dest = DecodeDestination(params[0].get_str());
+        CTxDestination dest = DecodeDestination(addrStr);
         if (!IsValidDestination(dest) || !GetDestinationIndexKey(dest, hashBytes, type)) {
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
         }
         addresses.push_back(std::make_pair(hashBytes, type));
+        if (addressLookup && type == DEST_INDEX_WITNESS_V1_AUTHSCRIPT) {
+            (*addressLookup)[std::make_pair(type, hashBytes)] = addrStr;
+        }
     } else if (params[0].isObject()) {
 
         UniValue addressValues = find_value(params[0].get_obj(), "addresses");
@@ -695,13 +708,17 @@ bool getAddressesFromParams(const UniValue& params, std::vector<std::pair<uint16
         std::vector<UniValue> values = addressValues.getValues();
 
         for (std::vector<UniValue>::iterator it = values.begin(); it != values.end(); ++it) {
+            std::string addrStr = it->get_str();
             uint160 hashBytes;
             int type = DEST_INDEX_NONE;
-            CTxDestination dest = DecodeDestination(it->get_str());
+            CTxDestination dest = DecodeDestination(addrStr);
             if (!IsValidDestination(dest) || !GetDestinationIndexKey(dest, hashBytes, type)) {
                 throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
             }
             addresses.push_back(std::make_pair(hashBytes, type));
+            if (addressLookup && type == DEST_INDEX_WITNESS_V1_AUTHSCRIPT) {
+                (*addressLookup)[std::make_pair(type, hashBytes)] = addrStr;
+            }
         }
     } else {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
@@ -756,8 +773,9 @@ UniValue getaddressmempool(const JSONRPCRequest& request)
         );
 
     std::vector<std::pair<uint160, int> > addresses;
+    std::map<std::pair<int, uint160>, std::string> addressLookup;
 
-    if (!getAddressesFromParams(request.params, addresses)) {
+    if (!getAddressesFromParams(request.params, addresses, &addressLookup)) {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
     }
 
@@ -790,7 +808,7 @@ UniValue getaddressmempool(const JSONRPCRequest& request)
          it != indexes.end(); it++) {
 
         std::string address;
-        if (!getAddressFromIndex(it->first.type, it->first.addressBytes, address)) {
+        if (!getAddressFromIndex(it->first.type, it->first.addressBytes, address, &addressLookup)) {
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown address type");
         }
 
@@ -862,8 +880,9 @@ UniValue getaddressutxos(const JSONRPCRequest& request)
     }
 
     std::vector<std::pair<uint160, int> > addresses;
+    std::map<std::pair<int, uint160>, std::string> addressLookup;
 
-    if (!getAddressesFromParams(request.params, addresses)) {
+    if (!getAddressesFromParams(request.params, addresses, &addressLookup)) {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
     }
 
@@ -888,7 +907,7 @@ UniValue getaddressutxos(const JSONRPCRequest& request)
     for (std::vector<std::pair<CAddressUnspentKey, CAddressUnspentValue> >::const_iterator it=unspentOutputs.begin(); it!=unspentOutputs.end(); it++) {
         UniValue output(UniValue::VOBJ);
         std::string address;
-        if (!getAddressFromIndex(it->first.type, it->first.hashBytes, address)) {
+        if (!getAddressFromIndex(it->first.type, it->first.hashBytes, address, &addressLookup)) {
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown address type");
         }
 
@@ -992,8 +1011,9 @@ UniValue getaddressdeltas(const JSONRPCRequest& request)
     }
 
     std::vector<std::pair<uint160, int> > addresses;
+    std::map<std::pair<int, uint160>, std::string> addressLookup;
 
-    if (!getAddressesFromParams(request.params, addresses)) {
+    if (!getAddressesFromParams(request.params, addresses, &addressLookup)) {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
     }
 
@@ -1015,7 +1035,7 @@ UniValue getaddressdeltas(const JSONRPCRequest& request)
 
     for (std::vector<std::pair<CAddressIndexKey, CAmount> >::const_iterator it=addressIndex.begin(); it!=addressIndex.end(); it++) {
         std::string address;
-        if (!getAddressFromIndex(it->first.type, it->first.hashBytes, address)) {
+        if (!getAddressFromIndex(it->first.type, it->first.hashBytes, address, &addressLookup)) {
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown address type");
         }
 
@@ -1367,7 +1387,7 @@ UniValue getpubkey(const JSONRPCRequest& request)
     uint160 addressHash;
     int addressType = DEST_INDEX_NONE;
     if (!GetDestinationIndexKey(dest, addressHash, addressType) ||
-        addressType != DEST_INDEX_KEY) {
+        (addressType != DEST_INDEX_KEY && addressType != DEST_INDEX_WITNESS_V1_AUTHSCRIPT)) {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address does not refer to a key");
     }
     CPubKeyIndexValue value;

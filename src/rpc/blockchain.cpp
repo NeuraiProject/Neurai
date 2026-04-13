@@ -154,6 +154,17 @@ UniValue blockToDeltasJSON(const CBlock& block, const CBlockIndex* blockindex)
                         delta.push_back(Pair("address", EncodeDestination(CKeyID(spentInfo.addressHash))));
                     } else if (spentInfo.addressType == DEST_INDEX_SCRIPT)  {
                         delta.push_back(Pair("address", EncodeDestination(CScriptID(spentInfo.addressHash))));
+                    } else if (spentInfo.addressType == DEST_INDEX_WITNESS_V1_AUTHSCRIPT) {
+                        // Reconstruct AuthScript address from the previous output's scriptPubKey
+                        CTransactionRef prevTx;
+                        uint256 prevHashBlock;
+                        if (GetTransaction(input.prevout.hash, prevTx, Params().GetConsensus(), prevHashBlock, true) &&
+                            input.prevout.n < prevTx->vout.size()) {
+                            CTxDestination prevDest;
+                            if (ExtractDestination(prevTx->vout[input.prevout.n].scriptPubKey, prevDest)) {
+                                delta.push_back(Pair("address", EncodeDestination(prevDest)));
+                            }
+                        }
                     } else {
                         continue;
                     }
@@ -187,7 +198,14 @@ UniValue blockToDeltasJSON(const CBlock& block, const CBlockIndex* blockindex)
                 std::vector<unsigned char> hashBytes(out.scriptPubKey.begin()+3, out.scriptPubKey.begin()+23);
                 delta.push_back(Pair("address", CNeuraiAddress(CKeyID(uint160(hashBytes))).ToString()));
             } else {
-                continue;
+                int witnessversion;
+                std::vector<unsigned char> witnessprogram;
+                if (out.scriptPubKey.IsWitnessProgram(witnessversion, witnessprogram) &&
+                    witnessversion == 1 && witnessprogram.size() == 32) {
+                    delta.push_back(Pair("address", EncodeDestination(WitnessV1AuthScript(uint256(witnessprogram)))));
+                } else {
+                    continue;
+                }
             }
 
             delta.push_back(Pair("satoshis", out.nValue));
