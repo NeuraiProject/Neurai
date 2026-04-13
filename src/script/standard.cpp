@@ -443,9 +443,9 @@ static bool IsDestinationIndexPayloadSizeValid(int type, size_t size)
     switch (type) {
     case DEST_INDEX_KEY:
     case DEST_INDEX_SCRIPT:
-        return size == uint160::WIDTH;
+        return size == 20;
     case DEST_INDEX_WITNESS_V1_AUTHSCRIPT:
-        return size == uint256::WIDTH;
+        return size == 32;
     default:
         return false;
     }

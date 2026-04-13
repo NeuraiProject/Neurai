@@ -672,7 +672,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         CDestinationIndexData indexData;
         BOOST_CHECK(GetScriptDestinationIndexData(newAssetScript, indexData));
         BOOST_CHECK_EQUAL(indexData.type, DEST_INDEX_WITNESS_V1_AUTHSCRIPT);
-        BOOST_CHECK_EQUAL(indexData.payload.size(), uint256::WIDTH);
+        BOOST_CHECK_EQUAL(indexData.payload.size(), 32U);
         BOOST_CHECK(std::equal(indexData.payload.begin(), indexData.payload.end(), witnessCommitment.begin()));
 
         CAssetTransfer transferAsset("PQASSET", 1 * COIN);
@@ -683,7 +683,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         BOOST_CHECK(GetAssetScriptWitnessProgram(transferScript, witnessVersion, witnessProgram));
         BOOST_CHECK(GetScriptDestinationIndexData(transferScript, indexData));
         BOOST_CHECK_EQUAL(indexData.type, DEST_INDEX_WITNESS_V1_AUTHSCRIPT);
-        BOOST_CHECK_EQUAL(indexData.payload.size(), uint256::WIDTH);
+        BOOST_CHECK_EQUAL(indexData.payload.size(), 32U);
 
         CReissueAsset reissueAsset("PQASSET", 10 * COIN, 0, 1, "");
         CScript reissueScript = GetScriptForDestination(pqDestination);
@@ -693,7 +693,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         BOOST_CHECK(GetAssetScriptWitnessProgram(reissueScript, witnessVersion, witnessProgram));
         BOOST_CHECK(GetScriptDestinationIndexData(reissueScript, indexData));
         BOOST_CHECK_EQUAL(indexData.type, DEST_INDEX_WITNESS_V1_AUTHSCRIPT);
-        BOOST_CHECK_EQUAL(indexData.payload.size(), uint256::WIDTH);
+        BOOST_CHECK_EQUAL(indexData.payload.size(), 32U);
     }
 
     BOOST_AUTO_TEST_CASE(asset_transfer_pq_signs_with_standard_flags_test)

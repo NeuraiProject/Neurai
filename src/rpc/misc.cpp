@@ -663,11 +663,11 @@ UniValue echo(const JSONRPCRequest& request)
 
 bool getAddressFromIndex(const CDestinationIndexData& addressData, std::string &address)
 {
-    if (addressData.type == DEST_INDEX_SCRIPT && addressData.payload.size() == uint160::WIDTH) {
+    if (addressData.type == DEST_INDEX_SCRIPT && addressData.payload.size() == 20) {
         address = EncodeDestination(CScriptID(uint160(addressData.payload)));
-    } else if (addressData.type == DEST_INDEX_KEY && addressData.payload.size() == uint160::WIDTH) {
+    } else if (addressData.type == DEST_INDEX_KEY && addressData.payload.size() == 20) {
         address = EncodeDestination(CKeyID(uint160(addressData.payload)));
-    } else if (addressData.type == DEST_INDEX_WITNESS_V1_AUTHSCRIPT && addressData.payload.size() == uint256::WIDTH) {
+    } else if (addressData.type == DEST_INDEX_WITNESS_V1_AUTHSCRIPT && addressData.payload.size() == 32) {
         address = EncodeDestination(WitnessV1AuthScript(uint256(addressData.payload)));
     } else {
         return false;
