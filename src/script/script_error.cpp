@@ -103,6 +103,8 @@ const char* ScriptErrorString(const ScriptError serror)
             return "OP_SPLIT failed (split position out of bounds or negative)";
         case SCRIPT_ERR_OUTPUTVALUE:
             return "OP_OUTPUTVALUE failed (invalid output index)";
+        case SCRIPT_ERR_TXLOCKTIME:
+            return "OP_TXLOCKTIME failed (transaction locktime unavailable)";
         case SCRIPT_ERR_UNKNOWN_ERROR:
         case SCRIPT_ERR_ERROR_COUNT:
         default: break;

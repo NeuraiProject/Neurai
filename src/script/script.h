@@ -189,6 +189,7 @@ enum opcodetype
     OP_NOP9 = 0xb8,
     OP_NOP10 = 0xb9,
     OP_REVERSEBYTES = 0xbc,
+    OP_TXLOCKTIME = 0xc5,
     OP_OUTPUTVALUE = 0xcc,
 
     /** XNA START */

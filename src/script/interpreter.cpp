@@ -736,6 +736,23 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                     }
                         break;
 
+                    case OP_TXLOCKTIME:
+                    {
+                        if (!(flags & SCRIPT_VERIFY_TXLOCKTIME))
+                        {
+                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
+                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+                            break;
+                        }
+
+                        valtype vchLockTime;
+                        if (!checker.GetTxLockTime(vchLockTime))
+                            return set_error(serror, SCRIPT_ERR_TXLOCKTIME);
+
+                        stack.push_back(vchLockTime);
+                    }
+                        break;
+
                     // NOP1, NOP9, NOP10 remain as generic upgradable NOPs.
                     // NOP7 (OP_TXFIELD) and NOP8 (OP_SPLIT) have their own cases above.
                     case OP_NOP1:
@@ -2129,6 +2146,17 @@ bool TransactionSignatureChecker::GetOutputValue(unsigned int nOut,
     const int64_t nValue = (int64_t)txTo->vout[nOut].nValue;
     result.resize(8);
     memcpy(result.data(), &nValue, 8);
+    return true;
+}
+
+bool TransactionSignatureChecker::GetTxLockTime(std::vector<unsigned char>& result) const
+{
+    if (!txTo)
+        return false;
+
+    const uint32_t nLockTime = txTo->nLockTime;
+    result.resize(4);
+    memcpy(result.data(), &nLockTime, 4);
     return true;
 }
 

@@ -62,12 +62,14 @@ enum
     neuraiconsensus_SCRIPT_FLAGS_VERIFY_CHECKSIGFROMSTACK     = (1U << 19), // enable OP_CHECKSIGFROMSTACK
     neuraiconsensus_SCRIPT_FLAGS_VERIFY_TXHASH               = (1U << 20), // enable OP_TXHASH
     neuraiconsensus_SCRIPT_FLAGS_VERIFY_OUTPUTVALUE          = (1U << 24), // enable OP_OUTPUTVALUE
+    neuraiconsensus_SCRIPT_FLAGS_VERIFY_TXLOCKTIME           = (1U << 25), // enable OP_TXLOCKTIME
     neuraiconsensus_SCRIPT_FLAGS_VERIFY_ALL                 = neuraiconsensus_SCRIPT_FLAGS_VERIFY_P2SH | neuraiconsensus_SCRIPT_FLAGS_VERIFY_DERSIG |
                                                                neuraiconsensus_SCRIPT_FLAGS_VERIFY_NULLDUMMY | neuraiconsensus_SCRIPT_FLAGS_VERIFY_CHECKLOCKTIMEVERIFY |
                                                                neuraiconsensus_SCRIPT_FLAGS_VERIFY_CHECKSEQUENCEVERIFY | neuraiconsensus_SCRIPT_FLAGS_VERIFY_WITNESS |
                                                                neuraiconsensus_SCRIPT_FLAGS_VERIFY_CAT | neuraiconsensus_SCRIPT_FLAGS_VERIFY_CHECKTEMPLATEVERIFY |
                                                                neuraiconsensus_SCRIPT_FLAGS_VERIFY_CHECKSIGFROMSTACK | neuraiconsensus_SCRIPT_FLAGS_VERIFY_TXHASH |
-                                                               neuraiconsensus_SCRIPT_FLAGS_VERIFY_OUTPUTVALUE
+                                                               neuraiconsensus_SCRIPT_FLAGS_VERIFY_OUTPUTVALUE |
+                                                               neuraiconsensus_SCRIPT_FLAGS_VERIFY_TXLOCKTIME
 };
 
 /// Returns 1 if the input nIn of the serialized transaction pointed to by

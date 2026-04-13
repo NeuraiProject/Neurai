@@ -84,6 +84,9 @@ typedef enum ScriptError_t
     /* OP_OUTPUTVALUE */
     SCRIPT_ERR_OUTPUTVALUE,
 
+    /* OP_TXLOCKTIME */
+    SCRIPT_ERR_TXLOCKTIME,
+
     SCRIPT_ERR_ERROR_COUNT
 } ScriptError;
 

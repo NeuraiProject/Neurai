@@ -159,6 +159,11 @@ enum
     // 8-byte little-endian data.
     //
             SCRIPT_VERIFY_OUTPUTVALUE = (1U << 24),
+
+    // Enable OP_TXLOCKTIME - push the transaction nLockTime as raw 4-byte
+    // little-endian data.
+    //
+            SCRIPT_VERIFY_TXLOCKTIME = (1U << 25),
 };
 
 bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, unsigned int flags, ScriptError *serror);
@@ -239,6 +244,11 @@ public:
         return false;
     }
 
+    virtual bool GetTxLockTime(std::vector<unsigned char>& result) const
+    {
+        return false;
+    }
+
     virtual ~BaseSignatureChecker() {}
 };
 
@@ -286,6 +296,8 @@ public:
     bool GetTxField(unsigned char selector, std::vector<unsigned char>& result) const override;
 
     bool GetOutputValue(unsigned int nOut, std::vector<unsigned char>& result) const override;
+
+    bool GetTxLockTime(std::vector<unsigned char>& result) const override;
 
     uint256 GetSigHash(const CScript& scriptCode, int nHashType, SigVersion sigversion, uint8_t authType = 0x00) const override;
 };
