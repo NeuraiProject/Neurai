@@ -438,6 +438,42 @@ bool GetDestinationIndexKey(const CTxDestination& dest, uint160& hashBytes, int&
     return false;
 }
 
+static bool IsDestinationIndexPayloadSizeValid(int type, size_t size)
+{
+    switch (type) {
+    case DEST_INDEX_KEY:
+    case DEST_INDEX_SCRIPT:
+        return size == uint160::WIDTH;
+    case DEST_INDEX_WITNESS_V1_AUTHSCRIPT:
+        return size == uint256::WIDTH;
+    default:
+        return false;
+    }
+}
+
+bool GetDestinationIndexData(const CTxDestination& dest, CDestinationIndexData& data)
+{
+    data.SetNull();
+
+    if (const CKeyID* keyID = boost::get<CKeyID>(&dest)) {
+        data.type = DEST_INDEX_KEY;
+        data.payload.assign(keyID->begin(), keyID->end());
+        return true;
+    }
+    if (const CScriptID* scriptID = boost::get<CScriptID>(&dest)) {
+        data.type = DEST_INDEX_SCRIPT;
+        data.payload.assign(scriptID->begin(), scriptID->end());
+        return true;
+    }
+    if (const WitnessV1AuthScript* authScript = boost::get<WitnessV1AuthScript>(&dest)) {
+        data.type = DEST_INDEX_WITNESS_V1_AUTHSCRIPT;
+        data.payload.assign(authScript->begin(), authScript->end());
+        return true;
+    }
+
+    return false;
+}
+
 bool GetScriptDestinationIndexKey(const CScript& scriptPubKey, uint160& hashBytes, int& type)
 {
     std::vector<valtype> vSolutions;
@@ -485,6 +521,59 @@ bool GetScriptDestinationIndexKey(const CScript& scriptPubKey, uint160& hashByte
     }
 
     return GetDestinationIndexKey(destination, hashBytes, type);
+}
+
+bool GetScriptDestinationIndexData(const CScript& scriptPubKey, CDestinationIndexData& data)
+{
+    data.SetNull();
+
+    std::vector<valtype> vSolutions;
+    txnouttype whichType;
+    if (!Solver(scriptPubKey, whichType, vSolutions)) {
+        return false;
+    }
+
+    CTxDestination destination;
+    switch (whichType) {
+    case TX_PUBKEY: {
+        CPubKey pubKey(vSolutions[0]);
+        if (!pubKey.IsValid()) {
+            return false;
+        }
+        destination = pubKey.GetID();
+        break;
+    }
+    case TX_PUBKEYHASH:
+        destination = CKeyID(uint160(vSolutions[0]));
+        break;
+    case TX_SCRIPTHASH:
+        destination = CScriptID(uint160(vSolutions[0]));
+        break;
+    case TX_WITNESS_V1_AUTHSCRIPT:
+        destination = WitnessV1AuthScript(uint256(vSolutions[0]));
+        break;
+    case TX_NEW_ASSET:
+    case TX_REISSUE_ASSET:
+    case TX_TRANSFER_ASSET:
+        if (!ExtractAssetDestination(scriptPubKey, destination)) {
+            return false;
+        }
+        break;
+    default:
+        return false;
+    }
+
+    if (!GetDestinationIndexData(destination, data)) {
+        data.SetNull();
+        return false;
+    }
+
+    if (!IsDestinationIndexPayloadSizeValid(data.type, data.payload.size())) {
+        data.SetNull();
+        return false;
+    }
+
+    return true;
 }
 
 bool ExtractDestinations(const CScript& scriptPubKey, txnouttype& typeRet, std::vector<CTxDestination>& addressRet, int& nRequiredRet)

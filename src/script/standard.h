@@ -121,6 +121,52 @@ enum DestinationIndexType
     DEST_INDEX_WITNESS_V1_AUTHSCRIPT = 3,
 };
 
+struct CDestinationIndexData
+{
+    int type;
+    std::vector<unsigned char> payload;
+
+    CDestinationIndexData() : type(DEST_INDEX_NONE) {}
+    CDestinationIndexData(int typeIn, const std::vector<unsigned char>& payloadIn) : type(typeIn), payload(payloadIn) {}
+
+    void SetNull()
+    {
+        type = DEST_INDEX_NONE;
+        payload.clear();
+    }
+
+    bool IsNull() const
+    {
+        return type == DEST_INDEX_NONE || payload.empty();
+    }
+
+    ADD_SERIALIZE_METHODS;
+
+    template <typename Stream, typename Operation>
+    inline void SerializationOp(Stream& s, Operation ser_action) {
+        READWRITE(type);
+        READWRITE(payload);
+    }
+};
+
+inline bool operator==(const CDestinationIndexData& a, const CDestinationIndexData& b)
+{
+    return a.type == b.type && a.payload == b.payload;
+}
+
+inline bool operator!=(const CDestinationIndexData& a, const CDestinationIndexData& b)
+{
+    return !(a == b);
+}
+
+inline bool operator<(const CDestinationIndexData& a, const CDestinationIndexData& b)
+{
+    if (a.type == b.type) {
+        return a.payload < b.payload;
+    }
+    return a.type < b.type;
+}
+
 /** Check whether a CTxDestination is a CNoDestination. */
 bool IsValidDestination(const CTxDestination& dest);
 
@@ -165,6 +211,12 @@ bool GetDestinationIndexKey(const CTxDestination& dest, uint160& hashBytes, int&
 
 /** Extract the hash/type pair used by address and pubkey indexes from a spendable script. */
 bool GetScriptDestinationIndexKey(const CScript& scriptPubKey, uint160& hashBytes, int& type);
+
+/** Convert a destination into the payload/type pair used by address and pubkey indexes. */
+bool GetDestinationIndexData(const CTxDestination& dest, CDestinationIndexData& data);
+
+/** Extract the payload/type pair used by address and pubkey indexes from a spendable script. */
+bool GetScriptDestinationIndexData(const CScript& scriptPubKey, CDestinationIndexData& data);
 
 /**
  * Parse a standard scriptPubKey with one or more destination addresses. For

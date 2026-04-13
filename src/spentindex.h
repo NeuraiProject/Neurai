@@ -8,6 +8,7 @@
 
 #include "uint256.h"
 #include "amount.h"
+#include "script/standard.h"
 
 struct CSpentIndexKey {
     uint256 txid;
@@ -43,7 +44,7 @@ struct CSpentIndexValue {
     int blockHeight;
     CAmount satoshis;
     int addressType;
-    uint160 addressHash;
+    std::vector<unsigned char> addressHash;
 
     ADD_SERIALIZE_METHODS;
 
@@ -57,13 +58,13 @@ struct CSpentIndexValue {
         READWRITE(addressHash);
     }
 
-    CSpentIndexValue(uint256 t, unsigned int i, int h, CAmount s, int type, uint160 a) {
+    CSpentIndexValue(uint256 t, unsigned int i, int h, CAmount s, const CDestinationIndexData& addressData) {
         txid = t;
         inputIndex = i;
         blockHeight = h;
         satoshis = s;
-        addressType = type;
-        addressHash = a;
+        addressType = addressData.type;
+        addressHash = addressData.payload;
     }
 
     CSpentIndexValue() {
@@ -76,7 +77,7 @@ struct CSpentIndexValue {
         blockHeight = 0;
         satoshis = 0;
         addressType = 0;
-        addressHash.SetNull();
+        addressHash.clear();
     }
 
     bool IsNull() const {

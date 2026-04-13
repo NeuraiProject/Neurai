@@ -1301,16 +1301,15 @@ UniValue listdepinaddresses(const JSONRPCRequest &request)
         const std::string& address = pair.first;
 
         CTxDestination dest = DecodeDestination(address);
-        uint160 addressHash;
-        int addressType = DEST_INDEX_NONE;
-        if (!IsValidDestination(dest) || !GetDestinationIndexKey(dest, addressHash, addressType) ||
-            (addressType != DEST_INDEX_KEY && addressType != DEST_INDEX_WITNESS_V1_AUTHSCRIPT)) {
+        CDestinationIndexData addressData;
+        if (!IsValidDestination(dest) || !GetDestinationIndexData(dest, addressData) ||
+            (addressData.type != DEST_INDEX_KEY && addressData.type != DEST_INDEX_WITNESS_V1_AUTHSCRIPT)) {
             continue;
         }
         CPubKeyIndexValue pubkeyValue;
 
         // Check if this address has a revealed pubkey
-        if (pblocktree->ReadPubKeyIndex(addressHash, pubkeyValue)) {
+        if (pblocktree->ReadPubKeyIndex(addressData, pubkeyValue)) {
             UniValue entry(UniValue::VOBJ);
             entry.pushKV("address", address);
             entry.pushKV("pubkey", HexStr(pubkeyValue.pubkey.begin(), pubkeyValue.pubkey.end()));

@@ -428,16 +428,15 @@ void CTxMemPool::addAddressIndex(const CTxMemPoolEntry &entry, const CCoinsViewC
     for (unsigned int j = 0; j < tx.vin.size(); j++) {
         const CTxIn input = tx.vin[j];
         const CTxOut &prevout = view.AccessCoin(input.prevout).out;
-        uint160 hashBytes;
-        int addressType = DEST_INDEX_NONE;
-        if (!GetScriptDestinationIndexKey(prevout.scriptPubKey, hashBytes, addressType)) {
+        CDestinationIndexData addressData;
+        if (!GetScriptDestinationIndexData(prevout.scriptPubKey, addressData)) {
             /** XNA START */
             if (!AreAssetsDeployed()) {
                 continue;
             }
-            std::string assetName;
-            CAmount assetAmount;
-            if (!ParseAssetScript(prevout.scriptPubKey, hashBytes, assetName, assetAmount)) {
+            CTxDestination assetDest;
+            if (!ExtractAssetDestination(prevout.scriptPubKey, assetDest) ||
+                !GetDestinationIndexData(assetDest, addressData)) {
                 continue;
             }
             /** XNA END */
@@ -446,10 +445,11 @@ void CTxMemPool::addAddressIndex(const CTxMemPoolEntry &entry, const CCoinsViewC
         /** XNA START */
         std::string assetName;
         CAmount assetAmount = 0;
-        const bool isAsset = AreAssetsDeployed() && ParseAssetScript(prevout.scriptPubKey, hashBytes, assetName, assetAmount);
+        uint160 legacyHashBytes;
+        const bool isAsset = AreAssetsDeployed() && ParseAssetScript(prevout.scriptPubKey, legacyHashBytes, assetName, assetAmount);
         const CAmount deltaAmount = isAsset ? assetAmount * -1 : prevout.nValue * -1;
         const std::string& indexAsset = isAsset ? assetName : XNA;
-        CMempoolAddressDeltaKey key(addressType, hashBytes, indexAsset, txhash, j, 1);
+        CMempoolAddressDeltaKey key(addressData, indexAsset, txhash, j, 1);
         CMempoolAddressDelta delta(entry.GetTime(), deltaAmount, input.prevout.hash, input.prevout.n);
         mapAddress.insert(std::make_pair(key, delta));
         inserted.push_back(key);
@@ -458,16 +458,15 @@ void CTxMemPool::addAddressIndex(const CTxMemPoolEntry &entry, const CCoinsViewC
 
     for (unsigned int k = 0; k < tx.vout.size(); k++) {
         const CTxOut &out = tx.vout[k];
-        uint160 hashBytes;
-        int addressType = DEST_INDEX_NONE;
-        if (!GetScriptDestinationIndexKey(out.scriptPubKey, hashBytes, addressType)) {
+        CDestinationIndexData addressData;
+        if (!GetScriptDestinationIndexData(out.scriptPubKey, addressData)) {
             /** XNA START */
             if (!AreAssetsDeployed()) {
                 continue;
             }
-            std::string assetName;
-            CAmount assetAmount;
-            if (!ParseAssetScript(out.scriptPubKey, hashBytes, assetName, assetAmount)) {
+            CTxDestination assetDest;
+            if (!ExtractAssetDestination(out.scriptPubKey, assetDest) ||
+                !GetDestinationIndexData(assetDest, addressData)) {
                 continue;
             }
             /** XNA END */
@@ -476,10 +475,11 @@ void CTxMemPool::addAddressIndex(const CTxMemPoolEntry &entry, const CCoinsViewC
         /** XNA START */
         std::string assetName;
         CAmount assetAmount = 0;
-        const bool isAsset = AreAssetsDeployed() && ParseAssetScript(out.scriptPubKey, hashBytes, assetName, assetAmount);
+        uint160 legacyHashBytes;
+        const bool isAsset = AreAssetsDeployed() && ParseAssetScript(out.scriptPubKey, legacyHashBytes, assetName, assetAmount);
         const CAmount deltaAmount = isAsset ? assetAmount : out.nValue;
         const std::string& indexAsset = isAsset ? assetName : XNA;
-        CMempoolAddressDeltaKey key(addressType, hashBytes, indexAsset, txhash, k, 0);
+        CMempoolAddressDeltaKey key(addressData, indexAsset, txhash, k, 0);
         mapAddress.insert(std::make_pair(key, CMempoolAddressDelta(entry.GetTime(), deltaAmount)));
         inserted.push_back(key);
         /** XNA END */
@@ -488,14 +488,13 @@ void CTxMemPool::addAddressIndex(const CTxMemPoolEntry &entry, const CCoinsViewC
     mapAddressInserted.insert(std::make_pair(txhash, inserted));
 }
 
-bool CTxMemPool::getAddressIndex(std::vector<std::pair<uint160, int> > &addresses, std::string assetName,
+bool CTxMemPool::getAddressIndex(std::vector<CDestinationIndexData> &addresses, std::string assetName,
                                  std::vector<std::pair<CMempoolAddressDeltaKey, CMempoolAddressDelta> > &results)
 {
     LOCK(cs);
-    for (std::vector<std::pair<uint160, int> >::iterator it = addresses.begin(); it != addresses.end(); it++) {
-        addressDeltaMap::iterator ait = mapAddress.lower_bound(CMempoolAddressDeltaKey((*it).second, (*it).first,
-                                                                                       assetName));
-        while (ait != mapAddress.end() && (*ait).first.addressBytes == (*it).first && (*ait).first.type == (*it).second
+    for (std::vector<CDestinationIndexData>::iterator it = addresses.begin(); it != addresses.end(); it++) {
+        addressDeltaMap::iterator ait = mapAddress.lower_bound(CMempoolAddressDeltaKey(*it, assetName));
+        while (ait != mapAddress.end() && (*ait).first.addressBytes == (*it).payload && (*ait).first.type == (*it).type
                 && (*ait).first.asset == assetName) {
             results.push_back(*ait);
             ait++;
@@ -504,13 +503,13 @@ bool CTxMemPool::getAddressIndex(std::vector<std::pair<uint160, int> > &addresse
     return true;
 }
 
-bool CTxMemPool::getAddressIndex(std::vector<std::pair<uint160, int> > &addresses,
+bool CTxMemPool::getAddressIndex(std::vector<CDestinationIndexData> &addresses,
                                  std::vector<std::pair<CMempoolAddressDeltaKey, CMempoolAddressDelta> > &results)
 {
     LOCK(cs);
-    for (std::vector<std::pair<uint160, int> >::iterator it = addresses.begin(); it != addresses.end(); it++) {
-        addressDeltaMap::iterator ait = mapAddress.lower_bound(CMempoolAddressDeltaKey((*it).second, (*it).first));
-        while (ait != mapAddress.end() && (*ait).first.addressBytes == (*it).first && (*ait).first.type == (*it).second) {
+    for (std::vector<CDestinationIndexData>::iterator it = addresses.begin(); it != addresses.end(); it++) {
+        addressDeltaMap::iterator ait = mapAddress.lower_bound(CMempoolAddressDeltaKey(*it));
+        while (ait != mapAddress.end() && (*ait).first.addressBytes == (*it).payload && (*ait).first.type == (*it).type) {
             results.push_back(*ait);
             ait++;
         }
@@ -545,16 +544,14 @@ void CTxMemPool::addSpentIndex(const CTxMemPoolEntry &entry, const CCoinsViewCac
     for (unsigned int j = 0; j < tx.vin.size(); j++) {
         const CTxIn input = tx.vin[j];
         const CTxOut &prevout = view.AccessCoin(input.prevout).out;
-        uint160 addressHash;
-        int addressType = DEST_INDEX_NONE;
+        CDestinationIndexData addressData;
 
-        if (!GetScriptDestinationIndexKey(prevout.scriptPubKey, addressHash, addressType)) {
-            addressHash.SetNull();
-            addressType = DEST_INDEX_NONE;
+        if (!GetScriptDestinationIndexData(prevout.scriptPubKey, addressData)) {
+            addressData.SetNull();
         }
 
         CSpentIndexKey key = CSpentIndexKey(input.prevout.hash, input.prevout.n);
-        CSpentIndexValue value = CSpentIndexValue(txhash, j, -1, prevout.nValue, addressType, addressHash);
+        CSpentIndexValue value = CSpentIndexValue(txhash, j, -1, prevout.nValue, addressData);
 
         mapSpent.insert(std::make_pair(key, value));
         inserted.push_back(key);

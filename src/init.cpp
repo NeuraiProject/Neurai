@@ -1741,6 +1741,15 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
                     break;
                 }
 
+                if (fAddressIndex || fSpentIndex || fPubKeyIndex) {
+                    int destinationIndexSchemaVersion = 0;
+                    if (!pblocktree->ReadIntFlag(DESTINATION_INDEX_SCHEMA_FLAG, destinationIndexSchemaVersion) ||
+                        destinationIndexSchemaVersion != DESTINATION_INDEX_SCHEMA_VERSION) {
+                        strLoadError = _("This testnet build changes the internal address, spent, and pubkey index format for full PQ support. Rebuild the indexes using -reindex.");
+                        break;
+                    }
+                }
+
                 // Check for changed -prune state.  What we are concerned about is a user who has pruned blocks
                 // in the past, but is now trying to run unpruned.
                 if (fHavePruned && !fPruneMode) {

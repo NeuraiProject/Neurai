@@ -159,9 +159,9 @@ UniValue blockToDeltasJSON(const CBlock& block, const CBlockIndex* blockindex)
                 CSpentIndexKey spentKey(input.prevout.hash, input.prevout.n);
 
                 if (GetSpentIndex(spentKey, spentInfo)) {
-                    if (spentInfo.addressType == DEST_INDEX_KEY) {
+                    if (spentInfo.addressType == DEST_INDEX_KEY && spentInfo.addressHash.size() == uint160::WIDTH) {
                         delta.push_back(Pair("address", EncodeDestination(CKeyID(spentInfo.addressHash))));
-                    } else if (spentInfo.addressType == DEST_INDEX_SCRIPT)  {
+                    } else if (spentInfo.addressType == DEST_INDEX_SCRIPT && spentInfo.addressHash.size() == uint160::WIDTH)  {
                         delta.push_back(Pair("address", EncodeDestination(CScriptID(spentInfo.addressHash))));
                     } else if (spentInfo.addressType == DEST_INDEX_WITNESS_V1_AUTHSCRIPT) {
                         // Reconstruct AuthScript address from the previous output's scriptPubKey

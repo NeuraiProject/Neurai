@@ -121,7 +121,7 @@ CAmount maxTxFee = DEFAULT_TRANSACTION_MAXFEE;
 
 namespace {
 
-bool ExtractIndexedPubKeyFromInput(const CTxIn& input, const uint160& expectedHash, int addressType, CPubKey& pubkey)
+bool ExtractIndexedPubKeyFromInput(const CTxIn& input, const std::vector<unsigned char>& expectedHash, int addressType, CPubKey& pubkey)
 {
     // For AuthScript witness v1: stack = [auth_type, sig, pubkey, ...args, witnessScript]
     if (addressType == DEST_INDEX_WITNESS_V1_AUTHSCRIPT) {
@@ -149,9 +149,12 @@ bool ExtractIndexedPubKeyFromInput(const CTxIn& input, const uint160& expectedHa
         std::vector<unsigned char> vchPubKey;
         if (scriptSig.GetOp(pc, opcode, vchSig) && scriptSig.GetOp(pc, opcode, vchPubKey)) {
             CPubKey candidate(vchPubKey);
-            if (candidate.IsValid() && Hash160(vchPubKey.begin(), vchPubKey.end()) == expectedHash) {
-                pubkey = candidate;
-                return true;
+            if (candidate.IsValid()) {
+                const auto candidateHash = Hash160(vchPubKey.begin(), vchPubKey.end());
+                if (std::vector<unsigned char>(candidateHash.begin(), candidateHash.end()) == expectedHash) {
+                    pubkey = candidate;
+                    return true;
+                }
             }
         }
     }
@@ -160,9 +163,12 @@ bool ExtractIndexedPubKeyFromInput(const CTxIn& input, const uint160& expectedHa
     if (input.scriptWitness.stack.size() >= 2) {
         const std::vector<unsigned char>& vchPubKey = input.scriptWitness.stack.back();
         CPubKey candidate(vchPubKey);
-        if (candidate.IsValid() && Hash160(vchPubKey.begin(), vchPubKey.end()) == expectedHash) {
-            pubkey = candidate;
-            return true;
+        if (candidate.IsValid()) {
+            const auto candidateHash = Hash160(vchPubKey.begin(), vchPubKey.end());
+            if (std::vector<unsigned char>(candidateHash.begin(), candidateHash.end()) == expectedHash) {
+                pubkey = candidate;
+                return true;
+            }
         }
     }
 
@@ -1215,49 +1221,49 @@ bool HashOnchainActive(const uint256 &hash)
     return true;
 }
 
-bool GetAddressIndex(uint160 addressHash, int type, std::string assetName,
+bool GetAddressIndex(const CDestinationIndexData& addressData, std::string assetName,
                      std::vector<std::pair<CAddressIndexKey, CAmount> > &addressIndex, int start, int end)
 {
     if (!fAddressIndex)
         return error("address index not enabled");
 
-    if (!pblocktree->ReadAddressIndex(addressHash, type, assetName, addressIndex, start, end))
+    if (!pblocktree->ReadAddressIndex(addressData, assetName, addressIndex, start, end))
         return error("unable to get txids for address");
 
     return true;
 }
 
-bool GetAddressIndex(uint160 addressHash, int type,
+bool GetAddressIndex(const CDestinationIndexData& addressData,
                      std::vector<std::pair<CAddressIndexKey, CAmount> > &addressIndex, int start, int end)
 {
     if (!fAddressIndex)
         return error("address index not enabled");
 
-    if (!pblocktree->ReadAddressIndex(addressHash, type, addressIndex, start, end))
+    if (!pblocktree->ReadAddressIndex(addressData, addressIndex, start, end))
         return error("unable to get txids for address");
 
     return true;
 }
 
-bool GetAddressUnspent(uint160 addressHash, int type, std::string assetName,
+bool GetAddressUnspent(const CDestinationIndexData& addressData, std::string assetName,
                        std::vector<std::pair<CAddressUnspentKey, CAddressUnspentValue> > &unspentOutputs)
 {
     if (!fAddressIndex)
         return error("address index not enabled");
 
-    if (!pblocktree->ReadAddressUnspentIndex(addressHash, type, assetName, unspentOutputs))
+    if (!pblocktree->ReadAddressUnspentIndex(addressData, assetName, unspentOutputs))
         return error("unable to get txids for address");
 
     return true;
 }
 
-bool GetAddressUnspent(uint160 addressHash, int type,
+bool GetAddressUnspent(const CDestinationIndexData& addressData,
                        std::vector<std::pair<CAddressUnspentKey, CAddressUnspentValue> > &unspentOutputs)
 {
     if (!fAddressIndex)
         return error("address index not enabled");
 
-    if (!pblocktree->ReadAddressUnspentIndex(addressHash, type, unspentOutputs))
+    if (!pblocktree->ReadAddressUnspentIndex(addressData, unspentOutputs))
         return error("unable to get txids for address");
 
     return true;
@@ -1949,16 +1955,15 @@ static DisconnectResult DisconnectBlock(const CBlock& block, const CBlockIndex* 
         if (fAddressIndex) {
             for (unsigned int k = tx.vout.size(); k-- > 0;) {
                 const CTxOut &out = tx.vout[k];
-                uint160 hashBytes;
-                int addressType = DEST_INDEX_NONE;
-                if (!GetScriptDestinationIndexKey(out.scriptPubKey, hashBytes, addressType)) {
+                CDestinationIndexData addressData;
+                if (!GetScriptDestinationIndexData(out.scriptPubKey, addressData)) {
                     /** XNA START */
                     if (!AreAssetsDeployed()) {
                         continue;
                     }
-                    std::string assetName;
-                    CAmount assetAmount;
-                    if (!ParseAssetScript(out.scriptPubKey, hashBytes, assetName, assetAmount)) {
+                    CTxDestination assetDest;
+                    if (!ExtractAssetDestination(out.scriptPubKey, assetDest) ||
+                        !GetDestinationIndexData(assetDest, addressData)) {
                         continue;
                     }
                     /** XNA END */
@@ -1967,17 +1972,18 @@ static DisconnectResult DisconnectBlock(const CBlock& block, const CBlockIndex* 
                 /** XNA START */
                 std::string assetName;
                 CAmount assetAmount = 0;
-                const bool isAsset = AreAssetsDeployed() && ParseAssetScript(out.scriptPubKey, hashBytes, assetName, assetAmount);
+                uint160 legacyHashBytes;
+                const bool isAsset = AreAssetsDeployed() && ParseAssetScript(out.scriptPubKey, legacyHashBytes, assetName, assetAmount);
                 if (isAsset) {
                     addressIndex.push_back(std::make_pair(
-                            CAddressIndexKey(addressType, hashBytes, assetName, pindex->nHeight, i, hash, k, false),
+                            CAddressIndexKey(addressData, assetName, pindex->nHeight, i, hash, k, false),
                             assetAmount));
                     addressUnspentIndex.push_back(
-                            std::make_pair(CAddressUnspentKey(addressType, hashBytes, assetName, hash, k),
+                            std::make_pair(CAddressUnspentKey(addressData, assetName, hash, k),
                                            CAddressUnspentValue()));
                 } else {
-                    addressIndex.push_back(std::make_pair(CAddressIndexKey(addressType, hashBytes, pindex->nHeight, i, hash, k, false), out.nValue));
-                    addressUnspentIndex.push_back(std::make_pair(CAddressUnspentKey(addressType, hashBytes, hash, k), CAddressUnspentValue()));
+                    addressIndex.push_back(std::make_pair(CAddressIndexKey(addressData, pindex->nHeight, i, hash, k, false), out.nValue));
+                    addressUnspentIndex.push_back(std::make_pair(CAddressUnspentKey(addressData, hash, k), CAddressUnspentValue()));
                 }
                 /** XNA END */
             }
@@ -2278,16 +2284,15 @@ static DisconnectResult DisconnectBlock(const CBlock& block, const CBlockIndex* 
 
                 if (fAddressIndex) {
                     const CTxOut &prevout = view.AccessCoin(tx.vin[j].prevout).out;
-                    uint160 hashBytes;
-                    int addressType = DEST_INDEX_NONE;
-                    if (!GetScriptDestinationIndexKey(prevout.scriptPubKey, hashBytes, addressType)) {
+                    CDestinationIndexData addressData;
+                    if (!GetScriptDestinationIndexData(prevout.scriptPubKey, addressData)) {
                         /** XNA START */
                         if (!AreAssetsDeployed()) {
                             continue;
                         }
-                        std::string assetName;
-                        CAmount assetAmount;
-                        if (!ParseAssetScript(prevout.scriptPubKey, hashBytes, assetName, assetAmount)) {
+                        CTxDestination assetDest;
+                        if (!ExtractAssetDestination(prevout.scriptPubKey, assetDest) ||
+                            !GetDestinationIndexData(assetDest, addressData)) {
                             continue;
                         }
                         /** XNA END */
@@ -2296,17 +2301,18 @@ static DisconnectResult DisconnectBlock(const CBlock& block, const CBlockIndex* 
                     /** XNA START */
                     std::string assetName;
                     CAmount assetAmount = 0;
-                    const bool isAsset = AreAssetsDeployed() && ParseAssetScript(prevout.scriptPubKey, hashBytes, assetName, assetAmount);
+                    uint160 legacyHashBytes;
+                    const bool isAsset = AreAssetsDeployed() && ParseAssetScript(prevout.scriptPubKey, legacyHashBytes, assetName, assetAmount);
                     if (isAsset) {
                         addressIndex.push_back(std::make_pair(
-                                CAddressIndexKey(addressType, hashBytes, assetName, pindex->nHeight, i, hash, j, true),
+                                CAddressIndexKey(addressData, assetName, pindex->nHeight, i, hash, j, true),
                                 assetAmount * -1));
                         addressUnspentIndex.push_back(std::make_pair(
-                                CAddressUnspentKey(addressType, hashBytes, assetName, input.prevout.hash, input.prevout.n),
+                                CAddressUnspentKey(addressData, assetName, input.prevout.hash, input.prevout.n),
                                 CAddressUnspentValue(assetAmount, prevout.scriptPubKey, undo.nHeight)));
                     } else {
-                        addressIndex.push_back(std::make_pair(CAddressIndexKey(addressType, hashBytes, pindex->nHeight, i, hash, j, true), prevout.nValue * -1));
-                        addressUnspentIndex.push_back(std::make_pair(CAddressUnspentKey(addressType, hashBytes, input.prevout.hash, input.prevout.n), CAddressUnspentValue(prevout.nValue, prevout.scriptPubKey, undo.nHeight)));
+                        addressIndex.push_back(std::make_pair(CAddressIndexKey(addressData, pindex->nHeight, i, hash, j, true), prevout.nValue * -1));
+                        addressUnspentIndex.push_back(std::make_pair(CAddressUnspentKey(addressData, input.prevout.hash, input.prevout.n), CAddressUnspentValue(prevout.nValue, prevout.scriptPubKey, undo.nHeight)));
                     }
                     /** XNA END */
                 }
@@ -2676,41 +2682,38 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
 
                     const CTxIn input = tx.vin[j];
                     const CTxOut &prevout = view.AccessCoin(tx.vin[j].prevout).out;
-                    uint160 hashBytes;
-                    int addressType = DEST_INDEX_NONE;
+                    CDestinationIndexData addressData;
                     bool isAsset = false;
                     std::string assetName;
                     CAmount assetAmount;
 
-                    if (!GetScriptDestinationIndexKey(prevout.scriptPubKey, hashBytes, addressType)) {
-                        hashBytes.SetNull();
-                        addressType = DEST_INDEX_NONE;
-                    }
+                    GetScriptDestinationIndexData(prevout.scriptPubKey, addressData);
 
                     /** XNA START */
-                    if (AreAssetsDeployed() && ParseAssetScript(prevout.scriptPubKey, hashBytes, assetName, assetAmount)) {
+                    uint160 legacyHashBytes;
+                    if (AreAssetsDeployed() && ParseAssetScript(prevout.scriptPubKey, legacyHashBytes, assetName, assetAmount)) {
                         isAsset = true;
                     }
                     /** XNA END */
 
-                    if (fAddressIndex && addressType > 0) {
+                    if (fAddressIndex && addressData.type > 0) {
                         /** XNA START */
                         if (isAsset) {
 //                            std::cout << "ConnectBlock(): pushing assets onto addressIndex: " << "1" << ", " << hashBytes.GetHex() << ", " << assetName << ", " << pindex->nHeight
 //                                      << ", " << i << ", " << txhash.GetHex() << ", " << j << ", " << "true" << ", " << assetAmount * -1 << std::endl;
 
                             // record spending activity
-                            addressIndex.push_back(std::make_pair(CAddressIndexKey(addressType, hashBytes, assetName, pindex->nHeight, i, txhash, j, true), assetAmount * -1));
+                            addressIndex.push_back(std::make_pair(CAddressIndexKey(addressData, assetName, pindex->nHeight, i, txhash, j, true), assetAmount * -1));
 
                             // remove address from unspent index
-                            addressUnspentIndex.push_back(std::make_pair(CAddressUnspentKey(addressType, hashBytes, assetName, input.prevout.hash, input.prevout.n), CAddressUnspentValue()));
+                            addressUnspentIndex.push_back(std::make_pair(CAddressUnspentKey(addressData, assetName, input.prevout.hash, input.prevout.n), CAddressUnspentValue()));
                         /** XNA END */
                         } else {
                             // record spending activity
-                            addressIndex.push_back(std::make_pair(CAddressIndexKey(addressType, hashBytes, pindex->nHeight, i, txhash, j, true), prevout.nValue * -1));
+                            addressIndex.push_back(std::make_pair(CAddressIndexKey(addressData, pindex->nHeight, i, txhash, j, true), prevout.nValue * -1));
 
                             // remove address from unspent index
-                            addressUnspentIndex.push_back(std::make_pair(CAddressUnspentKey(addressType, hashBytes, input.prevout.hash, input.prevout.n), CAddressUnspentValue()));
+                            addressUnspentIndex.push_back(std::make_pair(CAddressUnspentKey(addressData, input.prevout.hash, input.prevout.n), CAddressUnspentValue()));
                         }
                     }
                     /** XNA END */
@@ -2718,16 +2721,16 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
                     if (fSpentIndex) {
                         // add the spent index to determine the txid and input that spent an output
                         // and to find the amount and address from an input
-                        spentIndex.push_back(std::make_pair(CSpentIndexKey(input.prevout.hash, input.prevout.n), CSpentIndexValue(txhash, j, pindex->nHeight, prevout.nValue, addressType, hashBytes)));
+                        spentIndex.push_back(std::make_pair(CSpentIndexKey(input.prevout.hash, input.prevout.n), CSpentIndexValue(txhash, j, pindex->nHeight, prevout.nValue, addressData)));
                     }
 
                     // Extract revealed public keys for pubkey index from scriptSig or witness.
                     if (fPubKeyIndex &&
-                        (addressType == DEST_INDEX_KEY || addressType == DEST_INDEX_WITNESS_V1_AUTHSCRIPT) &&
-                        !hashBytes.IsNull()) {
+                        (addressData.type == DEST_INDEX_KEY || addressData.type == DEST_INDEX_WITNESS_V1_AUTHSCRIPT) &&
+                        !addressData.payload.empty()) {
                         CPubKey pubkey;
-                        if (ExtractIndexedPubKeyFromInput(input, hashBytes, addressType, pubkey)) {
-                            CPubKeyIndexKey key(hashBytes);
+                        if (ExtractIndexedPubKeyFromInput(input, addressData.payload, addressData.type, pubkey)) {
+                            CPubKeyIndexKey key(addressData);
                             CPubKeyIndexValue value(pubkey, pindex->nHeight, txhash);
                             pubkeyIndex.push_back(std::make_pair(key, value));
                         }
@@ -2761,17 +2764,16 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
             for (unsigned int k = 0; k < tx.vout.size(); k++) {
                 const CTxOut &out = tx.vout[k];
 
-                uint160 hashBytes;
-                int addressType = DEST_INDEX_NONE;
-                if (!GetScriptDestinationIndexKey(out.scriptPubKey, hashBytes, addressType)) {
+                CDestinationIndexData addressData;
+                if (!GetScriptDestinationIndexData(out.scriptPubKey, addressData)) {
                     /** XNA START */
                     if (!AreAssetsDeployed()) {
                         continue;
                     }
 
-                    std::string assetName;
-                    CAmount assetAmount;
-                    if (!ParseAssetScript(out.scriptPubKey, hashBytes, assetName, assetAmount)) {
+                    CTxDestination assetDest;
+                    if (!ExtractAssetDestination(out.scriptPubKey, assetDest) ||
+                        !GetDestinationIndexData(assetDest, addressData)) {
                         continue;
                     }
                     /** XNA END */
@@ -2780,19 +2782,20 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
                 /** XNA START */
                 std::string assetName;
                 CAmount assetAmount = 0;
-                const bool isAsset = AreAssetsDeployed() && ParseAssetScript(out.scriptPubKey, hashBytes, assetName, assetAmount);
+                uint160 legacyHashBytes;
+                const bool isAsset = AreAssetsDeployed() && ParseAssetScript(out.scriptPubKey, legacyHashBytes, assetName, assetAmount);
                 if (isAsset) {
                     addressIndex.push_back(std::make_pair(
-                            CAddressIndexKey(addressType, hashBytes, assetName, pindex->nHeight, i, txhash, k, false),
+                            CAddressIndexKey(addressData, assetName, pindex->nHeight, i, txhash, k, false),
                             assetAmount));
 
                     addressUnspentIndex.push_back(
-                            std::make_pair(CAddressUnspentKey(addressType, hashBytes, assetName, txhash, k),
+                            std::make_pair(CAddressUnspentKey(addressData, assetName, txhash, k),
                                            CAddressUnspentValue(assetAmount, out.scriptPubKey,
                                                                 pindex->nHeight)));
                 } else {
-                    addressIndex.push_back(std::make_pair(CAddressIndexKey(addressType, hashBytes, pindex->nHeight, i, txhash, k, false), out.nValue));
-                    addressUnspentIndex.push_back(std::make_pair(CAddressUnspentKey(addressType, hashBytes, txhash, k), CAddressUnspentValue(out.nValue, out.scriptPubKey, pindex->nHeight)));
+                    addressIndex.push_back(std::make_pair(CAddressIndexKey(addressData, pindex->nHeight, i, txhash, k, false), out.nValue));
+                    addressUnspentIndex.push_back(std::make_pair(CAddressUnspentKey(addressData, txhash, k), CAddressUnspentValue(out.nValue, out.scriptPubKey, pindex->nHeight)));
                 }
                 /** XNA END */
             }
@@ -4934,6 +4937,16 @@ bool static LoadBlockIndexDB(const CChainParams& chainparams)
     // Check whether we have a pubkey index
     pblocktree->ReadFlag("pubkeyindex", fPubKeyIndex);
     LogPrintf("%s: pubkey index %s\n", __func__, fPubKeyIndex ? "enabled" : "disabled");
+
+    if (fAddressIndex || fSpentIndex || fPubKeyIndex) {
+        int destinationIndexSchemaVersion = 0;
+        if (!pblocktree->ReadIntFlag(DESTINATION_INDEX_SCHEMA_FLAG, destinationIndexSchemaVersion)) {
+            LogPrintf("%s: destination index schema version missing, indexes require rebuild\n", __func__);
+        } else if (destinationIndexSchemaVersion != DESTINATION_INDEX_SCHEMA_VERSION) {
+            LogPrintf("%s: destination index schema mismatch (disk=%d expected=%d)\n",
+                      __func__, destinationIndexSchemaVersion, DESTINATION_INDEX_SCHEMA_VERSION);
+        }
+    }
     return true;
 }
 
@@ -5336,6 +5349,9 @@ bool LoadBlockIndex(const CChainParams& chainparams)
         fPubKeyIndex = gArgs.GetBoolArg("-pubkeyindex", DEFAULT_PUBKEYINDEX);
         pblocktree->WriteFlag("pubkeyindex", fPubKeyIndex);
         LogPrintf("%s: pubkey index %s\n", __func__, fPubKeyIndex ? "enabled" : "disabled");
+
+        pblocktree->WriteIntFlag(DESTINATION_INDEX_SCHEMA_FLAG, DESTINATION_INDEX_SCHEMA_VERSION);
+        LogPrintf("%s: destination index schema version %d\n", __func__, DESTINATION_INDEX_SCHEMA_VERSION);
 
     }
     return true;

@@ -42,6 +42,8 @@ static const int64_t nMaxBlockDBCache = 2;
 static const int64_t nMaxBlockDBAndTxIndexCache = 1024;
 //! Max memory allocated to coin DB specific cache (MiB)
 static const int64_t nMaxCoinsDBCache = 8;
+static constexpr int DESTINATION_INDEX_SCHEMA_VERSION = 1;
+static constexpr const char* DESTINATION_INDEX_SCHEMA_FLAG = "destinationindexschema";
 
 struct CDiskTxPos : public CDiskBlockPos
 {
@@ -129,16 +131,16 @@ public:
     bool ReadSpentIndex(CSpentIndexKey &key, CSpentIndexValue &value);
     bool UpdateSpentIndex(const std::vector<std::pair<CSpentIndexKey, CSpentIndexValue> >&vect);
     bool UpdateAddressUnspentIndex(const std::vector<std::pair<CAddressUnspentKey, CAddressUnspentValue > >&vect);
-    bool ReadAddressUnspentIndex(uint160 addressHash, int type, std::string assetName,
+    bool ReadAddressUnspentIndex(const CDestinationIndexData& addressData, std::string assetName,
                                  std::vector<std::pair<CAddressUnspentKey, CAddressUnspentValue> > &vect);
-    bool ReadAddressUnspentIndex(uint160 addressHash, int type,
+    bool ReadAddressUnspentIndex(const CDestinationIndexData& addressData,
                                  std::vector<std::pair<CAddressUnspentKey, CAddressUnspentValue> > &vect);
     bool WriteAddressIndex(const std::vector<std::pair<CAddressIndexKey, CAmount> > &vect);
     bool EraseAddressIndex(const std::vector<std::pair<CAddressIndexKey, CAmount> > &vect);
-    bool ReadAddressIndex(uint160 addressHash, int type, std::string assetName,
+    bool ReadAddressIndex(const CDestinationIndexData& addressData, std::string assetName,
                           std::vector<std::pair<CAddressIndexKey, CAmount> > &addressIndex,
                           int start = 0, int end = 0);
-    bool ReadAddressIndex(uint160 addressHash, int type,
+    bool ReadAddressIndex(const CDestinationIndexData& addressData,
                           std::vector<std::pair<CAddressIndexKey, CAmount> > &addressIndex,
                           int start = 0, int end = 0);
     bool WriteTimestampIndex(const CTimestampIndexKey &timestampIndex);
@@ -147,11 +149,13 @@ public:
     bool ReadTimestampBlockIndex(const uint256 &hash, unsigned int &logicalTS);
     bool WriteFlag(const std::string &name, bool fValue);
     bool ReadFlag(const std::string &name, bool &fValue);
+    bool WriteIntFlag(const std::string &name, int value);
+    bool ReadIntFlag(const std::string &name, int &value);
     bool LoadBlockIndexGuts(const Consensus::Params& consensusParams, std::function<CBlockIndex*(const uint256&)> insertBlockIndex);
 
     // PubKey Index
     bool WritePubKeyIndex(const std::vector<std::pair<CPubKeyIndexKey, CPubKeyIndexValue>>& vect);
-    bool ReadPubKeyIndex(const uint160& addressHash, CPubKeyIndexValue& value);
+    bool ReadPubKeyIndex(const CDestinationIndexData& addressData, CPubKeyIndexValue& value);
     bool ErasePubKeyIndex(const std::vector<CPubKeyIndexKey>& vect);
 };
 

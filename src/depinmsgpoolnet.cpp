@@ -703,8 +703,14 @@ std::string CDepinMsgPoolServer::IssueChallenge(const std::string& token, const 
         return "";
     }
 
+    CDestinationIndexData addressData;
+    if (!GetDestinationIndexData(dest, addressData)) {
+        error = "Failed to derive address index data";
+        return "";
+    }
+
     CPubKeyIndexValue pubKeyValue;
-    if (!pblocktree->ReadPubKeyIndex(uint160(*keyID), pubKeyValue)) {
+    if (!pblocktree->ReadPubKeyIndex(addressData, pubKeyValue)) {
         error = "Address has no public key registered in blockchain. Address must spend coins first to reveal public key.";
         return "";
     }

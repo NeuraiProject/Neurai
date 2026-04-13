@@ -8,6 +8,7 @@
 #include "pubkey.h"
 #include "uint256.h"
 #include "serialize.h"
+#include "script/standard.h"
 
 /**
  * Public Key Index
@@ -17,28 +18,32 @@
  * or in scriptWitness (PQ witness), and can then be used for encryption
  * purposes (e.g., ECIES).
  *
- * The index maps: address hash (uint160) -> public key + metadata
+ * The index maps: indexed destination payload -> public key + metadata
  */
 
 struct CPubKeyIndexKey {
-    uint160 addressHash;
+    int addressType;
+    std::vector<unsigned char> addressHash;
 
     CPubKeyIndexKey() {
         SetNull();
     }
 
-    explicit CPubKeyIndexKey(uint160 addressHashIn) {
-        addressHash = addressHashIn;
+    explicit CPubKeyIndexKey(const CDestinationIndexData& addressData) {
+        addressType = addressData.type;
+        addressHash = addressData.payload;
     }
 
     void SetNull() {
-        addressHash.SetNull();
+        addressType = DEST_INDEX_NONE;
+        addressHash.clear();
     }
 
     ADD_SERIALIZE_METHODS;
 
     template <typename Stream, typename Operation>
     inline void SerializationOp(Stream& s, Operation ser_action) {
+        READWRITE(addressType);
         READWRITE(addressHash);
     }
 };

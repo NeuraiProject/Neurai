@@ -409,17 +409,16 @@ bool CheckAddressHasPublicKey(const std::string& address, CPubKey& pubkey, std::
 
     // Decode address to get hash160
     CTxDestination dest = DecodeDestination(address);
-    uint160 addressHash;
-    int addressType = DEST_INDEX_NONE;
-    if (!IsValidDestination(dest) || !GetDestinationIndexKey(dest, addressHash, addressType) ||
-        (addressType != DEST_INDEX_KEY && addressType != DEST_INDEX_WITNESS_V1_AUTHSCRIPT)) {
+    CDestinationIndexData addressData;
+    if (!IsValidDestination(dest) || !GetDestinationIndexData(dest, addressData) ||
+        (addressData.type != DEST_INDEX_KEY && addressData.type != DEST_INDEX_WITNESS_V1_AUTHSCRIPT)) {
         error = strprintf("Invalid address format: %s", address);
         return false;
     }
 
     // Query pubkey index
     CPubKeyIndexValue value;
-    if (!pblocktree->ReadPubKeyIndex(addressHash, value)) {
+    if (!pblocktree->ReadPubKeyIndex(addressData, value)) {
         error = strprintf("Address %s has not revealed its public key", address);
         return false;
     }
