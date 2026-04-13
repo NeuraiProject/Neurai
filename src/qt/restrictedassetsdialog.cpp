@@ -2153,8 +2153,8 @@ void RestrictedAssetsDialog::freezeAddressClicked()
     FreezeAddress* widget = ui->tabWidget->findChild<FreezeAddress *>("tab_freeze_address");
 
     std::string asset_name = widget->getUI()->assetComboBox->currentData(AssetTableModel::RoleIndex::AssetNameRole).toString().toStdString();
-    std::string address = widget->getUI()->lineEditAddress->text().toStdString();
-    std::string change_address = widget->getUI()->checkBoxChangeAddress->isChecked() ? widget->getUI()->lineEditChangeAddress->text().toStdString(): "";
+    std::string address = widget->getUI()->lineEditAddress->text().trimmed().toStdString();
+    std::string change_address = widget->getUI()->checkBoxChangeAddress->isChecked() ? widget->getUI()->lineEditChangeAddress->text().trimmed().toStdString(): "";
     std::string decodedAssetData = DecodeAssetData(widget->getUI()->lineEditAssetData->text().toStdString());
 
     // Get the single address options
@@ -2473,9 +2473,9 @@ void RestrictedAssetsDialog::assignQualifierClicked()
 
     AssignQualifier* widget = ui->tabWidget->findChild<AssignQualifier *>("tab_assign_qualifier");
 
-    std::string address = widget->getUI()->lineEditAddress->text().toStdString();
+    std::string address = widget->getUI()->lineEditAddress->text().trimmed().toStdString();
     std::string asset_name = widget->getUI()->assetComboBox->currentData(AssetTableModel::RoleIndex::AssetNameRole).toString().toStdString();
-    std::string change_address = widget->getUI()->checkBoxChangeAddress->isChecked() ? widget->getUI()->lineEditChangeAddress->text().toStdString(): "";
+    std::string change_address = widget->getUI()->checkBoxChangeAddress->isChecked() ? widget->getUI()->lineEditChangeAddress->text().trimmed().toStdString(): "";
     std::string decodedAssetData = DecodeAssetData(widget->getUI()->lineEditAssetData->text().toStdString());
 
     int flag = widget->getUI()->assignTypeComboBox->currentIndex() ? 0 : 1;

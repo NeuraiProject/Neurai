@@ -166,7 +166,7 @@ void FreezeAddress::changeAddressChanged(int state)
 void FreezeAddress::check()
 {
     QString restricted_asset = ui->assetComboBox->currentData(AssetTableModel::RoleIndex::AssetNameRole).toString();
-    QString address = ui->lineEditAddress->text();
+    QString address = ui->lineEditAddress->text().trimmed();
     bool freeze_address = ui->radioButtonFreezeAddress->isChecked();
     bool unfreeze_address = ui->radioButtonUnfreezeAddress->isChecked();
     bool freeze_global = ui->radioButtonGlobalFreeze->isChecked();
@@ -183,18 +183,16 @@ void FreezeAddress::check()
 
     std::string strAddress = address.toStdString();
     if (isSingleAddress) {
-        CTxDestination dest = DecodeDestination(strAddress);
-        if (!IsValidDestination(dest)) {
+        if (!IsValidDestinationString(strAddress)) {
             ui->lineEditAddress->setStyleSheet(STYLE_INVALID);
             failed = true;
         }
     }
 
     if (ui->checkBoxChangeAddress->isChecked()) {
-        std::string strChangeAddress = ui->lineEditChangeAddress->text().toStdString();
+        std::string strChangeAddress = ui->lineEditChangeAddress->text().trimmed().toStdString();
         if (!strChangeAddress.empty()) {
-            CTxDestination changeDest = DecodeDestination(strChangeAddress);
-            if (!IsValidDestination(changeDest)) {
+            if (!IsValidDestinationString(strChangeAddress)) {
                 ui->lineEditChangeAddress->setStyleSheet(STYLE_INVALID);
                 failed = true;
             }

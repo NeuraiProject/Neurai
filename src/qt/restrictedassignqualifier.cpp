@@ -162,7 +162,7 @@ void AssignQualifier::changeAddressChanged(int state)
 void AssignQualifier::check()
 {
     QString qualifier = ui->assetComboBox->currentData(AssetTableModel::RoleIndex::AssetNameRole).toString();
-    QString address = ui->lineEditAddress->text();
+    QString address = ui->lineEditAddress->text().trimmed();
     bool removing = ui->assignTypeComboBox->currentIndex() == 1;
 
     bool failed = false;
@@ -172,17 +172,15 @@ void AssignQualifier::check()
     }
 
     std::string strAddress = address.toStdString();
-    CTxDestination dest = DecodeDestination(strAddress);
-    if (!IsValidDestination(dest)) {
+    if (!IsValidDestinationString(strAddress)) {
         ui->lineEditAddress->setStyleSheet(STYLE_INVALID);
         failed = true;
     }
 
     if (ui->checkBoxChangeAddress->isChecked()) {
-        std::string strChangeAddress = ui->lineEditChangeAddress->text().toStdString();
+        std::string strChangeAddress = ui->lineEditChangeAddress->text().trimmed().toStdString();
         if (!strChangeAddress.empty()) {
-            CTxDestination changeDest = DecodeDestination(strChangeAddress);
-            if (!IsValidDestination(changeDest)) {
+            if (!IsValidDestinationString(strChangeAddress)) {
                 ui->lineEditChangeAddress->setStyleSheet(STYLE_INVALID);
                 failed = true;
             }
