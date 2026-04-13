@@ -179,6 +179,15 @@ BOOST_AUTO_TEST_CASE(outputvalue_evalscript_pushes_le_amount)
     BOOST_CHECK(result[0] == EncodeAmountLE(42));
 }
 
+BOOST_AUTO_TEST_CASE(outputvalue_returns_8_bytes)
+{
+    CTransaction tx(BuildTx());
+    std::vector<unsigned char> result;
+
+    BOOST_CHECK(DirectGetOutputValue(tx, 1, result));
+    BOOST_CHECK_EQUAL(result.size(), 8U);
+}
+
 BOOST_AUTO_TEST_CASE(outputvalue_with_reversebytes_produces_big_endian)
 {
     CTransaction tx(BuildTx());
@@ -204,6 +213,21 @@ BOOST_AUTO_TEST_CASE(outputvalue_selector_must_be_scriptnum)
     ScriptError err = SCRIPT_ERR_OK;
     BOOST_CHECK(!RunScript(tx, script, OUTPUTVALUE_FLAGS, result, &err));
     BOOST_CHECK(err != SCRIPT_ERR_OK);
+}
+
+BOOST_AUTO_TEST_CASE(outputvalue_works_via_verifyscript)
+{
+    CMutableTransaction mtx = BuildTx();
+    CTransaction tx(mtx);
+
+    CScript scriptSig;
+    CScript scriptPubKey;
+    scriptPubKey << CScriptNum(1) << OP_OUTPUTVALUE << EncodeAmountLE(5000000000LL) << OP_EQUAL;
+
+    ScriptError err = SCRIPT_ERR_OK;
+    BOOST_CHECK(VerifyScript(scriptSig, scriptPubKey, nullptr, OUTPUTVALUE_FLAGS,
+                             TransactionSignatureChecker(&tx, 0, 0), &err));
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OK);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
