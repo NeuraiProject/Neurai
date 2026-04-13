@@ -7,6 +7,7 @@
 #ifndef NEURAI_SCRIPT_STANDARD_H
 #define NEURAI_SCRIPT_STANDARD_H
 
+#include "pubkey.h"
 #include "script/interpreter.h"
 #include "uint256.h"
 
@@ -16,7 +17,6 @@
 
 static const bool DEFAULT_ACCEPT_DATACARRIER = true;
 
-class CKeyID;
 class CScript;
 
 /** A reference to a CScript: the Hash160 of its serialization (see script.h) */
