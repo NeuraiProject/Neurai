@@ -105,6 +105,9 @@ struct Params {
     /** Enable OP_OUTPUTVALUE - push the amount of a selected output as raw
      *  8-byte little-endian data. true on testnet/regtest; false on mainnet. */
     bool nOUTPUTVALUEEnabled;
+    /** Enable OP_OUTPUTSCRIPT - push the scriptPubKey of a selected output
+     *  as raw bytes. true on testnet/regtest; false on mainnet. */
+    bool nOUTPUTSCRIPTEnabled;
     /** Enable OP_TXLOCKTIME - push transaction nLockTime as raw 4-byte
      *  little-endian data. true on testnet/regtest; false on mainnet. */
     bool nTXLOCKTIMEEnabled;

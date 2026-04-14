@@ -164,6 +164,11 @@ enum
     // little-endian data.
     //
             SCRIPT_VERIFY_TXLOCKTIME = (1U << 25),
+
+    // Enable OP_OUTPUTSCRIPT - push the scriptPubKey of a selected output
+    // as raw bytes.
+    //
+            SCRIPT_VERIFY_OUTPUTSCRIPT = (1U << 26),
 };
 
 bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, unsigned int flags, ScriptError *serror);
@@ -244,6 +249,11 @@ public:
         return false;
     }
 
+    virtual bool GetOutputScript(unsigned int nOut, std::vector<unsigned char>& result) const
+    {
+        return false;
+    }
+
     virtual bool GetTxLockTime(std::vector<unsigned char>& result) const
     {
         return false;
@@ -296,6 +306,8 @@ public:
     bool GetTxField(unsigned char selector, std::vector<unsigned char>& result) const override;
 
     bool GetOutputValue(unsigned int nOut, std::vector<unsigned char>& result) const override;
+
+    bool GetOutputScript(unsigned int nOut, std::vector<unsigned char>& result) const override;
 
     bool GetTxLockTime(std::vector<unsigned char>& result) const override;
 

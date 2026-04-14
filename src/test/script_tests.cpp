@@ -100,6 +100,7 @@ static ScriptErrorDesc script_errors[] = {
         {SCRIPT_ERR_WITNESS_MALLEATED_P2SH,                "WITNESS_MALLEATED_P2SH"},
         {SCRIPT_ERR_WITNESS_UNEXPECTED,                    "WITNESS_UNEXPECTED"},
         {SCRIPT_ERR_WITNESS_PUBKEYTYPE,                    "WITNESS_PUBKEYTYPE"},
+        {SCRIPT_ERR_OUTPUTSCRIPT,                          "OUTPUTSCRIPT"},
 };
 
 const char *FormatScriptError(ScriptError_t err)

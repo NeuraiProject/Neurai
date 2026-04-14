@@ -2497,6 +2497,11 @@ static unsigned int GetBlockScriptFlags(const CBlockIndex* pindex, const Consens
         flags |= SCRIPT_VERIFY_OUTPUTVALUE;
     }
 
+    // OP_OUTPUTSCRIPT
+    if (consensusparams.nOUTPUTSCRIPTEnabled) {
+        flags |= SCRIPT_VERIFY_OUTPUTSCRIPT;
+    }
+
     // OP_TXLOCKTIME
     if (consensusparams.nTXLOCKTIMEEnabled) {
         flags |= SCRIPT_VERIFY_TXLOCKTIME;

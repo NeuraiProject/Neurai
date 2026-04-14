@@ -736,6 +736,31 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                     }
                         break;
 
+                    case OP_OUTPUTSCRIPT:
+                    {
+                        if (!(flags & SCRIPT_VERIFY_OUTPUTSCRIPT))
+                        {
+                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
+                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+                            break;
+                        }
+
+                        if (stack.size() < 1)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+                        const int nOut = CScriptNum(stacktop(-1), fRequireMinimal).getint();
+                        if (nOut < 0)
+                            return set_error(serror, SCRIPT_ERR_OUTPUTSCRIPT);
+
+                        valtype vchScript;
+                        if (!checker.GetOutputScript((unsigned int)nOut, vchScript))
+                            return set_error(serror, SCRIPT_ERR_OUTPUTSCRIPT);
+
+                        popstack(stack);
+                        stack.push_back(vchScript);
+                    }
+                        break;
+
                     case OP_TXLOCKTIME:
                     {
                         if (!(flags & SCRIPT_VERIFY_TXLOCKTIME))
@@ -2146,6 +2171,22 @@ bool TransactionSignatureChecker::GetOutputValue(unsigned int nOut,
     const int64_t nValue = (int64_t)txTo->vout[nOut].nValue;
     result.resize(8);
     memcpy(result.data(), &nValue, 8);
+    return true;
+}
+
+bool TransactionSignatureChecker::GetOutputScript(unsigned int nOut,
+                                                  std::vector<unsigned char>& result) const
+{
+    if (!txTo)
+        return false;
+    if (nOut >= txTo->vout.size())
+        return false;
+
+    const CScript& spk = txTo->vout[nOut].scriptPubKey;
+    if (spk.size() > MAX_SCRIPT_ELEMENT_SIZE)
+        return false;
+
+    result.assign(spk.begin(), spk.end());
     return true;
 }
 
