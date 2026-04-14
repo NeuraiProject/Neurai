@@ -221,6 +221,25 @@ BOOST_FIXTURE_TEST_SUITE(asset_tests, BasicTestingSetup)
         BOOST_CHECK(!IsAssetNameValid("$ABC#NO"));
     }
 
+    BOOST_AUTO_TEST_CASE(depin_name_validation_network_gating_tests)
+    {
+        BOOST_TEST_MESSAGE("Running DEPIN network gating validation tests");
+
+        AssetType type;
+
+        SelectParams(CBaseChainParams::MAIN);
+        BOOST_CHECK(!IsAssetNameValid("&DEPINASSET", type));
+        BOOST_CHECK(type == AssetType::INVALID);
+
+        SelectParams(CBaseChainParams::TESTNET);
+        BOOST_CHECK(IsAssetNameValid("&DEPINASSET", type));
+        BOOST_CHECK(type == AssetType::DEPIN);
+
+        SelectParams(CBaseChainParams::REGTEST);
+        BOOST_CHECK(IsAssetNameValid("&DEPINASSET", type));
+        BOOST_CHECK(type == AssetType::DEPIN);
+    }
+
     BOOST_AUTO_TEST_CASE(transfer_asset_coin_test)
     {
         BOOST_TEST_MESSAGE("Running Transfer Asset Coin Test");

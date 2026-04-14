@@ -47,7 +47,7 @@ int GetMaxAssetNameLength();
 
 #define RESTRICTED_CHAR '$'
 #define QUALIFIER_CHAR '#'
-#define DEPIN_CHAR '&'  // Soulbound assets (testnet only)
+#define DEPIN_CHAR '&'  // Soulbound assets (testnet and regtest only)
 
 #define QUALIFIER_ASSET_MIN_AMOUNT 1 * COIN
 #define QUALIFIER_ASSET_MAX_AMOUNT 10 * COIN
@@ -450,7 +450,7 @@ bool IsAssetNameASubQualifier(const std::string& name);
 //! Check if an asset is a message channel
 bool IsAssetNameAnMsgChannel(const std::string& name);
 
-//! Check if an asset is a DEPIN (soulbound) asset (testnet only)
+//! Check if an asset is a DEPIN (soulbound) asset (testnet and regtest only)
 bool IsAssetNameADEPIN(const std::string& name);
 
 //! Check if an asset is a sub-DEPIN asset

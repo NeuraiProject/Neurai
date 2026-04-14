@@ -45,6 +45,12 @@ static const auto MAX_NAME_LENGTH = 31;
 static const auto MAX_NAME_LENGTH_TESTNET = 121;
 static const auto MAX_CHANNEL_NAME_LENGTH = 12;
 
+static bool AreDEPINAssetsEnabledOnCurrentNetwork()
+{
+    const std::string& network = GetParams().NetworkIDString();
+    return network == CBaseChainParams::TESTNET || network == CBaseChainParams::REGTEST;
+}
+
 int GetMaxAssetNameLength()
 {
     // Use larger asset name length in testnet for testing purposes
@@ -66,7 +72,7 @@ static const std::regex QUALIFIER_NAME_CHARACTERS("#[A-Z0-9._]{3,}$");
 static const std::regex SUB_QUALIFIER_NAME_CHARACTERS("#[A-Z0-9._]+$");
 static const std::regex RESTRICTED_NAME_CHARACTERS("\\$[A-Z0-9._]{3,}$");
 
-// DEPIN assets (soulbound, testnet only)
+// DEPIN assets (soulbound, enabled on testnet and regtest)
 static const std::regex DEPIN_NAME_CHARACTERS("&[A-Z0-9._]{3,}$");
 static const std::regex SUB_DEPIN_NAME_CHARACTERS("&[A-Z0-9._/]+$");
 
@@ -95,7 +101,7 @@ static const std::regex VOTE_INDICATOR(R"(^[^^~#!]+\^[^~#!\/]+$)");
 static const std::regex QUALIFIER_INDICATOR("^[#][A-Z0-9._]{3,}$"); // Starts with #
 static const std::regex SUB_QUALIFIER_INDICATOR("^#[A-Z0-9._]+\\/#[A-Z0-9._]+$"); // Starts with #
 static const std::regex RESTRICTED_INDICATOR("^[\\$][A-Z0-9._]{3,}$"); // Starts with $
-static const std::regex DEPIN_INDICATOR("^[&][A-Z0-9._]{3,}$"); // Starts with & (testnet only)
+static const std::regex DEPIN_INDICATOR("^[&][A-Z0-9._]{3,}$"); // Starts with &
 static const std::regex SUB_DEPIN_INDICATOR("^&[A-Z0-9._]+\\/[A-Z0-9._/]+$"); // Sub-DEPIN with /
 
 static const std::regex NEURAI_NAMES("^XNA$|^NEURAI$|^NEURAICOIN$|^#XNA$|^#NEURAI$|^#NEURAICOIN$");
@@ -300,9 +306,9 @@ bool IsAssetNameValid(const std::string& name, AssetType& assetType, std::string
     }
     else if (std::regex_match(name, DEPIN_INDICATOR) || std::regex_match(name, SUB_DEPIN_INDICATOR))
     {
-        // DEPIN assets are only enabled in testnet
-        if (GetParams().NetworkIDString() != "test") {
-            error = "DEPIN assets are only available in testnet";
+        // DEPIN assets are enabled in testnet and regtest, but remain disabled on mainnet
+        if (!AreDEPINAssetsEnabledOnCurrentNetwork()) {
+            error = "DEPIN assets are only available in testnet and regtest";
             return false;
         }
 
@@ -420,7 +426,7 @@ bool IsTypeCheckNameValid(const AssetType type, const std::string& name, std::st
         if (!valid) { error = "Restricted name contains invalid characters (Valid characters are: A-Z 0-9 _ .) ($ must be the first character, _ . special characters can't be the first or last characters)";  return false; }
         return true;
     } else if (type == AssetType::DEPIN) {
-        // DEPIN assets (testnet only)
+        // DEPIN assets (testnet and regtest only)
         if (name.size() > maxLength) { error = "Name is greater than max length of " + std::to_string(maxLength); return false; }
 
         // Check if sub-DEPIN (contains /)
@@ -5792,11 +5798,11 @@ bool ContextualCheckTransferAsset(CAssetsCache* assetCache, const CAssetTransfer
         }
     }
 
-    // DEPIN assets validation (testnet only)
+    // DEPIN assets validation (testnet and regtest only)
     if (assetType == AssetType::DEPIN) {
-        // DEPIN assets can only be used in testnet
-        if (GetParams().NetworkIDString() != "test") {
-            strError = "bad-txns-depin-not-enabled: DEPIN assets are only available in testnet";
+        // DEPIN assets can only be used in testnet and regtest
+        if (!AreDEPINAssetsEnabledOnCurrentNetwork()) {
+            strError = "bad-txns-depin-not-enabled: DEPIN assets are only available in testnet and regtest";
             return false;
         }
 
