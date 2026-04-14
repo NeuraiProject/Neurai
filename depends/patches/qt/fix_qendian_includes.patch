@@ -1,0 +1,23 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Neurai <dev@neurai.org>
+Date: Mon, 14 Apr 2026 00:00:00 +0000
+Subject: [PATCH] Fix missing #include <limits> in qendian.h for GCC 12+
+
+GCC 12 no longer transitively includes <limits> through other standard
+headers, causing std::numeric_limits to be undeclared in qendian.h.
+---
+ qtbase/src/corelib/global/qendian.h | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/qtbase/src/corelib/global/qendian.h b/qtbase/src/corelib/global/qendian.h
+index 1234567..abcdefg 100644
+--- a/qtbase/src/corelib/global/qendian.h
++++ b/qtbase/src/corelib/global/qendian.h
+@@ -43,6 +43,7 @@
+ #include <QtCore/qglobal.h>
+ 
+ // include stdlib.h and hope that it defines __GLIBC__ for glibc-based systems
++#include <limits>
+ #include <stdlib.h>
+ #include <string.h>
+ 
