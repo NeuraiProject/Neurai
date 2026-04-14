@@ -798,7 +798,7 @@ void NeuraiGUI::createToolBars()
 
         // Network request code for the header widget
         QObject::connect(networkManager, &QNetworkAccessManager::finished,
-                         this, [=](QNetworkReply *reply) {
+                         this, [=, this](QNetworkReply *reply) {
                     if (reply->error()) {
                         labelCurrentPrice->setText("");
                         qDebug() << reply->errorString();
@@ -856,7 +856,7 @@ void NeuraiGUI::createToolBars()
         // Get the latest Neurai release and let the user know if they are using the latest version
         // Network request code for the header widget
         QObject::connect(networkVersionManager, &QNetworkAccessManager::finished,
-                         this, [=](QNetworkReply *reply) {
+                         this, [=, this](QNetworkReply *reply) {
                     if (reply->error()) {
                         qDebug() << reply->errorString();
                         return;

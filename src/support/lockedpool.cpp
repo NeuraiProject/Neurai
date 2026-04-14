@@ -67,7 +67,7 @@ void* Arena::alloc(size_t size)
 
     // Pick a large enough free-chunk
     auto it = std::find_if(chunks_free.begin(), chunks_free.end(),
-        [=](const std::map<char*, size_t>::value_type& chunk){ return chunk.second >= size; });
+        [size](const std::map<char*, size_t>::value_type& chunk){ return chunk.second >= size; });
     if (it == chunks_free.end())
         return nullptr;
 

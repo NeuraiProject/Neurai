@@ -956,7 +956,7 @@ void CreateAssetDialog::onCreateAssetClicked()
         QMessageBox msgBox;
         QPushButton *copyButton = msgBox.addButton(tr("Copy"), QMessageBox::ActionRole);
         copyButton->disconnect();
-        connect(copyButton, &QPushButton::clicked, this, [=](){
+        connect(copyButton, &QPushButton::clicked, this, [=, this](){
             QClipboard *p_Clipboard = QApplication::clipboard();
             p_Clipboard->setText(QString::fromStdString(txid), QClipboard::Mode::Clipboard);
 
