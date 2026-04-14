@@ -1,0 +1,56 @@
+# docker build -t neurai-linux64-bin -f doc/docker/Dockerfile-Linux64-bin-v2 .
+
+FROM debian:12
+
+LABEL maintainer="Asimov"
+
+LABEL version="1.0.6"
+
+LABEL description="Neurai 1.0.6 | Docker for linux x64 bin (C++20)"
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt update
+
+RUN apt-get install -y \
+    autoconf \
+    automake \
+    autotools-dev \
+    binutils \
+    bsdmainutils \
+    build-essential \
+    ca-certificates \
+    cmake \
+    curl \
+    git \
+    gnupg \
+    libssl-dev \
+    libtool \
+    ninja-build \
+    pkg-config \
+    python3 \
+    bison \
+    unzip \
+    wget
+
+WORKDIR /root
+
+RUN git clone --branch DePIN-Test --single-branch https://github.com/NeuraiProject/Neurai.git
+
+WORKDIR /root/Neurai/depends
+
+RUN make HOST=x86_64-pc-linux-gnu -j4
+
+WORKDIR /root/Neurai
+
+RUN ./autogen.sh
+
+RUN contrib/install_db4.sh ../
+
+ENV BDB_PREFIX=/root/db4
+
+RUN CONFIG_SITE=$PWD/depends/x86_64-pc-linux-gnu/share/config.site ./configure --prefix=$PWD/depends/x86_64-pc-linux-gnu --enable-cxx --disable-shared --disable-maintainer-mode --with-pic LDFLAGS="-L${BDB_PREFIX}/lib/" CPPFLAGS="-I${BDB_PREFIX}/include/"
+
+RUN make -j4
+
+CMD ["tail", "-f", "/dev/null"]
