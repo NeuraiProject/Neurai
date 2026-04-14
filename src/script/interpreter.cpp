@@ -6,6 +6,8 @@
 
 #include "interpreter.h"
 
+#include "assets/assets.h"
+#include "assets/assettypes.h"
 #include "primitives/transaction.h"
 #include "crypto/ripemd160.h"
 #include "crypto/sha1.h"
@@ -18,8 +20,136 @@
 #include "streams.h"
 
 #include <algorithm>
+#include <cstring>
 
 typedef std::vector<unsigned char> valtype;
+
+static bool ExtractAssetField_Transfer(
+    const CAssetTransfer& t,
+    unsigned char selector,
+    std::vector<unsigned char>& result)
+{
+    switch (selector) {
+        case 0x01:
+            result.assign(t.strName.begin(), t.strName.end());
+            return true;
+        case 0x02: {
+            result.resize(8);
+            const int64_t v = static_cast<int64_t>(t.nAmount);
+            memcpy(result.data(), &v, 8);
+            return true;
+        }
+        case 0x07: {
+            AssetType type;
+            if (!IsAssetNameValid(t.strName, type))
+                return false;
+            result = {static_cast<unsigned char>(IntFromAssetType(type))};
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
+static bool ExtractAssetField_New(
+    const CNewAsset& a,
+    unsigned char selector,
+    std::vector<unsigned char>& result)
+{
+    switch (selector) {
+        case 0x01:
+            result.assign(a.strName.begin(), a.strName.end());
+            return true;
+        case 0x02: {
+            result.resize(8);
+            const int64_t v = static_cast<int64_t>(a.nAmount);
+            memcpy(result.data(), &v, 8);
+            return true;
+        }
+        case 0x03:
+            result = {static_cast<unsigned char>(a.units)};
+            return true;
+        case 0x04:
+            result = {static_cast<unsigned char>(a.nReissuable)};
+            return true;
+        case 0x05:
+            result = {static_cast<unsigned char>(a.nHasIPFS)};
+            return true;
+        case 0x06:
+            if (a.nHasIPFS == 0 || a.strIPFSHash.empty())
+                return false;
+            result.assign(a.strIPFSHash.begin(), a.strIPFSHash.end());
+            return true;
+        case 0x07: {
+            AssetType type;
+            if (!IsAssetNameValid(a.strName, type))
+                return false;
+            result = {static_cast<unsigned char>(IntFromAssetType(type))};
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
+static bool ExtractAssetField_Reissue(
+    const CReissueAsset& r,
+    unsigned char selector,
+    std::vector<unsigned char>& result)
+{
+    switch (selector) {
+        case 0x01:
+            result.assign(r.strName.begin(), r.strName.end());
+            return true;
+        case 0x02: {
+            result.resize(8);
+            const int64_t v = static_cast<int64_t>(r.nAmount);
+            memcpy(result.data(), &v, 8);
+            return true;
+        }
+        case 0x03:
+            // nUnits: -1 (0xff) = unchanged, 0..8 = explicit value
+            result = {static_cast<unsigned char>(r.nUnits)};
+            return true;
+        case 0x04:
+            // nReissuable: always 0 or 1 in valid reissues (no sentinel)
+            result = {static_cast<unsigned char>(r.nReissuable)};
+            return true;
+        case 0x06:
+            if (r.strIPFSHash.empty())
+                return false;
+            result.assign(r.strIPFSHash.begin(), r.strIPFSHash.end());
+            return true;
+        case 0x07:
+            result = {static_cast<unsigned char>(IntFromAssetType(AssetType::REISSUE))};
+            return true;
+        default:
+            return false;
+    }
+}
+
+static bool ExtractAssetField_Owner(
+    const std::string& ownerName,
+    unsigned char selector,
+    std::vector<unsigned char>& result)
+{
+    switch (selector) {
+        case 0x01:
+            result.assign(ownerName.begin(), ownerName.end());
+            return true;
+        case 0x02: {
+            result.resize(8);
+            const int64_t v = static_cast<int64_t>(OWNER_ASSET_AMOUNT);
+            memcpy(result.data(), &v, 8);
+            return true;
+        }
+        case 0x07:
+            result = {static_cast<unsigned char>(IntFromAssetType(AssetType::OWNER))};
+            return true;
+        default:
+            return false;
+    }
+}
 
 namespace
 {
@@ -758,6 +888,40 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
 
                         popstack(stack);
                         stack.push_back(vchScript);
+                    }
+                        break;
+
+                    case OP_OUTPUTASSETFIELD:
+                    {
+                        if (!(flags & SCRIPT_VERIFY_OUTPUTASSETFIELD))
+                        {
+                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
+                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+                            break;
+                        }
+
+                        if (stack.size() < 2)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+                        const valtype& vchSelector = stacktop(-1);
+                        if (vchSelector.size() != 1)
+                            return set_error(serror, SCRIPT_ERR_OUTPUTASSETFIELD);
+                        const unsigned char selector = vchSelector[0];
+
+                        const int nOut = CScriptNum(stacktop(-2), fRequireMinimal).getint();
+                        if (nOut < 0)
+                            return set_error(serror, SCRIPT_ERR_OUTPUTASSETFIELD);
+
+                        if (selector == 0x00 || selector >= 0x08)
+                            return set_error(serror, SCRIPT_ERR_OUTPUTASSETFIELD);
+
+                        valtype vchResult;
+                        if (!checker.GetOutputAssetField(static_cast<unsigned int>(nOut), selector, vchResult))
+                            return set_error(serror, SCRIPT_ERR_OUTPUTASSETFIELD);
+
+                        popstack(stack);
+                        popstack(stack);
+                        stack.push_back(vchResult);
                     }
                         break;
 
@@ -2188,6 +2352,44 @@ bool TransactionSignatureChecker::GetOutputScript(unsigned int nOut,
 
     result.assign(spk.begin(), spk.end());
     return true;
+}
+
+bool TransactionSignatureChecker::GetOutputAssetField(unsigned int nOut,
+                                                      unsigned char selector,
+                                                      std::vector<unsigned char>& result) const
+{
+    if (!txTo || nOut >= txTo->vout.size())
+        return false;
+
+    const CScript& scriptPubKey = txTo->vout[nOut].scriptPubKey;
+    std::string strAddress;
+
+    CAssetTransfer transfer;
+    if (TransferAssetFromScript(scriptPubKey, transfer, strAddress))
+        return ExtractAssetField_Transfer(transfer, selector, result);
+
+    CNewAsset newAsset;
+    if (AssetFromScript(scriptPubKey, newAsset, strAddress))
+        return ExtractAssetField_New(newAsset, selector, result);
+
+    if (MsgChannelAssetFromScript(scriptPubKey, newAsset, strAddress))
+        return ExtractAssetField_New(newAsset, selector, result);
+
+    if (QualifierAssetFromScript(scriptPubKey, newAsset, strAddress))
+        return ExtractAssetField_New(newAsset, selector, result);
+
+    if (RestrictedAssetFromScript(scriptPubKey, newAsset, strAddress))
+        return ExtractAssetField_New(newAsset, selector, result);
+
+    CReissueAsset reissue;
+    if (ReissueAssetFromScript(scriptPubKey, reissue, strAddress))
+        return ExtractAssetField_Reissue(reissue, selector, result);
+
+    std::string ownerName;
+    if (OwnerAssetFromScript(scriptPubKey, ownerName, strAddress))
+        return ExtractAssetField_Owner(ownerName, selector, result);
+
+    return false;
 }
 
 bool TransactionSignatureChecker::GetTxLockTime(std::vector<unsigned char>& result) const

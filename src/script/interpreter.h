@@ -169,6 +169,11 @@ enum
     // as raw bytes.
     //
             SCRIPT_VERIFY_OUTPUTSCRIPT = (1U << 26),
+
+    // Enable OP_OUTPUTASSETFIELD - read asset payload fields from a selected
+    // output by selector.
+    //
+            SCRIPT_VERIFY_OUTPUTASSETFIELD = (1U << 27),
 };
 
 bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, unsigned int flags, ScriptError *serror);
@@ -254,6 +259,11 @@ public:
         return false;
     }
 
+    virtual bool GetOutputAssetField(unsigned int nOut, unsigned char selector, std::vector<unsigned char>& result) const
+    {
+        return false;
+    }
+
     virtual bool GetTxLockTime(std::vector<unsigned char>& result) const
     {
         return false;
@@ -308,6 +318,8 @@ public:
     bool GetOutputValue(unsigned int nOut, std::vector<unsigned char>& result) const override;
 
     bool GetOutputScript(unsigned int nOut, std::vector<unsigned char>& result) const override;
+
+    bool GetOutputAssetField(unsigned int nOut, unsigned char selector, std::vector<unsigned char>& result) const override;
 
     bool GetTxLockTime(std::vector<unsigned char>& result) const override;
 

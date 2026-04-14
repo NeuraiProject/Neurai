@@ -101,6 +101,7 @@ static ScriptErrorDesc script_errors[] = {
         {SCRIPT_ERR_WITNESS_UNEXPECTED,                    "WITNESS_UNEXPECTED"},
         {SCRIPT_ERR_WITNESS_PUBKEYTYPE,                    "WITNESS_PUBKEYTYPE"},
         {SCRIPT_ERR_OUTPUTSCRIPT,                          "OUTPUTSCRIPT"},
+        {SCRIPT_ERR_OUTPUTASSETFIELD,                      "OUTPUTASSETFIELD"},
 };
 
 const char *FormatScriptError(ScriptError_t err)
