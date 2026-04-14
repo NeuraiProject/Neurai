@@ -184,6 +184,11 @@ enum
     // referenced by a selected input.
     //
             SCRIPT_VERIFY_INPUTASSETFIELD = (1U << 29),
+
+    // Enable OP_INPUTCOUNT / OP_OUTPUTCOUNT — push transaction
+    // input/output count onto the stack as CScriptNum.
+    //
+            SCRIPT_VERIFY_INPUTOUTPUTCOUNT = (1U << 30),
 };
 
 bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, unsigned int flags, ScriptError *serror);
@@ -279,6 +284,16 @@ public:
         return false;
     }
 
+    virtual bool GetInputCount(std::vector<unsigned char>& result) const
+    {
+        return false;
+    }
+
+    virtual bool GetOutputCount(std::vector<unsigned char>& result) const
+    {
+        return false;
+    }
+
     virtual bool GetTxLockTime(std::vector<unsigned char>& result) const
     {
         return false;
@@ -344,6 +359,9 @@ public:
     bool GetOutputAssetField(unsigned int nOut, unsigned char selector, std::vector<unsigned char>& result) const override;
 
     bool GetInputAssetField(unsigned int nIn, unsigned char selector, std::vector<unsigned char>& result) const override;
+
+    bool GetInputCount(std::vector<unsigned char>& result) const override;
+    bool GetOutputCount(std::vector<unsigned char>& result) const override;
 
     bool GetTxLockTime(std::vector<unsigned char>& result) const override;
 

@@ -986,6 +986,9 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         if (chainparams.GetConsensus().nTXLOCKTIMEEnabled) {
             scriptVerifyFlags |= SCRIPT_VERIFY_TXLOCKTIME;
         }
+        if (chainparams.GetConsensus().nINPUTOUTPUTCOUNTEnabled) {
+            scriptVerifyFlags |= SCRIPT_VERIFY_INPUTOUTPUTCOUNT;
+        }
 
         // Check against previous transactions
         // This is done last to help prevent CPU exhaustion denial-of-service attacks.
@@ -2558,6 +2561,11 @@ static unsigned int GetBlockScriptFlags(const CBlockIndex* pindex, const Consens
     // OP_TXLOCKTIME
     if (consensusparams.nTXLOCKTIMEEnabled) {
         flags |= SCRIPT_VERIFY_TXLOCKTIME;
+    }
+
+    // OP_INPUTCOUNT / OP_OUTPUTCOUNT
+    if (consensusparams.nINPUTOUTPUTCOUNTEnabled) {
+        flags |= SCRIPT_VERIFY_INPUTOUTPUTCOUNT;
     }
 
     return flags;

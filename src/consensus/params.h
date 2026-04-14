@@ -120,6 +120,9 @@ struct Params {
     /** Enable OP_TXLOCKTIME - push transaction nLockTime as raw 4-byte
      *  little-endian data. true on testnet/regtest; false on mainnet. */
     bool nTXLOCKTIMEEnabled;
+    /** Enable OP_INPUTCOUNT / OP_OUTPUTCOUNT - push transaction input/output
+     *  count onto the stack. true on testnet/regtest; false on mainnet. */
+    bool nINPUTOUTPUTCOUNTEnabled;
 };
 } // namespace Consensus
 

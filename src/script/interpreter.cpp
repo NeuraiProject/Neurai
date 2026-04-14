@@ -1068,6 +1068,40 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                     }
                         break;
 
+                    case OP_INPUTCOUNT:
+                    {
+                        if (!(flags & SCRIPT_VERIFY_INPUTOUTPUTCOUNT))
+                        {
+                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
+                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+                            break;
+                        }
+
+                        valtype vchResult;
+                        if (!checker.GetInputCount(vchResult))
+                            return set_error(serror, SCRIPT_ERR_INPUTOUTPUTCOUNT);
+
+                        stack.push_back(vchResult);
+                    }
+                        break;
+
+                    case OP_OUTPUTCOUNT:
+                    {
+                        if (!(flags & SCRIPT_VERIFY_INPUTOUTPUTCOUNT))
+                        {
+                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
+                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+                            break;
+                        }
+
+                        valtype vchResult;
+                        if (!checker.GetOutputCount(vchResult))
+                            return set_error(serror, SCRIPT_ERR_INPUTOUTPUTCOUNT);
+
+                        stack.push_back(vchResult);
+                    }
+                        break;
+
                     case OP_TXLOCKTIME:
                     {
                         if (!(flags & SCRIPT_VERIFY_TXLOCKTIME))
@@ -2680,6 +2714,24 @@ bool TransactionSignatureChecker::GetInputAssetField(unsigned int nInput,
         return ExtractAssetField_Owner(ownerName, selector, result);
 
     return false;
+}
+
+bool TransactionSignatureChecker::GetInputCount(
+    std::vector<unsigned char>& result) const
+{
+    if (!txTo)
+        return false;
+    result = CScriptNum(txTo->vin.size()).getvch();
+    return true;
+}
+
+bool TransactionSignatureChecker::GetOutputCount(
+    std::vector<unsigned char>& result) const
+{
+    if (!txTo)
+        return false;
+    result = CScriptNum(txTo->vout.size()).getvch();
+    return true;
 }
 
 bool TransactionSignatureChecker::GetTxLockTime(std::vector<unsigned char>& result) const

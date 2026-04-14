@@ -103,6 +103,7 @@ static ScriptErrorDesc script_errors[] = {
         {SCRIPT_ERR_OUTPUTSCRIPT,                          "OUTPUTSCRIPT"},
         {SCRIPT_ERR_OUTPUTASSETFIELD,                      "OUTPUTASSETFIELD"},
         {SCRIPT_ERR_INPUTASSETFIELD,                       "INPUTASSETFIELD"},
+        {SCRIPT_ERR_INPUTOUTPUTCOUNT,                     "INPUTOUTPUTCOUNT"},
         {SCRIPT_ERR_MUL_OVERFLOW,                          "MUL_OVERFLOW"},
         {SCRIPT_ERR_DIV_BY_ZERO,                           "DIV_BY_ZERO"},
         {SCRIPT_ERR_DIV_OVERFLOW,                          "DIV_OVERFLOW"},
