@@ -107,6 +107,8 @@ const char* ScriptErrorString(const ScriptError serror)
             return "OP_OUTPUTSCRIPT failed (invalid output index or script too large)";
         case SCRIPT_ERR_OUTPUTASSETFIELD:
             return "OP_OUTPUTASSETFIELD failed (invalid output, missing asset, or invalid selector)";
+        case SCRIPT_ERR_INPUTASSETFIELD:
+            return "OP_INPUTASSETFIELD failed (invalid input, missing asset, or invalid selector)";
         case SCRIPT_ERR_MUL_OVERFLOW:
             return "OP_MUL overflowed the 64-bit numeric domain";
         case SCRIPT_ERR_DIV_BY_ZERO:

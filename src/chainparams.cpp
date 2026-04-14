@@ -123,6 +123,7 @@ public:
         consensus.nOUTPUTVALUEEnabled = false; // OP_OUTPUTVALUE not yet active on mainnet
         consensus.nOUTPUTSCRIPTEnabled = false; // OP_OUTPUTSCRIPT not yet active on mainnet
         consensus.nOUTPUTASSETFIELDEnabled = false; // OP_OUTPUTASSETFIELD not yet active on mainnet
+        consensus.nINPUTASSETFIELDEnabled = false; // OP_INPUTASSETFIELD not yet active on mainnet
         consensus.n64BitIntegersEnabled = false; // 64-bit arithmetic not yet active on mainnet
         consensus.nTXLOCKTIMEEnabled = false; // OP_TXLOCKTIME not yet active on mainnet
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
@@ -317,6 +318,7 @@ public:
         consensus.nOUTPUTVALUEEnabled = true; // OP_OUTPUTVALUE active on testnet
         consensus.nOUTPUTSCRIPTEnabled = true; // OP_OUTPUTSCRIPT active on testnet
         consensus.nOUTPUTASSETFIELDEnabled = true; // OP_OUTPUTASSETFIELD active on testnet
+        consensus.nINPUTASSETFIELDEnabled = true; // OP_INPUTASSETFIELD active on testnet
         consensus.n64BitIntegersEnabled = true; // 64-bit arithmetic active on testnet
         consensus.nTXLOCKTIMEEnabled = true; // OP_TXLOCKTIME active on testnet
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
@@ -512,6 +514,7 @@ public:
         consensus.nOUTPUTVALUEEnabled = true; // OP_OUTPUTVALUE active on regtest
         consensus.nOUTPUTSCRIPTEnabled = true; // OP_OUTPUTSCRIPT active on regtest
         consensus.nOUTPUTASSETFIELDEnabled = true; // OP_OUTPUTASSETFIELD active on regtest
+        consensus.nINPUTASSETFIELDEnabled = true; // OP_INPUTASSETFIELD active on regtest
         consensus.n64BitIntegersEnabled = true; // 64-bit arithmetic active on regtest
         consensus.nTXLOCKTIMEEnabled = true; // OP_TXLOCKTIME active on regtest
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");

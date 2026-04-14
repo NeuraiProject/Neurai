@@ -1027,6 +1027,47 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                     }
                         break;
 
+                    case OP_INPUTASSETFIELD:
+                    {
+                        if (!(flags & SCRIPT_VERIFY_INPUTASSETFIELD))
+                        {
+                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
+                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+                            break;
+                        }
+
+                        if (stack.size() < 2)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+                        const valtype& vchSelector = stacktop(-1);
+                        if (vchSelector.size() != 1)
+                            return set_error(serror, SCRIPT_ERR_INPUTASSETFIELD);
+                        const unsigned char selector = vchSelector[0];
+
+                        const int nInput = CScriptNum(stacktop(-2), fRequireMinimal).getint();
+                        if (nInput < 0)
+                            return set_error(serror, SCRIPT_ERR_INPUTASSETFIELD);
+
+                        if (selector == 0x00 || selector >= 0x08)
+                            return set_error(serror, SCRIPT_ERR_INPUTASSETFIELD);
+
+                        valtype vchResult;
+                        if (!checker.GetInputAssetField(static_cast<unsigned int>(nInput), selector, vchResult))
+                            return set_error(serror, SCRIPT_ERR_INPUTASSETFIELD);
+
+                        if (selector == 0x02 && (flags & SCRIPT_VERIFY_64BIT_INTEGERS) && vchResult.size() == 8)
+                        {
+                            int64_t nAmount;
+                            memcpy(&nAmount, vchResult.data(), 8);
+                            vchResult = CScriptNum(nAmount).getvch();
+                        }
+
+                        popstack(stack);
+                        popstack(stack);
+                        stack.push_back(vchResult);
+                    }
+                        break;
+
                     case OP_TXLOCKTIME:
                     {
                         if (!(flags & SCRIPT_VERIFY_TXLOCKTIME))
@@ -2573,6 +2614,44 @@ bool TransactionSignatureChecker::GetOutputAssetField(unsigned int nOut,
         return false;
 
     const CScript& scriptPubKey = txTo->vout[nOut].scriptPubKey;
+    std::string strAddress;
+
+    CAssetTransfer transfer;
+    if (TransferAssetFromScript(scriptPubKey, transfer, strAddress))
+        return ExtractAssetField_Transfer(transfer, selector, result);
+
+    CNewAsset newAsset;
+    if (AssetFromScript(scriptPubKey, newAsset, strAddress))
+        return ExtractAssetField_New(newAsset, selector, result);
+
+    if (MsgChannelAssetFromScript(scriptPubKey, newAsset, strAddress))
+        return ExtractAssetField_New(newAsset, selector, result);
+
+    if (QualifierAssetFromScript(scriptPubKey, newAsset, strAddress))
+        return ExtractAssetField_New(newAsset, selector, result);
+
+    if (RestrictedAssetFromScript(scriptPubKey, newAsset, strAddress))
+        return ExtractAssetField_New(newAsset, selector, result);
+
+    CReissueAsset reissue;
+    if (ReissueAssetFromScript(scriptPubKey, reissue, strAddress))
+        return ExtractAssetField_Reissue(reissue, selector, result);
+
+    std::string ownerName;
+    if (OwnerAssetFromScript(scriptPubKey, ownerName, strAddress))
+        return ExtractAssetField_Owner(ownerName, selector, result);
+
+    return false;
+}
+
+bool TransactionSignatureChecker::GetInputAssetField(unsigned int nInput,
+                                                     unsigned char selector,
+                                                     std::vector<unsigned char>& result) const
+{
+    if (!txTo || !m_allPrevouts || nInput >= txTo->vin.size() || nInput >= m_allPrevouts->size())
+        return false;
+
+    const CScript& scriptPubKey = (*m_allPrevouts)[nInput].scriptPubKey;
     std::string strAddress;
 
     CAssetTransfer transfer;

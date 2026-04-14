@@ -55,6 +55,9 @@ public:
     CachingTransactionSignatureChecker(const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, bool storeIn, PrecomputedTransactionData& txdataIn, const CScript& spentScriptPubKeyIn)
         : TransactionSignatureChecker(txToIn, nInIn, amountIn, txdataIn, spentScriptPubKeyIn), store(storeIn) {}
 
+    CachingTransactionSignatureChecker(const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, bool storeIn, PrecomputedTransactionData& txdataIn, const CScript& spentScriptPubKeyIn, const std::vector<CTxOut>* allPrevoutsIn)
+        : TransactionSignatureChecker(txToIn, nInIn, amountIn, txdataIn, spentScriptPubKeyIn, allPrevoutsIn), store(storeIn) {}
+
     bool VerifySignature(const std::vector<unsigned char>& vchSig, const CPubKey& vchPubKey, const uint256& sighash) const override;
 };
 

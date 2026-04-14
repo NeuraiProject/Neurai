@@ -90,6 +90,9 @@ typedef enum ScriptError_t
     /* OP_OUTPUTASSETFIELD */
     SCRIPT_ERR_OUTPUTASSETFIELD,
 
+    /* OP_INPUTASSETFIELD */
+    SCRIPT_ERR_INPUTASSETFIELD,
+
     /* 64-bit arithmetic */
     SCRIPT_ERR_MUL_OVERFLOW,
     SCRIPT_ERR_DIV_BY_ZERO,

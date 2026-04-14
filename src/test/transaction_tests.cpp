@@ -58,6 +58,7 @@ static std::map<std::string, unsigned int> mapFlagNames = {
         {std::string("OUTPUTSCRIPT"),                           (unsigned int) SCRIPT_VERIFY_OUTPUTSCRIPT},
         {std::string("OUTPUTASSETFIELD"),                      (unsigned int) SCRIPT_VERIFY_OUTPUTASSETFIELD},
         {std::string("64BIT_INTEGERS"),                        (unsigned int) SCRIPT_VERIFY_64BIT_INTEGERS},
+        {std::string("INPUTASSETFIELD"),                      (unsigned int) SCRIPT_VERIFY_INPUTASSETFIELD},
 };
 
 unsigned int ParseScriptFlags(std::string strFlags)

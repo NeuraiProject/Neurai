@@ -111,6 +111,9 @@ struct Params {
     /** Enable OP_OUTPUTASSETFIELD - read asset payload fields from a selected
      *  output by selector. true on testnet/regtest; false on mainnet. */
     bool nOUTPUTASSETFIELDEnabled;
+    /** Enable OP_INPUTASSETFIELD - read asset payload fields from a selected
+     *  prevout referenced by an input. true on testnet/regtest; false on mainnet. */
+    bool nINPUTASSETFIELDEnabled;
     /** Enable 64-bit arithmetic and OP_MUL/OP_DIV/OP_MOD. true on
      *  testnet/regtest; false on mainnet until future activation. */
     bool n64BitIntegersEnabled;

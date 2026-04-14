@@ -107,6 +107,7 @@ NEURAI_TESTS =\
   test/arithmetic64_tests.cpp \
   test/outputvalue_tests.cpp \
   test/outputassetfield_tests.cpp \
+  test/inputassetfield_tests.cpp \
   test/outputscript_tests.cpp \
   test/txlocktime_tests.cpp \
   test/txvalidationcache_tests.cpp \

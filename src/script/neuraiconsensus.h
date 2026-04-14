@@ -66,6 +66,7 @@ enum
     neuraiconsensus_SCRIPT_FLAGS_VERIFY_OUTPUTSCRIPT         = (1U << 26), // enable OP_OUTPUTSCRIPT
     neuraiconsensus_SCRIPT_FLAGS_VERIFY_OUTPUTASSETFIELD     = (1U << 27), // enable OP_OUTPUTASSETFIELD
     neuraiconsensus_SCRIPT_FLAGS_VERIFY_64BIT_INTEGERS       = (1U << 28), // enable 64-bit arithmetic + OP_MUL/OP_DIV/OP_MOD
+    neuraiconsensus_SCRIPT_FLAGS_VERIFY_INPUTASSETFIELD      = (1U << 29), // enable OP_INPUTASSETFIELD
     neuraiconsensus_SCRIPT_FLAGS_VERIFY_ALL                 = neuraiconsensus_SCRIPT_FLAGS_VERIFY_P2SH | neuraiconsensus_SCRIPT_FLAGS_VERIFY_DERSIG |
                                                                neuraiconsensus_SCRIPT_FLAGS_VERIFY_NULLDUMMY | neuraiconsensus_SCRIPT_FLAGS_VERIFY_CHECKLOCKTIMEVERIFY |
                                                                neuraiconsensus_SCRIPT_FLAGS_VERIFY_CHECKSEQUENCEVERIFY | neuraiconsensus_SCRIPT_FLAGS_VERIFY_WITNESS |
@@ -75,7 +76,8 @@ enum
                                                                neuraiconsensus_SCRIPT_FLAGS_VERIFY_TXLOCKTIME |
                                                                neuraiconsensus_SCRIPT_FLAGS_VERIFY_OUTPUTSCRIPT |
                                                                neuraiconsensus_SCRIPT_FLAGS_VERIFY_OUTPUTASSETFIELD |
-                                                               neuraiconsensus_SCRIPT_FLAGS_VERIFY_64BIT_INTEGERS
+                                                               neuraiconsensus_SCRIPT_FLAGS_VERIFY_64BIT_INTEGERS |
+                                                               neuraiconsensus_SCRIPT_FLAGS_VERIFY_INPUTASSETFIELD
 };
 
 /// Returns 1 if the input nIn of the serialized transaction pointed to by

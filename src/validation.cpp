@@ -977,6 +977,9 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         if (chainparams.GetConsensus().nOUTPUTASSETFIELDEnabled) {
             scriptVerifyFlags |= SCRIPT_VERIFY_OUTPUTASSETFIELD;
         }
+        if (chainparams.GetConsensus().nINPUTASSETFIELDEnabled) {
+            scriptVerifyFlags |= SCRIPT_VERIFY_INPUTASSETFIELD;
+        }
         if (chainparams.GetConsensus().n64BitIntegersEnabled) {
             scriptVerifyFlags |= SCRIPT_VERIFY_64BIT_INTEGERS;
         }
@@ -1679,7 +1682,7 @@ bool CScriptCheck::operator()() {
     const CScript &scriptSig = ptxTo->vin[nIn].scriptSig;
     const CScriptWitness *witness = &ptxTo->vin[nIn].scriptWitness;
     return VerifyScript(scriptSig, m_tx_out.scriptPubKey, witness, nFlags,
-                        CachingTransactionSignatureChecker(ptxTo, nIn, m_tx_out.nValue, cacheStore, *txdata, m_tx_out.scriptPubKey),
+                        CachingTransactionSignatureChecker(ptxTo, nIn, m_tx_out.nValue, cacheStore, *txdata, m_tx_out.scriptPubKey, m_allPrevouts.get()),
                         &error);
 }
 
@@ -1749,6 +1752,17 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                 return true;
             }
 
+            std::shared_ptr<std::vector<CTxOut>> pAllPrevouts;
+            if (flags & SCRIPT_VERIFY_INPUTASSETFIELD) {
+                pAllPrevouts = std::make_shared<std::vector<CTxOut>>();
+                pAllPrevouts->reserve(tx.vin.size());
+                for (const CTxIn& txin : tx.vin) {
+                    const Coin& prevCoin = inputs.AccessCoin(txin.prevout);
+                    assert(!prevCoin.IsSpent());
+                    pAllPrevouts->push_back(prevCoin.out);
+                }
+            }
+
             for (unsigned int i = 0; i < tx.vin.size(); i++) {
                 const COutPoint &prevout = tx.vin[i].prevout;
                 const Coin& coin = inputs.AccessCoin(prevout);
@@ -1761,7 +1775,7 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                 // spent being checked as a part of CScriptCheck.
 
                 // Verify signature
-                CScriptCheck check(coin.out, tx, i, flags, cacheSigStore, &txdata);
+                CScriptCheck check(coin.out, tx, i, flags, cacheSigStore, &txdata, pAllPrevouts);
                 if (pvChecks) {
                     pvChecks->push_back(CScriptCheck());
                     check.swap(pvChecks->back());
@@ -1774,7 +1788,7 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                         // avoid splitting the network between upgraded and
                         // non-upgraded nodes.
                         CScriptCheck check2(coin.out, tx, i,
-                                flags & ~STANDARD_NOT_MANDATORY_VERIFY_FLAGS, cacheSigStore, &txdata);
+                                flags & ~STANDARD_NOT_MANDATORY_VERIFY_FLAGS, cacheSigStore, &txdata, pAllPrevouts);
                         if (check2())
                             return state.Invalid(false, REJECT_NONSTANDARD, strprintf("non-mandatory-script-verify-flag (%s)", ScriptErrorString(check.GetScriptError())));
                     }
@@ -2529,6 +2543,11 @@ static unsigned int GetBlockScriptFlags(const CBlockIndex* pindex, const Consens
     // OP_OUTPUTASSETFIELD
     if (consensusparams.nOUTPUTASSETFIELDEnabled) {
         flags |= SCRIPT_VERIFY_OUTPUTASSETFIELD;
+    }
+
+    // OP_INPUTASSETFIELD
+    if (consensusparams.nINPUTASSETFIELDEnabled) {
+        flags |= SCRIPT_VERIFY_INPUTASSETFIELD;
     }
 
     // 64-bit arithmetic
