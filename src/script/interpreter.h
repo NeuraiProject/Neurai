@@ -174,6 +174,11 @@ enum
     // output by selector.
     //
             SCRIPT_VERIFY_OUTPUTASSETFIELD = (1U << 27),
+
+    // Enable 64-bit arithmetic and reactivate OP_MUL/OP_DIV/OP_MOD while
+    // widening the numeric covenant domain to 8-byte CScriptNum values.
+    //
+            SCRIPT_VERIFY_64BIT_INTEGERS = (1U << 28),
 };
 
 bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, unsigned int flags, ScriptError *serror);

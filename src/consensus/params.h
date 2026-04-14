@@ -111,6 +111,9 @@ struct Params {
     /** Enable OP_OUTPUTASSETFIELD - read asset payload fields from a selected
      *  output by selector. true on testnet/regtest; false on mainnet. */
     bool nOUTPUTASSETFIELDEnabled;
+    /** Enable 64-bit arithmetic and OP_MUL/OP_DIV/OP_MOD. true on
+     *  testnet/regtest; false on mainnet until future activation. */
+    bool n64BitIntegersEnabled;
     /** Enable OP_TXLOCKTIME - push transaction nLockTime as raw 4-byte
      *  little-endian data. true on testnet/regtest; false on mainnet. */
     bool nTXLOCKTIMEEnabled;

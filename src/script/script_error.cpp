@@ -107,6 +107,22 @@ const char* ScriptErrorString(const ScriptError serror)
             return "OP_OUTPUTSCRIPT failed (invalid output index or script too large)";
         case SCRIPT_ERR_OUTPUTASSETFIELD:
             return "OP_OUTPUTASSETFIELD failed (invalid output, missing asset, or invalid selector)";
+        case SCRIPT_ERR_MUL_OVERFLOW:
+            return "OP_MUL overflowed the 64-bit numeric domain";
+        case SCRIPT_ERR_DIV_BY_ZERO:
+            return "OP_DIV attempted division by zero";
+        case SCRIPT_ERR_DIV_OVERFLOW:
+            return "OP_DIV overflowed the 64-bit numeric domain";
+        case SCRIPT_ERR_MOD_BY_ZERO:
+            return "OP_MOD attempted division by zero";
+        case SCRIPT_ERR_MOD_OVERFLOW:
+            return "OP_MOD overflowed the 64-bit numeric domain";
+        case SCRIPT_ERR_ADD_OVERFLOW:
+            return "Numeric addition overflowed the 64-bit numeric domain";
+        case SCRIPT_ERR_SUB_OVERFLOW:
+            return "Numeric subtraction overflowed the 64-bit numeric domain";
+        case SCRIPT_ERR_NEGATE_OVERFLOW:
+            return "Numeric negation overflowed the 64-bit numeric domain";
         case SCRIPT_ERR_TXLOCKTIME:
             return "OP_TXLOCKTIME failed (transaction locktime unavailable)";
         case SCRIPT_ERR_UNKNOWN_ERROR:

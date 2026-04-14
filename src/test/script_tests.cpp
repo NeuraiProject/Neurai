@@ -102,6 +102,14 @@ static ScriptErrorDesc script_errors[] = {
         {SCRIPT_ERR_WITNESS_PUBKEYTYPE,                    "WITNESS_PUBKEYTYPE"},
         {SCRIPT_ERR_OUTPUTSCRIPT,                          "OUTPUTSCRIPT"},
         {SCRIPT_ERR_OUTPUTASSETFIELD,                      "OUTPUTASSETFIELD"},
+        {SCRIPT_ERR_MUL_OVERFLOW,                          "MUL_OVERFLOW"},
+        {SCRIPT_ERR_DIV_BY_ZERO,                           "DIV_BY_ZERO"},
+        {SCRIPT_ERR_DIV_OVERFLOW,                          "DIV_OVERFLOW"},
+        {SCRIPT_ERR_MOD_BY_ZERO,                           "MOD_BY_ZERO"},
+        {SCRIPT_ERR_MOD_OVERFLOW,                          "MOD_OVERFLOW"},
+        {SCRIPT_ERR_ADD_OVERFLOW,                          "ADD_OVERFLOW"},
+        {SCRIPT_ERR_SUB_OVERFLOW,                          "SUB_OVERFLOW"},
+        {SCRIPT_ERR_NEGATE_OVERFLOW,                       "NEGATE_OVERFLOW"},
 };
 
 const char *FormatScriptError(ScriptError_t err)

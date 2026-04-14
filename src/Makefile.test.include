@@ -104,6 +104,7 @@ NEURAI_TESTS =\
   test/txfield_tests.cpp \
   test/split_tests.cpp \
   test/reversebytes_tests.cpp \
+  test/arithmetic64_tests.cpp \
   test/outputvalue_tests.cpp \
   test/outputassetfield_tests.cpp \
   test/outputscript_tests.cpp \

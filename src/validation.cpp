@@ -959,6 +959,30 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         if (chainparams.GetConsensus().nTXHASHEnabled) {
             scriptVerifyFlags |= SCRIPT_VERIFY_TXHASH;
         }
+        if (chainparams.GetConsensus().nTXFIELDEnabled) {
+            scriptVerifyFlags |= SCRIPT_VERIFY_TXFIELD;
+        }
+        if (chainparams.GetConsensus().nSPLITEnabled) {
+            scriptVerifyFlags |= SCRIPT_VERIFY_SPLIT;
+        }
+        if (chainparams.GetConsensus().nREVERSEBYTESEnabled) {
+            scriptVerifyFlags |= SCRIPT_VERIFY_REVERSEBYTES;
+        }
+        if (chainparams.GetConsensus().nOUTPUTVALUEEnabled) {
+            scriptVerifyFlags |= SCRIPT_VERIFY_OUTPUTVALUE;
+        }
+        if (chainparams.GetConsensus().nOUTPUTSCRIPTEnabled) {
+            scriptVerifyFlags |= SCRIPT_VERIFY_OUTPUTSCRIPT;
+        }
+        if (chainparams.GetConsensus().nOUTPUTASSETFIELDEnabled) {
+            scriptVerifyFlags |= SCRIPT_VERIFY_OUTPUTASSETFIELD;
+        }
+        if (chainparams.GetConsensus().n64BitIntegersEnabled) {
+            scriptVerifyFlags |= SCRIPT_VERIFY_64BIT_INTEGERS;
+        }
+        if (chainparams.GetConsensus().nTXLOCKTIMEEnabled) {
+            scriptVerifyFlags |= SCRIPT_VERIFY_TXLOCKTIME;
+        }
 
         // Check against previous transactions
         // This is done last to help prevent CPU exhaustion denial-of-service attacks.
@@ -2505,6 +2529,11 @@ static unsigned int GetBlockScriptFlags(const CBlockIndex* pindex, const Consens
     // OP_OUTPUTASSETFIELD
     if (consensusparams.nOUTPUTASSETFIELDEnabled) {
         flags |= SCRIPT_VERIFY_OUTPUTASSETFIELD;
+    }
+
+    // 64-bit arithmetic
+    if (consensusparams.n64BitIntegersEnabled) {
+        flags |= SCRIPT_VERIFY_64BIT_INTEGERS;
     }
 
     // OP_TXLOCKTIME

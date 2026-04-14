@@ -21,8 +21,92 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 
 typedef std::vector<unsigned char> valtype;
+
+static constexpr int64_t MIN_SCRIPT_INT64 = -std::numeric_limits<int64_t>::max();
+
+static bool AddOverflow64(int64_t a, int64_t b, int64_t& result)
+{
+#if defined(__GNUC__) || defined(__clang__)
+    if (__builtin_add_overflow(a, b, &result))
+        return false;
+    return result != std::numeric_limits<int64_t>::min();
+#elif defined(__SIZEOF_INT128__)
+    __int128 r = static_cast<__int128>(a) + static_cast<__int128>(b);
+    if (r > std::numeric_limits<int64_t>::max() || r < MIN_SCRIPT_INT64)
+        return false;
+    result = static_cast<int64_t>(r);
+    return true;
+#else
+    if ((b > 0 && a > std::numeric_limits<int64_t>::max() - b) ||
+        (b < 0 && a < MIN_SCRIPT_INT64 - b))
+        return false;
+    result = a + b;
+    return result != std::numeric_limits<int64_t>::min();
+#endif
+}
+
+static bool SubOverflow64(int64_t a, int64_t b, int64_t& result)
+{
+#if defined(__GNUC__) || defined(__clang__)
+    if (__builtin_sub_overflow(a, b, &result))
+        return false;
+    return result != std::numeric_limits<int64_t>::min();
+#elif defined(__SIZEOF_INT128__)
+    __int128 r = static_cast<__int128>(a) - static_cast<__int128>(b);
+    if (r > std::numeric_limits<int64_t>::max() || r < MIN_SCRIPT_INT64)
+        return false;
+    result = static_cast<int64_t>(r);
+    return true;
+#else
+    if ((b > 0 && a < MIN_SCRIPT_INT64 + b) ||
+        (b < 0 && a > std::numeric_limits<int64_t>::max() + b))
+        return false;
+    result = a - b;
+    return result != std::numeric_limits<int64_t>::min();
+#endif
+}
+
+static bool MulOverflow64(int64_t a, int64_t b, int64_t& result)
+{
+#if defined(__GNUC__) || defined(__clang__)
+    if (__builtin_mul_overflow(a, b, &result))
+        return false;
+    return result != std::numeric_limits<int64_t>::min();
+#elif defined(__SIZEOF_INT128__)
+    __int128 r = static_cast<__int128>(a) * static_cast<__int128>(b);
+    if (r > std::numeric_limits<int64_t>::max() || r < MIN_SCRIPT_INT64)
+        return false;
+    result = static_cast<int64_t>(r);
+    return true;
+#else
+    if (a == 0 || b == 0) {
+        result = 0;
+        return true;
+    }
+    if (a == -1) {
+        if (b == std::numeric_limits<int64_t>::min())
+            return false;
+        result = -b;
+        return result != std::numeric_limits<int64_t>::min();
+    }
+    if (b == -1) {
+        if (a == std::numeric_limits<int64_t>::min())
+            return false;
+        result = -a;
+        return result != std::numeric_limits<int64_t>::min();
+    }
+    if ((a > 0 && b > 0 && a > std::numeric_limits<int64_t>::max() / b) ||
+        (a > 0 && b < 0 && b < MIN_SCRIPT_INT64 / a) ||
+        (a < 0 && b > 0 && a < MIN_SCRIPT_INT64 / b) ||
+        (a < 0 && b < 0 && a < std::numeric_limits<int64_t>::max() / b))
+        return false;
+    result = a * b;
+    return result != std::numeric_limits<int64_t>::min();
+#endif
+}
 
 static bool ExtractAssetField_Transfer(
     const CAssetTransfer& t,
@@ -524,9 +608,9 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                 opcode == OP_XOR ||
                 opcode == OP_2MUL ||
                 opcode == OP_2DIV ||
-                opcode == OP_MUL ||
-                opcode == OP_DIV ||
-                opcode == OP_MOD ||
+                (opcode == OP_MUL && !(flags & SCRIPT_VERIFY_64BIT_INTEGERS)) ||
+                (opcode == OP_DIV && !(flags & SCRIPT_VERIFY_64BIT_INTEGERS)) ||
+                (opcode == OP_MOD && !(flags & SCRIPT_VERIFY_64BIT_INTEGERS)) ||
                 opcode == OP_LSHIFT ||
                 opcode == OP_RSHIFT)
                 return set_error(serror, SCRIPT_ERR_DISABLED_OPCODE); // Disabled opcodes.
@@ -541,6 +625,10 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
             }
             else if (fExec || (OP_IF <= opcode && opcode <= OP_ENDIF))
             {
+                const size_t nMaxNum = (flags & SCRIPT_VERIFY_64BIT_INTEGERS)
+                    ? 8
+                    : CScriptNum::nDefaultMaxNumSize;
+
                 switch (opcode)
                 {
                     //
@@ -861,6 +949,13 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         if (!checker.GetOutputValue((unsigned int)nOut, vchValue))
                             return set_error(serror, SCRIPT_ERR_OUTPUTVALUE);
 
+                        if ((flags & SCRIPT_VERIFY_64BIT_INTEGERS) && vchValue.size() == 8)
+                        {
+                            int64_t nValue;
+                            memcpy(&nValue, vchValue.data(), 8);
+                            vchValue = CScriptNum(nValue).getvch();
+                        }
+
                         popstack(stack);
                         stack.push_back(vchValue);
                     }
@@ -918,6 +1013,13 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         valtype vchResult;
                         if (!checker.GetOutputAssetField(static_cast<unsigned int>(nOut), selector, vchResult))
                             return set_error(serror, SCRIPT_ERR_OUTPUTASSETFIELD);
+
+                        if (selector == 0x02 && (flags & SCRIPT_VERIFY_64BIT_INTEGERS) && vchResult.size() == 8)
+                        {
+                            int64_t nAmount;
+                            memcpy(&nAmount, vchResult.data(), 8);
+                            vchResult = CScriptNum(nAmount).getvch();
+                        }
 
                         popstack(stack);
                         popstack(stack);
@@ -1262,7 +1364,45 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         // (in -- out)
                         if (stack.size() < 1)
                             return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
-                        CScriptNum bn(stacktop(-1), fRequireMinimal);
+                        CScriptNum bn(stacktop(-1), fRequireMinimal, nMaxNum);
+                        if (flags & SCRIPT_VERIFY_64BIT_INTEGERS)
+                        {
+                            const int64_t v = bn.getint64();
+                            int64_t result = 0;
+                            switch (opcode)
+                            {
+                                case OP_1ADD:
+                                    if (!AddOverflow64(v, 1, result))
+                                        return set_error(serror, SCRIPT_ERR_ADD_OVERFLOW);
+                                    break;
+                                case OP_1SUB:
+                                    if (!SubOverflow64(v, 1, result))
+                                        return set_error(serror, SCRIPT_ERR_SUB_OVERFLOW);
+                                    break;
+                                case OP_NEGATE:
+                                    if (v == std::numeric_limits<int64_t>::min())
+                                        return set_error(serror, SCRIPT_ERR_NEGATE_OVERFLOW);
+                                    result = -v;
+                                    break;
+                                case OP_ABS:
+                                    if (v == std::numeric_limits<int64_t>::min())
+                                        return set_error(serror, SCRIPT_ERR_NEGATE_OVERFLOW);
+                                    result = (v < 0) ? -v : v;
+                                    break;
+                                case OP_NOT:
+                                    result = (v == 0);
+                                    break;
+                                case OP_0NOTEQUAL:
+                                    result = (v != 0);
+                                    break;
+                                default:
+                                    assert(!"invalid opcode");
+                                    break;
+                            }
+                            popstack(stack);
+                            stack.push_back(CScriptNum(result).getvch());
+                            break;
+                        }
                         switch (opcode)
                         {
                             case OP_1ADD:
@@ -1309,17 +1449,31 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         // (x1 x2 -- out)
                         if (stack.size() < 2)
                             return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
-                        CScriptNum bn1(stacktop(-2), fRequireMinimal);
-                        CScriptNum bn2(stacktop(-1), fRequireMinimal);
+                        CScriptNum bn1(stacktop(-2), fRequireMinimal, nMaxNum);
+                        CScriptNum bn2(stacktop(-1), fRequireMinimal, nMaxNum);
                         CScriptNum bn(0);
                         switch (opcode)
                         {
                             case OP_ADD:
-                                bn = bn1 + bn2;
+                                if (flags & SCRIPT_VERIFY_64BIT_INTEGERS) {
+                                    int64_t result;
+                                    if (!AddOverflow64(bn1.getint64(), bn2.getint64(), result))
+                                        return set_error(serror, SCRIPT_ERR_ADD_OVERFLOW);
+                                    bn = CScriptNum(result);
+                                } else {
+                                    bn = bn1 + bn2;
+                                }
                                 break;
 
                             case OP_SUB:
-                                bn = bn1 - bn2;
+                                if (flags & SCRIPT_VERIFY_64BIT_INTEGERS) {
+                                    int64_t result;
+                                    if (!SubOverflow64(bn1.getint64(), bn2.getint64(), result))
+                                        return set_error(serror, SCRIPT_ERR_SUB_OVERFLOW);
+                                    bn = CScriptNum(result);
+                                } else {
+                                    bn = bn1 - bn2;
+                                }
                                 break;
 
                             case OP_BOOLAND:
@@ -1378,14 +1532,71 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         // (x min max -- out)
                         if (stack.size() < 3)
                             return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
-                        CScriptNum bn1(stacktop(-3), fRequireMinimal);
-                        CScriptNum bn2(stacktop(-2), fRequireMinimal);
-                        CScriptNum bn3(stacktop(-1), fRequireMinimal);
+                        CScriptNum bn1(stacktop(-3), fRequireMinimal, nMaxNum);
+                        CScriptNum bn2(stacktop(-2), fRequireMinimal, nMaxNum);
+                        CScriptNum bn3(stacktop(-1), fRequireMinimal, nMaxNum);
                         bool fValue = (bn2 <= bn1 && bn1 < bn3);
                         popstack(stack);
                         popstack(stack);
                         popstack(stack);
                         stack.push_back(fValue ? vchTrue : vchFalse);
+                    }
+                        break;
+
+                    case OP_MUL:
+                    {
+                        if (stack.size() < 2)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+                        CScriptNum bn1(stacktop(-2), fRequireMinimal, nMaxNum);
+                        CScriptNum bn2(stacktop(-1), fRequireMinimal, nMaxNum);
+                        int64_t result;
+                        if (!MulOverflow64(bn1.getint64(), bn2.getint64(), result))
+                            return set_error(serror, SCRIPT_ERR_MUL_OVERFLOW);
+                        popstack(stack);
+                        popstack(stack);
+                        stack.push_back(CScriptNum(result).getvch());
+                    }
+                        break;
+
+                    case OP_DIV:
+                    {
+                        if (stack.size() < 2)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+                        CScriptNum bn1(stacktop(-2), fRequireMinimal, nMaxNum);
+                        CScriptNum bn2(stacktop(-1), fRequireMinimal, nMaxNum);
+                        const int64_t a = bn1.getint64();
+                        const int64_t b = bn2.getint64();
+                        if (b == 0)
+                            return set_error(serror, SCRIPT_ERR_DIV_BY_ZERO);
+                        if (a == std::numeric_limits<int64_t>::min() && b == -1)
+                            return set_error(serror, SCRIPT_ERR_DIV_OVERFLOW);
+                        const int64_t result = a / b;
+                        if (result == std::numeric_limits<int64_t>::min())
+                            return set_error(serror, SCRIPT_ERR_DIV_OVERFLOW);
+                        popstack(stack);
+                        popstack(stack);
+                        stack.push_back(CScriptNum(result).getvch());
+                    }
+                        break;
+
+                    case OP_MOD:
+                    {
+                        if (stack.size() < 2)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+                        CScriptNum bn1(stacktop(-2), fRequireMinimal, nMaxNum);
+                        CScriptNum bn2(stacktop(-1), fRequireMinimal, nMaxNum);
+                        const int64_t a = bn1.getint64();
+                        const int64_t b = bn2.getint64();
+                        if (b == 0)
+                            return set_error(serror, SCRIPT_ERR_MOD_BY_ZERO);
+                        if (a == std::numeric_limits<int64_t>::min() && b == -1)
+                            return set_error(serror, SCRIPT_ERR_MOD_OVERFLOW);
+                        const int64_t result = a % b;
+                        if (result == std::numeric_limits<int64_t>::min())
+                            return set_error(serror, SCRIPT_ERR_MOD_OVERFLOW);
+                        popstack(stack);
+                        popstack(stack);
+                        stack.push_back(CScriptNum(result).getvch());
                     }
                         break;
 
