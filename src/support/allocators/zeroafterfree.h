@@ -15,15 +15,10 @@
 
 template <typename T>
 struct zero_after_free_allocator : public std::allocator<T> {
-    // MSVC8 default copy constructor is broken
     typedef std::allocator<T> base;
-    typedef typename base::size_type size_type;
-    typedef typename base::difference_type difference_type;
-    typedef typename base::pointer pointer;
-    typedef typename base::const_pointer const_pointer;
-    typedef typename base::reference reference;
-    typedef typename base::const_reference const_reference;
-    typedef typename base::value_type value_type;
+    typedef std::size_t size_type;
+    typedef std::ptrdiff_t difference_type;
+    typedef T value_type;
     zero_after_free_allocator() noexcept {}
     zero_after_free_allocator(const zero_after_free_allocator& a) noexcept : base(a) {}
     template <typename U>
@@ -31,10 +26,6 @@ struct zero_after_free_allocator : public std::allocator<T> {
     {
     }
     ~zero_after_free_allocator() noexcept {}
-    template <typename _Other>
-    struct rebind {
-        typedef zero_after_free_allocator<_Other> other;
-    };
 
     void deallocate(T* p, std::size_t n)
     {
