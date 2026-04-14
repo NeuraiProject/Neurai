@@ -14,11 +14,12 @@ all of them at once since every Qt header includes qglobal.h.
 diff --git a/qtbase/src/corelib/global/qglobal.h b/qtbase/src/corelib/global/qglobal.h
 --- a/qtbase/src/corelib/global/qglobal.h
 +++ b/qtbase/src/corelib/global/qglobal.h
-@@ -45,6 +45,7 @@
+@@ -46,6 +46,7 @@
  #ifdef __cplusplus
- #include <type_traits>
- #include <cstddef>
-+#include <limits>
- #include <utility>
+ #  include <type_traits>
+ #  include <cstddef>
++#  include <limits>
+ #  include <utility>
  #endif
- 
+ #ifndef __ASSEMBLER__
+
