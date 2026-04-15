@@ -387,4 +387,6 @@ bool VerifyScript(const CScript &scriptSig, const CScript &scriptPubKey, const C
 
 size_t CountWitnessSigOps(const CScript &scriptSig, const CScript &scriptPubKey, const CScriptWitness *witness, unsigned int flags);
 
+bool CastToBool(const std::vector<unsigned char>& vch);
+
 #endif // NEURAI_SCRIPT_INTERPRETER_H
