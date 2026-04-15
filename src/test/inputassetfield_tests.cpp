@@ -3,6 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "assets/assets.h"
+#include "base58.h"
 #include "chainparams.h"
 #include "consensus/validation.h"
 #include "primitives/transaction.h"

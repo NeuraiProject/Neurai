@@ -4,6 +4,7 @@
 
 #include "amount.h"
 #include "assets/assets.h"
+#include "base58.h"
 #include "chainparams.h"
 #include "primitives/transaction.h"
 #include "script/interpreter.h"
