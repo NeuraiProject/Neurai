@@ -15,7 +15,6 @@ src/qt/test/test_neurai-qt
 output.txt
 
 # autoreconf
-Makefile.in
 aclocal.m4
 autom4te.cache/
 build-aux/config.guess
