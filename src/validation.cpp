@@ -325,7 +325,7 @@ enum FlushStateMode {
 static bool FlushStateToDisk(const CChainParams& chainParams, CValidationState &state, FlushStateMode mode, int nManualPruneHeight=0);
 static void FindFilesToPruneManual(std::set<int>& setFilesToPrune, int nManualPruneHeight);
 static void FindFilesToPrune(std::set<int>& setFilesToPrune, uint64_t nPruneAfterHeight);
-bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks = nullptr);
+bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks = nullptr, std::shared_ptr<std::vector<CTxOut>> pRefOutputs = nullptr);
 static FILE* OpenUndoFile(const CDiskBlockPos &pos, bool fReadOnly = false);
 
 bool CheckFinalTx(const CTransaction &tx, int flags)
@@ -607,6 +607,11 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
     if (fRequireStandard && !IsStandardTx(tx, reason, witnessEnabled))
         return state.DoS(0, false, REJECT_NONSTANDARD, reason);
 
+    // NIP-014: reject v3 before activation
+    if (tx.nVersion == 3 && !chainparams.GetConsensus().nREFINPUTSEnabled) {
+        return state.DoS(0, false, REJECT_NONSTANDARD, "version-v3-not-active");
+    }
+
     // Only accept nLockTime-using transactions that can be mined in the next
     // block; we don't want our mempool filled up with transactions that can't
     // be mined yet.
@@ -692,6 +697,20 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
                     *pfMissingInputs = true;
                 }
                 return false; // fMissingInputs and !state.IsInvalid() is used to detect this condition, don't set state.Invalid()
+            }
+        }
+
+        // NIP-014: reference inputs must be confirmed and uncontested
+        if (tx.nVersion == 3 && !tx.vrefin.empty()) {
+            for (const auto& refout : tx.vrefin) {
+                // Check 1: must exist in chain UTXO set (NOT mempool overlay)
+                if (!pcoinsTip->HaveCoin(refout)) {
+                    return state.DoS(0, false, REJECT_NONSTANDARD, "refinput-not-confirmed");
+                }
+                // Check 2: must not be spent by a mempool transaction
+                if (pool.mapNextTx.count(refout)) {
+                    return state.DoS(0, false, REJECT_NONSTANDARD, "refinput-spent-in-mempool");
+                }
             }
         }
 
@@ -991,17 +1010,33 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         if (chainparams.GetConsensus().nINPUTOUTPUTCOUNTEnabled) {
             scriptVerifyFlags |= SCRIPT_VERIFY_INPUTOUTPUTCOUNT;
         }
+        if (chainparams.GetConsensus().nREFINPUTSEnabled) {
+            scriptVerifyFlags |= SCRIPT_VERIFY_REFINPUTS;
+        }
 
         // Check against previous transactions
         // This is done last to help prevent CPU exhaustion denial-of-service attacks.
         PrecomputedTransactionData txdata(tx);
-        if (!CheckInputs(tx, state, view, true, scriptVerifyFlags, true, false, txdata)) {
+
+        // NIP-014: resolve reference inputs for mempool script checks
+        std::shared_ptr<std::vector<CTxOut>> pRefOutputs;
+        if (tx.nVersion == 3 && !tx.vrefin.empty()) {
+            pRefOutputs = std::make_shared<std::vector<CTxOut>>();
+            pRefOutputs->reserve(tx.vrefin.size());
+            for (const auto& refout : tx.vrefin) {
+                const Coin& coin = pcoinsTip->AccessCoin(refout);
+                assert(!coin.IsSpent()); // already verified in confirmed-and-uncontested check above
+                pRefOutputs->push_back(coin.out);
+            }
+        }
+
+        if (!CheckInputs(tx, state, view, true, scriptVerifyFlags, true, false, txdata, nullptr, pRefOutputs)) {
             // SCRIPT_VERIFY_CLEANSTACK requires SCRIPT_VERIFY_WITNESS, so we
             // need to turn both off, and compare against just turning off CLEANSTACK
             // to see if the failure is specifically due to witness validation.
             CValidationState stateDummy; // Want reported failures to be from first CheckInputs
-            if (!tx.HasWitness() && CheckInputs(tx, stateDummy, view, true, scriptVerifyFlags & ~(SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_CLEANSTACK), true, false, txdata) &&
-                !CheckInputs(tx, stateDummy, view, true, scriptVerifyFlags & ~SCRIPT_VERIFY_CLEANSTACK, true, false, txdata)) {
+            if (!tx.HasWitness() && CheckInputs(tx, stateDummy, view, true, scriptVerifyFlags & ~(SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_CLEANSTACK), true, false, txdata, nullptr, pRefOutputs) &&
+                !CheckInputs(tx, stateDummy, view, true, scriptVerifyFlags & ~SCRIPT_VERIFY_CLEANSTACK, true, false, txdata, nullptr, pRefOutputs)) {
                 // Only the witness is missing, so the transaction itself may be fine.
                 state.SetCorruptionPossible();
             }
@@ -1687,7 +1722,7 @@ bool CScriptCheck::operator()() {
     const CScript &scriptSig = ptxTo->vin[nIn].scriptSig;
     const CScriptWitness *witness = &ptxTo->vin[nIn].scriptWitness;
     return VerifyScript(scriptSig, m_tx_out.scriptPubKey, witness, nFlags,
-                        CachingTransactionSignatureChecker(ptxTo, nIn, m_tx_out.nValue, cacheStore, *txdata, m_tx_out.scriptPubKey, m_allPrevouts.get()),
+                        CachingTransactionSignatureChecker(ptxTo, nIn, m_tx_out.nValue, cacheStore, *txdata, m_tx_out.scriptPubKey, m_allPrevouts.get(), m_refOutputs.get()),
                         &error);
 }
 
@@ -1725,7 +1760,7 @@ void InitScriptExecutionCache() {
  *
  * Non-static (and re-declared) in src/test/txvalidationcache_tests.cpp
  */
-bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks)
+bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks, std::shared_ptr<std::vector<CTxOut>> pRefOutputs)
 {
     if (!tx.IsCoinBase())
     {
@@ -1781,7 +1816,7 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                 // spent being checked as a part of CScriptCheck.
 
                 // Verify signature
-                CScriptCheck check(coin.out, tx, i, flags, cacheSigStore, &txdata, pAllPrevouts);
+                CScriptCheck check(coin.out, tx, i, flags, cacheSigStore, &txdata, pAllPrevouts, pRefOutputs);
                 if (pvChecks) {
                     pvChecks->push_back(CScriptCheck());
                     check.swap(pvChecks->back());
@@ -1794,7 +1829,7 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                         // avoid splitting the network between upgraded and
                         // non-upgraded nodes.
                         CScriptCheck check2(coin.out, tx, i,
-                                flags & ~STANDARD_NOT_MANDATORY_VERIFY_FLAGS, cacheSigStore, &txdata, pAllPrevouts);
+                                flags & ~STANDARD_NOT_MANDATORY_VERIFY_FLAGS, cacheSigStore, &txdata, pAllPrevouts, pRefOutputs);
                         if (check2())
                             return state.Invalid(false, REJECT_NONSTANDARD, strprintf("non-mandatory-script-verify-flag (%s)", ScriptErrorString(check.GetScriptError())));
                     }
@@ -2571,6 +2606,11 @@ static script_verify_flags GetBlockScriptFlags(const CBlockIndex* pindex, const 
         flags |= SCRIPT_VERIFY_INPUTOUTPUTCOUNT;
     }
 
+    // NIP-014: OP_REFINPUT* opcodes + tx v3 vrefin
+    if (consensusparams.nREFINPUTSEnabled) {
+        flags |= SCRIPT_VERIFY_REFINPUTS;
+    }
+
     return flags;
 }
 
@@ -2692,6 +2732,15 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
 
     // Get the script flags for this block
     script_verify_flags flags = GetBlockScriptFlags(pindex, chainparams.GetConsensus());
+
+    // NIP-014: reject v3 transactions before activation
+    if (!chainparams.GetConsensus().nREFINPUTSEnabled) {
+        for (const auto& tx : block.vtx) {
+            if (tx->nVersion == 3) {
+                return state.DoS(100, false, REJECT_INVALID, "bad-txns-v3-not-active");
+            }
+        }
+    }
 
     int64_t nTime2 = GetTimeMicros(); nTimeForks += nTime2 - nTime1;
     LogPrint(BCLog::BENCH, "    - Fork checks: %.2fms [%.2fs (%.2fms/blk)]\n", MILLI * (nTime2 - nTime1), nTimeForks * MICRO, nTimeForks * MILLI / nBlocksTotal);
@@ -2848,9 +2897,25 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
         txdata.emplace_back(tx);
         if (!tx.IsCoinBase())
         {
+            // NIP-014: resolve reference inputs against pre-block UTXO snapshot
+            std::shared_ptr<std::vector<CTxOut>> pRefOutputs;
+            if (tx.nVersion == 3 && !tx.vrefin.empty()) {
+                pRefOutputs = std::make_shared<std::vector<CTxOut>>();
+                pRefOutputs->reserve(tx.vrefin.size());
+                for (const auto& refout : tx.vrefin) {
+                    // Use pcoinsTip (pre-block snapshot, never modified during ConnectBlock)
+                    const Coin& coin = pcoinsTip->AccessCoin(refout);
+                    if (coin.IsSpent()) {
+                        return state.DoS(100, error("%s: referenced UTXO not found: %s", __func__, refout.ToString()),
+                                         REJECT_INVALID, "bad-txns-vrefin-missing");
+                    }
+                    pRefOutputs->push_back(coin.out);
+                }
+            }
+
             std::vector<CScriptCheck> vChecks;
             bool fCacheResults = fJustCheck; /* Don't cache results if we're actually connecting blocks (still consult the cache, though) */
-            if (!CheckInputs(tx, state, view, fScriptChecks, flags, fCacheResults, fCacheResults, txdata[i], nScriptCheckThreads ? &vChecks : nullptr))
+            if (!CheckInputs(tx, state, view, fScriptChecks, flags, fCacheResults, fCacheResults, txdata[i], nScriptCheckThreads ? &vChecks : nullptr, pRefOutputs))
                 return error("ConnectBlock(): CheckInputs on %s failed with %s",
                     tx.GetHash().ToString(), FormatStateMessage(state));
             control.Add(vChecks);

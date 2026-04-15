@@ -78,6 +78,7 @@ static int AppInitRawTx(int argc, char* argv[])
         strUsage += HelpMessageOpt("delin=N", _("Delete input N from TX"));
         strUsage += HelpMessageOpt("delout=N", _("Delete output N from TX"));
         strUsage += HelpMessageOpt("in=TXID:VOUT(:SEQUENCE_NUMBER)", _("Add input to TX"));
+        strUsage += HelpMessageOpt("refin=TXID:VOUT", _("Add a reference input (forces v3)"));
         strUsage += HelpMessageOpt("locktime=N", _("Set TX lock time to N"));
         strUsage += HelpMessageOpt("nversion=N", _("Set TX version to N"));
         strUsage += HelpMessageOpt("replaceable(=N)", _("Set RBF opt-in sequence number for input N (if not provided, opt-in all available inputs)"));
@@ -266,6 +267,28 @@ static void MutateTxAddInput(CMutableTransaction& tx, const std::string& strInpu
     // append to transaction input list
     CTxIn txin(txid, vout, CScript(), nSequenceIn);
     tx.vin.push_back(txin);
+}
+
+// NIP-014: add a reference input (forces v3)
+static void MutateTxAddRefInput(CMutableTransaction& tx, const std::string& strInput)
+{
+    std::vector<std::string> vStrInputParts;
+    boost::split(vStrInputParts, strInput, boost::is_any_of(":"));
+
+    if (vStrInputParts.size() != 2)
+        throw std::runtime_error("TX refin missing separator (expected TXID:VOUT)");
+
+    std::string strTxid = vStrInputParts[0];
+    if ((strTxid.size() != 64) || !IsHex(strTxid))
+        throw std::runtime_error("invalid TX refin txid");
+    uint256 txid(uint256S(strTxid));
+
+    int vout = atoi(vStrInputParts[1]);
+    if (vout < 0)
+        throw std::runtime_error("invalid TX refin vout");
+
+    tx.nVersion = 3; // force v3
+    tx.vrefin.push_back(COutPoint(txid, vout));
 }
 
 static void MutateTxAddOutAddr(CMutableTransaction& tx, const std::string& strInput)
@@ -699,6 +722,8 @@ static void MutateTx(CMutableTransaction& tx, const std::string& command,
         MutateTxDelInput(tx, commandVal);
     else if (command == "in")
         MutateTxAddInput(tx, commandVal);
+    else if (command == "refin")
+        MutateTxAddRefInput(tx, commandVal);
 
     else if (command == "delout")
         MutateTxDelOutput(tx, commandVal);

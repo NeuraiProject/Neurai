@@ -1996,6 +1996,13 @@ namespace
             unsigned int nOutputs = fHashNone ? 0 : (fHashSingle ? nIn + 1 : txTo.vout.size());
             ::WriteCompactSize(s, nOutputs);
             for (unsigned int nOutput = 0; nOutput < nOutputs; nOutput++) SerializeOutput(s, nOutput);
+            // NIP-014: serialize vrefin for v3 (unconditional — not affected by sighash mode)
+            if (txTo.nVersion == 3) {
+                ::WriteCompactSize(s, txTo.vrefin.size());
+                for (const auto& refin : txTo.vrefin) {
+                    ::Serialize(s, refin);
+                }
+            }
             // Serialize nLockTime
             ::Serialize(s, txTo.nLockTime);
         }
@@ -2027,6 +2034,16 @@ namespace
         for (const auto &txout : txTo.vout)
         {
             ss << txout;
+        }
+        return ss.GetHash();
+    }
+
+    // NIP-014: double-SHA256 hash of reference inputs (BIP143 sighash path)
+    uint256 GetRefInputsHash(const CTransaction& txTo)
+    {
+        CHashWriter ss(SER_GETHASH, 0);
+        for (const auto& refin : txTo.vrefin) {
+            ss << refin;
         }
         return ss.GetHash();
     }
@@ -2084,6 +2101,27 @@ PrecomputedTransactionData::PrecomputedTransactionData(const CTransaction &txTo)
 
         ctvReady = true;
     }
+
+    // NIP-014: precompute reference input hashes for v3
+    if (txTo.nVersion == 3 && !txTo.vrefin.empty()) {
+        // BIP143-style double-SHA256
+        CHashWriter refHasher(SER_GETHASH, 0);
+        for (const auto& refin : txTo.vrefin) {
+            refHasher << refin;
+        }
+        hashRefInputs = refHasher.GetHash();
+        refInputsReady = true;
+
+        // CTV-style single-SHA256
+        CSHA256 ctvRefHasher;
+        for (const auto& refin : txTo.vrefin) {
+            CDataStream s(SER_NETWORK, PROTOCOL_VERSION);
+            s << refin;
+            ctvRefHasher.Write((const unsigned char*)s.data(), s.size());
+        }
+        ctvRefHasher.Finalize(ctvHashRefInputs.begin());
+        ctvRefInputsReady = true;
+    }
 }
 
 uint256 SignatureHash(const CScript &scriptCode, const CTransaction &txTo, unsigned int nIn, int nHashType, const CAmount &amount, SigVersion sigversion, const PrecomputedTransactionData *cache, uint8_t authType)
@@ -2134,6 +2172,16 @@ uint256 SignatureHash(const CScript &scriptCode, const CTransaction &txTo, unsig
         ss << txTo.vin[nIn].nSequence;
         // Outputs (none/one/all, depending on flags)
         ss << hashOutputs;
+        // NIP-014: commit to reference inputs for v3
+        if (txTo.nVersion == 3) {
+            uint256 hashRefIns;
+            if (cacheready && cache->refInputsReady) {
+                hashRefIns = cache->hashRefInputs;
+            } else {
+                hashRefIns = GetRefInputsHash(txTo);
+            }
+            ss << hashRefIns;
+        }
         // Locktime
         ss << txTo.nLockTime;
         if (sigversion == SIGVERSION_AUTHSCRIPT) {
@@ -2360,6 +2408,28 @@ static uint256 DefaultCheckTemplateVerifyHash(const CTransaction& tx, uint32_t n
         unsigned char outResult[CSHA256::OUTPUT_SIZE];
         outputsHash.Finalize(outResult);
         ss.Write(outResult, CSHA256::OUTPUT_SIZE);
+    }
+
+    // NIP-014: commit to reference inputs for v3
+    if (tx.nVersion == 3) {
+        uint32_t nRefInputs = tx.vrefin.size();
+        ss.Write((const unsigned char*)&nRefInputs, 4);
+
+        if (nRefInputs > 0) {
+            if (cacheready && txdata->ctvRefInputsReady) {
+                ss.Write(txdata->ctvHashRefInputs.begin(), CSHA256::OUTPUT_SIZE);
+            } else {
+                CSHA256 refInputsHash;
+                for (const auto& refin : tx.vrefin) {
+                    CDataStream s(SER_NETWORK, PROTOCOL_VERSION);
+                    s << refin;
+                    refInputsHash.Write((const unsigned char*)s.data(), s.size());
+                }
+                unsigned char refResult[CSHA256::OUTPUT_SIZE];
+                refInputsHash.Finalize(refResult);
+                ss.Write(refResult, CSHA256::OUTPUT_SIZE);
+            }
+        }
     }
 
     // 8. Input index (4 bytes LE)
@@ -2743,6 +2813,58 @@ bool TransactionSignatureChecker::GetTxLockTime(std::vector<unsigned char>& resu
     result.resize(4);
     memcpy(result.data(), &nLockTime, 4);
     return true;
+}
+
+// NIP-014: reference input introspection
+bool TransactionSignatureChecker::GetRefInputCount(std::vector<unsigned char>& result) const
+{
+    if (!txTo || !m_refOutputs)
+        return false;
+
+    int64_t count = static_cast<int64_t>(m_refOutputs->size());
+    CScriptNum num(count);
+    result = num.getvch();
+    return true;
+}
+
+bool TransactionSignatureChecker::GetRefInputField(unsigned int nRef, unsigned char selector,
+                                                    std::vector<unsigned char>& result) const
+{
+    if (!txTo || !m_refOutputs)
+        return false;
+    if (nRef >= m_refOutputs->size())
+        return false;
+
+    const CTxOut& refOut = (*m_refOutputs)[nRef];
+
+    switch (selector) {
+        case 0x00: { // nValue (8 bytes LE)
+            int64_t val = refOut.nValue;
+            result.resize(8);
+            memcpy(result.data(), &val, 8);
+            return true;
+        }
+        case 0x01: { // scriptPubKey (raw bytes)
+            result.assign(refOut.scriptPubKey.begin(), refOut.scriptPubKey.end());
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
+bool TransactionSignatureChecker::GetRefInputAssetField(unsigned int nRef, unsigned char selector,
+                                                         std::vector<unsigned char>& result) const
+{
+    if (!txTo || !m_refOutputs)
+        return false;
+    if (nRef >= m_refOutputs->size())
+        return false;
+
+    // Asset field introspection follows the same pattern as GetOutputAssetField
+    // but from resolved reference outputs. Placeholder for future asset parsing.
+    // For now, return false to indicate no asset data available.
+    return false;
 }
 
 static bool VerifyAuthScriptCore(const CScriptWitness& witness, const std::vector<unsigned char>& program, script_verify_flags flags, const BaseSignatureChecker& checker, ScriptError* serror)

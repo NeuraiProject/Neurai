@@ -357,11 +357,11 @@ UniValue verifytxoutproof(const JSONRPCRequest& request)
 
 UniValue createrawtransaction(const JSONRPCRequest& request)
 {
-    if (request.fHelp || request.params.size() < 2 || request.params.size() > 3)
+    if (request.fHelp || request.params.size() < 2 || request.params.size() > 4)
         throw std::runtime_error(
             "createrawtransaction [{\"txid\":\"id\",\"vout\":n},...] {\"address\":(amount or object),\"data\":\"hex\",...}\n"
             "createrawtransaction [{\"txid\":\"id\",\"vout\":n},...] [{\"address\":(amount or object)},{\"data\":\"hex\"},...]\n"
-            "                     ( locktime ) ( replaceable )\n"
+            "                     ( locktime ) ( [{\"txid\":\"id\",\"vout\":n},...] )\n"
             "\nCreate a transaction spending the given inputs and creating new outputs.\n"
             "Outputs are addresses (paired with a XNA amount, data or object specifying an asset operation) or data.\n"
             "Returns hex-encoded raw transaction.\n"
@@ -600,8 +600,14 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
             "     ]\n"
             "                                               Array form must be non-empty.\n"
             "3. locktime                  (numeric, optional, default=0) Raw locktime. Non-0 value also locktime-activates inputs\n"
-//            "4. replaceable               (boolean, optional, default=false) Marks this transaction as BIP125 replaceable.\n"
-//            "                                        Allows this transaction to be replaced by a transaction with higher fees.\n"
+            "4. \"refinputs\"               (array, optional) NIP-014: reference inputs (forces v3 transaction)\n"
+            "     [\n"
+            "       {\n"
+            "         \"txid\":\"id\",                      (string, required) The transaction id\n"
+            "         \"vout\":n                          (number, required) The output number\n"
+            "       }\n"
+            "       ,...\n"
+            "     ]\n"
 //            "                                        If provided, it is an error if explicit sequence numbers are incompatible.\n"
             "\nResult:\n"
             "\"transaction\"              (string) hex string of the transaction\n"
@@ -679,6 +685,27 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
         CTxIn in(COutPoint(txid, nOutput), CScript(), nSequence);
 
         rawTx.vin.push_back(in);
+    }
+
+    // NIP-014: parse reference inputs (4th parameter)
+    if (!request.params[3].isNull()) {
+        UniValue refinputs = request.params[3].get_array();
+        rawTx.nVersion = 3; // force v3
+        for (unsigned int idx = 0; idx < refinputs.size(); idx++) {
+            const UniValue& refinput = refinputs[idx];
+            const UniValue& ro = refinput.get_obj();
+
+            uint256 reftxid = ParseHashO(ro, "txid");
+
+            const UniValue& refvout_v = find_value(ro, "vout");
+            if (!refvout_v.isNum())
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, refinput missing vout key");
+            int nRefOutput = refvout_v.get_int();
+            if (nRefOutput < 0)
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, refinput vout must be positive");
+
+            rawTx.vrefin.push_back(COutPoint(reftxid, nRefOutput));
+        }
     }
 
     auto currentActiveAssetCache = GetCurrentAssetCache();

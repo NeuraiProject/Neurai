@@ -60,6 +60,7 @@ static std::map<std::string, script_verify_flags> mapFlagNames = {
         {std::string("64BIT_INTEGERS"),                        script_verify_flags{SCRIPT_VERIFY_64BIT_INTEGERS}},
         {std::string("INPUTASSETFIELD"),                       script_verify_flags{SCRIPT_VERIFY_INPUTASSETFIELD}},
         {std::string("INPUTOUTPUTCOUNT"),                      script_verify_flags{SCRIPT_VERIFY_INPUTOUTPUTCOUNT}},
+        {std::string("REFINPUTS"),                              script_verify_flags{SCRIPT_VERIFY_REFINPUTS}},
 };
 
 script_verify_flags ParseScriptFlags(std::string strFlags)

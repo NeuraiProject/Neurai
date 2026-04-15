@@ -119,6 +119,12 @@ bool IsStandardTx(const CTransaction& tx, std::string& reason, const bool witnes
         return false;
     }
 
+    // NIP-014: limit reference inputs
+    if (tx.nVersion == 3 && tx.vrefin.size() > MAX_STANDARD_REFINPUTS) {
+        reason = "too-many-refinputs";
+        return false;
+    }
+
     // Extremely large transactions with lots of inputs can cost the network
     // almost as much to process as they cost the sender in fees, because
     // computing signature hashes is O(ninputs*txsize). Limiting transactions

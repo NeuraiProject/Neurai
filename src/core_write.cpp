@@ -322,6 +322,18 @@ void TxToUniv(const CTransaction& tx, const uint256& hashBlock, UniValue& entry,
     }
     entry.pushKV("vout", vout);
 
+    // NIP-014: reference inputs
+    if (tx.nVersion == 3 && !tx.vrefin.empty()) {
+        UniValue vrefin(UniValue::VARR);
+        for (unsigned int i = 0; i < tx.vrefin.size(); i++) {
+            UniValue ref(UniValue::VOBJ);
+            ref.pushKV("txid", tx.vrefin[i].hash.GetHex());
+            ref.pushKV("vout", (int64_t)tx.vrefin[i].n);
+            vrefin.push_back(ref);
+        }
+        entry.pushKV("vrefin", vrefin);
+    }
+
     if (!hashBlock.IsNull())
         entry.pushKV("blockhash", hashBlock.GetHex());
 

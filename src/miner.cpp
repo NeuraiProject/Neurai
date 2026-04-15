@@ -261,6 +261,14 @@ bool BlockAssembler::TestPackageTransactions(const CTxMemPool::setEntries& packa
             return false;
         if (!fIncludeWitness && it->GetTx().HasWitness())
             return false;
+        // NIP-014: skip transactions whose reference inputs conflict with block template
+        if (it->GetTx().nVersion == 3 && !it->GetTx().vrefin.empty()) {
+            for (const auto& refin : it->GetTx().vrefin) {
+                if (blockSpentOutpoints.count(refin)) {
+                    return false;  // referenced UTXO already spent in this template
+                }
+            }
+        }
     }
     return true;
 }
@@ -275,6 +283,11 @@ void BlockAssembler::AddToBlock(CTxMemPool::txiter iter)
     nBlockSigOpsCost += iter->GetSigOpCost();
     nFees += iter->GetFee();
     inBlock.insert(iter);
+
+    // NIP-014: track spent outpoints for reference input validation
+    for (const auto& txin : iter->GetTx().vin) {
+        blockSpentOutpoints.insert(txin.prevout);
+    }
 
     bool fPrintPriority = gArgs.GetBoolArg("-printpriority", DEFAULT_PRINTPRIORITY);
     if (fPrintPriority) {

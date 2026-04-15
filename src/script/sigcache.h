@@ -58,6 +58,10 @@ public:
     CachingTransactionSignatureChecker(const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, bool storeIn, PrecomputedTransactionData& txdataIn, const CScript& spentScriptPubKeyIn, const std::vector<CTxOut>* allPrevoutsIn)
         : TransactionSignatureChecker(txToIn, nInIn, amountIn, txdataIn, spentScriptPubKeyIn, allPrevoutsIn), store(storeIn) {}
 
+    // NIP-014: Constructor with reference outputs for v3 transactions.
+    CachingTransactionSignatureChecker(const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, bool storeIn, PrecomputedTransactionData& txdataIn, const CScript& spentScriptPubKeyIn, const std::vector<CTxOut>* allPrevoutsIn, const std::vector<CTxOut>* refOutputsIn)
+        : TransactionSignatureChecker(txToIn, nInIn, amountIn, txdataIn, spentScriptPubKeyIn, allPrevoutsIn, refOutputsIn), store(storeIn) {}
+
     bool VerifySignature(const std::vector<unsigned char>& vchSig, const CPubKey& vchPubKey, const uint256& sighash) const override;
 };
 

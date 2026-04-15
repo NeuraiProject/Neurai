@@ -190,6 +190,12 @@ enum class script_verify_flag_name : uint8_t {
     //
     SCRIPT_VERIFY_INPUTOUTPUTCOUNT,                         // bit 30
 
+    // NIP-014: Enable OP_REFINPUT* opcodes — reference input introspection.
+    // When set, v3 transactions with vrefin are valid and OP_REFINPUT* opcodes
+    // can read fields from resolved reference inputs.
+    //
+    SCRIPT_VERIFY_REFINPUTS,                                // bit 31
+
     // End marker — must always be last.
     SCRIPT_VERIFY_END_MARKER
 };
@@ -222,6 +228,13 @@ struct PrecomputedTransactionData
     uint256 ctvHashSequences, ctvHashOutputs, ctvHashScriptSigs;
     bool ctvHasNonEmptyScriptSig = false;
     bool ctvReady = false;
+
+    // NIP-014: reference input caches
+    uint256 hashRefInputs;       // double-SHA256 for BIP143 sighash
+    bool refInputsReady = false;
+
+    uint256 ctvHashRefInputs;    // single-SHA256 for CTV
+    bool ctvRefInputsReady = false;
 
     explicit PrecomputedTransactionData(const CTransaction &tx);
 };
@@ -318,6 +331,24 @@ public:
         return false;
     }
 
+    // NIP-014: reference input introspection
+    virtual bool GetRefInputCount(std::vector<unsigned char>& result) const
+    {
+        return false;
+    }
+
+    virtual bool GetRefInputField(unsigned int nRef, unsigned char selector,
+                                  std::vector<unsigned char>& result) const
+    {
+        return false;
+    }
+
+    virtual bool GetRefInputAssetField(unsigned int nRef, unsigned char selector,
+                                       std::vector<unsigned char>& result) const
+    {
+        return false;
+    }
+
     virtual ~BaseSignatureChecker() {}
 };
 
@@ -330,32 +361,37 @@ private:
     const PrecomputedTransactionData *txdata;
     const CScript* m_spentScriptPubKey;  // scriptPubKey of the UTXO being spent (for OP_TXFIELD)
     const std::vector<CTxOut>* m_allPrevouts; // prevouts of all inputs, if available
+    const std::vector<CTxOut>* m_refOutputs;  // NIP-014: resolved reference outputs
 
 protected:
     virtual bool VerifySignature(const std::vector<unsigned char> &vchSig, const CPubKey &vchPubKey, const uint256 &sighash) const;
 
 public:
     TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn)
-        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(nullptr), m_spentScriptPubKey(nullptr), m_allPrevouts(nullptr) {}
+        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(nullptr), m_spentScriptPubKey(nullptr), m_allPrevouts(nullptr), m_refOutputs(nullptr) {}
 
     TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const PrecomputedTransactionData &txdataIn)
-        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn), m_spentScriptPubKey(nullptr), m_allPrevouts(nullptr) {}
+        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn), m_spentScriptPubKey(nullptr), m_allPrevouts(nullptr), m_refOutputs(nullptr) {}
 
     // Constructor with spent scriptPubKey but without precomputed txdata.
     // Used by RPC signing paths (signrawtransaction, combinesignatures) where
     // PrecomputedTransactionData is not available but OP_TXFIELD must still work.
     TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const CScript& spentScriptPubKeyIn)
-        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(nullptr), m_spentScriptPubKey(&spentScriptPubKeyIn), m_allPrevouts(nullptr) {}
+        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(nullptr), m_spentScriptPubKey(&spentScriptPubKeyIn), m_allPrevouts(nullptr), m_refOutputs(nullptr) {}
 
     TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const CScript& spentScriptPubKeyIn, const std::vector<CTxOut>* allPrevoutsIn)
-        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(nullptr), m_spentScriptPubKey(&spentScriptPubKeyIn), m_allPrevouts(allPrevoutsIn) {}
+        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(nullptr), m_spentScriptPubKey(&spentScriptPubKeyIn), m_allPrevouts(allPrevoutsIn), m_refOutputs(nullptr) {}
 
     // Constructor with both precomputed txdata and spent scriptPubKey — used by consensus validation.
     TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const PrecomputedTransactionData &txdataIn, const CScript& spentScriptPubKeyIn)
-        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn), m_spentScriptPubKey(&spentScriptPubKeyIn), m_allPrevouts(nullptr) {}
+        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn), m_spentScriptPubKey(&spentScriptPubKeyIn), m_allPrevouts(nullptr), m_refOutputs(nullptr) {}
 
     TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const PrecomputedTransactionData &txdataIn, const CScript& spentScriptPubKeyIn, const std::vector<CTxOut>* allPrevoutsIn)
-        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn), m_spentScriptPubKey(&spentScriptPubKeyIn), m_allPrevouts(allPrevoutsIn) {}
+        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn), m_spentScriptPubKey(&spentScriptPubKeyIn), m_allPrevouts(allPrevoutsIn), m_refOutputs(nullptr) {}
+
+    // NIP-014: Constructor with reference outputs — used by consensus validation for v3 txs.
+    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const PrecomputedTransactionData &txdataIn, const CScript& spentScriptPubKeyIn, const std::vector<CTxOut>* allPrevoutsIn, const std::vector<CTxOut>* refOutputsIn)
+        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn), m_spentScriptPubKey(&spentScriptPubKeyIn), m_allPrevouts(allPrevoutsIn), m_refOutputs(refOutputsIn) {}
 
     bool CheckSig(const std::vector<unsigned char> &scriptSig, const std::vector<unsigned char> &vchPubKey, const CScript &scriptCode, SigVersion sigversion, uint8_t authType = 0x00) const override;
 
@@ -383,6 +419,13 @@ public:
     bool GetOutputCount(std::vector<unsigned char>& result) const override;
 
     bool GetTxLockTime(std::vector<unsigned char>& result) const override;
+
+    // NIP-014: reference input introspection
+    bool GetRefInputCount(std::vector<unsigned char>& result) const override;
+    bool GetRefInputField(unsigned int nRef, unsigned char selector,
+                          std::vector<unsigned char>& result) const override;
+    bool GetRefInputAssetField(unsigned int nRef, unsigned char selector,
+                               std::vector<unsigned char>& result) const override;
 
     uint256 GetSigHash(const CScript& scriptCode, int nHashType, SigVersion sigversion, uint8_t authType = 0x00) const override;
 };

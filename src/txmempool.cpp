@@ -391,6 +391,12 @@ bool CTxMemPool::addUnchecked(const uint256& hash, const CTxMemPoolEntry &entry,
         mapNextTx.insert(std::make_pair(&tx.vin[i].prevout, &tx));
         setParentTransactions.insert(tx.vin[i].prevout.hash);
     }
+    // NIP-014: index reference inputs
+    if (tx.nVersion == 3) {
+        for (const auto& refin : tx.vrefin) {
+            mapRefTx[refin].insert(tx.GetHash());
+        }
+    }
     // Don't bother worrying about child transactions of this one.
     // Normal case of a new transaction arriving is that there can't be any
     // children, because such children would be orphans.
@@ -596,6 +602,19 @@ void CTxMemPool::removeUnchecked(txiter it, MemPoolRemovalReason reason)
     const uint256 hash = it->GetTx().GetHash();
     for (const CTxIn& txin : it->GetTx().vin)
         mapNextTx.erase(txin.prevout);
+
+    // NIP-014: clean up reference input index
+    if (it->GetTx().nVersion == 3) {
+        for (const auto& refin : it->GetTx().vrefin) {
+            auto refIt = mapRefTx.find(refin);
+            if (refIt != mapRefTx.end()) {
+                refIt->second.erase(hash);
+                if (refIt->second.empty()) {
+                    mapRefTx.erase(refIt);
+                }
+            }
+        }
+    }
 
     if (vTxHashes.size() > 1) {
         vTxHashes[it->vTxHashesIdx] = std::move(vTxHashes.back());
@@ -970,6 +989,23 @@ void CTxMemPool::removeForBlock(const std::vector<CTransactionRef>& vtx, unsigne
         ClearPrioritisation(tx->GetHash());
     }
 
+    // NIP-014: evict mempool referencers when their referenced UTXOs are spent
+    for (const auto& tx : vtx) {
+        for (const auto& txin : tx->vin) {
+            auto refIt = mapRefTx.find(txin.prevout);
+            if (refIt != mapRefTx.end()) {
+                std::set<uint256> referencers = refIt->second; // copy — iterating while removing
+                for (const auto& refTxHash : referencers) {
+                    auto it = mapTx.find(refTxHash);
+                    if (it != mapTx.end()) {
+                        CTransaction refTx = it->GetTx();
+                        removeRecursive(refTx, MemPoolRemovalReason::REFINPUT_SPENT);
+                    }
+                }
+            }
+        }
+    }
+
     /** XNA START */
     // Remove newly added asset issue transactions from the mempool if they haven't been removed already
     for (auto tx : trans)
@@ -994,6 +1030,7 @@ void CTxMemPool::_clear()
     mapLinks.clear();
     mapTx.clear();
     mapNextTx.clear();
+    mapRefTx.clear(); // NIP-014
     totalTxSize = 0;
     cachedInnerUsage = 0;
     lastRollingFeeUpdate = GetTime();

@@ -187,6 +187,7 @@ struct CMutableTransaction;
  * - int32_t nVersion
  * - std::vector<CTxIn> vin
  * - std::vector<CTxOut> vout
+ * - if (nVersion == 3): std::vector<COutPoint> vrefin   // NIP-014
  * - uint32_t nLockTime
  *
  * Extended transaction serialization format:
@@ -195,6 +196,7 @@ struct CMutableTransaction;
  * - unsigned char flags (!= 0)
  * - std::vector<CTxIn> vin
  * - std::vector<CTxOut> vout
+ * - if (nVersion == 3): std::vector<COutPoint> vrefin   // NIP-014
  * - if (flags & 1):
  *   - CTxWitness wit;
  * - uint32_t nLockTime
@@ -207,6 +209,7 @@ inline void UnserializeTransaction(TxType& tx, Stream& s) {
     unsigned char flags = 0;
     tx.vin.clear();
     tx.vout.clear();
+    tx.vrefin.clear();
     /* Try to read the vin. In case the dummy is there, this will be read as an empty vector. */
     s >> tx.vin;
     if (tx.vin.size() == 0 && fAllowWitness) {
@@ -219,6 +222,10 @@ inline void UnserializeTransaction(TxType& tx, Stream& s) {
     } else {
         /* We read a non-empty vin. Assume a normal vout follows. */
         s >> tx.vout;
+    }
+    // NIP-014: read vrefin for v3 (between vout and witness, affects both txid and wtxid)
+    if (tx.nVersion == 3) {
+        s >> tx.vrefin;
     }
     if ((flags & 1) && fAllowWitness) {
         /* The witness flag is present, and we support witnesses. */
@@ -255,6 +262,10 @@ inline void SerializeTransaction(const TxType& tx, Stream& s) {
     }
     s << tx.vin;
     s << tx.vout;
+    // NIP-014: write vrefin for v3 (between vout and witness, affects both txid and wtxid)
+    if (tx.nVersion == 3) {
+        s << tx.vrefin;
+    }
     if (flags & 1) {
         for (size_t i = 0; i < tx.vin.size(); i++) {
             s << tx.vin[i].scriptWitness.stack;
@@ -277,7 +288,7 @@ public:
     // adapting relay policy by bumping MAX_STANDARD_VERSION, and then later date
     // bumping the default CURRENT_VERSION at which point both CURRENT_VERSION and
     // MAX_STANDARD_VERSION will be equal.
-    static const int32_t MAX_STANDARD_VERSION=2;
+    static const int32_t MAX_STANDARD_VERSION=3;
 
     // The local variables are made const to prevent unintended modification
     // without updating the cached hash value. However, CTransaction is not
@@ -286,6 +297,7 @@ public:
     // structure, including the hash.
     const std::vector<CTxIn> vin;
     const std::vector<CTxOut> vout;
+    const std::vector<COutPoint> vrefin;   // NIP-014: reference inputs (v3 only)
     const int32_t nVersion;
     const uint32_t nLockTime;
 
@@ -383,6 +395,8 @@ public:
         }
         return false;
     }
+
+    bool HasRefInputs() const { return !vrefin.empty(); }
 };
 
 /** A mutable version of CTransaction. */
@@ -390,6 +404,7 @@ struct CMutableTransaction
 {
     std::vector<CTxIn> vin;
     std::vector<CTxOut> vout;
+    std::vector<COutPoint> vrefin;         // NIP-014: reference inputs (v3 only)
     int32_t nVersion;
     uint32_t nLockTime;
 
@@ -431,6 +446,8 @@ struct CMutableTransaction
         }
         return false;
     }
+
+    bool HasRefInputs() const { return !vrefin.empty(); }
 };
 
 typedef std::shared_ptr<const CTransaction> CTransactionRef;

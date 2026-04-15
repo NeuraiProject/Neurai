@@ -53,6 +53,7 @@ NEURAI_TESTS =\
   test/coins_tests.cpp \
   test/csfs_tests.cpp \
   test/ctv_tests.cpp \
+  test/refinputs_tests.cpp \
   test/compress_tests.cpp \
   test/crypto_tests.cpp \
   test/depinecies_tests.cpp \

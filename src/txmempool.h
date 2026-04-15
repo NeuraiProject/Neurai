@@ -325,6 +325,7 @@ enum class MemPoolRemovalReason {
     BLOCK,       //!< Removed for block
     CONFLICT,    //!< Removed for conflict with in-block transaction
     REPLACED,    //!< Removed for replacement
+    REFINPUT_SPENT, //!< NIP-014: referenced UTXO spent by confirmed tx
 };
 
 class SaltedTxidHasher
@@ -545,6 +546,8 @@ private:
 
 public:
     indirectmap<COutPoint, const CTransaction*> mapNextTx;
+    // NIP-014: maps outpoints to transactions that reference them via vrefin
+    std::map<COutPoint, std::set<uint256>> mapRefTx;
     std::map<uint256, CAmount> mapDeltas;
 
     /** Create a new CTxMemPool.

@@ -150,6 +150,7 @@ private:
     uint64_t nBlockSigOpsCost;
     CAmount nFees;
     CTxMemPool::setEntries inBlock;
+    std::set<COutPoint> blockSpentOutpoints;  // NIP-014: spent outpoints in current template
 
     // Chain context for the block
     int nHeight;

@@ -413,11 +413,12 @@ private:
     ScriptError error;
     PrecomputedTransactionData *txdata;
     std::shared_ptr<std::vector<CTxOut>> m_allPrevouts;
+    std::shared_ptr<std::vector<CTxOut>> m_refOutputs;   // NIP-014
 
 public:
     CScriptCheck(): ptxTo(nullptr), nIn(0), nFlags(SCRIPT_VERIFY_NONE), cacheStore(false), error(SCRIPT_ERR_UNKNOWN_ERROR), txdata(nullptr) {}
-    CScriptCheck(const CTxOut& outIn, const CTransaction& txToIn, unsigned int nInIn, script_verify_flags nFlagsIn, bool cacheIn, PrecomputedTransactionData* txdataIn, std::shared_ptr<std::vector<CTxOut>> allPrevoutsIn = nullptr) :
-        m_tx_out(outIn), ptxTo(&txToIn), nIn(nInIn), nFlags(nFlagsIn), cacheStore(cacheIn), error(SCRIPT_ERR_UNKNOWN_ERROR), txdata(txdataIn), m_allPrevouts(std::move(allPrevoutsIn)) { }
+    CScriptCheck(const CTxOut& outIn, const CTransaction& txToIn, unsigned int nInIn, script_verify_flags nFlagsIn, bool cacheIn, PrecomputedTransactionData* txdataIn, std::shared_ptr<std::vector<CTxOut>> allPrevoutsIn = nullptr, std::shared_ptr<std::vector<CTxOut>> refOutputsIn = nullptr) :
+        m_tx_out(outIn), ptxTo(&txToIn), nIn(nInIn), nFlags(nFlagsIn), cacheStore(cacheIn), error(SCRIPT_ERR_UNKNOWN_ERROR), txdata(txdataIn), m_allPrevouts(std::move(allPrevoutsIn)), m_refOutputs(std::move(refOutputsIn)) { }
 
     bool operator()();
 
@@ -430,6 +431,7 @@ public:
         std::swap(error, check.error);
         std::swap(txdata, check.txdata);
         std::swap(m_allPrevouts, check.m_allPrevouts);
+        std::swap(m_refOutputs, check.m_refOutputs);
     }
 
     ScriptError GetScriptError() const { return error; }

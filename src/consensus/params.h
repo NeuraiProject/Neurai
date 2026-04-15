@@ -123,6 +123,9 @@ struct Params {
     /** Enable OP_INPUTCOUNT / OP_OUTPUTCOUNT - push transaction input/output
      *  count onto the stack. true on testnet/regtest; false on mainnet. */
     bool nINPUTOUTPUTCOUNTEnabled;
+    /** NIP-014: Enable transaction v3 with reference inputs (vrefin) and
+     *  OP_REFINPUT* opcodes. true on testnet/regtest; false on mainnet. */
+    bool nREFINPUTSEnabled;
 };
 } // namespace Consensus
 

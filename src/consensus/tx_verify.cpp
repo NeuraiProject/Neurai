@@ -483,6 +483,40 @@ bool CheckTransaction(const CTransaction& tx, CValidationState &state, bool fChe
         }
     }
 
+    // NIP-014: structural validation for vrefin
+    if (tx.nVersion != 3 && !tx.vrefin.empty()) {
+        return state.DoS(100, false, REJECT_INVALID, "bad-txns-vrefin-no-v3",
+                         false, "vrefin present in non-v3 transaction");
+    }
+
+    if (tx.nVersion == 3) {
+        // No duplicate entries within vrefin
+        if (fCheckDuplicateInputs) {
+            std::set<COutPoint> vRefInOutPoints;
+            for (const auto& refin : tx.vrefin) {
+                if (!vRefInOutPoints.insert(refin).second) {
+                    return state.DoS(100, false, REJECT_INVALID, "bad-txns-vrefin-duplicate");
+                }
+            }
+
+            // No overlap between vin and vrefin
+            std::set<COutPoint> vInOutPoints2;
+            for (const auto& txin : tx.vin) {
+                vInOutPoints2.insert(txin.prevout);
+            }
+            for (const auto& refin : tx.vrefin) {
+                if (vInOutPoints2.count(refin)) {
+                    return state.DoS(100, false, REJECT_INVALID, "bad-txns-vrefin-overlap-vin");
+                }
+            }
+        }
+
+        // Coinbase cannot have vrefin
+        if (tx.IsCoinBase() && !tx.vrefin.empty()) {
+            return state.DoS(100, false, REJECT_INVALID, "bad-cb-vrefin");
+        }
+    }
+
     if (tx.IsCoinBase())
     {
         if (tx.vin[0].scriptSig.size() < 2 || tx.vin[0].scriptSig.size() > 100)
