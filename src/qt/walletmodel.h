@@ -16,6 +16,8 @@
 
 #include <QObject>
 
+#include <boost/signals2/connection.hpp>
+
 class AddressTableModel;
 class OptionsModel;
 class PlatformStyle;
@@ -323,6 +325,7 @@ private:
     int cachedNumBlocks;
 
     QTimer *pollTimer;
+    std::vector<boost::signals2::connection> m_coreSignalConnections;
 
     void subscribeToCoreSignals();
     void unsubscribeFromCoreSignals();

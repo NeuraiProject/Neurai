@@ -539,13 +539,13 @@ static void ShowProgress(MyRestrictedAssetsTableModel *ttm, const std::string &t
 void MyRestrictedAssetsTableModel::subscribeToCoreSignals()
 {
     // Connect signals to wallet
-    wallet->NotifyMyRestrictedAssetsChanged.connect(boost::bind(NotifyTransactionChanged, this, _1, _2, _3, _4, _5));
-    wallet->ShowProgress.connect(boost::bind(ShowProgress, this, _1, _2));
+    m_coreSignalConnections.push_back(wallet->NotifyMyRestrictedAssetsChanged.connect(boost::bind(NotifyTransactionChanged, this, _1, _2, _3, _4, _5)));
+    m_coreSignalConnections.push_back(wallet->ShowProgress.connect(boost::bind(ShowProgress, this, _1, _2)));
 }
 
 void MyRestrictedAssetsTableModel::unsubscribeFromCoreSignals()
 {
     // Disconnect signals from wallet
-    wallet->NotifyMyRestrictedAssetsChanged.disconnect(boost::bind(NotifyTransactionChanged, this, _1, _2, _3, _4, _5));
-    wallet->ShowProgress.disconnect(boost::bind(ShowProgress, this, _1, _2));
+    for (auto& c : m_coreSignalConnections) c.disconnect();
+    m_coreSignalConnections.clear();
 }

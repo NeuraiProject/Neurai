@@ -12,6 +12,9 @@
 #include <QAbstractTableModel>
 #include <QStringList>
 
+#include <boost/signals2/connection.hpp>
+#include <vector>
+
 class PlatformStyle;
 class TransactionRecord;
 class TransactionTablePriv;
@@ -93,6 +96,7 @@ private:
     TransactionTablePriv *priv;
     bool fProcessingQueuedTransactions;
     const PlatformStyle *platformStyle;
+    std::vector<boost::signals2::connection> m_coreSignalConnections;
 
     void subscribeToCoreSignals();
     void unsubscribeFromCoreSignals();

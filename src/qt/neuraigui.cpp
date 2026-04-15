@@ -1794,17 +1794,16 @@ static bool ThreadSafeMnemonic(NeuraiGUI *gui, unsigned int style)
 void NeuraiGUI::subscribeToCoreSignals()
 {
     // Connect signals to client
-    uiInterface.ThreadSafeMessageBox.connect(boost::bind(ThreadSafeMessageBox, this, _1, _2, _3));
-    uiInterface.ThreadSafeQuestion.connect(boost::bind(ThreadSafeMessageBox, this, _1, _3, _4));
-    uiInterface.ShowMnemonic.connect(boost::bind(ThreadSafeMnemonic, this, _1));
+    m_coreSignalConnections.push_back(uiInterface.ThreadSafeMessageBox.connect(boost::bind(ThreadSafeMessageBox, this, _1, _2, _3)));
+    m_coreSignalConnections.push_back(uiInterface.ThreadSafeQuestion.connect(boost::bind(ThreadSafeMessageBox, this, _1, _3, _4)));
+    m_coreSignalConnections.push_back(uiInterface.ShowMnemonic.connect(boost::bind(ThreadSafeMnemonic, this, _1)));
 }
 
 void NeuraiGUI::unsubscribeFromCoreSignals()
 {
     // Disconnect signals from client
-    uiInterface.ThreadSafeMessageBox.disconnect(boost::bind(ThreadSafeMessageBox, this, _1, _2, _3));
-    uiInterface.ThreadSafeQuestion.disconnect(boost::bind(ThreadSafeMessageBox, this, _1, _3, _4));
-    uiInterface.ShowMnemonic.disconnect(boost::bind(ThreadSafeMnemonic, this, _1));
+    for (auto& c : m_coreSignalConnections) c.disconnect();
+    m_coreSignalConnections.clear();
 }
 
 void NeuraiGUI::toggleNetworkActive()

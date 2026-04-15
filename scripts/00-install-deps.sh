@@ -35,9 +35,11 @@ if [[ ${OS} == "windows" ]]; then
     python3 \
     rename \
     zip \
-    bison
+    bison \
+    unzip \
+    wget
 
-    update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix 
+    update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
 
 
 elif [[ ${OS} == "osx" ]]; then
@@ -64,11 +66,11 @@ elif [[ ${OS} == "osx" ]]; then
     python3 \
     python3-dev \
     python3-setuptools \
-    s3curl \
     sleuthkit \
     bison \
-    libtinfo5
-    
+    unzip \
+    wget
+
 elif [[ ${OS} == "linux" || ${OS} == "linux-disable-wallet" || ${OS} == "aarch64" || ${OS} == "aarch64-disable-wallet" ]]; then
     apt -y install \
     apt-file \
@@ -83,10 +85,10 @@ elif [[ ${OS} == "linux" || ${OS} == "linux-disable-wallet" || ${OS} == "aarch64
     cmake \
     curl \
     g++-aarch64-linux-gnu \
-    g++-10-aarch64-linux-gnu \
-    g++-10-multilib \
-    gcc-10-aarch64-linux-gnu \
-    gcc-10-multilib \
+    g++-12-aarch64-linux-gnu \
+    g++-12-multilib \
+    gcc-12-aarch64-linux-gnu \
+    gcc-12-multilib \
     git \
     gnupg \
     libssl-dev \
@@ -100,9 +102,9 @@ elif [[ ${OS} == "linux" || ${OS} == "linux-disable-wallet" || ${OS} == "aarch64
     ubuntu-dev-tools \
     xkb-data \
     zip \
-    bison
-
-
+    bison \
+    unzip \
+    wget
 
 elif [[ ${OS} == "arm32v7" || ${OS} == "arm32v7-disable-wallet" ]]; then
     apt -y install \
@@ -116,23 +118,24 @@ elif [[ ${OS} == "arm32v7" || ${OS} == "arm32v7-disable-wallet" ]]; then
     cmake \
     curl \
     g++-aarch64-linux-gnu \
-    g++-8-aarch64-linux-gnu \
-    gcc-8-aarch64-linux-gnu \
+    g++-12-aarch64-linux-gnu \
+    gcc-12-aarch64-linux-gnu \
     g++-arm-linux-gnueabihf \
-    g++-8-arm-linux-gnueabihf \
-    gcc-8-arm-linux-gnueabihf \
-    g++-8-multilib \
-    gcc-8-multilib \
+    g++-12-arm-linux-gnueabihf \
+    gcc-12-arm-linux-gnueabihf \
+    g++-12-multilib \
+    gcc-12-multilib \
     git \
     libssl-dev \
     libtool \
     ninja-build \
     pkg-config \
     python3 \
-    bison
+    bison \
+    unzip \
+    wget
 else
     echo "you must pass the OS to build for"
     exit 1
 fi
-    update-alternatives --install /usr/bin/python python /usr/bin/python2 1
-    update-alternatives --install /usr/bin/python python /usr/bin/python3 2
+    update-alternatives --install /usr/bin/python python /usr/bin/python3 1

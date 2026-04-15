@@ -3,6 +3,9 @@
 #include <QAbstractTableModel>
 #include <QStringList>
 
+#include <boost/signals2/connection.hpp>
+#include <vector>
+
 class PlatformStyle;
 class MyRestrictedAssetRecord;
 class MyRestrictedAssetsTablePriv;
@@ -71,6 +74,7 @@ private:
     MyRestrictedAssetsTablePriv *priv;
     bool fProcessingQueuedTransactions;
     const PlatformStyle *platformStyle;
+    std::vector<boost::signals2::connection> m_coreSignalConnections;
 
     void subscribeToCoreSignals();
     void unsubscribeFromCoreSignals();

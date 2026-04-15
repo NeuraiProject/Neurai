@@ -18,6 +18,9 @@
 #include <QMap>
 #include <QMenu>
 #include <QPoint>
+
+#include <boost/signals2/connection.hpp>
+#include <vector>
 #include <QSystemTrayIcon>
 #include <QComboBox>
 #include <QDateTime>
@@ -195,6 +198,8 @@ private:
     void subscribeToCoreSignals();
     /** Disconnect core signals from GUI client */
     void unsubscribeFromCoreSignals();
+
+    std::vector<boost::signals2::connection> m_coreSignalConnections;
 
     /** Update UI with latest network info from model. */
     void updateNetworkState();

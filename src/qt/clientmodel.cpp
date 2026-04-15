@@ -320,23 +320,18 @@ static void BlockTipChanged(ClientModel *clientmodel, bool initialSync, const CB
 void ClientModel::subscribeToCoreSignals()
 {
     // Connect signals to client
-    uiInterface.ShowProgress.connect(boost::bind(ShowProgress, this, _1, _2));
-    uiInterface.NotifyNumConnectionsChanged.connect(boost::bind(NotifyNumConnectionsChanged, this, _1));
-    uiInterface.NotifyNetworkActiveChanged.connect(boost::bind(NotifyNetworkActiveChanged, this, _1));
-    uiInterface.NotifyAlertChanged.connect(boost::bind(NotifyAlertChanged, this));
-    uiInterface.BannedListChanged.connect(boost::bind(BannedListChanged, this));
-    uiInterface.NotifyBlockTip.connect(boost::bind(BlockTipChanged, this, _1, _2, false));
-    uiInterface.NotifyHeaderTip.connect(boost::bind(BlockTipChanged, this, _1, _2, true));
+    m_coreSignalConnections.push_back(uiInterface.ShowProgress.connect(boost::bind(ShowProgress, this, _1, _2)));
+    m_coreSignalConnections.push_back(uiInterface.NotifyNumConnectionsChanged.connect(boost::bind(NotifyNumConnectionsChanged, this, _1)));
+    m_coreSignalConnections.push_back(uiInterface.NotifyNetworkActiveChanged.connect(boost::bind(NotifyNetworkActiveChanged, this, _1)));
+    m_coreSignalConnections.push_back(uiInterface.NotifyAlertChanged.connect(boost::bind(NotifyAlertChanged, this)));
+    m_coreSignalConnections.push_back(uiInterface.BannedListChanged.connect(boost::bind(BannedListChanged, this)));
+    m_coreSignalConnections.push_back(uiInterface.NotifyBlockTip.connect(boost::bind(BlockTipChanged, this, _1, _2, false)));
+    m_coreSignalConnections.push_back(uiInterface.NotifyHeaderTip.connect(boost::bind(BlockTipChanged, this, _1, _2, true)));
 }
 
 void ClientModel::unsubscribeFromCoreSignals()
 {
     // Disconnect signals from client
-    uiInterface.ShowProgress.disconnect(boost::bind(ShowProgress, this, _1, _2));
-    uiInterface.NotifyNumConnectionsChanged.disconnect(boost::bind(NotifyNumConnectionsChanged, this, _1));
-    uiInterface.NotifyNetworkActiveChanged.disconnect(boost::bind(NotifyNetworkActiveChanged, this, _1));
-    uiInterface.NotifyAlertChanged.disconnect(boost::bind(NotifyAlertChanged, this));
-    uiInterface.BannedListChanged.disconnect(boost::bind(BannedListChanged, this));
-    uiInterface.NotifyBlockTip.disconnect(boost::bind(BlockTipChanged, this, _1, _2, false));
-    uiInterface.NotifyHeaderTip.disconnect(boost::bind(BlockTipChanged, this, _1, _2, true));
+    for (auto& c : m_coreSignalConnections) c.disconnect();
+    m_coreSignalConnections.clear();
 }

@@ -1,4 +1,4 @@
-Neurai - DePIN Messaging Experimental
+Neurai - DePIN Messaging
 =====================================
 
 

@@ -7,7 +7,11 @@
 #define NEURAI_QT_SPLASHSCREEN_H
 
 #include <functional>
+#include <map>
+#include <vector>
 #include <QSplashScreen>
+
+#include <boost/signals2/connection.hpp>
 
 class CWallet;
 class NetworkStyle;
@@ -54,6 +58,8 @@ private:
     int curAlignment;
 
     QList<CWallet*> connectedWallets;
+    std::vector<boost::signals2::connection> m_coreSignalConnections;
+    std::map<CWallet*, boost::signals2::connection> m_walletConnections;
 };
 
 #endif // NEURAI_QT_SPLASHSCREEN_H

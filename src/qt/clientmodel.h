@@ -11,6 +11,9 @@
 #include <QDateTime>
 
 #include <atomic>
+#include <vector>
+
+#include <boost/signals2/connection.hpp>
 
 class BanTableModel;
 class OptionsModel;
@@ -92,6 +95,7 @@ private:
     BanTableModel *banTableModel;
 
     QTimer *pollTimer;
+    std::vector<boost::signals2::connection> m_coreSignalConnections;
 
     void subscribeToCoreSignals();
     void unsubscribeFromCoreSignals();
