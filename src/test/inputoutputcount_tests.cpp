@@ -382,13 +382,13 @@ BOOST_AUTO_TEST_CASE(inputcount_encoding_not_affected_by_64bit_flag)
 BOOST_AUTO_TEST_CASE(inputoutputcount_depin_network_activation)
 {
     SelectParams(CBaseChainParams::TESTNET);
-    BOOST_CHECK(Params().GetConsensus().nINPUTOUTPUTCOUNTEnabled);
+    BOOST_CHECK(GetParams().GetConsensus().nINPUTOUTPUTCOUNTEnabled);
 
     SelectParams(CBaseChainParams::REGTEST);
-    BOOST_CHECK(Params().GetConsensus().nINPUTOUTPUTCOUNTEnabled);
+    BOOST_CHECK(GetParams().GetConsensus().nINPUTOUTPUTCOUNTEnabled);
 
     SelectParams(CBaseChainParams::MAIN);
-    BOOST_CHECK(!Params().GetConsensus().nINPUTOUTPUTCOUNTEnabled);
+    BOOST_CHECK(!GetParams().GetConsensus().nINPUTOUTPUTCOUNTEnabled);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
