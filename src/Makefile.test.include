@@ -159,7 +159,7 @@ test_test_neurai_fuzzy_LDADD = \
   $(LIBNEURAI_CRYPTO) \
   $(LIBSECP256K1)
 
-test_test_neurai_fuzzy_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS)
+test_test_neurai_fuzzy_LDADD += $(BOOST_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(OQS_LIBS)
 #
 
 # test_neurai_hash binary #
@@ -175,7 +175,7 @@ test_test_neurai_hash_LDADD = \
   $(LIBNEURAI_CONSENSUS) \
   $(LIBNEURAI_CRYPTO)
 
-test_test_neurai_hash_LDADD += $(CRYPTO_LIBS)
+test_test_neurai_hash_LDADD += $(SSL_LIBS) $(CRYPTO_LIBS) $(OQS_LIBS)
 #
 
 nodist_test_test_neurai_SOURCES = $(GENERATED_TEST_FILES)
