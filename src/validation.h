@@ -24,12 +24,14 @@
 #include "timestampindex.h"
 
 #include <algorithm>
+#include <deque>
 #include <exception>
 #include <map>
 #include <memory>
 #include <set>
 #include <stdint.h>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 

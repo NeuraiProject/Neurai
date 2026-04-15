@@ -45,6 +45,7 @@
 #include "net.h"
 
 #include <atomic>
+#include <deque>
 #include <sstream>
 
 #include <boost/algorithm/string/replace.hpp>

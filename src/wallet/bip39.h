@@ -27,6 +27,8 @@
 
 #include "support/allocators/secure.h"
 
+#include <array>
+
 const int NUM_LANGUAGES_BIP39_SUPPORTED = 8;
 
 const int DEFAULT_LANG = 0;

@@ -14,6 +14,7 @@
 #include "base58.h"
 
 #include <assert.h>
+#include <tuple>
 #include <assets/assets.h>
 #include <wallet/wallet.h>
 

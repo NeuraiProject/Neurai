@@ -6,6 +6,8 @@
 #define NEURAICOIN_MYASSETSDB_H
 
 #include <dbwrapper.h>
+#include <tuple>
+#include <vector>
 
 class CMessage;
 class COutPoint;
