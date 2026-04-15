@@ -17,8 +17,8 @@
 #include <boost/test/unit_test.hpp>
 
 // Flags for OP_TXHASH testing
-static const unsigned int TXHASH_FLAGS = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_TXHASH;
-static const unsigned int TXHASH_FLAGS_DISCOURAGE = TXHASH_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
+static constexpr script_verify_flags TXHASH_FLAGS = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_TXHASH;
+static constexpr script_verify_flags TXHASH_FLAGS_DISCOURAGE = TXHASH_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
 
 // Field selector constants (must match interpreter.cpp)
 static const unsigned char TXHASH_VERSION       = (1 << 0); // 0x01
@@ -524,7 +524,7 @@ BOOST_AUTO_TEST_CASE(txhash_disabled_treated_as_nop)
     TransactionSignatureChecker checker(&tx, 0, 0, txdata);
     std::vector<std::vector<unsigned char>> stack;
 
-    unsigned int flags_no_txhash = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS;
+    script_verify_flags flags_no_txhash = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS;
     BOOST_CHECK(EvalScript(stack, scriptPubKey, flags_no_txhash, checker, SIGVERSION_BASE, &serror));
 }
 
@@ -542,7 +542,7 @@ BOOST_AUTO_TEST_CASE(txhash_disabled_discourage_nops_fails)
     TransactionSignatureChecker checker(&tx, 0, 0, txdata);
     std::vector<std::vector<unsigned char>> stack;
 
-    unsigned int flags_discourage = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
+    script_verify_flags flags_discourage = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
     BOOST_CHECK(!EvalScript(stack, scriptPubKey, flags_discourage, checker, SIGVERSION_BASE, &serror));
     BOOST_CHECK_EQUAL(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
 }

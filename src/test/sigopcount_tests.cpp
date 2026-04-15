@@ -71,7 +71,7 @@ BOOST_FIXTURE_TEST_SUITE(sigopcount_tests, BasicTestingSetup)
      * Verifies script execution of the zeroth scriptPubKey of tx output and
      * zeroth scriptSig and witness of tx input.
      */
-    ScriptError VerifyWithFlag(const CTransaction &output, const CMutableTransaction &input, int flags)
+    ScriptError VerifyWithFlag(const CTransaction &output, const CMutableTransaction &input, script_verify_flags flags)
     {
         ScriptError error;
         CTransaction inputi(input);
@@ -128,7 +128,7 @@ BOOST_FIXTURE_TEST_SUITE(sigopcount_tests, BasicTestingSetup)
         key.MakeNewKey(true);
         CPubKey pubkey = key.GetPubKey();
         // Default flags
-        int flags = SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_P2SH;
+        script_verify_flags flags = SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_P2SH;
 
         // Multisig script (legacy counting)
         {

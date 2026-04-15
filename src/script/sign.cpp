@@ -17,9 +17,9 @@
 
 typedef std::vector<unsigned char> valtype;
 
-static unsigned int LocalScriptVerifyFlags()
+static script_verify_flags LocalScriptVerifyFlags()
 {
-    unsigned int flags = STANDARD_SCRIPT_VERIFY_FLAGS;
+    script_verify_flags flags = STANDARD_SCRIPT_VERIFY_FLAGS;
     if (GetParams().GetConsensus().nPQWitnessEnabled) {
         flags |= SCRIPT_VERIFY_AUTHSCRIPT;
     }

@@ -13,20 +13,20 @@
 
 #include <boost/test/unit_test.hpp>
 
-static const unsigned int REVERSEBYTES_FLAGS =
+static constexpr script_verify_flags REVERSEBYTES_FLAGS =
     SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_REVERSEBYTES;
-static const unsigned int NO_REVERSEBYTES_FLAGS =
+static constexpr script_verify_flags NO_REVERSEBYTES_FLAGS =
     SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS;
-static const unsigned int NO_REVERSEBYTES_FLAGS_DISCOURAGE =
+static constexpr script_verify_flags NO_REVERSEBYTES_FLAGS_DISCOURAGE =
     NO_REVERSEBYTES_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
-static const unsigned int SPLIT_REVERSEBYTES_FLAGS =
+static constexpr script_verify_flags SPLIT_REVERSEBYTES_FLAGS =
     REVERSEBYTES_FLAGS | SCRIPT_VERIFY_SPLIT;
-static const unsigned int CAT_SPLIT_REVERSEBYTES_FLAGS =
+static constexpr script_verify_flags CAT_SPLIT_REVERSEBYTES_FLAGS =
     SPLIT_REVERSEBYTES_FLAGS | SCRIPT_VERIFY_CAT;
 
 namespace {
 
-bool RunScript(const CScript& script, unsigned int flags,
+bool RunScript(const CScript& script, script_verify_flags flags,
                std::vector<std::vector<unsigned char>> initialStack,
                std::vector<std::vector<unsigned char>>& resultStack,
                ScriptError* errOut = nullptr)

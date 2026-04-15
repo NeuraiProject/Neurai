@@ -437,7 +437,7 @@ bool static IsDefinedHashtypeSignature(const valtype &vchSig)
     return true;
 }
 
-bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, unsigned int flags, ScriptError *serror)
+bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, script_verify_flags flags, ScriptError *serror)
 {
     // Empty signature. Not strictly DER encoded, but allowed to provide a
     // compact way to provide an invalid signature for use with CHECK(MULTI)SIG
@@ -461,7 +461,7 @@ bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, unsigned i
     return true;
 }
 
-bool static CheckSignatureEncodingForPubKey(const std::vector<unsigned char> &vchSig, const valtype& vchPubKey, unsigned int flags, ScriptError *serror)
+bool static CheckSignatureEncodingForPubKey(const std::vector<unsigned char> &vchSig, const valtype& vchPubKey, script_verify_flags flags, ScriptError *serror)
 {
     if (!IsPostQuantumPubKey(vchPubKey)) {
         return CheckSignatureEncoding(vchSig, flags, serror);
@@ -484,7 +484,7 @@ bool static CheckSignatureEncodingForPubKey(const std::vector<unsigned char> &vc
     return true;
 }
 
-bool static CheckPubKeyEncoding(const valtype &vchPubKey, unsigned int flags, const SigVersion &sigversion, ScriptError *serror)
+bool static CheckPubKeyEncoding(const valtype &vchPubKey, script_verify_flags flags, const SigVersion &sigversion, ScriptError *serror)
 {
     if ((flags & SCRIPT_VERIFY_STRICTENC) != 0 &&
         !IsCompressedOrUncompressedPubKey(vchPubKey) &&
@@ -538,7 +538,7 @@ bool static CheckMinimalPush(const valtype &data, opcodetype opcode)
     return true;
 }
 
-bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &script, unsigned int flags, const BaseSignatureChecker &checker, SigVersion sigversion, ScriptError *serror)
+bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &script, script_verify_flags flags, const BaseSignatureChecker &checker, SigVersion sigversion, ScriptError *serror)
 {
     static const CScriptNum bnZero(0);
     static const CScriptNum bnOne(1);
@@ -2745,7 +2745,7 @@ bool TransactionSignatureChecker::GetTxLockTime(std::vector<unsigned char>& resu
     return true;
 }
 
-static bool VerifyAuthScriptCore(const CScriptWitness& witness, const std::vector<unsigned char>& program, unsigned int flags, const BaseSignatureChecker& checker, ScriptError* serror)
+static bool VerifyAuthScriptCore(const CScriptWitness& witness, const std::vector<unsigned char>& program, script_verify_flags flags, const BaseSignatureChecker& checker, ScriptError* serror)
 {
     if (program.size() != 32 || (flags & SCRIPT_VERIFY_AUTHSCRIPT) == 0) {
         return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
@@ -2833,7 +2833,7 @@ static bool VerifyAuthScriptCore(const CScriptWitness& witness, const std::vecto
     return set_success(serror);
 }
 
-static bool VerifyWitnessProgram(const CScriptWitness &witness, int witversion, const std::vector<unsigned char> &program, unsigned int flags, const BaseSignatureChecker &checker, ScriptError *serror)
+static bool VerifyWitnessProgram(const CScriptWitness &witness, int witversion, const std::vector<unsigned char> &program, script_verify_flags flags, const BaseSignatureChecker &checker, ScriptError *serror)
 {
     std::vector<std::vector<unsigned char> > stack;
     CScript scriptPubKey;
@@ -2905,7 +2905,7 @@ static bool VerifyWitnessProgram(const CScriptWitness &witness, int witversion, 
     return true;
 }
 
-static bool VerifyAssetWitnessProgram(const CScriptWitness& witness, int witversion, const std::vector<unsigned char>& program, const std::vector<unsigned char>& assetData, unsigned int flags, const BaseSignatureChecker& checker, ScriptError* serror)
+static bool VerifyAssetWitnessProgram(const CScriptWitness& witness, int witversion, const std::vector<unsigned char>& program, const std::vector<unsigned char>& assetData, script_verify_flags flags, const BaseSignatureChecker& checker, ScriptError* serror)
 {
     if (witversion == 1 && program.size() == 32 && (flags & SCRIPT_VERIFY_AUTHSCRIPT)) {
         (void)assetData;
@@ -2920,7 +2920,7 @@ static bool VerifyAssetWitnessProgram(const CScriptWitness& witness, int witvers
 }
 
 
-bool VerifyScript(const CScript &scriptSig, const CScript &scriptPubKey, const CScriptWitness *witness, unsigned int flags, const BaseSignatureChecker &checker, ScriptError *serror)
+bool VerifyScript(const CScript &scriptSig, const CScript &scriptPubKey, const CScriptWitness *witness, script_verify_flags flags, const BaseSignatureChecker &checker, ScriptError *serror)
 {
     static const CScriptWitness emptyWitness;
     if (witness == nullptr)
@@ -3075,7 +3075,7 @@ bool VerifyScript(const CScript &scriptSig, const CScript &scriptPubKey, const C
     return set_success(serror);
 }
 
-size_t static WitnessSigOps(int witversion, const std::vector<unsigned char> &witprogram, const CScriptWitness &witness, int flags)
+size_t static WitnessSigOps(int witversion, const std::vector<unsigned char> &witprogram, const CScriptWitness &witness, script_verify_flags flags)
 {
     if (witversion == 0)
     {
@@ -3108,7 +3108,7 @@ size_t static WitnessSigOps(int witversion, const std::vector<unsigned char> &wi
     return 0;
 }
 
-size_t CountWitnessSigOps(const CScript &scriptSig, const CScript &scriptPubKey, const CScriptWitness *witness, unsigned int flags)
+size_t CountWitnessSigOps(const CScript &scriptSig, const CScript &scriptPubKey, const CScriptWitness *witness, script_verify_flags flags)
 {
     static const CScriptWitness witnessEmpty;
 

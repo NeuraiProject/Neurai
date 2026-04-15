@@ -18,18 +18,18 @@
 
 #include <boost/test/unit_test.hpp>
 
-static const unsigned int INPUTASSETFIELD_FLAGS =
+static constexpr script_verify_flags INPUTASSETFIELD_FLAGS =
     SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_INPUTASSETFIELD;
-static const unsigned int INPUTASSETFIELD_FLAGS_DISCOURAGE =
+static constexpr script_verify_flags INPUTASSETFIELD_FLAGS_DISCOURAGE =
     INPUTASSETFIELD_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
-static const unsigned int INPUTASSETFIELD_ARITH64_FLAGS =
+static constexpr script_verify_flags INPUTASSETFIELD_ARITH64_FLAGS =
     INPUTASSETFIELD_FLAGS | SCRIPT_VERIFY_64BIT_INTEGERS;
-static const unsigned int NO_INPUTASSETFIELD_FLAGS =
+static constexpr script_verify_flags NO_INPUTASSETFIELD_FLAGS =
     SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS;
-static const unsigned int NO_INPUTASSETFIELD_FLAGS_DISCOURAGE =
+static constexpr script_verify_flags NO_INPUTASSETFIELD_FLAGS_DISCOURAGE =
     NO_INPUTASSETFIELD_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
 
-bool CheckInputs(const CTransaction &tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, unsigned int flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData &txdata, std::vector<CScriptCheck> *pvChecks = nullptr);
+bool CheckInputs(const CTransaction &tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData &txdata, std::vector<CScriptCheck> *pvChecks = nullptr);
 
 namespace {
 
@@ -169,7 +169,7 @@ CMutableTransaction BuildSpendingTx(size_t inputCount)
     return tx;
 }
 
-bool RunScriptWithPrevouts(const CTransaction& tx, const std::vector<CTxOut>& prevouts, const CScript& script, unsigned int flags,
+bool RunScriptWithPrevouts(const CTransaction& tx, const std::vector<CTxOut>& prevouts, const CScript& script, script_verify_flags flags,
                            std::vector<std::vector<unsigned char>>& resultStack, ScriptError* errOut = nullptr)
 {
     const CScript spentScriptPubKey = prevouts.empty() ? CScript() : prevouts[0].scriptPubKey;
@@ -183,7 +183,7 @@ bool RunScriptWithPrevouts(const CTransaction& tx, const std::vector<CTxOut>& pr
     return ok;
 }
 
-bool RunScriptWithoutPrevouts(const CTransaction& tx, const CScript& script, unsigned int flags,
+bool RunScriptWithoutPrevouts(const CTransaction& tx, const CScript& script, script_verify_flags flags,
                               std::vector<std::vector<unsigned char>>& resultStack, ScriptError* errOut = nullptr)
 {
     TransactionSignatureChecker checker(&tx, 0, 0);

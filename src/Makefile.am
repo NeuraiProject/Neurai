@@ -411,6 +411,7 @@ libneurai_consensus_a_SOURCES = \
   script/neuraiconsensus.cpp \
   script/interpreter.cpp \
   script/interpreter.h \
+  script/verify_flags.h \
   script/script.cpp \
   script/script.h \
   script/script_error.cpp \

@@ -13,13 +13,13 @@
 
 #include <boost/test/unit_test.hpp>
 
-static const unsigned int IOCOUNT_FLAGS =
+static constexpr script_verify_flags IOCOUNT_FLAGS =
     SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_INPUTOUTPUTCOUNT;
-static const unsigned int IOCOUNT_FLAGS_DISCOURAGE =
+static constexpr script_verify_flags IOCOUNT_FLAGS_DISCOURAGE =
     IOCOUNT_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
-static const unsigned int NO_IOCOUNT_FLAGS =
+static constexpr script_verify_flags NO_IOCOUNT_FLAGS =
     SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS;
-static const unsigned int NO_IOCOUNT_FLAGS_DISCOURAGE =
+static constexpr script_verify_flags NO_IOCOUNT_FLAGS_DISCOURAGE =
     NO_IOCOUNT_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
 
 namespace {
@@ -49,7 +49,7 @@ CMutableTransaction BuildTx(int nInputs, int nOutputs)
     return tx;
 }
 
-bool RunScript(const CTransaction& tx, const CScript& script, unsigned int flags,
+bool RunScript(const CTransaction& tx, const CScript& script, script_verify_flags flags,
                std::vector<std::vector<unsigned char>>& resultStack,
                ScriptError* errOut = nullptr)
 {
@@ -358,7 +358,7 @@ BOOST_AUTO_TEST_CASE(inputcount_encoding_not_affected_by_64bit_flag)
     CTransaction tx(BuildTx(3, 1));
 
     // With 64-bit flag active, result must be identical
-    unsigned int flags64 = IOCOUNT_FLAGS | SCRIPT_VERIFY_64BIT_INTEGERS;
+    script_verify_flags flags64 = IOCOUNT_FLAGS | SCRIPT_VERIFY_64BIT_INTEGERS;
 
     CScript script;
     script << OP_INPUTCOUNT;

@@ -2070,7 +2070,7 @@ UniValue signrawtransaction(const JSONRPCRequest& request)
         UpdateTransaction(mtx, i, sigdata);
 
         ScriptError serror = SCRIPT_ERR_OK;
-        unsigned int verify_flags = STANDARD_SCRIPT_VERIFY_FLAGS;
+        script_verify_flags verify_flags = STANDARD_SCRIPT_VERIFY_FLAGS;
         if (GetParams().GetConsensus().nPQWitnessEnabled) {
             verify_flags |= SCRIPT_VERIFY_AUTHSCRIPT;
         }

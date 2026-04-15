@@ -9,6 +9,7 @@
 #define NEURAI_SCRIPT_INTERPRETER_H
 
 #include "script_error.h"
+#include "script/verify_flags.h"
 #include "primitives/transaction.h"
 
 #include <vector>
@@ -32,38 +33,37 @@ enum
     SIGHASH_ANYONECANPAY = 0x80,
 };
 
-/** Script verification flags */
-enum
-{
-    SCRIPT_VERIFY_NONE = 0,
-
+/** Script verification flags — bit positions for the type-safe wrapper.
+ *  Each enumerator holds a bit *position* (0, 1, 2, …); the wrapper class
+ *  converts it to a bitmask via (1ULL << position).  See verify_flags.h. */
+enum class script_verify_flag_name : uint8_t {
     // Evaluate P2SH subscripts (softfork safe, BIP16).
-            SCRIPT_VERIFY_P2SH = (1U << 0),
+    SCRIPT_VERIFY_P2SH,                                   // bit 0
 
     // Passing a non-strict-DER signature or one with undefined hashtype to a checksig operation causes script failure.
     // Evaluating a pubkey that is not (0x04 + 64 bytes) or (0x02 or 0x03 + 32 bytes) by checksig causes script failure.
     // (softfork safe, but not used or intended as a consensus rule).
-            SCRIPT_VERIFY_STRICTENC = (1U << 1),
+    SCRIPT_VERIFY_STRICTENC,                               // bit 1
 
     // Passing a non-strict-DER signature to a checksig operation causes script failure (softfork safe, BIP62 rule 1)
-            SCRIPT_VERIFY_DERSIG = (1U << 2),
+    SCRIPT_VERIFY_DERSIG,                                  // bit 2
 
     // Passing a non-strict-DER signature or one with S > order/2 to a checksig operation causes script failure
     // (softfork safe, BIP62 rule 5).
-            SCRIPT_VERIFY_LOW_S = (1U << 3),
+    SCRIPT_VERIFY_LOW_S,                                   // bit 3
 
     // verify dummy stack item consumed by CHECKMULTISIG is of zero-length (softfork safe, BIP62 rule 7).
-            SCRIPT_VERIFY_NULLDUMMY = (1U << 4),
+    SCRIPT_VERIFY_NULLDUMMY,                               // bit 4
 
     // Using a non-push operator in the scriptSig causes script failure (softfork safe, BIP62 rule 2).
-            SCRIPT_VERIFY_SIGPUSHONLY = (1U << 5),
+    SCRIPT_VERIFY_SIGPUSHONLY,                              // bit 5
 
     // Require minimal encodings for all push operations (OP_0... OP_16, OP_1NEGATE where possible, direct
     // pushes up to 75 bytes, OP_PUSHDATA up to 255 bytes, OP_PUSHDATA2 for anything larger). Evaluating
     // any other push causes the script to fail (BIP62 rule 3).
     // In addition, whenever a stack element is interpreted as a number, it must be of minimal length (BIP62 rule 4).
     // (softfork safe)
-            SCRIPT_VERIFY_MINIMALDATA = (1U << 6),
+    SCRIPT_VERIFY_MINIMALDATA,                              // bit 6
 
     // Discourage use of NOPs reserved for upgrades (NOP1-10)
     //
@@ -73,125 +73,144 @@ enum
     // discouraged NOPs fails the script. This verification flag will never be
     // a mandatory flag applied to scripts in a block. NOPs that are not
     // executed, e.g.  within an unexecuted IF ENDIF block, are *not* rejected.
-            SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS = (1U << 7),
+    SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS,               // bit 7
 
     // Require that only a single stack element remains after evaluation. This changes the success criterion from
     // "At least one stack element must remain, and when interpreted as a boolean, it must be true" to
     // "Exactly one stack element must remain, and when interpreted as a boolean, it must be true".
     // (softfork safe, BIP62 rule 6)
     // Note: CLEANSTACK should never be used without P2SH or WITNESS.
-            SCRIPT_VERIFY_CLEANSTACK = (1U << 8),
+    SCRIPT_VERIFY_CLEANSTACK,                               // bit 8
 
     // Verify CHECKLOCKTIMEVERIFY
     //
     // See BIP65 for details.
-            SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY = (1U << 9),
+    SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY,                      // bit 9
 
     // support CHECKSEQUENCEVERIFY opcode
     //
     // See BIP112 for details
-            SCRIPT_VERIFY_CHECKSEQUENCEVERIFY = (1U << 10),
+    SCRIPT_VERIFY_CHECKSEQUENCEVERIFY,                      // bit 10
 
     // Support segregated witness
     //
-            SCRIPT_VERIFY_WITNESS = (1U << 11),
+    SCRIPT_VERIFY_WITNESS,                                  // bit 11
 
     // Making v1-v16 witness program non-standard
     //
-            SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM = (1U << 12),
+    SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM,    // bit 12
 
     // Segwit script only: Require the argument of OP_IF/NOTIF to be exactly 0x01 or empty vector
     //
-            SCRIPT_VERIFY_MINIMALIF = (1U << 13),
+    SCRIPT_VERIFY_MINIMALIF,                                // bit 13
 
     // Signature(s) must be empty vector if an CHECK(MULTI)SIG operation failed
     //
-            SCRIPT_VERIFY_NULLFAIL = (1U << 14),
+    SCRIPT_VERIFY_NULLFAIL,                                 // bit 14
 
     // Public keys in segregated witness scripts must be compressed
     //
-            SCRIPT_VERIFY_WITNESS_PUBKEYTYPE = (1U << 15),
+    SCRIPT_VERIFY_WITNESS_PUBKEYTYPE,                       // bit 15
 
     // Enable AuthScript witness v1 program verification.
     // When set, witness v1 programs with a 32-byte commitment are verified
     // using AuthScript semantics instead of being treated as upgradable/unknown.
     //
-            SCRIPT_VERIFY_AUTHSCRIPT = (1U << 16),
+    SCRIPT_VERIFY_AUTHSCRIPT,                               // bit 16
 
     // Enable OP_CAT (BIP 347) - stack element concatenation.
     // When set, OP_CAT is executed instead of returning SCRIPT_ERR_DISABLED_OPCODE.
     //
-            SCRIPT_VERIFY_CAT = (1U << 17),
+    SCRIPT_VERIFY_CAT,                                      // bit 17
 
     // Enable OP_CHECKTEMPLATEVERIFY (BIP 119) - transaction template verification.
     // When set, OP_CHECKTEMPLATEVERIFY is executed instead of being treated as OP_NOP4.
     //
-            SCRIPT_VERIFY_CHECKTEMPLATEVERIFY = (1U << 18),
+    SCRIPT_VERIFY_CHECKTEMPLATEVERIFY,                       // bit 18
 
     // Enable OP_CHECKSIGFROMSTACK - verify signature against arbitrary message.
     // When set, OP_CHECKSIGFROMSTACK is executed instead of being treated as OP_NOP5.
     //
-            SCRIPT_VERIFY_CHECKSIGFROMSTACK = (1U << 19),
+    SCRIPT_VERIFY_CHECKSIGFROMSTACK,                         // bit 19
 
     // Enable OP_TXHASH - push hash of selected transaction fields to stack.
     // When set, OP_TXHASH is executed instead of being treated as OP_NOP6.
     //
-            SCRIPT_VERIFY_TXHASH = (1U << 20),
+    SCRIPT_VERIFY_TXHASH,                                   // bit 20
 
     // Enable OP_TXFIELD - push raw bytes of spent output fields to stack.
     // When set, OP_TXFIELD is executed instead of being treated as OP_NOP7.
     //
-            SCRIPT_VERIFY_TXFIELD = (1U << 21),
+    SCRIPT_VERIFY_TXFIELD,                                  // bit 21
 
     // Enable OP_SPLIT - split a byte array into two parts at a given position.
     // When set, OP_SPLIT is executed instead of being treated as OP_NOP8.
     // Inverse of OP_CAT (BIP 347).
     //
-            SCRIPT_VERIFY_SPLIT = (1U << 22),
+    SCRIPT_VERIFY_SPLIT,                                    // bit 22
 
     // Enable OP_REVERSEBYTES - reverse the top stack element in place.
     // When set, OP_REVERSEBYTES is executed instead of being treated as an
     // upgradable opcode.
     //
-            SCRIPT_VERIFY_REVERSEBYTES = (1U << 23),
+    SCRIPT_VERIFY_REVERSEBYTES,                             // bit 23
 
     // Enable OP_OUTPUTVALUE - push the amount of a selected output as raw
     // 8-byte little-endian data.
     //
-            SCRIPT_VERIFY_OUTPUTVALUE = (1U << 24),
+    SCRIPT_VERIFY_OUTPUTVALUE,                              // bit 24
 
     // Enable OP_TXLOCKTIME - push the transaction nLockTime as raw 4-byte
     // little-endian data.
     //
-            SCRIPT_VERIFY_TXLOCKTIME = (1U << 25),
+    SCRIPT_VERIFY_TXLOCKTIME,                               // bit 25
 
     // Enable OP_OUTPUTSCRIPT - push the scriptPubKey of a selected output
     // as raw bytes.
     //
-            SCRIPT_VERIFY_OUTPUTSCRIPT = (1U << 26),
+    SCRIPT_VERIFY_OUTPUTSCRIPT,                             // bit 26
 
     // Enable OP_OUTPUTASSETFIELD - read asset payload fields from a selected
     // output by selector.
     //
-            SCRIPT_VERIFY_OUTPUTASSETFIELD = (1U << 27),
+    SCRIPT_VERIFY_OUTPUTASSETFIELD,                         // bit 27
 
     // Enable 64-bit arithmetic and reactivate OP_MUL/OP_DIV/OP_MOD while
     // widening the numeric covenant domain to 8-byte CScriptNum values.
     //
-            SCRIPT_VERIFY_64BIT_INTEGERS = (1U << 28),
+    SCRIPT_VERIFY_64BIT_INTEGERS,                           // bit 28
 
     // Enable OP_INPUTASSETFIELD - read asset payload fields from the prevout
     // referenced by a selected input.
     //
-            SCRIPT_VERIFY_INPUTASSETFIELD = (1U << 29),
+    SCRIPT_VERIFY_INPUTASSETFIELD,                          // bit 29
 
     // Enable OP_INPUTCOUNT / OP_OUTPUTCOUNT — push transaction
     // input/output count onto the stack as CScriptNum.
     //
-            SCRIPT_VERIFY_INPUTOUTPUTCOUNT = (1U << 30),
+    SCRIPT_VERIFY_INPUTOUTPUTCOUNT,                         // bit 30
+
+    // End marker — must always be last.
+    SCRIPT_VERIFY_END_MARKER
 };
 
-bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, unsigned int flags, ScriptError *serror);
+// Import all flag names into the enclosing scope for source compatibility.
+using enum script_verify_flag_name;
+
+// Canonical empty-flags value.
+static constexpr script_verify_flags SCRIPT_VERIFY_NONE{};
+
+// Compile-time capacity guards.
+static constexpr int MAX_SCRIPT_VERIFY_FLAGS_BITS =
+    static_cast<int>(script_verify_flag_name::SCRIPT_VERIFY_END_MARKER);
+static_assert(0 < MAX_SCRIPT_VERIFY_FLAGS_BITS
+    && MAX_SCRIPT_VERIFY_FLAGS_BITS <= 63,
+    "Script verification flag space exhausted");
+
+static constexpr script_verify_flags::value_type MAX_SCRIPT_VERIFY_FLAGS =
+    ((script_verify_flags::value_type{1} << MAX_SCRIPT_VERIFY_FLAGS_BITS) - 1);
+
+bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, script_verify_flags flags, ScriptError *serror);
 
 struct PrecomputedTransactionData
 {
@@ -381,11 +400,11 @@ public:
         : TransactionSignatureChecker(&txTo, nInIn, amountIn, spentScriptPubKeyIn, allPrevoutsIn), txTo(*txToIn) {}
 };
 
-bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &script, unsigned int flags, const BaseSignatureChecker &checker, SigVersion sigversion, ScriptError *error = nullptr);
+bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &script, script_verify_flags flags, const BaseSignatureChecker &checker, SigVersion sigversion, ScriptError *error = nullptr);
 
-bool VerifyScript(const CScript &scriptSig, const CScript &scriptPubKey, const CScriptWitness *witness, unsigned int flags, const BaseSignatureChecker &checker, ScriptError *serror = nullptr);
+bool VerifyScript(const CScript &scriptSig, const CScript &scriptPubKey, const CScriptWitness *witness, script_verify_flags flags, const BaseSignatureChecker &checker, ScriptError *serror = nullptr);
 
-size_t CountWitnessSigOps(const CScript &scriptSig, const CScript &scriptPubKey, const CScriptWitness *witness, unsigned int flags);
+size_t CountWitnessSigOps(const CScript &scriptSig, const CScript &scriptPubKey, const CScriptWitness *witness, script_verify_flags flags);
 
 bool CastToBool(const std::vector<unsigned char>& vch);
 

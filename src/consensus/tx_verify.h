@@ -7,6 +7,7 @@
 #define NEURAI_CONSENSUS_TX_VERIFY_H
 
 #include "amount.h"
+#include "script/verify_flags.h"
 
 #include <stdint.h>
 #include <vector>
@@ -67,7 +68,7 @@ unsigned int GetP2SHSigOpCount(const CTransaction& tx, const CCoinsViewCache& ma
  * @param[out] flags Script verification flags
  * @return Total signature operation cost of tx
  */
-int64_t GetTransactionSigOpCost(const CTransaction& tx, const CCoinsViewCache& inputs, int flags);
+int64_t GetTransactionSigOpCost(const CTransaction& tx, const CCoinsViewCache& inputs, script_verify_flags flags);
 
 /**
  * Check if transaction is final and can be included in a block with the

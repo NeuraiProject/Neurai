@@ -18,13 +18,13 @@
 
 #include <boost/test/unit_test.hpp>
 
-static const unsigned int ARITH64_FLAGS =
+static constexpr script_verify_flags ARITH64_FLAGS =
     SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_64BIT_INTEGERS;
-static const unsigned int OUTPUTVALUE_ARITH64_FLAGS =
+static constexpr script_verify_flags OUTPUTVALUE_ARITH64_FLAGS =
     ARITH64_FLAGS | SCRIPT_VERIFY_OUTPUTVALUE;
-static const unsigned int OUTPUTASSETFIELD_ARITH64_FLAGS =
+static constexpr script_verify_flags OUTPUTASSETFIELD_ARITH64_FLAGS =
     ARITH64_FLAGS | SCRIPT_VERIFY_OUTPUTASSETFIELD;
-static const unsigned int NO_ARITH64_FLAGS =
+static constexpr script_verify_flags NO_ARITH64_FLAGS =
     SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS;
 
 namespace {
@@ -83,7 +83,7 @@ CMutableTransaction BuildAssetTx()
     return tx;
 }
 
-bool RunScript(const CTransaction& tx, const CScript& script, unsigned int flags,
+bool RunScript(const CTransaction& tx, const CScript& script, script_verify_flags flags,
                std::vector<std::vector<unsigned char>>& resultStack, ScriptError* errOut = nullptr)
 {
     TransactionSignatureChecker checker(&tx, 0, 0);

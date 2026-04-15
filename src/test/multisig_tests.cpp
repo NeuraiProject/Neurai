@@ -41,7 +41,7 @@ BOOST_FIXTURE_TEST_SUITE(multisig_tests, BasicTestingSetup)
     {
         BOOST_TEST_MESSAGE("Running MultiSig Verify Test");
 
-        unsigned int flags = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_STRICTENC;
+        script_verify_flags flags = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_STRICTENC;
 
         ScriptError err;
         CKey key[4];

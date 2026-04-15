@@ -17,6 +17,7 @@
 #include "protocol.h" // For CMessageHeader::MessageStartChars
 #include "policy/feerate.h"
 #include "script/script_error.h"
+#include "script/verify_flags.h"
 #include "sync.h"
 #include "versionbits.h"
 #include "spentindex.h"
@@ -407,15 +408,15 @@ private:
     CTxOut m_tx_out;
     const CTransaction *ptxTo;
     unsigned int nIn;
-    unsigned int nFlags;
+    script_verify_flags nFlags;
     bool cacheStore;
     ScriptError error;
     PrecomputedTransactionData *txdata;
     std::shared_ptr<std::vector<CTxOut>> m_allPrevouts;
 
 public:
-    CScriptCheck(): ptxTo(nullptr), nIn(0), nFlags(0), cacheStore(false), error(SCRIPT_ERR_UNKNOWN_ERROR), txdata(nullptr) {}
-    CScriptCheck(const CTxOut& outIn, const CTransaction& txToIn, unsigned int nInIn, unsigned int nFlagsIn, bool cacheIn, PrecomputedTransactionData* txdataIn, std::shared_ptr<std::vector<CTxOut>> allPrevoutsIn = nullptr) :
+    CScriptCheck(): ptxTo(nullptr), nIn(0), nFlags(SCRIPT_VERIFY_NONE), cacheStore(false), error(SCRIPT_ERR_UNKNOWN_ERROR), txdata(nullptr) {}
+    CScriptCheck(const CTxOut& outIn, const CTransaction& txToIn, unsigned int nInIn, script_verify_flags nFlagsIn, bool cacheIn, PrecomputedTransactionData* txdataIn, std::shared_ptr<std::vector<CTxOut>> allPrevoutsIn = nullptr) :
         m_tx_out(outIn), ptxTo(&txToIn), nIn(nInIn), nFlags(nFlagsIn), cacheStore(cacheIn), error(SCRIPT_ERR_UNKNOWN_ERROR), txdata(txdataIn), m_allPrevouts(std::move(allPrevoutsIn)) { }
 
     bool operator()();

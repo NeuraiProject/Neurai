@@ -13,15 +13,15 @@
 
 #include <boost/test/unit_test.hpp>
 
-static const unsigned int TXLOCKTIME_FLAGS =
+static constexpr script_verify_flags TXLOCKTIME_FLAGS =
     SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_TXLOCKTIME;
-static const unsigned int TXLOCKTIME_FLAGS_DISCOURAGE =
+static constexpr script_verify_flags TXLOCKTIME_FLAGS_DISCOURAGE =
     TXLOCKTIME_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
-static const unsigned int NO_TXLOCKTIME_FLAGS =
+static constexpr script_verify_flags NO_TXLOCKTIME_FLAGS =
     SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS;
-static const unsigned int NO_TXLOCKTIME_FLAGS_DISCOURAGE =
+static constexpr script_verify_flags NO_TXLOCKTIME_FLAGS_DISCOURAGE =
     NO_TXLOCKTIME_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
-static const unsigned int TXLOCKTIME_REVERSEBYTES_FLAGS =
+static constexpr script_verify_flags TXLOCKTIME_REVERSEBYTES_FLAGS =
     TXLOCKTIME_FLAGS | SCRIPT_VERIFY_REVERSEBYTES;
 
 namespace {
@@ -45,7 +45,7 @@ CMutableTransaction BuildTx(uint32_t locktime)
     return tx;
 }
 
-bool RunScript(const CTransaction& tx, const CScript& script, unsigned int flags,
+bool RunScript(const CTransaction& tx, const CScript& script, script_verify_flags flags,
                std::vector<std::vector<unsigned char>>& resultStack, ScriptError* errOut = nullptr)
 {
     TransactionSignatureChecker checker(&tx, 0, 0);

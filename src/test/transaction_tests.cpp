@@ -37,38 +37,38 @@ typedef std::vector<unsigned char> valtype;
 extern UniValue read_json(const std::string &jsondata);
 
 
-static std::map<std::string, unsigned int> mapFlagNames = {
-        {std::string("NONE"),                                  (unsigned int) SCRIPT_VERIFY_NONE},
-        {std::string("P2SH"),                                  (unsigned int) SCRIPT_VERIFY_P2SH},
-        {std::string("STRICTENC"),                             (unsigned int) SCRIPT_VERIFY_STRICTENC},
-        {std::string("DERSIG"),                                (unsigned int) SCRIPT_VERIFY_DERSIG},
-        {std::string("LOW_S"),                                 (unsigned int) SCRIPT_VERIFY_LOW_S},
-        {std::string("SIGPUSHONLY"),                           (unsigned int) SCRIPT_VERIFY_SIGPUSHONLY},
-        {std::string("MINIMALDATA"),                           (unsigned int) SCRIPT_VERIFY_MINIMALDATA},
-        {std::string("NULLDUMMY"),                             (unsigned int) SCRIPT_VERIFY_NULLDUMMY},
-        {std::string("DISCOURAGE_UPGRADABLE_NOPS"),            (unsigned int) SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS},
-        {std::string("CLEANSTACK"),                            (unsigned int) SCRIPT_VERIFY_CLEANSTACK},
-        {std::string("MINIMALIF"),                             (unsigned int) SCRIPT_VERIFY_MINIMALIF},
-        {std::string("NULLFAIL"),                              (unsigned int) SCRIPT_VERIFY_NULLFAIL},
-        {std::string("CHECKLOCKTIMEVERIFY"),                   (unsigned int) SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY},
-        {std::string("CHECKSEQUENCEVERIFY"),                   (unsigned int) SCRIPT_VERIFY_CHECKSEQUENCEVERIFY},
-        {std::string("WITNESS"),                               (unsigned int) SCRIPT_VERIFY_WITNESS},
-        {std::string("DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM"), (unsigned int) SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM},
-        {std::string("WITNESS_PUBKEYTYPE"),                    (unsigned int) SCRIPT_VERIFY_WITNESS_PUBKEYTYPE},
-        {std::string("OUTPUTSCRIPT"),                           (unsigned int) SCRIPT_VERIFY_OUTPUTSCRIPT},
-        {std::string("OUTPUTASSETFIELD"),                      (unsigned int) SCRIPT_VERIFY_OUTPUTASSETFIELD},
-        {std::string("64BIT_INTEGERS"),                        (unsigned int) SCRIPT_VERIFY_64BIT_INTEGERS},
-        {std::string("INPUTASSETFIELD"),                      (unsigned int) SCRIPT_VERIFY_INPUTASSETFIELD},
-        {std::string("INPUTOUTPUTCOUNT"),                  (unsigned int) SCRIPT_VERIFY_INPUTOUTPUTCOUNT},
+static std::map<std::string, script_verify_flags> mapFlagNames = {
+        {std::string("NONE"),                                  SCRIPT_VERIFY_NONE},
+        {std::string("P2SH"),                                  script_verify_flags{SCRIPT_VERIFY_P2SH}},
+        {std::string("STRICTENC"),                             script_verify_flags{SCRIPT_VERIFY_STRICTENC}},
+        {std::string("DERSIG"),                                script_verify_flags{SCRIPT_VERIFY_DERSIG}},
+        {std::string("LOW_S"),                                 script_verify_flags{SCRIPT_VERIFY_LOW_S}},
+        {std::string("SIGPUSHONLY"),                           script_verify_flags{SCRIPT_VERIFY_SIGPUSHONLY}},
+        {std::string("MINIMALDATA"),                           script_verify_flags{SCRIPT_VERIFY_MINIMALDATA}},
+        {std::string("NULLDUMMY"),                             script_verify_flags{SCRIPT_VERIFY_NULLDUMMY}},
+        {std::string("DISCOURAGE_UPGRADABLE_NOPS"),            script_verify_flags{SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS}},
+        {std::string("CLEANSTACK"),                            script_verify_flags{SCRIPT_VERIFY_CLEANSTACK}},
+        {std::string("MINIMALIF"),                             script_verify_flags{SCRIPT_VERIFY_MINIMALIF}},
+        {std::string("NULLFAIL"),                              script_verify_flags{SCRIPT_VERIFY_NULLFAIL}},
+        {std::string("CHECKLOCKTIMEVERIFY"),                   script_verify_flags{SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY}},
+        {std::string("CHECKSEQUENCEVERIFY"),                   script_verify_flags{SCRIPT_VERIFY_CHECKSEQUENCEVERIFY}},
+        {std::string("WITNESS"),                               script_verify_flags{SCRIPT_VERIFY_WITNESS}},
+        {std::string("DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM"), script_verify_flags{SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM}},
+        {std::string("WITNESS_PUBKEYTYPE"),                    script_verify_flags{SCRIPT_VERIFY_WITNESS_PUBKEYTYPE}},
+        {std::string("OUTPUTSCRIPT"),                          script_verify_flags{SCRIPT_VERIFY_OUTPUTSCRIPT}},
+        {std::string("OUTPUTASSETFIELD"),                      script_verify_flags{SCRIPT_VERIFY_OUTPUTASSETFIELD}},
+        {std::string("64BIT_INTEGERS"),                        script_verify_flags{SCRIPT_VERIFY_64BIT_INTEGERS}},
+        {std::string("INPUTASSETFIELD"),                       script_verify_flags{SCRIPT_VERIFY_INPUTASSETFIELD}},
+        {std::string("INPUTOUTPUTCOUNT"),                      script_verify_flags{SCRIPT_VERIFY_INPUTOUTPUTCOUNT}},
 };
 
-unsigned int ParseScriptFlags(std::string strFlags)
+script_verify_flags ParseScriptFlags(std::string strFlags)
 {
     if (strFlags.empty())
     {
-        return 0;
+        return SCRIPT_VERIFY_NONE;
     }
-    unsigned int flags = 0;
+    script_verify_flags flags = SCRIPT_VERIFY_NONE;
     std::vector<std::string> words;
     boost::algorithm::split(words, strFlags, boost::algorithm::is_any_of(","));
 
@@ -82,14 +82,14 @@ unsigned int ParseScriptFlags(std::string strFlags)
     return flags;
 }
 
-std::string FormatScriptFlags(unsigned int flags)
+std::string FormatScriptFlags(script_verify_flags flags)
 {
-    if (flags == 0)
+    if (flags == SCRIPT_VERIFY_NONE)
     {
         return "";
     }
     std::string ret;
-    std::map<std::string, unsigned int>::const_iterator it = mapFlagNames.begin();
+    auto it = mapFlagNames.begin();
     while (it != mapFlagNames.end())
     {
         if (flags & it->second)
@@ -182,7 +182,7 @@ BOOST_FIXTURE_TEST_SUITE(transaction_tests, BasicTestingSetup)
                     {
                         amount = mapprevOutValues[tx.vin[i].prevout];
                     }
-                    unsigned int verify_flags = ParseScriptFlags(test[2].get_str());
+                    script_verify_flags verify_flags = ParseScriptFlags(test[2].get_str());
                     const CScriptWitness *witness = &tx.vin[i].scriptWitness;
                     const CScript& spentScriptPubKey = mapprevOutScriptPubKeys[tx.vin[i].prevout];
                     BOOST_CHECK_MESSAGE(VerifyScript(tx.vin[i].scriptSig, spentScriptPubKey,
@@ -269,7 +269,7 @@ BOOST_FIXTURE_TEST_SUITE(transaction_tests, BasicTestingSetup)
                         break;
                     }
 
-                    unsigned int verify_flags = ParseScriptFlags(test[2].get_str());
+                    script_verify_flags verify_flags = ParseScriptFlags(test[2].get_str());
                     CAmount amount = 0;
                     if (mapprevOutValues.count(tx.vin[i].prevout))
                     {
@@ -408,7 +408,7 @@ BOOST_FIXTURE_TEST_SUITE(transaction_tests, BasicTestingSetup)
         assert(input.vin[0].scriptWitness.stack == inputm.vin[0].scriptWitness.stack);
     }
 
-    void CheckWithFlag(const CTransactionRef &output, const CMutableTransaction &input, int flags, bool success)
+    void CheckWithFlag(const CTransactionRef &output, const CMutableTransaction &input, script_verify_flags flags, bool success)
     {
         ScriptError error;
         CTransaction inputi(input);

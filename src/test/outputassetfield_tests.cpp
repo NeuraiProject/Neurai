@@ -16,13 +16,13 @@
 
 #include <boost/test/unit_test.hpp>
 
-static const unsigned int OUTPUTASSETFIELD_FLAGS =
+static constexpr script_verify_flags OUTPUTASSETFIELD_FLAGS =
     SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_OUTPUTASSETFIELD;
-static const unsigned int OUTPUTASSETFIELD_FLAGS_DISCOURAGE =
+static constexpr script_verify_flags OUTPUTASSETFIELD_FLAGS_DISCOURAGE =
     OUTPUTASSETFIELD_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
-static const unsigned int NO_OUTPUTASSETFIELD_FLAGS =
+static constexpr script_verify_flags NO_OUTPUTASSETFIELD_FLAGS =
     SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS;
-static const unsigned int NO_OUTPUTASSETFIELD_FLAGS_DISCOURAGE =
+static constexpr script_verify_flags NO_OUTPUTASSETFIELD_FLAGS_DISCOURAGE =
     NO_OUTPUTASSETFIELD_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
 
 namespace {
@@ -162,7 +162,7 @@ CMutableTransaction BuildDEPINTxForNetwork(const std::string& chain)
     return tx;
 }
 
-bool RunScript(const CTransaction& tx, const CScript& script, unsigned int flags,
+bool RunScript(const CTransaction& tx, const CScript& script, script_verify_flags flags,
                std::vector<std::vector<unsigned char>>& resultStack, ScriptError* errOut = nullptr)
 {
     TransactionSignatureChecker checker(&tx, 0, 0);

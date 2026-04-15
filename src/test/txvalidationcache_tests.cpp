@@ -24,7 +24,7 @@
 
 #include "util.h"
 
-bool CheckInputs(const CTransaction &tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, unsigned int flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData &txdata, std::vector<CScriptCheck> *pvChecks);
+bool CheckInputs(const CTransaction &tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData &txdata, std::vector<CScriptCheck> *pvChecks);
 
 BOOST_AUTO_TEST_SUITE(tx_validationcache_tests)
 
@@ -110,22 +110,23 @@ BOOST_AUTO_TEST_SUITE(tx_validationcache_tests)
     // should fail.
     // Capture this interaction with the upgraded_nop argument: set it when evaluating
     // any script flag that is implemented as an upgraded NOP code.
-    void ValidateCheckInputsForAllFlags(CMutableTransaction &tx, uint32_t failing_flags, bool add_to_cache, bool upgraded_nop)
+    void ValidateCheckInputsForAllFlags(CMutableTransaction &tx, script_verify_flags failing_flags, bool add_to_cache, bool upgraded_nop)
     {
         PrecomputedTransactionData txdata(tx);
         // If we add many more flags, this loop can get too expensive, but we can
         // rewrite in the future to randomly pick a set of flags to evaluate.
-        for (uint32_t test_flags = 0; test_flags < (1U << 16); test_flags += 1)
+        for (uint32_t test_flags_int = 0; test_flags_int < (1U << 16); test_flags_int += 1)
         {
             CValidationState state;
+            script_verify_flags test_flags = script_verify_flags::from_int(test_flags_int);
             // Filter out incompatible flag choices
-            if ((test_flags & SCRIPT_VERIFY_CLEANSTACK))
+            if (test_flags & SCRIPT_VERIFY_CLEANSTACK)
             {
                 // CLEANSTACK requires P2SH and WITNESS, see VerifyScript() in
                 // script/interpreter.cpp
                 test_flags |= SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS;
             }
-            if ((test_flags & SCRIPT_VERIFY_WITNESS))
+            if (test_flags & SCRIPT_VERIFY_WITNESS)
             {
                 // WITNESS requires P2SH
                 test_flags |= SCRIPT_VERIFY_P2SH;

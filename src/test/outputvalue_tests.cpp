@@ -13,15 +13,15 @@
 
 #include <boost/test/unit_test.hpp>
 
-static const unsigned int OUTPUTVALUE_FLAGS =
+static constexpr script_verify_flags OUTPUTVALUE_FLAGS =
     SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_OUTPUTVALUE;
-static const unsigned int OUTPUTVALUE_FLAGS_DISCOURAGE =
+static constexpr script_verify_flags OUTPUTVALUE_FLAGS_DISCOURAGE =
     OUTPUTVALUE_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
-static const unsigned int NO_OUTPUTVALUE_FLAGS =
+static constexpr script_verify_flags NO_OUTPUTVALUE_FLAGS =
     SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS;
-static const unsigned int NO_OUTPUTVALUE_FLAGS_DISCOURAGE =
+static constexpr script_verify_flags NO_OUTPUTVALUE_FLAGS_DISCOURAGE =
     NO_OUTPUTVALUE_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
-static const unsigned int OUTPUTVALUE_REVERSEBYTES_FLAGS =
+static constexpr script_verify_flags OUTPUTVALUE_REVERSEBYTES_FLAGS =
     OUTPUTVALUE_FLAGS | SCRIPT_VERIFY_REVERSEBYTES;
 
 namespace {
@@ -55,7 +55,7 @@ CMutableTransaction BuildTx()
     return tx;
 }
 
-bool RunScript(const CTransaction& tx, const CScript& script, unsigned int flags,
+bool RunScript(const CTransaction& tx, const CScript& script, script_verify_flags flags,
                std::vector<std::vector<unsigned char>>& resultStack, ScriptError* errOut = nullptr)
 {
     TransactionSignatureChecker checker(&tx, 0, 0);

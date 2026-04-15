@@ -19,16 +19,16 @@
 #include <boost/test/unit_test.hpp>
 
 // Flags matching standard mempool policy (includes STRICTENC/DERSIG)
-static const unsigned int CSFS_FLAGS_STRICT = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS |
+static constexpr script_verify_flags CSFS_FLAGS_STRICT = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS |
     SCRIPT_VERIFY_CHECKSIGFROMSTACK | SCRIPT_VERIFY_NULLFAIL |
     SCRIPT_VERIFY_DERSIG | SCRIPT_VERIFY_STRICTENC | SCRIPT_VERIFY_LOW_S;
 
 // Minimal flags (no encoding checks)
-static const unsigned int CSFS_FLAGS_MINIMAL = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS |
+static constexpr script_verify_flags CSFS_FLAGS_MINIMAL = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS |
     SCRIPT_VERIFY_CHECKSIGFROMSTACK | SCRIPT_VERIFY_NULLFAIL;
 
-static const unsigned int NO_CSFS_FLAGS = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS;
-static const unsigned int NO_CSFS_FLAGS_DISCOURAGE = NO_CSFS_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
+static constexpr script_verify_flags NO_CSFS_FLAGS = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS;
+static constexpr script_verify_flags NO_CSFS_FLAGS_DISCOURAGE = NO_CSFS_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
 
 namespace {
 
@@ -75,7 +75,7 @@ std::vector<unsigned char> SignForCsfsRaw(const CKey& key, const std::vector<uns
 }
 
 // Helper: evaluate a bare script
-bool RunBareScript(const CScript& script, unsigned int flags, const CTransaction& tx, ScriptError* err = nullptr)
+bool RunBareScript(const CScript& script, script_verify_flags flags, const CTransaction& tx, ScriptError* err = nullptr)
 {
     TransactionSignatureChecker checker(&tx, 0, 0);
     ScriptError serror;
@@ -87,7 +87,7 @@ bool RunBareScript(const CScript& script, unsigned int flags, const CTransaction
 
 // Helper: evaluate a P2WSH-wrapped script via VerifyScript
 bool RunP2WSH(const CScript& witnessScript, const std::vector<std::vector<unsigned char>>& witnessData,
-              unsigned int flags, const CTransaction& tx, ScriptError* err = nullptr)
+              script_verify_flags flags, const CTransaction& tx, ScriptError* err = nullptr)
 {
     // Build witness: data items + serialized witnessScript
     CScriptWitness witness;
@@ -205,7 +205,7 @@ BOOST_AUTO_TEST_CASE(csfs_ecdsa_empty_sig_returns_false)
 
     // Without NULLFAIL, empty sig -> pushes false, script succeeds
     CScript script;
-    unsigned int flagsNoNullfail = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_CHECKSIGFROMSTACK;
+    script_verify_flags flagsNoNullfail = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_CHECKSIGFROMSTACK;
     script << emptySig << msg << vchPubKey << OP_CHECKSIGFROMSTACK << OP_NOT;
 
     CMutableTransaction mtx = BuildCsfsTestTx();
@@ -393,7 +393,7 @@ BOOST_AUTO_TEST_CASE(csfs_stack_underflow)
     CTransaction tx(mtx);
 
     ScriptError err;
-    unsigned int flagsNoNullfail = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_CHECKSIGFROMSTACK;
+    script_verify_flags flagsNoNullfail = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_CHECKSIGFROMSTACK;
     BOOST_CHECK(!RunBareScript(script, flagsNoNullfail, tx, &err));
     BOOST_CHECK_EQUAL(err, SCRIPT_ERR_INVALID_STACK_OPERATION);
 }
@@ -420,7 +420,7 @@ BOOST_AUTO_TEST_CASE(csfs_ecdsa_no_hashtype_nonstrict)
     std::vector<unsigned char> vchPubKey(pubkey.begin(), pubkey.end());
 
     // Minimal CSFS flags: no STRICTENC, no DERSIG, no NULLFAIL
-    unsigned int minimalFlags = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_CHECKSIGFROMSTACK;
+    script_verify_flags minimalFlags = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_CHECKSIGFROMSTACK;
 
     // Raw sig (no hashtype) should fail verification (pop_back corrupts DER)
     CScript scriptFail;
@@ -464,7 +464,7 @@ BOOST_AUTO_TEST_CASE(csfs_pq_no_hashtype_nonstrict)
     BOOST_CHECK_EQUAL(rawSig.size(), ML_DSA_44_SIG_SIZE); // 2420, no hashtype
 
     // Minimal CSFS flags: no STRICTENC, no DERSIG, no NULLFAIL
-    unsigned int minimalFlags = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_CHECKSIGFROMSTACK;
+    script_verify_flags minimalFlags = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_CHECKSIGFROMSTACK;
 
     // Raw PQ sig (no hashtype) should fail verification (pop_back corrupts sig)
     CScript scriptFail;

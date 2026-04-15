@@ -33,11 +33,11 @@
 // Uncomment if you want to output updated JSON tests.
 // #define UPDATE_JSON_TESTS
 
-static const unsigned int gFlags = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_STRICTENC;
+static constexpr script_verify_flags gFlags = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_STRICTENC;
 
-unsigned int ParseScriptFlags(std::string strFlags);
+script_verify_flags ParseScriptFlags(std::string strFlags);
 
-std::string FormatScriptFlags(unsigned int flags);
+std::string FormatScriptFlags(script_verify_flags flags);
 
 UniValue
 read_json(const std::string &jsondata)
@@ -168,7 +168,7 @@ BOOST_FIXTURE_TEST_SUITE(script_tests, BasicTestingSetup)
         return txSpend;
     }
 
-    void DoTest(const CScript &scriptPubKey, const CScript &scriptSig, const CScriptWitness &scriptWitness, int flags, const std::string &message, int scriptError, CAmount nValue = 0)
+    void DoTest(const CScript &scriptPubKey, const CScript &scriptSig, const CScriptWitness &scriptWitness, script_verify_flags flags, const std::string &message, int scriptError, CAmount nValue = 0)
     {
         bool expect = (scriptError == SCRIPT_ERR_OK);
         if (flags & SCRIPT_VERIFY_CLEANSTACK)
@@ -299,7 +299,7 @@ BOOST_FIXTURE_TEST_SUITE(script_tests, BasicTestingSetup)
             bool havePush;
             std::vector<unsigned char> push;
             std::string comment;
-            int flags;
+            script_verify_flags flags;
             int scriptError;
             CAmount nValue;
 
@@ -320,7 +320,7 @@ BOOST_FIXTURE_TEST_SUITE(script_tests, BasicTestingSetup)
             }
 
         public:
-            TestBuilder(const CScript &script_, const std::string &comment_, int flags_, bool P2SH = false, WitnessMode wm = WITNESS_NONE, int witnessversion = 0, CAmount nValue_ = 0)
+            TestBuilder(const CScript &script_, const std::string &comment_, script_verify_flags flags_, bool P2SH = false, WitnessMode wm = WITNESS_NONE, int witnessversion = 0, CAmount nValue_ = 0)
                     : script(script_), havePush(false), comment(comment_), flags(flags_), scriptError(SCRIPT_ERR_OK), nValue(nValue_)
             {
                 CScript scriptPubKey = script;
@@ -1118,7 +1118,7 @@ BOOST_FIXTURE_TEST_SUITE(script_tests, BasicTestingSetup)
             CScript scriptSig = ParseScript(scriptSigString);
             std::string scriptPubKeyString = test[pos++].get_str();
             CScript scriptPubKey = ParseScript(scriptPubKeyString);
-            unsigned int scriptflags = ParseScriptFlags(test[pos++].get_str());
+            script_verify_flags scriptflags = ParseScriptFlags(test[pos++].get_str());
             int scriptError = ParseScriptError(test[pos++].get_str());
 
             DoTest(scriptPubKey, scriptSig, witness, scriptflags, strTest, scriptError, nValue);

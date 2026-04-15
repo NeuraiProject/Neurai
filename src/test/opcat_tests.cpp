@@ -16,8 +16,8 @@
 #include <boost/test/unit_test.hpp>
 
 // Flags for OP_CAT testing
-static const unsigned int CAT_FLAGS = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_CAT;
-static const unsigned int NO_CAT_FLAGS = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS;
+static constexpr script_verify_flags CAT_FLAGS = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_CAT;
+static constexpr script_verify_flags NO_CAT_FLAGS = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS;
 
 namespace {
 
@@ -39,7 +39,7 @@ CMutableTransaction BuildMinimalTx()
 }
 
 // Helper: evaluate a script with OP_CAT flags, return success and error
-bool RunScript(const CScript& script, unsigned int flags, ScriptError* err = nullptr)
+bool RunScript(const CScript& script, script_verify_flags flags, ScriptError* err = nullptr)
 {
     CMutableTransaction mtx = BuildMinimalTx();
     CTransaction tx(mtx);

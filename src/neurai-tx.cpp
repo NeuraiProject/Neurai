@@ -653,7 +653,7 @@ static void MutateTxSign(CMutableTransaction& tx, const std::string& flagStr)
             sigdata = CombineSignatures(prevPubKey, MutableTransactionSignatureChecker(&mergedTx, i, amount, prevPubKey), sigdata, DataFromTransaction(txv, i));
         UpdateTransaction(mergedTx, i, sigdata);
 
-        unsigned int verify_flags = STANDARD_SCRIPT_VERIFY_FLAGS;
+        script_verify_flags verify_flags = STANDARD_SCRIPT_VERIFY_FLAGS;
         if (GetParams().GetConsensus().nPQWitnessEnabled) {
             verify_flags |= SCRIPT_VERIFY_AUTHSCRIPT;
         }

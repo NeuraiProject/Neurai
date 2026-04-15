@@ -14,15 +14,15 @@
 #include <boost/test/unit_test.hpp>
 
 // Verification flags
-static const unsigned int TXFIELD_FLAGS =
+static constexpr script_verify_flags TXFIELD_FLAGS =
     SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_TXFIELD;
-static const unsigned int TXFIELD_FLAGS_DISCOURAGE =
+static constexpr script_verify_flags TXFIELD_FLAGS_DISCOURAGE =
     TXFIELD_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
-static const unsigned int NO_TXFIELD_FLAGS =
+static constexpr script_verify_flags NO_TXFIELD_FLAGS =
     SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS;
 static const unsigned int NO_TXFIELD_DISCOURAGE =
     NO_TXFIELD_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
-static const unsigned int TXFIELD_SPLIT_FLAGS =
+static constexpr script_verify_flags TXFIELD_SPLIT_FLAGS =
     TXFIELD_FLAGS | SCRIPT_VERIFY_SPLIT;
 
 // Selector constants (must match interpreter.cpp)
@@ -79,7 +79,7 @@ CScript BuildAuthScriptSPKWithAssetSuffix(const std::vector<unsigned char>& comm
 bool RunTxFieldScript(const CScript& scriptPubKey,
                       const CScript& spentSPK,
                       CAmount spentAmount,
-                      unsigned int flags,
+                      script_verify_flags flags,
                       std::vector<std::vector<unsigned char>>& resultStack,
                       ScriptError* errOut = nullptr)
 {

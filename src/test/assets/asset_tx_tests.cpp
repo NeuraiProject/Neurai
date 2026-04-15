@@ -741,7 +741,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         BOOST_CHECK(SignSignature(keystore, fundingTx, txTo, 0, SIGHASH_ALL));
 
         ScriptError err = SCRIPT_ERR_UNKNOWN_ERROR;
-        const unsigned int flags = SCRIPT_VERIFY_P2SH |
+        constexpr script_verify_flags flags = SCRIPT_VERIFY_P2SH |
                                    SCRIPT_VERIFY_STRICTENC |
                                    SCRIPT_VERIFY_DERSIG |
                                    SCRIPT_VERIFY_LOW_S |
@@ -803,7 +803,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         BOOST_CHECK_EQUAL(txTo.vin[0].scriptWitness.stack.size(), 4U);
 
         ScriptError err = SCRIPT_ERR_UNKNOWN_ERROR;
-        const unsigned int flags = SCRIPT_VERIFY_P2SH |
+        constexpr script_verify_flags flags = SCRIPT_VERIFY_P2SH |
                                    SCRIPT_VERIFY_STRICTENC |
                                    SCRIPT_VERIFY_DERSIG |
                                    SCRIPT_VERIFY_LOW_S |

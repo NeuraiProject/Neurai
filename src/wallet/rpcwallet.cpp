@@ -1358,7 +1358,7 @@ public:
             // This check is to make sure that the script we created can actually be solved for and signed by us
             // if we were to have the private keys. This is just to make sure that the script is valid and that,
             // if found in a transaction, we would still accept and relay that transaction.
-            unsigned int verify_flags = MANDATORY_SCRIPT_VERIFY_FLAGS | SCRIPT_VERIFY_WITNESS_PUBKEYTYPE;
+            script_verify_flags verify_flags = MANDATORY_SCRIPT_VERIFY_FLAGS | SCRIPT_VERIFY_WITNESS_PUBKEYTYPE;
             if (GetParams().GetConsensus().nPQWitnessEnabled) {
                 verify_flags |= SCRIPT_VERIFY_AUTHSCRIPT;
             }
@@ -1387,7 +1387,7 @@ public:
             // This check is to make sure that the script we created can actually be solved for and signed by us
             // if we were to have the private keys. This is just to make sure that the script is valid and that,
             // if found in a transaction, we would still accept and relay that transaction.
-            unsigned int verify_flags = MANDATORY_SCRIPT_VERIFY_FLAGS | SCRIPT_VERIFY_WITNESS_PUBKEYTYPE;
+            script_verify_flags verify_flags = MANDATORY_SCRIPT_VERIFY_FLAGS | SCRIPT_VERIFY_WITNESS_PUBKEYTYPE;
             if (GetParams().GetConsensus().nPQWitnessEnabled) {
                 verify_flags |= SCRIPT_VERIFY_AUTHSCRIPT;
             }

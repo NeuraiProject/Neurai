@@ -12,16 +12,16 @@
 
 #include <boost/test/unit_test.hpp>
 
-static const unsigned int OUTPUTSCRIPT_FLAGS =
+static constexpr script_verify_flags OUTPUTSCRIPT_FLAGS =
     SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_OUTPUTSCRIPT;
-static const unsigned int OUTPUTSCRIPT_FLAGS_DISCOURAGE =
+static constexpr script_verify_flags OUTPUTSCRIPT_FLAGS_DISCOURAGE =
     OUTPUTSCRIPT_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
-static const unsigned int NO_OUTPUTSCRIPT_FLAGS =
+static constexpr script_verify_flags NO_OUTPUTSCRIPT_FLAGS =
     SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS;
-static const unsigned int NO_OUTPUTSCRIPT_FLAGS_DISCOURAGE =
+static constexpr script_verify_flags NO_OUTPUTSCRIPT_FLAGS_DISCOURAGE =
     NO_OUTPUTSCRIPT_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
 // Combined flags for self-reference tests (OP_TXFIELD + OP_OUTPUTSCRIPT)
-static const unsigned int SELFREF_FLAGS =
+static constexpr script_verify_flags SELFREF_FLAGS =
     OUTPUTSCRIPT_FLAGS | SCRIPT_VERIFY_TXFIELD;
 
 namespace {
@@ -90,7 +90,7 @@ CMutableTransaction BuildTx()
     return tx;
 }
 
-bool RunScript(const CTransaction& tx, const CScript& script, unsigned int flags,
+bool RunScript(const CTransaction& tx, const CScript& script, script_verify_flags flags,
                std::vector<std::vector<unsigned char>>& resultStack, ScriptError* errOut = nullptr)
 {
     TransactionSignatureChecker checker(&tx, 0, 0);
@@ -105,7 +105,7 @@ bool RunScript(const CTransaction& tx, const CScript& script, unsigned int flags
 // Run a script with a spentScriptPubKey available (needed for OP_TXFIELD)
 bool RunScriptWithSpentSPK(const CTransaction& tx, const CScript& script,
                            const CScript& spentSPK, CAmount spentAmount,
-                           unsigned int flags,
+                           script_verify_flags flags,
                            std::vector<std::vector<unsigned char>>& resultStack,
                            ScriptError* errOut = nullptr)
 {

@@ -98,7 +98,7 @@ static int verify_script(const unsigned char *scriptPubKey, unsigned int scriptP
 
         const CScript spentScriptPubKey(scriptPubKey, scriptPubKey + scriptPubKeyLen);
         PrecomputedTransactionData txdata(tx);
-        return VerifyScript(tx.vin[nIn].scriptSig, spentScriptPubKey, &tx.vin[nIn].scriptWitness, flags,
+        return VerifyScript(tx.vin[nIn].scriptSig, spentScriptPubKey, &tx.vin[nIn].scriptWitness, script_verify_flags::from_int(flags),
                             TransactionSignatureChecker(&tx, nIn, amount, txdata, spentScriptPubKey), nullptr);
     } catch (const std::exception&) {
         return set_error(err, neuraiconsensus_ERR_TX_DESERIALIZE); // Error deserializing

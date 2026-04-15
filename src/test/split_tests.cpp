@@ -14,22 +14,22 @@
 #include <boost/test/unit_test.hpp>
 
 // Flags used in tests
-static const unsigned int SPLIT_FLAGS =
+static constexpr script_verify_flags SPLIT_FLAGS =
     SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_SPLIT;
-static const unsigned int SPLIT_FLAGS_DISCOURAGE =
+static constexpr script_verify_flags SPLIT_FLAGS_DISCOURAGE =
     SPLIT_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
-static const unsigned int NO_SPLIT_FLAGS =
+static constexpr script_verify_flags NO_SPLIT_FLAGS =
     SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS;
 static const unsigned int NO_SPLIT_DISCOURAGE =
     NO_SPLIT_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
-static const unsigned int CAT_SPLIT_FLAGS =
+static constexpr script_verify_flags CAT_SPLIT_FLAGS =
     SPLIT_FLAGS | SCRIPT_VERIFY_CAT;
 
 namespace {
 
 // Helper: run a script with a pre-built stack, return stack state on success.
 // scriptPubKey is evaluated directly (no scriptSig).
-bool RunScript(const CScript& script, unsigned int flags,
+bool RunScript(const CScript& script, script_verify_flags flags,
                std::vector<std::vector<unsigned char>> initialStack,
                std::vector<std::vector<unsigned char>>& resultStack,
                ScriptError* errOut = nullptr)
