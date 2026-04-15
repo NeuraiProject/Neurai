@@ -281,7 +281,7 @@ BOOST_AUTO_TEST_CASE(outputassetfield_new_asset_fields)
     BOOST_CHECK(result == EncodeByte(1));
 
     BOOST_CHECK(DirectGetOutputAssetField(tx, 2, 0x06, result));
-    BOOST_CHECK(result == DecodeAssetData("QmacSRmrkVmvJfbCpmU6pK72furJ8E8fbKHindrLxmYMQo"));
+    BOOST_CHECK(result == [](){ auto s = DecodeAssetData("QmacSRmrkVmvJfbCpmU6pK72furJ8E8fbKHindrLxmYMQo"); return std::vector<unsigned char>(s.begin(), s.end()); }());
 
     BOOST_CHECK(DirectGetOutputAssetField(tx, 2, 0x07, result));
     BOOST_CHECK(result == EncodeByte((unsigned char)IntFromAssetType(AssetType::ROOT)));
@@ -311,7 +311,7 @@ BOOST_AUTO_TEST_CASE(outputassetfield_reissue_fields)
     BOOST_CHECK(result == EncodeByte((unsigned char)IntFromAssetType(AssetType::REISSUE)));
 
     BOOST_CHECK(DirectGetOutputAssetField(tx, 4, 0x06, result));
-    BOOST_CHECK(result == DecodeAssetData("9c2c8e121a0139ba39bffd3ca97267bca9d4c0c1e84ac0c34a883c28e7a912ca"));
+    BOOST_CHECK(result == [](){ auto s = DecodeAssetData("9c2c8e121a0139ba39bffd3ca97267bca9d4c0c1e84ac0c34a883c28e7a912ca"); return std::vector<unsigned char>(s.begin(), s.end()); }());
 }
 
 BOOST_AUTO_TEST_CASE(outputassetfield_owner_fields)
