@@ -7,6 +7,12 @@ $(package)_sha256_hash=56001b905601bb9023d399f3ba780d7fa940f3e4861e496a7c490331f
 $(package)_dependencies=openssl
 $(package)_linux_dependencies=freetype fontconfig libxcb libxkbcommon
 
+# When cross-compiling, native_qt provides moc/rcc/uic/lrelease for the build
+# host.  For native Linux x86_64→x86_64 builds this is not needed.
+ifneq ($(host),$(build))
+$(package)_dependencies += native_qt
+endif
+
 $(package)_qttranslations_file_name=qttranslations-$($(package)_suffix)
 $(package)_qttranslations_sha256_hash=c3c61d79c3d8fe316a20b3617c64673ce5b5519b2e45535f49bee313152fa531
 
@@ -57,6 +63,7 @@ $(package)_config_opts += -DQT_FEATURE_kms=OFF
 $(package)_config_opts += -DQT_FEATURE_linuxfb=OFF
 $(package)_config_opts += -DQT_FEATURE_libudev=OFF
 $(package)_config_opts += -DQT_FEATURE_mtdev=OFF
+$(package)_config_opts += -DINPUT_opengl=no
 $(package)_config_opts += -DQT_FEATURE_opengl=OFF
 $(package)_config_opts += -DQT_FEATURE_openvg=OFF
 $(package)_config_opts += -DQT_FEATURE_reduce_relocations=OFF
