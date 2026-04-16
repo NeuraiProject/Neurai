@@ -140,11 +140,6 @@ bool IsSubNameValid(const std::string& name)
         && !std::regex_match(name, TRAILING_PUNCTUATION);
 }
 
-bool IsUniqueTagValid(const std::string& tag)
-{
-    return std::regex_match(tag, UNIQUE_TAG_CHARACTERS);
-}
-
 bool IsVoteTagValid(const std::string& tag)
 {
     return std::regex_match(tag, VOTE_TAG_CHARACTERS);

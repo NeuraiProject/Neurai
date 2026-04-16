@@ -125,7 +125,7 @@ static bool IsSubNameValid(const std::string& name)
         && !std::regex_match(name, TRAILING_PUNCTUATION);
 }
 
-static bool IsUniqueTagValid(const std::string& tag)
+bool IsUniqueTagValid(const std::string& tag)
 {
     return std::regex_match(tag, UNIQUE_TAG_CHARACTERS);
 }
