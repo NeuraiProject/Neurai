@@ -345,14 +345,18 @@ dnl
 dnl Inputs: no inputs.
 dnl Outputs: QT_LIBS is prepended.
 AC_DEFUN([_NEURAI_QT_CHECK_STATIC_LIBS], [
-  dnl Qt6: support modules are integrated into QPA plugins — no separate linking needed.
-  dnl Only link the platform plugin itself.
+  dnl Qt6: QPA platform support libraries (e.g. Qt6XcbQpa) depend on Qt6Gui
+  dnl symbols.  They must come BEFORE Qt6Gui in the link order so the static
+  dnl linker can resolve those symbols.  Prepend, do not append.
   if test "x$TARGET_OS" = xlinux; then
-    QT_LIBS="$QT_LIBS -lQt6XcbQpa"
+    dnl Qt6XcbQpa and the qxcb plugin depend on Qt6Gui and the Qt6 support
+    dnl modules.  Prepend them so the static linker sees dependents before
+    dnl dependencies (XcbQpa -> FbSupport/InputSupport -> Gui -> Core).
+    QT_LIBS="-lQt6XcbQpa -lQt6FbSupport -lQt6InputSupport -lQt6DeviceDiscoverySupport $QT_LIBS"
   elif test "x$TARGET_OS" = xdarwin; then
-    QT_LIBS="$QT_LIBS -lQt6CocoaIntegration"
+    QT_LIBS="-lQt6CocoaIntegration $QT_LIBS"
   elif test "x$TARGET_OS" = xwindows; then
-    QT_LIBS="$QT_LIBS -lQt6WindowsIntegration"
+    QT_LIBS="-lQt6WindowsIntegration $QT_LIBS"
   fi
 ])
 
