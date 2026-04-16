@@ -368,7 +368,7 @@ void WalletView::getMyWords()
     box.setWindowTitle(tr("Recovery information. (Will close after 5 min)"));
     box.setText(tr("No words available."));
     box.setStandardButtons(QMessageBox::Close);
-    box.button(QMessageBox::Close)->animateClick(300000);
+    box.button(QMessageBox::Close)->animateClick(); // Qt6: msec param removed
 
     // Check for HD-wallet and set text if not HD-wallet.
     if(!walletModel->hd44Enabled())

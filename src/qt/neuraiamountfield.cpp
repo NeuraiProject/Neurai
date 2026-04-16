@@ -147,7 +147,7 @@ public:
             opt.rect = rect();
 
             cachedMinimumSizeHint = style()->sizeFromContents(QStyle::CT_SpinBox, &opt, hint, this)
-                                    .expandedTo(QApplication::globalStrut());
+                                    .expandedTo(QSize()); // globalStrut removed in Qt6
         }
         return cachedMinimumSizeHint;
     }

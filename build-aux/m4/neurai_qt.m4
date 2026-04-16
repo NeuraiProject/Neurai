@@ -54,7 +54,7 @@ dnl CAUTION: Do not use this inside of a conditional.
 AC_DEFUN([NEURAI_QT_INIT],[
   dnl enable qt support
   AC_ARG_WITH([gui],
-    [AS_HELP_STRING([--with-gui@<:@=no|qt5|auto@:>@],
+    [AS_HELP_STRING([--with-gui@<:@=no|qt6|auto@:>@],
     [build neurai-qt GUI (default=auto)])],
     [
      neurai_qt_want_version=$withval
@@ -65,11 +65,11 @@ AC_DEFUN([NEURAI_QT_INIT],[
     ],
     [neurai_qt_want_version=auto])
 
-  AS_IF([test "x$with_gui" = xqt5_debug],
+  AS_IF([test "x$with_gui" = xqt6_debug],
         [AS_CASE([$host],
                  [*darwin*], [qt_lib_suffix=_debug],
                  [*mingw*], [qt_lib_suffix=d],
-                 [qt_lib_suffix= ]); neurai_qt_want_version=qt5],
+                 [qt_lib_suffix= ]); neurai_qt_want_version=qt6],
         [qt_lib_suffix= ])
 
   AC_ARG_WITH([qt-incdir],[AS_HELP_STRING([--with-qt-incdir=INC_DIR],[specify qt include path (overridden by pkgconfig)])], [qt_include_path=$withval], [])
@@ -105,7 +105,7 @@ dnl Outputs: Sets variables for all qt-related tools.
 dnl Outputs: neurai_enable_qt, neurai_enable_qt_dbus, neurai_enable_qt_test
 AC_DEFUN([NEURAI_QT_CONFIGURE],[
   qt_version=">= $1"
-  qt_lib_prefix="Qt5"
+  qt_lib_prefix="Qt6"
   NEURAI_QT_CHECK([_NEURAI_QT_FIND_LIBS])
 
   dnl This is ugly and complicated. Yuck. Works as follows:
@@ -163,7 +163,7 @@ AC_DEFUN([NEURAI_QT_CONFIGURE],[
       _NEURAI_QT_CHECK_STATIC_PLUGIN([QMacStylePlugin], [-lqmacstyle])
       AC_DEFINE(QT_QPA_PLATFORM_COCOA, 1, [Define this symbol if the qt platform is cocoa])
     elif test "x$TARGET_OS" = xandroid; then
-      QT_LIBS="-Wl,--export-dynamic,--undefined=JNI_OnLoad -lqtforandroid -ljnigraphics -landroid -lqtfreetype -lQt5EglSupport $QT_LIBS"
+      QT_LIBS="-Wl,--export-dynamic,--undefined=JNI_OnLoad -lqtforandroid -ljnigraphics -landroid -lqtfreetype $QT_LIBS"
       AC_DEFINE(QT_QPA_PLATFORM_ANDROID, 1, [Define this symbol if the qt platform is android])
     fi
   fi
@@ -172,7 +172,13 @@ AC_DEFUN([NEURAI_QT_CONFIGURE],[
   ])
 
   if test "x$qt_bin_path" = x; then
-    qt_bin_path="`$PKG_CONFIG --variable=host_bins Qt5Core 2>/dev/null`"
+    dnl Qt6 on Debian/Ubuntu places moc/uic/rcc in libexecdir, not bindir.
+    qt_libexec_path="`$PKG_CONFIG --variable=libexecdir Qt6Core 2>/dev/null`"
+    qt_bin_path="`$PKG_CONFIG --variable=bindir Qt6Core 2>/dev/null`"
+    dnl Prefer libexecdir for moc/uic/rcc; fall back to bindir.
+    if test "x$qt_libexec_path" != x; then
+      qt_bin_path="$qt_libexec_path:$qt_bin_path"
+    fi
   fi
 
   if test "x$use_hardening" != xno; then
@@ -222,11 +228,11 @@ AC_DEFUN([NEURAI_QT_CONFIGURE],[
     ])
   fi
 
-  NEURAI_QT_PATH_PROGS([MOC], [moc-qt5 moc5 moc], $qt_bin_path)
-  NEURAI_QT_PATH_PROGS([UIC], [uic-qt5 uic5 uic], $qt_bin_path)
-  NEURAI_QT_PATH_PROGS([RCC], [rcc-qt5 rcc5 rcc], $qt_bin_path)
-  NEURAI_QT_PATH_PROGS([LRELEASE], [lrelease-qt5 lrelease5 lrelease], $qt_bin_path)
-  NEURAI_QT_PATH_PROGS([LUPDATE], [lupdate-qt5 lupdate5 lupdate],$qt_bin_path, yes)
+  NEURAI_QT_PATH_PROGS([MOC], [moc-qt6 moc6 moc], $qt_bin_path)
+  NEURAI_QT_PATH_PROGS([UIC], [uic-qt6 uic6 uic], $qt_bin_path)
+  NEURAI_QT_PATH_PROGS([RCC], [rcc-qt6 rcc6 rcc], $qt_bin_path)
+  NEURAI_QT_PATH_PROGS([LRELEASE], [lrelease-qt6 lrelease6 lrelease], $qt_bin_path)
+  NEURAI_QT_PATH_PROGS([LUPDATE], [lupdate-qt6 lupdate6 lupdate],$qt_bin_path, yes)
 
   MOC_DEFS='-DHAVE_CONFIG_H -I$(srcdir)'
   case $host in
@@ -279,7 +285,7 @@ AC_DEFUN([NEURAI_QT_CONFIGURE],[
   AC_SUBST(QT_DBUS_LIBS)
   AC_SUBST(QT_TEST_INCLUDES)
   AC_SUBST(QT_TEST_LIBS)
-  AC_SUBST(QT_SELECT, qt5)
+  AC_SUBST(QT_SELECT, qt6)
   AC_SUBST(MOC_DEFS)
 ])
 
@@ -339,19 +345,14 @@ dnl
 dnl Inputs: no inputs.
 dnl Outputs: QT_LIBS is prepended.
 AC_DEFUN([_NEURAI_QT_CHECK_STATIC_LIBS], [
-  PKG_CHECK_MODULES([QTFONTDATABASE], [Qt5FontDatabaseSupport${qt_lib_suffix}], [QT_LIBS="-lQt5FontDatabaseSupport${qt_lib_suffix} $QT_LIBS"])
-  PKG_CHECK_MODULES([QTEVENTDISPATCHER], [Qt5EventDispatcherSupport${qt_lib_suffix}], [QT_LIBS="-lQt5EventDispatcherSupport${qt_lib_suffix} $QT_LIBS"])
-  PKG_CHECK_MODULES([QTTHEME], [Qt5ThemeSupport${qt_lib_suffix}], [QT_LIBS="-lQt5ThemeSupport${qt_lib_suffix} $QT_LIBS"])
-  PKG_CHECK_MODULES([QTDEVICEDISCOVERY], [Qt5DeviceDiscoverySupport${qt_lib_suffix}], [QT_LIBS="-lQt5DeviceDiscoverySupport${qt_lib_suffix} $QT_LIBS"])
-  PKG_CHECK_MODULES([QTACCESSIBILITY], [Qt5AccessibilitySupport${qt_lib_suffix}], [QT_LIBS="-lQt5AccessibilitySupport${qt_lib_suffix} $QT_LIBS"])
-  PKG_CHECK_MODULES([QTFB], [Qt5FbSupport${qt_lib_suffix}], [QT_LIBS="-lQt5FbSupport${qt_lib_suffix} $QT_LIBS"])
+  dnl Qt6: support modules are integrated into QPA plugins — no separate linking needed.
+  dnl Only link the platform plugin itself.
   if test "x$TARGET_OS" = xlinux; then
-    PKG_CHECK_MODULES([QTXCBQPA], [Qt5XcbQpa], [QT_LIBS="$QTXCBQPA_LIBS $QT_LIBS"])
+    QT_LIBS="$QT_LIBS -lQt6XcbQpa"
   elif test "x$TARGET_OS" = xdarwin; then
-    PKG_CHECK_MODULES([QTCLIPBOARD], [Qt5ClipboardSupport${qt_lib_suffix}], [QT_LIBS="-lQt5ClipboardSupport${qt_lib_suffix} $QT_LIBS"])
-    PKG_CHECK_MODULES([QTGRAPHICS], [Qt5GraphicsSupport${qt_lib_suffix}], [QT_LIBS="-lQt5GraphicsSupport${qt_lib_suffix} $QT_LIBS"])
+    QT_LIBS="$QT_LIBS -lQt6CocoaIntegration"
   elif test "x$TARGET_OS" = xwindows; then
-    PKG_CHECK_MODULES([QTWINDOWSUIAUTOMATION], [Qt5WindowsUIAutomationSupport${qt_lib_suffix}], [QT_LIBS="-lQt5WindowsUIAutomationSupport${qt_lib_suffix} $QT_LIBS"])
+    QT_LIBS="$QT_LIBS -lQt6WindowsIntegration"
   fi
 ])
 

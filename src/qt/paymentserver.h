@@ -50,7 +50,7 @@ class QByteArray;
 class QLocalServer;
 class QNetworkAccessManager;
 class QNetworkReply;
-class QSslError;
+#include <QSslError>
 class QUrl;
 QT_END_NAMESPACE
 

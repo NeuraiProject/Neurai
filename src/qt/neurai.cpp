@@ -81,9 +81,7 @@ Q_IMPORT_PLUGIN(QMacStylePlugin);
 #endif
 #endif
 
-#if QT_VERSION < 0x050000
-#include <QTextCodec>
-#endif
+// QTextCodec removed in Qt6; UTF-8 is the default.
 
 // Declare meta types used for QMetaObject::invokeMethod
 Q_DECLARE_METATYPE(bool*)
@@ -601,31 +599,17 @@ int main(int argc, char *argv[])
     // Do not refer to data directory yet, this can be overridden by Intro::pickDataDirectory
 
     /// 2. Basic Qt initialization (not dependent on parameters or configuration)
-#if QT_VERSION < 0x050000
-    // Internal string conversion is all UTF-8
-    QTextCodec::setCodecForTr(QTextCodec::codecForName("UTF-8"));
-    QTextCodec::setCodecForCStrings(QTextCodec::codecForTr());
-#endif
-
+    // Qt6: UTF-8 is default; QTextCodec removed. High-DPI scaling enabled by default.
     Q_INIT_RESOURCE(neurai);
     Q_INIT_RESOURCE(neurai_locale);
-
-#if QT_VERSION > 0x050600
-    // Generate high-dpi pixmaps
-    QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
-    QGuiApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
-#endif
 #ifdef Q_OS_MAC
     QApplication::setAttribute(Qt::AA_DontShowIconsInMenus);
 #endif
 
-#if QT_VERSION >= 0x050500
-    // Because of the POODLE attack it is recommended to disable SSLv3 (https://disablessl3.com/),
-    // so set SSL protocols to TLS1.0+.
+    // Qt6: TlsV1_0OrLater removed; enforce TLS 1.2+ (POODLE mitigation).
     QSslConfiguration sslconf = QSslConfiguration::defaultConfiguration();
-    sslconf.setProtocol(QSsl::TlsV1_0OrLater);
+    sslconf.setProtocol(QSsl::TlsV1_2OrLater);
     QSslConfiguration::setDefaultConfiguration(sslconf);
-#endif
 
     // This should be after the attributes.
     NeuraiApplication app;

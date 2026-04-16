@@ -886,14 +886,14 @@ QString WalletModel::getMyWords() const
     // Handle words.
     QString myWords = tr("Words:");
     myWords.append("\n");
-    for (const auto &w : vchWords) myWords.append(w);
+    for (const auto &w : vchWords) myWords.append(QChar(static_cast<char>(w)));
     myWords.append("\n");
     
     // Handle passphrase.
     QString myPass = tr("Passphrase:");
     const int myPass_isize = myPass.size();
 
-    for (const auto &p : vchPassphrase) myPass.append(p);
+    for (const auto &p : vchPassphrase) myPass.append(QChar(static_cast<char>(p)));
 
     // Add Passphrase if bigger than initialized.
     if (myPass_isize < myPass.size())

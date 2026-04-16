@@ -146,13 +146,15 @@ const QDBusArgument &operator>>(const QDBusArgument &a, FreedesktopImage &i)
 
 int FreedesktopImage::metaType()
 {
-    return qDBusRegisterMetaType<FreedesktopImage>();
+    // Qt6: qDBusRegisterMetaType returns QMetaType; extract int id.
+    return qDBusRegisterMetaType<FreedesktopImage>().id();
 }
 
 QVariant FreedesktopImage::toVariant(const QImage &img)
 {
     FreedesktopImage fimg(img);
-    return QVariant(FreedesktopImage::metaType(), &fimg);
+    // Qt6: QVariant(int,void*) removed; use QVariant(QMetaType, void*).
+    return QVariant(QMetaType(FreedesktopImage::metaType()), &fimg);
 }
 
 void Notificator::notifyDBus(Class cls, const QString &title, const QString &text, const QIcon &icon, int millisTimeout)

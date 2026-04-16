@@ -413,7 +413,7 @@ case $host in
 
          openssl_prefix=`$BREW --prefix openssl 2>/dev/null`
          bdb_prefix=`$BREW --prefix berkeley-db 2>/dev/null`
-         qt5_prefix=`$BREW --prefix qt5 2>/dev/null`
+         qt5_prefix=`$BREW --prefix qt@6 2>/dev/null || $BREW --prefix qt6 2>/dev/null || $BREW --prefix qt5 2>/dev/null`
          if test x$openssl_prefix != x; then
            PKG_CONFIG_PATH="$openssl_prefix/lib/pkgconfig:$PKG_CONFIG_PATH"
            export PKG_CONFIG_PATH
@@ -758,7 +758,7 @@ fi
 NEURAI_QT_INIT
 
 dnl sets $neurai_enable_qt, $neurai_enable_qt_test, $neurai_enable_qt_dbus
-NEURAI_QT_CONFIGURE([$use_pkgconfig], [qt5])
+NEURAI_QT_CONFIGURE([$use_pkgconfig], [qt6])
 
 if test x$build_neurai_cli$build_neurai_tx$build_neuraid$neurai_enable_qt$use_tests$use_bench = xnononononono; then
     use_boost=no

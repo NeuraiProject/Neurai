@@ -51,8 +51,10 @@
 #include <QPainter>
 #include <QWidgetAction>
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QDateTime>
+#include <QRegularExpression>
 #include <QDragEnterEvent>
 #include <QListWidget>
 #include <QMenuBar>
@@ -326,7 +328,7 @@ void NeuraiGUI::createActions()
     overviewAction->setStatusTip(tr("Show general overview of wallet"));
     overviewAction->setToolTip(overviewAction->statusTip());
     overviewAction->setCheckable(true);
-    overviewAction->setShortcut(QKeySequence(Qt::ALT + Qt::Key_1));
+    overviewAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_1));
     overviewAction->setFont(font);
     tabGroup->addAction(overviewAction);
 
@@ -334,7 +336,7 @@ void NeuraiGUI::createActions()
     sendCoinsAction->setStatusTip(tr("Send coins to a Neurai address"));
     sendCoinsAction->setToolTip(sendCoinsAction->statusTip());
     sendCoinsAction->setCheckable(true);
-    sendCoinsAction->setShortcut(QKeySequence(Qt::ALT + Qt::Key_2));
+    sendCoinsAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_2));
     sendCoinsAction->setFont(font);
     tabGroup->addAction(sendCoinsAction);
 
@@ -346,7 +348,7 @@ void NeuraiGUI::createActions()
     receiveCoinsAction->setStatusTip(tr("Request payments (generates QR codes and neurai: URIs)"));
     receiveCoinsAction->setToolTip(receiveCoinsAction->statusTip());
     receiveCoinsAction->setCheckable(true);
-    receiveCoinsAction->setShortcut(QKeySequence(Qt::ALT + Qt::Key_3));
+    receiveCoinsAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_3));
     receiveCoinsAction->setFont(font);
     tabGroup->addAction(receiveCoinsAction);
 
@@ -358,7 +360,7 @@ void NeuraiGUI::createActions()
     historyAction->setStatusTip(tr("Browse transaction history"));
     historyAction->setToolTip(historyAction->statusTip());
     historyAction->setCheckable(true);
-    historyAction->setShortcut(QKeySequence(Qt::ALT + Qt::Key_4));
+    historyAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_4));
     historyAction->setFont(font);
     tabGroup->addAction(historyAction);
 
@@ -367,7 +369,7 @@ void NeuraiGUI::createActions()
     createAssetAction->setStatusTip(tr("Create new assets"));
     createAssetAction->setToolTip(createAssetAction->statusTip());
     createAssetAction->setCheckable(true);
-    createAssetAction->setShortcut(QKeySequence(Qt::ALT + Qt::Key_5));
+    createAssetAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_5));
     createAssetAction->setFont(font);
     tabGroup->addAction(createAssetAction);
 
@@ -375,7 +377,7 @@ void NeuraiGUI::createActions()
     transferAssetAction->setStatusTip(tr("Transfer assets to XNA addresses"));
     transferAssetAction->setToolTip(transferAssetAction->statusTip());
     transferAssetAction->setCheckable(true);
-    transferAssetAction->setShortcut(QKeySequence(Qt::ALT + Qt::Key_6));
+    transferAssetAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_6));
     transferAssetAction->setFont(font);
     tabGroup->addAction(transferAssetAction);
 
@@ -383,7 +385,7 @@ void NeuraiGUI::createActions()
     manageAssetAction->setStatusTip(tr("Manage assets you are the administrator of"));
     manageAssetAction->setToolTip(manageAssetAction->statusTip());
     manageAssetAction->setCheckable(true);
-    manageAssetAction->setShortcut(QKeySequence(Qt::ALT + Qt::Key_7));
+    manageAssetAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_7));
     manageAssetAction->setFont(font);
     tabGroup->addAction(manageAssetAction);
 
@@ -391,7 +393,7 @@ void NeuraiGUI::createActions()
     messagingAction->setStatusTip(tr("Coming Soon"));
     messagingAction->setToolTip(messagingAction->statusTip());
     messagingAction->setCheckable(true);
-//    messagingAction->setShortcut(QKeySequence(Qt::ALT + Qt::Key_9));
+//    messagingAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_9));
     messagingAction->setFont(font);
     tabGroup->addAction(messagingAction);
 
@@ -407,7 +409,7 @@ void NeuraiGUI::createActions()
     restrictedAssetAction->setStatusTip(tr("Manage restricted assets"));
     restrictedAssetAction->setToolTip(restrictedAssetAction->statusTip());
     restrictedAssetAction->setCheckable(true);
-    restrictedAssetAction->setShortcut(QKeySequence(Qt::ALT + Qt::Key_8));
+    restrictedAssetAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_8));
     restrictedAssetAction->setFont(font);
     tabGroup->addAction(restrictedAssetAction);
 
@@ -415,7 +417,7 @@ void NeuraiGUI::createActions()
     depinAssetAction->setStatusTip(tr("Manage DePIN assets"));
     depinAssetAction->setToolTip(depinAssetAction->statusTip());
     depinAssetAction->setCheckable(true);
-    depinAssetAction->setShortcut(QKeySequence(Qt::ALT + Qt::Key_9));
+    depinAssetAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_9));
     depinAssetAction->setFont(font);
     tabGroup->addAction(depinAssetAction);
 
@@ -452,7 +454,7 @@ void NeuraiGUI::createActions()
 
     quitAction = new QAction(platformStyle->TextColorIcon(":/icons/quit"), tr("E&xit"), this);
     quitAction->setStatusTip(tr("Quit application"));
-    quitAction->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_Q));
+    quitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Q));
     quitAction->setMenuRole(QAction::QuitRole);
     aboutAction = new QAction(platformStyle->TextColorIcon(":/icons/about"), tr("&About %1").arg(tr(PACKAGE_NAME)), this);
     aboutAction->setStatusTip(tr("Show information about %1").arg(tr(PACKAGE_NAME)));
@@ -555,8 +557,8 @@ void NeuraiGUI::createActions()
     }
 #endif // ENABLE_WALLET
 
-    new QShortcut(QKeySequence(Qt::CTRL + Qt::SHIFT + Qt::Key_C), this, SLOT(showDebugWindowActivateConsole()));
-    new QShortcut(QKeySequence(Qt::CTRL + Qt::SHIFT + Qt::Key_D), this, SLOT(showDebugWindow()));
+    new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C), this, SLOT(showDebugWindowActivateConsole()));
+    new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D), this, SLOT(showDebugWindow()));
 }
 
 void NeuraiGUI::createMenuBar()
@@ -808,11 +810,13 @@ void NeuraiGUI::createToolBars()
                     QString answer = reply->readAll();
 
                     // Create regex expression to find the value with 8 decimals
-                    QRegExp rx("\\d*.\\d\\d\\d\\d\\d\\d\\d\\d");
-                    rx.indexIn(answer);
+                    QRegularExpression rx("\\d*\\.\\d{8}");
+                    QRegularExpressionMatch rx_match = rx.match(answer);
 
                     // List the found values
-                    QStringList list = rx.capturedTexts();
+                    QStringList list;
+                    if (rx_match.hasMatch())
+                        list << rx_match.captured(0);
 
                     QString currentPriceStyleSheet = ".QLabel{color: %1;}";
                     // Evaluate the current and next numbers and assign a color (green for positive, red for negative)
@@ -884,11 +888,13 @@ void NeuraiGUI::createToolBars()
                        if (key == "tag_name") {
                            auto latestVersion = latestRelease["tag_name"].get_str();
 
-                           QRegExp rx("v(\\d+).(\\d+).(\\d+)");
-                           rx.indexIn(QString::fromStdString(latestVersion));
+                           QRegularExpression rx("v(\\d+)\\.(\\d+)\\.(\\d+)");
+                           QRegularExpressionMatch rx_match = rx.match(QString::fromStdString(latestVersion));
 
-                           // List the found values
-                           QStringList list = rx.capturedTexts();
+                           // List the found values (index 0=full, 1=major, 2=minor, 3=patch)
+                           QStringList list;
+                           if (rx_match.hasMatch())
+                               list << rx_match.captured(0) << rx_match.captured(1) << rx_match.captured(2) << rx_match.captured(3);
                            static const int CLIENT_VERSION_MAJOR_INDEX = 1;
                            static const int CLIENT_VERSION_MINOR_INDEX = 2;
                            static const int CLIENT_VERSION_REVISION_INDEX = 3;
@@ -978,7 +984,7 @@ void NeuraiGUI::setClientModel(ClientModel *_clientModel)
         connect(_clientModel, SIGNAL(numConnectionsChanged(int)), this, SLOT(setNumConnections(int)));
         connect(_clientModel, SIGNAL(networkActiveChanged(bool)), this, SLOT(setNetworkActive(bool)));
 
-        modalOverlay->setKnownBestHeight(_clientModel->getHeaderTipHeight(), QDateTime::fromTime_t(_clientModel->getHeaderTipTime()));
+        modalOverlay->setKnownBestHeight(_clientModel->getHeaderTipHeight(), QDateTime::fromSecsSinceEpoch(_clientModel->getHeaderTipTime()));
         setNumBlocks(_clientModel->getNumBlocks(), _clientModel->getLastBlockDate(), _clientModel->getVerificationProgress(nullptr), false);
         connect(_clientModel, SIGNAL(numBlocksChanged(int,QDateTime,double,bool)), this, SLOT(setNumBlocks(int,QDateTime,double,bool)));
 

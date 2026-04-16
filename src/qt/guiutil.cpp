@@ -44,7 +44,8 @@
 #include <QClipboard>
 #include <QDateTime>
 #include <QDesktopServices>
-#include <QDesktopWidget>
+#include <QRegularExpression>
+#include <QScreen>
 #include <QDoubleValidator>
 #include <QFileDialog>
 #include <QFont>
@@ -55,15 +56,10 @@
 #include <QMouseEvent>
 #include <QPainter>
 
-#if QT_VERSION < QT_VERSION_CHECK(5, 0, 0)
-#include <QUrl>
-#else
-#include <QUrlQuery>
-#endif
-
-#if QT_VERSION >= QT_VERSION_CHECK(5, 2, 0)
 #include <QFontDatabase>
-#endif
+#include <QLocale>
+#include <QStandardPaths>
+#include <QUrlQuery>
 
 #if QT_VERSION < QT_VERSION_CHECK(5, 11, 0)
 #define QTversionPreFiveEleven
@@ -131,7 +127,7 @@ QFont getTopLabelFont(int weight, int pxsize)
 #if !defined(Q_OS_MAC)
     labelTopFont.setFamily("Open Sans");
 #endif
-    labelTopFont.setWeight(weight);
+    labelTopFont.setWeight(static_cast<QFont::Weight>(weight));
     labelTopFont.setLetterSpacing(QFont::SpacingType::AbsoluteSpacing, -0.6);
     labelTopFont.setPixelSize(pxsize);
     return labelTopFont;
@@ -163,12 +159,12 @@ QGraphicsDropShadowEffect* getShadowEffect()
 
 QString dateTimeStr(const QDateTime &date)
 {
-    return date.date().toString(Qt::SystemLocaleShortDate) + QString(" ") + date.toString("hh:mm");
+    return QLocale::system().toString(date.date(), QLocale::ShortFormat) + QString(" ") + date.toString("hh:mm");
 }
 
 QString dateTimeStr(qint64 nTime)
 {
-    return dateTimeStr(QDateTime::fromTime_t((qint32)nTime));
+    return dateTimeStr(QDateTime::fromSecsSinceEpoch((qint32)nTime));
 }
 
 QFont fixedPitchFont()
@@ -386,11 +382,7 @@ QString getSaveFileName(QWidget *parent, const QString &caption, const QString &
     QString myDir;
     if(dir.isEmpty()) // Default to user documents location
     {
-#if QT_VERSION < 0x050000
-        myDir = QDesktopServices::storageLocation(QDesktopServices::DocumentsLocation);
-#else
         myDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-#endif
     }
     else
     {
@@ -400,11 +392,12 @@ QString getSaveFileName(QWidget *parent, const QString &caption, const QString &
     QString result = QDir::toNativeSeparators(QFileDialog::getSaveFileName(parent, caption, myDir, filter, &selectedFilter));
 
     /* Extract first suffix from filter pattern "Description (*.foo)" or "Description (*.foo *.bar ...) */
-    QRegExp filter_re(".* \\(\\*\\.(.*)[ \\)]");
+    QRegularExpression filter_re(".* \\(\\*\\.(.*)[ \\)]");
     QString selectedSuffix;
-    if(filter_re.exactMatch(selectedFilter))
+    QRegularExpressionMatch filter_match = filter_re.match(selectedFilter);
+    if(filter_match.hasMatch())
     {
-        selectedSuffix = filter_re.cap(1);
+        selectedSuffix = filter_match.captured(1);
     }
 
     /* Add suffix if needed */
@@ -436,11 +429,7 @@ QString getOpenFileName(QWidget *parent, const QString &caption, const QString &
     QString myDir;
     if(dir.isEmpty()) // Default to user documents location
     {
-#if QT_VERSION < 0x050000
-        myDir = QDesktopServices::storageLocation(QDesktopServices::DocumentsLocation);
-#else
         myDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-#endif
     }
     else
     {
@@ -452,11 +441,12 @@ QString getOpenFileName(QWidget *parent, const QString &caption, const QString &
     if(selectedSuffixOut)
     {
         /* Extract first suffix from filter pattern "Description (*.foo)" or "Description (*.foo *.bar ...) */
-        QRegExp filter_re(".* \\(\\*\\.(.*)[ \\)]");
+        QRegularExpression filter_re(".* \\(\\*\\.(.*)[ \\)]");
         QString selectedSuffix;
-        if(filter_re.exactMatch(selectedFilter))
+        QRegularExpressionMatch filter_match = filter_re.match(selectedFilter);
+        if(filter_match.hasMatch())
         {
-            selectedSuffix = filter_re.cap(1);
+            selectedSuffix = filter_match.captured(1);
         }
         *selectedSuffixOut = selectedSuffix;
     }
