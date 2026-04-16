@@ -35,7 +35,7 @@ $(package)_config_opts += -DBUILD_SHARED_LIBS=OFF
 $(package)_config_opts += -DCMAKE_INSTALL_PREFIX=$(host_prefix)
 $(package)_config_opts += -DQT_BUILD_EXAMPLES=OFF
 $(package)_config_opts += -DQT_BUILD_TESTS=OFF
-$(package)_config_opts += -DQT_FEATURE_pch=OFF
+$(package)_config_opts += -DQT_FEATURE_precompile_header=OFF
 
 # --- OpenSSL: linked (not bundled) ---
 $(package)_config_opts += -DINPUT_openssl=linked
@@ -58,7 +58,6 @@ $(package)_config_opts += -DQT_FEATURE_gif=OFF
 $(package)_config_opts += -DQT_FEATURE_glib=OFF
 $(package)_config_opts += -DQT_FEATURE_icu=OFF
 $(package)_config_opts += -DQT_FEATURE_ico=OFF
-$(package)_config_opts += -DQT_FEATURE_iconv=OFF
 $(package)_config_opts += -DQT_FEATURE_kms=OFF
 $(package)_config_opts += -DQT_FEATURE_linuxfb=OFF
 $(package)_config_opts += -DQT_FEATURE_libudev=OFF
@@ -87,7 +86,6 @@ $(package)_config_opts += -DQT_FEATURE_printer=OFF
 $(package)_config_opts += -DQT_FEATURE_printpreviewdialog=OFF
 $(package)_config_opts += -DQT_FEATURE_printpreviewwidget=OFF
 $(package)_config_opts += -DQT_FEATURE_sessionmanager=OFF
-$(package)_config_opts += -DQT_FEATURE_statemachine=OFF
 $(package)_config_opts += -DQT_FEATURE_syntaxhighlighter=OFF
 $(package)_config_opts += -DQT_FEATURE_textodfwriter=OFF
 $(package)_config_opts += -DQT_FEATURE_topleveldomain=OFF
@@ -107,6 +105,10 @@ $(package)_config_opts_linux += -DQT_FEATURE_system_freetype=ON
 $(package)_config_opts_linux += -DQT_FEATURE_fontconfig=ON
 $(package)_config_opts_linux += -DQT_FEATURE_opengl=OFF
 $(package)_config_opts_linux += -DINPUT_dbus=runtime
+# xcb-cursor (libxcb-cursor) is not in the depends packages.
+# Disable it explicitly so the xcb platform plugin does not link XCB::CURSOR.
+$(package)_config_opts_linux += -DINPUT_xcb_cursor=no
+$(package)_config_opts_linux += -DQT_FEATURE_xcb_cursor=OFF
 
 # --- Linux cross-compilation (aarch64) ---
 $(package)_config_opts_aarch64_linux += -DQT_HOST_PATH=$(build_prefix)
