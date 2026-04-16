@@ -273,7 +273,6 @@ libneurai_server_a_SOURCES = \
   noui.cpp \
   assets/assets.cpp \
   assets/assetdb.cpp \
-  assets/assettypes.cpp \
   assets/messages.cpp \
   assets/myassetsdb.cpp \
   assets/restricteddb.cpp \
@@ -451,6 +450,7 @@ libneurai_common_a_SOURCES = \
   script/standard.cpp \
   warnings.cpp \
   assets/assets_fromscript.cpp \
+  assets/assettypes.cpp \
   $(NEURAI_CORE_H)
 
 # util: shared between all executables.
