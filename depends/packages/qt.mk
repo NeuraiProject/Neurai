@@ -165,19 +165,21 @@ define $(package)_preprocess_cmds
   : # intentionally empty
 endef
 
-# Qt6 CMake configure for qtbase only.
-# qttools and qttranslations are configured in _build_cmds after qtbase is installed
-# to a local staging tree so lrelease is available when translations are built.
+# depends/hosts/linux.mk sets x86_64_linux_CXX="g++ -m64" — compiler + flag in one
+# variable.  CMake requires CMAKE_CXX_COMPILER to be the bare executable; the
+# extra flags must go into CMAKE_CXX_FLAGS.  Use GNU Make $(firstword) /
+# $(wordlist) to split them at configure time.
 define $(package)_config_cmds
   export PKG_CONFIG_SYSROOT_DIR=/ && \
   export PKG_CONFIG_LIBDIR=$(host_prefix)/lib/pkgconfig && \
   export PKG_CONFIG_PATH=$(host_prefix)/share/pkgconfig && \
   cmake -B qtbase/build -S qtbase \
+    -GNinja \
     $($(package)_config_opts) \
-    -DCMAKE_C_COMPILER="$($(package)_cc)" \
-    -DCMAKE_CXX_COMPILER="$($(package)_cxx)" \
-    -DCMAKE_C_FLAGS="$($(package)_cflags) $($(package)_cppflags)" \
-    -DCMAKE_CXX_FLAGS="$($(package)_cxxflags) $($(package)_cppflags)" \
+    -DCMAKE_C_COMPILER="$(firstword $($(package)_cc))" \
+    -DCMAKE_CXX_COMPILER="$(firstword $($(package)_cxx))" \
+    -DCMAKE_C_FLAGS="$(wordlist 2,99,$($(package)_cc)) $($(package)_cflags) $($(package)_cppflags)" \
+    -DCMAKE_CXX_FLAGS="$(wordlist 2,99,$($(package)_cxx)) $($(package)_cxxflags) $($(package)_cppflags)" \
     -DCMAKE_EXE_LINKER_FLAGS="$($(package)_ldflags)" \
     -DCMAKE_SHARED_LINKER_FLAGS="$($(package)_ldflags)"
 endef
@@ -188,9 +190,10 @@ endef
 #   3. Install qttools                → qt_install (provides lrelease for step 4)
 #   4. Configure+build qttranslations (needs lrelease from step 3)
 define $(package)_build_cmds
-  $(MAKE) -C qtbase/build && \
+  ninja -C qtbase/build && \
   cmake --install qtbase/build --prefix $($(package)_extract_dir)/qt_install && \
   cmake -B qttools/build -S qttools \
+    -GNinja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_PREFIX_PATH=$($(package)_extract_dir)/qt_install \
     -DCMAKE_INSTALL_PREFIX=$($(package)_extract_dir)/qt_install \
@@ -209,13 +212,14 @@ define $(package)_build_cmds
     -DFEATURE_qtattributionsscanner=OFF \
     -DFEATURE_qtdiag=OFF \
     -DFEATURE_qtplugininfo=OFF && \
-  $(MAKE) -C qttools/build && \
+  ninja -C qttools/build && \
   cmake --install qttools/build --prefix $($(package)_extract_dir)/qt_install && \
   cmake -B qttranslations/build -S qttranslations \
+    -GNinja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_PREFIX_PATH=$($(package)_extract_dir)/qt_install \
     -DCMAKE_INSTALL_PREFIX=$($(package)_extract_dir)/qt_install && \
-  $(MAKE) -C qttranslations/build
+  ninja -C qttranslations/build
 endef
 
 # Install all three modules to the depends staging prefix.
