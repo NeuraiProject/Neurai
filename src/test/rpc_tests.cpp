@@ -283,8 +283,8 @@ BOOST_FIXTURE_TEST_SUITE(rpc_tests, TestingSetup)
         BOOST_CHECK_THROW(ParseNonRFCJSONValue("1.0sds"), std::runtime_error);
         BOOST_CHECK_THROW(ParseNonRFCJSONValue("1.0]"), std::runtime_error);
         // XNA addresses should fail parsing
-        BOOST_CHECK_THROW(ParseNonRFCJSONValue("175tWpb8K1S7NmH4Zx6rewF9WQrcZv245W"), std::runtime_error);
-        BOOST_CHECK_THROW(ParseNonRFCJSONValue("3J98t1WpEZ73CNmQviecrnyiWrnqRhWNL"), std::runtime_error);
+        BOOST_CHECK_THROW(ParseNonRFCJSONValue("NBURNXXXXXXXXXXXXXXXXXXXXXXXb2YXMk"), std::runtime_error);
+        BOOST_CHECK_THROW(ParseNonRFCJSONValue("tBURNXXXXXXXXXXXXXXXXXXXXXXXVZLroy"), std::runtime_error);
     }
 
     BOOST_AUTO_TEST_CASE(rpc_ban_test)
@@ -378,22 +378,22 @@ BOOST_FIXTURE_TEST_SUITE(rpc_tests, TestingSetup)
 
         UniValue result;
 
-        BOOST_CHECK_NO_THROW(result = RPCConvertValues("generatetoaddress", {"101", "mkESjLZW66TmHhiFX8MCaBjrhZ543PPh9a"}));
+        BOOST_CHECK_NO_THROW(result = RPCConvertValues("generatetoaddress", {"101", "tBURNXXXXXXXXXXXXXXXXXXXXXXXVZLroy"}));
         BOOST_CHECK_EQUAL(result[0].get_int(), 101);
-        BOOST_CHECK_EQUAL(result[1].get_str(), "mkESjLZW66TmHhiFX8MCaBjrhZ543PPh9a");
+        BOOST_CHECK_EQUAL(result[1].get_str(), "tBURNXXXXXXXXXXXXXXXXXXXXXXXVZLroy");
 
-        BOOST_CHECK_NO_THROW(result = RPCConvertValues("generatetoaddress", {"101", "mhMbmE2tE9xzJYCV9aNC8jKWN31vtGrguU"}));
+        BOOST_CHECK_NO_THROW(result = RPCConvertValues("generatetoaddress", {"101", "tAssetXXXXXXXXXXXXXXXXXXXXXXas6pz8"}));
         BOOST_CHECK_EQUAL(result[0].get_int(), 101);
-        BOOST_CHECK_EQUAL(result[1].get_str(), "mhMbmE2tE9xzJYCV9aNC8jKWN31vtGrguU");
+        BOOST_CHECK_EQUAL(result[1].get_str(), "tAssetXXXXXXXXXXXXXXXXXXXXXXas6pz8");
 
-        BOOST_CHECK_NO_THROW(result = RPCConvertValues("generatetoaddress", {"1", "mkESjLZW66TmHhiFX8MCaBjrhZ543PPh9a", "9"}));
+        BOOST_CHECK_NO_THROW(result = RPCConvertValues("generatetoaddress", {"1", "tBURNXXXXXXXXXXXXXXXXXXXXXXXVZLroy", "9"}));
         BOOST_CHECK_EQUAL(result[0].get_int(), 1);
-        BOOST_CHECK_EQUAL(result[1].get_str(), "mkESjLZW66TmHhiFX8MCaBjrhZ543PPh9a");
+        BOOST_CHECK_EQUAL(result[1].get_str(), "tBURNXXXXXXXXXXXXXXXXXXXXXXXVZLroy");
         BOOST_CHECK_EQUAL(result[2].get_int(), 9);
 
-        BOOST_CHECK_NO_THROW(result = RPCConvertValues("generatetoaddress", {"1", "mhMbmE2tE9xzJYCV9aNC8jKWN31vtGrguU", "9"}));
+        BOOST_CHECK_NO_THROW(result = RPCConvertValues("generatetoaddress", {"1", "tAssetXXXXXXXXXXXXXXXXXXXXXXas6pz8", "9"}));
         BOOST_CHECK_EQUAL(result[0].get_int(), 1);
-        BOOST_CHECK_EQUAL(result[1].get_str(), "mhMbmE2tE9xzJYCV9aNC8jKWN31vtGrguU");
+        BOOST_CHECK_EQUAL(result[1].get_str(), "tAssetXXXXXXXXXXXXXXXXXXXXXXas6pz8");
         BOOST_CHECK_EQUAL(result[2].get_int(), 9);
     }
 

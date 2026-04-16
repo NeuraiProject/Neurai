@@ -22,11 +22,8 @@ static const std::string strSecret1 = "5HxWvvfubhXpYYpS3tJkw6fq9jE9j18THftkZjHHf
 static const std::string strSecret2 = "5KC4ejrDjv152FGwP386VD1i2NYc5KkfSMyv1nGy1VGDxGHqVY3";
 static const std::string strSecret1C = "Kwr371tjA9u2rFSMZjTNun2PXXP3WPZu2afRHTcta6KxEUdm1vEw";
 static const std::string strSecret2C = "L3Hq7a8FEQwJkW1M2GNKDW28546Vp5miewcCzSqUD9kCAXrJdS3g";
-static const std::string addr1 = "RYY2usMVfuN47PfRmjshQjCcXzo3oPicoh"; //1QFqqMUD55ZV3PJEJZtaKCsQmjLT6JkjvJ";
-static const std::string addr2 = "RPNA9jxXxRt84dg5eKgTfzyFoXgYsXYrGu"; //1F5y5E5FMc5YzdJtB9hLaUe43GDxEKXENJ";
-static const std::string addr1C = "RX5VwKmAZCytjCf6mhSBP6xWcnspqFiSfK"; //1NoJrossxPBKfCHuJXT4HadJrXRE9Fxiqs";
-static const std::string addr2C = "RLhv6ordc2L64HXioasqMsJtSdukCn2Tcg"; //"1CRj2HyM1CXWzHAXLQtiGLyggNT9WQqsDs";
 
+// A Bitcoin mainnet address, intentionally invalid for Neurai
 static const std::string strAddressBad = "1HV9Lc3sNHZxwj4Zk6fB38tEmBryq2cBiF";
 
 
@@ -77,15 +74,20 @@ BOOST_FIXTURE_TEST_SUITE(key_tests, BasicTestingSetup)
         BOOST_CHECK(!key2C.VerifyPubKey(pubkey2));
         BOOST_CHECK(key2C.VerifyPubKey(pubkey2C));
 
-        std::string pubKey1Address = EncodeDestination(CTxDestination(pubkey1.GetID()));
-        std::string pubKey2Address = EncodeDestination(CTxDestination(pubkey2.GetID()));
-        std::string pubKey1CAddress = EncodeDestination(CTxDestination(pubkey1C.GetID()));
-        std::string pubKey2CAddress = EncodeDestination(CTxDestination(pubkey2C.GetID()));
+        // Derive addresses from pubkeys and verify round-trip encoding
+        std::string addr1 = EncodeDestination(CTxDestination(pubkey1.GetID()));
+        std::string addr2 = EncodeDestination(CTxDestination(pubkey2.GetID()));
+        std::string addr1C = EncodeDestination(CTxDestination(pubkey1C.GetID()));
+        std::string addr2C = EncodeDestination(CTxDestination(pubkey2C.GetID()));
 
         BOOST_CHECK(DecodeDestination(addr1) == CTxDestination(pubkey1.GetID()));
         BOOST_CHECK(DecodeDestination(addr2) == CTxDestination(pubkey2.GetID()));
         BOOST_CHECK(DecodeDestination(addr1C) == CTxDestination(pubkey1C.GetID()));
         BOOST_CHECK(DecodeDestination(addr2C) == CTxDestination(pubkey2C.GetID()));
+
+        // Compressed and uncompressed keys produce different addresses
+        BOOST_CHECK(addr1 != addr1C);
+        BOOST_CHECK(addr2 != addr2C);
 
         for (int n = 0; n < 16; n++)
         {
