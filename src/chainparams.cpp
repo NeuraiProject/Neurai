@@ -392,7 +392,7 @@ public:
         {
             fs::path epochFile = GetDataDir(false) / "testnet_epoch";
             if (FILE* f = fopen(epochFile.string().c_str(), "r")) {
-                fscanf(f, "%u", &nEpoch);
+                (void)fscanf(f, "%u", &nEpoch);
                 fclose(f);
             }
         }
