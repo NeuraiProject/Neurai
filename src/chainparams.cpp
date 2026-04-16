@@ -378,6 +378,11 @@ public:
         nDefaultPort = 19100;
         nPruneAfterHeight = 1000;
 
+        // SHA256 testnet: KAWPOW never activates — keeps Bitcoin-style 4-byte nNonce format
+        // Must be set BEFORE genesis mining so GetHash() uses the SHA256d path
+        nKAAAWWWPOWActivationTime = 0xFFFFFFFF;
+        nKAWPOWActivationTime = nKAAAWWWPOWActivationTime;
+
         // Testnet resets every 100,000 blocks — each epoch gets its own deterministic genesis.
         // Epoch number is stored in <datadir>/testnet_epoch and managed by neuraid/neurai-qt
         // before SelectParams() is called. SHA256d genesis mining takes only milliseconds.
@@ -487,9 +492,6 @@ public:
         nMessagingActivationBlock = 1; // Messaging activated block height
         nRestrictedActivationBlock = 1; // Restricted activated block height
 
-        // SHA256 testnet: KAWPOW never activates — keeps Bitcoin-style 4-byte nNonce format
-        nKAAAWWWPOWActivationTime = 0xFFFFFFFF;
-        nKAWPOWActivationTime = nKAAAWWWPOWActivationTime;
         /** XNA End **/
     }
 };
@@ -576,13 +578,23 @@ public:
         nDefaultPort = 19200;
         nPruneAfterHeight = 1000;
 
+        // SHA256 regtest: KAWPOW never activates — keeps Bitcoin-style 4-byte nNonce format
+        // Must be set BEFORE genesis mining so GetHash() uses the SHA256d path
+        nKAAAWWWPOWActivationTime = 0xFFFFFFFF;
+        nKAWPOWActivationTime = nKAAAWWWPOWActivationTime;
+
         uint32_t nGenesisTime = 1681720840;
 
+        // Auto-mine genesis with SHA256d (deterministic, instant with 0x207fffff)
+        genesis = CreateGenesisBlock(nGenesisTime, 0, 0x207fffff, 2, 50000 * COIN);
+        {
+            arith_uint256 hashTarget = arith_uint256().SetCompact(genesis.nBits);
+            while (UintToArith256(genesis.GetHash()) > hashTarget) {
+                ++genesis.nNonce;
+            }
+        }
+        consensus.hashGenesisBlock = genesis.GetHash();
 
-        genesis = CreateGenesisBlock(nGenesisTime, 1, 0x207fffff, 4, 50000 * COIN);
-        consensus.hashGenesisBlock = genesis.GetX16RHash();
-
-        assert(consensus.hashGenesisBlock == uint256S("0x0b2c703dc93bb63a36c4e33b85be4855ddbca2ac951a7a0a29b8de0408200a3c "));
         assert(genesis.hashMerkleRoot == uint256S("4b28bf93d960cd83d1889757381d5a587208464e9075bdc0739151fbe15f5951"));
 
         vFixedSeeds.clear(); //!< Regtest mode doesn't have any fixed seeds.
@@ -651,8 +663,6 @@ public:
         nRestrictedActivationBlock = 0; 
 
 
-        nKAAAWWWPOWActivationTime = 3582830167;
-        nKAWPOWActivationTime = nKAAAWWWPOWActivationTime;
         /** XNA End **/
     }
 };
