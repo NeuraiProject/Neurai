@@ -396,7 +396,7 @@ public:
         uint32_t nGenesisTime = TESTNET_BASE_TIME + nEpoch;
 
         // Auto-mine genesis for this epoch (deterministic: same epoch → same nonce → same hash)
-        genesis = CreateGenesisBlock(nGenesisTime, 0, 0x1e00ffff, 2, 50000 * COIN);
+        genesis = CreateGenesisBlock(nGenesisTime, 0, 0x207fffff, 2, 50000 * COIN);
         {
             arith_uint256 hashTarget = arith_uint256().SetCompact(genesis.nBits);
             while (UintToArith256(genesis.GetHash()) > hashTarget) {

@@ -39,7 +39,7 @@ RUN git clone --branch DePIN-Test --single-branch https://github.com/NeuraiProje
 
 WORKDIR /root/Neurai/depends
 
-RUN make HOST=x86_64-pc-linux-gnu -j4
+RUN make HOST=x86_64-pc-linux-gnu -j10
 
 WORKDIR /root/Neurai
 
@@ -49,7 +49,7 @@ RUN contrib/install_db4.sh ../
 
 ENV BDB_PREFIX=/root/db4
 
-RUN CONFIG_SITE=$PWD/depends/x86_64-pc-linux-gnu/share/config.site ./configure --prefix=$PWD/depends/x86_64-pc-linux-gnu --enable-cxx --disable-shared --disable-maintainer-mode --with-pic LDFLAGS="-L${BDB_PREFIX}/lib/" CPPFLAGS="-I${BDB_PREFIX}/include/"
+RUN CONFIG_SITE=$PWD/depends/x86_64-pc-linux-gnu/share/config.site ./configure --prefix=$PWD/depends/x86_64-pc-linux-gnu --enable-cxx --enable-tests --with-tx --disable-shared --disable-maintainer-mode --with-pic LDFLAGS="-L${BDB_PREFIX}/lib/" CPPFLAGS="-I${BDB_PREFIX}/include/"
 
 #RUN make -j4
 
