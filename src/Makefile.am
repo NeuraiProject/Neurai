@@ -433,6 +433,8 @@ libneurai_consensus_a_SOURCES = \
 libneurai_common_a_CPPFLAGS = $(AM_CPPFLAGS) $(NEURAI_INCLUDES)
 libneurai_common_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 libneurai_common_a_SOURCES = \
+  arith_uint256.cpp \
+  consensus/merkle.cpp \
   base58.cpp \
   bech32.cpp \
   chainparams.cpp \
