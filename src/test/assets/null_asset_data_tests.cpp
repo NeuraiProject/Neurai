@@ -11,6 +11,7 @@
 #include <base58.h>
 #include <chainparams.h>
 #include <key.h>
+#include <validation.h>
 
 BOOST_FIXTURE_TEST_SUITE(null_asset_data_tests, BasicTestingSetup)
 
@@ -118,7 +119,16 @@ CTxDestination MakePQDestination()
 }
 }
 
-BOOST_FIXTURE_TEST_SUITE(null_asset_data_contextual_tests, BasicTestingSetup)
+/** Lightweight fixture: BasicTestingSetup + a global CAssetsCache so that
+ *  CAssetsCache member functions that fall through to the global passets
+ *  pointer (e.g. CheckForAddressRestriction) do not segfault. */
+struct DePINContextualTestingSetup : public BasicTestingSetup {
+    CAssetsCache globalAssetsCache;
+    DePINContextualTestingSetup() { passets = &globalAssetsCache; }
+    ~DePINContextualTestingSetup() { passets = nullptr; }
+};
+
+BOOST_FIXTURE_TEST_SUITE(null_asset_data_contextual_tests, DePINContextualTestingSetup)
 
     BOOST_AUTO_TEST_CASE(depin_owner_freeze_to_pq_contextual_check_test)
     {
