@@ -5,6 +5,7 @@
 // Tests for NIP-012: script_verify_flags type-safe wrapper migration.
 
 #include "script/interpreter.h"
+#include "policy/policy.h"
 #include "test/test_neurai.h"
 
 #include <boost/test/unit_test.hpp>
@@ -134,7 +135,7 @@ BOOST_AUTO_TEST_CASE(comparison_operators)
     BOOST_CHECK(SCRIPT_VERIFY_P2SH == SCRIPT_VERIFY_P2SH);
     BOOST_CHECK(SCRIPT_VERIFY_P2SH != SCRIPT_VERIFY_CAT);
     BOOST_CHECK(SCRIPT_VERIFY_NONE == 0);
-    BOOST_CHECK(SCRIPT_VERIFY_P2SH != 0);
+    BOOST_CHECK(SCRIPT_VERIFY_P2SH != SCRIPT_VERIFY_NONE);
 }
 
 // --- Policy masks match expected low bits ---
