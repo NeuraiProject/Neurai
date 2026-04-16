@@ -20,7 +20,7 @@ static constexpr script_verify_flags TXFIELD_FLAGS_DISCOURAGE =
     TXFIELD_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
 static constexpr script_verify_flags NO_TXFIELD_FLAGS =
     SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS;
-static const unsigned int NO_TXFIELD_DISCOURAGE =
+static constexpr script_verify_flags NO_TXFIELD_DISCOURAGE =
     NO_TXFIELD_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
 static constexpr script_verify_flags TXFIELD_SPLIT_FLAGS =
     TXFIELD_FLAGS | SCRIPT_VERIFY_SPLIT;
