@@ -5,7 +5,7 @@ $(package)_suffix=everywhere-src-$($(package)_version).tar.xz
 $(package)_file_name=qtbase-$($(package)_suffix)
 $(package)_sha256_hash=56001b905601bb9023d399f3ba780d7fa940f3e4861e496a7c490331f49e0b80
 $(package)_dependencies=openssl
-$(package)_linux_dependencies=freetype fontconfig libxcb libxkbcommon
+$(package)_linux_dependencies=freetype fontconfig libxcb libxkbcommon libxcb_util libxcb_util_cursor libxcb_util_render libxcb_util_keysyms libxcb_util_image libxcb_util_wm
 
 # When cross-compiling, native_qt provides moc/rcc/uic/lrelease for the build
 # host.  For native Linux x86_64→x86_64 builds this is not needed.
@@ -105,10 +105,6 @@ $(package)_config_opts_linux += -DQT_FEATURE_system_freetype=ON
 $(package)_config_opts_linux += -DQT_FEATURE_fontconfig=ON
 $(package)_config_opts_linux += -DQT_FEATURE_opengl=OFF
 $(package)_config_opts_linux += -DINPUT_dbus=runtime
-# xcb-cursor (libxcb-cursor) is not in the depends packages.
-# Disable it explicitly so the xcb platform plugin does not link XCB::CURSOR.
-$(package)_config_opts_linux += -DINPUT_xcb_cursor=no
-$(package)_config_opts_linux += -DQT_FEATURE_xcb_cursor=OFF
 
 # --- Linux cross-compilation (aarch64) ---
 $(package)_config_opts_aarch64_linux += -DQT_HOST_PATH=$(build_prefix)
