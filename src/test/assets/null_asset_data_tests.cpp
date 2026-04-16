@@ -118,7 +118,7 @@ CTxDestination MakePQDestination()
 }
 }
 
-BOOST_FIXTURE_TEST_SUITE(null_asset_data_contextual_tests, TestingSetup)
+BOOST_FIXTURE_TEST_SUITE(null_asset_data_contextual_tests, BasicTestingSetup)
 
     BOOST_AUTO_TEST_CASE(depin_owner_freeze_to_pq_contextual_check_test)
     {

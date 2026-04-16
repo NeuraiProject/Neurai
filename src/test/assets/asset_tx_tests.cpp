@@ -846,7 +846,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         BOOST_CHECK_EQUAL(sigdata.scriptWitness.stack.size(), 4U);
         BOOST_CHECK_EQUAL(sigdata.scriptWitness.stack[0].size(), 1U);
         BOOST_CHECK_EQUAL(sigdata.scriptWitness.stack[1].size(), ML_DSA_44_SIG_SIZE + 1);
-        BOOST_CHECK_EQUAL(sigdata.scriptWitness.stack[1].size(), 1U + ML_DSA_44_PUBKEY_SIZE);
+        BOOST_CHECK_EQUAL(sigdata.scriptWitness.stack[2].size(), 1U + ML_DSA_44_PUBKEY_SIZE);
     }
 
 BOOST_AUTO_TEST_SUITE_END()
