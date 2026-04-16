@@ -20,7 +20,7 @@ static constexpr script_verify_flags SPLIT_FLAGS_DISCOURAGE =
     SPLIT_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
 static constexpr script_verify_flags NO_SPLIT_FLAGS =
     SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS;
-static const unsigned int NO_SPLIT_DISCOURAGE =
+static constexpr script_verify_flags NO_SPLIT_DISCOURAGE =
     NO_SPLIT_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS;
 static constexpr script_verify_flags CAT_SPLIT_FLAGS =
     SPLIT_FLAGS | SCRIPT_VERIFY_CAT;

@@ -186,7 +186,7 @@ BOOST_AUTO_TEST_CASE(structural_duplicate_refinputs)
 
     CTransaction tx(mtx);
     CValidationState state;
-    BOOST_CHECK(!CheckTransaction(tx, state, nullptr, true));
+    BOOST_CHECK(!CheckTransaction(tx, state, true, true));
     BOOST_CHECK_EQUAL(state.GetRejectReason(), "bad-txns-vrefin-duplicate");
 }
 
@@ -199,7 +199,7 @@ BOOST_AUTO_TEST_CASE(structural_overlap_vin_vrefin)
 
     CTransaction tx(mtx);
     CValidationState state;
-    BOOST_CHECK(!CheckTransaction(tx, state, nullptr, true));
+    BOOST_CHECK(!CheckTransaction(tx, state, true, true));
     BOOST_CHECK_EQUAL(state.GetRejectReason(), "bad-txns-vrefin-overlap-vin");
 }
 
@@ -211,7 +211,7 @@ BOOST_AUTO_TEST_CASE(non_v3_with_vrefin)
 
     CTransaction tx(mtx);
     CValidationState state;
-    BOOST_CHECK(!CheckTransaction(tx, state, nullptr, true));
+    BOOST_CHECK(!CheckTransaction(tx, state, true, true));
     BOOST_CHECK_EQUAL(state.GetRejectReason(), "bad-txns-vrefin-no-v3");
 }
 
@@ -221,7 +221,7 @@ BOOST_AUTO_TEST_CASE(v3_empty_vrefin_valid)
     CMutableTransaction mtx = BuildV3TestTx(1, 1, 0);
     CTransaction tx(mtx);
     CValidationState state;
-    BOOST_CHECK(CheckTransaction(tx, state, nullptr, true));
+    BOOST_CHECK(CheckTransaction(tx, state, true, true));
 }
 
 // Test 10: HasRefInputs() helper works correctly
