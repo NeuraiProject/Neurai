@@ -547,13 +547,14 @@ endif
 
 neurai_tx_LDADD = \
   $(LIBUNIVALUE) \
+  $(LIBNEURAI_SERVER) \
   $(LIBNEURAI_COMMON) \
   $(LIBNEURAI_UTIL) \
   $(LIBNEURAI_CONSENSUS) \
   $(LIBNEURAI_CRYPTO) \
   $(LIBSECP256K1)
 
-neurai_tx_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS) $(OQS_LIBS)
+neurai_tx_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS) $(EVENT_LIBS) $(OQS_LIBS)
 #
 
 # neuraiconsensus library #
