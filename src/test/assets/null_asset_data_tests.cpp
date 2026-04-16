@@ -124,8 +124,15 @@ CTxDestination MakePQDestination()
  *  pointer (e.g. CheckForAddressRestriction) do not segfault. */
 struct DePINContextualTestingSetup : public BasicTestingSetup {
     CAssetsCache globalAssetsCache;
-    DePINContextualTestingSetup() { passets = &globalAssetsCache; }
-    ~DePINContextualTestingSetup() { passets = nullptr; }
+    bool fPrevAssetIndex;
+    DePINContextualTestingSetup() : fPrevAssetIndex(fAssetIndex) {
+        fAssetIndex = false;   // avoid null passetsdb dereference
+        passets = &globalAssetsCache;
+    }
+    ~DePINContextualTestingSetup() {
+        passets = nullptr;
+        fAssetIndex = fPrevAssetIndex;
+    }
 };
 
 BOOST_FIXTURE_TEST_SUITE(null_asset_data_contextual_tests, DePINContextualTestingSetup)
@@ -193,7 +200,9 @@ BOOST_FIXTURE_TEST_SUITE(null_asset_data_contextual_tests, DePINContextualTestin
         CAssetsCache cache;
         const std::string ownerChangeAddress = EncodeDestination(ownerChangeDest);
         cache.mapAssetsAddressAmount[std::make_pair(assetName + OWNER_TAG, ownerChangeAddress)] = OWNER_ASSET_AMOUNT;
-        cache.setNewRestrictedAddressToAdd.insert(CAssetCacheRestrictedAddress(assetName, targetAddress, RestrictedType::FREEZE_ADDRESS));
+        // The freeze must live in the committed (parent) cache because
+        // VerifyDEPINOwnerChange checks with fSkipTempCache=true.
+        passets->setNewRestrictedAddressToAdd.insert(CAssetCacheRestrictedAddress(assetName, targetAddress, RestrictedType::FREEZE_ADDRESS));
 
         std::string error;
         BOOST_CHECK_MESSAGE(ContextualCheckNullAssetTxOut(tx.vout[1], &tx, &cache, error),
