@@ -332,6 +332,17 @@ public:
     void ConstructTransaction(CScript& script) const;
 };
 
+/** Output entry used by GetAssetData and wallet reporting */
+struct CAssetOutputEntry {
+    txnouttype type;
+    std::string assetName;
+    CTxDestination destination;
+    CAmount nAmount = 0;
+    std::string message;
+    int64_t expireTime;
+    int vout;
+};
+
 /** THESE ARE ONLY TO BE USED WHEN ADDING THINGS TO THE CACHE DURING CONNECT AND DISCONNECT BLOCK */
 struct CAssetCacheNewAsset
 {

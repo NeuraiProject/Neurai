@@ -488,81 +488,6 @@ bool OwnerFromTransaction(const CTransaction& tx, std::string& ownerName, std::s
 // ReissueAssetFromScript — moved to assets/assets_fromscript.cpp
 // (LIBNEURAI_COMMON) so that neurai-tx can link without the full server stack.
 
-bool AssetNullDataFromScript(const CScript& scriptPubKey, CNullAssetTxData& assetData, std::string& strAddress)
-{
-    if (!scriptPubKey.IsNullAssetTxDataScript()) {
-        return false;
-    }
-
-    CTxDestination destination;
-    ExtractDestination(scriptPubKey, destination);
-
-    strAddress = EncodeDestination(destination);
-
-    int dataOffset = -1;
-    if (scriptPubKey.size() > 23 && scriptPubKey[0] == OP_XNA_ASSET && scriptPubKey[1] == 0x14) {
-        dataOffset = 23; // OP_XNA_ASSET + push20 + 20-byte hash + pushdata opcode
-    } else if (scriptPubKey.size() > 36 && scriptPubKey[0] == OP_XNA_ASSET && scriptPubKey[1] == OP_1 && scriptPubKey[2] == 0x20) {
-        dataOffset = 36; // OP_XNA_ASSET + OP_1 + push32 + 32-byte commitment + pushdata opcode
-    } else {
-        return false;
-    }
-
-    std::vector<unsigned char> vchAssetData;
-    vchAssetData.insert(vchAssetData.end(), scriptPubKey.begin() + dataOffset, scriptPubKey.end());
-
-    CDataStream ssData(vchAssetData, SER_NETWORK, PROTOCOL_VERSION);
-
-    try {
-        ssData >> assetData;
-    } catch(std::exception& e) {
-        error("Failed to get the null asset tx data from the stream: %s", e.what());
-        return false;
-    }
-
-    return true;
-}
-
-bool GlobalAssetNullDataFromScript(const CScript& scriptPubKey, CNullAssetTxData& assetData)
-{
-    if (!scriptPubKey.IsNullGlobalRestrictionAssetTxDataScript()) {
-        return false;
-    }
-
-    std::vector<unsigned char> vchAssetData;
-    vchAssetData.insert(vchAssetData.end(), scriptPubKey.begin() + OFFSET_FOUR, scriptPubKey.end());
-    CDataStream ssData(vchAssetData, SER_NETWORK, PROTOCOL_VERSION);
-
-    try {
-        ssData >> assetData;
-    } catch(std::exception& e) {
-        error("Failed to get the global restriction asset tx data from the stream: %s", e.what());
-        return false;
-    }
-
-    return true;
-}
-
-bool AssetNullVerifierDataFromScript(const CScript& scriptPubKey, CNullAssetTxVerifierString& verifierData)
-{
-    if (!scriptPubKey.IsNullAssetVerifierTxDataScript()) {
-        return false;
-    }
-
-    std::vector<unsigned char> vchAssetData;
-    vchAssetData.insert(vchAssetData.end(), scriptPubKey.begin() + OFFSET_THREE, scriptPubKey.end());
-    CDataStream ssData(vchAssetData, SER_NETWORK, PROTOCOL_VERSION);
-
-    try {
-        ssData >> verifierData;
-    } catch(std::exception& e) {
-        error("Failed to get the verifier string from the stream: %s", e.what());
-        return false;
-    }
-
-    return true;
-}
-
 //! Call VerifyNewAsset if this function returns true
 bool CTransaction::IsNewAsset() const
 {
@@ -3105,80 +3030,6 @@ bool GetAssetInfoFromCoin(const Coin& coin, std::string& strName, CAmount& nAmou
     return GetAssetInfoFromScript(coin.out.scriptPubKey, strName, nAmount);
 }
 
-bool GetAssetData(const CScript& script, CAssetOutputEntry& data)
-{
-    // Placeholder strings that will get set if you successfully get the transfer or asset from the script
-    std::string address = "";
-    std::string assetName = "";
-
-    int nType = 0;
-    bool fIsOwner = false;
-    if (!script.IsAssetScript(nType, fIsOwner)) {
-        return false;
-    }
-
-    txnouttype type = txnouttype(nType);
-
-    // Get the New Asset or Transfer Asset from the scriptPubKey
-    if (type == TX_NEW_ASSET && !fIsOwner) {
-        CNewAsset asset;
-        if (AssetFromScript(script, asset, address)) {
-            data.type = TX_NEW_ASSET;
-            data.nAmount = asset.nAmount;
-            data.destination = DecodeDestination(address);
-            data.assetName = asset.strName;
-            return true;
-        } else if (MsgChannelAssetFromScript(script, asset, address)) {
-            data.type = TX_NEW_ASSET;
-            data.nAmount = asset.nAmount;
-            data.destination = DecodeDestination(address);
-            data.assetName = asset.strName;
-        } else if (QualifierAssetFromScript(script, asset, address)) {
-            data.type = TX_NEW_ASSET;
-            data.nAmount = asset.nAmount;
-            data.destination = DecodeDestination(address);
-            data.assetName = asset.strName;
-        } else if (RestrictedAssetFromScript(script, asset, address)) {
-            data.type = TX_NEW_ASSET;
-            data.nAmount = asset.nAmount;
-            data.destination = DecodeDestination(address);
-            data.assetName = asset.strName;
-        }
-    } else if (type == TX_TRANSFER_ASSET) {
-        CAssetTransfer transfer;
-        if (TransferAssetFromScript(script, transfer, address)) {
-            data.type = TX_TRANSFER_ASSET;
-            data.nAmount = transfer.nAmount;
-            data.destination = DecodeDestination(address);
-            data.assetName = transfer.strName;
-            data.message = transfer.message;
-            data.expireTime = transfer.nExpireTime;
-            return true;
-        } else {
-            LogPrintf("Failed to get transfer from script\n");
-        }
-    } else if (type == TX_NEW_ASSET && fIsOwner) {
-        if (OwnerAssetFromScript(script, assetName, address)) {
-            data.type = TX_NEW_ASSET;
-            data.nAmount = OWNER_ASSET_AMOUNT;
-            data.destination = DecodeDestination(address);
-            data.assetName = assetName;
-            return true;
-        }
-    } else if (type == TX_REISSUE_ASSET) {
-        CReissueAsset reissue;
-        if (ReissueAssetFromScript(script, reissue, address)) {
-            data.type = TX_REISSUE_ASSET;
-            data.nAmount = reissue.nAmount;
-            data.destination = DecodeDestination(address);
-            data.assetName = reissue.strName;
-            return true;
-        }
-    }
-
-    return false;
-}
-
 #ifdef ENABLE_WALLET
 void GetAllAdministrativeAssets(CWallet *pwallet, std::vector<std::string> &names, int nMinConf)
 {
@@ -3472,35 +3323,6 @@ std::string DecodeAssetData(std::string encoded)
 
     return "";
 
-};
-
-std::string EncodeAssetData(std::string decoded)
-{
-    if (decoded.size() == 34) {
-        return EncodeIPFS(decoded);
-    }
-    else if (decoded.size() == 32){
-        return HexStr(decoded);
-    }
-
-    return "";
-}
-
-// 46 char base58 --> 34 char KAW compatible
-std::string DecodeIPFS(std::string encoded)
-{
-    std::vector<unsigned char> b;
-    DecodeBase58(encoded, b);
-    return std::string(b.begin(), b.end());
-};
-
-// 34 char KAW compatible --> 46 char base58
-std::string EncodeIPFS(std::string decoded){
-    std::vector<char> charData(decoded.begin(), decoded.end());
-    std::vector<unsigned char> unsignedCharData;
-    for (char c : charData)
-        unsignedCharData.push_back(static_cast<unsigned char>(c));
-    return EncodeBase58(unsignedCharData);
 };
 
 #ifdef ENABLE_WALLET

@@ -69,7 +69,7 @@ class Coin;
 class CWallet;
 class CReserveKey;
 class CWalletTx;
-struct CAssetOutputEntry;
+// CAssetOutputEntry is defined in assettypes.h (included above)
 class CCoinControl;
 struct CBlockAssetUndo;
 class COutput;

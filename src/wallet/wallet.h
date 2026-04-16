@@ -191,19 +191,6 @@ struct COutputEntry
     int vout;
 };
 
-/** XNA START */
-struct CAssetOutputEntry
-{
-    txnouttype type;
-    std::string assetName;
-    CTxDestination destination;
-    CAmount nAmount = 0;
-    std::string message;
-    int64_t expireTime;
-    int vout;
-};
-/** XNA END */
-
 /** A transaction with a merkle branch linking it to the block chain. */
 class CMerkleTx
 {
