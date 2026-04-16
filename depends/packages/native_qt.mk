@@ -105,8 +105,8 @@ define $(package)_build_cmds
 endef
 
 define $(package)_stage_cmds
-  cmake --install qtbase/build --prefix $($(package)_staging_prefix) && \
-  cmake --install qttools/build --prefix $($(package)_staging_prefix)
+  cmake --install qtbase/build  --prefix $($(package)_staging_prefix_dir) && \
+  cmake --install qttools/build --prefix $($(package)_staging_prefix_dir)
 endef
 
 define $(package)_postprocess_cmds

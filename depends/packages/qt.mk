@@ -229,9 +229,9 @@ endef
 # Install all three modules to the depends staging prefix.
 # cmake --install --prefix overrides CMAKE_INSTALL_PREFIX without DESTDIR indirection.
 define $(package)_stage_cmds
-  cmake --install qtbase/build       --prefix $($(package)_staging_prefix) && \
-  cmake --install qttools/build      --prefix $($(package)_staging_prefix) && \
-  cmake --install qttranslations/build --prefix $($(package)_staging_prefix)
+  cmake --install qtbase/build         --prefix $($(package)_staging_prefix_dir) && \
+  cmake --install qttools/build        --prefix $($(package)_staging_prefix_dir) && \
+  cmake --install qttranslations/build --prefix $($(package)_staging_prefix_dir)
 endef
 
 define $(package)_postprocess_cmds
