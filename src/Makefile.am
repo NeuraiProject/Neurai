@@ -549,11 +549,10 @@ endif
 
 neurai_tx_LDADD = \
   $(LIBUNIVALUE) \
-  -Wl,--start-group \
   $(LIBNEURAI_COMMON) \
   $(LIBNEURAI_UTIL) \
   $(LIBNEURAI_CONSENSUS) \
-  -Wl,--end-group \
+  $(LIBNEURAI_COMMON) \
   $(LIBNEURAI_CRYPTO) \
   $(LIBSECP256K1)
 
