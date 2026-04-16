@@ -1102,6 +1102,116 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                     }
                         break;
 
+                    // =====================================================
+                    // NIP-017: OP_REFINPUT* family (reference input
+                    // introspection, gated by SCRIPT_VERIFY_REFINPUTS)
+                    // =====================================================
+
+                    case OP_REFINPUTCOUNT:
+                    {
+                        if (!(flags & SCRIPT_VERIFY_REFINPUTS))
+                        {
+                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
+                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+                            break;
+                        }
+
+                        valtype vchResult;
+                        if (!checker.GetRefInputCount(vchResult))
+                            return set_error(serror, SCRIPT_ERR_REFINPUTCOUNT);
+
+                        stack.push_back(vchResult);
+                    }
+                        break;
+
+                    case OP_REFINPUTFIELD:
+                    {
+                        if (!(flags & SCRIPT_VERIFY_REFINPUTS))
+                        {
+                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
+                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+                            break;
+                        }
+
+                        // (nRef selector -- field_bytes)
+                        if (stack.size() < 2)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+                        const valtype& vchSelector = stacktop(-1);
+                        if (vchSelector.size() != 1)
+                            return set_error(serror, SCRIPT_ERR_REFINPUTFIELD);
+                        const unsigned char selector = vchSelector[0];
+
+                        const int nRef = CScriptNum(stacktop(-2), fRequireMinimal).getint();
+                        if (nRef < 0)
+                            return set_error(serror, SCRIPT_ERR_REFINPUTFIELD);
+
+                        // Selectors 0x01-0x03 valid (value, authcommitment, scriptPubKey)
+                        if (selector == 0x00 || selector >= 0x04)
+                            return set_error(serror, SCRIPT_ERR_REFINPUTFIELD);
+
+                        valtype vchResult;
+                        if (!checker.GetRefInputField(static_cast<unsigned int>(nRef), selector, vchResult))
+                            return set_error(serror, SCRIPT_ERR_REFINPUTFIELD);
+
+                        // Selector 0x01 (nValue): convert to CScriptNum if 64-bit integers enabled
+                        if (selector == 0x01 && (flags & SCRIPT_VERIFY_64BIT_INTEGERS) && vchResult.size() == 8)
+                        {
+                            int64_t nValue;
+                            memcpy(&nValue, vchResult.data(), 8);
+                            vchResult = CScriptNum(nValue).getvch();
+                        }
+
+                        popstack(stack);
+                        popstack(stack);
+                        stack.push_back(vchResult);
+                    }
+                        break;
+
+                    case OP_REFINPUTASSETFIELD:
+                    {
+                        if (!(flags & SCRIPT_VERIFY_REFINPUTS))
+                        {
+                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
+                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+                            break;
+                        }
+
+                        // (nRef selector -- asset_field_bytes)
+                        if (stack.size() < 2)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+                        const valtype& vchSelector = stacktop(-1);
+                        if (vchSelector.size() != 1)
+                            return set_error(serror, SCRIPT_ERR_REFINPUTASSETFIELD);
+                        const unsigned char selector = vchSelector[0];
+
+                        const int nRef = CScriptNum(stacktop(-2), fRequireMinimal).getint();
+                        if (nRef < 0)
+                            return set_error(serror, SCRIPT_ERR_REFINPUTASSETFIELD);
+
+                        // Selectors 0x01-0x07 valid (same as OP_OUTPUTASSETFIELD)
+                        if (selector == 0x00 || selector >= 0x08)
+                            return set_error(serror, SCRIPT_ERR_REFINPUTASSETFIELD);
+
+                        valtype vchResult;
+                        if (!checker.GetRefInputAssetField(static_cast<unsigned int>(nRef), selector, vchResult))
+                            return set_error(serror, SCRIPT_ERR_REFINPUTASSETFIELD);
+
+                        // Selector 0x02 (amount): convert to CScriptNum if 64-bit integers enabled
+                        if (selector == 0x02 && (flags & SCRIPT_VERIFY_64BIT_INTEGERS) && vchResult.size() == 8)
+                        {
+                            int64_t nAmount;
+                            memcpy(&nAmount, vchResult.data(), 8);
+                            vchResult = CScriptNum(nAmount).getvch();
+                        }
+
+                        popstack(stack);
+                        popstack(stack);
+                        stack.push_back(vchResult);
+                    }
+                        break;
+
                     case OP_TXLOCKTIME:
                     {
                         if (!(flags & SCRIPT_VERIFY_TXLOCKTIME))
@@ -2838,14 +2948,29 @@ bool TransactionSignatureChecker::GetRefInputField(unsigned int nRef, unsigned c
     const CTxOut& refOut = (*m_refOutputs)[nRef];
 
     switch (selector) {
-        case 0x00: { // nValue (8 bytes LE)
+        case 0x01: { // nValue (8 bytes LE) — matches TXFIELD_SPENT_VALUE
             int64_t val = refOut.nValue;
             result.resize(8);
             memcpy(result.data(), &val, 8);
             return true;
         }
-        case 0x01: { // scriptPubKey (raw bytes)
-            result.assign(refOut.scriptPubKey.begin(), refOut.scriptPubKey.end());
+        case 0x02: { // AuthScript commitment (32 bytes) — matches TXFIELD_SPENT_AUTHCOMMITMENT
+            const CScript& spk = refOut.scriptPubKey;
+            if (spk.size() < 34)
+                return false;
+            const unsigned char* data = spk.data();
+            if (data[0] != 0x51)   // OP_1 (witness version 1)
+                return false;
+            if (data[1] != 0x20)   // push exactly 32 bytes
+                return false;
+            result.assign(data + 2, data + 34);
+            return true;
+        }
+        case 0x03: { // Full scriptPubKey (raw bytes) — matches TXFIELD_SPENT_FULLSCRIPT
+            const CScript& spk = refOut.scriptPubKey;
+            if (spk.size() > MAX_SCRIPT_ELEMENT_SIZE)
+                return false;  // too large to be a valid stack element
+            result.assign(spk.begin(), spk.end());
             return true;
         }
         default:
@@ -2861,9 +2986,34 @@ bool TransactionSignatureChecker::GetRefInputAssetField(unsigned int nRef, unsig
     if (nRef >= m_refOutputs->size())
         return false;
 
-    // Asset field introspection follows the same pattern as GetOutputAssetField
-    // but from resolved reference outputs. Placeholder for future asset parsing.
-    // For now, return false to indicate no asset data available.
+    const CScript& scriptPubKey = (*m_refOutputs)[nRef].scriptPubKey;
+    std::string strAddress;
+
+    CAssetTransfer transfer;
+    if (TransferAssetFromScript(scriptPubKey, transfer, strAddress))
+        return ExtractAssetField_Transfer(transfer, selector, result);
+
+    CNewAsset newAsset;
+    if (AssetFromScript(scriptPubKey, newAsset, strAddress))
+        return ExtractAssetField_New(newAsset, selector, result);
+
+    if (MsgChannelAssetFromScript(scriptPubKey, newAsset, strAddress))
+        return ExtractAssetField_New(newAsset, selector, result);
+
+    if (QualifierAssetFromScript(scriptPubKey, newAsset, strAddress))
+        return ExtractAssetField_New(newAsset, selector, result);
+
+    if (RestrictedAssetFromScript(scriptPubKey, newAsset, strAddress))
+        return ExtractAssetField_New(newAsset, selector, result);
+
+    CReissueAsset reissue;
+    if (ReissueAssetFromScript(scriptPubKey, reissue, strAddress))
+        return ExtractAssetField_Reissue(reissue, selector, result);
+
+    std::string ownerName;
+    if (OwnerAssetFromScript(scriptPubKey, ownerName, strAddress))
+        return ExtractAssetField_Owner(ownerName, selector, result);
+
     return false;
 }
 

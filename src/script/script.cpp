@@ -150,6 +150,9 @@ const char* GetOpName(opcodetype opcode)
     case OP_INPUTASSETFIELD        : return "OP_INPUTASSETFIELD";
     case OP_INPUTCOUNT             : return "OP_INPUTCOUNT";
     case OP_OUTPUTCOUNT            : return "OP_OUTPUTCOUNT";
+    case OP_REFINPUTFIELD          : return "OP_REFINPUTFIELD";
+    case OP_REFINPUTASSETFIELD     : return "OP_REFINPUTASSETFIELD";
+    case OP_REFINPUTCOUNT          : return "OP_REFINPUTCOUNT";
 
     /** XNA START */
     case OP_XNA_ASSET              : return "OP_XNA_ASSET";

@@ -129,6 +129,12 @@ const char* ScriptErrorString(const ScriptError serror)
             return "Numeric negation overflowed the 64-bit numeric domain";
         case SCRIPT_ERR_TXLOCKTIME:
             return "OP_TXLOCKTIME failed (transaction locktime unavailable)";
+        case SCRIPT_ERR_REFINPUTFIELD:
+            return "OP_REFINPUTFIELD failed (invalid ref index, invalid selector, unavailable field, or invalid referenced script)";
+        case SCRIPT_ERR_REFINPUTASSETFIELD:
+            return "OP_REFINPUTASSETFIELD failed (invalid ref index, invalid selector, or unavailable asset field)";
+        case SCRIPT_ERR_REFINPUTCOUNT:
+            return "OP_REFINPUTCOUNT failed (reference outputs not available)";
         case SCRIPT_ERR_UNKNOWN_ERROR:
         case SCRIPT_ERR_ERROR_COUNT:
         default: break;
