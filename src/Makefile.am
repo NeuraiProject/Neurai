@@ -273,6 +273,7 @@ libneurai_server_a_SOURCES = \
   noui.cpp \
   assets/assets.cpp \
   assets/assetdb.cpp \
+  coins_server.cpp \
   assets/messages.cpp \
   assets/myassetsdb.cpp \
   assets/restricteddb.cpp \
@@ -548,9 +549,11 @@ endif
 
 neurai_tx_LDADD = \
   $(LIBUNIVALUE) \
-  $(LIBNEURAI_CONSENSUS) \
+  -Wl,--start-group \
   $(LIBNEURAI_COMMON) \
   $(LIBNEURAI_UTIL) \
+  $(LIBNEURAI_CONSENSUS) \
+  -Wl,--end-group \
   $(LIBNEURAI_CRYPTO) \
   $(LIBSECP256K1)
 

@@ -852,9 +852,18 @@ std::string EncodeAssetData(std::string decoded)
 }
 
 // ---------------------------------------------------------------------------
-// AddAddressSeen — weak stub so that COMMON (coins.cpp) links in neurai-tx.
-// The real definition in assets/messages.cpp (SERVER) overrides this when
-// neuraid / neurai-qt are linked.
+// Weak stubs — COMMON placeholders that neurai-tx links against.
+// The real SERVER definitions override these when neuraid / neurai-qt link.
 // ---------------------------------------------------------------------------
 
+// messages.cpp (SERVER) → real definition
 __attribute__((weak)) void AddAddressSeen(const std::string& /*address*/) {}
+
+// validation.cpp (SERVER) → real definition
+__attribute__((weak)) bool AreAssetsDeployed() { return false; }
+
+// consensus/consensus.cpp (SERVER) → real definition
+__attribute__((weak)) unsigned int GetMaxBlockWeight() { return 8000000u; }
+
+// assets/assets.cpp (SERVER) → real definition
+__attribute__((weak)) bool CAssetsCache::TrySpendCoin(const COutPoint& /*out*/, const CTxOut& /*coin*/) { return true; }
