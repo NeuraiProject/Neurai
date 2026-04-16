@@ -72,7 +72,6 @@ $(package)_config_opts += -DQT_FEATURE_vulkan=OFF
 
 # --- Disable unneeded widgets, dialogs, and network features ---
 $(package)_config_opts += -DQT_FEATURE_colordialog=OFF
-$(package)_config_opts += -DQT_FEATURE_commandlineparser=OFF
 $(package)_config_opts += -DQT_FEATURE_concurrent=OFF
 $(package)_config_opts += -DQT_FEATURE_dial=OFF
 $(package)_config_opts += -DQT_FEATURE_fontcombobox=OFF
