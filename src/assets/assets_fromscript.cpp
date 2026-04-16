@@ -7,6 +7,7 @@
 // can link against them without pulling in the full server stack.
 
 #include "assets.h"
+#include "base58.h"
 #include "script/standard.h"
 #include "streams.h"
 #include "util.h"
