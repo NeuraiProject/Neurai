@@ -33,8 +33,12 @@ define $(package)_config_cmds
     meson setup $($(package)_config_opts) .. .
 endef
 
+# Build only the static libraries we ship. Avoids compiling the test and
+# benchmark binaries (test-x11, test-x11comp, bench-x11), which link against
+# libxcb.a and would pull in libXau symbols (XauGetBestAuthByAddr,
+# XauDisposeAuth) that are not provided by the depends tree.
 define $(package)_build_cmds
-  ninja
+  ninja libxkbcommon.a libxkbcommon-x11.a
 endef
 
 define $(package)_stage_cmds
