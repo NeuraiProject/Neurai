@@ -572,7 +572,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
             //
             if (!script.GetOp(pc, opcode, vchPushValue))
                 return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
-            if (vchPushValue.size() > MAX_SCRIPT_ELEMENT_SIZE)
+            if (vchPushValue.size() > EffectiveMaxScriptElementSize(flags))
                 return set_error(serror, SCRIPT_ERR_PUSH_SIZE);
 
             // Note how OP_RESERVED does not count towards the opcode limit.
@@ -588,8 +588,9 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                 valtype& vch1 = stacktop(-2);
                 valtype& vch2 = stacktop(-1);
 
-                // Security: Check that concatenation won't exceed MAX_SCRIPT_ELEMENT_SIZE (520 bytes)
-                if (vch1.size() + vch2.size() > MAX_SCRIPT_ELEMENT_SIZE)
+                // Security: concatenation must not exceed the effective per-element size cap.
+                // NIP-018: the cap is 3072 when SCRIPT_VERIFY_CHECKSIGFROMSTACK is set, 520 otherwise.
+                if (vch1.size() + vch2.size() > EffectiveMaxScriptElementSize(flags))
                     return set_error(serror, SCRIPT_ERR_PUSH_SIZE);
 
                 // Concatenate vch2 onto vch1
@@ -877,6 +878,11 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         if (!checker.GetTxField(fieldSelector, vchField))
                             return set_error(serror, SCRIPT_ERR_TXFIELD);
 
+                        // NIP-018: size check lifted from the checker; keep
+                        // SCRIPT_ERR_TXFIELD to preserve opcode semantics.
+                        if (vchField.size() > EffectiveMaxScriptElementSize(flags))
+                            return set_error(serror, SCRIPT_ERR_TXFIELD);
+
                         popstack(stack);
                         stack.push_back(vchField);
                     }
@@ -984,6 +990,11 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
 
                         valtype vchScript;
                         if (!checker.GetOutputScript((unsigned int)nOut, vchScript))
+                            return set_error(serror, SCRIPT_ERR_OUTPUTSCRIPT);
+
+                        // NIP-018: size check lifted from the checker; keep
+                        // SCRIPT_ERR_OUTPUTSCRIPT to preserve opcode semantics.
+                        if (vchScript.size() > EffectiveMaxScriptElementSize(flags))
                             return set_error(serror, SCRIPT_ERR_OUTPUTSCRIPT);
 
                         popstack(stack);
@@ -1157,6 +1168,12 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
 
                         valtype vchResult;
                         if (!checker.GetRefInputField(static_cast<unsigned int>(nRef), selector, vchResult))
+                            return set_error(serror, SCRIPT_ERR_REFINPUTFIELD);
+
+                        // NIP-018: size check lifted from the checker (selector
+                        // 0x03 returns a scriptPubKey). Keep SCRIPT_ERR_REFINPUTFIELD
+                        // to preserve opcode semantics.
+                        if (vchResult.size() > EffectiveMaxScriptElementSize(flags))
                             return set_error(serror, SCRIPT_ERR_REFINPUTFIELD);
 
                         // Selector 0x01 (nValue): convert to CScriptNum if 64-bit integers enabled
@@ -1997,6 +2014,18 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
             // Size limits
             if (stack.size() + altstack.size() > MAX_STACK_SIZE)
                 return set_error(serror, SCRIPT_ERR_STACK_SIZE);
+
+            // NIP-018: total stack-bytes cap, enforced only on the CSFS path.
+            // Bounds worst-case memory when PQ-sized (3072 B) elements are
+            // permitted. Non-CSFS scripts keep the implicit 520 KB bound from
+            // MAX_STACK_SIZE × MAX_SCRIPT_ELEMENT_SIZE.
+            if (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) {
+                size_t stack_bytes = 0;
+                for (const auto& item : stack)    stack_bytes += item.size();
+                for (const auto& item : altstack) stack_bytes += item.size();
+                if (stack_bytes > MAX_STACK_BYTES)
+                    return set_error(serror, SCRIPT_ERR_STACK_SIZE);
+            }
         }
     }
     catch (...)
@@ -2780,12 +2809,13 @@ bool TransactionSignatureChecker::GetTxField(unsigned char selector,
     }
 
     case TXFIELD_SPENT_FULLSCRIPT: {
-        // Full scriptPubKey of the spent UTXO (raw bytes, max 520).
+        // Full scriptPubKey of the spent UTXO (raw bytes).
+        // NIP-018: size cap is enforced by the caller (OP_TXFIELD) using
+        // EffectiveMaxScriptElementSize(flags), so the checker returns the
+        // bytes unconditionally and the caller emits SCRIPT_ERR_TXFIELD.
         if (!m_spentScriptPubKey)
             return false;
         const CScript& spk = *m_spentScriptPubKey;
-        if (spk.size() > MAX_SCRIPT_ELEMENT_SIZE)
-            return false;  // too large to be a valid stack element
         result.assign(spk.begin(), spk.end());
         return true;
     }
@@ -2817,10 +2847,10 @@ bool TransactionSignatureChecker::GetOutputScript(unsigned int nOut,
     if (nOut >= txTo->vout.size())
         return false;
 
+    // NIP-018: size cap is enforced by the caller (OP_OUTPUTSCRIPT) using
+    // EffectiveMaxScriptElementSize(flags). Checker returns bytes
+    // unconditionally; caller emits SCRIPT_ERR_OUTPUTSCRIPT on oversize.
     const CScript& spk = txTo->vout[nOut].scriptPubKey;
-    if (spk.size() > MAX_SCRIPT_ELEMENT_SIZE)
-        return false;
-
     result.assign(spk.begin(), spk.end());
     return true;
 }
@@ -2972,9 +3002,10 @@ bool TransactionSignatureChecker::GetRefInputField(unsigned int nRef, unsigned c
             return true;
         }
         case 0x03: { // Full scriptPubKey (raw bytes) — matches TXFIELD_SPENT_FULLSCRIPT
+            // NIP-018: size cap is enforced by the caller (OP_REFINPUTFIELD)
+            // using EffectiveMaxScriptElementSize(flags). Checker returns
+            // bytes unconditionally; caller emits SCRIPT_ERR_REFINPUTFIELD.
             const CScript& spk = refOut.scriptPubKey;
-            if (spk.size() > MAX_SCRIPT_ELEMENT_SIZE)
-                return false;  // too large to be a valid stack element
             result.assign(spk.begin(), spk.end());
             return true;
         }
@@ -3089,7 +3120,7 @@ static bool VerifyAuthScriptCore(const CScriptWitness& witness, const std::vecto
     std::vector<std::vector<unsigned char>> stack;
     stack.reserve(witness.stack.size() - argsOffset);
     for (size_t i = argsOffset; i + 1 < witness.stack.size(); ++i) {
-        if (witness.stack[i].size() > MAX_SCRIPT_ELEMENT_SIZE) {
+        if (witness.stack[i].size() > EffectiveMaxScriptElementSize(flags)) {
             return set_error(serror, SCRIPT_ERR_PUSH_SIZE);
         }
         stack.push_back(witness.stack[i]);
@@ -3162,10 +3193,11 @@ static bool VerifyWitnessProgram(const CScriptWitness &witness, int witversion, 
         return set_success(serror);
     }
 
-    // Disallow stack item size > MAX_SCRIPT_ELEMENT_SIZE in witness stack
+    // Disallow stack item size > effective per-element cap in witness stack.
+    // NIP-018: effective cap is 3072 when SCRIPT_VERIFY_CHECKSIGFROMSTACK is set.
     for (unsigned int i = 0; i < stack.size(); i++)
     {
-        if (stack.at(i).size() > MAX_SCRIPT_ELEMENT_SIZE)
+        if (stack.at(i).size() > EffectiveMaxScriptElementSize(flags))
             return set_error(serror, SCRIPT_ERR_PUSH_SIZE);
     }
 

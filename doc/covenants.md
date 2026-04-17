@@ -532,7 +532,7 @@ Unlike overlay protocols or token standards built on top of generic scripting, N
 
 ### Stack Element Size Limit
 
-All data pushed onto the stack is bounded by `MAX_SCRIPT_ELEMENT_SIZE` (520 bytes). This applies to `OP_CAT` results, `OP_OUTPUTSCRIPT` returns, and `OP_TXFIELD` outputs. Scripts that exceed this limit fail cleanly.
+All data pushed onto the stack is bounded by the effective per-element cap: `MAX_SCRIPT_ELEMENT_SIZE` (520 bytes) by default, or `MAX_PQ_SCRIPT_ELEMENT_SIZE` (3072 bytes) when `SCRIPT_VERIFY_CHECKSIGFROMSTACK` is active (NIP-018). This applies to `OP_CAT` results, `OP_OUTPUTSCRIPT` returns, `OP_REFINPUTFIELD` returns, and `OP_TXFIELD` outputs. Scripts that exceed the effective limit fail cleanly. Under CSFS, an additional `MAX_STACK_BYTES` (256 KiB) cap bounds the total bytes held on `stack + altstack`.
 
 ### Quadratic Hashing Prevention
 

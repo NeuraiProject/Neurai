@@ -218,22 +218,10 @@ BOOST_AUTO_TEST_CASE(csfs_ecdsa_empty_sig_returns_false)
 // PQ: Valid ML-DSA-44 signature (bare script)
 // ============================================================================
 //
-// DISABLED: this test combines OP_CHECKSIGFROMSTACK with a PQ signature as a
-// script push, a case that the current script machinery does NOT support.
-//
-// Normal PQ spends work fine: they use witness v1 AuthScript, where the
-// signature is read directly from witness.stack[1] (see VerifyAuthScriptCore
-// in interpreter.cpp) and never goes through the 520-byte push limit.
-//
-// OP_CHECKSIGFROMSTACK, by contrast, reads sig/msg/pubkey from the *script*
-// stack — which means the sig must be pushed as a script element. PQ sigs
-// are 2420 bytes and hit SCRIPT_ERR_PUSH_SIZE at interpreter.cpp:575 before
-// reaching CheckSigFromStack.
-//
-// Re-enable if and when a design choice is made on how to deliver PQ data
-// to OP_CSFS (e.g. witness-v2 with larger element limit, or a dedicated
-// OP_CSFS_PQ opcode that reads the sig from an out-of-stack location).
-#if 0
+// Re-enabled by NIP-018: under SCRIPT_VERIFY_CHECKSIGFROMSTACK the per-element
+// cap is MAX_PQ_SCRIPT_ELEMENT_SIZE (3072), which admits PQ sig (2421 B) and
+// PQ pubkey (1313 B) as script pushes. See EffectiveMaxScriptElementSize()
+// in interpreter.h.
 BOOST_AUTO_TEST_CASE(csfs_pq_valid_signature)
 {
     const std::vector<unsigned char> pqSeed = ParseHex("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
@@ -258,17 +246,12 @@ BOOST_AUTO_TEST_CASE(csfs_pq_valid_signature)
     // Use strict flags (which enforce PQ sig size = ML_DSA_44_SIG_SIZE + 1)
     BOOST_CHECK(RunBareScript(script, CSFS_FLAGS_STRICT, tx));
 }
-#endif
 
 // ============================================================================
 // PQ: Wrong message fails
 // ============================================================================
 //
-// DISABLED: same reason as csfs_pq_valid_signature — OP_CHECKSIGFROMSTACK
-// requires the signature to be pushed onto the script stack, which the
-// 520-byte MAX_SCRIPT_ELEMENT_SIZE forbids for PQ sigs (2420 B). Normal PQ
-// spends (witness v1 AuthScript) are unaffected.
-#if 0
+// Re-enabled by NIP-018: see csfs_pq_valid_signature.
 BOOST_AUTO_TEST_CASE(csfs_pq_wrong_message)
 {
     const std::vector<unsigned char> pqSeed = ParseHex("0102030405060708091011121314151617181920212223242526272829303132");
@@ -291,7 +274,6 @@ BOOST_AUTO_TEST_CASE(csfs_pq_wrong_message)
     BOOST_CHECK(!RunBareScript(script, CSFS_FLAGS_STRICT, tx, &err));
     BOOST_CHECK_EQUAL(err, SCRIPT_ERR_SIG_NULLFAIL);
 }
-#endif
 
 // ============================================================================
 // ECDSA via P2WSH wrapper
@@ -334,13 +316,10 @@ BOOST_AUTO_TEST_CASE(csfs_ecdsa_p2wsh)
 // to be relayed by standard nodes.
 // ============================================================================
 
-// DISABLED: P2WSH routes the signature through witness.stack[i] which IS
-// bounded by MAX_SCRIPT_ELEMENT_SIZE (520 B) at interpreter.cpp:3087.  Note
-// this is the P2WSH stack loop — NOT the witness-v1 AuthScript direct-index
-// path used by real PQ address spends (that one bypasses the size cap for
-// witness.stack[1] and [2]).  PQ sigs in P2WSH witness data would need a
-// new witness version with a larger element limit, or a dedicated PQ opcode.
-#if 0
+// Re-enabled by NIP-018: the P2WSH witness-stack loop now calls
+// EffectiveMaxScriptElementSize(flags), which accepts PQ-sized items under
+// SCRIPT_VERIFY_CHECKSIGFROMSTACK. Witness-v1 AuthScript direct-index
+// spends are unaffected (they bypassed the loop already).
 BOOST_AUTO_TEST_CASE(csfs_pq_p2wsh)
 {
     const std::vector<unsigned char> pqSeed = ParseHex("aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899");
@@ -366,7 +345,6 @@ BOOST_AUTO_TEST_CASE(csfs_pq_p2wsh)
 
     BOOST_CHECK(RunP2WSH(witnessScript, witnessData, CSFS_FLAGS_STRICT, tx));
 }
-#endif
 
 // ============================================================================
 // Disabled: treated as NOP5
@@ -477,8 +455,8 @@ BOOST_AUTO_TEST_CASE(csfs_ecdsa_no_hashtype_nonstrict)
 // Regression: PQ signature WITHOUT hashtype byte under non-strict flags
 // ============================================================================
 
-// DISABLED: PQ signatures exceed MAX_SCRIPT_ELEMENT_SIZE (see csfs_pq_valid_signature).
-#if 0
+// Re-enabled by NIP-018: PQ sig pushes are permitted under
+// SCRIPT_VERIFY_CHECKSIGFROMSTACK.
 BOOST_AUTO_TEST_CASE(csfs_pq_no_hashtype_nonstrict)
 {
     // Same test for PQ: a raw ML-DSA-44 signature (2420 bytes) without hashtype
@@ -518,7 +496,6 @@ BOOST_AUTO_TEST_CASE(csfs_pq_no_hashtype_nonstrict)
 
     BOOST_CHECK(RunBareScript(scriptOk, minimalFlags, tx));
 }
-#endif
 
 // ============================================================================
 // Regression: ECDSA signature WITHOUT hashtype byte under strict flags
@@ -556,11 +533,10 @@ BOOST_AUTO_TEST_CASE(csfs_ecdsa_no_hashtype_strict)
 
 BOOST_AUTO_TEST_CASE(csfs_pq_no_hashtype_strict)
 {
-    // A raw PQ signature is 2420 bytes, which exceeds MAX_SCRIPT_ELEMENT_SIZE
-    // (520 bytes). Pushing it into the script triggers SCRIPT_ERR_PUSH_SIZE
-    // in EvalScript *before* CheckSignatureEncodingForPubKey can run. The
-    // intent of the test (raw PQ sig without hashtype is rejected in strict
-    // mode) still holds — the rejection simply happens at the push stage.
+    // NIP-018 restored original intent: under SCRIPT_VERIFY_CHECKSIGFROMSTACK
+    // the PQ sig push is permitted (up to MAX_PQ_SCRIPT_ELEMENT_SIZE), so
+    // evaluation now reaches CheckSignatureEncodingForPubKey. With strict
+    // flags, a raw PQ sig without hashtype byte is rejected as SIG_DER.
     const std::vector<unsigned char> pqSeed = ParseHex("0102030405060708091011121314151617181920212223242526272829303132");
     CKey pqKey;
     pqKey.MakeNewKeyPQ(pqSeed);
@@ -580,7 +556,7 @@ BOOST_AUTO_TEST_CASE(csfs_pq_no_hashtype_strict)
 
     ScriptError err;
     BOOST_CHECK(!RunBareScript(script, CSFS_FLAGS_STRICT, tx, &err));
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_PUSH_SIZE);
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_SIG_DER);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

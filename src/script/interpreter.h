@@ -216,6 +216,18 @@ static_assert(0 < MAX_SCRIPT_VERIFY_FLAGS_BITS
 static constexpr script_verify_flags::value_type MAX_SCRIPT_VERIFY_FLAGS =
     ((script_verify_flags::value_type{1} << MAX_SCRIPT_VERIFY_FLAGS_BITS) - 1);
 
+// NIP-018: effective per-element size cap for the script interpreter.
+// Returns MAX_PQ_SCRIPT_ELEMENT_SIZE (3072) when SCRIPT_VERIFY_CHECKSIGFROMSTACK
+// is set in the verify flags, otherwise MAX_SCRIPT_ELEMENT_SIZE (520).
+// Single source of truth for every call site in EvalScript and the witness
+// verification paths.
+inline unsigned int EffectiveMaxScriptElementSize(script_verify_flags flags)
+{
+    return (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK)
+         ? MAX_PQ_SCRIPT_ELEMENT_SIZE
+         : MAX_SCRIPT_ELEMENT_SIZE;
+}
+
 bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, script_verify_flags flags, ScriptError *serror);
 
 struct PrecomputedTransactionData

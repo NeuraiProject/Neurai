@@ -25,6 +25,18 @@
 // Maximum number of bytes pushable to the stack
 static const unsigned int MAX_SCRIPT_ELEMENT_SIZE = 520;
 
+// NIP-018: Maximum number of bytes pushable to the stack under
+// SCRIPT_VERIFY_CHECKSIGFROMSTACK. Sized to fit ML-DSA-44 sig (2421 B) +
+// pubkey (1313 B) with headroom. Gated behind the CSFS verify flag, which
+// is currently off on mainnet.
+static const unsigned int MAX_PQ_SCRIPT_ELEMENT_SIZE = 3072;
+
+// NIP-018: Maximum total bytes held on stack + altstack at any point during
+// EvalScript, enforced only on the CSFS path. Bounds worst-case memory
+// under the wider PQ element size (1000 items × 3072 B = 3 MB would be
+// too loose).
+static const unsigned int MAX_STACK_BYTES = 262144;  // 256 KiB
+
 // Maximum number of non-push operations per script
 static const int MAX_OPS_PER_SCRIPT = 201;
 

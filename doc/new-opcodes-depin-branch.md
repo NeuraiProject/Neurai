@@ -210,7 +210,7 @@ Unlike OP_TXHASH (which returns a hash), OP_TXFIELD returns raw bytes of a singl
 - If the flag is not set, behaves as `OP_NOP7`.
 - Selector must be exactly 1 byte.
 - Selector `0x02` requires the spent scriptPubKey to start with `OP_1 0x20 <32 bytes>` (witness v1 format).
-- Selector `0x03` fails if the scriptPubKey exceeds `MAX_SCRIPT_ELEMENT_SIZE` (520 bytes).
+- Selector `0x03` fails if the scriptPubKey exceeds the effective per-element cap: `MAX_SCRIPT_ELEMENT_SIZE` (520 B) under normal flags, or `MAX_PQ_SCRIPT_ELEMENT_SIZE` (3072 B) when `SCRIPT_VERIFY_CHECKSIGFROMSTACK` is set (NIP-018).
 
 **Use Cases:**
 
@@ -305,7 +305,7 @@ OP_OUTPUTSCRIPT pushes the raw `scriptPubKey` of the specified output onto the s
 **Behavior:**
 
 - The output index must be non-negative and within range.
-- The resulting scriptPubKey must not exceed `MAX_SCRIPT_ELEMENT_SIZE` (520 bytes); otherwise, the script fails.
+- The resulting scriptPubKey must not exceed the effective per-element cap: `MAX_SCRIPT_ELEMENT_SIZE` (520 B) under normal flags, or `MAX_PQ_SCRIPT_ELEMENT_SIZE` (3072 B) under `SCRIPT_VERIFY_CHECKSIGFROMSTACK` (NIP-018). Oversize values fail with `SCRIPT_ERR_OUTPUTSCRIPT`.
 
 **Use Cases:**
 
@@ -535,7 +535,7 @@ OP_REFINPUTFIELD reads a field from the resolved output referenced by entry `ref
 - The selector must be exactly 1 byte; selector `0x00` and `>= 0x04` are invalid.
 - `ref_index` must be non-negative and within the range of `vrefin`.
 - Selector `0x02` requires the referenced `scriptPubKey` to start with `OP_1 0x20 <32 bytes>` (witness v1 format); otherwise the script fails.
-- Selector `0x03` fails if the referenced `scriptPubKey` exceeds `MAX_SCRIPT_ELEMENT_SIZE` (520 bytes).
+- Selector `0x03` fails if the referenced `scriptPubKey` exceeds the effective per-element cap: `MAX_SCRIPT_ELEMENT_SIZE` (520 B) under normal flags, or `MAX_PQ_SCRIPT_ELEMENT_SIZE` (3072 B) under `SCRIPT_VERIFY_CHECKSIGFROMSTACK` (NIP-018). Failure returns `SCRIPT_ERR_REFINPUTFIELD`.
 - When `SCRIPT_VERIFY_64BIT_INTEGERS` is active and selector is `0x01`, the raw 8-byte value is converted to `CScriptNum` encoding for direct use with arithmetic opcodes.
 
 **Use Cases:**
@@ -623,7 +623,7 @@ OP_CAT concatenates the top two stack elements. This opcode was disabled in Bitc
 **Behavior:**
 
 - Requires at least 2 stack elements.
-- The combined size must not exceed `MAX_SCRIPT_ELEMENT_SIZE` (520 bytes); otherwise, fails with `SCRIPT_ERR_PUSH_SIZE`.
+- The combined size must not exceed the effective per-element cap: `MAX_SCRIPT_ELEMENT_SIZE` (520 B) under normal flags, or `MAX_PQ_SCRIPT_ELEMENT_SIZE` (3072 B) under `SCRIPT_VERIFY_CHECKSIGFROMSTACK` (NIP-018). Oversize fails with `SCRIPT_ERR_PUSH_SIZE`.
 - `vch2` is appended to `vch1` in-place, then `vch2` is removed from the stack.
 - When the `SCRIPT_VERIFY_CAT` flag is not set, OP_CAT returns `SCRIPT_ERR_DISABLED_OPCODE` (original behavior).
 
