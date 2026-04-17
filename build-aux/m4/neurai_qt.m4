@@ -127,6 +127,9 @@ AC_DEFUN([NEURAI_QT_CONFIGURE],[
       if test -d "$qt_plugin_path/platforms"; then
         QT_LIBS="$QT_LIBS -L$qt_plugin_path/platforms"
       fi
+      if test -d "$qt_plugin_path/tls"; then
+        QT_LIBS="$QT_LIBS -L$qt_plugin_path/tls"
+      fi
       if test -d "$qt_plugin_path/styles"; then
         QT_LIBS="$QT_LIBS -L$qt_plugin_path/styles"
       fi
@@ -143,6 +146,9 @@ AC_DEFUN([NEURAI_QT_CONFIGURE],[
       _NEURAI_QT_CHECK_STATIC_PLUGIN([QMinimalIntegrationPlugin], [-lqminimal])
       AC_DEFINE(QT_QPA_PLATFORM_MINIMAL, 1, [Define this symbol if the minimal qt platform exists])
     fi
+    dnl Qt6 TLS backends are plugins as well. Static builds must link and import
+    dnl the OpenSSL backend explicitly or QSslSocket reports "No TLS backend is available".
+    _NEURAI_QT_CHECK_STATIC_PLUGIN([QTlsBackendOpenSSL], [-lqopensslbackend])
     if test "x$TARGET_OS" = xwindows; then
       dnl Linking against wtsapi32 is required. See #17749 and
       dnl https://bugreports.qt.io/browse/QTBUG-27097.

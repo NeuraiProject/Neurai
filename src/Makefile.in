@@ -503,7 +503,10 @@ am__objects_5 = algo/libneurai_common_a-groestl.$(OBJEXT) \
 	algo/libneurai_common_a-sponge.$(OBJEXT) \
 	algo/libneurai_common_a-sph_sha2.$(OBJEXT) \
 	algo/libneurai_common_a-gost_streebog.$(OBJEXT)
-am_libneurai_common_a_OBJECTS = libneurai_common_a-base58.$(OBJEXT) \
+am_libneurai_common_a_OBJECTS =  \
+	libneurai_common_a-arith_uint256.$(OBJEXT) \
+	consensus/libneurai_common_a-merkle.$(OBJEXT) \
+	libneurai_common_a-base58.$(OBJEXT) \
 	libneurai_common_a-bech32.$(OBJEXT) \
 	libneurai_common_a-chainparams.$(OBJEXT) \
 	libneurai_common_a-coins.$(OBJEXT) \
@@ -519,7 +522,10 @@ am_libneurai_common_a_OBJECTS = libneurai_common_a-base58.$(OBJEXT) \
 	libneurai_common_a-scheduler.$(OBJEXT) \
 	script/libneurai_common_a-sign.$(OBJEXT) \
 	script/libneurai_common_a-standard.$(OBJEXT) \
-	libneurai_common_a-warnings.$(OBJEXT) $(am__objects_5)
+	libneurai_common_a-warnings.$(OBJEXT) \
+	assets/libneurai_common_a-assets_fromscript.$(OBJEXT) \
+	assets/libneurai_common_a-assettypes.$(OBJEXT) \
+	$(am__objects_5)
 libneurai_common_a_OBJECTS = $(am_libneurai_common_a_OBJECTS)
 libneurai_consensus_a_AR = $(AR) $(ARFLAGS)
 libneurai_consensus_a_RANLIB = $(RANLIB)
@@ -610,7 +616,7 @@ am_libneurai_server_a_OBJECTS = libneurai_server_a-addrdb.$(OBJEXT) \
 	libneurai_server_a-noui.$(OBJEXT) \
 	assets/libneurai_server_a-assets.$(OBJEXT) \
 	assets/libneurai_server_a-assetdb.$(OBJEXT) \
-	assets/libneurai_server_a-assettypes.$(OBJEXT) \
+	libneurai_server_a-coins_server.$(OBJEXT) \
 	assets/libneurai_server_a-messages.$(OBJEXT) \
 	assets/libneurai_server_a-myassetsdb.$(OBJEXT) \
 	assets/libneurai_server_a-restricteddb.$(OBJEXT) \
@@ -1185,11 +1191,11 @@ am__libneuraiconsensus_la_SOURCES_DIST = crypto/aes.cpp crypto/aes.h \
 	primitives/block.cpp primitives/block.h \
 	primitives/transaction.cpp primitives/transaction.h pubkey.cpp \
 	pubkey.h script/neuraiconsensus.cpp script/interpreter.cpp \
-	script/interpreter.h script/script.cpp script/script.h \
-	script/script_error.cpp script/script_error.h serialize.h \
-	support/cleanse.h support/cleanse.cpp tinyformat.h uint256.cpp \
-	uint256.h utilstrencodings.cpp utilstrencodings.h version.h \
-	LibBoolEE.cpp LibBoolEE.h addrdb.h addressindex.h \
+	script/interpreter.h script/verify_flags.h script/script.cpp \
+	script/script.h script/script_error.cpp script/script_error.h \
+	serialize.h support/cleanse.h support/cleanse.cpp tinyformat.h \
+	uint256.cpp uint256.h utilstrencodings.cpp utilstrencodings.h \
+	version.h LibBoolEE.cpp LibBoolEE.h addrdb.h addressindex.h \
 	algo/sph_groestl.h algo/sph_types.h algo/sph_blake.h \
 	algo/sph_bmw.h algo/sph_jh.h algo/sph_keccak.h \
 	algo/sph_skein.h algo/sph_luffa.h algo/sph_cubehash.h \
@@ -1374,9 +1380,9 @@ am__neurai_tx_SOURCES_DIST = neurai-tx.cpp neurai-tx-res.rc
 am_neurai_tx_OBJECTS = neurai_tx-neurai-tx.$(OBJEXT) $(am__objects_30)
 neurai_tx_OBJECTS = $(am_neurai_tx_OBJECTS)
 neurai_tx_DEPENDENCIES = $(am__DEPENDENCIES_4) $(LIBNEURAI_COMMON) \
-	$(LIBNEURAI_UTIL) $(LIBNEURAI_CONSENSUS) $(LIBNEURAI_CRYPTO) \
-	$(LIBSECP256K1) $(am__DEPENDENCIES_1) $(am__DEPENDENCIES_1) \
-	$(am__DEPENDENCIES_1)
+	$(LIBNEURAI_UTIL) $(LIBNEURAI_CONSENSUS) $(LIBNEURAI_COMMON) \
+	$(LIBNEURAI_CRYPTO) $(LIBSECP256K1) $(am__DEPENDENCIES_1) \
+	$(am__DEPENDENCIES_1) $(am__DEPENDENCIES_1)
 neurai_tx_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CXXLD) $(neurai_tx_CXXFLAGS) \
 	$(CXXFLAGS) $(neurai_tx_LDFLAGS) $(LDFLAGS) -o $@
@@ -1504,29 +1510,37 @@ am__test_test_neurai_SOURCES_DIST = test/assets/asset_tests.cpp \
 	test/bip32_tests.cpp test/blockencodings_tests.cpp \
 	test/bloom_tests.cpp test/bswap_tests.cpp \
 	test/checkqueue_tests.cpp test/coins_tests.cpp \
-	test/compress_tests.cpp test/crypto_tests.cpp \
-	test/depinecies_tests.cpp test/cuckoocache_tests.cpp \
-	test/DoS_tests.cpp test/getarg_tests.cpp test/hash_tests.cpp \
-	test/key_tests.cpp test/limitedmap_tests.cpp \
-	test/dbwrapper_tests.cpp test/main_tests.cpp \
-	test/mempool_tests.cpp test/merkle_tests.cpp \
-	test/merkleblock_tests.cpp test/miner_tests.cpp \
-	test/multisig_tests.cpp test/net_tests.cpp \
-	test/netbase_tests.cpp test/pmt_tests.cpp \
-	test/policyestimator_tests.cpp test/pow_tests.cpp \
-	test/prevector_tests.cpp test/kawpow_tests.cpp \
-	test/raii_event_tests.cpp test/random_tests.cpp \
-	test/reverselock_tests.cpp test/rpc_tests.cpp \
-	test/sanity_tests.cpp test/scheduler_tests.cpp \
-	test/script_P2SH_tests.cpp test/script_P2PK_tests.cpp \
-	test/script_P2PKH_tests.cpp test/script_tests.cpp \
-	test/script_standard_tests.cpp test/scriptnum_tests.cpp \
-	test/serialize_tests.cpp test/sighash_tests.cpp \
-	test/sigopcount_tests.cpp test/skiplist_tests.cpp \
-	test/streams_tests.cpp test/test_neurai.cpp test/test_neurai.h \
+	test/csfs_tests.cpp test/ctv_tests.cpp \
+	test/refinputs_tests.cpp test/compress_tests.cpp \
+	test/crypto_tests.cpp test/depinecies_tests.cpp \
+	test/cuckoocache_tests.cpp test/DoS_tests.cpp \
+	test/getarg_tests.cpp test/hash_tests.cpp test/key_tests.cpp \
+	test/limitedmap_tests.cpp test/dbwrapper_tests.cpp \
+	test/main_tests.cpp test/mempool_tests.cpp \
+	test/merkle_tests.cpp test/merkleblock_tests.cpp \
+	test/miner_tests.cpp test/multisig_tests.cpp \
+	test/net_tests.cpp test/opcat_tests.cpp test/netbase_tests.cpp \
+	test/pmt_tests.cpp test/policyestimator_tests.cpp \
+	test/pow_tests.cpp test/prevector_tests.cpp \
+	test/kawpow_tests.cpp test/raii_event_tests.cpp \
+	test/random_tests.cpp test/reverselock_tests.cpp \
+	test/rpc_tests.cpp test/sanity_tests.cpp \
+	test/scheduler_tests.cpp test/script_P2SH_tests.cpp \
+	test/script_P2PK_tests.cpp test/script_P2PKH_tests.cpp \
+	test/script_tests.cpp test/script_standard_tests.cpp \
+	test/scriptnum_tests.cpp test/serialize_tests.cpp \
+	test/sighash_tests.cpp test/sigopcount_tests.cpp \
+	test/skiplist_tests.cpp test/streams_tests.cpp \
+	test/test_neurai.cpp test/test_neurai.h \
 	test/test_neurai_main.cpp test/timedata_tests.cpp \
 	test/torcontrol_tests.cpp test/transaction_tests.cpp \
-	test/txvalidationcache_tests.cpp test/versionbits_tests.cpp \
+	test/txhash_tests.cpp test/txfield_tests.cpp \
+	test/split_tests.cpp test/reversebytes_tests.cpp \
+	test/arithmetic64_tests.cpp test/outputvalue_tests.cpp \
+	test/outputassetfield_tests.cpp test/inputassetfield_tests.cpp \
+	test/inputoutputcount_tests.cpp test/outputscript_tests.cpp \
+	test/txlocktime_tests.cpp test/txvalidationcache_tests.cpp \
+	test/verify_flags_tests.cpp test/versionbits_tests.cpp \
 	test/uint256_tests.cpp test/univalue_tests.cpp \
 	test/util_tests.cpp wallet/test/wallet_test_fixture.cpp \
 	wallet/test/wallet_test_fixture.h \
@@ -1564,6 +1578,9 @@ am__test_test_neurai_SOURCES_DIST = test/assets/asset_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/test_neurai-bswap_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/test_neurai-checkqueue_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/test_neurai-coins_tests.$(OBJEXT) \
+@ENABLE_TESTS_TRUE@	test/test_neurai-csfs_tests.$(OBJEXT) \
+@ENABLE_TESTS_TRUE@	test/test_neurai-ctv_tests.$(OBJEXT) \
+@ENABLE_TESTS_TRUE@	test/test_neurai-refinputs_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/test_neurai-compress_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/test_neurai-crypto_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/test_neurai-depinecies_tests.$(OBJEXT) \
@@ -1581,6 +1598,7 @@ am__test_test_neurai_SOURCES_DIST = test/assets/asset_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/test_neurai-miner_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/test_neurai-multisig_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/test_neurai-net_tests.$(OBJEXT) \
+@ENABLE_TESTS_TRUE@	test/test_neurai-opcat_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/test_neurai-netbase_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/test_neurai-pmt_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/test_neurai-policyestimator_tests.$(OBJEXT) \
@@ -1609,7 +1627,19 @@ am__test_test_neurai_SOURCES_DIST = test/assets/asset_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/test_neurai-timedata_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/test_neurai-torcontrol_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/test_neurai-transaction_tests.$(OBJEXT) \
+@ENABLE_TESTS_TRUE@	test/test_neurai-txhash_tests.$(OBJEXT) \
+@ENABLE_TESTS_TRUE@	test/test_neurai-txfield_tests.$(OBJEXT) \
+@ENABLE_TESTS_TRUE@	test/test_neurai-split_tests.$(OBJEXT) \
+@ENABLE_TESTS_TRUE@	test/test_neurai-reversebytes_tests.$(OBJEXT) \
+@ENABLE_TESTS_TRUE@	test/test_neurai-arithmetic64_tests.$(OBJEXT) \
+@ENABLE_TESTS_TRUE@	test/test_neurai-outputvalue_tests.$(OBJEXT) \
+@ENABLE_TESTS_TRUE@	test/test_neurai-outputassetfield_tests.$(OBJEXT) \
+@ENABLE_TESTS_TRUE@	test/test_neurai-inputassetfield_tests.$(OBJEXT) \
+@ENABLE_TESTS_TRUE@	test/test_neurai-inputoutputcount_tests.$(OBJEXT) \
+@ENABLE_TESTS_TRUE@	test/test_neurai-outputscript_tests.$(OBJEXT) \
+@ENABLE_TESTS_TRUE@	test/test_neurai-txlocktime_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/test_neurai-txvalidationcache_tests.$(OBJEXT) \
+@ENABLE_TESTS_TRUE@	test/test_neurai-verify_flags_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/test_neurai-versionbits_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/test_neurai-uint256_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/test_neurai-univalue_tests.$(OBJEXT) \
@@ -1650,6 +1680,7 @@ test_test_neurai_fuzzy_OBJECTS = $(am_test_test_neurai_fuzzy_OBJECTS)
 @ENABLE_TESTS_TRUE@	$(LIBNEURAI_COMMON) $(LIBNEURAI_UTIL) \
 @ENABLE_TESTS_TRUE@	$(LIBNEURAI_CONSENSUS) $(LIBNEURAI_CRYPTO) \
 @ENABLE_TESTS_TRUE@	$(LIBSECP256K1) $(am__DEPENDENCIES_1) \
+@ENABLE_TESTS_TRUE@	$(am__DEPENDENCIES_1) $(am__DEPENDENCIES_1) \
 @ENABLE_TESTS_TRUE@	$(am__DEPENDENCIES_1)
 test_test_neurai_fuzzy_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CXX \
 	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CXXLD) \
@@ -1661,7 +1692,8 @@ test_test_neurai_hash_OBJECTS = $(am_test_test_neurai_hash_OBJECTS)
 @ENABLE_TESTS_TRUE@test_test_neurai_hash_DEPENDENCIES =  \
 @ENABLE_TESTS_TRUE@	$(am__DEPENDENCIES_4) $(LIBNEURAI_COMMON) \
 @ENABLE_TESTS_TRUE@	$(LIBNEURAI_UTIL) $(LIBNEURAI_CONSENSUS) \
-@ENABLE_TESTS_TRUE@	$(LIBNEURAI_CRYPTO) $(am__DEPENDENCIES_1)
+@ENABLE_TESTS_TRUE@	$(LIBNEURAI_CRYPTO) $(am__DEPENDENCIES_1) \
+@ENABLE_TESTS_TRUE@	$(am__DEPENDENCIES_1) $(am__DEPENDENCIES_1)
 test_test_neurai_hash_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CXX \
 	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CXXLD) \
 	$(test_test_neurai_hash_CXXFLAGS) $(CXXFLAGS) \
@@ -1681,7 +1713,8 @@ am__v_at_1 =
 DEFAULT_INCLUDES = -I.@am__isrc@ -I$(top_builddir)/src/config
 depcomp = $(SHELL) $(top_srcdir)/build-aux/depcomp
 am__maybe_remake_depfiles = depfiles
-am__depfiles_remade = ./$(DEPDIR)/libneurai_common_a-base58.Po \
+am__depfiles_remade = ./$(DEPDIR)/libneurai_common_a-arith_uint256.Po \
+	./$(DEPDIR)/libneurai_common_a-base58.Po \
 	./$(DEPDIR)/libneurai_common_a-bech32.Po \
 	./$(DEPDIR)/libneurai_common_a-chainparams.Po \
 	./$(DEPDIR)/libneurai_common_a-coins.Po \
@@ -1707,6 +1740,7 @@ am__depfiles_remade = ./$(DEPDIR)/libneurai_common_a-base58.Po \
 	./$(DEPDIR)/libneurai_server_a-bloom.Po \
 	./$(DEPDIR)/libneurai_server_a-chain.Po \
 	./$(DEPDIR)/libneurai_server_a-checkpoints.Po \
+	./$(DEPDIR)/libneurai_server_a-coins_server.Po \
 	./$(DEPDIR)/libneurai_server_a-dbwrapper.Po \
 	./$(DEPDIR)/libneurai_server_a-depinecies.Po \
 	./$(DEPDIR)/libneurai_server_a-depinmcpclient.Po \
@@ -1918,10 +1952,11 @@ am__depfiles_remade = ./$(DEPDIR)/libneurai_common_a-base58.Po \
 	algo/$(DEPDIR)/libneuraiconsensus_la-sponge.Plo \
 	algo/$(DEPDIR)/libneuraiconsensus_la-tiger.Plo \
 	algo/$(DEPDIR)/libneuraiconsensus_la-whirlpool.Plo \
+	assets/$(DEPDIR)/libneurai_common_a-assets_fromscript.Po \
+	assets/$(DEPDIR)/libneurai_common_a-assettypes.Po \
 	assets/$(DEPDIR)/libneurai_server_a-assetdb.Po \
 	assets/$(DEPDIR)/libneurai_server_a-assets.Po \
 	assets/$(DEPDIR)/libneurai_server_a-assetsnapshotdb.Po \
-	assets/$(DEPDIR)/libneurai_server_a-assettypes.Po \
 	assets/$(DEPDIR)/libneurai_server_a-messages.Po \
 	assets/$(DEPDIR)/libneurai_server_a-myassetsdb.Po \
 	assets/$(DEPDIR)/libneurai_server_a-restricteddb.Po \
@@ -1946,6 +1981,7 @@ am__depfiles_remade = ./$(DEPDIR)/libneurai_common_a-base58.Po \
 	compat/$(DEPDIR)/libneurai_util_a-glibc_sanity.Po \
 	compat/$(DEPDIR)/libneurai_util_a-glibcxx_sanity.Po \
 	compat/$(DEPDIR)/libneuraiconsensus_la-glibc_compat.Plo \
+	consensus/$(DEPDIR)/libneurai_common_a-merkle.Po \
 	consensus/$(DEPDIR)/libneurai_consensus_a-merkle.Po \
 	consensus/$(DEPDIR)/libneurai_server_a-consensus.Po \
 	consensus/$(DEPDIR)/libneurai_server_a-tx_verify.Po \
@@ -2208,6 +2244,7 @@ am__depfiles_remade = ./$(DEPDIR)/libneurai_common_a-base58.Po \
 	test/$(DEPDIR)/test_neurai-allocator_tests.Po \
 	test/$(DEPDIR)/test_neurai-amount_tests.Po \
 	test/$(DEPDIR)/test_neurai-arith_uint256_tests.Po \
+	test/$(DEPDIR)/test_neurai-arithmetic64_tests.Po \
 	test/$(DEPDIR)/test_neurai-base32_tests.Po \
 	test/$(DEPDIR)/test_neurai-base58_tests.Po \
 	test/$(DEPDIR)/test_neurai-base64_tests.Po \
@@ -2219,11 +2256,15 @@ am__depfiles_remade = ./$(DEPDIR)/libneurai_common_a-base58.Po \
 	test/$(DEPDIR)/test_neurai-coins_tests.Po \
 	test/$(DEPDIR)/test_neurai-compress_tests.Po \
 	test/$(DEPDIR)/test_neurai-crypto_tests.Po \
+	test/$(DEPDIR)/test_neurai-csfs_tests.Po \
+	test/$(DEPDIR)/test_neurai-ctv_tests.Po \
 	test/$(DEPDIR)/test_neurai-cuckoocache_tests.Po \
 	test/$(DEPDIR)/test_neurai-dbwrapper_tests.Po \
 	test/$(DEPDIR)/test_neurai-depinecies_tests.Po \
 	test/$(DEPDIR)/test_neurai-getarg_tests.Po \
 	test/$(DEPDIR)/test_neurai-hash_tests.Po \
+	test/$(DEPDIR)/test_neurai-inputassetfield_tests.Po \
+	test/$(DEPDIR)/test_neurai-inputoutputcount_tests.Po \
 	test/$(DEPDIR)/test_neurai-kawpow_tests.Po \
 	test/$(DEPDIR)/test_neurai-key_tests.Po \
 	test/$(DEPDIR)/test_neurai-limitedmap_tests.Po \
@@ -2235,12 +2276,18 @@ am__depfiles_remade = ./$(DEPDIR)/libneurai_common_a-base58.Po \
 	test/$(DEPDIR)/test_neurai-multisig_tests.Po \
 	test/$(DEPDIR)/test_neurai-net_tests.Po \
 	test/$(DEPDIR)/test_neurai-netbase_tests.Po \
+	test/$(DEPDIR)/test_neurai-opcat_tests.Po \
+	test/$(DEPDIR)/test_neurai-outputassetfield_tests.Po \
+	test/$(DEPDIR)/test_neurai-outputscript_tests.Po \
+	test/$(DEPDIR)/test_neurai-outputvalue_tests.Po \
 	test/$(DEPDIR)/test_neurai-pmt_tests.Po \
 	test/$(DEPDIR)/test_neurai-policyestimator_tests.Po \
 	test/$(DEPDIR)/test_neurai-pow_tests.Po \
 	test/$(DEPDIR)/test_neurai-prevector_tests.Po \
 	test/$(DEPDIR)/test_neurai-raii_event_tests.Po \
 	test/$(DEPDIR)/test_neurai-random_tests.Po \
+	test/$(DEPDIR)/test_neurai-refinputs_tests.Po \
+	test/$(DEPDIR)/test_neurai-reversebytes_tests.Po \
 	test/$(DEPDIR)/test_neurai-reverselock_tests.Po \
 	test/$(DEPDIR)/test_neurai-rpc_tests.Po \
 	test/$(DEPDIR)/test_neurai-sanity_tests.Po \
@@ -2255,16 +2302,21 @@ am__depfiles_remade = ./$(DEPDIR)/libneurai_common_a-base58.Po \
 	test/$(DEPDIR)/test_neurai-sighash_tests.Po \
 	test/$(DEPDIR)/test_neurai-sigopcount_tests.Po \
 	test/$(DEPDIR)/test_neurai-skiplist_tests.Po \
+	test/$(DEPDIR)/test_neurai-split_tests.Po \
 	test/$(DEPDIR)/test_neurai-streams_tests.Po \
 	test/$(DEPDIR)/test_neurai-test_neurai.Po \
 	test/$(DEPDIR)/test_neurai-test_neurai_main.Po \
 	test/$(DEPDIR)/test_neurai-timedata_tests.Po \
 	test/$(DEPDIR)/test_neurai-torcontrol_tests.Po \
 	test/$(DEPDIR)/test_neurai-transaction_tests.Po \
+	test/$(DEPDIR)/test_neurai-txfield_tests.Po \
+	test/$(DEPDIR)/test_neurai-txhash_tests.Po \
+	test/$(DEPDIR)/test_neurai-txlocktime_tests.Po \
 	test/$(DEPDIR)/test_neurai-txvalidationcache_tests.Po \
 	test/$(DEPDIR)/test_neurai-uint256_tests.Po \
 	test/$(DEPDIR)/test_neurai-univalue_tests.Po \
 	test/$(DEPDIR)/test_neurai-util_tests.Po \
+	test/$(DEPDIR)/test_neurai-verify_flags_tests.Po \
 	test/$(DEPDIR)/test_neurai-versionbits_tests.Po \
 	test/$(DEPDIR)/test_neurai_fuzzy-test_neurai_fuzzy.Po \
 	test/$(DEPDIR)/test_neurai_hash-test_neurai_hash.Po \
@@ -2719,7 +2771,7 @@ GREP = @GREP@
 HARDENED_CPPFLAGS = @HARDENED_CPPFLAGS@
 HARDENED_CXXFLAGS = @HARDENED_CXXFLAGS@
 HARDENED_LDFLAGS = @HARDENED_LDFLAGS@
-HAVE_CXX17 = @HAVE_CXX17@
+HAVE_CXX20 = @HAVE_CXX20@
 HEXDUMP = @HEXDUMP@
 IMAGEMAGICK_CONVERT = @IMAGEMAGICK_CONVERT@
 INSTALL = @INSTALL@
@@ -2794,26 +2846,6 @@ PYTHON = @PYTHON@
 PYTHONPATH = @PYTHONPATH@
 QR_CFLAGS = @QR_CFLAGS@
 QR_LIBS = @QR_LIBS@
-QTACCESSIBILITY_CFLAGS = @QTACCESSIBILITY_CFLAGS@
-QTACCESSIBILITY_LIBS = @QTACCESSIBILITY_LIBS@
-QTCLIPBOARD_CFLAGS = @QTCLIPBOARD_CFLAGS@
-QTCLIPBOARD_LIBS = @QTCLIPBOARD_LIBS@
-QTDEVICEDISCOVERY_CFLAGS = @QTDEVICEDISCOVERY_CFLAGS@
-QTDEVICEDISCOVERY_LIBS = @QTDEVICEDISCOVERY_LIBS@
-QTEVENTDISPATCHER_CFLAGS = @QTEVENTDISPATCHER_CFLAGS@
-QTEVENTDISPATCHER_LIBS = @QTEVENTDISPATCHER_LIBS@
-QTFB_CFLAGS = @QTFB_CFLAGS@
-QTFB_LIBS = @QTFB_LIBS@
-QTFONTDATABASE_CFLAGS = @QTFONTDATABASE_CFLAGS@
-QTFONTDATABASE_LIBS = @QTFONTDATABASE_LIBS@
-QTGRAPHICS_CFLAGS = @QTGRAPHICS_CFLAGS@
-QTGRAPHICS_LIBS = @QTGRAPHICS_LIBS@
-QTTHEME_CFLAGS = @QTTHEME_CFLAGS@
-QTTHEME_LIBS = @QTTHEME_LIBS@
-QTWINDOWSUIAUTOMATION_CFLAGS = @QTWINDOWSUIAUTOMATION_CFLAGS@
-QTWINDOWSUIAUTOMATION_LIBS = @QTWINDOWSUIAUTOMATION_LIBS@
-QTXCBQPA_CFLAGS = @QTXCBQPA_CFLAGS@
-QTXCBQPA_LIBS = @QTXCBQPA_LIBS@
 QT_CORE_CFLAGS = @QT_CORE_CFLAGS@
 QT_CORE_LIBS = @QT_CORE_LIBS@
 QT_DBUS_CFLAGS = @QT_DBUS_CFLAGS@
@@ -3136,7 +3168,7 @@ libneurai_server_a_SOURCES = \
   noui.cpp \
   assets/assets.cpp \
   assets/assetdb.cpp \
-  assets/assettypes.cpp \
+  coins_server.cpp \
   assets/messages.cpp \
   assets/myassetsdb.cpp \
   assets/restricteddb.cpp \
@@ -3258,6 +3290,7 @@ libneurai_consensus_a_SOURCES = \
   script/neuraiconsensus.cpp \
   script/interpreter.cpp \
   script/interpreter.h \
+  script/verify_flags.h \
   script/script.cpp \
   script/script.h \
   script/script_error.cpp \
@@ -3280,6 +3313,8 @@ libneurai_consensus_a_SOURCES = \
 libneurai_common_a_CPPFLAGS = $(AM_CPPFLAGS) $(NEURAI_INCLUDES)
 libneurai_common_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 libneurai_common_a_SOURCES = \
+  arith_uint256.cpp \
+  consensus/merkle.cpp \
   base58.cpp \
   bech32.cpp \
   chainparams.cpp \
@@ -3297,6 +3332,8 @@ libneurai_common_a_SOURCES = \
   script/sign.cpp \
   script/standard.cpp \
   warnings.cpp \
+  assets/assets_fromscript.cpp \
+  assets/assettypes.cpp \
   $(NEURAI_CORE_H)
 
 
@@ -3350,8 +3387,8 @@ neurai_tx_CPPFLAGS = $(AM_CPPFLAGS) $(NEURAI_INCLUDES)
 neurai_tx_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 neurai_tx_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS)
 neurai_tx_LDADD = $(LIBUNIVALUE) $(LIBNEURAI_COMMON) $(LIBNEURAI_UTIL) \
-	$(LIBNEURAI_CONSENSUS) $(LIBNEURAI_CRYPTO) $(LIBSECP256K1) \
-	$(BOOST_LIBS) $(CRYPTO_LIBS) $(OQS_LIBS)
+	$(LIBNEURAI_CONSENSUS) $(LIBNEURAI_COMMON) $(LIBNEURAI_CRYPTO) \
+	$(LIBSECP256K1) $(BOOST_LIBS) $(CRYPTO_LIBS) $(OQS_LIBS)
 #
 
 # neuraiconsensus library #
@@ -3530,7 +3567,8 @@ EXTRA_DIST = $(CTAES_DIST)
 @ENABLE_TESTS_TRUE@	test/blockencodings_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/bloom_tests.cpp test/bswap_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/checkqueue_tests.cpp \
-@ENABLE_TESTS_TRUE@	test/coins_tests.cpp \
+@ENABLE_TESTS_TRUE@	test/coins_tests.cpp test/csfs_tests.cpp \
+@ENABLE_TESTS_TRUE@	test/ctv_tests.cpp test/refinputs_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/compress_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/crypto_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/depinecies_tests.cpp \
@@ -3544,7 +3582,8 @@ EXTRA_DIST = $(CTAES_DIST)
 @ENABLE_TESTS_TRUE@	test/merkleblock_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/miner_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/multisig_tests.cpp test/net_tests.cpp \
-@ENABLE_TESTS_TRUE@	test/netbase_tests.cpp test/pmt_tests.cpp \
+@ENABLE_TESTS_TRUE@	test/opcat_tests.cpp test/netbase_tests.cpp \
+@ENABLE_TESTS_TRUE@	test/pmt_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/policyestimator_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/pow_tests.cpp test/prevector_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/kawpow_tests.cpp \
@@ -3569,7 +3608,18 @@ EXTRA_DIST = $(CTAES_DIST)
 @ENABLE_TESTS_TRUE@	test/timedata_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/torcontrol_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/transaction_tests.cpp \
+@ENABLE_TESTS_TRUE@	test/txhash_tests.cpp \
+@ENABLE_TESTS_TRUE@	test/txfield_tests.cpp test/split_tests.cpp \
+@ENABLE_TESTS_TRUE@	test/reversebytes_tests.cpp \
+@ENABLE_TESTS_TRUE@	test/arithmetic64_tests.cpp \
+@ENABLE_TESTS_TRUE@	test/outputvalue_tests.cpp \
+@ENABLE_TESTS_TRUE@	test/outputassetfield_tests.cpp \
+@ENABLE_TESTS_TRUE@	test/inputassetfield_tests.cpp \
+@ENABLE_TESTS_TRUE@	test/inputoutputcount_tests.cpp \
+@ENABLE_TESTS_TRUE@	test/outputscript_tests.cpp \
+@ENABLE_TESTS_TRUE@	test/txlocktime_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/txvalidationcache_tests.cpp \
+@ENABLE_TESTS_TRUE@	test/verify_flags_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/versionbits_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/uint256_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/univalue_tests.cpp test/util_tests.cpp \
@@ -3603,7 +3653,8 @@ EXTRA_DIST = $(CTAES_DIST)
 @ENABLE_TESTS_TRUE@	$(LIBNEURAI_SERVER) $(LIBNEURAI_COMMON) \
 @ENABLE_TESTS_TRUE@	$(LIBNEURAI_UTIL) $(LIBNEURAI_CONSENSUS) \
 @ENABLE_TESTS_TRUE@	$(LIBNEURAI_CRYPTO) $(LIBSECP256K1) \
-@ENABLE_TESTS_TRUE@	$(BOOST_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(OQS_LIBS)
+@ENABLE_TESTS_TRUE@	$(BOOST_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) \
+@ENABLE_TESTS_TRUE@	$(OQS_LIBS)
 #
 
 # test_neurai_hash binary #
@@ -4610,6 +4661,14 @@ libneurai_cli.a: $(libneurai_cli_a_OBJECTS) $(libneurai_cli_a_DEPENDENCIES) $(EX
 	$(AM_V_at)-rm -f libneurai_cli.a
 	$(AM_V_AR)$(libneurai_cli_a_AR) libneurai_cli.a $(libneurai_cli_a_OBJECTS) $(libneurai_cli_a_LIBADD)
 	$(AM_V_at)$(libneurai_cli_a_RANLIB) libneurai_cli.a
+consensus/$(am__dirstamp):
+	@$(MKDIR_P) consensus
+	@: >>consensus/$(am__dirstamp)
+consensus/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) consensus/$(DEPDIR)
+	@: >>consensus/$(DEPDIR)/$(am__dirstamp)
+consensus/libneurai_common_a-merkle.$(OBJEXT):  \
+	consensus/$(am__dirstamp) consensus/$(DEPDIR)/$(am__dirstamp)
 policy/$(am__dirstamp):
 	@$(MKDIR_P) policy
 	@: >>policy/$(am__dirstamp)
@@ -4628,6 +4687,16 @@ script/libneurai_common_a-sign.$(OBJEXT): script/$(am__dirstamp) \
 	script/$(DEPDIR)/$(am__dirstamp)
 script/libneurai_common_a-standard.$(OBJEXT): script/$(am__dirstamp) \
 	script/$(DEPDIR)/$(am__dirstamp)
+assets/$(am__dirstamp):
+	@$(MKDIR_P) assets
+	@: >>assets/$(am__dirstamp)
+assets/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) assets/$(DEPDIR)
+	@: >>assets/$(DEPDIR)/$(am__dirstamp)
+assets/libneurai_common_a-assets_fromscript.$(OBJEXT):  \
+	assets/$(am__dirstamp) assets/$(DEPDIR)/$(am__dirstamp)
+assets/libneurai_common_a-assettypes.$(OBJEXT):  \
+	assets/$(am__dirstamp) assets/$(DEPDIR)/$(am__dirstamp)
 algo/libneurai_common_a-groestl.$(OBJEXT): algo/$(am__dirstamp) \
 	algo/$(DEPDIR)/$(am__dirstamp)
 algo/libneurai_common_a-blake.$(OBJEXT): algo/$(am__dirstamp) \
@@ -4681,12 +4750,6 @@ libneurai_common.a: $(libneurai_common_a_OBJECTS) $(libneurai_common_a_DEPENDENC
 	$(AM_V_at)-rm -f libneurai_common.a
 	$(AM_V_AR)$(libneurai_common_a_AR) libneurai_common.a $(libneurai_common_a_OBJECTS) $(libneurai_common_a_LIBADD)
 	$(AM_V_at)$(libneurai_common_a_RANLIB) libneurai_common.a
-consensus/$(am__dirstamp):
-	@$(MKDIR_P) consensus
-	@: >>consensus/$(am__dirstamp)
-consensus/$(DEPDIR)/$(am__dirstamp):
-	@$(MKDIR_P) consensus/$(DEPDIR)
-	@: >>consensus/$(DEPDIR)/$(am__dirstamp)
 consensus/libneurai_consensus_a-merkle.$(OBJEXT):  \
 	consensus/$(am__dirstamp) consensus/$(DEPDIR)/$(am__dirstamp)
 primitives/$(am__dirstamp):
@@ -4774,18 +4837,10 @@ consensus/libneurai_server_a-consensus.$(OBJEXT):  \
 	consensus/$(am__dirstamp) consensus/$(DEPDIR)/$(am__dirstamp)
 consensus/libneurai_server_a-tx_verify.$(OBJEXT):  \
 	consensus/$(am__dirstamp) consensus/$(DEPDIR)/$(am__dirstamp)
-assets/$(am__dirstamp):
-	@$(MKDIR_P) assets
-	@: >>assets/$(am__dirstamp)
-assets/$(DEPDIR)/$(am__dirstamp):
-	@$(MKDIR_P) assets/$(DEPDIR)
-	@: >>assets/$(DEPDIR)/$(am__dirstamp)
 assets/libneurai_server_a-assets.$(OBJEXT): assets/$(am__dirstamp) \
 	assets/$(DEPDIR)/$(am__dirstamp)
 assets/libneurai_server_a-assetdb.$(OBJEXT): assets/$(am__dirstamp) \
 	assets/$(DEPDIR)/$(am__dirstamp)
-assets/libneurai_server_a-assettypes.$(OBJEXT):  \
-	assets/$(am__dirstamp) assets/$(DEPDIR)/$(am__dirstamp)
 assets/libneurai_server_a-messages.$(OBJEXT): assets/$(am__dirstamp) \
 	assets/$(DEPDIR)/$(am__dirstamp)
 assets/libneurai_server_a-myassetsdb.$(OBJEXT):  \
@@ -5606,6 +5661,12 @@ test/test_neurai-checkqueue_tests.$(OBJEXT): test/$(am__dirstamp) \
 	test/$(DEPDIR)/$(am__dirstamp)
 test/test_neurai-coins_tests.$(OBJEXT): test/$(am__dirstamp) \
 	test/$(DEPDIR)/$(am__dirstamp)
+test/test_neurai-csfs_tests.$(OBJEXT): test/$(am__dirstamp) \
+	test/$(DEPDIR)/$(am__dirstamp)
+test/test_neurai-ctv_tests.$(OBJEXT): test/$(am__dirstamp) \
+	test/$(DEPDIR)/$(am__dirstamp)
+test/test_neurai-refinputs_tests.$(OBJEXT): test/$(am__dirstamp) \
+	test/$(DEPDIR)/$(am__dirstamp)
 test/test_neurai-compress_tests.$(OBJEXT): test/$(am__dirstamp) \
 	test/$(DEPDIR)/$(am__dirstamp)
 test/test_neurai-crypto_tests.$(OBJEXT): test/$(am__dirstamp) \
@@ -5639,6 +5700,8 @@ test/test_neurai-miner_tests.$(OBJEXT): test/$(am__dirstamp) \
 test/test_neurai-multisig_tests.$(OBJEXT): test/$(am__dirstamp) \
 	test/$(DEPDIR)/$(am__dirstamp)
 test/test_neurai-net_tests.$(OBJEXT): test/$(am__dirstamp) \
+	test/$(DEPDIR)/$(am__dirstamp)
+test/test_neurai-opcat_tests.$(OBJEXT): test/$(am__dirstamp) \
 	test/$(DEPDIR)/$(am__dirstamp)
 test/test_neurai-netbase_tests.$(OBJEXT): test/$(am__dirstamp) \
 	test/$(DEPDIR)/$(am__dirstamp)
@@ -5696,8 +5759,32 @@ test/test_neurai-torcontrol_tests.$(OBJEXT): test/$(am__dirstamp) \
 	test/$(DEPDIR)/$(am__dirstamp)
 test/test_neurai-transaction_tests.$(OBJEXT): test/$(am__dirstamp) \
 	test/$(DEPDIR)/$(am__dirstamp)
+test/test_neurai-txhash_tests.$(OBJEXT): test/$(am__dirstamp) \
+	test/$(DEPDIR)/$(am__dirstamp)
+test/test_neurai-txfield_tests.$(OBJEXT): test/$(am__dirstamp) \
+	test/$(DEPDIR)/$(am__dirstamp)
+test/test_neurai-split_tests.$(OBJEXT): test/$(am__dirstamp) \
+	test/$(DEPDIR)/$(am__dirstamp)
+test/test_neurai-reversebytes_tests.$(OBJEXT): test/$(am__dirstamp) \
+	test/$(DEPDIR)/$(am__dirstamp)
+test/test_neurai-arithmetic64_tests.$(OBJEXT): test/$(am__dirstamp) \
+	test/$(DEPDIR)/$(am__dirstamp)
+test/test_neurai-outputvalue_tests.$(OBJEXT): test/$(am__dirstamp) \
+	test/$(DEPDIR)/$(am__dirstamp)
+test/test_neurai-outputassetfield_tests.$(OBJEXT):  \
+	test/$(am__dirstamp) test/$(DEPDIR)/$(am__dirstamp)
+test/test_neurai-inputassetfield_tests.$(OBJEXT):  \
+	test/$(am__dirstamp) test/$(DEPDIR)/$(am__dirstamp)
+test/test_neurai-inputoutputcount_tests.$(OBJEXT):  \
+	test/$(am__dirstamp) test/$(DEPDIR)/$(am__dirstamp)
+test/test_neurai-outputscript_tests.$(OBJEXT): test/$(am__dirstamp) \
+	test/$(DEPDIR)/$(am__dirstamp)
+test/test_neurai-txlocktime_tests.$(OBJEXT): test/$(am__dirstamp) \
+	test/$(DEPDIR)/$(am__dirstamp)
 test/test_neurai-txvalidationcache_tests.$(OBJEXT):  \
 	test/$(am__dirstamp) test/$(DEPDIR)/$(am__dirstamp)
+test/test_neurai-verify_flags_tests.$(OBJEXT): test/$(am__dirstamp) \
+	test/$(DEPDIR)/$(am__dirstamp)
 test/test_neurai-versionbits_tests.$(OBJEXT): test/$(am__dirstamp) \
 	test/$(DEPDIR)/$(am__dirstamp)
 test/test_neurai-uint256_tests.$(OBJEXT): test/$(am__dirstamp) \
@@ -5776,6 +5863,7 @@ mostlyclean-compile:
 distclean-compile:
 	-rm -f *.tab.c
 
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libneurai_common_a-arith_uint256.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libneurai_common_a-base58.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libneurai_common_a-bech32.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libneurai_common_a-chainparams.Po@am__quote@ # am--include-marker
@@ -5802,6 +5890,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libneurai_server_a-bloom.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libneurai_server_a-chain.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libneurai_server_a-checkpoints.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libneurai_server_a-coins_server.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libneurai_server_a-dbwrapper.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libneurai_server_a-depinecies.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libneurai_server_a-depinmcpclient.Po@am__quote@ # am--include-marker
@@ -6013,10 +6102,11 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@algo/$(DEPDIR)/libneuraiconsensus_la-sponge.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@algo/$(DEPDIR)/libneuraiconsensus_la-tiger.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@algo/$(DEPDIR)/libneuraiconsensus_la-whirlpool.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@assets/$(DEPDIR)/libneurai_common_a-assets_fromscript.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@assets/$(DEPDIR)/libneurai_common_a-assettypes.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@assets/$(DEPDIR)/libneurai_server_a-assetdb.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@assets/$(DEPDIR)/libneurai_server_a-assets.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@assets/$(DEPDIR)/libneurai_server_a-assetsnapshotdb.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@assets/$(DEPDIR)/libneurai_server_a-assettypes.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@assets/$(DEPDIR)/libneurai_server_a-messages.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@assets/$(DEPDIR)/libneurai_server_a-myassetsdb.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@assets/$(DEPDIR)/libneurai_server_a-restricteddb.Po@am__quote@ # am--include-marker
@@ -6041,6 +6131,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@compat/$(DEPDIR)/libneurai_util_a-glibc_sanity.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@compat/$(DEPDIR)/libneurai_util_a-glibcxx_sanity.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@compat/$(DEPDIR)/libneuraiconsensus_la-glibc_compat.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@consensus/$(DEPDIR)/libneurai_common_a-merkle.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@consensus/$(DEPDIR)/libneurai_consensus_a-merkle.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@consensus/$(DEPDIR)/libneurai_server_a-consensus.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@consensus/$(DEPDIR)/libneurai_server_a-tx_verify.Po@am__quote@ # am--include-marker
@@ -6303,6 +6394,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-allocator_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-amount_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-arith_uint256_tests.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-arithmetic64_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-base32_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-base58_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-base64_tests.Po@am__quote@ # am--include-marker
@@ -6314,11 +6406,15 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-coins_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-compress_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-crypto_tests.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-csfs_tests.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-ctv_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-cuckoocache_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-dbwrapper_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-depinecies_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-getarg_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-hash_tests.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-inputassetfield_tests.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-inputoutputcount_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-kawpow_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-key_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-limitedmap_tests.Po@am__quote@ # am--include-marker
@@ -6330,12 +6426,18 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-multisig_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-net_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-netbase_tests.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-opcat_tests.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-outputassetfield_tests.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-outputscript_tests.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-outputvalue_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-pmt_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-policyestimator_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-pow_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-prevector_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-raii_event_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-random_tests.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-refinputs_tests.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-reversebytes_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-reverselock_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-rpc_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-sanity_tests.Po@am__quote@ # am--include-marker
@@ -6350,16 +6452,21 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-sighash_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-sigopcount_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-skiplist_tests.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-split_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-streams_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-test_neurai.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-test_neurai_main.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-timedata_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-torcontrol_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-transaction_tests.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-txfield_tests.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-txhash_tests.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-txlocktime_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-txvalidationcache_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-uint256_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-univalue_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-util_tests.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-verify_flags_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-versionbits_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai_fuzzy-test_neurai_fuzzy.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai_hash-test_neurai_hash.Po@am__quote@ # am--include-marker
@@ -9268,6 +9375,34 @@ algo/libneurai_cli_a-sponge.obj: algo/sponge.cpp
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_cli_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_cli_a_CXXFLAGS) $(CXXFLAGS) -c -o algo/libneurai_cli_a-sponge.obj `if test -f 'algo/sponge.cpp'; then $(CYGPATH_W) 'algo/sponge.cpp'; else $(CYGPATH_W) '$(srcdir)/algo/sponge.cpp'; fi`
 
+libneurai_common_a-arith_uint256.o: arith_uint256.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -MT libneurai_common_a-arith_uint256.o -MD -MP -MF $(DEPDIR)/libneurai_common_a-arith_uint256.Tpo -c -o libneurai_common_a-arith_uint256.o `test -f 'arith_uint256.cpp' || echo '$(srcdir)/'`arith_uint256.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libneurai_common_a-arith_uint256.Tpo $(DEPDIR)/libneurai_common_a-arith_uint256.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='arith_uint256.cpp' object='libneurai_common_a-arith_uint256.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -c -o libneurai_common_a-arith_uint256.o `test -f 'arith_uint256.cpp' || echo '$(srcdir)/'`arith_uint256.cpp
+
+libneurai_common_a-arith_uint256.obj: arith_uint256.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -MT libneurai_common_a-arith_uint256.obj -MD -MP -MF $(DEPDIR)/libneurai_common_a-arith_uint256.Tpo -c -o libneurai_common_a-arith_uint256.obj `if test -f 'arith_uint256.cpp'; then $(CYGPATH_W) 'arith_uint256.cpp'; else $(CYGPATH_W) '$(srcdir)/arith_uint256.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libneurai_common_a-arith_uint256.Tpo $(DEPDIR)/libneurai_common_a-arith_uint256.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='arith_uint256.cpp' object='libneurai_common_a-arith_uint256.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -c -o libneurai_common_a-arith_uint256.obj `if test -f 'arith_uint256.cpp'; then $(CYGPATH_W) 'arith_uint256.cpp'; else $(CYGPATH_W) '$(srcdir)/arith_uint256.cpp'; fi`
+
+consensus/libneurai_common_a-merkle.o: consensus/merkle.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -MT consensus/libneurai_common_a-merkle.o -MD -MP -MF consensus/$(DEPDIR)/libneurai_common_a-merkle.Tpo -c -o consensus/libneurai_common_a-merkle.o `test -f 'consensus/merkle.cpp' || echo '$(srcdir)/'`consensus/merkle.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) consensus/$(DEPDIR)/libneurai_common_a-merkle.Tpo consensus/$(DEPDIR)/libneurai_common_a-merkle.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='consensus/merkle.cpp' object='consensus/libneurai_common_a-merkle.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -c -o consensus/libneurai_common_a-merkle.o `test -f 'consensus/merkle.cpp' || echo '$(srcdir)/'`consensus/merkle.cpp
+
+consensus/libneurai_common_a-merkle.obj: consensus/merkle.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -MT consensus/libneurai_common_a-merkle.obj -MD -MP -MF consensus/$(DEPDIR)/libneurai_common_a-merkle.Tpo -c -o consensus/libneurai_common_a-merkle.obj `if test -f 'consensus/merkle.cpp'; then $(CYGPATH_W) 'consensus/merkle.cpp'; else $(CYGPATH_W) '$(srcdir)/consensus/merkle.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) consensus/$(DEPDIR)/libneurai_common_a-merkle.Tpo consensus/$(DEPDIR)/libneurai_common_a-merkle.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='consensus/merkle.cpp' object='consensus/libneurai_common_a-merkle.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -c -o consensus/libneurai_common_a-merkle.obj `if test -f 'consensus/merkle.cpp'; then $(CYGPATH_W) 'consensus/merkle.cpp'; else $(CYGPATH_W) '$(srcdir)/consensus/merkle.cpp'; fi`
+
 libneurai_common_a-base58.o: base58.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -MT libneurai_common_a-base58.o -MD -MP -MF $(DEPDIR)/libneurai_common_a-base58.Tpo -c -o libneurai_common_a-base58.o `test -f 'base58.cpp' || echo '$(srcdir)/'`base58.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libneurai_common_a-base58.Tpo $(DEPDIR)/libneurai_common_a-base58.Po
@@ -9505,6 +9640,34 @@ libneurai_common_a-warnings.obj: warnings.cpp
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='warnings.cpp' object='libneurai_common_a-warnings.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -c -o libneurai_common_a-warnings.obj `if test -f 'warnings.cpp'; then $(CYGPATH_W) 'warnings.cpp'; else $(CYGPATH_W) '$(srcdir)/warnings.cpp'; fi`
+
+assets/libneurai_common_a-assets_fromscript.o: assets/assets_fromscript.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -MT assets/libneurai_common_a-assets_fromscript.o -MD -MP -MF assets/$(DEPDIR)/libneurai_common_a-assets_fromscript.Tpo -c -o assets/libneurai_common_a-assets_fromscript.o `test -f 'assets/assets_fromscript.cpp' || echo '$(srcdir)/'`assets/assets_fromscript.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) assets/$(DEPDIR)/libneurai_common_a-assets_fromscript.Tpo assets/$(DEPDIR)/libneurai_common_a-assets_fromscript.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='assets/assets_fromscript.cpp' object='assets/libneurai_common_a-assets_fromscript.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -c -o assets/libneurai_common_a-assets_fromscript.o `test -f 'assets/assets_fromscript.cpp' || echo '$(srcdir)/'`assets/assets_fromscript.cpp
+
+assets/libneurai_common_a-assets_fromscript.obj: assets/assets_fromscript.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -MT assets/libneurai_common_a-assets_fromscript.obj -MD -MP -MF assets/$(DEPDIR)/libneurai_common_a-assets_fromscript.Tpo -c -o assets/libneurai_common_a-assets_fromscript.obj `if test -f 'assets/assets_fromscript.cpp'; then $(CYGPATH_W) 'assets/assets_fromscript.cpp'; else $(CYGPATH_W) '$(srcdir)/assets/assets_fromscript.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) assets/$(DEPDIR)/libneurai_common_a-assets_fromscript.Tpo assets/$(DEPDIR)/libneurai_common_a-assets_fromscript.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='assets/assets_fromscript.cpp' object='assets/libneurai_common_a-assets_fromscript.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -c -o assets/libneurai_common_a-assets_fromscript.obj `if test -f 'assets/assets_fromscript.cpp'; then $(CYGPATH_W) 'assets/assets_fromscript.cpp'; else $(CYGPATH_W) '$(srcdir)/assets/assets_fromscript.cpp'; fi`
+
+assets/libneurai_common_a-assettypes.o: assets/assettypes.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -MT assets/libneurai_common_a-assettypes.o -MD -MP -MF assets/$(DEPDIR)/libneurai_common_a-assettypes.Tpo -c -o assets/libneurai_common_a-assettypes.o `test -f 'assets/assettypes.cpp' || echo '$(srcdir)/'`assets/assettypes.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) assets/$(DEPDIR)/libneurai_common_a-assettypes.Tpo assets/$(DEPDIR)/libneurai_common_a-assettypes.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='assets/assettypes.cpp' object='assets/libneurai_common_a-assettypes.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -c -o assets/libneurai_common_a-assettypes.o `test -f 'assets/assettypes.cpp' || echo '$(srcdir)/'`assets/assettypes.cpp
+
+assets/libneurai_common_a-assettypes.obj: assets/assettypes.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -MT assets/libneurai_common_a-assettypes.obj -MD -MP -MF assets/$(DEPDIR)/libneurai_common_a-assettypes.Tpo -c -o assets/libneurai_common_a-assettypes.obj `if test -f 'assets/assettypes.cpp'; then $(CYGPATH_W) 'assets/assettypes.cpp'; else $(CYGPATH_W) '$(srcdir)/assets/assettypes.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) assets/$(DEPDIR)/libneurai_common_a-assettypes.Tpo assets/$(DEPDIR)/libneurai_common_a-assettypes.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='assets/assettypes.cpp' object='assets/libneurai_common_a-assettypes.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -c -o assets/libneurai_common_a-assettypes.obj `if test -f 'assets/assettypes.cpp'; then $(CYGPATH_W) 'assets/assettypes.cpp'; else $(CYGPATH_W) '$(srcdir)/assets/assettypes.cpp'; fi`
 
 algo/libneurai_common_a-tiger.o: algo/tiger.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -MT algo/libneurai_common_a-tiger.o -MD -MP -MF algo/$(DEPDIR)/libneurai_common_a-tiger.Tpo -c -o algo/libneurai_common_a-tiger.o `test -f 'algo/tiger.cpp' || echo '$(srcdir)/'`algo/tiger.cpp
@@ -10052,19 +10215,19 @@ assets/libneurai_server_a-assetdb.obj: assets/assetdb.cpp
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_server_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_server_a_CXXFLAGS) $(CXXFLAGS) -c -o assets/libneurai_server_a-assetdb.obj `if test -f 'assets/assetdb.cpp'; then $(CYGPATH_W) 'assets/assetdb.cpp'; else $(CYGPATH_W) '$(srcdir)/assets/assetdb.cpp'; fi`
 
-assets/libneurai_server_a-assettypes.o: assets/assettypes.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_server_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_server_a_CXXFLAGS) $(CXXFLAGS) -MT assets/libneurai_server_a-assettypes.o -MD -MP -MF assets/$(DEPDIR)/libneurai_server_a-assettypes.Tpo -c -o assets/libneurai_server_a-assettypes.o `test -f 'assets/assettypes.cpp' || echo '$(srcdir)/'`assets/assettypes.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) assets/$(DEPDIR)/libneurai_server_a-assettypes.Tpo assets/$(DEPDIR)/libneurai_server_a-assettypes.Po
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='assets/assettypes.cpp' object='assets/libneurai_server_a-assettypes.o' libtool=no @AMDEPBACKSLASH@
+libneurai_server_a-coins_server.o: coins_server.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_server_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_server_a_CXXFLAGS) $(CXXFLAGS) -MT libneurai_server_a-coins_server.o -MD -MP -MF $(DEPDIR)/libneurai_server_a-coins_server.Tpo -c -o libneurai_server_a-coins_server.o `test -f 'coins_server.cpp' || echo '$(srcdir)/'`coins_server.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libneurai_server_a-coins_server.Tpo $(DEPDIR)/libneurai_server_a-coins_server.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='coins_server.cpp' object='libneurai_server_a-coins_server.o' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_server_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_server_a_CXXFLAGS) $(CXXFLAGS) -c -o assets/libneurai_server_a-assettypes.o `test -f 'assets/assettypes.cpp' || echo '$(srcdir)/'`assets/assettypes.cpp
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_server_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_server_a_CXXFLAGS) $(CXXFLAGS) -c -o libneurai_server_a-coins_server.o `test -f 'coins_server.cpp' || echo '$(srcdir)/'`coins_server.cpp
 
-assets/libneurai_server_a-assettypes.obj: assets/assettypes.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_server_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_server_a_CXXFLAGS) $(CXXFLAGS) -MT assets/libneurai_server_a-assettypes.obj -MD -MP -MF assets/$(DEPDIR)/libneurai_server_a-assettypes.Tpo -c -o assets/libneurai_server_a-assettypes.obj `if test -f 'assets/assettypes.cpp'; then $(CYGPATH_W) 'assets/assettypes.cpp'; else $(CYGPATH_W) '$(srcdir)/assets/assettypes.cpp'; fi`
-@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) assets/$(DEPDIR)/libneurai_server_a-assettypes.Tpo assets/$(DEPDIR)/libneurai_server_a-assettypes.Po
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='assets/assettypes.cpp' object='assets/libneurai_server_a-assettypes.obj' libtool=no @AMDEPBACKSLASH@
+libneurai_server_a-coins_server.obj: coins_server.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_server_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_server_a_CXXFLAGS) $(CXXFLAGS) -MT libneurai_server_a-coins_server.obj -MD -MP -MF $(DEPDIR)/libneurai_server_a-coins_server.Tpo -c -o libneurai_server_a-coins_server.obj `if test -f 'coins_server.cpp'; then $(CYGPATH_W) 'coins_server.cpp'; else $(CYGPATH_W) '$(srcdir)/coins_server.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libneurai_server_a-coins_server.Tpo $(DEPDIR)/libneurai_server_a-coins_server.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='coins_server.cpp' object='libneurai_server_a-coins_server.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_server_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_server_a_CXXFLAGS) $(CXXFLAGS) -c -o assets/libneurai_server_a-assettypes.obj `if test -f 'assets/assettypes.cpp'; then $(CYGPATH_W) 'assets/assettypes.cpp'; else $(CYGPATH_W) '$(srcdir)/assets/assettypes.cpp'; fi`
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_server_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_server_a_CXXFLAGS) $(CXXFLAGS) -c -o libneurai_server_a-coins_server.obj `if test -f 'coins_server.cpp'; then $(CYGPATH_W) 'coins_server.cpp'; else $(CYGPATH_W) '$(srcdir)/coins_server.cpp'; fi`
 
 assets/libneurai_server_a-messages.o: assets/messages.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_server_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_server_a_CXXFLAGS) $(CXXFLAGS) -MT assets/libneurai_server_a-messages.o -MD -MP -MF assets/$(DEPDIR)/libneurai_server_a-messages.Tpo -c -o assets/libneurai_server_a-messages.o `test -f 'assets/messages.cpp' || echo '$(srcdir)/'`assets/messages.cpp
@@ -13874,6 +14037,48 @@ test/test_neurai-coins_tests.obj: test/coins_tests.cpp
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-coins_tests.obj `if test -f 'test/coins_tests.cpp'; then $(CYGPATH_W) 'test/coins_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/coins_tests.cpp'; fi`
 
+test/test_neurai-csfs_tests.o: test/csfs_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-csfs_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-csfs_tests.Tpo -c -o test/test_neurai-csfs_tests.o `test -f 'test/csfs_tests.cpp' || echo '$(srcdir)/'`test/csfs_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-csfs_tests.Tpo test/$(DEPDIR)/test_neurai-csfs_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/csfs_tests.cpp' object='test/test_neurai-csfs_tests.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-csfs_tests.o `test -f 'test/csfs_tests.cpp' || echo '$(srcdir)/'`test/csfs_tests.cpp
+
+test/test_neurai-csfs_tests.obj: test/csfs_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-csfs_tests.obj -MD -MP -MF test/$(DEPDIR)/test_neurai-csfs_tests.Tpo -c -o test/test_neurai-csfs_tests.obj `if test -f 'test/csfs_tests.cpp'; then $(CYGPATH_W) 'test/csfs_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/csfs_tests.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-csfs_tests.Tpo test/$(DEPDIR)/test_neurai-csfs_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/csfs_tests.cpp' object='test/test_neurai-csfs_tests.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-csfs_tests.obj `if test -f 'test/csfs_tests.cpp'; then $(CYGPATH_W) 'test/csfs_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/csfs_tests.cpp'; fi`
+
+test/test_neurai-ctv_tests.o: test/ctv_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-ctv_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-ctv_tests.Tpo -c -o test/test_neurai-ctv_tests.o `test -f 'test/ctv_tests.cpp' || echo '$(srcdir)/'`test/ctv_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-ctv_tests.Tpo test/$(DEPDIR)/test_neurai-ctv_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/ctv_tests.cpp' object='test/test_neurai-ctv_tests.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-ctv_tests.o `test -f 'test/ctv_tests.cpp' || echo '$(srcdir)/'`test/ctv_tests.cpp
+
+test/test_neurai-ctv_tests.obj: test/ctv_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-ctv_tests.obj -MD -MP -MF test/$(DEPDIR)/test_neurai-ctv_tests.Tpo -c -o test/test_neurai-ctv_tests.obj `if test -f 'test/ctv_tests.cpp'; then $(CYGPATH_W) 'test/ctv_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/ctv_tests.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-ctv_tests.Tpo test/$(DEPDIR)/test_neurai-ctv_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/ctv_tests.cpp' object='test/test_neurai-ctv_tests.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-ctv_tests.obj `if test -f 'test/ctv_tests.cpp'; then $(CYGPATH_W) 'test/ctv_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/ctv_tests.cpp'; fi`
+
+test/test_neurai-refinputs_tests.o: test/refinputs_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-refinputs_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-refinputs_tests.Tpo -c -o test/test_neurai-refinputs_tests.o `test -f 'test/refinputs_tests.cpp' || echo '$(srcdir)/'`test/refinputs_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-refinputs_tests.Tpo test/$(DEPDIR)/test_neurai-refinputs_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/refinputs_tests.cpp' object='test/test_neurai-refinputs_tests.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-refinputs_tests.o `test -f 'test/refinputs_tests.cpp' || echo '$(srcdir)/'`test/refinputs_tests.cpp
+
+test/test_neurai-refinputs_tests.obj: test/refinputs_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-refinputs_tests.obj -MD -MP -MF test/$(DEPDIR)/test_neurai-refinputs_tests.Tpo -c -o test/test_neurai-refinputs_tests.obj `if test -f 'test/refinputs_tests.cpp'; then $(CYGPATH_W) 'test/refinputs_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/refinputs_tests.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-refinputs_tests.Tpo test/$(DEPDIR)/test_neurai-refinputs_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/refinputs_tests.cpp' object='test/test_neurai-refinputs_tests.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-refinputs_tests.obj `if test -f 'test/refinputs_tests.cpp'; then $(CYGPATH_W) 'test/refinputs_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/refinputs_tests.cpp'; fi`
+
 test/test_neurai-compress_tests.o: test/compress_tests.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-compress_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-compress_tests.Tpo -c -o test/test_neurai-compress_tests.o `test -f 'test/compress_tests.cpp' || echo '$(srcdir)/'`test/compress_tests.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-compress_tests.Tpo test/$(DEPDIR)/test_neurai-compress_tests.Po
@@ -14111,6 +14316,20 @@ test/test_neurai-net_tests.obj: test/net_tests.cpp
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/net_tests.cpp' object='test/test_neurai-net_tests.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-net_tests.obj `if test -f 'test/net_tests.cpp'; then $(CYGPATH_W) 'test/net_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/net_tests.cpp'; fi`
+
+test/test_neurai-opcat_tests.o: test/opcat_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-opcat_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-opcat_tests.Tpo -c -o test/test_neurai-opcat_tests.o `test -f 'test/opcat_tests.cpp' || echo '$(srcdir)/'`test/opcat_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-opcat_tests.Tpo test/$(DEPDIR)/test_neurai-opcat_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/opcat_tests.cpp' object='test/test_neurai-opcat_tests.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-opcat_tests.o `test -f 'test/opcat_tests.cpp' || echo '$(srcdir)/'`test/opcat_tests.cpp
+
+test/test_neurai-opcat_tests.obj: test/opcat_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-opcat_tests.obj -MD -MP -MF test/$(DEPDIR)/test_neurai-opcat_tests.Tpo -c -o test/test_neurai-opcat_tests.obj `if test -f 'test/opcat_tests.cpp'; then $(CYGPATH_W) 'test/opcat_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/opcat_tests.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-opcat_tests.Tpo test/$(DEPDIR)/test_neurai-opcat_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/opcat_tests.cpp' object='test/test_neurai-opcat_tests.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-opcat_tests.obj `if test -f 'test/opcat_tests.cpp'; then $(CYGPATH_W) 'test/opcat_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/opcat_tests.cpp'; fi`
 
 test/test_neurai-netbase_tests.o: test/netbase_tests.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-netbase_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-netbase_tests.Tpo -c -o test/test_neurai-netbase_tests.o `test -f 'test/netbase_tests.cpp' || echo '$(srcdir)/'`test/netbase_tests.cpp
@@ -14504,6 +14723,160 @@ test/test_neurai-transaction_tests.obj: test/transaction_tests.cpp
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-transaction_tests.obj `if test -f 'test/transaction_tests.cpp'; then $(CYGPATH_W) 'test/transaction_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/transaction_tests.cpp'; fi`
 
+test/test_neurai-txhash_tests.o: test/txhash_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-txhash_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-txhash_tests.Tpo -c -o test/test_neurai-txhash_tests.o `test -f 'test/txhash_tests.cpp' || echo '$(srcdir)/'`test/txhash_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-txhash_tests.Tpo test/$(DEPDIR)/test_neurai-txhash_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/txhash_tests.cpp' object='test/test_neurai-txhash_tests.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-txhash_tests.o `test -f 'test/txhash_tests.cpp' || echo '$(srcdir)/'`test/txhash_tests.cpp
+
+test/test_neurai-txhash_tests.obj: test/txhash_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-txhash_tests.obj -MD -MP -MF test/$(DEPDIR)/test_neurai-txhash_tests.Tpo -c -o test/test_neurai-txhash_tests.obj `if test -f 'test/txhash_tests.cpp'; then $(CYGPATH_W) 'test/txhash_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/txhash_tests.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-txhash_tests.Tpo test/$(DEPDIR)/test_neurai-txhash_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/txhash_tests.cpp' object='test/test_neurai-txhash_tests.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-txhash_tests.obj `if test -f 'test/txhash_tests.cpp'; then $(CYGPATH_W) 'test/txhash_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/txhash_tests.cpp'; fi`
+
+test/test_neurai-txfield_tests.o: test/txfield_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-txfield_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-txfield_tests.Tpo -c -o test/test_neurai-txfield_tests.o `test -f 'test/txfield_tests.cpp' || echo '$(srcdir)/'`test/txfield_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-txfield_tests.Tpo test/$(DEPDIR)/test_neurai-txfield_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/txfield_tests.cpp' object='test/test_neurai-txfield_tests.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-txfield_tests.o `test -f 'test/txfield_tests.cpp' || echo '$(srcdir)/'`test/txfield_tests.cpp
+
+test/test_neurai-txfield_tests.obj: test/txfield_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-txfield_tests.obj -MD -MP -MF test/$(DEPDIR)/test_neurai-txfield_tests.Tpo -c -o test/test_neurai-txfield_tests.obj `if test -f 'test/txfield_tests.cpp'; then $(CYGPATH_W) 'test/txfield_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/txfield_tests.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-txfield_tests.Tpo test/$(DEPDIR)/test_neurai-txfield_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/txfield_tests.cpp' object='test/test_neurai-txfield_tests.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-txfield_tests.obj `if test -f 'test/txfield_tests.cpp'; then $(CYGPATH_W) 'test/txfield_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/txfield_tests.cpp'; fi`
+
+test/test_neurai-split_tests.o: test/split_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-split_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-split_tests.Tpo -c -o test/test_neurai-split_tests.o `test -f 'test/split_tests.cpp' || echo '$(srcdir)/'`test/split_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-split_tests.Tpo test/$(DEPDIR)/test_neurai-split_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/split_tests.cpp' object='test/test_neurai-split_tests.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-split_tests.o `test -f 'test/split_tests.cpp' || echo '$(srcdir)/'`test/split_tests.cpp
+
+test/test_neurai-split_tests.obj: test/split_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-split_tests.obj -MD -MP -MF test/$(DEPDIR)/test_neurai-split_tests.Tpo -c -o test/test_neurai-split_tests.obj `if test -f 'test/split_tests.cpp'; then $(CYGPATH_W) 'test/split_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/split_tests.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-split_tests.Tpo test/$(DEPDIR)/test_neurai-split_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/split_tests.cpp' object='test/test_neurai-split_tests.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-split_tests.obj `if test -f 'test/split_tests.cpp'; then $(CYGPATH_W) 'test/split_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/split_tests.cpp'; fi`
+
+test/test_neurai-reversebytes_tests.o: test/reversebytes_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-reversebytes_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-reversebytes_tests.Tpo -c -o test/test_neurai-reversebytes_tests.o `test -f 'test/reversebytes_tests.cpp' || echo '$(srcdir)/'`test/reversebytes_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-reversebytes_tests.Tpo test/$(DEPDIR)/test_neurai-reversebytes_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/reversebytes_tests.cpp' object='test/test_neurai-reversebytes_tests.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-reversebytes_tests.o `test -f 'test/reversebytes_tests.cpp' || echo '$(srcdir)/'`test/reversebytes_tests.cpp
+
+test/test_neurai-reversebytes_tests.obj: test/reversebytes_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-reversebytes_tests.obj -MD -MP -MF test/$(DEPDIR)/test_neurai-reversebytes_tests.Tpo -c -o test/test_neurai-reversebytes_tests.obj `if test -f 'test/reversebytes_tests.cpp'; then $(CYGPATH_W) 'test/reversebytes_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/reversebytes_tests.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-reversebytes_tests.Tpo test/$(DEPDIR)/test_neurai-reversebytes_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/reversebytes_tests.cpp' object='test/test_neurai-reversebytes_tests.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-reversebytes_tests.obj `if test -f 'test/reversebytes_tests.cpp'; then $(CYGPATH_W) 'test/reversebytes_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/reversebytes_tests.cpp'; fi`
+
+test/test_neurai-arithmetic64_tests.o: test/arithmetic64_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-arithmetic64_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-arithmetic64_tests.Tpo -c -o test/test_neurai-arithmetic64_tests.o `test -f 'test/arithmetic64_tests.cpp' || echo '$(srcdir)/'`test/arithmetic64_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-arithmetic64_tests.Tpo test/$(DEPDIR)/test_neurai-arithmetic64_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/arithmetic64_tests.cpp' object='test/test_neurai-arithmetic64_tests.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-arithmetic64_tests.o `test -f 'test/arithmetic64_tests.cpp' || echo '$(srcdir)/'`test/arithmetic64_tests.cpp
+
+test/test_neurai-arithmetic64_tests.obj: test/arithmetic64_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-arithmetic64_tests.obj -MD -MP -MF test/$(DEPDIR)/test_neurai-arithmetic64_tests.Tpo -c -o test/test_neurai-arithmetic64_tests.obj `if test -f 'test/arithmetic64_tests.cpp'; then $(CYGPATH_W) 'test/arithmetic64_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/arithmetic64_tests.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-arithmetic64_tests.Tpo test/$(DEPDIR)/test_neurai-arithmetic64_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/arithmetic64_tests.cpp' object='test/test_neurai-arithmetic64_tests.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-arithmetic64_tests.obj `if test -f 'test/arithmetic64_tests.cpp'; then $(CYGPATH_W) 'test/arithmetic64_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/arithmetic64_tests.cpp'; fi`
+
+test/test_neurai-outputvalue_tests.o: test/outputvalue_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-outputvalue_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-outputvalue_tests.Tpo -c -o test/test_neurai-outputvalue_tests.o `test -f 'test/outputvalue_tests.cpp' || echo '$(srcdir)/'`test/outputvalue_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-outputvalue_tests.Tpo test/$(DEPDIR)/test_neurai-outputvalue_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/outputvalue_tests.cpp' object='test/test_neurai-outputvalue_tests.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-outputvalue_tests.o `test -f 'test/outputvalue_tests.cpp' || echo '$(srcdir)/'`test/outputvalue_tests.cpp
+
+test/test_neurai-outputvalue_tests.obj: test/outputvalue_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-outputvalue_tests.obj -MD -MP -MF test/$(DEPDIR)/test_neurai-outputvalue_tests.Tpo -c -o test/test_neurai-outputvalue_tests.obj `if test -f 'test/outputvalue_tests.cpp'; then $(CYGPATH_W) 'test/outputvalue_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/outputvalue_tests.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-outputvalue_tests.Tpo test/$(DEPDIR)/test_neurai-outputvalue_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/outputvalue_tests.cpp' object='test/test_neurai-outputvalue_tests.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-outputvalue_tests.obj `if test -f 'test/outputvalue_tests.cpp'; then $(CYGPATH_W) 'test/outputvalue_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/outputvalue_tests.cpp'; fi`
+
+test/test_neurai-outputassetfield_tests.o: test/outputassetfield_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-outputassetfield_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-outputassetfield_tests.Tpo -c -o test/test_neurai-outputassetfield_tests.o `test -f 'test/outputassetfield_tests.cpp' || echo '$(srcdir)/'`test/outputassetfield_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-outputassetfield_tests.Tpo test/$(DEPDIR)/test_neurai-outputassetfield_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/outputassetfield_tests.cpp' object='test/test_neurai-outputassetfield_tests.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-outputassetfield_tests.o `test -f 'test/outputassetfield_tests.cpp' || echo '$(srcdir)/'`test/outputassetfield_tests.cpp
+
+test/test_neurai-outputassetfield_tests.obj: test/outputassetfield_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-outputassetfield_tests.obj -MD -MP -MF test/$(DEPDIR)/test_neurai-outputassetfield_tests.Tpo -c -o test/test_neurai-outputassetfield_tests.obj `if test -f 'test/outputassetfield_tests.cpp'; then $(CYGPATH_W) 'test/outputassetfield_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/outputassetfield_tests.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-outputassetfield_tests.Tpo test/$(DEPDIR)/test_neurai-outputassetfield_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/outputassetfield_tests.cpp' object='test/test_neurai-outputassetfield_tests.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-outputassetfield_tests.obj `if test -f 'test/outputassetfield_tests.cpp'; then $(CYGPATH_W) 'test/outputassetfield_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/outputassetfield_tests.cpp'; fi`
+
+test/test_neurai-inputassetfield_tests.o: test/inputassetfield_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-inputassetfield_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-inputassetfield_tests.Tpo -c -o test/test_neurai-inputassetfield_tests.o `test -f 'test/inputassetfield_tests.cpp' || echo '$(srcdir)/'`test/inputassetfield_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-inputassetfield_tests.Tpo test/$(DEPDIR)/test_neurai-inputassetfield_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/inputassetfield_tests.cpp' object='test/test_neurai-inputassetfield_tests.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-inputassetfield_tests.o `test -f 'test/inputassetfield_tests.cpp' || echo '$(srcdir)/'`test/inputassetfield_tests.cpp
+
+test/test_neurai-inputassetfield_tests.obj: test/inputassetfield_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-inputassetfield_tests.obj -MD -MP -MF test/$(DEPDIR)/test_neurai-inputassetfield_tests.Tpo -c -o test/test_neurai-inputassetfield_tests.obj `if test -f 'test/inputassetfield_tests.cpp'; then $(CYGPATH_W) 'test/inputassetfield_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/inputassetfield_tests.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-inputassetfield_tests.Tpo test/$(DEPDIR)/test_neurai-inputassetfield_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/inputassetfield_tests.cpp' object='test/test_neurai-inputassetfield_tests.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-inputassetfield_tests.obj `if test -f 'test/inputassetfield_tests.cpp'; then $(CYGPATH_W) 'test/inputassetfield_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/inputassetfield_tests.cpp'; fi`
+
+test/test_neurai-inputoutputcount_tests.o: test/inputoutputcount_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-inputoutputcount_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-inputoutputcount_tests.Tpo -c -o test/test_neurai-inputoutputcount_tests.o `test -f 'test/inputoutputcount_tests.cpp' || echo '$(srcdir)/'`test/inputoutputcount_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-inputoutputcount_tests.Tpo test/$(DEPDIR)/test_neurai-inputoutputcount_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/inputoutputcount_tests.cpp' object='test/test_neurai-inputoutputcount_tests.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-inputoutputcount_tests.o `test -f 'test/inputoutputcount_tests.cpp' || echo '$(srcdir)/'`test/inputoutputcount_tests.cpp
+
+test/test_neurai-inputoutputcount_tests.obj: test/inputoutputcount_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-inputoutputcount_tests.obj -MD -MP -MF test/$(DEPDIR)/test_neurai-inputoutputcount_tests.Tpo -c -o test/test_neurai-inputoutputcount_tests.obj `if test -f 'test/inputoutputcount_tests.cpp'; then $(CYGPATH_W) 'test/inputoutputcount_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/inputoutputcount_tests.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-inputoutputcount_tests.Tpo test/$(DEPDIR)/test_neurai-inputoutputcount_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/inputoutputcount_tests.cpp' object='test/test_neurai-inputoutputcount_tests.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-inputoutputcount_tests.obj `if test -f 'test/inputoutputcount_tests.cpp'; then $(CYGPATH_W) 'test/inputoutputcount_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/inputoutputcount_tests.cpp'; fi`
+
+test/test_neurai-outputscript_tests.o: test/outputscript_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-outputscript_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-outputscript_tests.Tpo -c -o test/test_neurai-outputscript_tests.o `test -f 'test/outputscript_tests.cpp' || echo '$(srcdir)/'`test/outputscript_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-outputscript_tests.Tpo test/$(DEPDIR)/test_neurai-outputscript_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/outputscript_tests.cpp' object='test/test_neurai-outputscript_tests.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-outputscript_tests.o `test -f 'test/outputscript_tests.cpp' || echo '$(srcdir)/'`test/outputscript_tests.cpp
+
+test/test_neurai-outputscript_tests.obj: test/outputscript_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-outputscript_tests.obj -MD -MP -MF test/$(DEPDIR)/test_neurai-outputscript_tests.Tpo -c -o test/test_neurai-outputscript_tests.obj `if test -f 'test/outputscript_tests.cpp'; then $(CYGPATH_W) 'test/outputscript_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/outputscript_tests.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-outputscript_tests.Tpo test/$(DEPDIR)/test_neurai-outputscript_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/outputscript_tests.cpp' object='test/test_neurai-outputscript_tests.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-outputscript_tests.obj `if test -f 'test/outputscript_tests.cpp'; then $(CYGPATH_W) 'test/outputscript_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/outputscript_tests.cpp'; fi`
+
+test/test_neurai-txlocktime_tests.o: test/txlocktime_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-txlocktime_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-txlocktime_tests.Tpo -c -o test/test_neurai-txlocktime_tests.o `test -f 'test/txlocktime_tests.cpp' || echo '$(srcdir)/'`test/txlocktime_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-txlocktime_tests.Tpo test/$(DEPDIR)/test_neurai-txlocktime_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/txlocktime_tests.cpp' object='test/test_neurai-txlocktime_tests.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-txlocktime_tests.o `test -f 'test/txlocktime_tests.cpp' || echo '$(srcdir)/'`test/txlocktime_tests.cpp
+
+test/test_neurai-txlocktime_tests.obj: test/txlocktime_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-txlocktime_tests.obj -MD -MP -MF test/$(DEPDIR)/test_neurai-txlocktime_tests.Tpo -c -o test/test_neurai-txlocktime_tests.obj `if test -f 'test/txlocktime_tests.cpp'; then $(CYGPATH_W) 'test/txlocktime_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/txlocktime_tests.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-txlocktime_tests.Tpo test/$(DEPDIR)/test_neurai-txlocktime_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/txlocktime_tests.cpp' object='test/test_neurai-txlocktime_tests.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-txlocktime_tests.obj `if test -f 'test/txlocktime_tests.cpp'; then $(CYGPATH_W) 'test/txlocktime_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/txlocktime_tests.cpp'; fi`
+
 test/test_neurai-txvalidationcache_tests.o: test/txvalidationcache_tests.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-txvalidationcache_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-txvalidationcache_tests.Tpo -c -o test/test_neurai-txvalidationcache_tests.o `test -f 'test/txvalidationcache_tests.cpp' || echo '$(srcdir)/'`test/txvalidationcache_tests.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-txvalidationcache_tests.Tpo test/$(DEPDIR)/test_neurai-txvalidationcache_tests.Po
@@ -14517,6 +14890,20 @@ test/test_neurai-txvalidationcache_tests.obj: test/txvalidationcache_tests.cpp
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/txvalidationcache_tests.cpp' object='test/test_neurai-txvalidationcache_tests.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-txvalidationcache_tests.obj `if test -f 'test/txvalidationcache_tests.cpp'; then $(CYGPATH_W) 'test/txvalidationcache_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/txvalidationcache_tests.cpp'; fi`
+
+test/test_neurai-verify_flags_tests.o: test/verify_flags_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-verify_flags_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-verify_flags_tests.Tpo -c -o test/test_neurai-verify_flags_tests.o `test -f 'test/verify_flags_tests.cpp' || echo '$(srcdir)/'`test/verify_flags_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-verify_flags_tests.Tpo test/$(DEPDIR)/test_neurai-verify_flags_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/verify_flags_tests.cpp' object='test/test_neurai-verify_flags_tests.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-verify_flags_tests.o `test -f 'test/verify_flags_tests.cpp' || echo '$(srcdir)/'`test/verify_flags_tests.cpp
+
+test/test_neurai-verify_flags_tests.obj: test/verify_flags_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-verify_flags_tests.obj -MD -MP -MF test/$(DEPDIR)/test_neurai-verify_flags_tests.Tpo -c -o test/test_neurai-verify_flags_tests.obj `if test -f 'test/verify_flags_tests.cpp'; then $(CYGPATH_W) 'test/verify_flags_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/verify_flags_tests.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-verify_flags_tests.Tpo test/$(DEPDIR)/test_neurai-verify_flags_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/verify_flags_tests.cpp' object='test/test_neurai-verify_flags_tests.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-verify_flags_tests.obj `if test -f 'test/verify_flags_tests.cpp'; then $(CYGPATH_W) 'test/verify_flags_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/verify_flags_tests.cpp'; fi`
 
 test/test_neurai-versionbits_tests.o: test/versionbits_tests.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-versionbits_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-versionbits_tests.Tpo -c -o test/test_neurai-versionbits_tests.o `test -f 'test/versionbits_tests.cpp' || echo '$(srcdir)/'`test/versionbits_tests.cpp
@@ -15230,6 +15617,7 @@ clean-am: clean-binPROGRAMS clean-generic clean-libLTLIBRARIES \
 	clean-libtool clean-local clean-noinstPROGRAMS mostlyclean-am
 
 distclean: distclean-recursive
+	-rm -f ./$(DEPDIR)/libneurai_common_a-arith_uint256.Po
 	-rm -f ./$(DEPDIR)/libneurai_common_a-base58.Po
 	-rm -f ./$(DEPDIR)/libneurai_common_a-bech32.Po
 	-rm -f ./$(DEPDIR)/libneurai_common_a-chainparams.Po
@@ -15256,6 +15644,7 @@ distclean: distclean-recursive
 	-rm -f ./$(DEPDIR)/libneurai_server_a-bloom.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-chain.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-checkpoints.Po
+	-rm -f ./$(DEPDIR)/libneurai_server_a-coins_server.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-dbwrapper.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-depinecies.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-depinmcpclient.Po
@@ -15467,10 +15856,11 @@ distclean: distclean-recursive
 	-rm -f algo/$(DEPDIR)/libneuraiconsensus_la-sponge.Plo
 	-rm -f algo/$(DEPDIR)/libneuraiconsensus_la-tiger.Plo
 	-rm -f algo/$(DEPDIR)/libneuraiconsensus_la-whirlpool.Plo
+	-rm -f assets/$(DEPDIR)/libneurai_common_a-assets_fromscript.Po
+	-rm -f assets/$(DEPDIR)/libneurai_common_a-assettypes.Po
 	-rm -f assets/$(DEPDIR)/libneurai_server_a-assetdb.Po
 	-rm -f assets/$(DEPDIR)/libneurai_server_a-assets.Po
 	-rm -f assets/$(DEPDIR)/libneurai_server_a-assetsnapshotdb.Po
-	-rm -f assets/$(DEPDIR)/libneurai_server_a-assettypes.Po
 	-rm -f assets/$(DEPDIR)/libneurai_server_a-messages.Po
 	-rm -f assets/$(DEPDIR)/libneurai_server_a-myassetsdb.Po
 	-rm -f assets/$(DEPDIR)/libneurai_server_a-restricteddb.Po
@@ -15495,6 +15885,7 @@ distclean: distclean-recursive
 	-rm -f compat/$(DEPDIR)/libneurai_util_a-glibc_sanity.Po
 	-rm -f compat/$(DEPDIR)/libneurai_util_a-glibcxx_sanity.Po
 	-rm -f compat/$(DEPDIR)/libneuraiconsensus_la-glibc_compat.Plo
+	-rm -f consensus/$(DEPDIR)/libneurai_common_a-merkle.Po
 	-rm -f consensus/$(DEPDIR)/libneurai_consensus_a-merkle.Po
 	-rm -f consensus/$(DEPDIR)/libneurai_server_a-consensus.Po
 	-rm -f consensus/$(DEPDIR)/libneurai_server_a-tx_verify.Po
@@ -15757,6 +16148,7 @@ distclean: distclean-recursive
 	-rm -f test/$(DEPDIR)/test_neurai-allocator_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-amount_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-arith_uint256_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-arithmetic64_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-base32_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-base58_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-base64_tests.Po
@@ -15768,11 +16160,15 @@ distclean: distclean-recursive
 	-rm -f test/$(DEPDIR)/test_neurai-coins_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-compress_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-crypto_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-csfs_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-ctv_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-cuckoocache_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-dbwrapper_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-depinecies_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-getarg_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-hash_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-inputassetfield_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-inputoutputcount_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-kawpow_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-key_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-limitedmap_tests.Po
@@ -15784,12 +16180,18 @@ distclean: distclean-recursive
 	-rm -f test/$(DEPDIR)/test_neurai-multisig_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-net_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-netbase_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-opcat_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-outputassetfield_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-outputscript_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-outputvalue_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-pmt_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-policyestimator_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-pow_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-prevector_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-raii_event_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-random_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-refinputs_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-reversebytes_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-reverselock_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-rpc_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-sanity_tests.Po
@@ -15804,16 +16206,21 @@ distclean: distclean-recursive
 	-rm -f test/$(DEPDIR)/test_neurai-sighash_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-sigopcount_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-skiplist_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-split_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-streams_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-test_neurai.Po
 	-rm -f test/$(DEPDIR)/test_neurai-test_neurai_main.Po
 	-rm -f test/$(DEPDIR)/test_neurai-timedata_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-torcontrol_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-transaction_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-txfield_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-txhash_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-txlocktime_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-txvalidationcache_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-uint256_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-univalue_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-util_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-verify_flags_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-versionbits_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai_fuzzy-test_neurai_fuzzy.Po
 	-rm -f test/$(DEPDIR)/test_neurai_hash-test_neurai_hash.Po
@@ -15891,6 +16298,7 @@ install-ps-am:
 installcheck-am:
 
 maintainer-clean: maintainer-clean-recursive
+	-rm -f ./$(DEPDIR)/libneurai_common_a-arith_uint256.Po
 	-rm -f ./$(DEPDIR)/libneurai_common_a-base58.Po
 	-rm -f ./$(DEPDIR)/libneurai_common_a-bech32.Po
 	-rm -f ./$(DEPDIR)/libneurai_common_a-chainparams.Po
@@ -15917,6 +16325,7 @@ maintainer-clean: maintainer-clean-recursive
 	-rm -f ./$(DEPDIR)/libneurai_server_a-bloom.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-chain.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-checkpoints.Po
+	-rm -f ./$(DEPDIR)/libneurai_server_a-coins_server.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-dbwrapper.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-depinecies.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-depinmcpclient.Po
@@ -16128,10 +16537,11 @@ maintainer-clean: maintainer-clean-recursive
 	-rm -f algo/$(DEPDIR)/libneuraiconsensus_la-sponge.Plo
 	-rm -f algo/$(DEPDIR)/libneuraiconsensus_la-tiger.Plo
 	-rm -f algo/$(DEPDIR)/libneuraiconsensus_la-whirlpool.Plo
+	-rm -f assets/$(DEPDIR)/libneurai_common_a-assets_fromscript.Po
+	-rm -f assets/$(DEPDIR)/libneurai_common_a-assettypes.Po
 	-rm -f assets/$(DEPDIR)/libneurai_server_a-assetdb.Po
 	-rm -f assets/$(DEPDIR)/libneurai_server_a-assets.Po
 	-rm -f assets/$(DEPDIR)/libneurai_server_a-assetsnapshotdb.Po
-	-rm -f assets/$(DEPDIR)/libneurai_server_a-assettypes.Po
 	-rm -f assets/$(DEPDIR)/libneurai_server_a-messages.Po
 	-rm -f assets/$(DEPDIR)/libneurai_server_a-myassetsdb.Po
 	-rm -f assets/$(DEPDIR)/libneurai_server_a-restricteddb.Po
@@ -16156,6 +16566,7 @@ maintainer-clean: maintainer-clean-recursive
 	-rm -f compat/$(DEPDIR)/libneurai_util_a-glibc_sanity.Po
 	-rm -f compat/$(DEPDIR)/libneurai_util_a-glibcxx_sanity.Po
 	-rm -f compat/$(DEPDIR)/libneuraiconsensus_la-glibc_compat.Plo
+	-rm -f consensus/$(DEPDIR)/libneurai_common_a-merkle.Po
 	-rm -f consensus/$(DEPDIR)/libneurai_consensus_a-merkle.Po
 	-rm -f consensus/$(DEPDIR)/libneurai_server_a-consensus.Po
 	-rm -f consensus/$(DEPDIR)/libneurai_server_a-tx_verify.Po
@@ -16418,6 +16829,7 @@ maintainer-clean: maintainer-clean-recursive
 	-rm -f test/$(DEPDIR)/test_neurai-allocator_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-amount_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-arith_uint256_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-arithmetic64_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-base32_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-base58_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-base64_tests.Po
@@ -16429,11 +16841,15 @@ maintainer-clean: maintainer-clean-recursive
 	-rm -f test/$(DEPDIR)/test_neurai-coins_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-compress_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-crypto_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-csfs_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-ctv_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-cuckoocache_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-dbwrapper_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-depinecies_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-getarg_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-hash_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-inputassetfield_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-inputoutputcount_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-kawpow_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-key_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-limitedmap_tests.Po
@@ -16445,12 +16861,18 @@ maintainer-clean: maintainer-clean-recursive
 	-rm -f test/$(DEPDIR)/test_neurai-multisig_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-net_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-netbase_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-opcat_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-outputassetfield_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-outputscript_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-outputvalue_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-pmt_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-policyestimator_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-pow_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-prevector_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-raii_event_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-random_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-refinputs_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-reversebytes_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-reverselock_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-rpc_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-sanity_tests.Po
@@ -16465,16 +16887,21 @@ maintainer-clean: maintainer-clean-recursive
 	-rm -f test/$(DEPDIR)/test_neurai-sighash_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-sigopcount_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-skiplist_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-split_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-streams_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-test_neurai.Po
 	-rm -f test/$(DEPDIR)/test_neurai-test_neurai_main.Po
 	-rm -f test/$(DEPDIR)/test_neurai-timedata_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-torcontrol_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-transaction_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-txfield_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-txhash_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-txlocktime_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-txvalidationcache_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-uint256_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-univalue_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-util_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-verify_flags_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-versionbits_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai_fuzzy-test_neurai_fuzzy.Po
 	-rm -f test/$(DEPDIR)/test_neurai_hash-test_neurai_hash.Po

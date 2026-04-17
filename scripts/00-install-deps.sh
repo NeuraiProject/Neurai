@@ -91,6 +91,7 @@ elif [[ ${OS} == "linux" || ${OS} == "linux-disable-wallet" || ${OS} == "aarch64
     gcc-12-multilib \
     git \
     gnupg \
+    libxcb-cursor0 \
     libssl-dev \
     libtool \
     ninja-build \

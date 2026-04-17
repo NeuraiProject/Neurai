@@ -70,6 +70,7 @@ Q_IMPORT_PLUGIN(qtaccessiblewidgets)
 #if QT_VERSION < 0x050400
 Q_IMPORT_PLUGIN(AccessibleFactory)
 #endif
+Q_IMPORT_PLUGIN(QTlsBackendOpenSSL);
 #if defined(QT_QPA_PLATFORM_XCB)
 Q_IMPORT_PLUGIN(QXcbIntegrationPlugin);
 #elif defined(QT_QPA_PLATFORM_WINDOWS)
