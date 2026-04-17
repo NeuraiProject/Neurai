@@ -127,13 +127,11 @@ BOOST_AUTO_TEST_CASE(cat_overflow_limited_to_520_when_csfs_inactive)
 
 BOOST_AUTO_TEST_CASE(stack_bytes_cap_hit)
 {
-    // 90 × 3072 B = 276480 B > MAX_STACK_BYTES (262144 B). Push one element
-    // at a time; the cap check runs after each opcode.
-    CScript s;
-    for (int i = 0; i < 90; ++i) {
-        std::vector<unsigned char> data(MAX_PQ_SCRIPT_ELEMENT_SIZE, 0xcd);
-        s << data;
-    }
+    // 90 × 3072 B = 276480 B > MAX_STACK_BYTES (262144 B).
+    // Use a single push and OP_DUP to multiply stack items cheaply:
+    // the script body stays under MAX_SCRIPT_SIZE (10000 B).
+    CScript s = PushOfSize(MAX_PQ_SCRIPT_ELEMENT_SIZE);
+    for (int i = 0; i < 89; ++i) s << OP_DUP;
     ScriptError err;
     BOOST_CHECK(!RunBare(s, CSFS_ON, &err));
     BOOST_CHECK_EQUAL(err, SCRIPT_ERR_STACK_SIZE);
@@ -141,13 +139,10 @@ BOOST_AUTO_TEST_CASE(stack_bytes_cap_hit)
 
 BOOST_AUTO_TEST_CASE(stack_bytes_cap_not_hit_under_budget)
 {
-    // 80 × 3072 B = 245760 B ≤ MAX_STACK_BYTES (262144 B); fits.
-    // Leave the last 3072 B blob on top — it's all 0xcd bytes, so truthy.
-    CScript s;
-    for (int i = 0; i < 80; ++i) {
-        std::vector<unsigned char> data(MAX_PQ_SCRIPT_ELEMENT_SIZE, 0xcd);
-        s << data;
-    }
+    // 80 × 3072 B = 245760 B ≤ MAX_STACK_BYTES; fits. One push + 79 OP_DUPs
+    // produces 80 copies on the stack; drop 79 to leave one truthy item.
+    CScript s = PushOfSize(MAX_PQ_SCRIPT_ELEMENT_SIZE);
+    for (int i = 0; i < 79; ++i) s << OP_DUP;
     for (int i = 0; i < 79; ++i) s << OP_DROP;
     ScriptError err = SCRIPT_ERR_OK;
     BOOST_CHECK(RunBare(s, CSFS_ON, &err));
@@ -156,14 +151,11 @@ BOOST_AUTO_TEST_CASE(stack_bytes_cap_not_hit_under_budget)
 
 BOOST_AUTO_TEST_CASE(stack_bytes_cap_not_enforced_without_csfs)
 {
-    // Without CSFS the cap is not applied. Pile up 520 × 520 B = 270400 B
-    // of stack (above MAX_STACK_BYTES) and confirm it is accepted. Item
-    // count 520 stays within MAX_STACK_SIZE (1000).
-    CScript s;
-    for (int i = 0; i < 520; ++i) {
-        std::vector<unsigned char> data(MAX_SCRIPT_ELEMENT_SIZE, 0xef);
-        s << data;
-    }
+    // Without CSFS the byte cap is not applied. Pile up 520 × 520 B =
+    // 270400 B on the stack (above MAX_STACK_BYTES if it were on) and
+    // confirm it passes. Item count stays within MAX_STACK_SIZE (1000).
+    CScript s = PushOfSize(MAX_SCRIPT_ELEMENT_SIZE);
+    for (int i = 0; i < 519; ++i) s << OP_DUP;
     for (int i = 0; i < 519; ++i) s << OP_DROP;
     ScriptError err = SCRIPT_ERR_OK;
     BOOST_CHECK(RunBare(s, CSFS_OFF, &err));

@@ -267,16 +267,20 @@ BOOST_AUTO_TEST_CASE(outputscript_empty_script_returns_empty)
 
 // --- Script too large ---
 
-BOOST_AUTO_TEST_CASE(outputscript_too_large_script_fails)
+BOOST_AUTO_TEST_CASE(outputscript_too_large_script_returns_bytes)
 {
+    // NIP-018: the checker no longer enforces MAX_SCRIPT_ELEMENT_SIZE; that
+    // belongs to the EvalScript caller (OP_OUTPUTSCRIPT), which raises
+    // SCRIPT_ERR_OUTPUTSCRIPT based on EffectiveMaxScriptElementSize(flags).
+    // The checker itself is a pure byte-returner and must succeed here.
     CMutableTransaction mtx = BuildTx();
-    // Replace output 0 with a script of 521 bytes (exceeds MAX_SCRIPT_ELEMENT_SIZE = 520)
     std::vector<unsigned char> largeData(521, 0xAA);
     mtx.vout[0].scriptPubKey = CScript(largeData.begin(), largeData.end());
     CTransaction tx(mtx);
 
     std::vector<unsigned char> result;
-    BOOST_CHECK(!DirectGetOutputScript(tx, 0, result));
+    BOOST_CHECK(DirectGetOutputScript(tx, 0, result));
+    BOOST_CHECK_EQUAL(result.size(), 521u);
 }
 
 BOOST_AUTO_TEST_CASE(outputscript_max_size_script_ok)

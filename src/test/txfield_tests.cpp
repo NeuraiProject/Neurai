@@ -405,14 +405,18 @@ BOOST_AUTO_TEST_CASE(txfield_spent_fullscript_works_without_txdata)
     BOOST_CHECK(std::vector<unsigned char>(spk.begin(), spk.end()) == result);
 }
 
-BOOST_AUTO_TEST_CASE(txfield_spent_fullscript_too_large_fails)
+BOOST_AUTO_TEST_CASE(txfield_spent_fullscript_too_large_returns_bytes)
 {
-    // scriptPubKey > 520 bytes → stack element would be too large → fail
+    // NIP-018: the checker no longer enforces MAX_SCRIPT_ELEMENT_SIZE; that
+    // belongs to the EvalScript caller (OP_TXFIELD), which raises
+    // SCRIPT_ERR_TXFIELD based on EffectiveMaxScriptElementSize(flags).
+    // The checker itself is a pure byte-returner and must succeed here.
     std::vector<unsigned char> raw(521, 0x00);
     CScript oversized(raw.begin(), raw.end());
 
     std::vector<unsigned char> result;
-    BOOST_CHECK(!DirectGetTxField(TXFIELD_SPENT_FULLSCRIPT, oversized, 1000, result));
+    BOOST_CHECK(DirectGetTxField(TXFIELD_SPENT_FULLSCRIPT, oversized, 1000, result));
+    BOOST_CHECK_EQUAL(result.size(), 521u);
 }
 
 // ============================================================================
