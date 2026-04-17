@@ -42,7 +42,7 @@ define $(package)_build_cmds
 endef
 
 define $(package)_stage_cmds
-  DESTDIR=$($(package)_staging_dir) ninja install
+  DESTDIR=$($(package)_staging_dir) meson install --no-rebuild
 endef
 
 define $(package)_postprocess_cmds
