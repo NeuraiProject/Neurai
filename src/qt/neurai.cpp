@@ -79,6 +79,15 @@ Q_IMPORT_PLUGIN(QWindowsIntegrationPlugin);
 Q_IMPORT_PLUGIN(QCocoaIntegrationPlugin);
 Q_IMPORT_PLUGIN(QMacStylePlugin);
 #endif
+// Wayland platform plugin is linked in parallel with XCB on Linux when built
+// by depends. Qt picks the right one at runtime based on $WAYLAND_DISPLAY /
+// $DISPLAY. The symbol is only defined if depends produced libqwayland-generic.a.
+#if defined(QT_QPA_PLATFORM_WAYLAND)
+Q_IMPORT_PLUGIN(QWaylandIntegrationPlugin);
+Q_IMPORT_PLUGIN(QWaylandXdgShellIntegrationPlugin);
+Q_IMPORT_PLUGIN(QWaylandWlShellIntegrationPlugin);
+Q_IMPORT_PLUGIN(QWaylandBradientDecorationPlugin);
+#endif
 #endif
 #endif
 

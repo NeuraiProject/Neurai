@@ -130,6 +130,12 @@ AC_DEFUN([NEURAI_QT_CONFIGURE],[
       if test -d "$qt_plugin_path/tls"; then
         QT_LIBS="$QT_LIBS -L$qt_plugin_path/tls"
       fi
+      if test -d "$qt_plugin_path/wayland-shell-integration"; then
+        QT_LIBS="$QT_LIBS -L$qt_plugin_path/wayland-shell-integration"
+      fi
+      if test -d "$qt_plugin_path/wayland-decoration-client"; then
+        QT_LIBS="$QT_LIBS -L$qt_plugin_path/wayland-decoration-client"
+      fi
       if test -d "$qt_plugin_path/styles"; then
         QT_LIBS="$QT_LIBS -L$qt_plugin_path/styles"
       fi
@@ -160,6 +166,18 @@ AC_DEFUN([NEURAI_QT_CONFIGURE],[
       AX_CHECK_LINK_FLAG([-lxcb-shm], [QT_LIBS="-lxcb-shm $QT_LIBS"], [AC_MSG_ERROR([could not link against -lxcb-shm])])
       _NEURAI_QT_CHECK_STATIC_PLUGIN([QXcbIntegrationPlugin], [-lqxcb])
       AC_DEFINE(QT_QPA_PLATFORM_XCB, 1, [Define this symbol if the qt platform is xcb])
+      dnl Wayland platform plugin is optional on Linux: present when depends built qtwayland.
+      dnl If the static lib is there, link it and define the preprocessor symbol so neurai.cpp
+      dnl imports the plugin. If not, skip silently so XCB-only binaries keep working.
+      neurai_qt_have_wayland=no
+      AS_IF([test -n "$qt_plugin_path" && test -f "$qt_plugin_path/platforms/libqwayland-generic.a"],
+        [neurai_qt_have_wayland=yes])
+      if test "x$neurai_qt_have_wayland" = xyes; then
+        dnl The generic wayland plugin delegates window decoration and shell
+        dnl integration to other static plugins that also need to be imported.
+        _NEURAI_QT_CHECK_STATIC_PLUGIN([QWaylandIntegrationPlugin], [-lqwayland-generic -lxdg-shell -lwl-shell-plugin -lbradient -lQt6WaylandClient -lQt6WlShellIntegration -lQt6WaylandClient -lwayland-client -lwayland-cursor -lffi])
+        AC_DEFINE(QT_QPA_PLATFORM_WAYLAND, 1, [Define this symbol if the wayland qt platform plugin is linked in])
+      fi
     elif test "x$TARGET_OS" = xdarwin; then
       AX_CHECK_LINK_FLAG([[-framework Carbon]],[QT_LIBS="$QT_LIBS -framework Carbon"],[AC_MSG_ERROR(could not link against Carbon framework)])
       AX_CHECK_LINK_FLAG([[-framework IOSurface]],[QT_LIBS="$QT_LIBS -framework IOSurface"],[AC_MSG_ERROR(could not link against IOSurface framework)])

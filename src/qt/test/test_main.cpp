@@ -44,6 +44,9 @@ Q_IMPORT_PLUGIN(QWindowsIntegrationPlugin);
 #elif defined(QT_QPA_PLATFORM_COCOA)
 Q_IMPORT_PLUGIN(QCocoaIntegrationPlugin);
 #endif
+#if defined(QT_QPA_PLATFORM_WAYLAND)
+Q_IMPORT_PLUGIN(QWaylandIntegrationPlugin);
+#endif
 #endif
 #endif
 

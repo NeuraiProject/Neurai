@@ -24,8 +24,10 @@ RUN apt-get install -y \
     curl \
     git \
     gnupg \
+    libffi-dev \
     libssl-dev \
     libtool \
+    meson \
     ninja-build \
     pkg-config \
     python3 \

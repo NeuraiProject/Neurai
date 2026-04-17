@@ -5,7 +5,7 @@ $(package)_suffix=everywhere-src-$($(package)_version).tar.xz
 $(package)_file_name=qtbase-$($(package)_suffix)
 $(package)_sha256_hash=56001b905601bb9023d399f3ba780d7fa940f3e4861e496a7c490331f49e0b80
 $(package)_dependencies=openssl
-$(package)_linux_dependencies=freetype fontconfig libxcb libxkbcommon libxcb_util libxcb_util_cursor libxcb_util_render libxcb_util_keysyms libxcb_util_image libxcb_util_wm
+$(package)_linux_dependencies=freetype fontconfig libxcb libxkbcommon libxcb_util libxcb_util_cursor libxcb_util_render libxcb_util_keysyms libxcb_util_image libxcb_util_wm libwayland wayland_protocols
 
 # When cross-compiling, native_qt provides moc/rcc/uic/lrelease for the build
 # host.  For native Linux x86_64→x86_64 builds this is not needed.
@@ -19,8 +19,12 @@ $(package)_qttranslations_sha256_hash=c3c61d79c3d8fe316a20b3617c64673ce5b5519b2e
 $(package)_qttools_file_name=qttools-$($(package)_suffix)
 $(package)_qttools_sha256_hash=02a4e219248b94f1333df843d25763f35251c1074cdc4fb5bda67d340f8c8b3a
 
+$(package)_qtwayland_file_name=qtwayland-$($(package)_suffix)
+$(package)_qtwayland_sha256_hash=20fe385887d21190165a3180c17dcfc8b9a0e1da4ec76865b6334bdc709994b0
+
 $(package)_extra_sources  = $($(package)_qttranslations_file_name)
 $(package)_extra_sources += $($(package)_qttools_file_name)
+$(package)_extra_sources += $($(package)_qtwayland_file_name)
 
 # Qt 6.8.7 is commercial-only; 6.8.3 is the latest open-source LTS (March 2025).
 # Qt6 uses CMake instead of qmake.  All qmake -no-feature-* flags are replaced
@@ -104,6 +108,9 @@ $(package)_config_opts_linux += -DQT_FEATURE_system_freetype=ON
 $(package)_config_opts_linux += -DQT_FEATURE_fontconfig=ON
 $(package)_config_opts_linux += -DQT_FEATURE_opengl=OFF
 $(package)_config_opts_linux += -DINPUT_dbus=runtime
+# Enable the Wayland client feature in qtbase.  The actual platform plugin
+# (qwayland-generic) is built from the qtwayland submodule in $(package)_build_cmds.
+$(package)_config_opts_linux += -DQT_FEATURE_wayland_client=ON
 
 # --- Linux cross-compilation (aarch64) ---
 $(package)_config_opts_aarch64_linux += -DQT_HOST_PATH=$(build_prefix)
@@ -145,7 +152,8 @@ endef
 define $(package)_fetch_cmds
 $(call fetch_file,$(package),$($(package)_download_path),$($(package)_download_file),$($(package)_file_name),$($(package)_sha256_hash)) && \
 $(call fetch_file,$(package),$($(package)_download_path),$($(package)_qttranslations_file_name),$($(package)_qttranslations_file_name),$($(package)_qttranslations_sha256_hash)) && \
-$(call fetch_file,$(package),$($(package)_download_path),$($(package)_qttools_file_name),$($(package)_qttools_file_name),$($(package)_qttools_sha256_hash))
+$(call fetch_file,$(package),$($(package)_download_path),$($(package)_qttools_file_name),$($(package)_qttools_file_name),$($(package)_qttools_sha256_hash)) && \
+$(call fetch_file,$(package),$($(package)_download_path),$($(package)_qtwayland_file_name),$($(package)_qtwayland_file_name),$($(package)_qtwayland_sha256_hash))
 endef
 
 define $(package)_extract_cmds
@@ -153,13 +161,16 @@ define $(package)_extract_cmds
   echo "$($(package)_sha256_hash)  $($(package)_source)" > $($(package)_extract_dir)/.$($(package)_file_name).hash && \
   echo "$($(package)_qttranslations_sha256_hash)  $($(package)_source_dir)/$($(package)_qttranslations_file_name)" >> $($(package)_extract_dir)/.$($(package)_file_name).hash && \
   echo "$($(package)_qttools_sha256_hash)  $($(package)_source_dir)/$($(package)_qttools_file_name)" >> $($(package)_extract_dir)/.$($(package)_file_name).hash && \
+  echo "$($(package)_qtwayland_sha256_hash)  $($(package)_source_dir)/$($(package)_qtwayland_file_name)" >> $($(package)_extract_dir)/.$($(package)_file_name).hash && \
   $(build_SHA256SUM) -c $($(package)_extract_dir)/.$($(package)_file_name).hash && \
   mkdir qtbase && \
   tar --no-same-owner --strip-components=1 -xf $($(package)_source) -C qtbase && \
   mkdir qttranslations && \
   tar --no-same-owner --strip-components=1 -xf $($(package)_source_dir)/$($(package)_qttranslations_file_name) -C qttranslations && \
   mkdir qttools && \
-  tar --no-same-owner --strip-components=1 -xf $($(package)_source_dir)/$($(package)_qttools_file_name) -C qttools
+  tar --no-same-owner --strip-components=1 -xf $($(package)_source_dir)/$($(package)_qttools_file_name) -C qttools && \
+  mkdir qtwayland && \
+  tar --no-same-owner --strip-components=1 -xf $($(package)_source_dir)/$($(package)_qtwayland_file_name) -C qtwayland
 endef
 
 # No patches are required for Qt 6.8.3.  All issues addressed by the Qt5 patches
@@ -189,10 +200,11 @@ define $(package)_config_cmds
 endef
 
 # Build order:
-#   1. Build+locally-install qtbase   → $($(package)_extract_dir)/qt_install
-#   2. Configure+build qttools        (needs Qt6 CMake config from step 1)
-#   3. Install qttools                → qt_install (provides lrelease for step 4)
-#   4. Configure+build qttranslations (needs lrelease from step 3)
+#   1. Build+locally-install qtbase    → $($(package)_extract_dir)/qt_install
+#   2. Configure+build qttools         (needs Qt6 CMake config from step 1)
+#   3. Install qttools                 → qt_install (provides lrelease for step 5)
+#   4. Configure+build+install qtwayland on Linux (needs libwayland + wayland-protocols from host_prefix)
+#   5. Configure+build qttranslations  (needs lrelease from step 3)
 define $(package)_build_cmds
   ninja -C qtbase/build && \
   cmake --install qtbase/build --prefix $($(package)_extract_dir)/qt_install && \
@@ -218,6 +230,28 @@ define $(package)_build_cmds
     -DFEATURE_qtplugininfo=OFF && \
   ninja -C qttools/build && \
   cmake --install qttools/build --prefix $($(package)_extract_dir)/qt_install && \
+  if [ "$(host_os)" = "linux" ]; then \
+    export PKG_CONFIG_SYSROOT_DIR=/ ; \
+    export PKG_CONFIG_LIBDIR=$(host_prefix)/lib/pkgconfig ; \
+    export PKG_CONFIG_PATH=$(host_prefix)/share/pkgconfig ; \
+    export PATH=$(host_prefix)/bin:$$$$PATH ; \
+    cmake -B qtwayland/build -S qtwayland \
+      -GNinja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_PREFIX_PATH="$($(package)_extract_dir)/qt_install;$(host_prefix)" \
+      -DCMAKE_INSTALL_PREFIX=$($(package)_extract_dir)/qt_install \
+      -DBUILD_SHARED_LIBS=OFF \
+      -DQT_BUILD_EXAMPLES=OFF \
+      -DQT_BUILD_TESTS=OFF \
+      -DFEATURE_wayland_client=ON \
+      -DFEATURE_wayland_server=OFF \
+      -DFEATURE_wayland_compositor=OFF \
+      -DFEATURE_wayland_compositor_quick=OFF \
+      -DFEATURE_wayland_egl_client=OFF \
+      -DFEATURE_opengl=OFF && \
+    ninja -C qtwayland/build && \
+    cmake --install qtwayland/build --prefix $($(package)_extract_dir)/qt_install ; \
+  fi && \
   cmake -B qttranslations/build -S qttranslations \
     -GNinja \
     -DCMAKE_BUILD_TYPE=Release \
@@ -226,11 +260,15 @@ define $(package)_build_cmds
   ninja -C qttranslations/build
 endef
 
-# Install all three modules to the depends staging prefix.
+# Install all modules to the depends staging prefix.
 # cmake --install --prefix overrides CMAKE_INSTALL_PREFIX without DESTDIR indirection.
+# qtwayland is only staged on Linux (built conditionally in build_cmds).
 define $(package)_stage_cmds
   cmake --install qtbase/build         --prefix $($(package)_staging_prefix_dir) && \
   cmake --install qttools/build        --prefix $($(package)_staging_prefix_dir) && \
+  if [ -d qtwayland/build ]; then \
+    cmake --install qtwayland/build    --prefix $($(package)_staging_prefix_dir) ; \
+  fi && \
   cmake --install qttranslations/build --prefix $($(package)_staging_prefix_dir)
 endef
 
@@ -347,5 +385,21 @@ define $(package)_postprocess_cmds
     'Requires: Qt6Widgets' \
     'Libs: -L$$$${libdir} -lQt6PrintSupport' \
     'Cflags: -I$$$${includedir} -I$$$${includedir}/QtPrintSupport -DQT_STATIC' \
-    > lib/pkgconfig/Qt6PrintSupport.pc
+    > lib/pkgconfig/Qt6PrintSupport.pc && \
+  if [ -f lib/libQt6WaylandClient.a ]; then \
+    printf '%s\n' \
+      'prefix=$$$${pcfiledir}/../..' \
+      'exec_prefix=$$$${prefix}' \
+      'libdir=$$$${prefix}/lib' \
+      'includedir=$$$${prefix}/include' \
+      'plugindir=$$$${prefix}/plugins' \
+      '' \
+      'Name: Qt6WaylandClient' \
+      'Description: Qt6 WaylandClient module (static, generated by depends)' \
+      'Version: $($(package)_version)' \
+      'Requires: Qt6Gui' \
+      'Libs: -L$$$${libdir} -L$$$${plugindir}/platforms -lqwayland-generic -lQt6WaylandClient -lwayland-client -lwayland-cursor -lxkbcommon' \
+      'Cflags: -I$$$${includedir} -I$$$${includedir}/QtWaylandClient -DQT_STATIC' \
+      > lib/pkgconfig/Qt6WaylandClient.pc ; \
+  fi
 endef
