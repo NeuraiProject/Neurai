@@ -218,10 +218,21 @@ BOOST_AUTO_TEST_CASE(csfs_ecdsa_empty_sig_returns_false)
 // PQ: Valid ML-DSA-44 signature (bare script)
 // ============================================================================
 //
-// DISABLED: ML-DSA-44 signatures are 2420 bytes, which exceeds
-// MAX_SCRIPT_ELEMENT_SIZE (520 bytes). Pushing a PQ signature into a bare
-// script triggers SCRIPT_ERR_PUSH_SIZE before reaching CheckSigFromStack.
-// Re-enable once a PQ push-size exemption (or bump) is introduced.
+// DISABLED: this test combines OP_CHECKSIGFROMSTACK with a PQ signature as a
+// script push, a case that the current script machinery does NOT support.
+//
+// Normal PQ spends work fine: they use witness v1 AuthScript, where the
+// signature is read directly from witness.stack[1] (see VerifyAuthScriptCore
+// in interpreter.cpp) and never goes through the 520-byte push limit.
+//
+// OP_CHECKSIGFROMSTACK, by contrast, reads sig/msg/pubkey from the *script*
+// stack — which means the sig must be pushed as a script element. PQ sigs
+// are 2420 bytes and hit SCRIPT_ERR_PUSH_SIZE at interpreter.cpp:575 before
+// reaching CheckSigFromStack.
+//
+// Re-enable if and when a design choice is made on how to deliver PQ data
+// to OP_CSFS (e.g. witness-v2 with larger element limit, or a dedicated
+// OP_CSFS_PQ opcode that reads the sig from an out-of-stack location).
 #if 0
 BOOST_AUTO_TEST_CASE(csfs_pq_valid_signature)
 {
@@ -253,9 +264,10 @@ BOOST_AUTO_TEST_CASE(csfs_pq_valid_signature)
 // PQ: Wrong message fails
 // ============================================================================
 //
-// DISABLED: same MAX_SCRIPT_ELEMENT_SIZE limitation as csfs_pq_valid_signature.
-// The test would exercise NULLFAIL semantics but the sig push is rejected
-// earlier with SCRIPT_ERR_PUSH_SIZE.
+// DISABLED: same reason as csfs_pq_valid_signature — OP_CHECKSIGFROMSTACK
+// requires the signature to be pushed onto the script stack, which the
+// 520-byte MAX_SCRIPT_ELEMENT_SIZE forbids for PQ sigs (2420 B). Normal PQ
+// spends (witness v1 AuthScript) are unaffected.
 #if 0
 BOOST_AUTO_TEST_CASE(csfs_pq_wrong_message)
 {
@@ -322,11 +334,12 @@ BOOST_AUTO_TEST_CASE(csfs_ecdsa_p2wsh)
 // to be relayed by standard nodes.
 // ============================================================================
 
-// DISABLED: P2WSH witness stack items are also capped at MAX_SCRIPT_ELEMENT_SIZE
-// (520 bytes) per BIP 141 (enforced at interpreter.cpp:3087).  PQ signatures
-// (2420 bytes) and PQ pubkeys (1313 bytes) exceed this limit.  A real PQ CSFS
-// transaction would require either a policy exception or a new witness
-// version; re-enable this test once either is in place.
+// DISABLED: P2WSH routes the signature through witness.stack[i] which IS
+// bounded by MAX_SCRIPT_ELEMENT_SIZE (520 B) at interpreter.cpp:3087.  Note
+// this is the P2WSH stack loop — NOT the witness-v1 AuthScript direct-index
+// path used by real PQ address spends (that one bypasses the size cap for
+// witness.stack[1] and [2]).  PQ sigs in P2WSH witness data would need a
+// new witness version with a larger element limit, or a dedicated PQ opcode.
 #if 0
 BOOST_AUTO_TEST_CASE(csfs_pq_p2wsh)
 {
