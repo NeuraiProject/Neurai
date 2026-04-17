@@ -382,12 +382,17 @@ BOOST_AUTO_TEST_CASE(outputscript_selector_must_be_scriptnum)
 {
     CTransaction tx(BuildTx());
     CScript script;
-    // Non-minimal encoding: 2-byte push for value 1
+    // Non-minimal 2-byte encoding for the value 1.  Under MINIMALDATA,
+    // CScriptNum(stacktop, fRequireMinimal=true) throws.  Without MINIMALDATA
+    // the non-minimal encoding is silently accepted, so this test has to run
+    // under MINIMALDATA specifically to exercise the selector validation.
     script << std::vector<unsigned char>{0x01, 0x00} << OP_OUTPUTSCRIPT;
+
+    const script_verify_flags minimalFlags = OUTPUTSCRIPT_FLAGS | SCRIPT_VERIFY_MINIMALDATA;
 
     std::vector<std::vector<unsigned char>> result;
     ScriptError err = SCRIPT_ERR_OK;
-    BOOST_CHECK(!RunScript(tx, script, OUTPUTSCRIPT_FLAGS, result, &err));
+    BOOST_CHECK(!RunScript(tx, script, minimalFlags, result, &err));
     BOOST_CHECK(err != SCRIPT_ERR_OK);
 }
 

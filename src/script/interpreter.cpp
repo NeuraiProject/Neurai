@@ -597,6 +597,11 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
 
                 // Remove vch2 from stack
                 popstack(stack);
+
+                // OP_CAT was handled here — skip the main opcode switch below
+                // (which would fall through to `default: BAD_OPCODE` since OP_CAT
+                //  has no case statement there).
+                continue;
             }
             else if (opcode == OP_CAT ||
                 opcode == OP_SUBSTR ||

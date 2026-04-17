@@ -44,6 +44,31 @@ CScript ParseScript(const std::string& s)
             boost::algorithm::replace_first(strName, "OP_", "");
             mapOpNames[strName] = (opcodetype)op;
         }
+        // Legacy NOP aliases: several former OP_NOP* slots were upgraded to
+        // real opcodes (OP_NOP7→OP_TXFIELD, OP_NOP8→OP_SPLIT, OP_NOP9→OP_TXLOCKTIME).
+        // Keep the old names parseable so script_tests.json fixtures that
+        // predate the upgrade still round-trip correctly. The opcode byte is
+        // identical; only the canonical name changed.
+        // OP_NOP2, OP_NOP3, OP_NOP4, OP_NOP5, OP_NOP6 are all aliases whose
+        // canonical name (CHECKLOCKTIMEVERIFY, CHECKSEQUENCEVERIFY,
+        // CHECKTEMPLATEVERIFY, CHECKSIGFROMSTACK, TXHASH) is what
+        // GetOpName returns, so the original NOP-labeled fixture lines stop
+        // parsing once these upgrades landed. Register the legacy names
+        // explicitly.
+        mapOpNames["OP_NOP4"]  = OP_NOP4;
+        mapOpNames["NOP4"]     = OP_NOP4;
+        mapOpNames["OP_NOP5"]  = OP_NOP5;
+        mapOpNames["NOP5"]     = OP_NOP5;
+        mapOpNames["OP_NOP6"]  = OP_NOP6;
+        mapOpNames["NOP6"]     = OP_NOP6;
+        mapOpNames["OP_NOP7"]  = OP_NOP7;
+        mapOpNames["NOP7"]     = OP_NOP7;
+        mapOpNames["OP_NOP8"]  = OP_NOP8;
+        mapOpNames["NOP8"]     = OP_NOP8;
+        mapOpNames["OP_NOP9"]  = OP_NOP9;
+        mapOpNames["NOP9"]     = OP_NOP9;
+        mapOpNames["OP_NOP10"] = OP_NOP10;
+        mapOpNames["NOP10"]    = OP_NOP10;
     }
 
     std::vector<std::string> words;
@@ -82,7 +107,7 @@ CScript ParseScript(const std::string& s)
         }
         else
         {
-            throw std::runtime_error("script parse error");
+            throw std::runtime_error("script parse error: word=[" + *w + "]");
         }
     }
 

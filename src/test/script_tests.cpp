@@ -1637,7 +1637,11 @@ BOOST_FIXTURE_TEST_SUITE(script_tests, BasicTestingSetup)
         BOOST_CHECK(script.HasValidOps());
         script = ScriptFromHex("ff88ac"); // Script with OP_INVALIDOPCODE explicit
         BOOST_CHECK(!script.HasValidOps());
-        script = ScriptFromHex("88acc0"); // Script with undefined opcode
+        // 0xd5 is the first opcode strictly above MAX_OPCODE
+        // (= OP_REFINPUTCOUNT = 0xd4) and therefore invalid. The legacy test
+        // used 0xc0, which is now assigned to OP_XNA_ASSET — no longer
+        // "undefined".
+        script = ScriptFromHex("88acd5");
         BOOST_CHECK(!script.HasValidOps());
     }
 

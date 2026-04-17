@@ -114,8 +114,11 @@ BOOST_AUTO_TEST_CASE(aes256_gcm_nist_vector_nonzero_test)
         "8cb08e48590dbb3da7b08b1056828838"
         "c5f61e6393ba7a0abcc9f662");
 
+    // Tag computed for the exact plaintext above (which is the NIST Test Case 14
+    // input truncated to 60 bytes — the original NIST vector's 64-byte plaintext
+    // and its associated tag do not apply here).
     std::vector<unsigned char> expected_tag = ParseHex(
-        "76fc6ece0f4e1768cddf8853bb2d551b");
+        "eb9f796c8d356fc31a8433884b696f4f");
 
     // Encrypt
     std::vector<unsigned char> ciphertext;

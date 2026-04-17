@@ -60,8 +60,9 @@ BOOST_AUTO_TEST_CASE(none_is_zero)
 
 BOOST_AUTO_TEST_CASE(end_marker_matches_flag_count)
 {
-    // 31 flags (bits 0-30) means END_MARKER should be 31.
-    BOOST_CHECK_EQUAL(MAX_SCRIPT_VERIFY_FLAGS_BITS, 31);
+    // 32 flags (bits 0-31) means END_MARKER should be 32.
+    // Last added: SCRIPT_VERIFY_REFINPUTS at bit 31 (NIP-017).
+    BOOST_CHECK_EQUAL(MAX_SCRIPT_VERIFY_FLAGS_BITS, 32);
 }
 
 // --- No internal truncation ---
@@ -70,7 +71,7 @@ BOOST_AUTO_TEST_CASE(no_truncation)
 {
     // Combine all known flags and verify no bits are lost.
     script_verify_flags all = script_verify_flags::from_int(MAX_SCRIPT_VERIFY_FLAGS);
-    BOOST_CHECK_EQUAL(all.as_int(), (uint64_t{1} << 31) - 1);
+    BOOST_CHECK_EQUAL(all.as_int(), (uint64_t{1} << 32) - 1);
 }
 
 // --- Synthetic high-bit plumbing test ---
