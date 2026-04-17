@@ -394,7 +394,7 @@ NeuraiApplication::NeuraiApplication():
 
 NeuraiApplication::~NeuraiApplication()
 {
-    if(coreThread)
+    if(coreThread && coreThread->isRunning())
     {
         qDebug() << __func__ << ": Stopping thread";
         Q_EMIT stopThread();
@@ -571,6 +571,19 @@ void NeuraiApplication::shutdownResult(bool success)
 {
     returnValue = success ? EXIT_SUCCESS : EXIT_FAILURE;
     qDebug() << __func__ << ": Shutdown result: " << returnValue;
+
+    // Stop core thread synchronously *before* leaving the event loop.
+    // In Qt6 the old pattern (quit the main loop, then wait on the thread
+    // in ~NeuraiApplication) deadlocks because the queued `stopThread`
+    // dispatch runs after the loop exits and wait() blocks forever.
+    if (coreThread) {
+        Q_EMIT stopThread();
+        coreThread->wait();
+    }
+
+    // Dismiss the shutdown window so nothing stays on screen once exec() returns.
+    shutdownWindow.reset();
+
     quit(); // Exit main loop after shutdown finished
 }
 
