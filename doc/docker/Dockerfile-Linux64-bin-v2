@@ -6,7 +6,7 @@ LABEL maintainer="Asimov"
 
 LABEL version="1.0.6"
 
-LABEL description="Neurai 1.0.6 | Docker for linux x64 bin (C++20)"
+LABEL description="Neurai 1.0.6 | Docker for linux x64 bin + neurai-qt (C++20, Qt6)"
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -49,8 +49,12 @@ RUN contrib/install_db4.sh ../
 
 ENV BDB_PREFIX=/root/db4
 
-RUN CONFIG_SITE=$PWD/depends/x86_64-pc-linux-gnu/share/config.site ./configure --prefix=$PWD/depends/x86_64-pc-linux-gnu --enable-cxx --enable-tests --with-tx --disable-shared --disable-maintainer-mode --with-pic LDFLAGS="-L${BDB_PREFIX}/lib/" CPPFLAGS="-I${BDB_PREFIX}/include/"
+RUN CONFIG_SITE=$PWD/depends/x86_64-pc-linux-gnu/share/config.site ./configure \
+    --prefix=$PWD/depends/x86_64-pc-linux-gnu \
+    --enable-cxx --enable-tests --with-tx \
+    --disable-shared --disable-maintainer-mode --with-pic \
+    LDFLAGS="-L${BDB_PREFIX}/lib/" CPPFLAGS="-I${BDB_PREFIX}/include/"
 
-#RUN make -j4
+RUN make -j4
 
 CMD ["tail", "-f", "/dev/null"]

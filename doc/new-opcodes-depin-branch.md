@@ -20,15 +20,19 @@ This document describes all new and re-enabled opcodes introduced in the `DePIN-
 3. [Asset Introspection Opcodes](#3-asset-introspection-opcodes)
    - [OP_OUTPUTASSETFIELD](#31-op_outputassetfield)
    - [OP_INPUTASSETFIELD](#32-op_inputassetfield)
-4. [Byte Manipulation Opcodes](#4-byte-manipulation-opcodes)
-   - [OP_CAT](#41-op_cat)
-   - [OP_SPLIT](#42-op_split)
-   - [OP_REVERSEBYTES](#43-op_reversebytes)
-5. [64-Bit Arithmetic (Re-enabled Opcodes)](#5-64-bit-arithmetic-re-enabled-opcodes)
-   - [OP_MUL](#51-op_mul)
-   - [OP_DIV](#52-op_div)
-   - [OP_MOD](#53-op_mod)
-   - [64-Bit Overflow-Safe Arithmetic on Existing Opcodes](#54-64-bit-overflow-safe-arithmetic-on-existing-opcodes)
+4. [Reference Input Introspection Opcodes](#4-reference-input-introspection-opcodes)
+   - [OP_REFINPUTCOUNT](#41-op_refinputcount)
+   - [OP_REFINPUTFIELD](#42-op_refinputfield)
+   - [OP_REFINPUTASSETFIELD](#43-op_refinputassetfield)
+5. [Byte Manipulation Opcodes](#5-byte-manipulation-opcodes)
+   - [OP_CAT](#51-op_cat)
+   - [OP_SPLIT](#52-op_split)
+   - [OP_REVERSEBYTES](#53-op_reversebytes)
+6. [64-Bit Arithmetic (Re-enabled Opcodes)](#6-64-bit-arithmetic-re-enabled-opcodes)
+   - [OP_MUL](#61-op_mul)
+   - [OP_DIV](#62-op_div)
+   - [OP_MOD](#63-op_mod)
+   - [64-Bit Overflow-Safe Arithmetic on Existing Opcodes](#64-64-bit-overflow-safe-arithmetic-on-existing-opcodes)
 
 ---
 
@@ -455,13 +459,148 @@ OP_INPUTASSETFIELD is the input-side counterpart to OP_OUTPUTASSETFIELD. It read
 
 ---
 
-## 4. Byte Manipulation Opcodes
+## 4. Reference Input Introspection Opcodes
+
+These opcodes allow scripts to read fields from **reference inputs** — UTXOs declared in the transaction's `vrefin` vector that are inspected but **not spent**. Reference inputs are the foundation for oracle-fed covenants, cross-UTXO order matching, DePIN state feeds, and any pattern where a script needs to read external state without consuming it.
+
+All three opcodes are gated by `SCRIPT_VERIFY_REFINPUTS` (bit 31, consensus parameter `nREFINPUTSEnabled`). When the flag is not active they behave as NOPs, with `DISCOURAGE_UPGRADABLE_NOPS` support.
+
+Reference inputs are transported in a dedicated `vrefin` vector alongside `vin` and `vout` in the transaction serialization. Unlike regular inputs, they do not require signatures and do not consume the referenced UTXOs; their sole purpose is to make external state available for introspection during script evaluation. The `OP_REFINPUT*` family provides the primitives to read values, commitments, scripts, and asset fields from those referenced outputs.
+
+---
+
+### 4.1 OP_REFINPUTCOUNT
+
+| Property | Value |
+|---|---|
+| **Byte Value** | `0xd4` |
+| **Activation Flag** | `SCRIPT_VERIFY_REFINPUTS` (bit 31) |
+| **Consensus Parameter** | `nREFINPUTSEnabled` |
+| **Error Code** | `SCRIPT_ERR_REFINPUTCOUNT` |
+
+**Stack Effect:**
+
+```
+Before: (empty)
+After:  <ref count as CScriptNum>
+```
+
+**Description:**
+
+OP_REFINPUTCOUNT pushes the number of reference inputs declared in `vrefin` for the spending transaction as a `CScriptNum`.
+
+**Behavior:**
+
+- If the flag is not set, behaves as a NOP.
+- If reference outputs are unavailable to the signature checker (e.g., the transaction was not validated with `vrefin` resolution), the script fails.
+- Returns `0` when the transaction has no reference inputs.
+
+**Use Cases:**
+
+- Gate script branches on the presence of reference inputs (e.g., "oracle data required").
+- Loop bounds for scripts that iterate over multiple reference inputs.
+- Distinguish between covenant variants that consult external state and those that do not.
+
+---
+
+### 4.2 OP_REFINPUTFIELD
+
+| Property | Value |
+|---|---|
+| **Byte Value** | `0xd2` |
+| **Activation Flag** | `SCRIPT_VERIFY_REFINPUTS` (bit 31) |
+| **Consensus Parameter** | `nREFINPUTSEnabled` |
+| **Error Code** | `SCRIPT_ERR_REFINPUTFIELD` |
+
+**Stack Effect:**
+
+```
+Before: <ref_index> <1-byte selector>
+After:  <raw field bytes>
+```
+
+**Description:**
+
+OP_REFINPUTFIELD reads a field from the resolved output referenced by entry `ref_index` of `vrefin`. Selectors are aligned with `OP_TXFIELD` so that introspection of reference inputs and of the spent input use the same vocabulary.
+
+| Selector | Field | Size |
+|----------|-------|------|
+| `0x01` | `nValue` of the referenced output | 8 bytes (int64 LE) |
+| `0x02` | 32-byte AuthScript commitment from the referenced `scriptPubKey` | 32 bytes |
+| `0x03` | Full `scriptPubKey` of the referenced output | Variable (max 520 bytes) |
+
+**Behavior:**
+
+- If the flag is not set, behaves as a NOP.
+- The selector must be exactly 1 byte; selector `0x00` and `>= 0x04` are invalid.
+- `ref_index` must be non-negative and within the range of `vrefin`.
+- Selector `0x02` requires the referenced `scriptPubKey` to start with `OP_1 0x20 <32 bytes>` (witness v1 format); otherwise the script fails.
+- Selector `0x03` fails if the referenced `scriptPubKey` exceeds `MAX_SCRIPT_ELEMENT_SIZE` (520 bytes).
+- When `SCRIPT_VERIFY_64BIT_INTEGERS` is active and selector is `0x01`, the raw 8-byte value is converted to `CScriptNum` encoding for direct use with arithmetic opcodes.
+
+**Use Cases:**
+
+- Oracle-fed covenants (read an oracle UTXO's commitment without spending it).
+- Cross-UTXO order matching (read an external order's price and state).
+- DePIN contracts that verify a device-state UTXO before releasing payment.
+- Shared-state references (e.g., a rate-limit UTXO consulted by many spenders).
+
+---
+
+### 4.3 OP_REFINPUTASSETFIELD
+
+| Property | Value |
+|---|---|
+| **Byte Value** | `0xd3` |
+| **Activation Flag** | `SCRIPT_VERIFY_REFINPUTS` (bit 31) |
+| **Consensus Parameter** | `nREFINPUTSEnabled` |
+| **Error Code** | `SCRIPT_ERR_REFINPUTASSETFIELD` |
+
+**Stack Effect:**
+
+```
+Before: <ref_index> <1-byte selector>
+After:  <field value>
+```
+
+**Description:**
+
+OP_REFINPUTASSETFIELD extracts a field from the asset payload of the output referenced by entry `ref_index` of `vrefin`. Selectors match `OP_OUTPUTASSETFIELD` / `OP_INPUTASSETFIELD` exactly, and the opcode recognizes all seven asset operation types: Transfer, New, MsgChannel, Qualifier, Restricted, Reissue, and Owner.
+
+| Selector | Field | Applies To | Return Type |
+|----------|-------|------------|-------------|
+| `0x01` | Asset name | Transfer, New, Reissue, Owner | String bytes |
+| `0x02` | Amount | Transfer, New, Reissue, Owner | 8-byte int64 LE |
+| `0x03` | Units (decimal places) | New, Reissue | 1 byte |
+| `0x04` | Reissuable flag | New, Reissue | 1 byte (0 or 1) |
+| `0x05` | Has IPFS flag | New | 1 byte (0 or 1) |
+| `0x06` | IPFS hash | New (if hasIPFS), Reissue (if set) | Variable bytes |
+| `0x07` | Asset type | All | 1 byte (enum) |
+
+**Behavior:**
+
+- If the flag is not set, behaves as a NOP.
+- The selector must be exactly 1 byte; selector `0x00` and `>= 0x08` are invalid.
+- `ref_index` must be non-negative and within the range of `vrefin`.
+- If the referenced output does not contain an asset payload recognized by any of the seven parsers, the script fails.
+- When `SCRIPT_VERIFY_64BIT_INTEGERS` is active and selector is `0x02` (amount), the raw 8-byte value is converted to `CScriptNum` encoding.
+
+**Use Cases:**
+
+- Oracle assets (e.g., a price-feed asset whose quantity encodes the price).
+- Reading the state of an external order UTXO (token id, remaining quantity) for matching.
+- LP/vault contracts that check the composition of a reserve UTXO before accepting a trade.
+- Conservation checks across reference and output assets in complex swap topologies.
+
+---
+
+## 5. Byte Manipulation Opcodes
 
 These opcodes provide low-level byte-string operations that are essential building blocks for constructing and deconstructing data on the stack.
 
 ---
 
-### 4.1 OP_CAT
+### 5.1 OP_CAT
 
 | Property | Value |
 |---|---|
@@ -497,7 +636,7 @@ OP_CAT concatenates the top two stack elements. This opcode was disabled in Bitc
 
 ---
 
-### 4.2 OP_SPLIT
+### 5.2 OP_SPLIT
 
 | Property | Value |
 |---|---|
@@ -532,7 +671,7 @@ OP_SPLIT is the inverse of OP_CAT. It splits a byte array into two parts at posi
 
 ---
 
-### 4.3 OP_REVERSEBYTES
+### 5.3 OP_REVERSEBYTES
 
 | Property | Value |
 |---|---|
@@ -565,7 +704,7 @@ OP_REVERSEBYTES reverses the byte order of the top stack element in place.
 
 ---
 
-## 5. 64-Bit Arithmetic (Re-enabled Opcodes)
+## 6. 64-Bit Arithmetic (Re-enabled Opcodes)
 
 The `SCRIPT_VERIFY_64BIT_INTEGERS` flag (bit 28, consensus parameter `n64BitIntegersEnabled`) widens the numeric domain of `CScriptNum` from 4 bytes to 8 bytes. This affects both the re-enabled opcodes below and all existing arithmetic opcodes (`OP_ADD`, `OP_SUB`, `OP_1ADD`, `OP_1SUB`, `OP_NEGATE`, `OP_ABS`, `OP_NOT`, `OP_0NOTEQUAL`, `OP_WITHIN`, comparison operators).
 
@@ -573,7 +712,7 @@ All 64-bit arithmetic operations use overflow-safe implementations that reject r
 
 ---
 
-### 5.1 OP_MUL
+### 6.1 OP_MUL
 
 | Property | Value |
 |---|---|
@@ -602,7 +741,7 @@ OP_MUL multiplies the top two stack elements as 64-bit signed integers. Original
 
 ---
 
-### 5.2 OP_DIV
+### 6.2 OP_DIV
 
 | Property | Value |
 |---|---|
@@ -631,7 +770,7 @@ OP_DIV performs integer division of `a` by `b`. Re-enabled only with 64-bit inte
 
 ---
 
-### 5.3 OP_MOD
+### 6.3 OP_MOD
 
 | Property | Value |
 |---|---|
@@ -659,7 +798,7 @@ OP_MOD computes the remainder of `a` divided by `b`. Re-enabled only with 64-bit
 
 ---
 
-### 5.4 64-Bit Overflow-Safe Arithmetic on Existing Opcodes
+### 6.4 64-Bit Overflow-Safe Arithmetic on Existing Opcodes
 
 When `SCRIPT_VERIFY_64BIT_INTEGERS` is active, the following existing opcodes are upgraded to operate on 8-byte `CScriptNum` values with overflow protection:
 
@@ -691,6 +830,9 @@ The unary opcodes `OP_NOT` and `OP_0NOTEQUAL` also operate on 64-bit values but 
 | `OP_OUTPUTCOUNT` | `0xd1` | — | 30 | TX Introspection |
 | `OP_OUTPUTASSETFIELD` | `0xce` | — | 27 | Asset Introspection |
 | `OP_INPUTASSETFIELD` | `0xcf` | — | 29 | Asset Introspection |
+| `OP_REFINPUTFIELD` | `0xd2` | — | 31 | Reference Input Introspection |
+| `OP_REFINPUTASSETFIELD` | `0xd3` | — | 31 | Reference Input Introspection |
+| `OP_REFINPUTCOUNT` | `0xd4` | — | 31 | Reference Input Introspection |
 | `OP_CAT` | `0x7e` | (re-enabled) | 17 | Byte Manipulation |
 | `OP_SPLIT` | `0xb7` | `OP_NOP8` | 22 | Byte Manipulation |
 | `OP_REVERSEBYTES` | `0xbc` | — | 23 | Byte Manipulation |
