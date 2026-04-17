@@ -1,37 +1,46 @@
 package=libxkbcommon
-$(package)_version=0.8.4
+$(package)_version=1.6.0
 $(package)_download_path=https://xkbcommon.org/download/
 $(package)_file_name=$(package)-$($(package)_version).tar.xz
-$(package)_sha256_hash=60ddcff932b7fd352752d51a5c4f04f3d0403230a584df9a2e0d5ed87c486c8b
-$(package)_dependencies=libxcb
+$(package)_sha256_hash=0edc14eccdd391514458bc5f5a4b99863ed2d651e4dd761a90abf4f46ef99c2b
+$(package)_dependencies=libxcb xcb_proto libwayland wayland_protocols
+$(package)_build_subdir=build
 
-# This package explicitly enables -Werror=array-bounds, which causes build failures
-# with GCC 12.1+. Work around that by turning errors back into warnings.
-# This workaround would be dropped if the package was updated, as that would require
-# a different build system (Meson).
+# Meson-only since 1.0. Build static with explicit X11 and Wayland support so
+# the Qt6 XCB plugin can resolve libxkbcommon-x11 (required for keyboard
+# dispatch; without it Qt emits "failed to get core keyboard device info"
+# and keystrokes never reach the wallet).
 define $(package)_set_vars
-$(package)_config_opts = --enable-option-checking --disable-dependency-tracking
-$(package)_config_opts += --disable-static --disable-docs
-$(package)_cflags += -Wno-error=array-bounds
-endef
-
-define $(package)_preprocess_cmds
-  cp -f $(BASEDIR)/config.guess $(BASEDIR)/config.sub build-aux
+  $(package)_config_opts  = --prefix=$(host_prefix)
+  $(package)_config_opts += --libdir=lib
+  $(package)_config_opts += --buildtype=release
+  $(package)_config_opts += --default-library=static
+  $(package)_config_opts += -Denable-x11=true
+  $(package)_config_opts += -Denable-wayland=true
+  $(package)_config_opts += -Denable-docs=false
+  $(package)_config_opts += -Denable-tools=false
+  $(package)_config_opts += -Denable-xkbregistry=false
 endef
 
 define $(package)_config_cmds
-  $($(package)_autoconf)
+  env CC="$($(package)_cc)" CXX="$($(package)_cxx)" \
+      CFLAGS="$($(package)_cppflags) $($(package)_cflags)" \
+      CXXFLAGS="$($(package)_cppflags) $($(package)_cxxflags)" \
+      LDFLAGS="$($(package)_ldflags)" \
+      PKG_CONFIG_SYSROOT_DIR=/ \
+      PKG_CONFIG_LIBDIR=$(host_prefix)/lib/pkgconfig \
+      PKG_CONFIG_PATH=$(host_prefix)/share/pkgconfig \
+    meson setup $($(package)_config_opts) .. .
 endef
 
 define $(package)_build_cmds
-  $(MAKE)
+  ninja
 endef
 
 define $(package)_stage_cmds
-  $(MAKE) DESTDIR=$($(package)_staging_dir) install
+  DESTDIR=$($(package)_staging_dir) ninja install
 endef
 
 define $(package)_postprocess_cmds
-  rm lib/*.la
+  rm -rf share lib/*.la
 endef
-

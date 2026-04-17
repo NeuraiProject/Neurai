@@ -13,8 +13,10 @@ $(package)_config_opts += --disable-composite --disable-damage --disable-dpms
 $(package)_config_opts += --disable-dri2 --disable-dri3 --disable-glx
 $(package)_config_opts += --disable-present --disable-record --disable-resource
 $(package)_config_opts += --disable-screensaver --disable-xevie --disable-xfree86-dri
-$(package)_config_opts += --disable-xinput --disable-xprint --disable-selinux
+$(package)_config_opts += --disable-xprint --disable-selinux
 $(package)_config_opts += --disable-xtest --disable-xv --disable-xvmc --disable-xinerama
+# Qt 6 XCB plugin requires XKB and XInput2 extensions for keyboard dispatch.
+$(package)_config_opts += --enable-xkb --enable-xinput
 endef
 
 # Remove the pthread-stubs dependency that is not available/needed on Linux.
