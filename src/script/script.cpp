@@ -478,7 +478,11 @@ bool CScript::HasValidOps() const
     while (it < end()) {
         opcodetype opcode;
         std::vector<unsigned char> item;
-        if (!GetOp(it, opcode, item) || opcode > MAX_OPCODE || item.size() > MAX_SCRIPT_ELEMENT_SIZE) {
+        // NIP-019: structural cap raised to MAX_PQ_SCRIPT_ELEMENT_SIZE so
+        // RPC decoders (CheckTxScriptsSanity → DecodeHexTx) accept scripts
+        // with PQ-sized pushes. Consensus-level rejection of oversize
+        // pushes on non-CSFS paths still happens in EvalScript.
+        if (!GetOp(it, opcode, item) || opcode > MAX_OPCODE || item.size() > MAX_PQ_SCRIPT_ELEMENT_SIZE) {
             return false;
         }
     }

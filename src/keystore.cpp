@@ -39,8 +39,13 @@ bool CBasicKeyStore::AddKeyPubKey(const CKey& key, const CPubKey &pubkey)
 
 bool CBasicKeyStore::AddCScript(const CScript& redeemScript)
 {
-    if (redeemScript.size() > MAX_SCRIPT_ELEMENT_SIZE)
-        return error("CBasicKeyStore::AddCScript(): redeemScripts > %i bytes are invalid", MAX_SCRIPT_ELEMENT_SIZE);
+    // NIP-019: cap raised to MAX_PQ_SCRIPT_ELEMENT_SIZE so PQ-sized
+    // P2WSH witnessScripts (via signrawtransactionwithkey) and PQ-sized
+    // P2SH redeemScripts (watch-only via importaddress/importmulti) can
+    // be stored. Consensus-level P2SH spendability remains bounded by
+    // MAX_SCRIPT_ELEMENT_SIZE in EvalScript.
+    if (redeemScript.size() > MAX_PQ_SCRIPT_ELEMENT_SIZE)
+        return error("CBasicKeyStore::AddCScript(): redeemScripts > %i bytes are invalid", MAX_PQ_SCRIPT_ELEMENT_SIZE);
 
     LOCK(cs_KeyStore);
     mapScripts[CScriptID(redeemScript)] = redeemScript;

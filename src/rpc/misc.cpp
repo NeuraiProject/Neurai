@@ -319,9 +319,13 @@ CScript _createmultisig_redeemScript(CWallet * const pwallet, const UniValue& pa
     }
     CScript result = GetScriptForMultisig(nRequired, pubkeys);
 
-    if (result.size() > MAX_SCRIPT_ELEMENT_SIZE)
+    // NIP-019: precheck raised to MAX_PQ_SCRIPT_ELEMENT_SIZE to match the
+    // keystore and permit larger multisig redeemScripts (notably useful for
+    // P2WSH-wrapped multisig where the size check in the interpreter does
+    // not apply to witness-delivered scripts).
+    if (result.size() > MAX_PQ_SCRIPT_ELEMENT_SIZE)
         throw std::runtime_error(
-                strprintf("redeemScript exceeds size limit: %d > %d", result.size(), MAX_SCRIPT_ELEMENT_SIZE));
+                strprintf("redeemScript exceeds size limit: %d > %d", result.size(), MAX_PQ_SCRIPT_ELEMENT_SIZE));
 
     return result;
 }

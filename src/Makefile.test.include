@@ -73,6 +73,7 @@ NEURAI_TESTS =\
   test/net_tests.cpp \
   test/opcat_tests.cpp \
   test/pq_script_element_size_tests.cpp \
+  test/pq_rpc_wallet_support_tests.cpp \
   test/netbase_tests.cpp \
   test/pmt_tests.cpp \
   test/policyestimator_tests.cpp \
