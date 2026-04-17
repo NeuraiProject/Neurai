@@ -20,6 +20,14 @@ define $(package)_set_vars
   $(package)_config_opts += -Denable-docs=false
   $(package)_config_opts += -Denable-tools=false
   $(package)_config_opts += -Denable-xkbregistry=false
+  # Hardcode runtime paths to the locations provided by the distro's
+  # xkeyboard-config package. Without these, libxkbcommon bakes in the
+  # depends prefix (e.g. /root/Neurai/depends/.../share/X11/xkb), which
+  # does not exist on the end user's machine and causes:
+  #   "xkbcommon: ERROR: failed to add default include path ..."
+  #   "qt.qpa.wayland: failed to create xkb context"
+  $(package)_config_opts += -Dxkb-config-root=/usr/share/X11/xkb
+  $(package)_config_opts += -Dx-locale-root=/usr/share/X11/locale
 endef
 
 define $(package)_config_cmds
