@@ -75,13 +75,15 @@ static constexpr script_verify_flags STANDARD_SCRIPT_VERIFY_FLAGS = MANDATORY_SC
 static constexpr script_verify_flags STANDARD_NOT_MANDATORY_VERIFY_FLAGS = STANDARD_SCRIPT_VERIFY_FLAGS & ~MANDATORY_SCRIPT_VERIFY_FLAGS;
 
 /**
- * NIP-020: returns STANDARD_SCRIPT_VERIFY_FLAGS augmented with every
- * consensus-activated opt-in flag for the given chain. Mirrors the inline
- * opt-in block in validation.cpp (AcceptToMemoryPool and GetBlockScriptFlags)
- * so that non-consensus verification paths (signing, RPC post-verify,
- * neurai-tx) stay consistent with what the chain's consensus actually
- * applies.
+ * NIP-020: ORs every consensus-activated opt-in flag into `base` and returns
+ * the result.  Used directly by validation.cpp (AcceptToMemoryPool,
+ * GetBlockScriptFlags) and indirectly through
+ * GetStandardScriptVerifyFlagsWithConsensusOptIns by non-consensus paths.
  */
+script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
+                                         const Consensus::Params& consensus);
+
+/** NIP-020: convenience wrapper — STANDARD_SCRIPT_VERIFY_FLAGS | opt-ins. */
 script_verify_flags GetStandardScriptVerifyFlagsWithConsensusOptIns(
     const Consensus::Params& consensus);
 

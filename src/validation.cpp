@@ -965,54 +965,7 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
             scriptVerifyFlags = script_verify_flags::from_int(
                 gArgs.GetArg("-promiscuousmempoolflags", scriptVerifyFlags.as_int()));
         }
-        if (chainparams.GetConsensus().nPQWitnessEnabled) {
-            scriptVerifyFlags |= SCRIPT_VERIFY_AUTHSCRIPT;
-        }
-        if (chainparams.GetConsensus().nCATEnabled) {
-            scriptVerifyFlags |= SCRIPT_VERIFY_CAT;
-        }
-        if (chainparams.GetConsensus().nCTVEnabled) {
-            scriptVerifyFlags |= SCRIPT_VERIFY_CHECKTEMPLATEVERIFY;
-        }
-        if (chainparams.GetConsensus().nCSFSEnabled) {
-            scriptVerifyFlags |= SCRIPT_VERIFY_CHECKSIGFROMSTACK;
-        }
-        if (chainparams.GetConsensus().nTXHASHEnabled) {
-            scriptVerifyFlags |= SCRIPT_VERIFY_TXHASH;
-        }
-        if (chainparams.GetConsensus().nTXFIELDEnabled) {
-            scriptVerifyFlags |= SCRIPT_VERIFY_TXFIELD;
-        }
-        if (chainparams.GetConsensus().nSPLITEnabled) {
-            scriptVerifyFlags |= SCRIPT_VERIFY_SPLIT;
-        }
-        if (chainparams.GetConsensus().nREVERSEBYTESEnabled) {
-            scriptVerifyFlags |= SCRIPT_VERIFY_REVERSEBYTES;
-        }
-        if (chainparams.GetConsensus().nOUTPUTVALUEEnabled) {
-            scriptVerifyFlags |= SCRIPT_VERIFY_OUTPUTVALUE;
-        }
-        if (chainparams.GetConsensus().nOUTPUTSCRIPTEnabled) {
-            scriptVerifyFlags |= SCRIPT_VERIFY_OUTPUTSCRIPT;
-        }
-        if (chainparams.GetConsensus().nOUTPUTASSETFIELDEnabled) {
-            scriptVerifyFlags |= SCRIPT_VERIFY_OUTPUTASSETFIELD;
-        }
-        if (chainparams.GetConsensus().nINPUTASSETFIELDEnabled) {
-            scriptVerifyFlags |= SCRIPT_VERIFY_INPUTASSETFIELD;
-        }
-        if (chainparams.GetConsensus().n64BitIntegersEnabled) {
-            scriptVerifyFlags |= SCRIPT_VERIFY_64BIT_INTEGERS;
-        }
-        if (chainparams.GetConsensus().nTXLOCKTIMEEnabled) {
-            scriptVerifyFlags |= SCRIPT_VERIFY_TXLOCKTIME;
-        }
-        if (chainparams.GetConsensus().nINPUTOUTPUTCOUNTEnabled) {
-            scriptVerifyFlags |= SCRIPT_VERIFY_INPUTOUTPUTCOUNT;
-        }
-        if (chainparams.GetConsensus().nREFINPUTSEnabled) {
-            scriptVerifyFlags |= SCRIPT_VERIFY_REFINPUTS;
-        }
+        scriptVerifyFlags = ApplyConsensusOptIns(scriptVerifyFlags, chainparams.GetConsensus());
 
         // Check against previous transactions
         // This is done last to help prevent CPU exhaustion denial-of-service attacks.
@@ -2531,87 +2484,7 @@ static script_verify_flags GetBlockScriptFlags(const CBlockIndex* pindex, const 
     		flags |= SCRIPT_VERIFY_NULLDUMMY;
     }
 
-    // Enable post-quantum (ML-DSA-44) witness v1 verification on testnet/regtest.
-    if (consensusparams.nPQWitnessEnabled) {
-        flags |= SCRIPT_VERIFY_AUTHSCRIPT;
-    }
-
-    // OP_CAT (BIP 347)
-    if (consensusparams.nCATEnabled) {
-        flags |= SCRIPT_VERIFY_CAT;
-    }
-
-    // OP_CHECKTEMPLATEVERIFY (BIP 119)
-    if (consensusparams.nCTVEnabled) {
-        flags |= SCRIPT_VERIFY_CHECKTEMPLATEVERIFY;
-    }
-
-    // OP_CHECKSIGFROMSTACK
-    if (consensusparams.nCSFSEnabled) {
-        flags |= SCRIPT_VERIFY_CHECKSIGFROMSTACK;
-    }
-
-    // OP_TXHASH
-    if (consensusparams.nTXHASHEnabled) {
-        flags |= SCRIPT_VERIFY_TXHASH;
-    }
-
-    // OP_TXFIELD (NOP7)
-    if (consensusparams.nTXFIELDEnabled) {
-        flags |= SCRIPT_VERIFY_TXFIELD;
-    }
-
-    // OP_SPLIT (NOP8)
-    if (consensusparams.nSPLITEnabled) {
-        flags |= SCRIPT_VERIFY_SPLIT;
-    }
-
-    // OP_REVERSEBYTES
-    if (consensusparams.nREVERSEBYTESEnabled) {
-        flags |= SCRIPT_VERIFY_REVERSEBYTES;
-    }
-
-    // OP_OUTPUTVALUE
-    if (consensusparams.nOUTPUTVALUEEnabled) {
-        flags |= SCRIPT_VERIFY_OUTPUTVALUE;
-    }
-
-    // OP_OUTPUTSCRIPT
-    if (consensusparams.nOUTPUTSCRIPTEnabled) {
-        flags |= SCRIPT_VERIFY_OUTPUTSCRIPT;
-    }
-
-    // OP_OUTPUTASSETFIELD
-    if (consensusparams.nOUTPUTASSETFIELDEnabled) {
-        flags |= SCRIPT_VERIFY_OUTPUTASSETFIELD;
-    }
-
-    // OP_INPUTASSETFIELD
-    if (consensusparams.nINPUTASSETFIELDEnabled) {
-        flags |= SCRIPT_VERIFY_INPUTASSETFIELD;
-    }
-
-    // 64-bit arithmetic
-    if (consensusparams.n64BitIntegersEnabled) {
-        flags |= SCRIPT_VERIFY_64BIT_INTEGERS;
-    }
-
-    // OP_TXLOCKTIME
-    if (consensusparams.nTXLOCKTIMEEnabled) {
-        flags |= SCRIPT_VERIFY_TXLOCKTIME;
-    }
-
-    // OP_INPUTCOUNT / OP_OUTPUTCOUNT
-    if (consensusparams.nINPUTOUTPUTCOUNTEnabled) {
-        flags |= SCRIPT_VERIFY_INPUTOUTPUTCOUNT;
-    }
-
-    // NIP-014: OP_REFINPUT* opcodes + tx v3 vrefin
-    if (consensusparams.nREFINPUTSEnabled) {
-        flags |= SCRIPT_VERIFY_REFINPUTS;
-    }
-
-    return flags;
+    return ApplyConsensusOptIns(flags, consensusparams);
 }
 
 
