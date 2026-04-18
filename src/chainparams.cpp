@@ -208,8 +208,9 @@ public:
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,53); //N
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,117);
         base58Prefixes[SECRET_KEY] =     std::vector<unsigned char>(1,128);
-        base58Prefixes[EXT_PUBLIC_KEY] = {0x04, 0x88, 0xB2, 0x1E};
-        base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x88, 0xAD, 0xE4};
+        base58Prefixes[EXT_PUBLIC_KEY]    = {0x04, 0x88, 0xB2, 0x1E};
+        base58Prefixes[EXT_SECRET_KEY]    = {0x04, 0x88, 0xAD, 0xE4};
+        base58Prefixes[EXT_PQ_SECRET_KEY] = {0x04, 0x88, 0x2C, 0xA0}; // xpqp... (mainnet)
         strBech32HRP = "nq";
 
         // Neurai BIP44 cointype in mainnet is '0'
@@ -428,8 +429,9 @@ public:
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,127); //t
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,196);
         base58Prefixes[SECRET_KEY] =     std::vector<unsigned char>(1,239);
-        base58Prefixes[EXT_PUBLIC_KEY] = {0x04, 0x35, 0x87, 0xCF};
-        base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x35, 0x83, 0x94};
+        base58Prefixes[EXT_PUBLIC_KEY]    = {0x04, 0x35, 0x87, 0xCF};
+        base58Prefixes[EXT_SECRET_KEY]    = {0x04, 0x35, 0x83, 0x94};
+        base58Prefixes[EXT_PQ_SECRET_KEY] = {0x04, 0x35, 0x9E, 0xC0}; // tpqp... (testnet)
         strBech32HRP = "tnq";
 
         // Neurai BIP44 cointype in testnet
@@ -618,8 +620,9 @@ public:
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,127); //t
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,196);
         base58Prefixes[SECRET_KEY] =     std::vector<unsigned char>(1,239);
-        base58Prefixes[EXT_PUBLIC_KEY] = {0x04, 0x35, 0x87, 0xCF};
-        base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x35, 0x83, 0x94};
+        base58Prefixes[EXT_PUBLIC_KEY]    = {0x04, 0x35, 0x87, 0xCF};
+        base58Prefixes[EXT_SECRET_KEY]    = {0x04, 0x35, 0x83, 0x94};
+        base58Prefixes[EXT_PQ_SECRET_KEY] = {0x04, 0x35, 0x9E, 0xC0}; // tpqp... (regtest)
         strBech32HRP = "rnq";
 
         // Neurai BIP44 cointype in regtest

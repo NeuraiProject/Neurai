@@ -11,7 +11,9 @@
 #include "chain.h"
 #include "wallet/coincontrol.h"
 #include "consensus/consensus.h"
+#include "consensus/merkle.h"
 #include "consensus/validation.h"
+#include "hash.h"
 #include "fs.h"
 #include "init.h"
 #include "key.h"
@@ -150,6 +152,133 @@ const CWalletTx* CWallet::GetWalletTx(const uint256& hash) const
     return &(it->second);
 }
 
+// ---- CXpqpub ---------------------------------------------------------------
+
+std::vector<unsigned char> CXpqpub::Serialize() const
+{
+    // Header: version(4) + depth(1) + fingerprint(4) + chain(4) + offset(4) + count(4) + merkle_root(32)
+    // = 53 bytes, then count × 1313 bytes pubkeys
+    std::vector<unsigned char> out;
+    out.reserve(53 + (size_t)count * 1313);
+
+    auto push32le = [&](uint32_t v) {
+        out.push_back(v & 0xFF); out.push_back((v >> 8) & 0xFF);
+        out.push_back((v >> 16) & 0xFF); out.push_back((v >> 24) & 0xFF);
+    };
+    push32le(version);
+    out.push_back(depth);
+    out.insert(out.end(), fingerprint, fingerprint + 4);
+    push32le(chain);
+    push32le(offset);
+    push32le(count);
+    out.insert(out.end(), merkle_root.begin(), merkle_root.end());
+
+    for (const CPubKey& pk : pubkeys)
+        out.insert(out.end(), pk.begin(), pk.end());
+    return out;
+}
+
+bool CXpqpub::Deserialize(const std::vector<unsigned char>& data)
+{
+    if (data.size() < 53) return false;
+    size_t pos = 0;
+    auto read32le = [&]() -> uint32_t {
+        uint32_t v = data[pos] | ((uint32_t)data[pos+1] << 8) |
+                     ((uint32_t)data[pos+2] << 16) | ((uint32_t)data[pos+3] << 24);
+        pos += 4; return v;
+    };
+    version = read32le();
+    depth   = data[pos++];
+    memcpy(fingerprint, data.data() + pos, 4); pos += 4;
+    chain   = read32le();
+    offset  = read32le();
+    count   = read32le();
+    memcpy(merkle_root.begin(), data.data() + pos, 32); pos += 32;
+
+    if (data.size() != 53 + (size_t)count * 1313) return false;
+    pubkeys.clear();
+    pubkeys.reserve(count);
+    for (uint32_t i = 0; i < count; ++i) {
+        CPubKey pk;
+        pk.Set(data.begin() + pos, data.begin() + pos + 1313);
+        if (!pk.IsValid() || !pk.IsPQ()) return false;
+        pubkeys.push_back(pk);
+        pos += 1313;
+    }
+    return true;
+}
+
+bool CXpqpub::VerifyPubKey(uint32_t i, const CPubKey& pk) const
+{
+    if (i < offset || i >= offset + count) return false;
+    uint32_t idx = i - offset;
+    if (idx >= pubkeys.size()) return false;
+    if (!(pk == pubkeys[idx])) return false;
+
+    // Verify Merkle inclusion: leaf = SHA256d(serialized_pubkey)
+    uint256 leaf;
+    {
+        std::vector<unsigned char> pkdata(pk.begin(), pk.end());
+        leaf = Hash(pkdata.begin(), pkdata.end());
+    }
+    // Recompute root from all leaves and compare
+    std::vector<uint256> leaves;
+    leaves.reserve(count);
+    for (const CPubKey& p : pubkeys) {
+        std::vector<unsigned char> pdata(p.begin(), p.end());
+        leaves.push_back(Hash(pdata.begin(), pdata.end()));
+    }
+    uint256 root = ComputeMerkleRoot(leaves);
+    return root == merkle_root;
+}
+
+CXpqpub CWallet::GenerateXpqpub(uint32_t chain, uint32_t count, uint32_t offset)
+{
+    AssertLockHeld(cs_wallet);
+
+    const uint32_t PQ_PURPOSE   = 100;
+    const uint32_t PQ_COIN_TYPE = (GetParams().NetworkIDString() == "main") ? 1900 : 1;
+    const uint32_t nAccountIndex = 0;
+
+    CExtKeyPQ masterKey;
+    masterKey.SetSeed(g_vchSeed.data(), g_vchSeed.size());
+
+    CExtKeyPQ purposeKey, coinTypeKey, accountKey, chainKey, leafKey;
+    masterKey.Derive(purposeKey,   PQ_PURPOSE    | BIP32_HARDENED_KEY_LIMIT);
+    purposeKey.Derive(coinTypeKey, PQ_COIN_TYPE  | BIP32_HARDENED_KEY_LIMIT);
+    coinTypeKey.Derive(accountKey, nAccountIndex | BIP32_HARDENED_KEY_LIMIT);
+    accountKey.Derive(chainKey,    chain         | BIP32_HARDENED_KEY_LIMIT);
+
+    CXpqpub result;
+    result.depth  = accountKey.nDepth + 1;
+    memcpy(result.fingerprint, chainKey.vchFingerprint, 4);
+    result.chain  = chain;
+    result.offset = offset;
+    result.count  = count;
+
+    result.pubkeys.reserve(count);
+    std::vector<uint256> leaves;
+    leaves.reserve(count);
+
+    for (uint32_t i = offset; i < offset + count; ++i) {
+        chainKey.Derive(leafKey, i | BIP32_HARDENED_KEY_LIMIT);
+        CPubKey pk = leafKey.GetPubKey();
+        result.pubkeys.push_back(pk);
+        std::vector<unsigned char> pkdata(pk.begin(), pk.end());
+        leaves.push_back(Hash(pkdata.begin(), pkdata.end()));
+    }
+
+    result.merkle_root = ComputeMerkleRoot(leaves);
+    return result;
+}
+
+CExtKeyPQ CWallet::GetMasterExtKeyPQ() const
+{
+    CExtKeyPQ master;
+    master.SetSeed(g_vchSeed.data(), g_vchSeed.size());
+    return master;
+}
+
 CPubKey CWallet::GenerateNewKeyPQ(CWalletDB& walletdb, bool internal)
 {
     AssertLockHeld(cs_wallet);
@@ -157,35 +286,28 @@ CPubKey CWallet::GenerateNewKeyPQ(CWalletDB& walletdb, bool internal)
     int64_t nCreationTime = GetTime();
     CKeyMetadata metadata(nCreationTime);
 
-    // Derive a deterministic seed for the PQ key using BIP32 path:
-    //   Mainnet external: m/100'/1900'/0'/0/index
-    //   Mainnet change:   m/100'/1900'/0'/1/index
-    //   Test/Reg external: m/100'/1'/0'/0/index
-    //   Test/Reg change:   m/100'/1'/0'/1/index
-    // The resulting 32-byte EC child key is used as the OQS DRBG seed, making PQ keys deterministic.
+    // Native PQ-HD derivation (NIP-022): m_pq/purpose'/coin_type'/account'/chain'/index'
+    // All levels hardened — no EC-bridge, no secp256k1 in the derivation path.
     const uint32_t PQ_PURPOSE   = 100;
     const uint32_t PQ_COIN_TYPE = (GetParams().NetworkIDString() == "main") ? 1900 : 1;
     const uint32_t nAccountIndex = 0;
     const uint32_t nChain = internal ? 1 : 0;
     uint32_t& nChildIndex = internal ? hdChain.nInternalChainCounter : hdChain.nExternalChainCounter;
 
-    CExtKey masterKey;
+    CExtKeyPQ masterKey;
     masterKey.SetSeed(g_vchSeed.data(), g_vchSeed.size());
 
-    CExtKey purposeKey, coinTypeKey, accountKey, chainKey, childKey;
-    masterKey.Derive(purposeKey,   PQ_PURPOSE   | BIP32_HARDENED_KEY_LIMIT);
-    purposeKey.Derive(coinTypeKey, PQ_COIN_TYPE | BIP32_HARDENED_KEY_LIMIT);
+    CExtKeyPQ purposeKey, coinTypeKey, accountKey, chainKey, leafKey;
+    masterKey.Derive(purposeKey,   PQ_PURPOSE    | BIP32_HARDENED_KEY_LIMIT);
+    purposeKey.Derive(coinTypeKey, PQ_COIN_TYPE  | BIP32_HARDENED_KEY_LIMIT);
     coinTypeKey.Derive(accountKey, nAccountIndex | BIP32_HARDENED_KEY_LIMIT);
-    accountKey.Derive(chainKey, nChain);
-    chainKey.Derive(childKey, nChildIndex);
+    accountKey.Derive(chainKey,    nChain        | BIP32_HARDENED_KEY_LIMIT);
+    chainKey.Derive(leafKey,       nChildIndex   | BIP32_HARDENED_KEY_LIMIT);
     nChildIndex++;
 
-    // Feed the 32-byte EC key as the OQS DRBG seed
-    std::vector<unsigned char> pq_seed(childKey.key.begin(), childKey.key.end());
-    CKey secret;
-    secret.MakeNewKeyPQ(pq_seed);
+    CKey secret = leafKey.GetKey();
 
-    metadata.hdKeypath = strprintf("m/%d'/%d'/%d'/%d/%d",
+    metadata.hdKeypath = strprintf("m_pq/%d'/%d'/%d'/%d'/%d'",
                                     PQ_PURPOSE,
                                     PQ_COIN_TYPE,
                                     nAccountIndex,

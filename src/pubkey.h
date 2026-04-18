@@ -32,6 +32,7 @@
  */
 
 const unsigned int BIP32_EXTKEY_SIZE = 74;
+static const unsigned int BIP32_PQ_EXTKEY_SIZE = 73;
 
 // ML-DSA-44 constants
 static const unsigned int ML_DSA_44_PRIVKEY_SIZE  = 2560;

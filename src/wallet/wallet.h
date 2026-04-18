@@ -573,6 +573,30 @@ public:
     }
 };
 
+/** Extended Public Key Set for ML-DSA-44 watch-only wallets (NIP-022 §4).
+ *  Contains N pre-generated pubkeys with a Merkle root for integrity verification. */
+struct CXpqpub {
+    uint32_t version{1};
+    uint8_t  depth{0};
+    uint8_t  fingerprint[4]{};
+    uint32_t chain{0};
+    uint32_t offset{0};
+    uint32_t count{0};
+    uint256  merkle_root;
+    std::vector<CPubKey> pubkeys;   // count × 1313 bytes each
+
+    bool IsValid() const { return count > 0 && pubkeys.size() == count && !merkle_root.IsNull(); }
+
+    /** Serialize to binary format: 53-byte header + count×1313 bytes pubkeys */
+    std::vector<unsigned char> Serialize() const;
+
+    /** Deserialize from binary format */
+    bool Deserialize(const std::vector<unsigned char>& data);
+
+    /** Verify that pubkey at position i belongs to this set */
+    bool VerifyPubKey(uint32_t i, const CPubKey& pk) const;
+};
+
 /**
  * Internal transfers.
  * Database key is acentry<account><counter>.
@@ -905,6 +929,12 @@ public:
 
     //! Generate a new ML-DSA-44 post-quantum key and add it to the wallet.
     CPubKey GenerateNewKeyPQ(CWalletDB& walletdb, bool internal);
+
+    //! Return the master CExtKeyPQ derived from the current HD seed (NIP-022).
+    CExtKeyPQ GetMasterExtKeyPQ() const;
+
+    //! Generate a CXpqpub batch of N pubkeys from account key at the given chain/offset.
+    CXpqpub GenerateXpqpub(uint32_t chain, uint32_t count, uint32_t offset = 0);
     //! Adds a key to the store, and saves it to disk.
     bool AddKeyPubKey(const CKey& key, const CPubKey &pubkey) override;
     bool AddKeyPubKeyWithDB(CWalletDB &walletdb,const CKey& key, const CPubKey &pubkey);

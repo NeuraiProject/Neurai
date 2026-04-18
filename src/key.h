@@ -195,6 +195,30 @@ struct CExtKey {
     }
 };
 
+/** Extended PQ (ML-DSA-44) key: 73-byte serialization.
+ *  Stores a 32-byte pq_seed (secure memory) and 32-byte chain code.
+ *  All derivation is hardened-only (index bit 31 must be set). */
+struct CExtKeyPQ {
+    unsigned char nDepth;
+    unsigned char vchFingerprint[4];
+    unsigned int  nChild;
+    ChainCode     chaincode;
+    std::vector<unsigned char, secure_allocator<unsigned char>> pq_seed;
+
+    CExtKeyPQ() : nDepth(0), nChild(0) {
+        memset(vchFingerprint, 0, sizeof(vchFingerprint));
+    }
+
+    bool IsValid() const { return pq_seed.size() == 32 && !chaincode.IsNull(); }
+
+    void SetSeed(const unsigned char* seed, unsigned int nSeedLen);
+    bool Derive(CExtKeyPQ& out, unsigned int nChild) const;
+    CKey    GetKey()    const;
+    CPubKey GetPubKey() const;
+    void Encode(unsigned char code[BIP32_PQ_EXTKEY_SIZE]) const;
+    void Decode(const unsigned char code[BIP32_PQ_EXTKEY_SIZE]);
+};
+
 /** Initialize the elliptic curve support. May not be called twice without calling ECC_Stop first. */
 void ECC_Start(void);
 

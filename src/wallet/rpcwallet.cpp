@@ -3581,6 +3581,79 @@ UniValue listpqaddresses(const JSONRPCRequest& request)
     return ret;
 }
 
+// ---- NIP-022 PQ-HD RPC commands -------------------------------------------
+
+UniValue dumpextkeypq(const JSONRPCRequest& request)
+{
+    CWallet* const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) return NullUniValue;
+
+    if (request.fHelp || request.params.size() != 0)
+        throw std::runtime_error(
+            "dumpextkeypq\n"
+            "\nReturns the master PQ extended private key (xpqpriv) for this wallet.\n"
+            "WARNING: exposes the master secret — keep it safe.\n"
+            "\nResult:\n"
+            "\"xpqpriv...\"   (string) Base58Check-encoded master CExtKeyPQ\n"
+            "\nExamples:\n"
+            + HelpExampleCli("dumpextkeypq", "")
+            + HelpExampleRpc("dumpextkeypq", "")
+        );
+
+    LOCK2(cs_main, pwallet->cs_wallet);
+    EnsureWalletIsUnlocked(pwallet);
+
+    CExtKeyPQ masterKey = pwallet->GetMasterExtKeyPQ();
+    if (!masterKey.IsValid())
+        throw JSONRPCError(RPC_WALLET_ERROR, "No HD seed available");
+
+    CNeuraiExtKeyPQ enc(masterKey);
+    return enc.ToString();
+}
+
+UniValue exportxpqpub(const JSONRPCRequest& request)
+{
+    CWallet* const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) return NullUniValue;
+
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 3)
+        throw std::runtime_error(
+            "exportxpqpub count ( chain offset )\n"
+            "\nGenerates a batch of count ML-DSA-44 public keys and returns the xpqpub blob.\n"
+            "\nArguments:\n"
+            "1. count   (numeric, required) Number of pubkeys to generate (max 1000)\n"
+            "2. chain   (numeric, optional, default=0) Chain index (0=external, 1=change)\n"
+            "3. offset  (numeric, optional, default=0) Starting index\n"
+            "\nResult:\n"
+            "\"hex\"   (string) Hex-encoded xpqpub binary blob\n"
+            "\nExamples:\n"
+            + HelpExampleCli("exportxpqpub", "20")
+            + HelpExampleRpc("exportxpqpub", "20, 0, 0")
+        );
+
+    LOCK2(cs_main, pwallet->cs_wallet);
+    EnsureWalletIsUnlocked(pwallet);
+
+    uint32_t count  = request.params[0].get_int();
+    uint32_t chain  = request.params.size() > 1 ? (uint32_t)request.params[1].get_int() : 0;
+    uint32_t offset = request.params.size() > 2 ? (uint32_t)request.params[2].get_int() : 0;
+
+    if (count == 0 || count > 1000)
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "count must be between 1 and 1000");
+
+    CXpqpub xpub = pwallet->GenerateXpqpub(chain, count, offset);
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("chain",       (int64_t)chain);
+    result.pushKV("offset",      (int64_t)offset);
+    result.pushKV("count",       (int64_t)count);
+    result.pushKV("merkle_root", xpub.merkle_root.GetHex());
+
+    std::vector<unsigned char> blob = xpub.Serialize();
+    result.pushKV("hex", HexStr(blob.begin(), blob.end()));
+    return result;
+}
+
 extern UniValue abortrescan(const JSONRPCRequest& request); // in rpcdump.cpp
 extern UniValue dumpprivkey(const JSONRPCRequest& request); // in rpcdump.cpp
 extern UniValue importprivkey(const JSONRPCRequest& request);
@@ -3606,6 +3679,8 @@ static const CRPCCommand commands[] =
     { "wallet",             "backupwallet",             &backupwallet,             {"destination"} },
     { "wallet",             "bumpfee",                  &bumpfee,                  {"txid", "options"} },
     { "wallet",             "dumpprivkey",              &dumpprivkey,              {"address"}  },
+    { "wallet",             "dumpextkeypq",             &dumpextkeypq,             {} },
+    { "wallet",             "exportxpqpub",             &exportxpqpub,             {"count","chain","offset"} },
     { "wallet",             "dumpwallet",               &dumpwallet,               {"filename"} },
     { "wallet",             "encryptwallet",            &encryptwallet,            {"passphrase"} },
     { "wallet",             "getaccountaddress",        &getaccountaddress,        {"account"} },

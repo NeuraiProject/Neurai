@@ -417,6 +417,71 @@ void CExtKey::Decode(const unsigned char code[BIP32_EXTKEY_SIZE]) {
     key.Set(code+42, code+BIP32_EXTKEY_SIZE, true);
 }
 
+// ---- CExtKeyPQ ----
+
+void CExtKeyPQ::SetSeed(const unsigned char* seed, unsigned int nSeedLen) {
+    static const unsigned char hashkey[] = {'N','e','u','r','a','i',' ','P','Q',' ','s','e','e','d'};
+    std::vector<unsigned char, secure_allocator<unsigned char>> vout(64);
+    CHMAC_SHA512(hashkey, sizeof(hashkey)).Write(seed, nSeedLen).Finalize(vout.data());
+    pq_seed.assign(vout.begin(), vout.begin() + 32);
+    memcpy(chaincode.begin(), vout.data() + 32, 32);
+    nDepth = 0;
+    nChild = 0;
+    memset(vchFingerprint, 0, sizeof(vchFingerprint));
+}
+
+bool CExtKeyPQ::Derive(CExtKeyPQ& out, unsigned int _nChild) const {
+    if ((_nChild & 0x80000000) == 0) return false;
+    std::vector<unsigned char, secure_allocator<unsigned char>> data(37);
+    data[0] = 0x00;
+    memcpy(data.data() + 1, pq_seed.data(), 32);
+    data[33] = (_nChild >> 24) & 0xFF;
+    data[34] = (_nChild >> 16) & 0xFF;
+    data[35] = (_nChild >>  8) & 0xFF;
+    data[36] = (_nChild      ) & 0xFF;
+    std::vector<unsigned char, secure_allocator<unsigned char>> vout(64);
+    CHMAC_SHA512(chaincode.begin(), chaincode.size()).Write(data.data(), 37).Finalize(vout.data());
+    out.pq_seed.assign(vout.begin(), vout.begin() + 32);
+    memcpy(out.chaincode.begin(), vout.data() + 32, 32);
+    out.nDepth = nDepth + 1;
+    out.nChild = _nChild;
+    CKeyID id = GetPubKey().GetID();
+    memcpy(out.vchFingerprint, &id, 4);
+    return true;
+}
+
+CKey CExtKeyPQ::GetKey() const {
+    std::vector<unsigned char> seed_vec(pq_seed.begin(), pq_seed.end());
+    CKey k;
+    k.MakeNewKeyPQ(seed_vec);
+    return k;
+}
+
+CPubKey CExtKeyPQ::GetPubKey() const {
+    return GetKey().GetPubKey();
+}
+
+void CExtKeyPQ::Encode(unsigned char code[BIP32_PQ_EXTKEY_SIZE]) const {
+    assert(pq_seed.size() == 32);
+    code[0] = nDepth;
+    memcpy(code + 1, vchFingerprint, 4);
+    code[5] = (nChild >> 24) & 0xFF;
+    code[6] = (nChild >> 16) & 0xFF;
+    code[7] = (nChild >>  8) & 0xFF;
+    code[8] = (nChild      ) & 0xFF;
+    memcpy(code + 9,  chaincode.begin(), 32);
+    memcpy(code + 41, pq_seed.data(),   32);
+}
+
+void CExtKeyPQ::Decode(const unsigned char code[BIP32_PQ_EXTKEY_SIZE]) {
+    nDepth = code[0];
+    memcpy(vchFingerprint, code + 1, 4);
+    nChild = ((uint32_t)code[5] << 24) | ((uint32_t)code[6] << 16) |
+             ((uint32_t)code[7] <<  8) | code[8];
+    memcpy(chaincode.begin(), code + 9, 32);
+    pq_seed.assign(code + 41, code + 73);
+}
+
 bool ECC_InitSanityCheck() {
     CKey key;
     key.MakeNewKey(true);
