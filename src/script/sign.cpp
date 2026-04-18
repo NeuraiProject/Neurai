@@ -19,11 +19,11 @@ typedef std::vector<unsigned char> valtype;
 
 static script_verify_flags LocalScriptVerifyFlags()
 {
-    script_verify_flags flags = STANDARD_SCRIPT_VERIFY_FLAGS;
-    if (GetParams().GetConsensus().nPQWitnessEnabled) {
-        flags |= SCRIPT_VERIFY_AUTHSCRIPT;
-    }
-    return flags;
+    // NIP-020: augment STANDARD_SCRIPT_VERIFY_FLAGS with every consensus
+    // opt-in the current chain has active, so the post-signing verify step
+    // agrees with what consensus actually applies (instead of only
+    // including AUTHSCRIPT as before).
+    return GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());
 }
 
 TransactionSignatureCreator::TransactionSignatureCreator(const CKeyStore* keystoreIn, const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, int nHashTypeIn) : BaseSignatureCreator(keystoreIn), txTo(txToIn), nIn(nInIn), nHashType(nHashTypeIn), amount(amountIn), checker(txTo, nIn, amountIn) {}

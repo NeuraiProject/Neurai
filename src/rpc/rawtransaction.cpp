@@ -2097,10 +2097,10 @@ UniValue signrawtransaction(const JSONRPCRequest& request)
         UpdateTransaction(mtx, i, sigdata);
 
         ScriptError serror = SCRIPT_ERR_OK;
-        script_verify_flags verify_flags = STANDARD_SCRIPT_VERIFY_FLAGS;
-        if (GetParams().GetConsensus().nPQWitnessEnabled) {
-            verify_flags |= SCRIPT_VERIFY_AUTHSCRIPT;
-        }
+        // NIP-020: include every consensus opt-in the chain has active so the
+        // post-sign verify matches consensus (previously only AUTHSCRIPT).
+        script_verify_flags verify_flags =
+            GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());
         if (!VerifyScript(txin.scriptSig, prevPubKey, &txin.scriptWitness, verify_flags, TransactionSignatureChecker(&txConst, i, amount, prevPubKey), &serror)) {
             if (serror == SCRIPT_ERR_INVALID_STACK_OPERATION) {
                 // Unable to sign input and verification failed (possible attempt to partially sign).

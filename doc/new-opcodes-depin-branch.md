@@ -850,3 +850,7 @@ All opcodes listed above are controlled by individual consensus parameters in `C
 - **Mainnet**: All opcodes are **disabled** (`false`) pending future activation via consensus upgrade.
 
 Each opcode degrades gracefully when its flag is not set — NOP-replacing opcodes behave as their original NOP, while re-enabled opcodes return `SCRIPT_ERR_DISABLED_OPCODE`.
+
+### Policy-layer flag propagation (NIP-020)
+
+Non-consensus verification paths (`signrawtransactionwithkey`'s post-sign verify, the internal `SignSignature` check, and the `neurai-tx` CLI) all read their flags through the single helper `GetStandardScriptVerifyFlagsWithConsensusOptIns(consensus)` declared in `policy.h`. The helper returns `STANDARD_SCRIPT_VERIFY_FLAGS` plus every consensus-activated opt-in for the current chain, so signing behaves consistently with block-level consensus on the chain the node is running against.

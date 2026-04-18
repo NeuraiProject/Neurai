@@ -563,6 +563,24 @@ CSFS follows the same `NULLFAIL` semantics as `OP_CHECKSIG`: under `SCRIPT_VERIF
 
 ---
 
+## Policy-layer signing verification (NIP-020)
+
+Post-signing verification in `signrawtransactionwithkey`, `neurai-tx`, and
+the internal `SignSignature` path goes through a single helper
+`GetStandardScriptVerifyFlagsWithConsensusOptIns(consensus)` that augments
+`STANDARD_SCRIPT_VERIFY_FLAGS` with every consensus opt-in the chain has
+active (`AUTHSCRIPT`, `CAT`, `CTV`, `CSFS`, `TXHASH`, `TXFIELD`, `SPLIT`,
+`REVERSEBYTES`, `OUTPUTVALUE`, `OUTPUTSCRIPT`, `OUTPUTASSETFIELD`,
+`INPUTASSETFIELD`, `64BIT_INTEGERS`, `TXLOCKTIME`, `INPUTOUTPUTCOUNT`,
+`REFINPUTS`). Signing on testnet/regtest therefore honors the wider PQ
+element cap and the other opt-ins, completing the sign-and-relay round-
+trip for P2WSH with PQ-sized witnessScripts.
+
+Mainnet relay of PQ witness items is still gated by
+`MAX_STANDARD_P2WSH_STACK_ITEM_SIZE = 80` in `IsWitnessStandard`
+(reject reason `bad-witness-nonstandard`). NIP-021 is the follow-up
+policy change for that path.
+
 ## Further Reading
 
 - [New OP_Codes Reference](new-opcodes-depin-branch.md) — Detailed specification of each opcode (byte values, flags, stack effects, error codes)

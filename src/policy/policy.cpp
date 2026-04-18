@@ -8,6 +8,7 @@
 
 #include "policy/policy.h"
 
+#include "consensus/params.h"
 #include "consensus/validation.h"
 #include "validation.h"
 #include "coins.h"
@@ -306,4 +307,35 @@ int64_t GetVirtualTransactionSize(int64_t nWeight, int64_t nSigOpCost)
 int64_t GetVirtualTransactionSize(const CTransaction& tx, int64_t nSigOpCost)
 {
     return GetVirtualTransactionSize(GetTransactionWeight(tx), nSigOpCost);
+}
+
+// NIP-020: single source of truth for "standard policy plus whatever
+// consensus opt-ins the current chain has active". Order and membership
+// mirror the inline blocks at validation.cpp:968+ (AcceptToMemoryPool) and
+// validation.cpp:2535+ (GetBlockScriptFlags); any new opt-in added in
+// consensus must be added here and at those two sites (or, once Phase 8
+// lands, only here).
+script_verify_flags GetStandardScriptVerifyFlagsWithConsensusOptIns(
+    const Consensus::Params& consensus)
+{
+    script_verify_flags flags = STANDARD_SCRIPT_VERIFY_FLAGS;
+
+    if (consensus.nPQWitnessEnabled)        flags |= SCRIPT_VERIFY_AUTHSCRIPT;
+    if (consensus.nCATEnabled)              flags |= SCRIPT_VERIFY_CAT;
+    if (consensus.nCTVEnabled)              flags |= SCRIPT_VERIFY_CHECKTEMPLATEVERIFY;
+    if (consensus.nCSFSEnabled)             flags |= SCRIPT_VERIFY_CHECKSIGFROMSTACK;
+    if (consensus.nTXHASHEnabled)           flags |= SCRIPT_VERIFY_TXHASH;
+    if (consensus.nTXFIELDEnabled)          flags |= SCRIPT_VERIFY_TXFIELD;
+    if (consensus.nSPLITEnabled)            flags |= SCRIPT_VERIFY_SPLIT;
+    if (consensus.nREVERSEBYTESEnabled)     flags |= SCRIPT_VERIFY_REVERSEBYTES;
+    if (consensus.nOUTPUTVALUEEnabled)      flags |= SCRIPT_VERIFY_OUTPUTVALUE;
+    if (consensus.nOUTPUTSCRIPTEnabled)     flags |= SCRIPT_VERIFY_OUTPUTSCRIPT;
+    if (consensus.nOUTPUTASSETFIELDEnabled) flags |= SCRIPT_VERIFY_OUTPUTASSETFIELD;
+    if (consensus.nINPUTASSETFIELDEnabled)  flags |= SCRIPT_VERIFY_INPUTASSETFIELD;
+    if (consensus.n64BitIntegersEnabled)    flags |= SCRIPT_VERIFY_64BIT_INTEGERS;
+    if (consensus.nTXLOCKTIMEEnabled)       flags |= SCRIPT_VERIFY_TXLOCKTIME;
+    if (consensus.nINPUTOUTPUTCOUNTEnabled) flags |= SCRIPT_VERIFY_INPUTOUTPUTCOUNT;
+    if (consensus.nREFINPUTSEnabled)        flags |= SCRIPT_VERIFY_REFINPUTS;
+
+    return flags;
 }

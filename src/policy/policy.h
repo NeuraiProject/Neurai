@@ -17,6 +17,8 @@
 class CCoinsViewCache;
 class CTxOut;
 
+namespace Consensus { struct Params; }
+
 /** Default for -blockmaxweight, which controls the range of block weights the mining code will create **/
 // Deprecated with RIP2 implementation
 //static const unsigned int DEFAULT_BLOCK_MAX_WEIGHT = MAX_BLOCK_WEIGHT - 4000;
@@ -71,6 +73,17 @@ static constexpr script_verify_flags STANDARD_SCRIPT_VERIFY_FLAGS = MANDATORY_SC
 
 /** For convenience, standard but not mandatory verify flags. */
 static constexpr script_verify_flags STANDARD_NOT_MANDATORY_VERIFY_FLAGS = STANDARD_SCRIPT_VERIFY_FLAGS & ~MANDATORY_SCRIPT_VERIFY_FLAGS;
+
+/**
+ * NIP-020: returns STANDARD_SCRIPT_VERIFY_FLAGS augmented with every
+ * consensus-activated opt-in flag for the given chain. Mirrors the inline
+ * opt-in block in validation.cpp (AcceptToMemoryPool and GetBlockScriptFlags)
+ * so that non-consensus verification paths (signing, RPC post-verify,
+ * neurai-tx) stay consistent with what the chain's consensus actually
+ * applies.
+ */
+script_verify_flags GetStandardScriptVerifyFlagsWithConsensusOptIns(
+    const Consensus::Params& consensus);
 
 /** Used as the flags parameter to sequence and nLocktime checks in non-consensus code. */
 static const unsigned int STANDARD_LOCKTIME_VERIFY_FLAGS = LOCKTIME_VERIFY_SEQUENCE |

@@ -676,10 +676,10 @@ static void MutateTxSign(CMutableTransaction& tx, const std::string& flagStr)
             sigdata = CombineSignatures(prevPubKey, MutableTransactionSignatureChecker(&mergedTx, i, amount, prevPubKey), sigdata, DataFromTransaction(txv, i));
         UpdateTransaction(mergedTx, i, sigdata);
 
-        script_verify_flags verify_flags = STANDARD_SCRIPT_VERIFY_FLAGS;
-        if (GetParams().GetConsensus().nPQWitnessEnabled) {
-            verify_flags |= SCRIPT_VERIFY_AUTHSCRIPT;
-        }
+        // NIP-020: include every consensus opt-in the chain has active so the
+        // post-sign verify matches consensus (previously only AUTHSCRIPT).
+        script_verify_flags verify_flags =
+            GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());
         if (!VerifyScript(txin.scriptSig, prevPubKey, &txin.scriptWitness, verify_flags, MutableTransactionSignatureChecker(&mergedTx, i, amount, prevPubKey)))
             fComplete = false;
     }
