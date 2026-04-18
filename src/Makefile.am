@@ -281,7 +281,6 @@ libneurai_server_a_SOURCES = \
   assets/assetsnapshotdb.cpp \
   assets/rewards.cpp \
   policy/fees.cpp \
-  policy/policy.cpp \
   policy/rbf.cpp \
   pow.cpp \
   rest.cpp \
@@ -447,6 +446,7 @@ libneurai_common_a_SOURCES = \
   netaddress.cpp \
   netbase.cpp \
   policy/feerate.cpp \
+  policy/policy.cpp \
   protocol.cpp \
   scheduler.cpp \
   script/sign.cpp \
