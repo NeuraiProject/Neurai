@@ -1,0 +1,72 @@
+# Neurai Testnet Node — Docker Compose
+#
+# USAGE
+# ─────────────────────────────────────────────────────────────────────────────
+# Start:
+#   docker compose -f docker-compose.testnet.yml up -d
+#
+# Start with custom password:
+#   NEURAI_RPC_PASSWORD=mysecret docker compose -f docker-compose.testnet.yml up -d
+#
+# Check sync status:
+#   docker compose -f docker-compose.testnet.yml exec neuraid neurai-cli -datadir=/data getinfo
+#
+# View logs:
+#   docker compose -f docker-compose.testnet.yml logs -f
+#
+# Stop (keeps blockchain data):
+#   docker compose -f docker-compose.testnet.yml down
+#
+# Destroy everything (removes blockchain data and image):
+#   docker compose -f docker-compose.testnet.yml down --volumes --rmi all
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  neuraid:
+    image: neuraiproject/neurai-node-testnet:${VERSION:-v1.0.6}
+    container_name: neurai-testnet-node
+    restart: unless-stopped
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+    environment:
+      NEURAI_TESTNET: "1"
+      NEURAI_LISTEN: ${NEURAI_LISTEN:-0}
+      NEURAI_REST: ${NEURAI_REST:-1}
+      NEURAI_RPC_USER: ${NEURAI_RPC_USER:-neurai}
+      NEURAI_RPC_PASSWORD: ${NEURAI_RPC_PASSWORD:-changeme}
+      NEURAI_RPC_ALLOW_IP: ${NEURAI_RPC_ALLOW_IP:-0.0.0.0/0}
+      NEURAI_RPC_PORT: "19101"
+      NEURAI_RPC_TIMEOUT: ${NEURAI_RPC_TIMEOUT:-240}
+      NEURAI_RPC_WORKQUEUE: ${NEURAI_RPC_WORKQUEUE:-64}
+      NEURAI_RPC_THREADS: ${NEURAI_RPC_THREADS:-8}
+      NEURAI_DISABLE_WALLET: ${NEURAI_DISABLE_WALLET:-1}
+      NEURAI_TXINDEX: ${NEURAI_TXINDEX:-1}
+      NEURAI_ASSETINDEX: ${NEURAI_ASSETINDEX:-1}
+      NEURAI_ADDRESSINDEX: ${NEURAI_ADDRESSINDEX:-1}
+      NEURAI_TIMESTAMPINDEX: ${NEURAI_TIMESTAMPINDEX:-1}
+      NEURAI_SPENTINDEX: ${NEURAI_SPENTINDEX:-1}
+      NEURAI_PUBKEYINDEX: ${NEURAI_PUBKEYINDEX:-1}
+      NEURAI_DATADIR: "/data"
+
+    volumes:
+      - neurai_data:/data
+
+    ports:
+      - "19100:19100"
+      - "19101:19101"
+
+    healthcheck:
+      test: ["CMD", "neurai-cli", "-datadir=/data", "getblockchaininfo"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  neurai_data:
+    driver: local
