@@ -576,10 +576,14 @@ active (`AUTHSCRIPT`, `CAT`, `CTV`, `CSFS`, `TXHASH`, `TXFIELD`, `SPLIT`,
 element cap and the other opt-ins, completing the sign-and-relay round-
 trip for P2WSH with PQ-sized witnessScripts.
 
-Mainnet relay of PQ witness items is still gated by
-`MAX_STANDARD_P2WSH_STACK_ITEM_SIZE = 80` in `IsWitnessStandard`
-(reject reason `bad-witness-nonstandard`). NIP-021 is the follow-up
-policy change for that path.
+NIP-021 ties the P2WSH per-stack-item relay cap in `IsWitnessStandard`
+to CSFS activation: the effective cap is `MAX_CSFS_STANDARD_P2WSH_STACK_ITEM_SIZE`
+(3072 B, `MAX_PQ_SCRIPT_ELEMENT_SIZE`) when `csfsActive` is true, and
+`MAX_STANDARD_P2WSH_STACK_ITEM_SIZE` (80 B) otherwise. On testnet/regtest
+(`nCSFSEnabled = true`) PQ-sized witness items relay normally; on mainnet
+(`nCSFSEnabled = false`) the 80-byte cap remains in effect and oversize
+items are rejected with reason `bad-witness-nonstandard` until CSFS
+is activated on mainnet.
 
 ## Further Reading
 
