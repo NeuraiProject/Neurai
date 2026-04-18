@@ -10,6 +10,7 @@
 #include "consensus/consensus.h"
 #include "feerate.h"
 #include "script/interpreter.h"
+#include "script/script.h"
 #include "script/standard.h"
 
 #include <string>
@@ -40,6 +41,10 @@ static const unsigned int DEFAULT_BYTES_PER_SIGOP = 20;
 static const unsigned int MAX_STANDARD_P2WSH_STACK_ITEMS = 100;
 /** The maximum size of each witness stack item in a standard P2WSH script */
 static const unsigned int MAX_STANDARD_P2WSH_STACK_ITEM_SIZE = 80;
+/** The maximum size of each witness stack item in a standard P2WSH script
+ *  when CSFS is active (NIP-021). Matches EffectiveMaxScriptElementSize
+ *  in interpreter.h under SCRIPT_VERIFY_CHECKSIGFROMSTACK. */
+static const unsigned int MAX_CSFS_STANDARD_P2WSH_STACK_ITEM_SIZE = MAX_PQ_SCRIPT_ELEMENT_SIZE;
 /** The maximum size of a standard witnessScript */
 static const unsigned int MAX_STANDARD_P2WSH_SCRIPT_SIZE = 3600;
 /** NIP-014: Maximum number of reference inputs in a standard v3 transaction */
@@ -109,10 +114,14 @@ bool IsStandardTx(const CTransaction& tx, std::string& reason, const bool witnes
 bool AreInputsStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs);
     /**
      * Check if the transaction is over standard P2WSH resources limit:
-     * 3600bytes witnessScript size, 80bytes per witness stack element, 100 witness stack elements
+     * 3600bytes witnessScript size, 100 witness stack elements.
+     * Per-item size: 80 bytes when csfsActive is false; MAX_PQ_SCRIPT_ELEMENT_SIZE
+     * (3072 bytes) when csfsActive is true (NIP-021 — CSFS makes large element
+     * pushes valid at consensus, policy must match).
      * These limits are adequate for multi-signature up to n-of-100 using OP_CHECKSIG, OP_ADD, and OP_EQUAL,
      */
-bool IsWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs);
+bool IsWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs,
+                        bool csfsActive);
 
 extern CFeeRate incrementalRelayFee;
 extern CFeeRate dustRelayFee;

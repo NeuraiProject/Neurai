@@ -242,7 +242,8 @@ bool AreInputsStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs)
     return true;
 }
 
-bool IsWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs)
+bool IsWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs,
+                        bool csfsActive)
 {
     if (tx.IsCoinBase())
         return true; // Coinbases are skipped
@@ -286,8 +287,11 @@ bool IsWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs)
             size_t sizeWitnessStack = tx.vin[i].scriptWitness.stack.size() - 1;
             if (sizeWitnessStack > MAX_STANDARD_P2WSH_STACK_ITEMS)
                 return false;
+            const size_t maxItemSize = csfsActive
+                ? MAX_CSFS_STANDARD_P2WSH_STACK_ITEM_SIZE
+                : MAX_STANDARD_P2WSH_STACK_ITEM_SIZE;
             for (unsigned int j = 0; j < sizeWitnessStack; j++) {
-                if (tx.vin[i].scriptWitness.stack[j].size() > MAX_STANDARD_P2WSH_STACK_ITEM_SIZE)
+                if (tx.vin[i].scriptWitness.stack[j].size() > maxItemSize)
                     return false;
             }
         }

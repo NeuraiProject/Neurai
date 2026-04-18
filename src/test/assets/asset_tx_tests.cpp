@@ -821,7 +821,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         CCoinsView view;
         CCoinsViewCache coins(&view);
         coins.AddCoin(COutPoint(txFrom.GetHash(), 0), Coin(CTxOut(0, ownerScript), 1, false), true);
-        BOOST_CHECK(IsWitnessStandard(CTransaction(txTo), coins));
+        BOOST_CHECK(IsWitnessStandard(CTransaction(txTo), coins, false));
     }
 
     BOOST_AUTO_TEST_CASE(pq_witness_dummy_signature_test)
