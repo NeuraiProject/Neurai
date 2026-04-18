@@ -312,33 +312,3 @@ int64_t GetVirtualTransactionSize(const CTransaction& tx, int64_t nSigOpCost)
 {
     return GetVirtualTransactionSize(GetTransactionWeight(tx), nSigOpCost);
 }
-
-// NIP-020 (Phase 8): single source of truth for consensus opt-in flags.
-// Any new opt-in must be added only here.
-script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
-                                         const Consensus::Params& consensus)
-{
-    if (consensus.nPQWitnessEnabled)        base |= SCRIPT_VERIFY_AUTHSCRIPT;
-    if (consensus.nCATEnabled)              base |= SCRIPT_VERIFY_CAT;
-    if (consensus.nCTVEnabled)              base |= SCRIPT_VERIFY_CHECKTEMPLATEVERIFY;
-    if (consensus.nCSFSEnabled)             base |= SCRIPT_VERIFY_CHECKSIGFROMSTACK;
-    if (consensus.nTXHASHEnabled)           base |= SCRIPT_VERIFY_TXHASH;
-    if (consensus.nTXFIELDEnabled)          base |= SCRIPT_VERIFY_TXFIELD;
-    if (consensus.nSPLITEnabled)            base |= SCRIPT_VERIFY_SPLIT;
-    if (consensus.nREVERSEBYTESEnabled)     base |= SCRIPT_VERIFY_REVERSEBYTES;
-    if (consensus.nOUTPUTVALUEEnabled)      base |= SCRIPT_VERIFY_OUTPUTVALUE;
-    if (consensus.nOUTPUTSCRIPTEnabled)     base |= SCRIPT_VERIFY_OUTPUTSCRIPT;
-    if (consensus.nOUTPUTASSETFIELDEnabled) base |= SCRIPT_VERIFY_OUTPUTASSETFIELD;
-    if (consensus.nINPUTASSETFIELDEnabled)  base |= SCRIPT_VERIFY_INPUTASSETFIELD;
-    if (consensus.n64BitIntegersEnabled)    base |= SCRIPT_VERIFY_64BIT_INTEGERS;
-    if (consensus.nTXLOCKTIMEEnabled)       base |= SCRIPT_VERIFY_TXLOCKTIME;
-    if (consensus.nINPUTOUTPUTCOUNTEnabled) base |= SCRIPT_VERIFY_INPUTOUTPUTCOUNT;
-    if (consensus.nREFINPUTSEnabled)        base |= SCRIPT_VERIFY_REFINPUTS;
-    return base;
-}
-
-script_verify_flags GetStandardScriptVerifyFlagsWithConsensusOptIns(
-    const Consensus::Params& consensus)
-{
-    return ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus);
-}

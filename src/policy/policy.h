@@ -8,6 +8,7 @@
 #define NEURAI_POLICY_POLICY_H
 
 #include "consensus/consensus.h"
+#include "consensus/params.h"
 #include "feerate.h"
 #include "script/interpreter.h"
 #include "script/script.h"
@@ -17,8 +18,6 @@
 
 class CCoinsViewCache;
 class CTxOut;
-
-namespace Consensus { struct Params; }
 
 /** Default for -blockmaxweight, which controls the range of block weights the mining code will create **/
 // Deprecated with RIP2 implementation
@@ -85,12 +84,34 @@ static constexpr script_verify_flags STANDARD_NOT_MANDATORY_VERIFY_FLAGS = STAND
  * GetBlockScriptFlags) and indirectly through
  * GetStandardScriptVerifyFlagsWithConsensusOptIns by non-consensus paths.
  */
-script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
-                                         const Consensus::Params& consensus);
+inline script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
+                                                const Consensus::Params& consensus)
+{
+    if (consensus.nPQWitnessEnabled)        base |= SCRIPT_VERIFY_AUTHSCRIPT;
+    if (consensus.nCATEnabled)              base |= SCRIPT_VERIFY_CAT;
+    if (consensus.nCTVEnabled)              base |= SCRIPT_VERIFY_CHECKTEMPLATEVERIFY;
+    if (consensus.nCSFSEnabled)             base |= SCRIPT_VERIFY_CHECKSIGFROMSTACK;
+    if (consensus.nTXHASHEnabled)           base |= SCRIPT_VERIFY_TXHASH;
+    if (consensus.nTXFIELDEnabled)          base |= SCRIPT_VERIFY_TXFIELD;
+    if (consensus.nSPLITEnabled)            base |= SCRIPT_VERIFY_SPLIT;
+    if (consensus.nREVERSEBYTESEnabled)     base |= SCRIPT_VERIFY_REVERSEBYTES;
+    if (consensus.nOUTPUTVALUEEnabled)      base |= SCRIPT_VERIFY_OUTPUTVALUE;
+    if (consensus.nOUTPUTSCRIPTEnabled)     base |= SCRIPT_VERIFY_OUTPUTSCRIPT;
+    if (consensus.nOUTPUTASSETFIELDEnabled) base |= SCRIPT_VERIFY_OUTPUTASSETFIELD;
+    if (consensus.nINPUTASSETFIELDEnabled)  base |= SCRIPT_VERIFY_INPUTASSETFIELD;
+    if (consensus.n64BitIntegersEnabled)    base |= SCRIPT_VERIFY_64BIT_INTEGERS;
+    if (consensus.nTXLOCKTIMEEnabled)       base |= SCRIPT_VERIFY_TXLOCKTIME;
+    if (consensus.nINPUTOUTPUTCOUNTEnabled) base |= SCRIPT_VERIFY_INPUTOUTPUTCOUNT;
+    if (consensus.nREFINPUTSEnabled)        base |= SCRIPT_VERIFY_REFINPUTS;
+    return base;
+}
 
 /** NIP-020: convenience wrapper — STANDARD_SCRIPT_VERIFY_FLAGS | opt-ins. */
-script_verify_flags GetStandardScriptVerifyFlagsWithConsensusOptIns(
-    const Consensus::Params& consensus);
+inline script_verify_flags GetStandardScriptVerifyFlagsWithConsensusOptIns(
+    const Consensus::Params& consensus)
+{
+    return ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus);
+}
 
 /** Used as the flags parameter to sequence and nLocktime checks in non-consensus code. */
 static const unsigned int STANDARD_LOCKTIME_VERIFY_FLAGS = LOCKTIME_VERIFY_SEQUENCE |
