@@ -735,6 +735,34 @@ bool Consensus::CheckTxInputs(const CTransaction& tx, CValidationState& state, c
         }
     }
 
+    // NIP-025: if any input of this tx references an asset-wrapped AuthScript v1
+    // UTXO (DEX covenant or PQ asset UTXO — consensus cannot tell them apart),
+    // require every input of the tx to have nSequence >= 0xfffffffe. Closes the
+    // BIP125 orphan-attack surface on chained mempool fills. See NIP-025 §2.3
+    // for why a per-input check is insufficient and §3.3 for the two-pass rationale.
+    if (GetParams().GetConsensus().nASSETRBFBlockEnabled) {
+        bool spends_asset_authscript = false;
+        for (unsigned int i = 0; i < tx.vin.size(); ++i) {
+            const Coin& coin = inputs.AccessCoin(tx.vin[i].prevout);
+            if (coin.out.scriptPubKey.IsAssetAuthScript()) {
+                spends_asset_authscript = true;
+                break;
+            }
+        }
+        if (spends_asset_authscript) {
+            for (unsigned int i = 0; i < tx.vin.size(); ++i) {
+                if (tx.vin[i].nSequence < 0xfffffffeU) {
+                    return state.DoS(100, false, REJECT_INVALID,
+                        "bad-txns-asset-authscript-input-rbf", false,
+                        strprintf("tx spends an asset-wrapped AuthScript UTXO "
+                                  "but input %u signals RBF (nSequence=0x%08x)",
+                                  i, tx.vin[i].nSequence),
+                        tx.GetHash());
+                }
+            }
+        }
+    }
+
     const CAmount value_out = tx.GetValueOut(AreEnforcedValuesDeployed());
     if (nValueIn < value_out) {
         return state.DoS(100, false, REJECT_INVALID, "bad-txns-in-belowout", false,

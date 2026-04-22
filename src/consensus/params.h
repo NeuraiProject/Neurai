@@ -135,6 +135,13 @@ struct Params {
      *  input's prevout. Symmetric to OP_OUTPUTVALUE. true on testnet/regtest;
      *  false on mainnet until future activation. */
     bool nINPUTVALUEEnabled;
+    /** NIP-025: If a transaction spends at least one asset-wrapped AuthScript v1
+     *  UTXO, require nSequence >= 0xfffffffe on every input of that transaction.
+     *  Covers DEX partial-fill covenants AND plain asset transfers to PQ
+     *  (witness-v1) addresses — the predicate cannot distinguish the two at
+     *  consensus level. true on testnet/regtest; false on mainnet until future
+     *  activation. */
+    bool nASSETRBFBlockEnabled;
 };
 } // namespace Consensus
 

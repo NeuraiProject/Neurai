@@ -253,6 +253,18 @@ bool CScript::IsAssetScript() const
     return IsAssetScript(nType, isOwner, start);
 }
 
+// NIP-025: AuthScript v1 + asset wrapper. The 2-byte prefix check narrows
+// IsAssetScript()'s two shapes (P2PKH+asset, AuthScript+asset) down to the
+// AuthScript case only. Any trailing OP_XNA_ASSET payload is validated by
+// IsAssetScript() itself, so no additional inspection is needed here.
+bool CScript::IsAssetAuthScript() const
+{
+    if (this->size() < 34) return false;
+    if ((*this)[0] != OP_1) return false;
+    if ((*this)[1] != 0x20) return false;
+    return this->IsAssetScript();
+}
+
 bool CScript::IsAssetScript(int& nType, bool& isOwner) const
 {
     int start = 0;

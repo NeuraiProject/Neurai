@@ -702,6 +702,11 @@ public:
     bool IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex) const;
     bool IsAssetScript(int& nType, bool& fIsOwner) const;
     bool IsAssetScript() const;
+    /** NIP-025: true iff scriptPubKey is an AuthScript v1 output
+     *  (OP_1 0x20 <32B>) with a trailing asset wrapper. Narrower than
+     *  IsAssetScript() — excludes P2PKH+asset. Covers DEX covenant UTXOs
+     *  AND plain asset transfers to PQ (witness-v1) addresses. */
+    bool IsAssetAuthScript() const;
     bool IsNewAsset() const;
     bool IsOwnerAsset() const;
     bool IsReissueAsset() const;
