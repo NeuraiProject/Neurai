@@ -196,6 +196,12 @@ enum class script_verify_flag_name : uint8_t {
     //
     SCRIPT_VERIFY_REFINPUTS,                                // bit 31
 
+    // NIP-023: Enable OP_OUTPUTAUTHCOMMITMENT — push the 32-byte AuthScript v1
+    // commitment from a selected output's scriptPubKey. Symmetric to
+    // TXFIELD_SPENT_AUTHCOMMITMENT for the currently-spent input.
+    //
+    SCRIPT_VERIFY_OUTPUTAUTHCOMMITMENT,                     // bit 32
+
     // End marker — must always be last.
     SCRIPT_VERIFY_END_MARKER
 };
@@ -318,6 +324,13 @@ public:
         return false;
     }
 
+    // NIP-023: Push the 32-byte AuthScript v1 commitment from the selected output's
+    // scriptPubKey. Mirrors the extraction logic of TXFIELD_SPENT_AUTHCOMMITMENT.
+    virtual bool GetOutputAuthCommitment(unsigned int nOut, std::vector<unsigned char>& result) const
+    {
+        return false;
+    }
+
     virtual bool GetOutputAssetField(unsigned int nOut, unsigned char selector, std::vector<unsigned char>& result) const
     {
         return false;
@@ -422,6 +435,8 @@ public:
     bool GetOutputValue(unsigned int nOut, std::vector<unsigned char>& result) const override;
 
     bool GetOutputScript(unsigned int nOut, std::vector<unsigned char>& result) const override;
+
+    bool GetOutputAuthCommitment(unsigned int nOut, std::vector<unsigned char>& result) const override;
 
     bool GetOutputAssetField(unsigned int nOut, unsigned char selector, std::vector<unsigned char>& result) const override;
 

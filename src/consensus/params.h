@@ -126,6 +126,11 @@ struct Params {
     /** NIP-014: Enable transaction v3 with reference inputs (vrefin) and
      *  OP_REFINPUT* opcodes. true on testnet/regtest; false on mainnet. */
     bool nREFINPUTSEnabled;
+    /** NIP-023: Enable OP_OUTPUTAUTHCOMMITMENT - push the 32-byte AuthScript v1
+     *  commitment of a selected output's scriptPubKey. Symmetric to
+     *  TXFIELD_SPENT_AUTHCOMMITMENT for inputs. true on testnet/regtest;
+     *  false on mainnet until future activation. */
+    bool nOUTPUTAUTHCOMMITMENTEnabled;
 };
 } // namespace Consensus
 

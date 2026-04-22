@@ -128,6 +128,7 @@ public:
         consensus.nTXLOCKTIMEEnabled = false; // OP_TXLOCKTIME not yet active on mainnet
         consensus.nINPUTOUTPUTCOUNTEnabled = false; // OP_INPUTCOUNT/OP_OUTPUTCOUNT not yet active on mainnet
         consensus.nREFINPUTSEnabled = false; // NIP-014: tx v3 + vrefin not yet active on mainnet
+        consensus.nOUTPUTAUTHCOMMITMENTEnabled = false; // NIP-023: OP_OUTPUTAUTHCOMMITMENT not yet active on mainnet
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days
@@ -326,6 +327,7 @@ public:
         consensus.nTXLOCKTIMEEnabled = true; // OP_TXLOCKTIME active on testnet
         consensus.nINPUTOUTPUTCOUNTEnabled = true; // OP_INPUTCOUNT/OP_OUTPUTCOUNT active on testnet
         consensus.nREFINPUTSEnabled = true; // NIP-014: tx v3 + vrefin active on testnet
+        consensus.nOUTPUTAUTHCOMMITMENTEnabled = true; // NIP-023: OP_OUTPUTAUTHCOMMITMENT active on testnet
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days
@@ -527,6 +529,7 @@ public:
         consensus.nTXLOCKTIMEEnabled = true; // OP_TXLOCKTIME active on regtest
         consensus.nINPUTOUTPUTCOUNTEnabled = true; // OP_INPUTCOUNT/OP_OUTPUTCOUNT active on regtest
         consensus.nREFINPUTSEnabled = true; // NIP-014: tx v3 + vrefin active on regtest
+        consensus.nOUTPUTAUTHCOMMITMENTEnabled = true; // NIP-023: OP_OUTPUTAUTHCOMMITMENT active on regtest
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days

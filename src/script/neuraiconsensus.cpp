@@ -73,6 +73,12 @@ ECCryptoClosure instance_of_eccryptoclosure;
 } // namespace
 
 /** Check that all specified flags are part of the libconsensus interface. */
+// NIP-023 / NIP-024: flag bits >= 32 (e.g. SCRIPT_VERIFY_OUTPUTAUTHCOMMITMENT,
+// SCRIPT_VERIFY_INPUTVALUE) are intentionally not surfaced through this 32-bit
+// ABI. The node's internal validation path uses a 64-bit script_verify_flags
+// derived from ApplyConsensusOptIns(consensus); this library does not. Widening
+// the ABI (and, for NIP-024, adding a prevouts calling convention) is deferred
+// to a future neuraiconsensus v2 entry point.
 static bool verify_flags(unsigned int flags)
 {
     return (flags & ~(neuraiconsensus_SCRIPT_FLAGS_VERIFY_ALL)) == 0;

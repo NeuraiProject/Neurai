@@ -115,6 +115,7 @@ NEURAI_TESTS =\
   test/inputassetfield_tests.cpp \
   test/inputoutputcount_tests.cpp \
   test/outputscript_tests.cpp \
+  test/outputauthcommitment_tests.cpp \
   test/txlocktime_tests.cpp \
   test/txvalidationcache_tests.cpp \
   test/verify_flags_tests.cpp \

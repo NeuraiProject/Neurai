@@ -1002,6 +1002,33 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                     }
                         break;
 
+                    case OP_OUTPUTAUTHCOMMITMENT:
+                    {
+                        // NIP-023: push the 32-byte AuthScript v1 commitment
+                        // from a selected output's scriptPubKey.
+                        if (!(flags & SCRIPT_VERIFY_OUTPUTAUTHCOMMITMENT))
+                        {
+                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
+                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+                            break;
+                        }
+
+                        if (stack.size() < 1)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+                        const int nOut = CScriptNum(stacktop(-1), fRequireMinimal).getint();
+                        if (nOut < 0)
+                            return set_error(serror, SCRIPT_ERR_OUTPUTAUTHCOMMITMENT);
+
+                        valtype vchResult;
+                        if (!checker.GetOutputAuthCommitment((unsigned int)nOut, vchResult))
+                            return set_error(serror, SCRIPT_ERR_OUTPUTAUTHCOMMITMENT);
+
+                        popstack(stack);
+                        stack.push_back(vchResult);
+                    }
+                        break;
+
                     case OP_OUTPUTASSETFIELD:
                     {
                         if (!(flags & SCRIPT_VERIFY_OUTPUTASSETFIELD))
@@ -2852,6 +2879,31 @@ bool TransactionSignatureChecker::GetOutputScript(unsigned int nOut,
     // unconditionally; caller emits SCRIPT_ERR_OUTPUTSCRIPT on oversize.
     const CScript& spk = txTo->vout[nOut].scriptPubKey;
     result.assign(spk.begin(), spk.end());
+    return true;
+}
+
+// NIP-023: Extract the 32-byte AuthScript v1 commitment from a selected output.
+// Mirrors TXFIELD_SPENT_AUTHCOMMITMENT (interpreter.cpp around line 2791) but
+// sourced from txTo->vout[nOut].scriptPubKey instead of the spent scriptPubKey.
+// The output's scriptPubKey must begin with OP_1 (0x51) + 0x20 + 32 bytes;
+// any trailing OP_XNA_ASSET ... OP_DROP suffix is intentionally ignored.
+bool TransactionSignatureChecker::GetOutputAuthCommitment(unsigned int nOut,
+                                                          std::vector<unsigned char>& result) const
+{
+    if (!txTo)
+        return false;
+    if (nOut >= txTo->vout.size())
+        return false;
+
+    const CScript& spk = txTo->vout[nOut].scriptPubKey;
+    if (spk.size() < 34)
+        return false;
+    const unsigned char* data = spk.data();
+    if (data[0] != 0x51)   // OP_1 (witness version 1)
+        return false;
+    if (data[1] != 0x20)   // push exactly 32 bytes
+        return false;
+    result.assign(data + 2, data + 34);
     return true;
 }
 
