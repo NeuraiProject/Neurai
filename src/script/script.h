@@ -212,6 +212,7 @@ enum opcodetype
     OP_REFINPUTASSETFIELD = 0xd3,
     OP_REFINPUTCOUNT = 0xd4,
     OP_OUTPUTAUTHCOMMITMENT = 0xd5, // NIP-023
+    OP_INPUTVALUE = 0xd6, // NIP-024
 
     /** XNA START */
     OP_XNA_ASSET = 0xc0,
@@ -228,7 +229,7 @@ enum opcodetype
 };
 
 // Maximum value that an opcode can be
-static const unsigned int MAX_OPCODE = OP_OUTPUTAUTHCOMMITMENT;
+static const unsigned int MAX_OPCODE = OP_INPUTVALUE;
 
 const char* GetOpName(opcodetype opcode);
 

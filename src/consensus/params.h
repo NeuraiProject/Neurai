@@ -131,6 +131,10 @@ struct Params {
      *  TXFIELD_SPENT_AUTHCOMMITMENT for inputs. true on testnet/regtest;
      *  false on mainnet until future activation. */
     bool nOUTPUTAUTHCOMMITMENTEnabled;
+    /** NIP-024: Enable OP_INPUTVALUE - push the XNA satoshi value of a selected
+     *  input's prevout. Symmetric to OP_OUTPUTVALUE. true on testnet/regtest;
+     *  false on mainnet until future activation. */
+    bool nINPUTVALUEEnabled;
 };
 } // namespace Consensus
 

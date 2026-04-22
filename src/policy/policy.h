@@ -104,6 +104,7 @@ inline script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
     if (consensus.nINPUTOUTPUTCOUNTEnabled) base |= SCRIPT_VERIFY_INPUTOUTPUTCOUNT;
     if (consensus.nREFINPUTSEnabled)        base |= SCRIPT_VERIFY_REFINPUTS;
     if (consensus.nOUTPUTAUTHCOMMITMENTEnabled) base |= SCRIPT_VERIFY_OUTPUTAUTHCOMMITMENT;
+    if (consensus.nINPUTVALUEEnabled)        base |= SCRIPT_VERIFY_INPUTVALUE;
     return base;
 }
 

@@ -16,7 +16,7 @@ BOOST_FIXTURE_TEST_SUITE(verify_flags_tests, BasicTestingSetup)
 
 BOOST_AUTO_TEST_CASE(low_bit_flags_survive)
 {
-    // Verify that all currently assigned flags (bits 0-32) produce the
+    // Verify that all currently assigned flags (bits 0-33) produce the
     // expected bitmask values through the wrapper.
     BOOST_CHECK_EQUAL(script_verify_flags{SCRIPT_VERIFY_P2SH}.as_int(),              uint64_t{1} << 0);
     BOOST_CHECK_EQUAL(script_verify_flags{SCRIPT_VERIFY_STRICTENC}.as_int(),          uint64_t{1} << 1);
@@ -51,6 +51,7 @@ BOOST_AUTO_TEST_CASE(low_bit_flags_survive)
     BOOST_CHECK_EQUAL(script_verify_flags{SCRIPT_VERIFY_INPUTOUTPUTCOUNT}.as_int(),    uint64_t{1} << 30);
     BOOST_CHECK_EQUAL(script_verify_flags{SCRIPT_VERIFY_REFINPUTS}.as_int(),           uint64_t{1} << 31);
     BOOST_CHECK_EQUAL(script_verify_flags{SCRIPT_VERIFY_OUTPUTAUTHCOMMITMENT}.as_int(), uint64_t{1} << 32);
+    BOOST_CHECK_EQUAL(script_verify_flags{SCRIPT_VERIFY_INPUTVALUE}.as_int(),          uint64_t{1} << 33);
 }
 
 BOOST_AUTO_TEST_CASE(none_is_zero)
@@ -62,9 +63,9 @@ BOOST_AUTO_TEST_CASE(none_is_zero)
 
 BOOST_AUTO_TEST_CASE(end_marker_matches_flag_count)
 {
-    // 33 flags (bits 0-32) means END_MARKER should be 33.
-    // Last added: SCRIPT_VERIFY_OUTPUTAUTHCOMMITMENT at bit 32 (NIP-023).
-    BOOST_CHECK_EQUAL(MAX_SCRIPT_VERIFY_FLAGS_BITS, 33);
+    // 34 flags (bits 0-33) means END_MARKER should be 34.
+    // Last added: SCRIPT_VERIFY_INPUTVALUE at bit 33 (NIP-024).
+    BOOST_CHECK_EQUAL(MAX_SCRIPT_VERIFY_FLAGS_BITS, 34);
 }
 
 // --- No internal truncation ---
@@ -73,7 +74,7 @@ BOOST_AUTO_TEST_CASE(no_truncation)
 {
     // Combine all known flags and verify no bits are lost.
     script_verify_flags all = script_verify_flags::from_int(MAX_SCRIPT_VERIFY_FLAGS);
-    BOOST_CHECK_EQUAL(all.as_int(), (uint64_t{1} << 33) - 1);
+    BOOST_CHECK_EQUAL(all.as_int(), (uint64_t{1} << 34) - 1);
 }
 
 // --- Synthetic high-bit plumbing test ---

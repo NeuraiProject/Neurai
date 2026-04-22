@@ -111,6 +111,8 @@ const char* ScriptErrorString(const ScriptError serror)
             return "OP_INPUTASSETFIELD failed (invalid input, missing asset, or invalid selector)";
         case SCRIPT_ERR_OUTPUTAUTHCOMMITMENT:
             return "OP_OUTPUTAUTHCOMMITMENT failed (invalid output index or output does not carry an AuthScript v1 commitment)";
+        case SCRIPT_ERR_INPUTVALUE:
+            return "OP_INPUTVALUE failed (invalid input index or checker missing prevouts)";
         case SCRIPT_ERR_INPUTOUTPUTCOUNT:
             return "OP_INPUTCOUNT or OP_OUTPUTCOUNT failed";
         case SCRIPT_ERR_MUL_OVERFLOW:

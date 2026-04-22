@@ -1002,6 +1002,41 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                     }
                         break;
 
+                    case OP_INPUTVALUE:
+                    {
+                        // NIP-024: push the XNA satoshi value of a selected
+                        // input's prevout (raw 8-byte LE, or CScriptNum under
+                        // the 64-bit-integers opt-in). Symmetric to OP_OUTPUTVALUE.
+                        if (!(flags & SCRIPT_VERIFY_INPUTVALUE))
+                        {
+                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
+                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+                            break;
+                        }
+
+                        if (stack.size() < 1)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+                        const int nInput = CScriptNum(stacktop(-1), fRequireMinimal).getint();
+                        if (nInput < 0)
+                            return set_error(serror, SCRIPT_ERR_INPUTVALUE);
+
+                        valtype vchValue;
+                        if (!checker.GetInputValue((unsigned int)nInput, vchValue))
+                            return set_error(serror, SCRIPT_ERR_INPUTVALUE);
+
+                        if ((flags & SCRIPT_VERIFY_64BIT_INTEGERS) && vchValue.size() == 8)
+                        {
+                            int64_t nValue;
+                            memcpy(&nValue, vchValue.data(), 8);
+                            vchValue = CScriptNum(nValue).getvch();
+                        }
+
+                        popstack(stack);
+                        stack.push_back(vchValue);
+                    }
+                        break;
+
                     case OP_OUTPUTAUTHCOMMITMENT:
                     {
                         // NIP-023: push the 32-byte AuthScript v1 commitment
@@ -2861,6 +2896,24 @@ bool TransactionSignatureChecker::GetOutputValue(unsigned int nOut,
         return false;
 
     const int64_t nValue = (int64_t)txTo->vout[nOut].nValue;
+    result.resize(8);
+    memcpy(result.data(), &nValue, 8);
+    return true;
+}
+
+// NIP-024: Push the XNA satoshi value of a selected input's prevout as raw
+// 8-byte little-endian. Sourced from m_allPrevouts — the same vector that
+// backs GetInputAssetField. Fails closed when the checker was not constructed
+// with prevouts (e.g. the public libneuraiconsensus entry point; see NIP-024
+// §3.10 for the ABI gap).
+bool TransactionSignatureChecker::GetInputValue(unsigned int nInput,
+                                                std::vector<unsigned char>& result) const
+{
+    if (!txTo || !m_allPrevouts || nInput >= txTo->vin.size() ||
+        nInput >= m_allPrevouts->size())
+        return false;
+
+    const int64_t nValue = (int64_t)(*m_allPrevouts)[nInput].nValue;
     result.resize(8);
     memcpy(result.data(), &nValue, 8);
     return true;

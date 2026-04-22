@@ -202,6 +202,12 @@ enum class script_verify_flag_name : uint8_t {
     //
     SCRIPT_VERIFY_OUTPUTAUTHCOMMITMENT,                     // bit 32
 
+    // NIP-024: Enable OP_INPUTVALUE — push the XNA satoshi value of a selected
+    // input's prevout as raw 8-byte little-endian (or CScriptNum under
+    // SCRIPT_VERIFY_64BIT_INTEGERS). Symmetric to OP_OUTPUTVALUE.
+    //
+    SCRIPT_VERIFY_INPUTVALUE,                               // bit 33
+
     // End marker — must always be last.
     SCRIPT_VERIFY_END_MARKER
 };
@@ -315,6 +321,14 @@ public:
     }
 
     virtual bool GetOutputValue(unsigned int nOut, std::vector<unsigned char>& result) const
+    {
+        return false;
+    }
+
+    // NIP-024: Push the XNA satoshi value of the selected input's prevout
+    // (raw 8-byte LE). Requires the checker to have been constructed with
+    // m_allPrevouts; otherwise returns false (fail-closed).
+    virtual bool GetInputValue(unsigned int nInput, std::vector<unsigned char>& result) const
     {
         return false;
     }
@@ -433,6 +447,8 @@ public:
     bool GetTxField(unsigned char selector, std::vector<unsigned char>& result) const override;
 
     bool GetOutputValue(unsigned int nOut, std::vector<unsigned char>& result) const override;
+
+    bool GetInputValue(unsigned int nInput, std::vector<unsigned char>& result) const override;
 
     bool GetOutputScript(unsigned int nOut, std::vector<unsigned char>& result) const override;
 
