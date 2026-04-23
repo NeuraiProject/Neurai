@@ -1037,6 +1037,58 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                     }
                         break;
 
+                    case OP_CHAINCONTEXT:
+                    {
+                        // NIP-026: push a chain-position field (HEIGHT, MTP,
+                        // CHAIN_ID) selected by a 1-byte value on the stack.
+                        //
+                        // Flag-off path MUST fail with BAD_OPCODE — not NOP.
+                        // 0xd7 is a newly-allocated opcode byte, so pre-upgrade
+                        // nodes reject it via the `default:` branch below. If
+                        // we fell through to `break` here, a new node with the
+                        // flag off would execute it as NOP, accepting txs that
+                        // pre-upgrade nodes reject — a consensus split.
+                        // DISCOURAGE_UPGRADABLE_NOPS is policy-only and cannot
+                        // protect against a mined block. See NIP-026 §3.7/§3.8.
+                        if (!(flags & SCRIPT_VERIFY_CHAINCONTEXT))
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
+
+                        // Hard dependency on SCRIPT_VERIFY_64BIT_INTEGERS:
+                        // MTP after 2038 exceeds the 4-byte CScriptNum limit,
+                        // and comparison opcodes (OP_GREATERTHAN, ...) reject
+                        // values > nMaxNum. Without the 64-bit flag the pushed
+                        // value would be unusable by downstream arithmetic.
+                        // ApplyConsensusOptIns co-sets the pair (§3.4); this
+                        // runtime check is belt-and-braces.
+                        if (!(flags & SCRIPT_VERIFY_64BIT_INTEGERS))
+                            return set_error(serror, SCRIPT_ERR_CHAINCONTEXT);
+
+                        if (stack.size() < 1)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+                        const valtype& vchSelector = stacktop(-1);
+                        if (vchSelector.size() != 1)
+                            return set_error(serror, SCRIPT_ERR_CHAINCONTEXT_BAD_SELECTOR);
+                        const unsigned char selector = vchSelector[0];
+
+                        if (selector < 0x01 || selector > 0x03)
+                            return set_error(serror, SCRIPT_ERR_CHAINCONTEXT_BAD_SELECTOR);
+
+                        int64_t value = 0;
+                        if (!checker.GetChainContext(selector, value))
+                            return set_error(serror, SCRIPT_ERR_CHAINCONTEXT);
+
+                        // Record that this script exercised OP_CHAINCONTEXT.
+                        // Mempool admission reads this bit after VerifyScript
+                        // to decide whether the entry must be re-validated on
+                        // every new tip (§3.9).
+                        checker.fChainContextObserved = true;
+
+                        popstack(stack);
+                        stack.push_back(CScriptNum(value).getvch());
+                    }
+                        break;
+
                     case OP_OUTPUTAUTHCOMMITMENT:
                     {
                         // NIP-023: push the 32-byte AuthScript v1 commitment
@@ -2917,6 +2969,23 @@ bool TransactionSignatureChecker::GetInputValue(unsigned int nInput,
     result.resize(8);
     memcpy(result.data(), &nValue, 8);
     return true;
+}
+
+// NIP-026: resolve a chain-context selector against m_chainContext.
+// Fails closed when the checker was constructed without context
+// (external callers via libneuraiconsensus, standalone tools).
+bool TransactionSignatureChecker::GetChainContext(unsigned char selector,
+                                                  int64_t& result) const
+{
+    if (!m_chainContext.available)
+        return false;
+    switch (selector) {
+        case 0x01: result = m_chainContext.height; return true;
+        case 0x02: result = m_chainContext.mtp;    return true;
+        case 0x03: result = (int64_t)m_chainContext.chainId; return true;
+        default:
+            return false;
+    }
 }
 
 bool TransactionSignatureChecker::GetOutputScript(unsigned int nOut,

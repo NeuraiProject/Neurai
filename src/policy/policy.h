@@ -105,6 +105,11 @@ inline script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
     if (consensus.nREFINPUTSEnabled)        base |= SCRIPT_VERIFY_REFINPUTS;
     if (consensus.nOUTPUTAUTHCOMMITMENTEnabled) base |= SCRIPT_VERIFY_OUTPUTAUTHCOMMITMENT;
     if (consensus.nINPUTVALUEEnabled)        base |= SCRIPT_VERIFY_INPUTVALUE;
+    // NIP-026: OP_CHAINCONTEXT pushes up to 8-byte values (MTP exceeds
+    // 4 bytes after 2038), so it must be co-set with 64BIT_INTEGERS.
+    // The handler re-checks this at runtime as belt-and-braces (§3.7).
+    if (consensus.nCHAINCONTEXTEnabled)      base |= SCRIPT_VERIFY_CHAINCONTEXT
+                                                   | SCRIPT_VERIFY_64BIT_INTEGERS;
     return base;
 }
 

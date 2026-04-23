@@ -6,6 +6,8 @@
 
 #include "key.h"
 #include "pubkey.h"
+#include "base58.h"
+#include "chainparams.h"
 #include "utilstrencodings.h"
 #include "test/test_neurai.h"
 
@@ -236,6 +238,52 @@ BOOST_AUTO_TEST_CASE(zero_seed_valid)
     k2.MakeNewKeyPQ(seed32);
     BOOST_CHECK(k1.IsValid() && k1.IsPQ());
     BOOST_CHECK(k1.GetPubKey() == k2.GetPubKey());
+}
+
+// ---- 11. xpqpriv base58check serialization with padded 74-byte layout -----
+
+BOOST_AUTO_TEST_CASE(xpqpriv_base58check_encoding)
+{
+    // Vector: "abandon x11 about" (BIP39 standard), empty passphrase.
+    // seed = PBKDF2-HMAC-SHA512(mnemonic, "mnemonic", 2048, 64)
+    auto seed = AbandonSeed64();
+    CExtKeyPQ master;
+    master.SetSeed(seed.data(), seed.size());
+
+    // Prefix "xpqp..." (mainnet, 0x0488AC24) requires:
+    //   - 74-byte payload (padding byte at code[41])
+    //   - version bytes 0x0488AC24 for EXT_PQ_SECRET_KEY
+    // Byte-level invariants:
+    BOOST_CHECK_EQUAL(BIP32_PQ_EXTKEY_SIZE, 74u);
+    unsigned char buf[BIP32_PQ_EXTKEY_SIZE];
+    master.Encode(buf);
+    BOOST_CHECK_EQUAL(buf[41], 0x00);            // padding byte must be zero
+
+    // Full base58check output using the active chain params (network at the
+    // time the test runs is regtest in the test harness; swap to mainnet for
+    // a deterministic match against the canonical vector).
+    SelectParams(CBaseChainParams::MAIN);
+    CNeuraiExtKeyPQ extKey(master);
+    std::string enc = extKey.ToString();
+    BOOST_CHECK(enc.compare(0, 4, "xpqp") == 0);
+    BOOST_CHECK_EQUAL(enc.size(), 111u);
+    // Canonical vector (mainnet master for "abandon x11 about" mnemonic):
+    BOOST_CHECK_EQUAL(enc,
+        "xpqp18m4AHhPx55uvwXt7MjEda4MhFQwN6HDpErrCjbD1M8XG61G3ARw3VRwQGds3SFrs47RRPt7a5VD7sBocLicvN6R6KD4Je5PEpzj7u5fFtH");
+
+    // Testnet counterpart
+    SelectParams(CBaseChainParams::TESTNET);
+    CNeuraiExtKeyPQ extKeyT(master);
+    std::string encT = extKeyT.ToString();
+    BOOST_CHECK(encT.compare(0, 4, "tpqp") == 0);
+    BOOST_CHECK_EQUAL(encT,
+        "tpqp898ggXX5fM3NCjijZYiKqVPj2NWbMUnHMsT9ZHeMMFtR1Nfy7PH2Bw6meJieZwD6exeL2yPz7BKFp3gR1CZrooYi9uxMzAjcpnb8sse8CYm");
+
+    // Roundtrip
+    CNeuraiExtKeyPQ recovered(enc);
+    CExtKeyPQ recoveredKey = recovered.GetKey();
+    BOOST_CHECK(recoveredKey.pq_seed == master.pq_seed);
+    BOOST_CHECK(recoveredKey.chaincode == master.chaincode);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

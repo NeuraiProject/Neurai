@@ -241,4 +241,20 @@ void TurnOffBIP66();
 
 void TurnOffCSV();
 
+/**
+ * NIP-026: static chain identifier exposed by OP_CHAINCONTEXT(0x03).
+ * Covenants hard-code these integers, so the mapping is consensus.
+ * Adding a new network (e.g. signet) requires a new integer here and
+ * a coordinated upgrade — unknown networks panic to prevent silent
+ * misclassification.
+ */
+inline uint8_t GetChainIdForParams(const CChainParams& params)
+{
+    const std::string& id = params.NetworkIDString();
+    if (id == CBaseChainParams::MAIN)    return 0;
+    if (id == CBaseChainParams::TESTNET) return 1;
+    if (id == CBaseChainParams::REGTEST) return 2;
+    throw std::runtime_error("GetChainIdForParams: unknown network " + id);
+}
+
 #endif // NEURAI_CHAINPARAMS_H

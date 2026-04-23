@@ -22,9 +22,11 @@
 
 CTxMemPoolEntry::CTxMemPoolEntry(const CTransactionRef& _tx, const CAmount& _nFee,
                                  int64_t _nTime, unsigned int _entryHeight,
-                                 bool _spendsCoinbase, int64_t _sigOpsCost, LockPoints lp):
+                                 bool _spendsCoinbase, int64_t _sigOpsCost, LockPoints lp,
+                                 bool _fUsesChainContext):
     tx(_tx), nFee(_nFee), nTime(_nTime), entryHeight(_entryHeight),
-    spendsCoinbase(_spendsCoinbase), sigOpCost(_sigOpsCost), lockPoints(lp)
+    spendsCoinbase(_spendsCoinbase), sigOpCost(_sigOpsCost), lockPoints(lp),
+    fUsesChainContext(_fUsesChainContext)
 {
     nTxWeight = GetTransactionWeight(*tx);
     nUsageSize = RecursiveDynamicUsage(tx);
@@ -809,6 +811,27 @@ void CTxMemPool::removeForReorg(const CCoinsViewCache *pcoins, unsigned int nMem
         if (!validLP) {
             mapTx.modify(it, update_lock_points(lp));
         }
+    }
+    setEntries setAllRemoves;
+    for (txiter it : txToRemove) {
+        CalculateDescendants(it, setAllRemoves);
+    }
+    RemoveStaged(setAllRemoves, false, MemPoolRemovalReason::REORG);
+}
+
+void CTxMemPool::removeForNewTip(std::function<bool(const CTxMemPoolEntry&)> shouldEvict)
+{
+    // NIP-026: walk tagged entries and ask the caller whether each one
+    // still validates against the new tip. The caller (validation.cpp)
+    // re-runs CheckInputs with a fresh ChainContext. Untagged entries
+    // cannot contain OP_CHAINCONTEXT observations, so they are skipped.
+    LOCK(cs);
+    setEntries txToRemove;
+    for (indexed_transaction_set::const_iterator it = mapTx.begin(); it != mapTx.end(); it++) {
+        if (!it->GetUsesChainContext())
+            continue;
+        if (shouldEvict(*it))
+            txToRemove.insert(it);
     }
     setEntries setAllRemoves;
     for (txiter it : txToRemove) {

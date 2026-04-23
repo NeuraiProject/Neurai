@@ -470,7 +470,8 @@ void CExtKeyPQ::Encode(unsigned char code[BIP32_PQ_EXTKEY_SIZE]) const {
     code[7] = (nChild >>  8) & 0xFF;
     code[8] = (nChild      ) & 0xFF;
     memcpy(code + 9,  chaincode.begin(), 32);
-    memcpy(code + 41, pq_seed.data(),   32);
+    code[41] = 0x00; // padding byte (aligns layout with BIP32 xprv)
+    memcpy(code + 42, pq_seed.data(),   32);
 }
 
 void CExtKeyPQ::Decode(const unsigned char code[BIP32_PQ_EXTKEY_SIZE]) {
@@ -479,7 +480,8 @@ void CExtKeyPQ::Decode(const unsigned char code[BIP32_PQ_EXTKEY_SIZE]) {
     nChild = ((uint32_t)code[5] << 24) | ((uint32_t)code[6] << 16) |
              ((uint32_t)code[7] <<  8) | code[8];
     memcpy(chaincode.begin(), code + 9, 32);
-    pq_seed.assign(code + 41, code + 73);
+    // code[41] is the BIP32-style padding byte (must be 0x00); skip it.
+    pq_seed.assign(code + 42, code + 74);
 }
 
 bool ECC_InitSanityCheck() {

@@ -135,6 +135,11 @@ struct Params {
      *  input's prevout. Symmetric to OP_OUTPUTVALUE. true on testnet/regtest;
      *  false on mainnet until future activation. */
     bool nINPUTVALUEEnabled;
+    /** NIP-026: Enable OP_CHAINCONTEXT (selectors HEIGHT, MTP, CHAIN_ID).
+     *  true on testnet/regtest; false on mainnet until future activation.
+     *  ApplyConsensusOptIns co-sets SCRIPT_VERIFY_64BIT_INTEGERS whenever
+     *  this is true — MTP after 2038 does not fit in a 4-byte CScriptNum. */
+    bool nCHAINCONTEXTEnabled;
     /** NIP-025: If a transaction spends at least one asset-wrapped AuthScript v1
      *  UTXO, require nSequence >= 0xfffffffe on every input of that transaction.
      *  Covers DEX partial-fill covenants AND plain asset transfers to PQ

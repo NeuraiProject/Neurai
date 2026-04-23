@@ -9,6 +9,7 @@
 
 #include <memory>
 #include <set>
+#include <functional>
 #include <map>
 #include <vector>
 #include <utility>
@@ -78,6 +79,7 @@ private:
     int64_t sigOpCost;         //!< Total sigop cost
     int64_t feeDelta;          //!< Used for determining the priority of the transaction for mining in a block
     LockPoints lockPoints;     //!< Track the height and time at which tx was final
+    bool fUsesChainContext;    //!< NIP-026: this tx's scripts exercise OP_CHAINCONTEXT (re-validate on tip change)
 
     // Information about descendants of this transaction that are in the
     // mempool; if we remove this transaction we must remove all of these
@@ -96,7 +98,8 @@ public:
     CTxMemPoolEntry(const CTransactionRef& _tx, const CAmount& _nFee,
                     int64_t _nTime, unsigned int _entryHeight,
                     bool spendsCoinbase,
-                    int64_t nSigOpsCost, LockPoints lp);
+                    int64_t nSigOpsCost, LockPoints lp,
+                    bool fUsesChainContextIn = false);
 
     const CTransaction& GetTx() const { return *this->tx; }
     CTransactionRef GetSharedTx() const { return this->tx; }
@@ -125,6 +128,12 @@ public:
     CAmount GetModFeesWithDescendants() const { return nModFeesWithDescendants; }
 
     bool GetSpendsCoinbase() const { return spendsCoinbase; }
+
+    // NIP-026: whether the entry's scripts exercised OP_CHAINCONTEXT
+    // during admission. Read by removeForNewTip to decide whether this
+    // entry must be re-validated against the new chain-position context.
+    bool GetUsesChainContext() const { return fUsesChainContext; }
+    void SetUsesChainContext(bool v) { fUsesChainContext = v; }
 
     uint64_t GetCountWithAncestors() const { return nCountWithAncestors; }
     uint64_t GetSizeWithAncestors() const { return nSizeWithAncestors; }
@@ -586,6 +595,13 @@ public:
     void removeConflicts(const CTransaction &tx);
     void removeForBlock(const std::vector<CTransactionRef>& vtx, unsigned int nBlockHeight, ConnectedBlockAssetData& connectedBlockData );
     void removeForBlock(const std::vector<CTransactionRef>& vtx, unsigned int nBlockHeight);
+
+    // NIP-026: evict entries tagged with fUsesChainContext whose scripts
+    // no longer validate against the new tip's chain-position context.
+    // The predicate is invoked once per tagged entry with the tx; the
+    // caller (validation.cpp::MempoolRemoveForNewTip) re-runs CheckInputs
+    // with the fresh ChainContext and returns true to evict.
+    void removeForNewTip(std::function<bool(const CTxMemPoolEntry&)> shouldEvict);
 
     void clear();
     void _clear(); //lock free

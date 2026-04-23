@@ -208,6 +208,13 @@ enum class script_verify_flag_name : uint8_t {
     //
     SCRIPT_VERIFY_INPUTVALUE,                               // bit 33
 
+    // NIP-026: Enable OP_CHAINCONTEXT — push chain-position fields
+    // (HEIGHT, MTP, CHAIN_ID) onto the stack. Must be co-set with
+    // SCRIPT_VERIFY_64BIT_INTEGERS (handler enforces at runtime); flag
+    // off returns SCRIPT_ERR_BAD_OPCODE, matching pre-upgrade nodes.
+    //
+    SCRIPT_VERIFY_CHAINCONTEXT,                             // bit 34
+
     // End marker — must always be last.
     SCRIPT_VERIFY_END_MARKER
 };
@@ -272,9 +279,29 @@ enum SigVersion
 
 uint256 SignatureHash(const CScript &scriptCode, const CTransaction &txTo, unsigned int nIn, int nHashType, const CAmount &amount, SigVersion sigversion, const PrecomputedTransactionData *cache = nullptr, uint8_t authType = 0x00);
 
+/**
+ * NIP-026: Chain-position context visible to OP_CHAINCONTEXT.
+ * Populated by block validation (from `pindex->pprev`) and mempool
+ * acceptance (from `chainActive.Tip()` — HEIGHT is `Tip + 1`, the
+ * height the tx would be confirmed at). `available = false` means
+ * no caller supplied a context; the opcode then fails fail-closed.
+ */
+struct ChainContext {
+    int64_t height{0};   // height of the block this tx validates against
+    int64_t mtp{0};      // GetMedianTimePast() of the preceding block
+    uint8_t chainId{0};  // 0 main, 1 testnet, 2 regtest
+    bool available{false};
+};
+
 class BaseSignatureChecker
 {
 public:
+    // NIP-026: set to true by the OP_CHAINCONTEXT handler on each successful
+    // invocation, read by the mempool admission path so entries that
+    // reference HEIGHT / MTP can be re-validated on every new tip.
+    // `mutable` because VerifyScript takes `const BaseSignatureChecker&`.
+    mutable bool fChainContextObserved{false};
+
     virtual bool CheckSig(const std::vector<unsigned char> &scriptSig, const std::vector<unsigned char> &vchPubKey, const CScript &scriptCode, SigVersion sigversion, uint8_t authType = 0x00) const
     {
         return false;
@@ -388,6 +415,16 @@ public:
         return false;
     }
 
+    // NIP-026: Fetch a chain-context field by 1-byte selector.
+    //   0x01 HEIGHT   → height of the block this tx validates against
+    //   0x02 MTP      → GetMedianTimePast() of the preceding block
+    //   0x03 CHAIN_ID → 0 main, 1 testnet, 2 regtest
+    // Returns false if no context is available (fail-closed path).
+    virtual bool GetChainContext(unsigned char /*selector*/, int64_t& /*result*/) const
+    {
+        return false;
+    }
+
     virtual ~BaseSignatureChecker() {}
 };
 
@@ -401,36 +438,37 @@ private:
     const CScript* m_spentScriptPubKey;  // scriptPubKey of the UTXO being spent (for OP_TXFIELD)
     const std::vector<CTxOut>* m_allPrevouts; // prevouts of all inputs, if available
     const std::vector<CTxOut>* m_refOutputs;  // NIP-014: resolved reference outputs
+    ChainContext m_chainContext{};            // NIP-026: chain-position view
 
 protected:
     virtual bool VerifySignature(const std::vector<unsigned char> &vchSig, const CPubKey &vchPubKey, const uint256 &sighash) const;
 
 public:
-    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn)
-        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(nullptr), m_spentScriptPubKey(nullptr), m_allPrevouts(nullptr), m_refOutputs(nullptr) {}
+    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, ChainContext chainCtx = {})
+        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(nullptr), m_spentScriptPubKey(nullptr), m_allPrevouts(nullptr), m_refOutputs(nullptr), m_chainContext(chainCtx) {}
 
-    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const PrecomputedTransactionData &txdataIn)
-        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn), m_spentScriptPubKey(nullptr), m_allPrevouts(nullptr), m_refOutputs(nullptr) {}
+    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const PrecomputedTransactionData &txdataIn, ChainContext chainCtx = {})
+        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn), m_spentScriptPubKey(nullptr), m_allPrevouts(nullptr), m_refOutputs(nullptr), m_chainContext(chainCtx) {}
 
     // Constructor with spent scriptPubKey but without precomputed txdata.
     // Used by RPC signing paths (signrawtransaction, combinesignatures) where
     // PrecomputedTransactionData is not available but OP_TXFIELD must still work.
-    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const CScript& spentScriptPubKeyIn)
-        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(nullptr), m_spentScriptPubKey(&spentScriptPubKeyIn), m_allPrevouts(nullptr), m_refOutputs(nullptr) {}
+    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const CScript& spentScriptPubKeyIn, ChainContext chainCtx = {})
+        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(nullptr), m_spentScriptPubKey(&spentScriptPubKeyIn), m_allPrevouts(nullptr), m_refOutputs(nullptr), m_chainContext(chainCtx) {}
 
-    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const CScript& spentScriptPubKeyIn, const std::vector<CTxOut>* allPrevoutsIn)
-        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(nullptr), m_spentScriptPubKey(&spentScriptPubKeyIn), m_allPrevouts(allPrevoutsIn), m_refOutputs(nullptr) {}
+    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const CScript& spentScriptPubKeyIn, const std::vector<CTxOut>* allPrevoutsIn, ChainContext chainCtx = {})
+        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(nullptr), m_spentScriptPubKey(&spentScriptPubKeyIn), m_allPrevouts(allPrevoutsIn), m_refOutputs(nullptr), m_chainContext(chainCtx) {}
 
     // Constructor with both precomputed txdata and spent scriptPubKey — used by consensus validation.
-    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const PrecomputedTransactionData &txdataIn, const CScript& spentScriptPubKeyIn)
-        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn), m_spentScriptPubKey(&spentScriptPubKeyIn), m_allPrevouts(nullptr), m_refOutputs(nullptr) {}
+    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const PrecomputedTransactionData &txdataIn, const CScript& spentScriptPubKeyIn, ChainContext chainCtx = {})
+        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn), m_spentScriptPubKey(&spentScriptPubKeyIn), m_allPrevouts(nullptr), m_refOutputs(nullptr), m_chainContext(chainCtx) {}
 
-    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const PrecomputedTransactionData &txdataIn, const CScript& spentScriptPubKeyIn, const std::vector<CTxOut>* allPrevoutsIn)
-        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn), m_spentScriptPubKey(&spentScriptPubKeyIn), m_allPrevouts(allPrevoutsIn), m_refOutputs(nullptr) {}
+    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const PrecomputedTransactionData &txdataIn, const CScript& spentScriptPubKeyIn, const std::vector<CTxOut>* allPrevoutsIn, ChainContext chainCtx = {})
+        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn), m_spentScriptPubKey(&spentScriptPubKeyIn), m_allPrevouts(allPrevoutsIn), m_refOutputs(nullptr), m_chainContext(chainCtx) {}
 
     // NIP-014: Constructor with reference outputs — used by consensus validation for v3 txs.
-    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const PrecomputedTransactionData &txdataIn, const CScript& spentScriptPubKeyIn, const std::vector<CTxOut>* allPrevoutsIn, const std::vector<CTxOut>* refOutputsIn)
-        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn), m_spentScriptPubKey(&spentScriptPubKeyIn), m_allPrevouts(allPrevoutsIn), m_refOutputs(refOutputsIn) {}
+    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const PrecomputedTransactionData &txdataIn, const CScript& spentScriptPubKeyIn, const std::vector<CTxOut>* allPrevoutsIn, const std::vector<CTxOut>* refOutputsIn, ChainContext chainCtx = {})
+        : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn), m_spentScriptPubKey(&spentScriptPubKeyIn), m_allPrevouts(allPrevoutsIn), m_refOutputs(refOutputsIn), m_chainContext(chainCtx) {}
 
     bool CheckSig(const std::vector<unsigned char> &scriptSig, const std::vector<unsigned char> &vchPubKey, const CScript &scriptCode, SigVersion sigversion, uint8_t authType = 0x00) const override;
 
@@ -469,6 +507,9 @@ public:
                           std::vector<unsigned char>& result) const override;
     bool GetRefInputAssetField(unsigned int nRef, unsigned char selector,
                                std::vector<unsigned char>& result) const override;
+
+    // NIP-026: resolve HEIGHT / MTP / CHAIN_ID from m_chainContext.
+    bool GetChainContext(unsigned char selector, int64_t& result) const override;
 
     uint256 GetSigHash(const CScript& scriptCode, int nHashType, SigVersion sigversion, uint8_t authType = 0x00) const override;
 };

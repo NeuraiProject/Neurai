@@ -130,6 +130,7 @@ public:
         consensus.nREFINPUTSEnabled = false; // NIP-014: tx v3 + vrefin not yet active on mainnet
         consensus.nOUTPUTAUTHCOMMITMENTEnabled = false; // NIP-023: OP_OUTPUTAUTHCOMMITMENT not yet active on mainnet
         consensus.nINPUTVALUEEnabled = false; // NIP-024: OP_INPUTVALUE not yet active on mainnet
+        consensus.nCHAINCONTEXTEnabled = false; // NIP-026: OP_CHAINCONTEXT not yet active on mainnet
         consensus.nASSETRBFBlockEnabled = false; // NIP-025: asset-AuthScript RBF ban not yet active on mainnet
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
@@ -213,7 +214,7 @@ public:
         base58Prefixes[SECRET_KEY] =     std::vector<unsigned char>(1,128);
         base58Prefixes[EXT_PUBLIC_KEY]    = {0x04, 0x88, 0xB2, 0x1E};
         base58Prefixes[EXT_SECRET_KEY]    = {0x04, 0x88, 0xAD, 0xE4};
-        base58Prefixes[EXT_PQ_SECRET_KEY] = {0x04, 0x88, 0x2C, 0xA0}; // xpqp... (mainnet)
+        base58Prefixes[EXT_PQ_SECRET_KEY] = {0x04, 0x88, 0xAC, 0x24}; // xpqp... (mainnet)
         strBech32HRP = "nq";
 
         // Neurai BIP44 cointype in mainnet is '0'
@@ -331,6 +332,7 @@ public:
         consensus.nREFINPUTSEnabled = true; // NIP-014: tx v3 + vrefin active on testnet
         consensus.nOUTPUTAUTHCOMMITMENTEnabled = true; // NIP-023: OP_OUTPUTAUTHCOMMITMENT active on testnet
         consensus.nINPUTVALUEEnabled = true; // NIP-024: OP_INPUTVALUE active on testnet
+        consensus.nCHAINCONTEXTEnabled = true; // NIP-026: OP_CHAINCONTEXT active on testnet
         consensus.nASSETRBFBlockEnabled = true; // NIP-025: asset-AuthScript RBF ban active on testnet
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
@@ -437,7 +439,7 @@ public:
         base58Prefixes[SECRET_KEY] =     std::vector<unsigned char>(1,239);
         base58Prefixes[EXT_PUBLIC_KEY]    = {0x04, 0x35, 0x87, 0xCF};
         base58Prefixes[EXT_SECRET_KEY]    = {0x04, 0x35, 0x83, 0x94};
-        base58Prefixes[EXT_PQ_SECRET_KEY] = {0x04, 0x35, 0x9E, 0xC0}; // tpqp... (testnet)
+        base58Prefixes[EXT_PQ_SECRET_KEY] = {0x04, 0x35, 0x81, 0xD5}; // tpqp... (testnet)
         strBech32HRP = "tnq";
 
         // Neurai BIP44 cointype in testnet
@@ -535,6 +537,7 @@ public:
         consensus.nREFINPUTSEnabled = true; // NIP-014: tx v3 + vrefin active on regtest
         consensus.nOUTPUTAUTHCOMMITMENTEnabled = true; // NIP-023: OP_OUTPUTAUTHCOMMITMENT active on regtest
         consensus.nINPUTVALUEEnabled = true; // NIP-024: OP_INPUTVALUE active on regtest
+        consensus.nCHAINCONTEXTEnabled = true; // NIP-026: OP_CHAINCONTEXT active on regtest
         consensus.nASSETRBFBlockEnabled = true; // NIP-025: asset-AuthScript RBF ban active on regtest
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
@@ -631,7 +634,7 @@ public:
         base58Prefixes[SECRET_KEY] =     std::vector<unsigned char>(1,239);
         base58Prefixes[EXT_PUBLIC_KEY]    = {0x04, 0x35, 0x87, 0xCF};
         base58Prefixes[EXT_SECRET_KEY]    = {0x04, 0x35, 0x83, 0x94};
-        base58Prefixes[EXT_PQ_SECRET_KEY] = {0x04, 0x35, 0x9E, 0xC0}; // tpqp... (regtest)
+        base58Prefixes[EXT_PQ_SECRET_KEY] = {0x04, 0x35, 0x81, 0xD5}; // tpqp... (regtest)
         strBech32HRP = "rnq";
 
         // Neurai BIP44 cointype in regtest

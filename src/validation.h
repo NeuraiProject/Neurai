@@ -16,6 +16,7 @@
 #include "fs.h"
 #include "protocol.h" // For CMessageHeader::MessageStartChars
 #include "policy/feerate.h"
+#include "script/interpreter.h" // ChainContext (NIP-026)
 #include "script/script_error.h"
 #include "script/verify_flags.h"
 #include "sync.h"
@@ -414,11 +415,18 @@ private:
     PrecomputedTransactionData *txdata;
     std::shared_ptr<std::vector<CTxOut>> m_allPrevouts;
     std::shared_ptr<std::vector<CTxOut>> m_refOutputs;   // NIP-014
+    ChainContext m_chainContext{};                       // NIP-026
 
 public:
+    // NIP-026: Mirrors BaseSignatureChecker::fChainContextObserved.
+    // `operator()` copies the checker's flag back into this field after
+    // VerifyScript returns, so callers can inspect it without having
+    // to hold the checker reference.
+    bool fChainContextObserved{false};
+
     CScriptCheck(): ptxTo(nullptr), nIn(0), nFlags(SCRIPT_VERIFY_NONE), cacheStore(false), error(SCRIPT_ERR_UNKNOWN_ERROR), txdata(nullptr) {}
-    CScriptCheck(const CTxOut& outIn, const CTransaction& txToIn, unsigned int nInIn, script_verify_flags nFlagsIn, bool cacheIn, PrecomputedTransactionData* txdataIn, std::shared_ptr<std::vector<CTxOut>> allPrevoutsIn = nullptr, std::shared_ptr<std::vector<CTxOut>> refOutputsIn = nullptr) :
-        m_tx_out(outIn), ptxTo(&txToIn), nIn(nInIn), nFlags(nFlagsIn), cacheStore(cacheIn), error(SCRIPT_ERR_UNKNOWN_ERROR), txdata(txdataIn), m_allPrevouts(std::move(allPrevoutsIn)), m_refOutputs(std::move(refOutputsIn)) { }
+    CScriptCheck(const CTxOut& outIn, const CTransaction& txToIn, unsigned int nInIn, script_verify_flags nFlagsIn, bool cacheIn, PrecomputedTransactionData* txdataIn, std::shared_ptr<std::vector<CTxOut>> allPrevoutsIn = nullptr, std::shared_ptr<std::vector<CTxOut>> refOutputsIn = nullptr, ChainContext chainCtxIn = {}) :
+        m_tx_out(outIn), ptxTo(&txToIn), nIn(nInIn), nFlags(nFlagsIn), cacheStore(cacheIn), error(SCRIPT_ERR_UNKNOWN_ERROR), txdata(txdataIn), m_allPrevouts(std::move(allPrevoutsIn)), m_refOutputs(std::move(refOutputsIn)), m_chainContext(chainCtxIn) { }
 
     bool operator()();
 
@@ -432,6 +440,8 @@ public:
         std::swap(txdata, check.txdata);
         std::swap(m_allPrevouts, check.m_allPrevouts);
         std::swap(m_refOutputs, check.m_refOutputs);
+        std::swap(m_chainContext, check.m_chainContext);
+        std::swap(fChainContextObserved, check.fChainContextObserved);
     }
 
     ScriptError GetScriptError() const { return error; }

@@ -48,19 +48,19 @@ private:
     bool store;
 
 public:
-    CachingTransactionSignatureChecker(const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, bool storeIn, PrecomputedTransactionData& txdataIn)
-        : TransactionSignatureChecker(txToIn, nInIn, amountIn, txdataIn), store(storeIn) {}
+    CachingTransactionSignatureChecker(const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, bool storeIn, PrecomputedTransactionData& txdataIn, ChainContext chainCtx = {})
+        : TransactionSignatureChecker(txToIn, nInIn, amountIn, txdataIn, chainCtx), store(storeIn) {}
 
     // Constructor with spent scriptPubKey — enables OP_TXFIELD selectors 0x02 and 0x03.
-    CachingTransactionSignatureChecker(const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, bool storeIn, PrecomputedTransactionData& txdataIn, const CScript& spentScriptPubKeyIn)
-        : TransactionSignatureChecker(txToIn, nInIn, amountIn, txdataIn, spentScriptPubKeyIn), store(storeIn) {}
+    CachingTransactionSignatureChecker(const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, bool storeIn, PrecomputedTransactionData& txdataIn, const CScript& spentScriptPubKeyIn, ChainContext chainCtx = {})
+        : TransactionSignatureChecker(txToIn, nInIn, amountIn, txdataIn, spentScriptPubKeyIn, chainCtx), store(storeIn) {}
 
-    CachingTransactionSignatureChecker(const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, bool storeIn, PrecomputedTransactionData& txdataIn, const CScript& spentScriptPubKeyIn, const std::vector<CTxOut>* allPrevoutsIn)
-        : TransactionSignatureChecker(txToIn, nInIn, amountIn, txdataIn, spentScriptPubKeyIn, allPrevoutsIn), store(storeIn) {}
+    CachingTransactionSignatureChecker(const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, bool storeIn, PrecomputedTransactionData& txdataIn, const CScript& spentScriptPubKeyIn, const std::vector<CTxOut>* allPrevoutsIn, ChainContext chainCtx = {})
+        : TransactionSignatureChecker(txToIn, nInIn, amountIn, txdataIn, spentScriptPubKeyIn, allPrevoutsIn, chainCtx), store(storeIn) {}
 
     // NIP-014: Constructor with reference outputs for v3 transactions.
-    CachingTransactionSignatureChecker(const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, bool storeIn, PrecomputedTransactionData& txdataIn, const CScript& spentScriptPubKeyIn, const std::vector<CTxOut>* allPrevoutsIn, const std::vector<CTxOut>* refOutputsIn)
-        : TransactionSignatureChecker(txToIn, nInIn, amountIn, txdataIn, spentScriptPubKeyIn, allPrevoutsIn, refOutputsIn), store(storeIn) {}
+    CachingTransactionSignatureChecker(const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, bool storeIn, PrecomputedTransactionData& txdataIn, const CScript& spentScriptPubKeyIn, const std::vector<CTxOut>* allPrevoutsIn, const std::vector<CTxOut>* refOutputsIn, ChainContext chainCtx = {})
+        : TransactionSignatureChecker(txToIn, nInIn, amountIn, txdataIn, spentScriptPubKeyIn, allPrevoutsIn, refOutputsIn, chainCtx), store(storeIn) {}
 
     bool VerifySignature(const std::vector<unsigned char>& vchSig, const CPubKey& vchPubKey, const uint256& sighash) const override;
 };

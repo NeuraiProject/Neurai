@@ -155,6 +155,7 @@ const char* GetOpName(opcodetype opcode)
     case OP_REFINPUTCOUNT          : return "OP_REFINPUTCOUNT";
     case OP_OUTPUTAUTHCOMMITMENT   : return "OP_OUTPUTAUTHCOMMITMENT";
     case OP_INPUTVALUE             : return "OP_INPUTVALUE";
+    case OP_CHAINCONTEXT           : return "OP_CHAINCONTEXT";
 
     /** XNA START */
     case OP_XNA_ASSET              : return "OP_XNA_ASSET";

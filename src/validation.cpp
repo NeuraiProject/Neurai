@@ -325,7 +325,7 @@ enum FlushStateMode {
 static bool FlushStateToDisk(const CChainParams& chainParams, CValidationState &state, FlushStateMode mode, int nManualPruneHeight=0);
 static void FindFilesToPruneManual(std::set<int>& setFilesToPrune, int nManualPruneHeight);
 static void FindFilesToPrune(std::set<int>& setFilesToPrune, uint64_t nPruneAfterHeight);
-bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks = nullptr, std::shared_ptr<std::vector<CTxOut>> pRefOutputs = nullptr);
+bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks = nullptr, std::shared_ptr<std::vector<CTxOut>> pRefOutputs = nullptr, ChainContext chainCtx = {}, bool* pfUsesChainContext = nullptr);
 static FILE* OpenUndoFile(const CDiskBlockPos &pos, bool fReadOnly = false);
 
 bool CheckFinalTx(const CTransaction &tx, int flags)
@@ -541,7 +541,7 @@ void UpdateMempoolForReorg(DisconnectedBlockTransactions &disconnectpool, bool f
 // Used to avoid mempool polluting consensus critical paths if CCoinsViewMempool
 // were somehow broken and returning the wrong scriptPubKeys
 static bool CheckInputsFromMempoolAndCache(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &view, CTxMemPool& pool,
-                 script_verify_flags flags, bool cacheSigStore, PrecomputedTransactionData& txdata) {
+                 script_verify_flags flags, bool cacheSigStore, PrecomputedTransactionData& txdata, ChainContext chainCtx = {}) {
     AssertLockHeld(cs_main);
 
     // pool.cs should be locked already, but go ahead and re-take the lock here
@@ -571,7 +571,7 @@ static bool CheckInputsFromMempoolAndCache(const CTransaction& tx, CValidationSt
         }
     }
 
-    return CheckInputs(tx, state, view, true, flags, cacheSigStore, true, txdata);
+    return CheckInputs(tx, state, view, true, flags, cacheSigStore, true, txdata, nullptr, nullptr, chainCtx);
 }
 
 static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool& pool, CValidationState& state, const CTransactionRef& ptx,
@@ -778,6 +778,9 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
 
         CTxMemPoolEntry entry(ptx, nFees, nAcceptTime, chainActive.Height(),
                               fSpendsCoinbase, nSigOpsCost, lp);
+        // NIP-026: `fUsesChainContext` is finalised after CheckInputs
+        // below populates `fUsesChainContext_local`; SetUsesChainContext
+        // is called between CheckInputs and pool.addUnchecked.
         unsigned int nSize = entry.GetTxSize();
 
         // Check that the transaction doesn't have an excessive number of
@@ -984,13 +987,26 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
             }
         }
 
-        if (!CheckInputs(tx, state, view, true, scriptVerifyFlags, true, false, txdata, nullptr, pRefOutputs)) {
+        // NIP-026: chain context for mempool. HEIGHT is Tip + 1 (the block
+        // this tx would be confirmed at, matching the CLTV/CheckFinalTx
+        // convention). MTP is the median-time-past of the current tip.
+        // fUsesChainContext_local is ORed by CheckInputs and later
+        // recorded on the mempool entry for tip-change re-validation.
+        ChainContext chainCtx{
+            chainActive.Tip()->nHeight + 1,
+            chainActive.Tip()->GetMedianTimePast(),
+            GetChainIdForParams(chainparams),
+            true
+        };
+        bool fUsesChainContext_local = false;
+
+        if (!CheckInputs(tx, state, view, true, scriptVerifyFlags, true, false, txdata, nullptr, pRefOutputs, chainCtx, &fUsesChainContext_local)) {
             // SCRIPT_VERIFY_CLEANSTACK requires SCRIPT_VERIFY_WITNESS, so we
             // need to turn both off, and compare against just turning off CLEANSTACK
             // to see if the failure is specifically due to witness validation.
             CValidationState stateDummy; // Want reported failures to be from first CheckInputs
-            if (!tx.HasWitness() && CheckInputs(tx, stateDummy, view, true, scriptVerifyFlags & ~(SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_CLEANSTACK), true, false, txdata, nullptr, pRefOutputs) &&
-                !CheckInputs(tx, stateDummy, view, true, scriptVerifyFlags & ~SCRIPT_VERIFY_CLEANSTACK, true, false, txdata, nullptr, pRefOutputs)) {
+            if (!tx.HasWitness() && CheckInputs(tx, stateDummy, view, true, scriptVerifyFlags & ~(SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_CLEANSTACK), true, false, txdata, nullptr, pRefOutputs, chainCtx, &fUsesChainContext_local) &&
+                !CheckInputs(tx, stateDummy, view, true, scriptVerifyFlags & ~SCRIPT_VERIFY_CLEANSTACK, true, false, txdata, nullptr, pRefOutputs, chainCtx, &fUsesChainContext_local)) {
                 // Only the witness is missing, so the transaction itself may be fine.
                 state.SetCorruptionPossible();
             }
@@ -1013,7 +1029,7 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         // invalid blocks (using TestBlockValidity), however allowing such
         // transactions into the mempool can be exploited as a DoS attack.
         script_verify_flags currentBlockScriptVerifyFlags = GetBlockScriptFlags(chainActive.Tip(), GetParams().GetConsensus());
-        if (!CheckInputsFromMempoolAndCache(tx, state, view, pool, currentBlockScriptVerifyFlags, true, txdata))
+        if (!CheckInputsFromMempoolAndCache(tx, state, view, pool, currentBlockScriptVerifyFlags, true, txdata, chainCtx))
         {
             // If we're using promiscuousmempoolflags, we may hit this normally
             // Check if current block has some flags that scriptVerifyFlags
@@ -1022,7 +1038,7 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
                 return error("%s: BUG! PLEASE REPORT THIS! ConnectInputs failed against latest-block but not STANDARD flags %s, %s",
                     __func__, hash.ToString(), FormatStateMessage(state));
             } else {
-                if (!CheckInputs(tx, state, view, true, MANDATORY_SCRIPT_VERIFY_FLAGS, true, false, txdata)) {
+                if (!CheckInputs(tx, state, view, true, MANDATORY_SCRIPT_VERIFY_FLAGS, true, false, txdata, nullptr, nullptr, chainCtx)) {
                     return error("%s: ConnectInputs failed against MANDATORY but not STANDARD flags due to promiscuous mempool %s, %s",
                         __func__, hash.ToString(), FormatStateMessage(state));
                 } else {
@@ -1055,6 +1071,10 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         // - the node is not behind
         // - the transaction is not dependent on any other transactions in the mempool
         bool validForFeeEstimation = !fReplacementTransaction && !bypass_limits && IsCurrentForFeeEstimation() && pool.HasNoInputsOf(tx);
+
+        // NIP-026: record whether any script in this tx exercised
+        // OP_CHAINCONTEXT. Drives re-validation in removeForNewTip.
+        entry.SetUsesChainContext(fUsesChainContext_local);
 
         // Store transaction in memory
         pool.addUnchecked(hash, entry, setAncestors, validForFeeEstimation);
@@ -1675,9 +1695,13 @@ void UpdateCoins(const CTransaction& tx, CCoinsViewCache& inputs, int nHeight)
 bool CScriptCheck::operator()() {
     const CScript &scriptSig = ptxTo->vin[nIn].scriptSig;
     const CScriptWitness *witness = &ptxTo->vin[nIn].scriptWitness;
-    return VerifyScript(scriptSig, m_tx_out.scriptPubKey, witness, nFlags,
-                        CachingTransactionSignatureChecker(ptxTo, nIn, m_tx_out.nValue, cacheStore, *txdata, m_tx_out.scriptPubKey, m_allPrevouts.get(), m_refOutputs.get()),
-                        &error);
+    CachingTransactionSignatureChecker checker(ptxTo, nIn, m_tx_out.nValue, cacheStore, *txdata, m_tx_out.scriptPubKey, m_allPrevouts.get(), m_refOutputs.get(), m_chainContext);
+    const bool ok = VerifyScript(scriptSig, m_tx_out.scriptPubKey, witness, nFlags, checker, &error);
+    // NIP-026: surface whether the script exercised OP_CHAINCONTEXT.
+    // Read regardless of success — a failed script may have still touched
+    // the opcode before failing, and the mempool wants an honest record.
+    fChainContextObserved = checker.fChainContextObserved;
+    return ok;
 }
 
 int GetSpendHeight(const CCoinsViewCache& inputs)
@@ -1700,6 +1724,60 @@ void InitScriptExecutionCache() {
             (nElems*sizeof(uint256)) >>20, (nMaxCacheSize*2)>>20, nElems);
 }
 
+// NIP-026: invalidate the entire script-execution cache by rotating the
+// per-process nonce. The nonce is mixed into every cache key
+// (scriptExecutionCache at line 1748), so a rotation makes all prior
+// entries unreachable without touching storage. Called on each tip
+// change so that OP_CHAINCONTEXT results tied to HEIGHT / MTP cannot
+// be re-served after the tip advances. Gated by callers on
+// nCHAINCONTEXTEnabled to avoid a pointless perf regression on chains
+// where the opcode is not active.
+static void FlushScriptExecutionCache() {
+    scriptExecutionCacheNonce = GetRandHash();
+}
+
+// NIP-026: drive mempool eviction of OP_CHAINCONTEXT-using entries that
+// no longer validate against the new tip. Called from ConnectTip /
+// DisconnectTip under cs_main.
+static void MempoolRemoveForNewTip(CTxMemPool& pool,
+                                   const CBlockIndex& tipNew,
+                                   const CChainParams& chainparams)
+{
+    AssertLockHeld(cs_main);
+    const ChainContext newCtx{
+        tipNew.nHeight + 1,
+        tipNew.GetMedianTimePast(),
+        GetChainIdForParams(chainparams),
+        true
+    };
+    const script_verify_flags flags =
+        ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, chainparams.GetConsensus());
+
+    pool.removeForNewTip([&](const CTxMemPoolEntry& entry) -> bool {
+        const CTransaction& tx = entry.GetTx();
+        CValidationState stateDummy;
+        PrecomputedTransactionData txdata(tx);
+        std::shared_ptr<std::vector<CTxOut>> pRefOutputs;
+        if (tx.nVersion == 3 && !tx.vrefin.empty()) {
+            pRefOutputs = std::make_shared<std::vector<CTxOut>>();
+            pRefOutputs->reserve(tx.vrefin.size());
+            for (const auto& refout : tx.vrefin) {
+                const Coin& coin = pcoinsTip->AccessCoin(refout);
+                if (coin.IsSpent()) return true; // ref-input vanished → evict
+                pRefOutputs->push_back(coin.out);
+            }
+        }
+        // Re-validate against the new chain-position context. A false
+        // return here means the tx's scripts no longer pass — most
+        // commonly, a deadline-based covenant whose HEIGHT / MTP
+        // constraint flipped when the tip advanced.
+        return !CheckInputs(tx, stateDummy, *pcoinsTip, true, flags,
+                            /*cacheSigStore=*/true,
+                            /*cacheFullScriptStore=*/false,
+                            txdata, nullptr, pRefOutputs, newCtx, nullptr);
+    });
+}
+
 /**
  * Check whether all inputs of this transaction are valid (no double spends, scripts & sigs, amounts)
  * This does not modify the UTXO set.
@@ -1714,7 +1792,7 @@ void InitScriptExecutionCache() {
  *
  * Non-static (and re-declared) in src/test/txvalidationcache_tests.cpp
  */
-bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks, std::shared_ptr<std::vector<CTxOut>> pRefOutputs)
+bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks, std::shared_ptr<std::vector<CTxOut>> pRefOutputs, ChainContext chainCtx, bool* pfUsesChainContext)
 {
     if (!tx.IsCoinBase())
     {
@@ -1770,11 +1848,16 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                 // spent being checked as a part of CScriptCheck.
 
                 // Verify signature
-                CScriptCheck check(coin.out, tx, i, flags, cacheSigStore, &txdata, pAllPrevouts, pRefOutputs);
+                CScriptCheck check(coin.out, tx, i, flags, cacheSigStore, &txdata, pAllPrevouts, pRefOutputs, chainCtx);
                 if (pvChecks) {
                     pvChecks->push_back(CScriptCheck());
                     check.swap(pvChecks->back());
                 } else if (!check()) {
+                    // NIP-026: record observation even on failure — the
+                    // script may have pushed the selector and failed a
+                    // later op; the mempool still wants to re-validate
+                    // this entry on tip changes.
+                    if (pfUsesChainContext) *pfUsesChainContext |= check.fChainContextObserved;
                     if (flags & STANDARD_NOT_MANDATORY_VERIFY_FLAGS) {
                         // Check whether the failure was caused by a
                         // non-mandatory script verification check, such as
@@ -1783,7 +1866,7 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                         // avoid splitting the network between upgraded and
                         // non-upgraded nodes.
                         CScriptCheck check2(coin.out, tx, i,
-                                flags & ~STANDARD_NOT_MANDATORY_VERIFY_FLAGS, cacheSigStore, &txdata, pAllPrevouts, pRefOutputs);
+                                flags & ~STANDARD_NOT_MANDATORY_VERIFY_FLAGS, cacheSigStore, &txdata, pAllPrevouts, pRefOutputs, chainCtx);
                         if (check2())
                             return state.Invalid(false, REJECT_NONSTANDARD, strprintf("non-mandatory-script-verify-flag (%s)", ScriptErrorString(check.GetScriptError())));
                     }
@@ -1796,6 +1879,9 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                     // super-majority signaling has occurred.
 
                     return state.DoS(100,false, REJECT_INVALID, strprintf("mandatory-script-verify-flag-failed (%s)", ScriptErrorString(check.GetScriptError())));
+                } else if (pfUsesChainContext) {
+                    // Success path — record observation for the mempool.
+                    *pfUsesChainContext |= check.fChainContextObserved;
                 }
             }
 
@@ -2789,7 +2875,16 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
 
             std::vector<CScriptCheck> vChecks;
             bool fCacheResults = fJustCheck; /* Don't cache results if we're actually connecting blocks (still consult the cache, though) */
-            if (!CheckInputs(tx, state, view, fScriptChecks, flags, fCacheResults, fCacheResults, txdata[i], nScriptCheckThreads ? &vChecks : nullptr, pRefOutputs))
+            // NIP-026: chain context visible to OP_CHAINCONTEXT. HEIGHT is
+            // the height of this block; MTP is the median-time-past of the
+            // block's parent (BIP113 convention). CHAIN_ID per chainparams.
+            ChainContext chainCtx{
+                pindex->nHeight,
+                pindex->pprev ? pindex->pprev->GetMedianTimePast() : 0,
+                GetChainIdForParams(chainparams),
+                true
+            };
+            if (!CheckInputs(tx, state, view, fScriptChecks, flags, fCacheResults, fCacheResults, txdata[i], nScriptCheckThreads ? &vChecks : nullptr, pRefOutputs, chainCtx))
                 return error("ConnectBlock(): CheckInputs on %s failed with %s",
                     tx.GetHash().ToString(), FormatStateMessage(state));
             control.Add(vChecks);
@@ -3311,6 +3406,16 @@ bool static DisconnectTip(CValidationState& state, const CChainParams& chainpara
 
     // Update chainActive and related variables.
     UpdateTip(pindexDelete->pprev, chainparams);
+    // NIP-026: flush the script-execution cache so that HEIGHT / MTP
+    // observations baked into prior hits cannot be re-served at the new
+    // tip, then evict mempool entries whose OP_CHAINCONTEXT-dependent
+    // scripts no longer validate. Gated to avoid paying the cost on
+    // chains where the opcode is not yet active.
+    if (chainparams.GetConsensus().nCHAINCONTEXTEnabled) {
+        FlushScriptExecutionCache();
+        if (pindexDelete->pprev)
+            MempoolRemoveForNewTip(mempool, *pindexDelete->pprev, chainparams);
+    }
     // Let wallets know transactions went from 1-confirmed to
     // 0-confirmed or conflicted:
     GetMainSignals().BlockDisconnected(pblock);
@@ -3490,6 +3595,13 @@ bool static ConnectTip(CValidationState& state, const CChainParams& chainparams,
     disconnectpool.removeForBlock(blockConnecting.vtx);
     // Update chainActive & related variables.
     UpdateTip(pindexNew, chainparams);
+    // NIP-026: see DisconnectTip — flushing here closes the stale-cache
+    // window for every tip advance, including the reorg case (which
+    // goes DisconnectTip → ConnectTip; both sides must flush).
+    if (chainparams.GetConsensus().nCHAINCONTEXTEnabled) {
+        FlushScriptExecutionCache();
+        MempoolRemoveForNewTip(mempool, *pindexNew, chainparams);
+    }
 
     int64_t nTime6 = GetTimeMicros(); nTimePostConnect += nTime6 - nTime5; nTimeTotal += nTime6 - nTime1;
     LogPrint(BCLog::BENCH, "  - Connect postprocess: %.2fms [%.2fs (%.2fms/blk)]\n", (nTime6 - nTime5) * MILLI, nTimePostConnect * MICRO, nTimePostConnect * MILLI / nBlocksTotal);

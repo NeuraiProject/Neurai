@@ -1637,11 +1637,13 @@ BOOST_FIXTURE_TEST_SUITE(script_tests, BasicTestingSetup)
         BOOST_CHECK(script.HasValidOps());
         script = ScriptFromHex("ff88ac"); // Script with OP_INVALIDOPCODE explicit
         BOOST_CHECK(!script.HasValidOps());
-        // 0xd5 is the first opcode strictly above MAX_OPCODE
-        // (= OP_REFINPUTCOUNT = 0xd4) and therefore invalid. The legacy test
-        // used 0xc0, which is now assigned to OP_XNA_ASSET — no longer
-        // "undefined".
-        script = ScriptFromHex("88acd5");
+        // 0xd8 is the first opcode strictly above MAX_OPCODE
+        // (= OP_CHAINCONTEXT = 0xd7, NIP-026) and therefore invalid.
+        // Historical versions of this test used 0xc0 (→ OP_XNA_ASSET)
+        // and 0xd5 (→ OP_OUTPUTAUTHCOMMITMENT, NIP-023) — both have
+        // since been allocated, so we keep bumping to the next
+        // unassigned byte.
+        script = ScriptFromHex("88acd8");
         BOOST_CHECK(!script.HasValidOps());
     }
 

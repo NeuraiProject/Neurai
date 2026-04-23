@@ -32,7 +32,10 @@
  */
 
 const unsigned int BIP32_EXTKEY_SIZE = 74;
-static const unsigned int BIP32_PQ_EXTKEY_SIZE = 73;
+// 74 bytes: depth(1) + fingerprint(4) + child(4) + chaincode(32) + padding(1=0x00) + pq_seed(32)
+// The padding byte aligns the layout with BIP32 xprv so base58check produces
+// an "xpqp..."/"tpqp..." prefix (same 82-byte total length as BIP32 xprv).
+static const unsigned int BIP32_PQ_EXTKEY_SIZE = 74;
 
 // ML-DSA-44 constants
 static const unsigned int ML_DSA_44_PRIVKEY_SIZE  = 2560;

@@ -833,6 +833,9 @@ The unary opcodes `OP_NOT` and `OP_0NOTEQUAL` also operate on 64-bit values but 
 | `OP_REFINPUTFIELD` | `0xd2` | — | 31 | Reference Input Introspection |
 | `OP_REFINPUTASSETFIELD` | `0xd3` | — | 31 | Reference Input Introspection |
 | `OP_REFINPUTCOUNT` | `0xd4` | — | 31 | Reference Input Introspection |
+| `OP_OUTPUTAUTHCOMMITMENT` | `0xd5` | — | 32 | Covenant (NIP-023) |
+| `OP_INPUTVALUE` | `0xd6` | — | 33 | TX Introspection (NIP-024) |
+| `OP_CHAINCONTEXT` | `0xd7` | — | 34 | Chain-Position Introspection (NIP-026) |
 | `OP_CAT` | `0x7e` | (re-enabled) | 17 | Byte Manipulation |
 | `OP_SPLIT` | `0xb7` | `OP_NOP8` | 22 | Byte Manipulation |
 | `OP_REVERSEBYTES` | `0xbc` | — | 23 | Byte Manipulation |
@@ -850,6 +853,8 @@ All opcodes listed above are controlled by individual consensus parameters in `C
 - **Mainnet**: All opcodes are **disabled** (`false`) pending future activation via consensus upgrade.
 
 Each opcode degrades gracefully when its flag is not set — NOP-replacing opcodes behave as their original NOP, while re-enabled opcodes return `SCRIPT_ERR_DISABLED_OPCODE`.
+
+**Exception: OP_CHAINCONTEXT (NIP-026).** Because `0xd7` is a newly-allocated opcode byte (not a repurposed NOP) and the opcode mutates the stack, its flag-off path returns `SCRIPT_ERR_BAD_OPCODE` instead of falling through to a NOP. This keeps upgraded-but-not-yet-activated nodes byte-for-byte compatible with pre-upgrade nodes when a tx containing `0xd7` appears before activation. `SCRIPT_VERIFY_CHAINCONTEXT` is co-set with `SCRIPT_VERIFY_64BIT_INTEGERS` in `ApplyConsensusOptIns`, because the opcode pushes `CScriptNum` values that can exceed 4 bytes (MTP after 2038). See NIP-026 §3.4 and §3.7.
 
 ### Policy-layer flag propagation (NIP-020)
 

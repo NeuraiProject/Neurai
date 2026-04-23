@@ -52,6 +52,7 @@ BOOST_AUTO_TEST_CASE(low_bit_flags_survive)
     BOOST_CHECK_EQUAL(script_verify_flags{SCRIPT_VERIFY_REFINPUTS}.as_int(),           uint64_t{1} << 31);
     BOOST_CHECK_EQUAL(script_verify_flags{SCRIPT_VERIFY_OUTPUTAUTHCOMMITMENT}.as_int(), uint64_t{1} << 32);
     BOOST_CHECK_EQUAL(script_verify_flags{SCRIPT_VERIFY_INPUTVALUE}.as_int(),          uint64_t{1} << 33);
+    BOOST_CHECK_EQUAL(script_verify_flags{SCRIPT_VERIFY_CHAINCONTEXT}.as_int(),        uint64_t{1} << 34);
 }
 
 BOOST_AUTO_TEST_CASE(none_is_zero)
@@ -63,9 +64,9 @@ BOOST_AUTO_TEST_CASE(none_is_zero)
 
 BOOST_AUTO_TEST_CASE(end_marker_matches_flag_count)
 {
-    // 34 flags (bits 0-33) means END_MARKER should be 34.
-    // Last added: SCRIPT_VERIFY_INPUTVALUE at bit 33 (NIP-024).
-    BOOST_CHECK_EQUAL(MAX_SCRIPT_VERIFY_FLAGS_BITS, 34);
+    // 35 flags (bits 0-34) means END_MARKER should be 35.
+    // Last added: SCRIPT_VERIFY_CHAINCONTEXT at bit 34 (NIP-026).
+    BOOST_CHECK_EQUAL(MAX_SCRIPT_VERIFY_FLAGS_BITS, 35);
 }
 
 // --- No internal truncation ---
@@ -74,7 +75,16 @@ BOOST_AUTO_TEST_CASE(no_truncation)
 {
     // Combine all known flags and verify no bits are lost.
     script_verify_flags all = script_verify_flags::from_int(MAX_SCRIPT_VERIFY_FLAGS);
-    BOOST_CHECK_EQUAL(all.as_int(), (uint64_t{1} << 34) - 1);
+    BOOST_CHECK_EQUAL(all.as_int(), (uint64_t{1} << 35) - 1);
+}
+
+BOOST_AUTO_TEST_CASE(chaincontext_is_bit_34)
+{
+    // NIP-026: OP_CHAINCONTEXT's verify flag must live at bit 34.
+    // Pinned because covenants compiled against this bit will break if
+    // the enum order ever changes.
+    BOOST_CHECK_EQUAL(script_verify_flags{SCRIPT_VERIFY_CHAINCONTEXT}.as_int(),
+                      uint64_t{1} << 34);
 }
 
 // --- Synthetic high-bit plumbing test ---
