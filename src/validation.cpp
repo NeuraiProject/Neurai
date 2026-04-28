@@ -1436,43 +1436,67 @@ bool ReadBlockFromDisk(CBlock& block, const CBlockIndex* pindex, const Consensus
 
 CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
 {
-    int halvings = nHeight / consensusParams.nSubsidyHalvingInterval;
+    // NIP-028: at and after the block-time-reduction activation height
+    // (testnet: 23,000), freeze the legacy halving index at the boundary
+    // and add post-activation halvings on top, then halve the result.
+    // Pre-activation behaviour is byte-identical to the legacy curve.
+    const bool fPostReduction =
+        IsBlockTimeReductionActive(nHeight, consensusParams);
+
+    int halvings;
+    if (fPostReduction) {
+        const int activation         = consensusParams.nBlockTimeReductionHeight;
+        const int legacyAtActivation = activation
+                                       / consensusParams.nSubsidyHalvingInterval;
+        const int postHalvings       = (nHeight - activation)
+                                       / consensusParams.nSubsidyHalvingIntervalPost;
+        halvings = legacyAtActivation + postHalvings;
+    } else {
+        halvings = nHeight / consensusParams.nSubsidyHalvingInterval;
+    }
+
+    auto half = [fPostReduction](CAmount v) -> CAmount {
+        return fPostReduction ? (v >> 1) : v;
+    };
 
     // Go zero after 383 micro-halvings (10 years) Mined 20993999270 XNA
+    // (mainnet figures; testnet emission diverges past height 23,000 per NIP-028)
 
     if (halvings >= 383)
         return 0;
 
     // Force block reward to 500 after 216 micro-halvings. Mined 19791599270 XNA
     if (halvings >= 216)
-        return 500 * COIN;
-		
+        return half(500 * COIN);
+
     // Force block reward to 1000 after 180 micro-halvings. Mined 19280399270 XNA
     if (halvings >= 180)
-        return 1000 * COIN;
+        return half(1000 * COIN);
 
     // Force block reward to 2000 after 144 micro-halvings. Mined 18257999270 XNA
     if (halvings >= 144)
-        return 2000 * COIN;
-		
+        return half(2000 * COIN);
+
     // Force block reward to 3000 after 108 micro-halvings. Mined 16717199270 XNA
     if (halvings >= 108)
-        return 3000 * COIN;
+        return half(3000 * COIN);
 
     // Force block reward to 4000 after 72 micro-halvings. Mined 14657999270 XNA
     if (halvings >= 72)
-        return 4000 * COIN;
-		
+        return half(4000 * COIN);
+
     // Force block reward to 5000 after 36 micro-halvings. Mined 12080399270 XNA
     if (halvings >= 36)
-        return 5000 * COIN;
+        return half(5000 * COIN);
 
-   
-    // Subsidy is cut 5% every 14,400 blocks which will occur approximately every 10 days.
+
+    // Subsidy is cut 5% every nSubsidyHalvingInterval blocks. Wall-clock
+    // cadence is preserved at ~10 days both pre-NIP-028 (14,400 × 60s)
+    // and post-NIP-028 (28,800 × 30s).
 
     CAmount nSubsidy = 50000 * COIN;
     nSubsidy = nSubsidy * pow(0.95, halvings);
-    return nSubsidy;
+    return half(nSubsidy);
 }
 
 bool IsInitialBlockDownload()
@@ -2503,6 +2527,15 @@ int32_t ComputeBlockVersion(const CBlockIndex* pindexPrev, const Consensus::Para
     /** If the assets are deployed now. We need to use the correct block version */
     if (AreAssetsDeployed())
         nVersion = VERSIONBITS_TOP_BITS_ASSETS;
+
+    // NIP-028: signal the block-time-reduction flag at every height at or
+    // past activation. Composes with VERSIONBITS_TOP_BITS_ASSETS via OR.
+    // On chains that did not opt in (mainnet, regtest by default)
+    // nBlockTimeReductionHeight is INT_MAX, so this branch never runs and
+    // ComputeBlockVersion returns the legacy value.
+    const int nNextHeight = pindexPrev ? pindexPrev->nHeight + 1 : 0;
+    if (IsBlockTimeReductionActive(nNextHeight, params))
+        nVersion |= VERSIONBITS_FLAG_NIP028;
 
     for (int i = 0; i < (int)Consensus::MAX_VERSION_BITS_DEPLOYMENTS; i++) {
         ThresholdState state = VersionBitsState(pindexPrev, params, (Consensus::DeploymentPos)i, versionbitscache);
@@ -4374,9 +4407,28 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationSta
 {
     assert(pindexPrev != nullptr);
     const int nHeight = pindexPrev->nHeight + 1;
+    const Consensus::Params& consensusParams = params.GetConsensus();
+
+    // NIP-028: at heights >= activation, the NIP-028 hardfork flag must
+    // be set in block.nVersion. Placed at the top of this function so it
+    // fires before the bad-diffbits check below and is the primary reject
+    // reason for legacy-mined blocks at every height >= activation,
+    // regardless of whether DGW has also diverged at that height. This
+    // prioritization is intentional: it makes the hardfork-marker
+    // rejection the canonical, single reject reason an unupgraded miner
+    // sees in upgraded-node logs. Mainnet inert
+    // (nBlockTimeReductionHeight = INT_MAX -> predicate false).
+    if (IsBlockTimeReductionActive(nHeight, consensusParams) &&
+        (block.nVersion & VERSIONBITS_FLAG_NIP028) == 0) {
+        return state.Invalid(false, REJECT_OBSOLETE,
+                             strprintf("bad-version-nip028(0x%08x)", block.nVersion),
+                             strprintf("rejected nVersion=0x%08x block: NIP-028 flag (0x%08x) "
+                                       "required at height %d",
+                                       block.nVersion, VERSIONBITS_FLAG_NIP028, nHeight));
+    }
 
     //If this is a reorg, check that it is not too deep
-    int nMaxReorgDepth = gArgs.GetArg("-maxreorg", GetParams().MaxReorganizationDepth());
+    int nMaxReorgDepth = gArgs.GetArg("-maxreorg", GetParams().MaxReorganizationDepth(nHeight));
     int nMinReorgPeers = gArgs.GetArg("-minreorgpeers", GetParams().MinReorganizationPeers());
     int nMinReorgAge = gArgs.GetArg("-minreorgage", GetParams().MinReorganizationAge());
     bool fGreaterThanMaxReorg = (chainActive.Height() - (nHeight - 1)) >= nMaxReorgDepth;
@@ -4391,7 +4443,6 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationSta
     }
 
     // Check proof of work
-    const Consensus::Params& consensusParams = params.GetConsensus();
     if (block.nBits != GetNextWorkRequired(pindexPrev, &block, consensusParams))
         return state.DoS(100, false, REJECT_INVALID, "bad-diffbits", false, "incorrect proof of work");
 
@@ -6111,6 +6162,33 @@ bool AreRestrictedAssetsDeployed() {
 
 bool IsDGWActive(unsigned int nBlockNumber) {
     return nBlockNumber >= GetParams().DGWActivationBlock();
+}
+
+bool IsBlockTimeReductionActive(int nHeight, const Consensus::Params& params)
+{
+    return nHeight >= params.nBlockTimeReductionHeight;
+}
+
+bool IsBlockTimeReductionActiveOnTip()
+{
+    LOCK(cs_main);
+    const CBlockIndex* tip = chainActive.Tip();
+    if (!tip) return false;
+    return IsBlockTimeReductionActive(tip->nHeight, GetParams().GetConsensus());
+}
+
+int64_t GetEffectivePowTargetSpacing(int nHeight, const Consensus::Params& params)
+{
+    return IsBlockTimeReductionActive(nHeight, params)
+        ? params.nPowTargetSpacingPost
+        : params.nPowTargetSpacing;
+}
+
+int64_t GetEffectivePowTargetTimespan(int nHeight, const Consensus::Params& params)
+{
+    return IsBlockTimeReductionActive(nHeight, params)
+        ? params.nPowTargetTimespanPost
+        : params.nPowTargetTimespan;
 }
 
 bool IsMessagingActive(unsigned int nBlockNumber) {

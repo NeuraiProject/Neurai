@@ -21,18 +21,27 @@ unsigned int static DarkGravityWave(const CBlockIndex* pindexLast, const CBlockH
 
     unsigned int nProofOfWorkLimit = UintToArith256(params.powLimit).GetCompact();
     const arith_uint256 bnPowLimit = UintToArith256(params.powLimit);
-    int64_t nPastBlocks = 180; // ~3hr
+    // NIP-028: window length stays at 180 blocks across the activation
+    // boundary by design. Wall-clock window naturally compresses from
+    // ~3h (60s × 180) to ~1.5h (30s × 180) post-activation. The
+    // per-block-summed nTargetTimespan below tracks the rules in force
+    // at each block in the window, so a straddling window does not
+    // trigger a single-step difficulty jump.
+    int64_t nPastBlocks = 180;
 
     // make sure we have at least (nPastBlocks + 1) blocks, otherwise just return powLimit
     if (!pindexLast || pindexLast->nHeight < nPastBlocks) {
         return bnPowLimit.GetCompact();
     }
 
+    const int nNewHeight = pindexLast->nHeight + 1;
+    const int64_t nSpacingNew = GetEffectivePowTargetSpacing(nNewHeight, params);
+
     if (params.fPowAllowMinDifficultyBlocks && params.fPowNoRetargeting) {
         // Special difficulty rule:
-        // If the new block's timestamp is more than 2 * 1 minutes
-        // then allow mining of a min-difficulty block.
-        if (pblock->GetBlockTime() > pindexLast->GetBlockTime() + params.nPowTargetSpacing * 2)
+        // If the new block's timestamp is more than 2 × the active
+        // target spacing, allow mining of a min-difficulty block.
+        if (pblock->GetBlockTime() > pindexLast->GetBlockTime() + nSpacingNew * 2)
             return nProofOfWorkLimit;
         else {
             // Return the last non-special-min-difficulty-rules-block
@@ -47,6 +56,12 @@ unsigned int static DarkGravityWave(const CBlockIndex* pindexLast, const CBlockH
     const CBlockIndex *pindex = pindexLast;
     arith_uint256 bnPastTargetAvg;
 
+    // NIP-028: nTargetTimespan is now a sum of per-block effective
+    // spacings rather than nPastBlocks × spacing. For a window that has
+    // not crossed the activation height the sum is
+    // nPastBlocks × params.nPowTargetSpacing — bit-identical to the
+    // legacy formula.
+    int64_t nTargetTimespan = 0;
     int nKAWPOWBlocksFound = 0;
     for (unsigned int nCountBlocks = 1; nCountBlocks <= nPastBlocks; nCountBlocks++) {
         arith_uint256 bnTarget = arith_uint256().SetCompact(pindex->nBits);
@@ -56,6 +71,8 @@ unsigned int static DarkGravityWave(const CBlockIndex* pindexLast, const CBlockH
             // NOTE: that's not an average really...
             bnPastTargetAvg = (bnPastTargetAvg * nCountBlocks + bnTarget) / (nCountBlocks + 1);
         }
+
+        nTargetTimespan += GetEffectivePowTargetSpacing(pindex->nHeight, params);
 
         // Count how blocks are KAWPOW mined in the last 180 blocks
         if (pindex->nTime >= nKAWPOWActivationTime) {
@@ -83,7 +100,8 @@ unsigned int static DarkGravityWave(const CBlockIndex* pindexLast, const CBlockH
 
     int64_t nActualTimespan = pindexLast->GetBlockTime() - pindex->GetBlockTime();
     // NOTE: is this accurate? nActualTimespan counts it for (nPastBlocks - 1) blocks only...
-    int64_t nTargetTimespan = nPastBlocks * params.nPowTargetSpacing;
+    // Preserved unchanged from legacy: the off-by-one exists in both old
+    // and new formulas, so behaviour is bit-identical pre-activation.
 
     if (nActualTimespan < nTargetTimespan/3)
         nActualTimespan = nTargetTimespan/3;
@@ -105,6 +123,8 @@ unsigned int GetNextWorkRequiredBTC(const CBlockIndex* pindexLast, const CBlockH
 {
     assert(pindexLast != nullptr);
     unsigned int nProofOfWorkLimit = UintToArith256(params.powLimit).GetCompact();
+    const int nNewHeight = pindexLast->nHeight + 1;
+    const int64_t nSpacingNew = GetEffectivePowTargetSpacing(nNewHeight, params);
 
     // Only change once per difficulty adjustment interval
     if ((pindexLast->nHeight+1) % params.DifficultyAdjustmentInterval() != 0)
@@ -112,9 +132,9 @@ unsigned int GetNextWorkRequiredBTC(const CBlockIndex* pindexLast, const CBlockH
         if (params.fPowAllowMinDifficultyBlocks)
         {
             // Special difficulty rule for testnet:
-            // If the new block's timestamp is more than 2* 10 minutes
-            // then allow mining of a min-difficulty block.
-            if (pblock->GetBlockTime() > pindexLast->GetBlockTime() + params.nPowTargetSpacing*2)
+            // If the new block's timestamp is more than 2 × the active
+            // target spacing, allow mining of a min-difficulty block.
+            if (pblock->GetBlockTime() > pindexLast->GetBlockTime() + nSpacingNew*2)
                 return nProofOfWorkLimit;
             else
             {
@@ -159,19 +179,24 @@ unsigned int CalculateNextWorkRequired(const CBlockIndex* pindexLast, int64_t nF
     if (params.fPowNoRetargeting)
         return pindexLast->nBits;
 
+    // NIP-028: use the effective timespan for the height of the block
+    // being mined. Pre-activation this is identical to params.nPowTargetTimespan.
+    const int64_t nTargetTimespan =
+        GetEffectivePowTargetTimespan(pindexLast->nHeight + 1, params);
+
     // Limit adjustment step
     int64_t nActualTimespan = pindexLast->GetBlockTime() - nFirstBlockTime;
-    if (nActualTimespan < params.nPowTargetTimespan/4)
-        nActualTimespan = params.nPowTargetTimespan/4;
-    if (nActualTimespan > params.nPowTargetTimespan*4)
-        nActualTimespan = params.nPowTargetTimespan*4;
+    if (nActualTimespan < nTargetTimespan/4)
+        nActualTimespan = nTargetTimespan/4;
+    if (nActualTimespan > nTargetTimespan*4)
+        nActualTimespan = nTargetTimespan*4;
 
     // Retarget
     const arith_uint256 bnPowLimit = UintToArith256(params.powLimit);
     arith_uint256 bnNew;
     bnNew.SetCompact(pindexLast->nBits);
     bnNew *= nActualTimespan;
-    bnNew /= params.nPowTargetTimespan;
+    bnNew /= nTargetTimespan;
 
     if (bnNew > bnPowLimit)
         bnNew = bnPowLimit;

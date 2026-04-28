@@ -1814,7 +1814,9 @@ UniValue getchaintxstats(const JSONRPCRequest& request)
         );
 
     const CBlockIndex* pindex;
-    int blockcount = 30 * 24 * 60 * 60 / GetParams().GetConsensus().nPowTargetSpacing; // By default: 1 month
+    // NIP-028: spacing helper at tip height (so a 30 s post-activation
+    // chain returns "1 month worth of blocks" = 86400 instead of 43200).
+    int blockcount = 30 * 24 * 60 * 60 / GetEffectivePowTargetSpacing(chainActive.Height(), GetParams().GetConsensus()); // By default: 1 month
 
     bool havehash = !request.params[1].isNull();
     uint256 hash;

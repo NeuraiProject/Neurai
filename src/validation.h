@@ -632,6 +632,24 @@ bool IsDGWActive(unsigned int nBlockNumber);
 bool IsMessagingActive(unsigned int nBlockNumber);
 bool IsRestrictedActive(unsigned int nBlockNumber);
 
+/** NIP-028: returns true iff nHeight is at or past the testnet
+ *  block-time-reduction activation. Always false on chains that did
+ *  not opt in (mainnet, regtest by default). */
+bool IsBlockTimeReductionActive(int nHeight, const Consensus::Params& params);
+
+/** NIP-028: same, but read from the current chainActive tip. Takes
+ *  cs_main. Used by the per-peer SendMessages runtime gate. */
+bool IsBlockTimeReductionActiveOnTip();
+
+/** NIP-028: effective PoW target spacing at nHeight on the given
+ *  chain. Returns nPowTargetSpacingPost at and after activation,
+ *  otherwise the legacy nPowTargetSpacing. */
+int64_t GetEffectivePowTargetSpacing(int nHeight, const Consensus::Params& params);
+
+/** NIP-028: effective PoW target timespan at nHeight on the given
+ *  chain. */
+int64_t GetEffectivePowTargetTimespan(int nHeight, const Consensus::Params& params);
+
 CAssetsCache* GetCurrentAssetCache();
 /** XNA END */
 

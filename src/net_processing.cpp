@@ -421,13 +421,15 @@ bool TipMayBeStale(const Consensus::Params &consensusParams)
     if (g_last_tip_update == 0) {
         g_last_tip_update = GetTime();
     }
-    return g_last_tip_update < GetTime() - consensusParams.nPowTargetSpacing * 3 && mapBlocksInFlight.empty();
+    // NIP-028: spacing helper at tip height
+    return g_last_tip_update < GetTime() - GetEffectivePowTargetSpacing(chainActive.Height(), consensusParams) * 3 && mapBlocksInFlight.empty();
 }
 
 // Requires cs_main
 bool CanDirectFetch(const Consensus::Params &consensusParams)
 {
-    return chainActive.Tip()->GetBlockTime() > GetAdjustedTime() - consensusParams.nPowTargetSpacing * 20;
+    // NIP-028: spacing helper at tip height
+    return chainActive.Tip()->GetBlockTime() > GetAdjustedTime() - GetEffectivePowTargetSpacing(chainActive.Height(), consensusParams) * 20;
 }
 
 // Requires cs_main
@@ -1054,7 +1056,7 @@ void static ProcessGetData(CNode* pfrom, const Consensus::Params& consensusParam
                         // chain we know about.
                         send = mi->second->IsValid(BLOCK_VALID_SCRIPTS) &&
                             StaleBlockRequestAllowed(mi->second, consensusParams) && (chainActive.Height() - (mi->second->nHeight-1) <
-                                GetParams().MaxReorganizationDepth());
+                                GetParams().MaxReorganizationDepth(chainActive.Height()));
                         if (!send) {
                             LogPrintf("%s: ignoring request from peer=%i for old block that isn't in the main chain\n", __func__, pfrom->GetId());
                         }
@@ -1625,6 +1627,19 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
             return false;
         }
 
+        // NIP-028: once the local tip has reached the block-time-reduction
+        // activation height (testnet: 23,000), peers below
+        // BLOCK_TIME_REDUCTION_VERSION are dropped at handshake. Inert on
+        // mainnet (nBlockTimeReductionHeight = INT_MAX) and on testnet
+        // pre-23,000.
+        if (IsBlockTimeReductionActiveOnTip() && nVersion < BLOCK_TIME_REDUCTION_VERSION) {
+            LogPrintf("peer=%d using obsolete version %i; disconnecting because peer isn't signalling protocol version for NIP-028 (block-time reduction)\n", pfrom->GetId(), nVersion);
+            connman->PushMessage(pfrom, CNetMsgMaker(INIT_PROTO_VERSION).Make(NetMsgType::REJECT, strCommand, REJECT_OBSOLETE,
+                                                                              strprintf("Version must be %d or greater", BLOCK_TIME_REDUCTION_VERSION)));
+            pfrom->fDisconnect = true;
+            return false;
+        }
+
         if (nVersion == 10300)
             nVersion = 300;
         if (!vRecv.empty())
@@ -2035,7 +2050,8 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
             }
             // If pruning, don't inv blocks unless we have on disk and are likely to still have
             // for some reasonable time window (1 hour) that block relay might require.
-            const int nPrunedBlocksLikelyToHave = MIN_BLOCKS_TO_KEEP - 3600 / chainparams.GetConsensus().nPowTargetSpacing;
+            // NIP-028: spacing helper at tip height
+            const int nPrunedBlocksLikelyToHave = MIN_BLOCKS_TO_KEEP - 3600 / GetEffectivePowTargetSpacing(chainActive.Height(), chainparams.GetConsensus());
             if (fPruneMode && (!(pindex->nStatus & BLOCK_HAVE_DATA) || pindex->nHeight <= chainActive.Tip()->nHeight - nPrunedBlocksLikelyToHave))
             {
                 LogPrint(BCLog::NET, " getblocks stopping, pruned or too old block at %d %s\n", pindex->nHeight, pindex->GetBlockHash().ToString());
@@ -3242,6 +3258,22 @@ bool PeerLogicValidation::SendMessages(CNode* pto, std::atomic<bool>& interruptM
         if (!pto->fSuccessfullyConnected || pto->fDisconnect)
             return true;
 
+        // NIP-028 v5: once the local tip has reached the block-time-reduction
+        // activation height, evict any peer that connected before activation
+        // (and is therefore signalling a pre-NIP-028 protocol version). This
+        // complements the handshake-time gate added in ProcessMessage(VERSION),
+        // which only catches new connections.
+        // Cost: one short cs_main acquisition + integer compare per peer per
+        // tick. Inert on mainnet (predicate permanently false).
+        if (IsBlockTimeReductionActiveOnTip() &&
+            pto->nVersion != 0 &&
+            pto->nVersion < BLOCK_TIME_REDUCTION_VERSION) {
+            LogPrintf("peer=%d using obsolete version %i; disconnecting post-activation per NIP-028\n",
+                      pto->GetId(), pto->nVersion.load());
+            pto->fDisconnect = true;
+            return true;
+        }
+
         // If we get here, the outgoing message serialization version is set and can't change.
         const CNetMsgMaker msgMaker(pto->GetSendVersion());
 
@@ -3352,7 +3384,8 @@ bool PeerLogicValidation::SendMessages(CNode* pto, std::atomic<bool>& interruptM
             // Only actively request headers from a single peer, unless we're close to today.
             if ((nSyncStarted == 0 && fFetch) || pindexBestHeader->GetBlockTime() > GetAdjustedTime() - 24 * 60 * 60) {
                 state.fSyncStarted = true;
-                state.nHeadersSyncTimeout = GetTimeMicros() + HEADERS_DOWNLOAD_TIMEOUT_BASE + HEADERS_DOWNLOAD_TIMEOUT_PER_HEADER * (GetAdjustedTime() - pindexBestHeader->GetBlockTime())/(consensusParams.nPowTargetSpacing);
+                // NIP-028: spacing helper at the headers-sync front
+                state.nHeadersSyncTimeout = GetTimeMicros() + HEADERS_DOWNLOAD_TIMEOUT_BASE + HEADERS_DOWNLOAD_TIMEOUT_PER_HEADER * (GetAdjustedTime() - pindexBestHeader->GetBlockTime())/(GetEffectivePowTargetSpacing(pindexBestHeader ? pindexBestHeader->nHeight : 0, consensusParams));
                 nSyncStarted++;
                 const CBlockIndex *pindexStart = pindexBestHeader;
                 /* If possible, start at the block preceding the currently
@@ -3670,7 +3703,8 @@ bool PeerLogicValidation::SendMessages(CNode* pto, std::atomic<bool>& interruptM
         if (state.vBlocksInFlight.size() > 0) {
             QueuedBlock &queuedBlock = state.vBlocksInFlight.front();
             int nOtherPeersWithValidatedDownloads = nPeersWithValidatedDownloads - (state.nBlocksInFlightValidHeaders > 0);
-            if (nNow > state.nDownloadingSince + consensusParams.nPowTargetSpacing * (BLOCK_DOWNLOAD_TIMEOUT_BASE + BLOCK_DOWNLOAD_TIMEOUT_PER_PEER * nOtherPeersWithValidatedDownloads)) {
+            // NIP-028: spacing helper at tip height
+            if (nNow > state.nDownloadingSince + GetEffectivePowTargetSpacing(chainActive.Height(), consensusParams) * (BLOCK_DOWNLOAD_TIMEOUT_BASE + BLOCK_DOWNLOAD_TIMEOUT_PER_PEER * nOtherPeersWithValidatedDownloads)) {
                 LogPrintf("Timeout downloading block %s from peer=%d, disconnecting\n", queuedBlock.hash.ToString(), pto->GetId());
                 pto->fDisconnect = true;
                 return true;

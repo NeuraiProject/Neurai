@@ -144,7 +144,13 @@ int64_t GetBlockProofEquivalentTime(const CBlockIndex& to, const CBlockIndex& fr
         r = from.nChainWork - to.nChainWork;
         sign = -1;
     }
-    r = r * arith_uint256(params.nPowTargetSpacing) / GetBlockProof(tip);
+    // NIP-028: use the effective spacing for the height of the tip we are
+    // measuring against. Inlined here to avoid pulling validation.h into
+    // chain.cpp.
+    const int64_t spacing = (tip.nHeight >= params.nBlockTimeReductionHeight)
+        ? params.nPowTargetSpacingPost
+        : params.nPowTargetSpacing;
+    r = r * arith_uint256(spacing) / GetBlockProof(tip);
     if (r.bits() > 63) {
         return sign * std::numeric_limits<int64_t>::max();
     }

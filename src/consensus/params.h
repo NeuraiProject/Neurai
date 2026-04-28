@@ -147,6 +147,22 @@ struct Params {
      *  consensus level. true on testnet/regtest; false on mainnet until future
      *  activation. */
     bool nASSETRBFBlockEnabled;
+    /** NIP-028: activation height for the testnet block-time reduction
+     *  (60s → 30s) and coupled subsidy halving. Set to
+     *  std::numeric_limits<int>::max() to disable on chains that did
+     *  not opt in (mainnet, regtest by default). At and after this
+     *  height the chain consensus rules use:
+     *    - nPowTargetSpacingPost           (= 30 on testnet)
+     *    - nPowTargetTimespanPost          (= 2016 * 30 on testnet)
+     *    - nSubsidyHalvingIntervalPost     (= 28800, doubled so the
+     *      wall-clock halving cadence ~10 days is preserved across the
+     *      spacing change)
+     *    - GetBlockSubsidy()               halved at this height
+     *    - block.nVersion                  must carry VERSIONBITS_FLAG_NIP028 */
+    int     nBlockTimeReductionHeight;
+    int64_t nPowTargetSpacingPost;
+    int64_t nPowTargetTimespanPost;
+    int     nSubsidyHalvingIntervalPost;
 };
 } // namespace Consensus
 

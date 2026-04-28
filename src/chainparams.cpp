@@ -13,6 +13,7 @@
 #include "arith_uint256.h"
 
 #include <assert.h>
+#include <limits>
 #include "chainparamsseeds.h"
 
 //TODO: Take these out
@@ -132,6 +133,11 @@ public:
         consensus.nINPUTVALUEEnabled = false; // NIP-024: OP_INPUTVALUE not yet active on mainnet
         consensus.nCHAINCONTEXTEnabled = false; // NIP-026: OP_CHAINCONTEXT not yet active on mainnet
         consensus.nASSETRBFBlockEnabled = false; // NIP-025: asset-AuthScript RBF ban not yet active on mainnet
+        // NIP-028: block-time reduction not active on mainnet
+        consensus.nBlockTimeReductionHeight   = std::numeric_limits<int>::max();
+        consensus.nPowTargetSpacingPost       = 1 * 60;       // mirror legacy
+        consensus.nPowTargetTimespanPost      = 2016 * 60;    // mirror legacy
+        consensus.nSubsidyHalvingIntervalPost = 14400;        // mirror legacy
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days
@@ -289,6 +295,7 @@ public:
         nDGWActivationBlock = 1;
 
         nMaxReorganizationDepth = 60; // 60 at 1 minute block timespan is +/- 60 minutes.
+        nMaxReorganizationDepthPost = 60; // mainnet: NIP-028 inactive; mirror legacy
         nMinReorganizationPeers = 6;
         nMinReorganizationAge = 60 * 60 * 12; // 12 hours
 
@@ -334,6 +341,14 @@ public:
         consensus.nINPUTVALUEEnabled = true; // NIP-024: OP_INPUTVALUE active on testnet
         consensus.nCHAINCONTEXTEnabled = true; // NIP-026: OP_CHAINCONTEXT active on testnet
         consensus.nASSETRBFBlockEnabled = true; // NIP-025: asset-AuthScript RBF ban active on testnet
+        // NIP-028: block-time reduction (60s -> 30s) and coupled subsidy halving
+        // activate at testnet height 23,000. Halving interval doubled so the
+        // wall-clock micro-halving cadence (~10 days) is preserved across the
+        // spacing change.
+        consensus.nBlockTimeReductionHeight   = 23000;
+        consensus.nPowTargetSpacingPost       = 30;
+        consensus.nPowTargetTimespanPost      = 2016 * 30;
+        consensus.nSubsidyHalvingIntervalPost = 28800;
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days
@@ -494,7 +509,10 @@ public:
         // DGW Activation
         nDGWActivationBlock = 1;
 
-        nMaxReorganizationDepth = 60; // 60 at 1 minute block timespan is +/- 60 minutes.
+        // NIP-028: pre-23000  60 blocks × 60s = 60 min;
+        //          post-23000 120 blocks × 30s = 60 min.
+        nMaxReorganizationDepth     = 60;
+        nMaxReorganizationDepthPost = 120;
         nMinReorganizationPeers = 6;
         nMinReorganizationAge = 60 * 60 * 12; // 12 hours
 
@@ -539,6 +557,12 @@ public:
         consensus.nINPUTVALUEEnabled = true; // NIP-024: OP_INPUTVALUE active on regtest
         consensus.nCHAINCONTEXTEnabled = true; // NIP-026: OP_CHAINCONTEXT active on regtest
         consensus.nASSETRBFBlockEnabled = true; // NIP-025: asset-AuthScript RBF ban active on regtest
+        // NIP-028: not active on regtest by default; tests can override via
+        // CChainParams::UpdateBlockTimeReduction... if a future opt-in is added.
+        consensus.nBlockTimeReductionHeight   = std::numeric_limits<int>::max();
+        consensus.nPowTargetSpacingPost       = 1 * 60;
+        consensus.nPowTargetTimespanPost      = 2016 * 60;
+        consensus.nSubsidyHalvingIntervalPost = 14400;
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days
@@ -669,9 +693,10 @@ public:
         // DGW Activation
         nDGWActivationBlock = 200;
 
-        nMaxReorganizationDepth = 60; 
+        nMaxReorganizationDepth = 60;
+        nMaxReorganizationDepthPost = 60; // regtest: NIP-028 inactive; mirror legacy
         nMinReorganizationPeers = 4;
-        nMinReorganizationAge = 60 * 60 * 12; 
+        nMinReorganizationAge = 60 * 60 * 12;
 
         nAssetActivationHeight = 0; 
         nMessagingActivationBlock = 0; 

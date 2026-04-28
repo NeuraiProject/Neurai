@@ -10,7 +10,7 @@
  * network protocol versioning
  */
 
-static const int PROTOCOL_VERSION = 70028;
+static const int PROTOCOL_VERSION = 70029;
 
 //! initial proto version, to be increased after version/verack negotiation
 static const int INIT_PROTO_VERSION = 209;
@@ -59,6 +59,12 @@ static const int ASSETDATA_VERSION_UPDATED = 70020;
 
 //! In this version, 'rip5 (messaging and restricted assets)' was introduced
 static const int MESSAGING_RESTRICTED_ASSETS_VERSION = 70026;
+
+//! NIP-028: peers below this protocol version are disconnected once
+//! the testnet tip has reached the block-time-reduction activation
+//! height (both during version handshake and on every per-peer
+//! tick thereafter).
+static const int BLOCK_TIME_REDUCTION_VERSION = 70029;
 
 
 #endif // NEURAI_VERSION_H

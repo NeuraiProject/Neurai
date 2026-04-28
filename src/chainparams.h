@@ -139,7 +139,15 @@ public:
     unsigned int MessagingActivationBlock() const { return nMessagingActivationBlock; }
     unsigned int RestrictedActivationBlock() const { return nRestrictedActivationBlock; }
 
-    int MaxReorganizationDepth() const { return nMaxReorganizationDepth; }
+    /** NIP-028: height-aware reorg cap. Returns nMaxReorganizationDepthPost
+     *  at and after consensus.nBlockTimeReductionHeight, otherwise
+     *  the legacy nMaxReorganizationDepth. On chains that did not opt
+     *  in, both values are equal so the function is a no-op. */
+    int MaxReorganizationDepth(int nHeight) const {
+        return nHeight >= consensus.nBlockTimeReductionHeight
+            ? nMaxReorganizationDepthPost
+            : nMaxReorganizationDepth;
+    }
     int MinReorganizationPeers() const { return nMinReorganizationPeers; }
     int MinReorganizationAge() const { return nMinReorganizationAge; }
 
@@ -198,6 +206,7 @@ protected:
     unsigned int nRestrictedActivationBlock;
 
     int nMaxReorganizationDepth;
+    int nMaxReorganizationDepthPost;   // NIP-028
     int nMinReorganizationPeers;
     int nMinReorganizationAge;
 

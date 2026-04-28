@@ -20,6 +20,12 @@ static const int32_t VERSIONBITS_TOP_BITS_ASSETS = 0x30000000UL;
 static const int32_t VERSIONBITS_TOP_MASK = 0xE0000000UL;
 /** Total bits available for versionbits */
 static const int32_t VERSIONBITS_NUM_BITS = 29;
+/** NIP-028: hardfork marker bit. Required to be set on every block at
+ *  heights >= consensus.nBlockTimeReductionHeight on chains that have
+ *  opted in (testnet only by default). Bit 30 — currently unused in
+ *  this tree. Composes with VERSIONBITS_TOP_BITS and
+ *  VERSIONBITS_TOP_BITS_ASSETS via bitwise OR. */
+static const int32_t VERSIONBITS_FLAG_NIP028 = 0x40000000UL;
 
 enum ThresholdState {
     THRESHOLD_DEFINED,
