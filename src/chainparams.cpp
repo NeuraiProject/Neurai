@@ -342,10 +342,10 @@ public:
         consensus.nCHAINCONTEXTEnabled = true; // NIP-026: OP_CHAINCONTEXT active on testnet
         consensus.nASSETRBFBlockEnabled = true; // NIP-025: asset-AuthScript RBF ban active on testnet
         // NIP-028: block-time reduction (60s -> 30s) and coupled subsidy halving
-        // activate at testnet height 23,000. Halving interval doubled so the
+        // activate at testnet height 22,700. Halving interval doubled so the
         // wall-clock micro-halving cadence (~10 days) is preserved across the
         // spacing change.
-        consensus.nBlockTimeReductionHeight   = 23000;
+        consensus.nBlockTimeReductionHeight   = 22700;
         consensus.nPowTargetSpacingPost       = 30;
         consensus.nPowTargetTimespanPost      = 2016 * 30;
         consensus.nSubsidyHalvingIntervalPost = 28800;
@@ -509,8 +509,8 @@ public:
         // DGW Activation
         nDGWActivationBlock = 1;
 
-        // NIP-028: pre-23000  60 blocks × 60s = 60 min;
-        //          post-23000 120 blocks × 30s = 60 min.
+        // NIP-028: pre-22700  60 blocks × 60s = 60 min;
+        //          post-22700 120 blocks × 30s = 60 min.
         nMaxReorganizationDepth     = 60;
         nMaxReorganizationDepthPost = 120;
         nMinReorganizationPeers = 6;
