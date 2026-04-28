@@ -359,6 +359,10 @@ crypto_libneurai_crypto_a_SOURCES = \
   crypto/sha256.h \
   crypto/sha512.h \
   crypto/sha512.cpp \
+  crypto/keccak256.h \
+  crypto/keccak256.cpp \
+  crypto/blake2b.h \
+  crypto/blake2b.cpp \
   crypto/ethash/include/ethash/ethash.h \
   crypto/ethash/include/ethash/ethash.hpp \
   crypto/ethash/include/ethash/hash_types.h \

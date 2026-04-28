@@ -200,6 +200,9 @@ enum opcodetype
     OP_NOP8 = OP_SPLIT,
     OP_NOP9 = 0xb8,
     OP_NOP10 = 0xb9,
+    // NIP-030: hash opcodes in previously unassigned slots.
+    OP_KECCAK256 = 0xba,
+    OP_BLAKE2B = 0xbb,
     OP_REVERSEBYTES = 0xbc,
     OP_TXLOCKTIME = 0xc5,
     OP_OUTPUTVALUE = 0xcc,

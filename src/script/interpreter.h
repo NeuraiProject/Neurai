@@ -215,6 +215,12 @@ enum class script_verify_flag_name : uint8_t {
     //
     SCRIPT_VERIFY_CHAINCONTEXT,                             // bit 34
 
+    // NIP-030: enable OP_KECCAK256 (0xba) and OP_BLAKE2B (0xbb),
+    // both previously unassigned. Flag off → both opcodes are
+    // bad-opcode. Hard-fork on activation.
+    //
+    SCRIPT_VERIFY_KECCAK_BLAKE2B,                           // bit 35
+
     // End marker — must always be last.
     SCRIPT_VERIFY_END_MARKER
 };

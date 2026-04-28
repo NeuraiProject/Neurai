@@ -110,6 +110,8 @@ inline script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
     // The handler re-checks this at runtime as belt-and-braces (§3.7).
     if (consensus.nCHAINCONTEXTEnabled)      base |= SCRIPT_VERIFY_CHAINCONTEXT
                                                    | SCRIPT_VERIFY_64BIT_INTEGERS;
+    // NIP-030: OP_KECCAK256 and OP_BLAKE2B hash opcodes.
+    if (consensus.nKeccakBlake2bEnabled)     base |= SCRIPT_VERIFY_KECCAK_BLAKE2B;
     return base;
 }
 

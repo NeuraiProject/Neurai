@@ -12,6 +12,8 @@
 #include "crypto/ripemd160.h"
 #include "crypto/sha1.h"
 #include "crypto/sha256.h"
+#include "crypto/keccak256.h"   // NIP-030
+#include "crypto/blake2b.h"     // NIP-030
 #include "pubkey.h"
 #include "script/script.h"
 #include "script/standard.h"
@@ -1949,6 +1951,28 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             CHash256().Write(vch.data(), vch.size()).Finalize(vchHash.data());
                         popstack(stack);
                         stack.push_back(vchHash);
+                    }
+                        break;
+
+                    // NIP-030: Keccak-256 (Ethereum) and BLAKE2b-256.
+                    // Both opcodes are gated on SCRIPT_VERIFY_KECCAK_BLAKE2B.
+                    // Flag off → bad-opcode (slots 0xba/0xbb were previously
+                    // unassigned). Flag on → push 32-byte hash of stack top.
+                    case OP_KECCAK256:
+                    case OP_BLAKE2B:
+                    {
+                        if (!(flags & SCRIPT_VERIFY_KECCAK_BLAKE2B))
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
+                        if (stack.size() < 1)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+                        valtype &vch = stacktop(-1);
+                        valtype vchHash(32);
+                        if (opcode == OP_KECCAK256)
+                            crypto::Keccak256(vch.data(), vch.size(), vchHash.data());
+                        else
+                            crypto::Blake2b256(vch.data(), vch.size(), vchHash.data());
+                        popstack(stack);
+                        stack.push_back(std::move(vchHash));
                     }
                         break;
 

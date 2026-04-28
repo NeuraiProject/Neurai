@@ -11,6 +11,7 @@ src/test/test_neurai
 src/test/test_neurai_fuzzy
 src/test/test_neurai_hash
 src/qt/test/test_neurai-qt
+build-out
 .vscode
 output.txt
 

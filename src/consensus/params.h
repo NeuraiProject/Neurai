@@ -163,6 +163,13 @@ struct Params {
     int64_t nPowTargetSpacingPost;
     int64_t nPowTargetTimespanPost;
     int     nSubsidyHalvingIntervalPost;
+    /** NIP-030: enable OP_KECCAK256 (0xba) and OP_BLAKE2B (0xbb)
+     *  hash opcodes. Both occupy previously unassigned slots
+     *  (`bad-opcode` pre-NIP-030); activation is a hard-fork
+     *  relative to the pre-NIP-030 rules. true on testnet/regtest
+     *  from genesis; false on mainnet until a future activation
+     *  NIP. */
+    bool nKeccakBlake2bEnabled;
 };
 } // namespace Consensus
 

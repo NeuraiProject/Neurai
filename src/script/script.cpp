@@ -142,6 +142,11 @@ const char* GetOpName(opcodetype opcode)
     case OP_SPLIT                  : return "OP_SPLIT";
     case OP_NOP9                   : return "OP_NOP9";
     case OP_NOP10                  : return "OP_NOP10";
+
+    // NIP-030
+    case OP_KECCAK256              : return "OP_KECCAK256";
+    case OP_BLAKE2B                : return "OP_BLAKE2B";
+
     case OP_REVERSEBYTES           : return "OP_REVERSEBYTES";
     case OP_TXLOCKTIME             : return "OP_TXLOCKTIME";
     case OP_OUTPUTVALUE            : return "OP_OUTPUTVALUE";
