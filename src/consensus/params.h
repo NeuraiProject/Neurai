@@ -179,6 +179,14 @@ struct Params {
      *  and the MAX_STACK_BYTES gate. true on testnet/regtest from
      *  genesis; false on mainnet until a future activation NIP. */
     bool nMerkleInclusionEnabled;
+    /** NIP-034a: enable OP_BLAKE3 (0xc8), OP_SHA3_256 (0xca) and
+     *  OP_SHA512 (0xcb) hash opcodes. All three slots were
+     *  previously unassigned (`bad-opcode`); activation is a
+     *  hard-fork. OP_POSEIDON (0xc9) is intentionally NOT covered
+     *  by this flag and stays bad-opcode pending its own NIP.
+     *  true on testnet/regtest from genesis; false on mainnet
+     *  until a future activation NIP. */
+    bool nModernHashesEnabled;
 };
 } // namespace Consensus
 

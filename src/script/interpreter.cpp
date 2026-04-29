@@ -14,6 +14,9 @@
 #include "crypto/sha256.h"
 #include "crypto/keccak256.h"   // NIP-030
 #include "crypto/blake2b.h"     // NIP-030
+#include "crypto/sha3_256.h"    // NIP-034a
+#include "crypto/sha512_wrap.h" // NIP-034a
+#include "crypto/blake3_wrap.h" // NIP-034a
 #include "pubkey.h"
 #include "script/script.h"
 #include "script/merkle_inclusion.h"  // NIP-031
@@ -2030,6 +2033,38 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             crypto::Blake2b256(vch.data(), vch.size(), vchHash.data());
                         popstack(stack);
                         stack.push_back(std::move(vchHash));
+                    }
+                        break;
+
+                    // NIP-034a: BLAKE3-256 / SHA3-256 / SHA-512.
+                    // All three slots (0xc8, 0xca, 0xcb) were previously
+                    // unassigned, so flag-off MUST return BAD_OPCODE — not
+                    // DISCOURAGE_UPGRADABLE_NOPS — to match pre-upgrade nodes.
+                    // Slot 0xc9 (OP_POSEIDON) is intentionally NOT handled
+                    // here and stays bad-opcode pending its own NIP.
+                    case OP_BLAKE3:
+                    case OP_SHA3_256:
+                    case OP_SHA512:
+                    {
+                        if (!(flags & SCRIPT_VERIFY_MODERN_HASHES))
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
+                        if (stack.size() < 1)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+                        valtype &vch = stacktop(-1);
+                        if (opcode == OP_SHA512) {
+                            valtype vchHash(64);
+                            crypto::SHA512_Wrap(vch.data(), vch.size(), vchHash.data());
+                            popstack(stack);
+                            stack.push_back(std::move(vchHash));
+                        } else {
+                            valtype vchHash(32);
+                            if (opcode == OP_BLAKE3)
+                                crypto::Blake3_256(vch.data(), vch.size(), vchHash.data());
+                            else
+                                crypto::SHA3_256(vch.data(), vch.size(), vchHash.data());
+                            popstack(stack);
+                            stack.push_back(std::move(vchHash));
+                        }
                     }
                         break;
 

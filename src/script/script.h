@@ -223,6 +223,14 @@ enum opcodetype
     // and pushes a boolean. Flag off → bad-opcode.
     OP_CHECKMERKLEINCLUSION = 0xc1,
 
+    // NIP-034a: modern hash opcodes in previously unassigned slots.
+    // Slot 0xc9 (OP_POSEIDON) is intentionally reserved for a future
+    // dedicated NIP and stays bad-opcode under the current consensus
+    // rules.
+    OP_BLAKE3   = 0xc8,
+    OP_SHA3_256 = 0xca,
+    OP_SHA512   = 0xcb,
+
     /** XNA START */
     OP_XNA_ASSET = 0xc0,
     /** XNA END */

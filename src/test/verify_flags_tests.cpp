@@ -64,11 +64,12 @@ BOOST_AUTO_TEST_CASE(none_is_zero)
 
 BOOST_AUTO_TEST_CASE(end_marker_matches_flag_count)
 {
-    // 37 flags (bits 0-36) means END_MARKER should be 37.
-    // Last added: SCRIPT_VERIFY_MERKLE_INCLUSION at bit 36 (NIP-031).
-    // Previously: SCRIPT_VERIFY_KECCAK_BLAKE2B at bit 35 (NIP-030),
+    // 38 flags (bits 0-37) means END_MARKER should be 38.
+    // Last added: SCRIPT_VERIFY_MODERN_HASHES at bit 37 (NIP-034a).
+    // Previously: SCRIPT_VERIFY_MERKLE_INCLUSION at bit 36 (NIP-031),
+    // SCRIPT_VERIFY_KECCAK_BLAKE2B at bit 35 (NIP-030),
     // SCRIPT_VERIFY_CHAINCONTEXT at bit 34 (NIP-026).
-    BOOST_CHECK_EQUAL(MAX_SCRIPT_VERIFY_FLAGS_BITS, 37);
+    BOOST_CHECK_EQUAL(MAX_SCRIPT_VERIFY_FLAGS_BITS, 38);
 }
 
 // --- No internal truncation ---
@@ -77,7 +78,7 @@ BOOST_AUTO_TEST_CASE(no_truncation)
 {
     // Combine all known flags and verify no bits are lost.
     script_verify_flags all = script_verify_flags::from_int(MAX_SCRIPT_VERIFY_FLAGS);
-    BOOST_CHECK_EQUAL(all.as_int(), (uint64_t{1} << 37) - 1);
+    BOOST_CHECK_EQUAL(all.as_int(), (uint64_t{1} << 38) - 1);
 }
 
 BOOST_AUTO_TEST_CASE(chaincontext_is_bit_34)

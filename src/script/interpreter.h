@@ -228,6 +228,14 @@ enum class script_verify_flag_name : uint8_t {
     //
     SCRIPT_VERIFY_MERKLE_INCLUSION,                         // bit 36
 
+    // NIP-034a: enable OP_BLAKE3 (0xc8), OP_SHA3_256 (0xca) and
+    // OP_SHA512 (0xcb), all previously unassigned. Flag off →
+    // bad-opcode for all three. Hard-fork on activation. Slot 0xc9
+    // (OP_POSEIDON) is NOT covered by this flag — it gets its own
+    // future NIP and verify flag.
+    //
+    SCRIPT_VERIFY_MODERN_HASHES,                            // bit 37
+
     // End marker — must always be last.
     SCRIPT_VERIFY_END_MARKER
 };

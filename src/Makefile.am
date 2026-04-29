@@ -340,7 +340,18 @@ libneurai_wallet_a_SOURCES = \
   $(NEURAI_CORE_H)
 
 # crypto primitives library
-crypto_libneurai_crypto_a_CPPFLAGS = $(AM_CPPFLAGS)
+#
+# NIP-034a: force BLAKE3 to its portable code path. Disables every
+# SIMD specialisation (SSE2/SSE4.1/AVX2/AVX512/NEON) in the vendored
+# upstream src/crypto/blake3/. The portable path matches the
+# upstream KAT vectors bit-exactly and keeps the consensus build
+# reproducible across compiler / target arch combinations. The
+# defines are only consumed by the BLAKE3 sources; harmless for
+# the other crypto files in this archive.
+crypto_libneurai_crypto_a_CPPFLAGS = $(AM_CPPFLAGS) \
+    -DBLAKE3_NO_SSE2 -DBLAKE3_NO_SSE41 \
+    -DBLAKE3_NO_AVX2 -DBLAKE3_NO_AVX512 \
+    -DBLAKE3_USE_NEON=0
 crypto_libneurai_crypto_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 crypto_libneurai_crypto_a_SOURCES = \
   crypto/aes.cpp \
@@ -363,6 +374,17 @@ crypto_libneurai_crypto_a_SOURCES = \
   crypto/keccak256.cpp \
   crypto/blake2b.h \
   crypto/blake2b.cpp \
+  crypto/sha512_wrap.h \
+  crypto/sha512_wrap.cpp \
+  crypto/sha3_256.h \
+  crypto/sha3_256.cpp \
+  crypto/blake3_wrap.h \
+  crypto/blake3_wrap.cpp \
+  crypto/blake3/blake3.c \
+  crypto/blake3/blake3.h \
+  crypto/blake3/blake3_impl.h \
+  crypto/blake3/blake3_dispatch.c \
+  crypto/blake3/blake3_portable.c \
   crypto/ethash/include/ethash/ethash.h \
   crypto/ethash/include/ethash/ethash.hpp \
   crypto/ethash/include/ethash/hash_types.h \

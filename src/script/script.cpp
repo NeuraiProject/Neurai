@@ -165,6 +165,11 @@ const char* GetOpName(opcodetype opcode)
     // NIP-031
     case OP_CHECKMERKLEINCLUSION   : return "OP_CHECKMERKLEINCLUSION";
 
+    // NIP-034a
+    case OP_BLAKE3                 : return "OP_BLAKE3";
+    case OP_SHA3_256               : return "OP_SHA3_256";
+    case OP_SHA512                 : return "OP_SHA512";
+
     /** XNA START */
     case OP_XNA_ASSET              : return "OP_XNA_ASSET";
     /** XNA END */

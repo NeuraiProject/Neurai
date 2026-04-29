@@ -114,6 +114,8 @@ inline script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
     if (consensus.nKeccakBlake2bEnabled)     base |= SCRIPT_VERIFY_KECCAK_BLAKE2B;
     // NIP-031: OP_CHECKMERKLEINCLUSION (native Merkle proof verifier).
     if (consensus.nMerkleInclusionEnabled)   base |= SCRIPT_VERIFY_MERKLE_INCLUSION;
+    // NIP-034a: OP_BLAKE3 / OP_SHA3_256 / OP_SHA512.
+    if (consensus.nModernHashesEnabled)      base |= SCRIPT_VERIFY_MODERN_HASHES;
     return base;
 }
 

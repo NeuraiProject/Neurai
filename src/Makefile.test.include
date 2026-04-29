@@ -63,6 +63,9 @@ NEURAI_TESTS =\
   test/hash_tests.cpp \
   test/keccak256_tests.cpp \
   test/blake2b_tests.cpp \
+  test/blake3_tests.cpp \
+  test/sha3_256_tests.cpp \
+  test/sha512_op_tests.cpp \
   test/key_tests.cpp \
   test/limitedmap_tests.cpp \
   test/dbwrapper_tests.cpp \
