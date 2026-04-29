@@ -16,6 +16,7 @@
 #include "crypto/blake2b.h"     // NIP-030
 #include "pubkey.h"
 #include "script/script.h"
+#include "script/merkle_inclusion.h"  // NIP-031
 #include "script/standard.h"
 #include "uint256.h"
 #include "serialize.h"
@@ -1091,6 +1092,62 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                     }
                         break;
 
+                    case OP_CHECKMERKLEINCLUSION:
+                    {
+                        // NIP-031: native Merkle inclusion verifier.
+                        //
+                        // Stack (top = root):
+                        //   <leaf> <scheme_id> <proof> <root> -> <bool>
+                        //
+                        // Flag-off path MUST fail with BAD_OPCODE — 0xc1 was
+                        // previously unassigned, so pre-upgrade nodes reject it
+                        // via the default branch. Falling through to NOP would
+                        // accept blocks that pre-upgrade nodes reject — a
+                        // consensus split. Mirrors NIP-026 / NIP-030 reasoning.
+                        if (!(flags & SCRIPT_VERIFY_MERKLE_INCLUSION))
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
+
+                        if (stack.size() < 4)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+                        const valtype& vchRoot   = stacktop(-1);
+                        const valtype& vchProof  = stacktop(-2);
+                        const valtype& vchScheme = stacktop(-3);
+                        const valtype& vchLeaf   = stacktop(-4);
+
+                        bool ok = false;
+                        if (vchRoot.size() == 32 && vchScheme.size() == 1) {
+                            const uint8_t scheme = vchScheme[0];
+                            // Scheme-availability gating. SHA-256 schemes
+                            // (0x01, 0x02) work whenever the NIP-031 flag is
+                            // set. Keccak / BLAKE2b schemes (0x03, 0x04)
+                            // additionally require NIP-030 to be active in
+                            // the same chain — matching the rule that
+                            // OP_KECCAK256 / OP_BLAKE2B opcodes use.
+                            const bool nip030 =
+                                (flags & SCRIPT_VERIFY_KECCAK_BLAKE2B) != 0;
+                            const bool scheme_available =
+                                scheme == nip031::SCHEME_BITCOIN_NEURAI ||
+                                scheme == nip031::SCHEME_SHA256_PLAIN ||
+                                ((scheme == nip031::SCHEME_KECCAK256_PLAIN ||
+                                  scheme == nip031::SCHEME_BLAKE2B_PLAIN) && nip030);
+                            if (scheme_available) {
+                                ok = nip031::VerifyMerkleInclusion(
+                                    vchLeaf.data(),  vchLeaf.size(),
+                                    scheme,
+                                    vchProof.data(), vchProof.size(),
+                                    vchRoot.data());
+                            }
+                        }
+
+                        popstack(stack);
+                        popstack(stack);
+                        popstack(stack);
+                        popstack(stack);
+                        stack.push_back(ok ? vchTrue : vchFalse);
+                    }
+                        break;
+
                     case OP_OUTPUTAUTHCOMMITMENT:
                     {
                         // NIP-023: push the 32-byte AuthScript v1 commitment
@@ -2153,11 +2210,13 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
             if (stack.size() + altstack.size() > MAX_STACK_SIZE)
                 return set_error(serror, SCRIPT_ERR_STACK_SIZE);
 
-            // NIP-018: total stack-bytes cap, enforced only on the CSFS path.
-            // Bounds worst-case memory when PQ-sized (3072 B) elements are
-            // permitted. Non-CSFS scripts keep the implicit 520 KB bound from
+            // NIP-018 / NIP-031: total stack-bytes cap, enforced whenever
+            // EffectiveMaxScriptElementSize widens above 520 B (i.e. CSFS
+            // or Merkle-inclusion is active). Bounds worst-case memory when
+            // PQ-sized (3072 B) elements are permitted. Non-widened scripts
+            // keep the implicit 520 KB bound from
             // MAX_STACK_SIZE × MAX_SCRIPT_ELEMENT_SIZE.
-            if (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) {
+            if (flags & (SCRIPT_VERIFY_CHECKSIGFROMSTACK | SCRIPT_VERIFY_MERKLE_INCLUSION)) {
                 size_t stack_bytes = 0;
                 for (const auto& item : stack)    stack_bytes += item.size();
                 for (const auto& item : altstack) stack_bytes += item.size();

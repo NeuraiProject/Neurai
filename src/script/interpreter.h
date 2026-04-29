@@ -221,6 +221,13 @@ enum class script_verify_flag_name : uint8_t {
     //
     SCRIPT_VERIFY_KECCAK_BLAKE2B,                           // bit 35
 
+    // NIP-031: enable OP_CHECKMERKLEINCLUSION (0xc1, previously
+    // unassigned). Flag off → bad-opcode. Hard-fork on activation.
+    // Also widens EffectiveMaxScriptElementSize to 3072 B and
+    // extends the MAX_STACK_BYTES enforcement gate (mirrors NIP-018).
+    //
+    SCRIPT_VERIFY_MERKLE_INCLUSION,                         // bit 36
+
     // End marker — must always be last.
     SCRIPT_VERIFY_END_MARKER
 };
@@ -241,14 +248,19 @@ static_assert(0 < MAX_SCRIPT_VERIFY_FLAGS_BITS
 static constexpr script_verify_flags::value_type MAX_SCRIPT_VERIFY_FLAGS =
     ((script_verify_flags::value_type{1} << MAX_SCRIPT_VERIFY_FLAGS_BITS) - 1);
 
-// NIP-018: effective per-element size cap for the script interpreter.
-// Returns MAX_PQ_SCRIPT_ELEMENT_SIZE (3072) when SCRIPT_VERIFY_CHECKSIGFROMSTACK
-// is set in the verify flags, otherwise MAX_SCRIPT_ELEMENT_SIZE (520).
-// Single source of truth for every call site in EvalScript and the witness
-// verification paths.
+// NIP-018 / NIP-031: effective per-element size cap for the script
+// interpreter. Returns MAX_PQ_SCRIPT_ELEMENT_SIZE (3072) when either:
+//   - SCRIPT_VERIFY_CHECKSIGFROMSTACK is set (NIP-018: PQ signatures
+//     and pubkeys exceed 520 B).
+//   - SCRIPT_VERIFY_MERKLE_INCLUSION is set (NIP-031: a depth-32
+//     proof element is up to ~1029 B; reuses the same widened cap
+//     instead of introducing a third constant).
+// Otherwise returns MAX_SCRIPT_ELEMENT_SIZE (520). Single source of
+// truth for every call site in EvalScript and the witness verification
+// paths.
 inline unsigned int EffectiveMaxScriptElementSize(script_verify_flags flags)
 {
-    return (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK)
+    return (flags & (SCRIPT_VERIFY_CHECKSIGFROMSTACK | SCRIPT_VERIFY_MERKLE_INCLUSION))
          ? MAX_PQ_SCRIPT_ELEMENT_SIZE
          : MAX_SCRIPT_ELEMENT_SIZE;
 }

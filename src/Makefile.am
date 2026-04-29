@@ -420,6 +420,8 @@ libneurai_consensus_a_SOURCES = \
   script/script.h \
   script/script_error.cpp \
   script/script_error.h \
+  script/merkle_inclusion.cpp \
+  script/merkle_inclusion.h \
   serialize.h \
   support/cleanse.h \
   support/cleanse.cpp \

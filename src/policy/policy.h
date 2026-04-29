@@ -112,6 +112,8 @@ inline script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
                                                    | SCRIPT_VERIFY_64BIT_INTEGERS;
     // NIP-030: OP_KECCAK256 and OP_BLAKE2B hash opcodes.
     if (consensus.nKeccakBlake2bEnabled)     base |= SCRIPT_VERIFY_KECCAK_BLAKE2B;
+    // NIP-031: OP_CHECKMERKLEINCLUSION (native Merkle proof verifier).
+    if (consensus.nMerkleInclusionEnabled)   base |= SCRIPT_VERIFY_MERKLE_INCLUSION;
     return base;
 }
 
@@ -145,13 +147,15 @@ bool AreInputsStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs)
     /**
      * Check if the transaction is over standard P2WSH resources limit:
      * 3600bytes witnessScript size, 100 witness stack elements.
-     * Per-item size: 80 bytes when csfsActive is false; MAX_PQ_SCRIPT_ELEMENT_SIZE
-     * (3072 bytes) when csfsActive is true (NIP-021 — CSFS makes large element
-     * pushes valid at consensus, policy must match).
+     * Per-item size: 80 bytes when largeWitnessItemsActive is false;
+     * MAX_PQ_SCRIPT_ELEMENT_SIZE (3072 bytes) when true. The wider cap is
+     * activated by either NIP-021 (CSFS — PQ pubkeys/signatures exceed 520 B)
+     * or NIP-031 (OP_CHECKMERKLEINCLUSION — depth-32 proofs are ~1029 B).
+     * Callers pass `nCSFSEnabled || nMerkleInclusionEnabled`.
      * These limits are adequate for multi-signature up to n-of-100 using OP_CHECKSIG, OP_ADD, and OP_EQUAL,
      */
 bool IsWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs,
-                        bool csfsActive);
+                        bool largeWitnessItemsActive);
 
 extern CFeeRate incrementalRelayFee;
 extern CFeeRate dustRelayFee;

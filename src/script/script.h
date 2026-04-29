@@ -218,6 +218,11 @@ enum opcodetype
     OP_INPUTVALUE = 0xd6, // NIP-024
     OP_CHAINCONTEXT = 0xd7, // NIP-026
 
+    // NIP-031: native Merkle inclusion verifier in a previously
+    // unassigned slot (0xc1). Consumes (leaf, scheme_id, proof, root)
+    // and pushes a boolean. Flag off → bad-opcode.
+    OP_CHECKMERKLEINCLUSION = 0xc1,
+
     /** XNA START */
     OP_XNA_ASSET = 0xc0,
     /** XNA END */

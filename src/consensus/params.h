@@ -170,6 +170,15 @@ struct Params {
      *  from genesis; false on mainnet until a future activation
      *  NIP. */
     bool nKeccakBlake2bEnabled;
+    /** NIP-031: enable OP_CHECKMERKLEINCLUSION (0xc1) — native
+     *  Merkle inclusion verification with a tree-scheme selector
+     *  (BITCOIN_NEURAI / SHA256_PLAIN / KECCAK256_PLAIN /
+     *  BLAKE2B_PLAIN). Slot 0xc1 was previously unassigned
+     *  (`bad-opcode`); activation is a hard-fork. Co-extends the
+     *  per-element stack cap to MAX_PQ_SCRIPT_ELEMENT_SIZE (3072 B)
+     *  and the MAX_STACK_BYTES gate. true on testnet/regtest from
+     *  genesis; false on mainnet until a future activation NIP. */
+    bool nMerkleInclusionEnabled;
 };
 } // namespace Consensus
 
