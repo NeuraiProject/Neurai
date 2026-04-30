@@ -1,0 +1,113 @@
+{
+  "metadata": {
+    "spec":                "NIP-036 v2 §3.5 byte sponge / §3.6 reference vectors",
+    "permutation_source":  "arnaucube/poseidon-rs @ f4ba1f7c32905cd2ae5a71e7568564bb150a9862",
+    "interop_anchor":      "Poseidon([1, 2]) over BN254 t=3 == 0x115cc0f5e7d690413df64c6b9662e9cf2a3617f2743245519e19607a4417189a",
+    "format_notes": [
+      "All hex strings are big-endian, lowercase, no 0x prefix.",
+      "input_pattern_imod256 means: bytes follow byte[i] = i mod 256.",
+      "padded_chunks N is the number of 31-byte chunks after the §3.5 padding (append 0x01, then zero-pad to a multiple of 31).",
+      "permutations is the number of Poseidon-permutation calls inside PoseidonBN254 for that input."
+    ],
+    "merge_gate": "NIP-036 §10 — the spec_pinned_sponge[] hex outputs and permutation_iden3[] hex outputs MUST be byte-exactly reproduced by src/test/poseidon_tests.cpp. Drift is treated as a consensus-affecting change."
+  },
+
+  "permutation_iden3": [
+    {
+      "name":           "Poseidon([1, 2]) (canonical interop check)",
+      "input_state":    ["0", "1", "2"],
+      "output_state_0": "115cc0f5e7d690413df64c6b9662e9cf2a3617f2743245519e19607a4417189a"
+    }
+  ],
+
+  "spec_pinned_sponge": [
+    {
+      "name":           "empty",
+      "input_len":      0,
+      "input_hex":      "",
+      "padded_chunks":  1,
+      "permutations":   1,
+      "output_hex":     "067761295e881eec953a764e4d72bbccedf07472b57b9a3f754dcb5012441956"
+    },
+    {
+      "name":           "ascii \"a\"",
+      "input_len":      1,
+      "input_hex":      "61",
+      "padded_chunks":  1,
+      "permutations":   1,
+      "output_hex":     "2dce4f0b4a54641dee666e6a9704e64f49a52acf86b62c37575088b82fa045e2"
+    },
+    {
+      "name":           "ascii \"hello\"",
+      "input_len":      5,
+      "input_hex":      "68656c6c6f",
+      "padded_chunks":  1,
+      "permutations":   1,
+      "output_hex":     "19a31753d0b32445ade8c7fe5158568be0182b5fb7756fd0229ed62257e5df2b"
+    },
+    {
+      "name":           "30 zero bytes (just-fits N=1)",
+      "input_len":      30,
+      "input_pattern":  "all_zeros",
+      "padded_chunks":  1,
+      "permutations":   1,
+      "output_hex":     "0ee069e6aa796ef0e46cbd51d10468393d443a00f5affe72898d9ab62e335e16"
+    },
+    {
+      "name":           "31 zero bytes (just-over N=1, lands at N=2)",
+      "input_len":      31,
+      "input_pattern":  "all_zeros",
+      "padded_chunks":  2,
+      "permutations":   1,
+      "output_hex":     "2c8200bd43b6b7ba32d55f85bd480739fefa58c50db8b3b45a998e1e3c9a298e"
+    },
+    {
+      "name":           "61 zero bytes (just-fits N=2)",
+      "input_len":      61,
+      "input_pattern":  "all_zeros",
+      "padded_chunks":  2,
+      "permutations":   1,
+      "output_hex":     "28bb28a2c7566e896a177dc7328d4298d197973bcac177fb8291984a1cc43b7f"
+    },
+    {
+      "name":           "62 zero bytes (just-over N=2, lands at N=3)",
+      "input_len":      62,
+      "input_pattern":  "all_zeros",
+      "padded_chunks":  3,
+      "permutations":   2,
+      "output_hex":     "041e9272526a9aaa6d439337caf3229e9d9c5224cd7641000926b9f7817378d9"
+    },
+    {
+      "name":           "92 zero bytes (just-fits N=3)",
+      "input_len":      92,
+      "input_pattern":  "all_zeros",
+      "padded_chunks":  3,
+      "permutations":   2,
+      "output_hex":     "24a5696413bfaeb8b174f647fabbe8da416ad982bb2fa5e50a5132b7bb6d25ec"
+    },
+    {
+      "name":           "93 zero bytes (just-over N=3, lands at N=4)",
+      "input_len":      93,
+      "input_pattern":  "all_zeros",
+      "padded_chunks":  4,
+      "permutations":   2,
+      "output_hex":     "19ee3fb113e682469722285be2032401d47cd1647ae9ea785e79120e007612bc"
+    },
+    {
+      "name":           "520 bytes, byte[i] = i mod 256 (520 B regime worst case)",
+      "input_len":      520,
+      "input_pattern":  "imod256",
+      "padded_chunks":  17,
+      "permutations":   9,
+      "output_hex":     "18ba739494c866f1049fd9967b77d46dd32178a5bf16f58b28b65f91975f6b9c"
+    },
+    {
+      "name":           "3072 bytes, byte[i] = i mod 256 (3072 B regime worst case)",
+      "input_len":      3072,
+      "input_pattern":  "imod256",
+      "padded_chunks":  100,
+      "permutations":   50,
+      "output_hex":     "0566a0fabf609b0e941d5305ac258bef2e7292febedff18ccf9bf8370399a9e7"
+    }
+  ]
+}

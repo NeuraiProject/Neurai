@@ -385,6 +385,9 @@ crypto_libneurai_crypto_a_SOURCES = \
   crypto/blake3/blake3_impl.h \
   crypto/blake3/blake3_dispatch.c \
   crypto/blake3/blake3_portable.c \
+  crypto/poseidon_bn254.h \
+  crypto/poseidon_bn254.cpp \
+  crypto/poseidon_bn254_constants.h \
   crypto/ethash/include/ethash/ethash.h \
   crypto/ethash/include/ethash/ethash.hpp \
   crypto/ethash/include/ethash/hash_types.h \

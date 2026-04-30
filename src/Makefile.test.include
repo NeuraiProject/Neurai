@@ -18,7 +18,8 @@ JSON_TEST_FILES = \
   test/data/base58_keys_invalid.json \
   test/data/tx_invalid.json \
   test/data/tx_valid.json \
-  test/data/sighash.json
+  test/data/sighash.json \
+  test/data/poseidon_vectors.json
 
 RAW_TEST_FILES =
 
@@ -66,6 +67,7 @@ NEURAI_TESTS =\
   test/blake3_tests.cpp \
   test/sha3_256_tests.cpp \
   test/sha512_op_tests.cpp \
+  test/poseidon_tests.cpp \
   test/key_tests.cpp \
   test/limitedmap_tests.cpp \
   test/dbwrapper_tests.cpp \
