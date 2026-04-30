@@ -236,6 +236,16 @@ enum class script_verify_flag_name : uint8_t {
     //
     SCRIPT_VERIFY_MODERN_HASHES,                            // bit 37
 
+    // NIP-036: enable OP_POSEIDON (0xc9, previously unassigned),
+    // the SNARK-friendly Poseidon hash over the BN254 scalar field.
+    // Flag off → bad-opcode. Hard-fork on activation. Independent
+    // of NIP-034a's SCRIPT_VERIFY_MODERN_HASHES (the 3 SHA-2-style
+    // hashes) so it can ship later without coupling. Activation
+    // also enforces the per-script Poseidon-input-byte budget
+    // (MAX_POSEIDON_INPUT_BYTES_PER_SCRIPT, see script.h).
+    //
+    SCRIPT_VERIFY_POSEIDON,                                 // bit 38
+
     // End marker — must always be last.
     SCRIPT_VERIFY_END_MARKER
 };

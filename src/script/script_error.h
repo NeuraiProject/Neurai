@@ -128,6 +128,11 @@ typedef enum ScriptError_t
     /* OP_REFINPUTCOUNT */
     SCRIPT_ERR_REFINPUTCOUNT,
 
+    /* NIP-036: per-script Poseidon-input-byte budget exceeded.
+       MAX_POSEIDON_INPUT_BYTES_PER_SCRIPT (script.h) caps the cumulative
+       byte length of OP_POSEIDON inputs across a script. */
+    SCRIPT_ERR_POSEIDON_BUDGET,
+
     SCRIPT_ERR_ERROR_COUNT
 } ScriptError;
 

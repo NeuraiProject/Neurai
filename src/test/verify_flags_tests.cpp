@@ -64,12 +64,13 @@ BOOST_AUTO_TEST_CASE(none_is_zero)
 
 BOOST_AUTO_TEST_CASE(end_marker_matches_flag_count)
 {
-    // 38 flags (bits 0-37) means END_MARKER should be 38.
-    // Last added: SCRIPT_VERIFY_MODERN_HASHES at bit 37 (NIP-034a).
-    // Previously: SCRIPT_VERIFY_MERKLE_INCLUSION at bit 36 (NIP-031),
+    // 39 flags (bits 0-38) means END_MARKER should be 39.
+    // Last added: SCRIPT_VERIFY_POSEIDON at bit 38 (NIP-036).
+    // Previously: SCRIPT_VERIFY_MODERN_HASHES at bit 37 (NIP-034a),
+    // SCRIPT_VERIFY_MERKLE_INCLUSION at bit 36 (NIP-031),
     // SCRIPT_VERIFY_KECCAK_BLAKE2B at bit 35 (NIP-030),
     // SCRIPT_VERIFY_CHAINCONTEXT at bit 34 (NIP-026).
-    BOOST_CHECK_EQUAL(MAX_SCRIPT_VERIFY_FLAGS_BITS, 38);
+    BOOST_CHECK_EQUAL(MAX_SCRIPT_VERIFY_FLAGS_BITS, 39);
 }
 
 // --- No internal truncation ---
@@ -78,7 +79,7 @@ BOOST_AUTO_TEST_CASE(no_truncation)
 {
     // Combine all known flags and verify no bits are lost.
     script_verify_flags all = script_verify_flags::from_int(MAX_SCRIPT_VERIFY_FLAGS);
-    BOOST_CHECK_EQUAL(all.as_int(), (uint64_t{1} << 38) - 1);
+    BOOST_CHECK_EQUAL(all.as_int(), (uint64_t{1} << 39) - 1);
 }
 
 BOOST_AUTO_TEST_CASE(chaincontext_is_bit_34)
@@ -88,6 +89,16 @@ BOOST_AUTO_TEST_CASE(chaincontext_is_bit_34)
     // the enum order ever changes.
     BOOST_CHECK_EQUAL(script_verify_flags{SCRIPT_VERIFY_CHAINCONTEXT}.as_int(),
                       uint64_t{1} << 34);
+}
+
+BOOST_AUTO_TEST_CASE(poseidon_is_bit_38)
+{
+    // NIP-036: OP_POSEIDON's verify flag must live at bit 38.
+    // Pinned because consensus rules and any external tooling that
+    // composes verify flags will break silently if the enum order
+    // ever changes.
+    BOOST_CHECK_EQUAL(script_verify_flags{SCRIPT_VERIFY_POSEIDON}.as_int(),
+                      uint64_t{1} << 38);
 }
 
 // --- Synthetic high-bit plumbing test ---

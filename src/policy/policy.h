@@ -116,6 +116,8 @@ inline script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
     if (consensus.nMerkleInclusionEnabled)   base |= SCRIPT_VERIFY_MERKLE_INCLUSION;
     // NIP-034a: OP_BLAKE3 / OP_SHA3_256 / OP_SHA512.
     if (consensus.nModernHashesEnabled)      base |= SCRIPT_VERIFY_MODERN_HASHES;
+    // NIP-036: OP_POSEIDON (SNARK-friendly Poseidon over BN254 Fr).
+    if (consensus.nPoseidonEnabled)          base |= SCRIPT_VERIFY_POSEIDON;
     return base;
 }
 

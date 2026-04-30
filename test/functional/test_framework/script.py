@@ -239,6 +239,9 @@ OP_NOP10 = CScriptOp(0xb9)
 
 OP_XNA_ASSET = CScriptOp(0xc0)
 
+# NIP-036: Poseidon over BN254 Fr (slot 0xc9, previously unassigned).
+OP_POSEIDON = CScriptOp(0xc9)
+
 # template matching params
 OP_SMALLINTEGER = CScriptOp(0xfa)
 OP_PUBKEYS = CScriptOp(0xfb)
@@ -360,6 +363,7 @@ OPCODE_NAMES.update({
     OP_NOP9: 'OP_NOP9',
     OP_NOP10: 'OP_NOP10',
     OP_XNA_ASSET: 'OP_XNA_ASSET',
+    OP_POSEIDON: 'OP_POSEIDON',
     OP_SMALLINTEGER: 'OP_SMALLINTEGER',
     OP_PUBKEYS: 'OP_PUBKEYS',
     OP_PUBKEYHASH: 'OP_PUBKEYHASH',

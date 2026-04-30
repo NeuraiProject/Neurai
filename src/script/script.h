@@ -40,6 +40,16 @@ static const unsigned int MAX_STACK_BYTES = 262144;  // 256 KiB
 // Maximum number of non-push operations per script
 static const int MAX_OPS_PER_SCRIPT = 201;
 
+// NIP-036 §3.7: per-script Poseidon-input-byte budget. Bounds worst-case
+// validation cost of OP_POSEIDON-saturated scripts. Enforced only when
+// SCRIPT_VERIFY_POSEIDON is set; the handler accumulates input sizes and
+// rejects with SCRIPT_ERR_POSEIDON_BUDGET on overflow. Picked so that the
+// worst-case script (~496 permutations) takes ~10.9 ms on CI hardware,
+// approximately 1× CHECKMULTISIG and ~5× under the 5× DoS gate. Generous
+// enough for PQ scripts: 1 ML-DSA-44 pubkey (1312 B) + 1 signature
+// (2420 B) + a 32 B message + 4× hashing-the-result fits comfortably.
+static const unsigned int MAX_POSEIDON_INPUT_BYTES_PER_SCRIPT = 30720; // 30 KiB
+
 // Maximum number of public keys per multisig
 static const int MAX_PUBKEYS_PER_MULTISIG = 20;
 
@@ -224,10 +234,10 @@ enum opcodetype
     OP_CHECKMERKLEINCLUSION = 0xc1,
 
     // NIP-034a: modern hash opcodes in previously unassigned slots.
-    // Slot 0xc9 (OP_POSEIDON) is intentionally reserved for a future
-    // dedicated NIP and stays bad-opcode under the current consensus
-    // rules.
+    // NIP-036 occupies slot 0xc9 (OP_POSEIDON, the SNARK-friendly
+    // Poseidon hash over the BN254 scalar field).
     OP_BLAKE3   = 0xc8,
+    OP_POSEIDON = 0xc9,
     OP_SHA3_256 = 0xca,
     OP_SHA512   = 0xcb,
 

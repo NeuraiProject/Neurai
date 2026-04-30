@@ -143,6 +143,8 @@ const char* ScriptErrorString(const ScriptError serror)
             return "OP_REFINPUTASSETFIELD failed (invalid ref index, invalid selector, or unavailable asset field)";
         case SCRIPT_ERR_REFINPUTCOUNT:
             return "OP_REFINPUTCOUNT failed (reference outputs not available)";
+        case SCRIPT_ERR_POSEIDON_BUDGET:
+            return "OP_POSEIDON per-script input-byte budget exceeded (NIP-036 §3.7)";
         case SCRIPT_ERR_UNKNOWN_ERROR:
         case SCRIPT_ERR_ERROR_COUNT:
         default: break;

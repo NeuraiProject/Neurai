@@ -187,6 +187,13 @@ struct Params {
      *  true on testnet/regtest from genesis; false on mainnet
      *  until a future activation NIP. */
     bool nModernHashesEnabled;
+
+    /** NIP-036: enable OP_POSEIDON (0xc9), the SNARK-friendly
+     *  Poseidon hash over the BN254 scalar field. Slot was
+     *  previously unassigned (`bad-opcode`); activation is a
+     *  hard-fork. true on testnet/regtest from genesis; false
+     *  on mainnet until a future activation NIP. */
+    bool nPoseidonEnabled;
 };
 } // namespace Consensus
 

@@ -183,6 +183,7 @@ SKIPPED_TESTS = [
     'feature_assumevalid.py',
     'feature_cltv.py',              #TODO - fix mininode rehash methods to use X16R
     'feature_dersig.py',            #TODO - fix mininode rehash methods to use X16R
+    'feature_op_poseidon.py',       # NIP-036
     'feature_nulldummy.py',         #TODO - fix mininode rehash methods to use X16R
     'feature_pruning.py',
     'feature_rbf.py',

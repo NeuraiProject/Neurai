@@ -585,8 +585,84 @@ to CSFS activation: the effective cap is `MAX_CSFS_STANDARD_P2WSH_STACK_ITEM_SIZ
 items are rejected with reason `bad-witness-nonstandard` until CSFS
 is activated on mainnet.
 
+## SNARK-friendly hashing: `OP_POSEIDON` (NIP-036)
+
+`OP_POSEIDON` (slot `0xc9`) implements the Poseidon hash over the BN254
+scalar field — the same hash used by `circom`, `snarkjs`,
+`go-iden3-crypto`, and Polygon zkEVM for in-circuit commitments. Because
+it is ~100× cheaper inside a SNARK circuit than SHA-256, it makes
+NIP-016 `OP_ZKVERIFY` practically usable for proofs that hash data on
+the prover side and want the verifier to match the same hash on-chain.
+
+### Stack contract
+
+```
+<data> OP_POSEIDON → <32-byte BE Fr element>
+```
+
+Output is always 32 bytes (one BN254 Fr element, big-endian). Fits under
+`MAX_STANDARD_P2WSH_STACK_ITEM_SIZE = 80` so it never trips the
+standardness cap for downstream items.
+
+### Activation and flag-off behaviour
+
+- Slot `0xc9` was previously **`bad-opcode`**, never a reserved NOP.
+- Activation gates on `consensus.nPoseidonEnabled` (true on
+  testnet/regtest from genesis, false on mainnet until a future
+  activation NIP). Activation is a hard fork.
+- With `SCRIPT_VERIFY_POSEIDON` (bit 38) **unset**, the handler returns
+  `SCRIPT_ERR_BAD_OPCODE` — *not* `DISCOURAGE_UPGRADABLE_NOPS`. This
+  matches the activation pattern of NIP-026 / NIP-030 / NIP-031 /
+  NIP-034a and avoids consensus splits between flag-on and flag-off
+  nodes.
+- Stack underflow with the flag on returns `SCRIPT_ERR_INVALID_STACK_OPERATION`.
+- The flag check runs **before** the underflow check by design, so
+  flag-off scripts always fail with `BAD_OPCODE` regardless of stack
+  contents.
+
+### Per-script byte budget (NIP-036 §3.7)
+
+To bound worst-case validation cost, the handler enforces a per-script
+cumulative input-byte budget:
+
+```
+MAX_POSEIDON_INPUT_BYTES_PER_SCRIPT = 30720   // 30 KiB
+```
+
+The interpreter carries a `nPoseidonInputBytes` counter alongside
+`nOpCount`. Each `OP_POSEIDON` invocation adds the popped item's size
+to that counter; when the new total would exceed the 30 KB ceiling, the
+handler returns `SCRIPT_ERR_POSEIDON_BUDGET` before doing any Poseidon
+work.
+
+This budget is generous enough to cover post-quantum scripts: hashing a
+single ML-DSA-44 public key (1312 B) plus a signature (2420 B) plus a
+short message and a few intermediate hashes is well under 30 KB. It also
+keeps the worst-case Poseidon-saturated script at ~10.9 ms on CI
+hardware (~1× `OP_CHECKMULTISIG`-saturated, ~5× under the 5× DoS gate).
+
+A naïve per-opcode 520 B input cap was considered and rejected during
+the NIP-036 v2 review because it would lock out PQ-sized inputs —
+NIP-018 specifically widened `EffectiveMaxScriptElementSize` to 3072 B
+for PQ pushes, and we keep that capability available to `OP_POSEIDON`
+callers.
+
+### Worked example: ZK + PQ commitment
+
+```
+<sig_pq> <pubkey_pq> OP_VERIFY_PQSIG_SOMETHING       // ML-DSA verify
+<pubkey_pq> OP_POSEIDON <commitment> OP_EQUALVERIFY  // 1312 B → 32 B → equality
+```
+
+This single-call Poseidon on a 1312 B input only costs ~960 µs on CI
+hardware and consumes 1312 B of the 30 720 B budget — comfortable
+headroom for additional commitments inside the same script.
+
+---
+
 ## Further Reading
 
 - [New OP_Codes Reference](new-opcodes-depin-branch.md) — Detailed specification of each opcode (byte values, flags, stack effects, error codes)
 - [Atomic Swaps](atomicswaps.md) — Cross-chain atomic swap protocol
 - [DePIN Client Protocol](depinreceivemsg.md) — DePIN messaging layer documentation
+- [NIP-036 v2](../NIP/Pendiente/036-OP_POSEIDON-v2.md) — Full Poseidon-on-BN254 specification, byte sponge, DoS analysis

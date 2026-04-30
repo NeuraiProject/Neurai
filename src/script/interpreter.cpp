@@ -17,6 +17,7 @@
 #include "crypto/sha3_256.h"    // NIP-034a
 #include "crypto/sha512_wrap.h" // NIP-034a
 #include "crypto/blake3_wrap.h" // NIP-034a
+#include "crypto/poseidon_bn254.h" // NIP-036
 #include "pubkey.h"
 #include "script/script.h"
 #include "script/merkle_inclusion.h"  // NIP-031
@@ -565,6 +566,9 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
     if (script.size() > MAX_SCRIPT_SIZE)
         return set_error(serror, SCRIPT_ERR_SCRIPT_SIZE);
     int nOpCount = 0;
+    // NIP-036 §3.7: per-script Poseidon-input-byte budget. Accumulated by
+    // OP_POSEIDON; rejection on overflow returns SCRIPT_ERR_POSEIDON_BUDGET.
+    size_t nPoseidonInputBytes = 0;
     bool fRequireMinimal = (flags & SCRIPT_VERIFY_MINIMALDATA) != 0;
 
     try
@@ -2065,6 +2069,31 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             popstack(stack);
                             stack.push_back(std::move(vchHash));
                         }
+                    }
+                        break;
+
+                    // NIP-036: Poseidon over BN254 Fr (SNARK-friendly).
+                    // Slot 0xc9 was previously unassigned (and reserved by
+                    // NIP-034a's comment), so flag-off MUST return BAD_OPCODE
+                    // — not DISCOURAGE_UPGRADABLE_NOPS. The flag check fires
+                    // before the underflow check by design (§4.1 test 1).
+                    case OP_POSEIDON:
+                    {
+                        if (!(flags & SCRIPT_VERIFY_POSEIDON))
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
+                        if (stack.size() < 1)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+                        valtype &vch = stacktop(-1);
+                        // §3.7 per-script byte budget. Computed as a
+                        // saturating "headroom" check to avoid an unsigned
+                        // overflow if vch.size() were ever near SIZE_MAX.
+                        if (vch.size() > MAX_POSEIDON_INPUT_BYTES_PER_SCRIPT - nPoseidonInputBytes)
+                            return set_error(serror, SCRIPT_ERR_POSEIDON_BUDGET);
+                        nPoseidonInputBytes += vch.size();
+                        valtype vchHash(32);
+                        crypto::PoseidonBN254(vch.data(), vch.size(), vchHash.data());
+                        popstack(stack);
+                        stack.push_back(std::move(vchHash));
                     }
                         break;
 

@@ -12,6 +12,9 @@
 
 #include "crypto/poseidon_bn254.h"
 #include "crypto/poseidon_bn254_constants.h"
+#include "script/interpreter.h"
+#include "script/script.h"
+#include "script/script_error.h"
 #include "test/test_neurai.h"
 #include "utilstrencodings.h"
 
@@ -378,6 +381,178 @@ BOOST_AUTO_TEST_CASE(sponge_large_input_no_overrun)
     bool all_zero = true;
     for (int i = 0; i < 32; ++i) if (hash[i] != 0) { all_zero = false; break; }
     BOOST_CHECK(!all_zero);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// =====================================================================
+// Suite 4: OP_POSEIDON gating in EvalScript (NIP-036 §4.1).
+//
+// Four tests cover: flag-off precedence, output size, the §3.7 30 KB
+// per-script budget, and round-trip equality against the spec vectors.
+// =====================================================================
+
+BOOST_FIXTURE_TEST_SUITE(poseidon_gating_tests, BasicTestingSetup)
+
+namespace {
+
+// Build a script consisting of `op_poseidon_calls` invocations of
+// OP_POSEIDON over a `payload_len`-byte blob. The blob is pushed once
+// and duplicated via OP_DUP before each call (so the script body stays
+// well under MAX_SCRIPT_SIZE = 10000 even for payload_len = 3072). Each
+// iteration is OP_DUP / OP_POSEIDON / OP_DROP — that costs 3 ops and
+// leaves the stack unchanged at the original payload, so the original
+// is still on top after the loop and gets dropped before OP_1 at the
+// end.
+CScript BuildPoseidonScript(size_t payload_len, int op_poseidon_calls)
+{
+    std::vector<unsigned char> payload(payload_len, 0x77);
+    CScript s;
+    s << payload;
+    for (int i = 0; i < op_poseidon_calls; ++i) {
+        s << OP_DUP << OP_POSEIDON << OP_DROP;
+    }
+    s << OP_DROP << OP_1; // pop the original payload, leave true on top.
+    return s;
+}
+
+bool RunPoseidonScript(const CScript& script, script_verify_flags flags,
+                       ScriptError& err)
+{
+    std::vector<std::vector<unsigned char>> stack;
+    return EvalScript(stack, script, flags, BaseSignatureChecker(),
+                      SIGVERSION_BASE, &err);
+}
+
+} // namespace
+
+// §4.1 test 1: flag-off → BAD_OPCODE, fires before underflow check.
+BOOST_AUTO_TEST_CASE(gating_flag_off_returns_bad_opcode)
+{
+    // Empty stack + OP_POSEIDON. Flag off: must hit BAD_OPCODE first
+    // (before the stack-underflow check).
+    CScript s;
+    s << OP_POSEIDON;
+    ScriptError err;
+    bool ok = RunPoseidonScript(s, SCRIPT_VERIFY_NONE, err);
+    BOOST_CHECK(!ok);
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
+}
+
+BOOST_AUTO_TEST_CASE(gating_flag_off_is_not_nop)
+{
+    // Even a syntactically-valid script (with input on stack) must
+    // reject under flag-off. Confirms the slot is *not* treated as a
+    // discouraged-NOP.
+    CScript s;
+    s << std::vector<unsigned char>{0x00} << OP_POSEIDON;
+    ScriptError err;
+    bool ok = RunPoseidonScript(s, SCRIPT_VERIFY_NONE, err);
+    BOOST_CHECK(!ok);
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
+}
+
+// §4.1 test 2: flag-on with stack underflow → INVALID_STACK_OPERATION.
+BOOST_AUTO_TEST_CASE(gating_underflow_flag_on)
+{
+    CScript s;
+    s << OP_POSEIDON;
+    ScriptError err;
+    bool ok = RunPoseidonScript(s, SCRIPT_VERIFY_POSEIDON, err);
+    BOOST_CHECK(!ok);
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_INVALID_STACK_OPERATION);
+}
+
+// §4.1 test 2 cont: flag-on output size = 32 bytes.
+BOOST_AUTO_TEST_CASE(gating_flag_on_output_is_32_bytes)
+{
+    CScript s;
+    s << std::vector<unsigned char>{'h','e','l','l','o'} << OP_POSEIDON;
+    std::vector<std::vector<unsigned char>> stack;
+    ScriptError err;
+    bool ok = EvalScript(stack, s, SCRIPT_VERIFY_POSEIDON,
+                         BaseSignatureChecker(), SIGVERSION_BASE, &err);
+    BOOST_CHECK(ok);
+    BOOST_REQUIRE_EQUAL(stack.size(), 1U);
+    BOOST_CHECK_EQUAL(stack[0].size(), 32U);
+}
+
+// §4.1 test 3: per-script 30 KB budget (NIP-036 §3.7).
+//
+// Run with the wider element-size cap active (CSFS or NIP-031), so the
+// 3072 B push gets past EffectiveMaxScriptElementSize at interpreter.cpp:581
+// and reaches the OP_POSEIDON handler. 10 calls of 3072 B = 30 720 B
+// = exactly the budget; the 11th must overflow.
+BOOST_AUTO_TEST_CASE(gating_budget_overflow_at_eleventh_call)
+{
+    const script_verify_flags flags =
+        SCRIPT_VERIFY_POSEIDON | SCRIPT_VERIFY_CHECKSIGFROMSTACK;
+
+    // 10 calls of 3072 B = 30 720 B = exactly the budget. Must succeed.
+    {
+        CScript s = BuildPoseidonScript(3072, 10);
+        ScriptError err;
+        bool ok = RunPoseidonScript(s, flags, err);
+        BOOST_CHECK_MESSAGE(ok,
+            "10 × 3072 B (= budget) should succeed, got error: " << err);
+    }
+
+    // 11 calls of 3072 B = 33 792 B > 30 720 B budget. Must fail with
+    // SCRIPT_ERR_POSEIDON_BUDGET.
+    {
+        CScript s = BuildPoseidonScript(3072, 11);
+        ScriptError err;
+        bool ok = RunPoseidonScript(s, flags, err);
+        BOOST_CHECK(!ok);
+        BOOST_CHECK_EQUAL(err, SCRIPT_ERR_POSEIDON_BUDGET);
+    }
+}
+
+// §4.1 test 3 cont: budget allows PQ-sized single-call (1312 B / 2420 B).
+BOOST_AUTO_TEST_CASE(gating_budget_allows_pq_sized_inputs)
+{
+    const script_verify_flags flags =
+        SCRIPT_VERIFY_POSEIDON | SCRIPT_VERIFY_CHECKSIGFROMSTACK;
+
+    // ML-DSA-44 pubkey-sized blob (1312 B): one call, well inside budget.
+    {
+        CScript s = BuildPoseidonScript(1312, 1);
+        ScriptError err;
+        bool ok = RunPoseidonScript(s, flags, err);
+        BOOST_CHECK_MESSAGE(ok,
+            "PQ-sized 1312 B single call should succeed, got error: " << err);
+    }
+
+    // ML-DSA-44 sig-sized blob (2420 B): one call, well inside budget.
+    {
+        CScript s = BuildPoseidonScript(2420, 1);
+        ScriptError err;
+        bool ok = RunPoseidonScript(s, flags, err);
+        BOOST_CHECK_MESSAGE(ok,
+            "PQ-sized 2420 B single call should succeed, got error: " << err);
+    }
+}
+
+// §4.1 test 4: round-trip — push a known input, OP_POSEIDON, push the
+// expected hash, OP_EQUAL. For one of the spec vectors we already know
+// the expected output ("hello" → 19a31753…57e5df2b).
+BOOST_AUTO_TEST_CASE(gating_roundtrip_hello_vector)
+{
+    std::vector<unsigned char> hello = {'h','e','l','l','o'};
+    std::vector<unsigned char> expected = ParseHex(
+        "19a31753d0b32445ade8c7fe5158568be0182b5fb7756fd0229ed62257e5df2b");
+
+    CScript s;
+    s << hello << OP_POSEIDON << expected << OP_EQUAL;
+
+    std::vector<std::vector<unsigned char>> stack;
+    ScriptError err;
+    bool ok = EvalScript(stack, s, SCRIPT_VERIFY_POSEIDON,
+                         BaseSignatureChecker(), SIGVERSION_BASE, &err);
+    BOOST_CHECK(ok);
+    BOOST_REQUIRE_EQUAL(stack.size(), 1U);
+    BOOST_CHECK_EQUAL(stack[0].size(), 1U);
+    BOOST_CHECK_EQUAL(stack[0][0], 0x01);  // OP_EQUAL pushed true
 }
 
 BOOST_AUTO_TEST_SUITE_END()

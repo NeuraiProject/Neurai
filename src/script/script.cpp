@@ -170,6 +170,9 @@ const char* GetOpName(opcodetype opcode)
     case OP_SHA3_256               : return "OP_SHA3_256";
     case OP_SHA512                 : return "OP_SHA512";
 
+    // NIP-036
+    case OP_POSEIDON               : return "OP_POSEIDON";
+
     /** XNA START */
     case OP_XNA_ASSET              : return "OP_XNA_ASSET";
     /** XNA END */
