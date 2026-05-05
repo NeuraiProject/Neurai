@@ -145,6 +145,14 @@ const char* ScriptErrorString(const ScriptError serror)
             return "OP_REFINPUTCOUNT failed (reference outputs not available)";
         case SCRIPT_ERR_POSEIDON_BUDGET:
             return "OP_POSEIDON per-script input-byte budget exceeded (NIP-036 §3.7)";
+        case SCRIPT_ERR_ED25519_SIG_SIZE:
+            return "OP_CHECKSIG_ED25519 signature size != 64 bytes (NIP-035 §4.4)";
+        case SCRIPT_ERR_ED25519_PUBKEY_SIZE:
+            return "OP_CHECKSIG_ED25519 pubkey size != 32 bytes (NIP-035 §4.4)";
+        case SCRIPT_ERR_ED25519_PUBKEY_ENCODING:
+            return "OP_CHECKSIG_ED25519 pubkey encoding invalid (non-canonical y, not on curve, or non-prime-order subgroup) (NIP-035 §4.4)";
+        case SCRIPT_ERR_ED25519_SIG_ENCODING:
+            return "OP_CHECKSIG_ED25519 signature encoding invalid (R non-canonical, R not on curve, R non-prime-order, or S >= l) (NIP-035 §4.4)";
         case SCRIPT_ERR_UNKNOWN_ERROR:
         case SCRIPT_ERR_ERROR_COUNT:
         default: break;

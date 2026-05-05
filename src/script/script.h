@@ -241,6 +241,14 @@ enum opcodetype
     OP_SHA3_256 = 0xca,
     OP_SHA512   = 0xcb,
 
+    // NIP-035: strict-profile RFC 8032 PureEd25519 verifier in a
+    // previously unassigned slot (0xdd). Stack contract is
+    // (sig64, msg, pubkey32 -- 0|1). Slots 0xd8..0xdc are reserved
+    // by NIP-033 (BLS12-381 family) but not yet assigned in code;
+    // when BLS lands, those slots will be defined and MAX_OPCODE
+    // stays at OP_CHECKSIG_ED25519.
+    OP_CHECKSIG_ED25519 = 0xdd,
+
     /** XNA START */
     OP_XNA_ASSET = 0xc0,
     /** XNA END */
@@ -255,8 +263,12 @@ enum opcodetype
     OP_INVALIDOPCODE = 0xff,
 };
 
-// Maximum value that an opcode can be
-static const unsigned int MAX_OPCODE = OP_CHAINCONTEXT;
+// Maximum value that an opcode can be. Bumped by NIP-035 from
+// OP_CHAINCONTEXT (0xd7) to OP_CHECKSIG_ED25519 (0xdd) — bytes in the
+// 0xd8..0xdc range remain unassigned (reserved for the NIP-033 BLS
+// family) and currently fall through to the EvalScript default branch
+// returning SCRIPT_ERR_BAD_OPCODE.
+static const unsigned int MAX_OPCODE = OP_CHECKSIG_ED25519;
 
 const char* GetOpName(opcodetype opcode);
 

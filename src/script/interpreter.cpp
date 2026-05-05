@@ -18,6 +18,7 @@
 #include "crypto/sha512_wrap.h" // NIP-034a
 #include "crypto/blake3_wrap.h" // NIP-034a
 #include "crypto/poseidon_bn254.h" // NIP-036
+#include "crypto/ed25519.h"     // NIP-035
 #include "pubkey.h"
 #include "script/script.h"
 #include "script/merkle_inclusion.h"  // NIP-031
@@ -2094,6 +2095,67 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         crypto::PoseidonBN254(vch.data(), vch.size(), vchHash.data());
                         popstack(stack);
                         stack.push_back(std::move(vchHash));
+                    }
+                        break;
+
+                    // NIP-035: strict-profile RFC 8032 PureEd25519 verifier.
+                    // Stack contract: <sig64> <msg> <pubkey32> -> <0-or-1>.
+                    // Slot 0xdd was previously unassigned (`bad-opcode`),
+                    // so flag-off MUST return BAD_OPCODE — not
+                    // DISCOURAGE_UPGRADABLE_NOPS. Malformed encodings are
+                    // hard consensus errors with distinct SCRIPT_ERR_* codes
+                    // (§4.4 / §4.5); only well-formed-but-failing signatures
+                    // push 0.
+                    case OP_CHECKSIG_ED25519:
+                    {
+                        if (!(flags & SCRIPT_VERIFY_ED25519))
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
+                        if (stack.size() < 3)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+                        valtype &vchPubKey = stacktop(-1);
+                        valtype &vchMsg    = stacktop(-2);
+                        valtype &vchSig    = stacktop(-3);
+
+                        using crypto::ed25519::StructuralResult;
+                        const auto pkCheck = crypto::ed25519::ValidatePubkey(
+                            vchPubKey.data(), vchPubKey.size());
+                        switch (pkCheck) {
+                            case StructuralResult::OK: break;
+                            case StructuralResult::PUBKEY_SIZE_INVALID:
+                                return set_error(serror, SCRIPT_ERR_ED25519_PUBKEY_SIZE);
+                            case StructuralResult::PUBKEY_NON_CANONICAL:
+                            case StructuralResult::PUBKEY_NOT_ON_CURVE:
+                            case StructuralResult::PUBKEY_NON_SUBGROUP:
+                                return set_error(serror, SCRIPT_ERR_ED25519_PUBKEY_ENCODING);
+                            default:
+                                return set_error(serror, SCRIPT_ERR_ED25519_PUBKEY_ENCODING);
+                        }
+
+                        const auto sigCheck = crypto::ed25519::ValidateSignature(
+                            vchSig.data(), vchSig.size());
+                        switch (sigCheck) {
+                            case StructuralResult::OK: break;
+                            case StructuralResult::SIG_SIZE_INVALID:
+                                return set_error(serror, SCRIPT_ERR_ED25519_SIG_SIZE);
+                            case StructuralResult::SIG_R_NON_CANONICAL:
+                            case StructuralResult::SIG_R_NOT_ON_CURVE:
+                            case StructuralResult::SIG_R_NON_SUBGROUP:
+                            case StructuralResult::SIG_S_NON_CANONICAL:
+                                return set_error(serror, SCRIPT_ERR_ED25519_SIG_ENCODING);
+                            default:
+                                return set_error(serror, SCRIPT_ERR_ED25519_SIG_ENCODING);
+                        }
+
+                        const bool fSuccess = crypto::ed25519::VerifyStrict(
+                            vchPubKey.data(), vchPubKey.size(),
+                            vchSig.data(),    vchSig.size(),
+                            vchMsg.data(),    vchMsg.size());
+
+                        popstack(stack); // pubkey
+                        popstack(stack); // msg
+                        popstack(stack); // sig
+                        stack.push_back(fSuccess ? vchTrue : vchFalse);
                     }
                         break;
 

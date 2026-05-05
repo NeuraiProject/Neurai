@@ -30,7 +30,8 @@ bench_bench_neurai_SOURCES = \
   bench/perf.cpp \
   bench/perf.h \
   bench/prevector_destructor.cpp \
-  bench/bench_poseidon.cpp
+  bench/bench_poseidon.cpp \
+  bench/bench_ed25519.cpp
 
 nodist_bench_bench_neurai_SOURCES = $(GENERATED_BENCH_FILES)
 

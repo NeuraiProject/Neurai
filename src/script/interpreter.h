@@ -246,6 +246,17 @@ enum class script_verify_flag_name : uint8_t {
     //
     SCRIPT_VERIFY_POSEIDON,                                 // bit 38
 
+    // NIP-035: enable OP_CHECKSIG_ED25519 (0xdd, previously
+    // unassigned) — strict-profile RFC 8032 PureEd25519 signature
+    // verifier. Flag off → bad-opcode. Hard-fork on activation.
+    // The strict acceptance rules are bit-exact at the
+    // crypto/ed25519.cpp wrapper layer (NIP-035 §4.4): non-cofactored
+    // verification equation, canonical encodings of A and R,
+    // prime-order subgroup membership (excluding identity), S < l.
+    // No ZIP-215 leniency.
+    //
+    SCRIPT_VERIFY_ED25519,                                  // bit 39
+
     // End marker — must always be last.
     SCRIPT_VERIFY_END_MARKER
 };

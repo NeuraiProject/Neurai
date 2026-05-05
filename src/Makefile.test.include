@@ -19,7 +19,9 @@ JSON_TEST_FILES = \
   test/data/tx_invalid.json \
   test/data/tx_valid.json \
   test/data/sighash.json \
-  test/data/poseidon_vectors.json
+  test/data/poseidon_vectors.json \
+  test/data/ed25519_vectors.json \
+  test/data/wycheproof_ed25519.json
 
 RAW_TEST_FILES =
 
@@ -68,6 +70,7 @@ NEURAI_TESTS =\
   test/sha3_256_tests.cpp \
   test/sha512_op_tests.cpp \
   test/poseidon_tests.cpp \
+  test/ed25519_tests.cpp \
   test/key_tests.cpp \
   test/limitedmap_tests.cpp \
   test/dbwrapper_tests.cpp \

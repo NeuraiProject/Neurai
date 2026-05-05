@@ -1,0 +1,104 @@
+{
+  "_comment": [
+    "NIP-035 Ed25519 test vectors. Human-readable single source of truth;",
+    "src/test/ed25519_tests.cpp mirrors these inline (drift between the",
+    "two is treated as a consensus-affecting change, exactly like",
+    "poseidon_vectors.json — see NIP-035 §8).",
+    "",
+    "rfc8032_pure_ed25519: canonical PureEd25519 KAT vectors from RFC 8032",
+    "§7.1. The strict NIP-035 profile (non-cofactored verification, ",
+    "canonical encodings, prime-order subgroup) accepts these unchanged.",
+    "",
+    "strict_reject: well-formed-size inputs that the strict profile",
+    "rejects with a specific SCRIPT_ERR_ED25519_* category. These exist",
+    "to catch backends that silently relax to ZIP-215."
+  ],
+
+  "rfc8032_pure_ed25519": [
+    {
+      "name": "RFC 8032 §7.1 TEST 1 (empty message)",
+      "pubkey":    "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "message":   "",
+      "signature": "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"
+    },
+    {
+      "name": "RFC 8032 §7.1 TEST 2 (1-byte message)",
+      "pubkey":    "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+      "message":   "72",
+      "signature": "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00"
+    },
+    {
+      "name": "RFC 8032 §7.1 TEST 3 (2-byte message)",
+      "pubkey":    "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025",
+      "message":   "af82",
+      "signature": "6291d657deec24024827e69c3abe01a30ce548a284743a445e3680d7db5ac3ac18ff9b538d16f290ae67f760984dc6594a7c15e9716ed28dc027beceea1ec40a"
+    },
+    {
+      "name": "RFC 8032 §7.1 TEST SHA(abc) (64-byte message)",
+      "pubkey":    "ec172b93ad5e563bf4932c70e1245034c35467ef2efd4d64ebf819683467e2bf",
+      "message":   "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f",
+      "signature": "dc2a4459e7369633a52b1bf277839a00201009a3efbf3ecb69bea2186c26b58909351fc9ac90b3ecfdfbc7c66431e0303dca179c138ac17ad9bef1177331a704"
+    }
+  ],
+
+  "strict_reject": [
+    {
+      "name": "pubkey y == 2^255-1 (non-canonical, y >= p)",
+      "kind": "PUBKEY_NON_CANONICAL",
+      "pubkey":    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "message":   "",
+      "signature": "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"
+    },
+    {
+      "name": "pubkey y == p (non-canonical, must reject)",
+      "kind": "PUBKEY_NON_CANONICAL",
+      "pubkey":    "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "message":   "",
+      "signature": "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"
+    },
+    {
+      "name": "signature S == l (boundary, non-canonical, must reject)",
+      "kind": "SIG_S_NON_CANONICAL",
+      "pubkey":    "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "message":   "",
+      "signature": "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010"
+    },
+    {
+      "name": "signature S all-ones (way above l, must reject)",
+      "kind": "SIG_S_NON_CANONICAL",
+      "pubkey":    "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "message":   "",
+      "signature": "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "name": "signature R y == 2^255-1 (non-canonical, must reject)",
+      "kind": "SIG_R_NON_CANONICAL",
+      "pubkey":    "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "message":   "",
+      "signature": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f5fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"
+    }
+  ],
+
+  "size_reject": [
+    {
+      "name": "pubkey too short (31 bytes)",
+      "kind": "PUBKEY_SIZE_INVALID",
+      "bytes": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f70751"
+    },
+    {
+      "name": "pubkey too long (33 bytes)",
+      "kind": "PUBKEY_SIZE_INVALID",
+      "bytes": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a00"
+    },
+    {
+      "name": "signature too short (63 bytes)",
+      "kind": "SIG_SIZE_INVALID",
+      "bytes": "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a10"
+    },
+    {
+      "name": "signature too long (65 bytes)",
+      "kind": "SIG_SIZE_INVALID",
+      "bytes": "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b00"
+    }
+  ]
+}

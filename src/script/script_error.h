@@ -133,6 +133,16 @@ typedef enum ScriptError_t
        byte length of OP_POSEIDON inputs across a script. */
     SCRIPT_ERR_POSEIDON_BUDGET,
 
+    /* NIP-035: OP_CHECKSIG_ED25519 strict-profile structural rejections.
+       These are CONSENSUS errors (the malformed-vs-invalid split per
+       §4.4 / §4.5: malformed encodings hard-error, well-formed but
+       invalid signatures push 0). Categories map 1:1 to the
+       crypto::ed25519::StructuralResult enum. */
+    SCRIPT_ERR_ED25519_SIG_SIZE,
+    SCRIPT_ERR_ED25519_PUBKEY_SIZE,
+    SCRIPT_ERR_ED25519_PUBKEY_ENCODING,
+    SCRIPT_ERR_ED25519_SIG_ENCODING,
+
     SCRIPT_ERR_ERROR_COUNT
 } ScriptError;
 

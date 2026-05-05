@@ -64,13 +64,14 @@ BOOST_AUTO_TEST_CASE(none_is_zero)
 
 BOOST_AUTO_TEST_CASE(end_marker_matches_flag_count)
 {
-    // 39 flags (bits 0-38) means END_MARKER should be 39.
-    // Last added: SCRIPT_VERIFY_POSEIDON at bit 38 (NIP-036).
-    // Previously: SCRIPT_VERIFY_MODERN_HASHES at bit 37 (NIP-034a),
+    // 40 flags (bits 0-39) means END_MARKER should be 40.
+    // Last added: SCRIPT_VERIFY_ED25519 at bit 39 (NIP-035).
+    // Previously: SCRIPT_VERIFY_POSEIDON at bit 38 (NIP-036),
+    // SCRIPT_VERIFY_MODERN_HASHES at bit 37 (NIP-034a),
     // SCRIPT_VERIFY_MERKLE_INCLUSION at bit 36 (NIP-031),
     // SCRIPT_VERIFY_KECCAK_BLAKE2B at bit 35 (NIP-030),
     // SCRIPT_VERIFY_CHAINCONTEXT at bit 34 (NIP-026).
-    BOOST_CHECK_EQUAL(MAX_SCRIPT_VERIFY_FLAGS_BITS, 39);
+    BOOST_CHECK_EQUAL(MAX_SCRIPT_VERIFY_FLAGS_BITS, 40);
 }
 
 // --- No internal truncation ---
@@ -79,7 +80,7 @@ BOOST_AUTO_TEST_CASE(no_truncation)
 {
     // Combine all known flags and verify no bits are lost.
     script_verify_flags all = script_verify_flags::from_int(MAX_SCRIPT_VERIFY_FLAGS);
-    BOOST_CHECK_EQUAL(all.as_int(), (uint64_t{1} << 39) - 1);
+    BOOST_CHECK_EQUAL(all.as_int(), (uint64_t{1} << 40) - 1);
 }
 
 BOOST_AUTO_TEST_CASE(chaincontext_is_bit_34)
@@ -99,6 +100,14 @@ BOOST_AUTO_TEST_CASE(poseidon_is_bit_38)
     // ever changes.
     BOOST_CHECK_EQUAL(script_verify_flags{SCRIPT_VERIFY_POSEIDON}.as_int(),
                       uint64_t{1} << 38);
+}
+
+BOOST_AUTO_TEST_CASE(ed25519_is_bit_39)
+{
+    // NIP-035: OP_CHECKSIG_ED25519's verify flag must live at bit 39.
+    // Pinned for the same reason as poseidon_is_bit_38.
+    BOOST_CHECK_EQUAL(script_verify_flags{SCRIPT_VERIFY_ED25519}.as_int(),
+                      uint64_t{1} << 39);
 }
 
 // --- Synthetic high-bit plumbing test ---

@@ -194,6 +194,14 @@ struct Params {
      *  hard-fork. true on testnet/regtest from genesis; false
      *  on mainnet until a future activation NIP. */
     bool nPoseidonEnabled;
+
+    /** NIP-035: enable OP_CHECKSIG_ED25519 (0xdd), the strict-profile
+     *  RFC 8032 PureEd25519 signature verifier. Slot was previously
+     *  unassigned (`bad-opcode`); activation is a hard-fork. true on
+     *  testnet/regtest from genesis; false on mainnet until a future
+     *  activation NIP. Activation also widens the large-witness
+     *  standardness gate so messages > 80 B can be relayed. */
+    bool nEd25519Enabled;
 };
 } // namespace Consensus
 

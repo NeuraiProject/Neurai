@@ -388,6 +388,16 @@ crypto_libneurai_crypto_a_SOURCES = \
   crypto/poseidon_bn254.h \
   crypto/poseidon_bn254.cpp \
   crypto/poseidon_bn254_constants.h \
+  crypto/ed25519.h \
+  crypto/ed25519.cpp \
+  crypto/ed25519/compat.h \
+  crypto/ed25519/ref10_types.h \
+  crypto/ed25519/ref10_fe_51_inline.h \
+  crypto/ed25519/ref10.c \
+  crypto/ed25519/fe_51/fe.h \
+  crypto/ed25519/fe_51/constants.h \
+  crypto/ed25519/fe_51/base.h \
+  crypto/ed25519/fe_51/base2.h \
   crypto/ethash/include/ethash/ethash.h \
   crypto/ethash/include/ethash/ethash.hpp \
   crypto/ethash/include/ethash/hash_types.h \
