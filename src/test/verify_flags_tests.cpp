@@ -64,14 +64,15 @@ BOOST_AUTO_TEST_CASE(none_is_zero)
 
 BOOST_AUTO_TEST_CASE(end_marker_matches_flag_count)
 {
-    // 40 flags (bits 0-39) means END_MARKER should be 40.
-    // Last added: SCRIPT_VERIFY_ED25519 at bit 39 (NIP-035).
-    // Previously: SCRIPT_VERIFY_POSEIDON at bit 38 (NIP-036),
+    // 41 flags (bits 0-40) means END_MARKER should be 41.
+    // Last added: SCRIPT_VERIFY_CHECKSIGADD at bit 40 (NIP-039).
+    // Previously: SCRIPT_VERIFY_ED25519 at bit 39 (NIP-035),
+    // SCRIPT_VERIFY_POSEIDON at bit 38 (NIP-036),
     // SCRIPT_VERIFY_MODERN_HASHES at bit 37 (NIP-034a),
     // SCRIPT_VERIFY_MERKLE_INCLUSION at bit 36 (NIP-031),
     // SCRIPT_VERIFY_KECCAK_BLAKE2B at bit 35 (NIP-030),
     // SCRIPT_VERIFY_CHAINCONTEXT at bit 34 (NIP-026).
-    BOOST_CHECK_EQUAL(MAX_SCRIPT_VERIFY_FLAGS_BITS, 40);
+    BOOST_CHECK_EQUAL(MAX_SCRIPT_VERIFY_FLAGS_BITS, 41);
 }
 
 // --- No internal truncation ---
@@ -80,7 +81,7 @@ BOOST_AUTO_TEST_CASE(no_truncation)
 {
     // Combine all known flags and verify no bits are lost.
     script_verify_flags all = script_verify_flags::from_int(MAX_SCRIPT_VERIFY_FLAGS);
-    BOOST_CHECK_EQUAL(all.as_int(), (uint64_t{1} << 40) - 1);
+    BOOST_CHECK_EQUAL(all.as_int(), (uint64_t{1} << 41) - 1);
 }
 
 BOOST_AUTO_TEST_CASE(chaincontext_is_bit_34)
@@ -110,13 +111,21 @@ BOOST_AUTO_TEST_CASE(ed25519_is_bit_39)
                       uint64_t{1} << 39);
 }
 
+BOOST_AUTO_TEST_CASE(checksigadd_is_bit_40)
+{
+    // NIP-039: OP_CHECKSIGADD's verify flag must live at bit 40.
+    // Pinned for the same reason as poseidon_is_bit_38.
+    BOOST_CHECK_EQUAL(script_verify_flags{SCRIPT_VERIFY_CHECKSIGADD}.as_int(),
+                      uint64_t{1} << 40);
+}
+
 // --- Synthetic high-bit plumbing test ---
 
 BOOST_AUTO_TEST_CASE(high_bit_survives_wrapper)
 {
     // Define a temporary high bit above 31 — proves the migration is real.
-    constexpr auto high_bit = script_verify_flags::from_int(uint64_t{1} << 40);
-    BOOST_CHECK_EQUAL(high_bit.as_int(), uint64_t{1} << 40);
+    constexpr auto high_bit = script_verify_flags::from_int(uint64_t{1} << 41);
+    BOOST_CHECK_EQUAL(high_bit.as_int(), uint64_t{1} << 41);
 
     // Combine with existing flags.
     script_verify_flags combined = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_CAT | high_bit;

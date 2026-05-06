@@ -757,12 +757,14 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         // Check for non-standard witness in P2WSH. The wider per-item cap
         // (MAX_CSFS_STANDARD_P2WSH_STACK_ITEM_SIZE = 3072 B) is used when
         // any of NIP-021 (CSFS / PQ signatures), NIP-031
-        // (OP_CHECKMERKLEINCLUSION proofs), or NIP-035 (Ed25519 bridge
-        // messages) is active in this chain.
-        const auto& cons031 = chainparams.GetConsensus();
+        // (OP_CHECKMERKLEINCLUSION proofs), NIP-035 (Ed25519 bridge
+        // messages), or NIP-039 (OP_CHECKSIGADD — PQ signatures 2421 B,
+        // PQ pubkeys 1313 B) is active in this chain.
+        const auto& consensus = chainparams.GetConsensus();
         if (tx.HasWitness() && fRequireStandard &&
             !IsWitnessStandard(tx, view,
-                               cons031.nCSFSEnabled || cons031.nMerkleInclusionEnabled || cons031.nEd25519Enabled))
+                               consensus.nCSFSEnabled || consensus.nMerkleInclusionEnabled
+                               || consensus.nEd25519Enabled || consensus.nCheckSigAddEnabled))
             return state.DoS(0, false, REJECT_NONSTANDARD, "bad-witness-nonstandard", true);
 
         int64_t nSigOpsCost = GetTransactionSigOpCost(tx, view, STANDARD_SCRIPT_VERIFY_FLAGS);

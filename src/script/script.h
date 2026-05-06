@@ -53,6 +53,16 @@ static const unsigned int MAX_POSEIDON_INPUT_BYTES_PER_SCRIPT = 30720; // 30 KiB
 // Maximum number of public keys per multisig
 static const int MAX_PUBKEYS_PER_MULTISIG = 20;
 
+// NIP-039 §3.7: per-executed-OP_CHECKSIGADD sigop cost. Charged
+// dynamically against MAX_OPS_PER_SCRIPT for every executed
+// OP_CHECKSIGADD, regardless of whether the underlying pubkey is legacy
+// or PQ and regardless of whether the signature is empty. v1 is
+// deliberately conservative (overcharges legacy threshold scripts) but
+// safe against PQ DoS without a sigop-accounting refactor. A future v2
+// may introduce dynamic legacy-vs-PQ accounting.
+// TODO(NIP-039 v2): consider dynamic accounting once benchmarks land.
+static const unsigned int CHECKSIGADD_PQ_SIGOP_COST = 8;
+
 // Maximum script length in bytes
 static const int MAX_SCRIPT_SIZE = 10000;
 
@@ -245,9 +255,15 @@ enum opcodetype
     // previously unassigned slot (0xdd). Stack contract is
     // (sig64, msg, pubkey32 -- 0|1). Slots 0xd8..0xdc are reserved
     // by NIP-033 (BLS12-381 family) but not yet assigned in code;
-    // when BLS lands, those slots will be defined and MAX_OPCODE
-    // stays at OP_CHECKSIG_ED25519.
+    // when BLS lands, those slots will be defined.
     OP_CHECKSIG_ED25519 = 0xdd,
+
+    // NIP-039: generic OP_CHECKSIG-compatible signature accumulator
+    // in a previously unassigned slot (0xde). Stack contract is
+    // (sig, count, pubkey -- count + 0|1). Works with both legacy
+    // secp256k1 keys and PQ ML-DSA-44 keys via CPubKey::Verify().
+    // Flag off → bad-opcode (slot was unassigned, not a NOP).
+    OP_CHECKSIGADD = 0xde,
 
     /** XNA START */
     OP_XNA_ASSET = 0xc0,
@@ -263,12 +279,11 @@ enum opcodetype
     OP_INVALIDOPCODE = 0xff,
 };
 
-// Maximum value that an opcode can be. Bumped by NIP-035 from
-// OP_CHAINCONTEXT (0xd7) to OP_CHECKSIG_ED25519 (0xdd) — bytes in the
-// 0xd8..0xdc range remain unassigned (reserved for the NIP-033 BLS
-// family) and currently fall through to the EvalScript default branch
-// returning SCRIPT_ERR_BAD_OPCODE.
-static const unsigned int MAX_OPCODE = OP_CHECKSIG_ED25519;
+// Maximum value that an opcode can be. Bumped by NIP-039 to
+// OP_CHECKSIGADD (0xde). The 0xd8..0xdc range remains unassigned
+// (reserved for the NIP-033 BLS family) and currently falls through to
+// the EvalScript default branch returning SCRIPT_ERR_BAD_OPCODE.
+static const unsigned int MAX_OPCODE = OP_CHECKSIGADD;
 
 const char* GetOpName(opcodetype opcode);
 

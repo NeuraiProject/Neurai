@@ -143,6 +143,14 @@ typedef enum ScriptError_t
     SCRIPT_ERR_ED25519_PUBKEY_ENCODING,
     SCRIPT_ERR_ED25519_SIG_ENCODING,
 
+    /* NIP-039: OP_CHECKSIGADD mandatory PQ-pubkey shape check. Raised when
+       a public key with prefix 0x05 has a size other than
+       1 + ML_DSA_44_PUBKEY_SIZE. This prevalidation fires INDEPENDENT of
+       any encoding flag (STRICTENC / WITNESS_PUBKEYTYPE) — it is the only
+       NIP-039-specific signature/pubkey rejection; everything else is
+       delegated to the existing OP_CHECKSIG encoding helpers. */
+    SCRIPT_ERR_PQ_PUBKEY_SIZE,
+
     SCRIPT_ERR_ERROR_COUNT
 } ScriptError;
 

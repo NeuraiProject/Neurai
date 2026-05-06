@@ -202,6 +202,15 @@ struct Params {
      *  activation NIP. Activation also widens the large-witness
      *  standardness gate so messages > 80 B can be relayed. */
     bool nEd25519Enabled;
+
+    /** NIP-039: enable OP_CHECKSIGADD (0xde), a generic signature
+     *  accumulator compatible with legacy and PQ CPubKey encodings.
+     *  Slot was previously unassigned (`bad-opcode`); activation is
+     *  a hard-fork. true on testnet/regtest from genesis; false on
+     *  mainnet until a future activation NIP. Activation also widens
+     *  the per-element script cap and the large-witness standardness
+     *  gate so PQ-sized signatures and pubkeys can flow through. */
+    bool nCheckSigAddEnabled;
 };
 } // namespace Consensus
 

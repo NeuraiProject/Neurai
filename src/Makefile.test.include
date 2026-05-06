@@ -53,6 +53,7 @@ NEURAI_TESTS =\
   test/bloom_tests.cpp \
   test/bswap_tests.cpp \
   test/checkqueue_tests.cpp \
+  test/checksigadd_tests.cpp \
   test/coins_tests.cpp \
   test/csfs_tests.cpp \
   test/ctv_tests.cpp \

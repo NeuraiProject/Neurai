@@ -120,6 +120,8 @@ inline script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
     if (consensus.nPoseidonEnabled)          base |= SCRIPT_VERIFY_POSEIDON;
     // NIP-035: OP_CHECKSIG_ED25519 (strict-profile Ed25519 verifier).
     if (consensus.nEd25519Enabled)           base |= SCRIPT_VERIFY_ED25519;
+    // NIP-039: OP_CHECKSIGADD (generic legacy/PQ signature accumulator).
+    if (consensus.nCheckSigAddEnabled)       base |= SCRIPT_VERIFY_CHECKSIGADD;
     return base;
 }
 
@@ -156,10 +158,12 @@ bool AreInputsStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs)
      * Per-item size: 80 bytes when largeWitnessItemsActive is false;
      * MAX_PQ_SCRIPT_ELEMENT_SIZE (3072 bytes) when true. The wider cap is
      * activated by NIP-021 (CSFS — PQ pubkeys/signatures exceed 520 B),
-     * NIP-031 (OP_CHECKMERKLEINCLUSION — depth-32 proofs are ~1029 B), or
+     * NIP-031 (OP_CHECKMERKLEINCLUSION — depth-32 proofs are ~1029 B),
      * NIP-035 (OP_CHECKSIG_ED25519 — bridge / light-client headers can
-     * exceed 80 B as the on-stack message).
-     * Callers pass `nCSFSEnabled || nMerkleInclusionEnabled || nEd25519Enabled`.
+     * exceed 80 B as the on-stack message), or NIP-039 (OP_CHECKSIGADD —
+     * PQ signatures are 2421 B and PQ pubkeys 1313 B).
+     * Callers pass `nCSFSEnabled || nMerkleInclusionEnabled ||
+     * nEd25519Enabled || nCheckSigAddEnabled`.
      * These limits are adequate for multi-signature up to n-of-100 using OP_CHECKSIG, OP_ADD, and OP_EQUAL,
      */
 bool IsWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs,

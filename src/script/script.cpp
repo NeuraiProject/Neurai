@@ -176,6 +176,9 @@ const char* GetOpName(opcodetype opcode)
     // NIP-035
     case OP_CHECKSIG_ED25519       : return "OP_CHECKSIG_ED25519";
 
+    // NIP-039
+    case OP_CHECKSIGADD            : return "OP_CHECKSIGADD";
+
     /** XNA START */
     case OP_XNA_ASSET              : return "OP_XNA_ASSET";
     /** XNA END */

@@ -257,6 +257,18 @@ enum class script_verify_flag_name : uint8_t {
     //
     SCRIPT_VERIFY_ED25519,                                  // bit 39
 
+    // NIP-039: enable OP_CHECKSIGADD (0xde, previously unassigned) —
+    // a generic OP_CHECKSIG-compatible signature accumulator working
+    // with both legacy secp256k1 keys and PQ ML-DSA-44 keys. Flag off
+    // → bad-opcode (slot was unassigned, not a NOP). Hard-fork on
+    // activation. Activation also widens EffectiveMaxScriptElementSize()
+    // and the matching MAX_STACK_BYTES gate so PQ-sized signatures
+    // (2421 B) and pubkeys (1313 B) can flow through; and widens the
+    // large-witness standardness gate (validation.cpp) for PQ-sized
+    // witness items.
+    //
+    SCRIPT_VERIFY_CHECKSIGADD,                              // bit 40
+
     // End marker — must always be last.
     SCRIPT_VERIFY_END_MARKER
 };
@@ -277,19 +289,25 @@ static_assert(0 < MAX_SCRIPT_VERIFY_FLAGS_BITS
 static constexpr script_verify_flags::value_type MAX_SCRIPT_VERIFY_FLAGS =
     ((script_verify_flags::value_type{1} << MAX_SCRIPT_VERIFY_FLAGS_BITS) - 1);
 
-// NIP-018 / NIP-031: effective per-element size cap for the script
-// interpreter. Returns MAX_PQ_SCRIPT_ELEMENT_SIZE (3072) when either:
+// NIP-018 / NIP-031 / NIP-039: effective per-element size cap for the
+// script interpreter. Returns MAX_PQ_SCRIPT_ELEMENT_SIZE (3072) when
+// any of:
 //   - SCRIPT_VERIFY_CHECKSIGFROMSTACK is set (NIP-018: PQ signatures
 //     and pubkeys exceed 520 B).
 //   - SCRIPT_VERIFY_MERKLE_INCLUSION is set (NIP-031: a depth-32
 //     proof element is up to ~1029 B; reuses the same widened cap
 //     instead of introducing a third constant).
+//   - SCRIPT_VERIFY_CHECKSIGADD is set (NIP-039: PQ signatures
+//     (2421 B) and pubkeys (1313 B) flow through the generic
+//     accumulator independently of CSFS / Merkle-inclusion).
 // Otherwise returns MAX_SCRIPT_ELEMENT_SIZE (520). Single source of
 // truth for every call site in EvalScript and the witness verification
 // paths.
 inline unsigned int EffectiveMaxScriptElementSize(script_verify_flags flags)
 {
-    return (flags & (SCRIPT_VERIFY_CHECKSIGFROMSTACK | SCRIPT_VERIFY_MERKLE_INCLUSION))
+    return (flags & (SCRIPT_VERIFY_CHECKSIGFROMSTACK
+                   | SCRIPT_VERIFY_MERKLE_INCLUSION
+                   | SCRIPT_VERIFY_CHECKSIGADD))
          ? MAX_PQ_SCRIPT_ELEMENT_SIZE
          : MAX_SCRIPT_ELEMENT_SIZE;
 }

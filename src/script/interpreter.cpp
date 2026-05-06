@@ -2159,6 +2159,85 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                     }
                         break;
 
+                    // NIP-039: generic OP_CHECKSIG-compatible signature
+                    // accumulator. Stack contract:
+                    //   <sig> <count> <pubkey> -> <count + (1 if sig verifies)>
+                    // Slot 0xde was previously unassigned (`bad-opcode`), so
+                    // flag-off MUST return BAD_OPCODE — not
+                    // DISCOURAGE_UPGRADABLE_NOPS. Cost is charged dynamically
+                    // against MAX_OPS_PER_SCRIPT BEFORE any cryptographic
+                    // work, bounding DoS even with PQ keys.
+                    case OP_CHECKSIGADD:
+                    {
+                        if (!(flags & SCRIPT_VERIFY_CHECKSIGADD))
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
+
+                        if (stack.size() < 3)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+                        valtype &vchSig    = stacktop(-3);
+                        valtype &vchCount  = stacktop(-2);
+                        valtype &vchPubKey = stacktop(-1);
+
+                        // Decode count under the same numeric rules as OP_ADD.
+                        const CScriptNum bnCount(vchCount, fRequireMinimal);
+
+                        // Charge BEFORE any pubkey/sig validation so DoS-shaped
+                        // scripts hit the budget early. Mirrors the
+                        // OP_CHECKMULTISIG accounting pattern at line ~2224.
+                        nOpCount += CHECKSIGADD_PQ_SIGOP_COST;
+                        if (nOpCount > MAX_OPS_PER_SCRIPT)
+                            return set_error(serror, SCRIPT_ERR_OP_COUNT);
+
+                        // Mandatory PQ-pubkey shape prevalidation, INDEPENDENT
+                        // of encoding flags (NIP-039 §3.4). Closes the gap
+                        // where CheckPubKeyEncoding only rejects malformed PQ
+                        // keys under STRICTENC / WITNESS_PUBKEYTYPE.
+                        if (!vchPubKey.empty() && vchPubKey[0] == 0x05 &&
+                            vchPubKey.size() != 1 + ML_DSA_44_PUBKEY_SIZE) {
+                            return set_error(serror, SCRIPT_ERR_PQ_PUBKEY_SIZE);
+                        }
+
+                        // Subset of script starting at the most recent
+                        // codeseparator (matches OP_CHECKSIG handling).
+                        CScript scriptCode(pbegincodehash, pend);
+
+                        // Drop the signature in pre-segwit scripts but not
+                        // segwit scripts (matches OP_CHECKSIG).
+                        if (sigversion == SIGVERSION_BASE)
+                        {
+                            scriptCode.FindAndDelete(CScript(vchSig));
+                        }
+
+                        // Reuse OP_CHECKSIG encoding helpers unchanged — no
+                        // second signature-encoding path. Empty signatures
+                        // are accepted by both helpers.
+                        if (!CheckSignatureEncodingForPubKey(vchSig, vchPubKey, flags, serror) ||
+                            !CheckPubKeyEncoding(vchPubKey, flags, sigversion, serror))
+                        {
+                            // serror is set
+                            return false;
+                        }
+
+                        // Empty signature means "this key position not
+                        // satisfied" — counter unchanged, no verify call.
+                        bool fSuccess = false;
+                        if (!vchSig.empty()) {
+                            fSuccess = checker.CheckSig(vchSig, vchPubKey, scriptCode, sigversion);
+                        }
+
+                        // NULLFAIL: matches OP_CHECKSIG.
+                        if (!fSuccess && (flags & SCRIPT_VERIFY_NULLFAIL) && vchSig.size())
+                            return set_error(serror, SCRIPT_ERR_SIG_NULLFAIL);
+
+                        popstack(stack); // pubkey
+                        popstack(stack); // count
+                        popstack(stack); // sig
+                        const CScriptNum bnResult = fSuccess ? (bnCount + bnOne) : bnCount;
+                        stack.push_back(bnResult.getvch());
+                    }
+                        break;
+
                     case OP_CODESEPARATOR:
                     {
                         // Hash starts after the code separator
@@ -2336,13 +2415,16 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
             if (stack.size() + altstack.size() > MAX_STACK_SIZE)
                 return set_error(serror, SCRIPT_ERR_STACK_SIZE);
 
-            // NIP-018 / NIP-031: total stack-bytes cap, enforced whenever
-            // EffectiveMaxScriptElementSize widens above 520 B (i.e. CSFS
-            // or Merkle-inclusion is active). Bounds worst-case memory when
-            // PQ-sized (3072 B) elements are permitted. Non-widened scripts
-            // keep the implicit 520 KB bound from
-            // MAX_STACK_SIZE × MAX_SCRIPT_ELEMENT_SIZE.
-            if (flags & (SCRIPT_VERIFY_CHECKSIGFROMSTACK | SCRIPT_VERIFY_MERKLE_INCLUSION)) {
+            // NIP-018 / NIP-031 / NIP-039: total stack-bytes cap, enforced
+            // whenever EffectiveMaxScriptElementSize widens above 520 B
+            // (i.e. CSFS, Merkle-inclusion, or CHECKSIGADD is active). Bounds
+            // worst-case memory when PQ-sized (3072 B) elements are
+            // permitted. Non-widened scripts keep the implicit 520 KB bound
+            // from MAX_STACK_SIZE × MAX_SCRIPT_ELEMENT_SIZE. Must stay in
+            // lockstep with EffectiveMaxScriptElementSize() in interpreter.h.
+            if (flags & (SCRIPT_VERIFY_CHECKSIGFROMSTACK
+                       | SCRIPT_VERIFY_MERKLE_INCLUSION
+                       | SCRIPT_VERIFY_CHECKSIGADD)) {
                 size_t stack_bytes = 0;
                 for (const auto& item : stack)    stack_bytes += item.size();
                 for (const auto& item : altstack) stack_bytes += item.size();

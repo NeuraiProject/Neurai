@@ -2,8 +2,17 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 //
-// NIP-021: IsWitnessStandard per-item size cap under nCSFSEnabled.
-// Tests the conditional 80 B / 3072 B limit for P2WSH witness stack items.
+// IsWitnessStandard per-item size cap.
+// Tests the conditional 80 B / 3072 B limit for P2WSH witness stack
+// items. The wider cap is driven by ANY of:
+//   - NIP-021 (CSFS / PQ signatures)
+//   - NIP-031 (OP_CHECKMERKLEINCLUSION proofs)
+//   - NIP-035 (OP_CHECKSIG_ED25519 bridge messages)
+//   - NIP-039 (OP_CHECKSIGADD — PQ signatures 2421 B, PQ pubkeys 1313 B)
+// IsWitnessStandard takes a single `largeWitnessItemsActive` boolean, so
+// these tests cover the behavior for all four NIPs uniformly. The cases
+// below were originally written for NIP-021 (hence the `csfs_*` names);
+// the assertions are equally load-bearing for NIP-031/035/039.
 
 #include "policy/policy.h"
 #include "coins.h"

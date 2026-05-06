@@ -153,6 +153,8 @@ const char* ScriptErrorString(const ScriptError serror)
             return "OP_CHECKSIG_ED25519 pubkey encoding invalid (non-canonical y, not on curve, or non-prime-order subgroup) (NIP-035 §4.4)";
         case SCRIPT_ERR_ED25519_SIG_ENCODING:
             return "OP_CHECKSIG_ED25519 signature encoding invalid (R non-canonical, R not on curve, R non-prime-order, or S >= l) (NIP-035 §4.4)";
+        case SCRIPT_ERR_PQ_PUBKEY_SIZE:
+            return "OP_CHECKSIGADD: 0x05-prefixed PQ public key has non-canonical size (NIP-039 §3.4)";
         case SCRIPT_ERR_UNKNOWN_ERROR:
         case SCRIPT_ERR_ERROR_COUNT:
         default: break;
