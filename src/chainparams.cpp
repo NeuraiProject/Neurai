@@ -419,7 +419,8 @@ public:
         nKAAAWWWPOWActivationTime = 0xFFFFFFFF;
         nKAWPOWActivationTime = nKAAAWWWPOWActivationTime;
 
-        // Testnet resets every 100,000 blocks — each epoch gets its own deterministic genesis.
+        // Testnet resets every TESTNET_EPOCH_LENGTH blocks (see validation.h) — each epoch
+        // gets its own deterministic genesis derived from TESTNET_BASE_TIME + epoch.
         // Epoch number is stored in <datadir>/testnet_epoch and managed by neuraid/neurai-qt
         // before SelectParams() is called. SHA256d genesis mining takes only milliseconds.
         static const uint32_t TESTNET_BASE_TIME = 1774828800; // 2026-03-30 00:00:00 UTC

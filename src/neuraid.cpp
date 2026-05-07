@@ -109,7 +109,7 @@ bool AppInit(int argc, char* argv[])
             fprintf(stderr,"Error reading configuration file: %s\n", e.what());
             return false;
         }
-        // Testnet epoch reset: if validation.cpp set the reset marker at block 100,000,
+        // Testnet epoch reset: if validation.cpp set the reset marker at TESTNET_EPOCH_LENGTH,
         // increment the epoch, wipe blocks/chainstate, and delete the marker — all before
         // SelectParams() constructs chainparams with the new epoch's genesis.
         if (gArgs.GetBoolArg("-testnet", false)) {
