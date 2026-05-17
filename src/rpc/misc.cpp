@@ -941,7 +941,7 @@ UniValue getaddressdeltas(const JSONRPCRequest& request)
             "  \"start\" (number) The start block height\n"
             "  \"end\" (number) The end block height\n"
             "  \"chainInfo\" (boolean) Include chain info in results, only applies if start and end specified\n"
-            "  \"assetName\"   (string, optional) Get deltas for a particular asset instead of XNA.\n"
+            "  \"assetName\"   (string, optional) Get deltas for a particular asset instead of XNA ('*' for all assets).\n"
             "}\n"
             "\nResult:\n"
             "[\n"
@@ -1001,13 +1001,25 @@ UniValue getaddressdeltas(const JSONRPCRequest& request)
     std::vector<std::pair<CAddressIndexKey, CAmount> > addressIndex;
 
     for (std::vector<CDestinationIndexData>::iterator it = addresses.begin(); it != addresses.end(); it++) {
-        if (start > 0 && end > 0) {
-            if (!GetAddressIndex(*it, assetName, addressIndex, start, end)) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "No information available for address");
+        if (assetName == "*") {
+            if (start > 0 && end > 0) {
+                if (!GetAddressIndex(*it, addressIndex, start, end)) {
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "No information available for address");
+                }
+            } else {
+                if (!GetAddressIndex(*it, addressIndex)) {
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "No information available for address");
+                }
             }
         } else {
-            if (!GetAddressIndex(*it, assetName, addressIndex)) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "No information available for address");
+            if (start > 0 && end > 0) {
+                if (!GetAddressIndex(*it, assetName, addressIndex, start, end)) {
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "No information available for address");
+                }
+            } else {
+                if (!GetAddressIndex(*it, assetName, addressIndex)) {
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "No information available for address");
+                }
             }
         }
     }

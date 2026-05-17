@@ -1,0 +1,80 @@
+# Native x64 build of neuraid + neurai-cli with PQ support, based on the
+# official Dockerfile-Linux64-qc but using debian:12 (bookworm) instead of
+# debian:11 (bullseye). Bullseye ships gcc-10 and lacks gcc-12 / cross-compile
+# toolchains that scripts/00-install-deps.sh expects.
+#
+# Build:
+#   cd /home/mark/src/AAA-experimento/Neurai-DePIN
+#   docker build -f doc/docker/Dockerfile-Linux64-qc-bookworm -t neurai-pq .
+
+FROM debian:12
+
+LABEL description="Neurai DePIN (PQ) | native x64 build with regtest support"
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Native x64 build deps only (no cross-compile, no GUI). Matches what
+# depends/ + configure actually need to build neuraid with the wallet and
+# PQ paths enabled. Skips the wider apt list from scripts/00-install-deps.sh
+# (which targets bookworm/bullseye cross-compile workflows).
+RUN apt-get update -qqy && apt-get install -qqy --no-install-recommends \
+        autoconf \
+        automake \
+        autotools-dev \
+        bison \
+        bsdmainutils \
+        build-essential \
+        ca-certificates \
+        cmake \
+        curl \
+        g++ \
+        gcc \
+        git \
+        libtool \
+        make \
+        ninja-build \
+        patch \
+        pkg-config \
+        python3 \
+        unzip \
+        wget \
+        xz-utils && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /root
+
+COPY . /root/Neurai
+
+# Build depends/ (boost, libevent, miniupnpc, etc. for x86_64-pc-linux-gnu).
+# NO_QT=1 skips Qt/Wayland/X11 chains we don't need for the headless daemon.
+WORKDIR /root/Neurai/depends
+RUN make HOST=x86_64-pc-linux-gnu NO_QT=1 -j"$(nproc)"
+
+# Build BerkeleyDB 4.8 from source (wallet).
+WORKDIR /root/Neurai
+RUN ./autogen.sh && contrib/install_db4.sh ../
+
+ENV BDB_PREFIX=/root/db4
+
+# Configure + build neuraid + neurai-cli (no GUI, no tests).
+RUN CONFIG_SITE=$PWD/depends/x86_64-pc-linux-gnu/share/config.site \
+    ./configure \
+        LIBS="-lm -ldl -lpthread" \
+        BDB_LIBS="-L${BDB_PREFIX}/lib -ldb_cxx-4.8" \
+        BDB_CFLAGS="-I${BDB_PREFIX}/include" \
+        --prefix=$PWD/depends/x86_64-pc-linux-gnu \
+        --enable-cxx \
+        --disable-shared \
+        --disable-tests \
+        --disable-gui-tests \
+        --disable-bench \
+        --disable-maintainer-mode \
+        --with-gui=no \
+        --with-pic && \
+    make -j"$(nproc)" src/neuraid src/neurai-cli
+
+# Symlink to standard locations so the e2e harness finds them on PATH.
+RUN ln -sf /root/Neurai/src/neuraid    /usr/local/bin/neuraid && \
+    ln -sf /root/Neurai/src/neurai-cli /usr/local/bin/neurai-cli
+
+CMD ["tail", "-f", "/dev/null"]
