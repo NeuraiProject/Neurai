@@ -61,6 +61,7 @@ NEURAI_TESTS =\
   test/compress_tests.cpp \
   test/crypto_tests.cpp \
   test/depinecies_tests.cpp \
+  test/depinmcpworker_tests.cpp \
   test/cuckoocache_tests.cpp \
   test/DoS_tests.cpp \
   test/getarg_tests.cpp \
@@ -160,6 +161,11 @@ test_test_neurai_LDADD += $(LIBNEURAI_SERVER) $(LIBNEURAI_CLI) $(LIBNEURAI_COMMO
 test_test_neurai_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 
 test_test_neurai_LDADD += $(LIBNEURAI_CONSENSUS) $(LIBNEURAI_CRYPTO) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(OQS_LIBS)
+# Static linking is single-pass, so the circular reference between libneurai_consensus
+# (script/interpreter.cpp) and libneurai_crypto (crypto::SHA3_256, Poseidon, ed25519, nip031)
+# is not resolved by archive order alone. Wrap both archives in a linker group so the
+# linker re-scans them until all cross-references are satisfied.
+test_test_neurai_LDADD += -Wl,--start-group $(LIBNEURAI_CONSENSUS) $(LIBNEURAI_CRYPTO) -Wl,--end-group
 test_test_neurai_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS) -static
 
 if ENABLE_ZMQ

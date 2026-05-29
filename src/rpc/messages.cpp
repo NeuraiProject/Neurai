@@ -1895,6 +1895,11 @@ UniValue depinmcpstatus(const JSONRPCRequest& request)
                 "  \"poll_interval\": n,            (numeric) Polling interval in seconds\n"
                 "  \"commands_processed\": n,       (numeric) Total commands processed\n"
                 "  \"total_errors\": n,             (numeric) Total errors encountered\n"
+                "  \"rate_limited\": n,             (numeric) Commands rejected by rate limiting\n"
+                "  \"concurrency\": n,              (numeric) Number of parallel task threads\n"
+                "  \"tasks_in_flight\": n,          (numeric) AI requests currently being processed\n"
+                "  \"processed_cache\": n,          (numeric) Size of the processed-message dedup cache\n"
+                "  \"context_sessions\": n,         (numeric) Active conversation contexts\n"
                 "  \"last_poll_time\": n            (numeric) Unix timestamp of last poll\n"
                 "}\n"
                 "\nExamples:\n"
@@ -1923,6 +1928,11 @@ UniValue depinmcpstatus(const JSONRPCRequest& request)
     result.push_back(Pair("using_remote_pool", g_depinMCPWorker->IsUsingRemotePool()));
     result.push_back(Pair("commands_processed", (uint64_t)g_depinMCPWorker->GetCommandsProcessed()));
     result.push_back(Pair("total_errors", (uint64_t)g_depinMCPWorker->GetTotalErrors()));
+    result.push_back(Pair("rate_limited", (uint64_t)g_depinMCPWorker->GetRateLimited()));
+    result.push_back(Pair("concurrency", g_depinMCPWorker->GetConcurrency()));
+    result.push_back(Pair("tasks_in_flight", g_depinMCPWorker->GetTasksInFlight()));
+    result.push_back(Pair("processed_cache", (uint64_t)g_depinMCPWorker->GetProcessedCacheSize()));
+    result.push_back(Pair("context_sessions", (uint64_t)g_depinMCPWorker->GetContextSessions()));
     result.push_back(Pair("last_poll_time", g_depinMCPWorker->GetLastPollTime()));
 
     if (g_depinMCPWorker->GetLastPollTime() > 0) {

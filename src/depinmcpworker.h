@@ -17,28 +17,59 @@
 #include <set>
 #include <map>
 #include <deque>
+#include <vector>
+#include <utility>
+#include <condition_variable>
+#include <mutex>
 
 struct CDepinMessage;
+
+// Defaults for MCP worker tuning
+static const int DEFAULT_DEPIN_MCP_TIMEOUT = 120;        // HTTP timeout seconds
+static const int DEFAULT_DEPIN_MCP_CONCURRENCY = 2;      // parallel AI requests
+static const int DEFAULT_DEPIN_MCP_CONTEXT = 6;          // history entries per sender (3 turns), 0 = off
+static const int DEFAULT_DEPIN_MCP_FRAG_SIZE = 1500;     // plaintext chars per response fragment
+static const int DEFAULT_DEPIN_MCP_MAX_FRAGMENTS = 5;    // max fragments per response
+static const size_t MCP_MAX_PROCESSED_CACHE = 10000;     // processed-hash cache cap
+static const size_t MCP_MAX_TASK_QUEUE = 256;            // pending task queue cap
+static const size_t MCP_MAX_COMMAND_CHARS = 4000;        // max chars of a single incoming command
+static const int64_t MCP_CONTEXT_IDLE_TTL = 60 * 60;     // drop idle conversation context after 1h
 
 /**
  * CDepinMCPWorker - Background worker for DePIN MCP integration
  *
- * This class runs a background thread that:
- * 1. Polls the DePIN message pool every N seconds
- * 2. Filters messages with the configured command prefix (e.g., "/ai")
- * 3. Sends prompts to the MCP server (AI model)
- * 4. Sends AI responses back to the DePIN channel
+ * Architecture:
+ * 1. A single poller thread (WorkerLoop) sweeps the DePIN message pool every N seconds,
+ *    validates messages with the command prefix (e.g. "/ai"), decrypts them once and hands
+ *    them to a bounded queue.
+ * 2. A pool of task threads (TaskLoop) consume the queue and run the (slow, blocking) AI
+ *    requests concurrently, so one slow prompt no longer stalls every other user.
+ * 3. Responses are encrypted (ECIES) for all token holders, signed and published back to the
+ *    channel, fragmented across several messages when too long.
  *
- * The worker maintains a cache of processed messages to avoid duplicates
- * and implements rate limiting per sender address.
+ * The worker keeps a FIFO cache of processed message hashes to avoid duplicates, per-sender
+ * and global rate limiting, and an in-memory short conversation history per sender.
  */
+// Test-only accessor (defined in test/depinmcpworker_tests.cpp).
+struct DepinMCPWorkerTester;
+
 class CDepinMCPWorker
 {
+    friend struct DepinMCPWorkerTester;
+
 private:
-    // Thread management
+    // Poller thread
     std::thread workerThread;
     std::atomic<bool> running;
     std::atomic<bool> shouldStop;
+
+    // Task pool (concurrent AI requests)
+    std::vector<std::thread> taskPool;
+    std::deque<std::pair<std::string, std::string>> taskQueue; // (senderAddress, decryptedMessage)
+    std::mutex taskMutex;
+    std::condition_variable taskCv;
+    std::atomic<int> tasksInFlight;
+    int concurrency;
 
     // MCP client
     std::unique_ptr<CDepinMCPClient> mcpClient;
@@ -51,93 +82,81 @@ private:
     std::string depinToken;         // Token to monitor
     int pollInterval;               // Seconds between polls
     std::string responsePrefix;     // e.g., "[BOT]:"
-    int rateLimitPerMinute;
+    int rateLimitPerMinute;         // per-sender (0 = unlimited)
+    int globalRateLimitPerMinute;   // global across all senders (0 = unlimited)
+    int contextSize;                // conversation history entries per sender (0 = disabled)
+    int fragmentSize;               // plaintext chars per response fragment
+    int maxFragments;               // max fragments per response
     std::string poolHost;           // DePIN pool host (localhost = local pool)
     int poolPort;                   // DePIN pool port
 
-    // Message processing
+    // Processed-message dedup (FIFO eviction)
     std::set<uint256> processedMessages;
+    std::deque<uint256> processedOrder;
+    bool processedDirty;
     CCriticalSection cs_processed;
 
-    // Rate limiting: address -> deque of timestamps
+    // Per-sender rate limiting: address -> deque of timestamps
     std::map<std::string, std::deque<int64_t>> rateLimitMap;
     CCriticalSection cs_rateLimit;
+
+    // Global rate limiting
+    std::deque<int64_t> globalRateTimestamps;
+    CCriticalSection cs_globalRate;
+
+    // Conversation context (in-memory only): sender -> last K messages (alternating user/assistant)
+    std::map<std::string, std::deque<std::string>> contextMap;
+    std::map<std::string, int64_t> contextLastSeen;
+    CCriticalSection cs_context;
 
     // Statistics
     std::atomic<uint64_t> totalCommandsProcessed;
     std::atomic<uint64_t> totalErrors;
+    std::atomic<uint64_t> totalRateLimited;
     std::atomic<int64_t> lastPollTime;
 
-    /**
-     * Main worker loop - runs in background thread
-     */
+    /** Poller thread entry point. */
     void WorkerLoop();
 
-    /**
-     * Process a single DePIN message
-     * @param msg Message to process
-     * @return true if processed successfully
-     */
-    bool ProcessMessage(const CDepinMessage& msg);
+    /** Task pool thread entry point. */
+    void TaskLoop();
 
-    /**
-     * Validate message before processing
-     * @param msg Message to validate
-     * @return true if message is valid and should be processed
-     */
-    bool ValidateMessage(const CDepinMessage& msg);
+    /** Enqueue a decrypted command for a task thread. Blocks while the queue is full.
+     *  @return false if the worker is shutting down (caller should not mark it processed). */
+    bool EnqueueTask(const std::string& sender, const std::string& decryptedMessage);
 
-    /**
-     * Extract command from message content
-     * @param message Full message text
-     * @param command Output parameter for extracted command
-     * @return true if command was successfully extracted
-     */
+    /** Run a single command end-to-end (rate limit, AI request, response). */
+    void ProcessTask(const std::string& sender, const std::string& decryptedMessage);
+
+    /** Validate a message and, on success, return its decrypted text (single decrypt). */
+    bool ValidateMessage(const CDepinMessage& msg, std::string& decryptedOut);
+
+    /** Extract the command text after the command prefix. */
     bool ExtractCommand(const std::string& message, std::string& command);
 
-    /**
-     * Check if message has already been processed
-     * @param hash Message hash
-     * @return true if already processed
-     */
     bool IsMessageProcessed(const uint256& hash);
-
-    /**
-     * Mark message as processed
-     * @param hash Message hash to mark
-     */
     void MarkAsProcessed(const uint256& hash);
 
-    /**
-     * Check rate limit for sender address
-     * @param address Sender's address
-     * @return true if within rate limit, false if exceeded
-     */
     bool CheckRateLimit(const std::string& address);
+    bool CheckGlobalRateLimit();
 
-    /**
-     * Load processed messages from disk
-     * @return true if loaded successfully (or file doesn't exist)
-     */
+    /** Drop stale rate-limit / context entries to bound memory. Called once per poll cycle. */
+    void CleanupStaleState();
+
+    // Conversation context helpers
+    std::vector<std::string> GetContext(const std::string& sender);
+    void AppendContext(const std::string& sender, const std::string& prompt, const std::string& response);
+    void ResetContext(const std::string& sender);
+
     bool LoadProcessedMessages();
-
-    /**
-     * Save processed messages to disk
-     * @return true if saved successfully
-     */
     bool SaveProcessedMessages();
-
-    /**
-     * Get path to processed messages file
-     */
+    void FlushProcessedIfDirty();
     fs::path GetProcessedMessagesPath() const;
 
-    /**
-     * Send AI response back to DePIN channel
-     * @param response Response text from AI
-     * @param originalSender Address of original message sender
-     * @return true if sent successfully
-     */
+    /** Encrypt+sign+publish a single pooled message for all token holders. */
+    bool SendPooledMessage(const std::string& text, const std::vector<std::string>& holders);
+
+    /** Send an AI response back to the channel, fragmenting it if too long. */
     bool SendResponse(const std::string& response, const std::string& originalSender);
 
 public:
@@ -145,57 +164,44 @@ public:
     ~CDepinMCPWorker();
 
     /**
-     * Initialize worker with configuration
-     * @param url MCP server base URL
-     * @param endpoint MCP API endpoint
-     * @param apiKey Optional API key
-     * @param key Command prefix (e.g., "/ai")
-     * @param address Node address for signing
-     * @param token DePIN token to monitor
-     * @param interval Poll interval in seconds
-     * @param prefix Response prefix (e.g., "[BOT]:")
-     * @param timeout HTTP timeout in seconds
-     * @param rateLimit Rate limit per minute (0 = no limit)
-     * @param poolHost DePIN pool host (localhost = local pool)
-     * @param poolPort DePIN pool port
-     * @return true if initialization succeeded
+     * Initialize worker with configuration. Extended params have sensible defaults so the
+     * existing call sites keep working.
      */
     bool Initialize(const std::string& url, const std::string& endpoint,
                    const std::string& apiKey, const std::string& key,
                    const std::string& address, const std::string& token,
                    int interval, const std::string& prefix,
                    int timeout, int rateLimit,
-                   const std::string& poolHost = "localhost", int poolPort = 19002);
+                   const std::string& poolHost = "localhost", int poolPort = 19002,
+                   int maxTokens = DEFAULT_DEPIN_MCP_MAX_TOKENS,
+                   double temperature = DEFAULT_DEPIN_MCP_TEMPERATURE,
+                   int concurrency = DEFAULT_DEPIN_MCP_CONCURRENCY,
+                   int contextSize = DEFAULT_DEPIN_MCP_CONTEXT,
+                   int globalRateLimit = 0,
+                   int fragmentSize = DEFAULT_DEPIN_MCP_FRAG_SIZE,
+                   int maxFragments = DEFAULT_DEPIN_MCP_MAX_FRAGMENTS);
 
-    /**
-     * Start the worker thread
-     * @return true if started successfully
-     */
     bool Start();
-
-    /**
-     * Stop the worker thread
-     */
     void Stop();
-
-    /**
-     * Check if worker is running
-     * @return true if worker thread is active
-     */
     bool IsRunning() const { return running.load(); }
 
     // Getters for statistics and configuration
     uint64_t GetCommandsProcessed() const { return totalCommandsProcessed.load(); }
     uint64_t GetTotalErrors() const { return totalErrors.load(); }
+    uint64_t GetRateLimited() const { return totalRateLimited.load(); }
+    int GetTasksInFlight() const { return tasksInFlight.load(); }
     int64_t GetLastPollTime() const { return lastPollTime.load(); }
     std::string GetMCPUrl() const { return mcpUrl; }
     std::string GetCommandKey() const { return commandKey; }
     std::string GetDepinToken() const { return depinToken; }
     std::string GetNodeAddress() const { return nodeAddress; }
     int GetPollInterval() const { return pollInterval; }
+    int GetConcurrency() const { return concurrency; }
     std::string GetPoolHost() const { return poolHost; }
     int GetPoolPort() const { return poolPort; }
     bool IsUsingRemotePool() const { return poolHost != "localhost" && poolHost != "127.0.0.1"; }
+    size_t GetProcessedCacheSize();
+    size_t GetContextSessions();
     std::string GetModelName() const;
 };
 

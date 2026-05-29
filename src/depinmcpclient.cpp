@@ -15,9 +15,17 @@
 #include <sstream>
 
 CDepinMCPClient::CDepinMCPClient(const std::string& url, const std::string& ep,
-                                 const std::string& key, int to)
-    : baseUrl(url), endpoint(ep), apiKey(key), timeout(to), modelName("")
+                                 const std::string& key, int to,
+                                 int maxTok, double temp)
+    : baseUrl(url), endpoint(ep), apiKey(key), timeout(to),
+      maxTokens(maxTok), temperature(temp), modelName("")
 {
+}
+
+std::string CDepinMCPClient::GetModelName() const
+{
+    LOCK(cs_model);
+    return modelName.empty() ? "unknown" : modelName;
 }
 
 std::string CDepinMCPClient::BuildPayload(const std::string& prompt,
@@ -52,8 +60,11 @@ std::string CDepinMCPClient::BuildPayload(const std::string& prompt,
     messages.push_back(userMsg);
 
     payload.push_back(Pair("messages", messages));
-    payload.push_back(Pair("temperature", 0.7));
-    payload.push_back(Pair("max_tokens", 500));
+    payload.push_back(Pair("temperature", temperature));
+    payload.push_back(Pair("max_tokens", maxTokens));
+    // NOTE: streaming intentionally disabled. The DePIN chat delivers discrete pooled
+    // messages, not a live channel, so token-by-token streaming adds no value; long
+    // answers are handled by response fragmentation in the worker instead.
     payload.push_back(Pair("stream", false));
 
     return payload.write();
@@ -71,6 +82,7 @@ bool CDepinMCPClient::ParseResponse(const std::string& jsonResponse, std::string
         // Extract model name if present
         const UniValue& model = find_value(response, "model");
         if (model.isStr()) {
+            LOCK(cs_model);
             modelName = model.get_str();
             LogPrintf("MCPClient: Model name from response: %s\n", modelName);
         }
@@ -364,8 +376,11 @@ bool CDepinMCPClient::FetchModelName()
             const UniValue& firstModel = data[0];
             const UniValue& id = find_value(firstModel, "id");
             if (id.isStr()) {
-                modelName = id.get_str();
-                LogPrintf("MCPClient: Loaded model: %s\n", modelName);
+                {
+                    LOCK(cs_model);
+                    modelName = id.get_str();
+                }
+                LogPrintf("MCPClient: Loaded model: %s\n", id.get_str());
                 return true;
             }
         }

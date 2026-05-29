@@ -5,14 +5,24 @@
 #ifndef NEURAI_DEPINMCPCLIENT_H
 #define NEURAI_DEPINMCPCLIENT_H
 
+#include "sync.h"
+
 #include <string>
 #include <vector>
+
+// Default generation parameters (OpenAI-compatible)
+static const int DEFAULT_DEPIN_MCP_MAX_TOKENS = 500;
+static const double DEFAULT_DEPIN_MCP_TEMPERATURE = 0.7;
 
 /**
  * CDepinMCPClient - HTTP client for communicating with MCP (Model Context Protocol) servers
  *
  * This class handles HTTP POST requests to AI model servers like LM Studio, Ollama, etc.
  * It builds JSON payloads in OpenAI-compatible format and parses responses.
+ *
+ * Thread-safety: MakeHTTPRequest() creates its own libevent base per call, so SendPrompt()/
+ * SendWithContext() may be invoked concurrently from several worker threads. The only mutable
+ * shared state is modelName, which is guarded by cs_model.
  */
 class CDepinMCPClient
 {
@@ -21,7 +31,10 @@ private:
     std::string endpoint;       // API endpoint (e.g., /v1/chat/completions)
     std::string apiKey;         // Optional API key for authentication
     int timeout;                // Request timeout in seconds
-    std::string modelName;      // Name of the loaded model
+    int maxTokens;              // max_tokens for generation
+    double temperature;         // temperature for generation
+    mutable CCriticalSection cs_model;
+    std::string modelName;      // Name of the loaded model (guarded by cs_model)
 
     /**
      * Make HTTP POST request to MCP server
@@ -39,9 +52,13 @@ public:
      * @param ep API endpoint path
      * @param key Optional API key
      * @param to Timeout in seconds
+     * @param maxTok max_tokens for generation
+     * @param temp temperature for generation
      */
     CDepinMCPClient(const std::string& url, const std::string& ep,
-                    const std::string& key, int to);
+                    const std::string& key, int to,
+                    int maxTok = DEFAULT_DEPIN_MCP_MAX_TOKENS,
+                    double temp = DEFAULT_DEPIN_MCP_TEMPERATURE);
 
     /**
      * Send a simple prompt to the MCP server
@@ -95,7 +112,7 @@ public:
      * Get the name of the currently loaded model
      * @return Model name or "unknown" if not available
      */
-    std::string GetModelName() const { return modelName.empty() ? "unknown" : modelName; }
+    std::string GetModelName() const;
 };
 
 #endif // NEURAI_DEPINMCPCLIENT_H

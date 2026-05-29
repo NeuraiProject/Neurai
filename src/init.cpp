@@ -526,9 +526,16 @@ std::string HelpMessage(HelpMessageMode mode)
     strUsage += HelpMessageOpt("-depinmcpaddress=<address>", _("Neurai address to sign bot responses (required when -depinmcp=1)"));
     strUsage += HelpMessageOpt("-depinmcpinterval=<n>", _("Polling interval in seconds (default: 10)"));
     strUsage += HelpMessageOpt("-depinmcpprefix=<prefix>", _("Prefix added to bot responses (default: [BOT]:)"));
-    strUsage += HelpMessageOpt("-depinmcptimeout=<n>", _("HTTP timeout for MCP requests in seconds (default: 600)"));
+    strUsage += HelpMessageOpt("-depinmcptimeout=<n>", strprintf(_("HTTP timeout for MCP requests in seconds (default: %u)"), DEFAULT_DEPIN_MCP_TIMEOUT));
     strUsage += HelpMessageOpt("-depinmcpapikey=<key>", _("Optional API key for MCP server authentication"));
-    strUsage += HelpMessageOpt("-depinmcpratelimit=<n>", _("Max commands per minute per user, 0=unlimited (default: 0)"));
+    strUsage += HelpMessageOpt("-depinmcpratelimit=<n>", _("Max commands per minute per sender, 0=unlimited (default: 0)"));
+    strUsage += HelpMessageOpt("-depinmcpglobalratelimit=<n>", _("Max commands per minute across all senders, 0=unlimited (default: 0)"));
+    strUsage += HelpMessageOpt("-depinmcpconcurrency=<n>", strprintf(_("Number of AI requests processed in parallel (default: %u)"), DEFAULT_DEPIN_MCP_CONCURRENCY));
+    strUsage += HelpMessageOpt("-depinmcpcontext=<n>", strprintf(_("Conversation history entries kept per sender, 0=disabled (default: %u)"), DEFAULT_DEPIN_MCP_CONTEXT));
+    strUsage += HelpMessageOpt("-depinmcpmaxtokens=<n>", strprintf(_("max_tokens passed to the AI model (default: %u)"), DEFAULT_DEPIN_MCP_MAX_TOKENS));
+    strUsage += HelpMessageOpt("-depinmcptemperature=<n>", _("Sampling temperature passed to the AI model (default: 0.7)"));
+    strUsage += HelpMessageOpt("-depinmcpfragsize=<n>", strprintf(_("Plaintext characters per response fragment (default: %u)"), DEFAULT_DEPIN_MCP_FRAG_SIZE));
+    strUsage += HelpMessageOpt("-depinmcpmaxfragments=<n>", strprintf(_("Maximum number of fragments per response (default: %u)"), DEFAULT_DEPIN_MCP_MAX_FRAGMENTS));
     strUsage += HelpMessageOpt("-depinmcppoolhost=<host>", _("DePIN message pool host to read from (default: localhost = local pool)"));
     strUsage += HelpMessageOpt("-depinmcppoolport=<port>", strprintf(_("DePIN message pool port to read from (default: %u)"), DEFAULT_DEPIN_MSG_PORT));
 
@@ -2008,8 +2015,16 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
             std::string mcpAddress = gArgs.GetArg("-depinmcpaddress", "");
             int mcpInterval = gArgs.GetArg("-depinmcpinterval", 10);
             std::string mcpPrefix = gArgs.GetArg("-depinmcpprefix", "[BOT]:");
-            int mcpTimeout = gArgs.GetArg("-depinmcptimeout", 600);
+            int mcpTimeout = gArgs.GetArg("-depinmcptimeout", DEFAULT_DEPIN_MCP_TIMEOUT);
             int mcpRateLimit = gArgs.GetArg("-depinmcpratelimit", 0);
+            int mcpGlobalRateLimit = gArgs.GetArg("-depinmcpglobalratelimit", 0);
+            int mcpConcurrency = gArgs.GetArg("-depinmcpconcurrency", DEFAULT_DEPIN_MCP_CONCURRENCY);
+            int mcpContext = gArgs.GetArg("-depinmcpcontext", DEFAULT_DEPIN_MCP_CONTEXT);
+            int mcpMaxTokens = gArgs.GetArg("-depinmcpmaxtokens", DEFAULT_DEPIN_MCP_MAX_TOKENS);
+            double mcpTemperature = DEFAULT_DEPIN_MCP_TEMPERATURE;
+            ParseDouble(gArgs.GetArg("-depinmcptemperature", "0.7"), &mcpTemperature);
+            int mcpFragSize = gArgs.GetArg("-depinmcpfragsize", DEFAULT_DEPIN_MCP_FRAG_SIZE);
+            int mcpMaxFragments = gArgs.GetArg("-depinmcpmaxfragments", DEFAULT_DEPIN_MCP_MAX_FRAGMENTS);
             std::string poolHost = gArgs.GetArg("-depinmcppoolhost", "localhost");
             int poolPort = gArgs.GetArg("-depinmcppoolport", DEFAULT_DEPIN_MSG_PORT);
 
@@ -2017,11 +2032,24 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
                 return InitError(_("DePIN MCP enabled but no address specified. Use -depinmcpaddress=ADDRESS"));
             }
 
+            // A remote pool host only works in builds compiled with ENABLE_DEPIN_GATEWAY.
+            // Fail fast and clearly instead of logging a recurring error every poll cycle.
+#ifndef ENABLE_DEPIN_GATEWAY
+            if (poolHost != "localhost" && poolHost != "127.0.0.1") {
+                return InitError(strprintf(_("DePIN MCP remote pool host '%s' requires a build with "
+                                             "ENABLE_DEPIN_GATEWAY. Use a local pool (-depinmcppoolhost=localhost) "
+                                             "or rebuild with the gateway enabled."), poolHost));
+            }
+#endif
+
             // Create and initialize MCP worker
             g_depinMCPWorker = std::make_unique<CDepinMCPWorker>();
             if (!g_depinMCPWorker->Initialize(mcpUrl, mcpEndpoint, mcpApiKey, mcpKey,
                                              mcpAddress, token, mcpInterval, mcpPrefix,
-                                             mcpTimeout, mcpRateLimit, poolHost, poolPort)) {
+                                             mcpTimeout, mcpRateLimit, poolHost, poolPort,
+                                             mcpMaxTokens, mcpTemperature, mcpConcurrency,
+                                             mcpContext, mcpGlobalRateLimit,
+                                             mcpFragSize, mcpMaxFragments)) {
                 return InitError(_("Failed to initialize DePIN MCP worker"));
             }
 

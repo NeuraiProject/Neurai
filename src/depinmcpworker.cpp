@@ -16,6 +16,7 @@
 #include "clientversion.h"
 
 #include <algorithm>
+#include <chrono>
 #include <fstream>
 
 // External declarations
@@ -27,10 +28,19 @@ std::unique_ptr<CDepinMCPWorker> g_depinMCPWorker = nullptr;
 CDepinMCPWorker::CDepinMCPWorker()
     : running(false),
       shouldStop(false),
+      tasksInFlight(0),
+      concurrency(DEFAULT_DEPIN_MCP_CONCURRENCY),
       pollInterval(10),
       rateLimitPerMinute(0),
+      globalRateLimitPerMinute(0),
+      contextSize(DEFAULT_DEPIN_MCP_CONTEXT),
+      fragmentSize(DEFAULT_DEPIN_MCP_FRAG_SIZE),
+      maxFragments(DEFAULT_DEPIN_MCP_MAX_FRAGMENTS),
+      poolPort(19002),
+      processedDirty(false),
       totalCommandsProcessed(0),
       totalErrors(0),
+      totalRateLimited(0),
       lastPollTime(0)
 {
 }
@@ -45,7 +55,11 @@ bool CDepinMCPWorker::Initialize(const std::string& url, const std::string& endp
                                  const std::string& address, const std::string& token,
                                  int interval, const std::string& prefix,
                                  int timeout, int rateLimit,
-                                 const std::string& pHost, int pPort)
+                                 const std::string& pHost, int pPort,
+                                 int maxTokens, double temperature,
+                                 int conc, int ctxSize,
+                                 int globalRateLimit,
+                                 int fragSize, int maxFrags)
 {
     LogPrintf("MCPWorker: Initializing with URL=%s, endpoint=%s, key=%s, token=%s\n",
               url, endpoint, key, token);
@@ -55,27 +69,22 @@ bool CDepinMCPWorker::Initialize(const std::string& url, const std::string& endp
         LogPrintf("MCPWorker: MCP URL cannot be empty\n");
         return false;
     }
-
     if (endpoint.empty()) {
         LogPrintf("MCPWorker: MCP endpoint cannot be empty\n");
         return false;
     }
-
     if (key.empty()) {
         LogPrintf("MCPWorker: Command key cannot be empty\n");
         return false;
     }
-
     if (token.empty()) {
         LogPrintf("MCPWorker: DePIN token cannot be empty\n");
         return false;
     }
-
     if (address.empty()) {
         LogPrintf("MCPWorker: Node address cannot be empty\n");
         return false;
     }
-
     if (interval < 1) {
         LogPrintf("MCPWorker: Poll interval must be at least 1 second\n");
         return false;
@@ -90,10 +99,16 @@ bool CDepinMCPWorker::Initialize(const std::string& url, const std::string& endp
     pollInterval = interval;
     responsePrefix = prefix;
     rateLimitPerMinute = rateLimit;
+    globalRateLimitPerMinute = globalRateLimit;
+    contextSize = ctxSize < 0 ? 0 : ctxSize;
+    // Conversation context works in user/assistant pairs; keep it even.
+    if (contextSize % 2 != 0) contextSize += 1;
+    fragmentSize = fragSize > 0 ? fragSize : DEFAULT_DEPIN_MCP_FRAG_SIZE;
+    maxFragments = maxFrags > 0 ? maxFrags : DEFAULT_DEPIN_MCP_MAX_FRAGMENTS;
+    concurrency = conc > 0 ? conc : 1;
     poolHost = pHost;
     poolPort = pPort;
 
-    // Log pool source
     if (poolHost == "localhost" || poolHost == "127.0.0.1") {
         LogPrintf("MCPWorker: Using LOCAL DePIN message pool\n");
     } else {
@@ -101,7 +116,8 @@ bool CDepinMCPWorker::Initialize(const std::string& url, const std::string& endp
     }
 
     // Create MCP client
-    mcpClient = std::make_unique<CDepinMCPClient>(url, endpoint, apiKey, timeout);
+    mcpClient = std::make_unique<CDepinMCPClient>(url, endpoint, apiKey, timeout,
+                                                  maxTokens, temperature);
 
     // Fetch model name from MCP server
     LogPrintf("MCPWorker: Fetching model information from MCP server...\n");
@@ -120,7 +136,8 @@ bool CDepinMCPWorker::Initialize(const std::string& url, const std::string& endp
         LogPrintf("MCPWorker: Successfully connected to MCP server\n");
     }
 
-    LogPrintf("MCPWorker: Initialization complete\n");
+    LogPrintf("MCPWorker: Initialization complete (concurrency=%d, context=%d, globalRateLimit=%d)\n",
+              concurrency, contextSize, globalRateLimitPerMinute);
 
     // Load previously processed messages from disk
     if (!LoadProcessedMessages()) {
@@ -137,14 +154,18 @@ bool CDepinMCPWorker::Start()
         return false;
     }
 
-    LogPrintf("MCPWorker: Starting worker thread...\n");
+    LogPrintf("MCPWorker: Starting worker (%d task threads)...\n", concurrency);
 
     shouldStop.store(false);
     running.store(true);
 
+    // Spawn task pool first so the queue has consumers, then the poller.
+    for (int i = 0; i < concurrency; i++) {
+        taskPool.emplace_back(&CDepinMCPWorker::TaskLoop, this);
+    }
     workerThread = std::thread(&CDepinMCPWorker::WorkerLoop, this);
 
-    LogPrintf("MCPWorker: Worker thread started\n");
+    LogPrintf("MCPWorker: Worker started\n");
     return true;
 }
 
@@ -154,25 +175,32 @@ void CDepinMCPWorker::Stop()
         return;
     }
 
-    LogPrintf("MCPWorker: Stopping worker thread...\n");
+    LogPrintf("MCPWorker: Stopping worker...\n");
 
     shouldStop.store(true);
+    taskCv.notify_all();
 
     if (workerThread.joinable()) {
         workerThread.join();
     }
 
+    taskCv.notify_all();
+    for (auto& t : taskPool) {
+        if (t.joinable()) t.join();
+    }
+    taskPool.clear();
+
     running.store(false);
 
     // Save processed messages before exiting
-    SaveProcessedMessages();
+    FlushProcessedIfDirty();
 
-    LogPrintf("MCPWorker: Worker thread stopped\n");
+    LogPrintf("MCPWorker: Worker stopped\n");
 }
 
 void CDepinMCPWorker::WorkerLoop()
 {
-    LogPrintf("MCPWorker: Worker loop started (interval=%d seconds)\n", pollInterval);
+    LogPrintf("MCPWorker: Poller loop started (interval=%d seconds)\n", pollInterval);
 
     bool useRemotePool = (poolHost != "localhost" && poolHost != "127.0.0.1");
 
@@ -207,6 +235,8 @@ void CDepinMCPWorker::WorkerLoop()
             } else {
 #else
             if (useRemotePool) {
+                // Should be unreachable: init.cpp refuses to start with a remote pool host
+                // when the gateway is not compiled in. Guard anyway.
                 LogPrintf("MCPWorker: Remote pool query is disabled in this build (requires ENABLE_DEPIN_GATEWAY)\n");
                 std::this_thread::sleep_for(std::chrono::seconds(pollInterval));
                 continue;
@@ -223,55 +253,155 @@ void CDepinMCPWorker::WorkerLoop()
 
             LogPrintf("MCPWorker: Found %d total messages in pool\n", messages.size());
 
-            int processedThisCycle = 0;
+            int enqueuedThisCycle = 0;
 
-            // Process each message
+            // Validate each message and hand the new ones to the task pool.
             for (const auto& msg : messages) {
                 if (shouldStop.load()) {
                     break;
                 }
 
-                // Get message hash for deduplication
                 uint256 hash = msg.GetHash();
-
-                // Skip if already processed
                 if (IsMessageProcessed(hash)) {
                     continue;
                 }
 
-                // Validate and process message
-                if (ValidateMessage(msg)) {
-                    if (ProcessMessage(msg)) {
+                std::string decrypted;
+                if (ValidateMessage(msg, decrypted)) {
+                    // Mark only after a successful enqueue so dropped/aborted messages retry.
+                    if (EnqueueTask(msg.senderAddress, decrypted)) {
                         MarkAsProcessed(hash);
-                        totalCommandsProcessed++;
-                        processedThisCycle++;
-                    } else {
-                        totalErrors++;
+                        enqueuedThisCycle++;
                     }
                 }
             }
 
-            if (processedThisCycle > 0) {
-                LogPrintf("MCPWorker: Processed %d new commands this cycle\n", processedThisCycle);
+            if (enqueuedThisCycle > 0) {
+                LogPrintf("MCPWorker: Enqueued %d new commands this cycle\n", enqueuedThisCycle);
             }
 
+            // Bound memory and persist the dedup cache at most once per cycle.
+            CleanupStaleState();
+            FlushProcessedIfDirty();
+
         } catch (const std::exception& e) {
-            LogPrintf("MCPWorker: Exception in worker loop: %s\n", e.what());
+            LogPrintf("MCPWorker: Exception in poller loop: %s\n", e.what());
             totalErrors++;
         }
 
-        // Sleep until next poll
-        std::this_thread::sleep_for(std::chrono::seconds(pollInterval));
+        // Interruptible sleep until next poll
+        for (int slept = 0; slept < pollInterval * 5 && !shouldStop.load(); slept++) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
     }
 
-    LogPrintf("MCPWorker: Worker loop exited\n");
+    LogPrintf("MCPWorker: Poller loop exited\n");
 }
 
-bool CDepinMCPWorker::ValidateMessage(const CDepinMessage& msg)
+void CDepinMCPWorker::TaskLoop()
+{
+    while (true) {
+        std::pair<std::string, std::string> task;
+        {
+            std::unique_lock<std::mutex> lk(taskMutex);
+            taskCv.wait(lk, [this] { return shouldStop.load() || !taskQueue.empty(); });
+            if (shouldStop.load() && taskQueue.empty()) {
+                return;
+            }
+            if (taskQueue.empty()) {
+                continue;
+            }
+            task = taskQueue.front();
+            taskQueue.pop_front();
+        }
+        // Wake any producer waiting for queue space.
+        taskCv.notify_all();
+
+        tasksInFlight++;
+        try {
+            ProcessTask(task.first, task.second);
+        } catch (const std::exception& e) {
+            LogPrintf("MCPWorker: Exception processing task: %s\n", e.what());
+            totalErrors++;
+        }
+        tasksInFlight--;
+    }
+}
+
+bool CDepinMCPWorker::EnqueueTask(const std::string& sender, const std::string& decryptedMessage)
+{
+    std::unique_lock<std::mutex> lk(taskMutex);
+    taskCv.wait(lk, [this] { return shouldStop.load() || taskQueue.size() < MCP_MAX_TASK_QUEUE; });
+    if (shouldStop.load()) {
+        return false;
+    }
+    taskQueue.emplace_back(sender, decryptedMessage);
+    lk.unlock();
+    taskCv.notify_all();
+    return true;
+}
+
+void CDepinMCPWorker::ProcessTask(const std::string& sender, const std::string& decryptedMessage)
+{
+    LogPrintf("MCPWorker: Processing command from %s\n", sender);
+
+    // Rate limiting: global first (cheaper to reject), then per-sender.
+    if (!CheckGlobalRateLimit() || !CheckRateLimit(sender)) {
+        LogPrintf("MCPWorker: Rate limit exceeded for %s\n", sender);
+        totalRateLimited++;
+        SendResponse("Rate limit exceeded. Please wait before sending more commands.", sender);
+        return;
+    }
+
+    // Extract command (text after the prefix)
+    std::string command;
+    if (!ExtractCommand(decryptedMessage, command)) {
+        LogPrintf("MCPWorker: Failed to extract command from message\n");
+        totalErrors++;
+        return;
+    }
+
+    // Special command: clear this sender's conversation context.
+    if (contextSize > 0 && command == "reset") {
+        ResetContext(sender);
+        SendResponse("Conversation context cleared.", sender);
+        totalCommandsProcessed++;
+        return;
+    }
+
+    // Send to MCP server, with conversation context when enabled.
+    std::string response;
+    std::vector<std::string> context;
+    if (contextSize > 0) {
+        context = GetContext(sender);
+    }
+
+    if (!mcpClient->SendWithContext(command, context, response)) {
+        LogPrintf("MCPWorker: Failed to get response from MCP server\n");
+        totalErrors++;
+        SendResponse("Error: Failed to get response from AI server. Please try again later.", sender);
+        return;
+    }
+
+    LogPrintf("MCPWorker: Received response from MCP (%d bytes)\n", response.length());
+
+    if (contextSize > 0) {
+        AppendContext(sender, command, response);
+    }
+
+    if (SendResponse(response, sender)) {
+        LogPrintf("MCPWorker: Successfully processed command and sent response\n");
+        totalCommandsProcessed++;
+    } else {
+        LogPrintf("MCPWorker: Failed to send response to channel\n");
+        totalErrors++;
+    }
+}
+
+bool CDepinMCPWorker::ValidateMessage(const CDepinMessage& msg, std::string& decryptedOut)
 {
     // Check if message is for our token
     if (msg.token != depinToken) {
-        LogPrintf("MCPWorker: Message token '%s' != our token '%s', skipping\n", msg.token, depinToken);
         return false;
     }
 
@@ -279,207 +409,159 @@ bool CDepinMCPWorker::ValidateMessage(const CDepinMessage& msg)
     int64_t now = GetTime();
     int64_t maxAge = 24 * 60 * 60; // 24 hours
     if (now - msg.timestamp > maxAge) {
-        LogPrintf("MCPWorker: Skipping old message (age=%d seconds)\n",
-                 now - msg.timestamp);
         return false;
     }
 
     // Don't process our own messages (from the bot)
     if (msg.senderAddress == nodeAddress) {
-        LogPrintf("MCPWorker: Skipping own message from %s\n", msg.senderAddress);
         return false;
     }
 
-    LogPrintf("MCPWorker: Checking message from %s (token=%s)\n", msg.senderAddress, msg.token);
-
-    // Try to decrypt the message to check if it starts with command key
-    // We need to decrypt it here to validate, then decrypt again in ProcessMessage
-    // This is necessary because messages are stored encrypted
-    std::string decryptedMessage;
+    // Decrypt the message ONCE here; the decrypted text is reused by the task thread.
     std::string error;
-
-    if (!DecryptMessageForAddress(msg.encryptedPayload, nodeAddress, decryptedMessage, error)) {
-        LogPrintf("MCPWorker: Could not decrypt message from %s: %s\n", msg.senderAddress, error);
+    if (!DecryptMessageForAddress(msg.encryptedPayload, nodeAddress, decryptedOut, error)) {
+        LogPrint(BCLog::NET, "MCPWorker: Could not decrypt message from %s: %s\n", msg.senderAddress, error);
         return false;
     }
-
-    LogPrintf("MCPWorker: Decrypted message: '%s'\n", decryptedMessage);
 
     // Check if message starts with command key
-    if (decryptedMessage.find(commandKey) != 0) {
-        LogPrintf("MCPWorker: Message does not start with command key '%s'\n", commandKey);
+    if (decryptedOut.find(commandKey) != 0) {
         return false;
     }
 
-    LogPrintf("MCPWorker: Valid AI command from %s: %s\n",
-             msg.senderAddress, decryptedMessage);
-
+    LogPrintf("MCPWorker: Accepted command from %s\n", msg.senderAddress);
     return true;
 }
 
 bool CDepinMCPWorker::ExtractCommand(const std::string& message, std::string& command)
 {
-    // Remove command key prefix
     if (message.find(commandKey) != 0) {
         return false;
     }
 
-    // Extract text after command key
     command = message.substr(commandKey.length());
 
-    // Trim leading/trailing whitespace
+    // Trim surrounding whitespace
     size_t start = command.find_first_not_of(" \t\r\n");
     if (start == std::string::npos) {
-        command = "";
-        return false;
+        command.clear();
+        return true; // empty command is allowed (e.g. just "/ai")
     }
-
     size_t end = command.find_last_not_of(" \t\r\n");
     command = command.substr(start, end - start + 1);
 
-    // Validate command length
-    if (command.empty()) {
-        return false;
-    }
-
-    if (command.length() > 1000) {
-        LogPrintf("MCPWorker: Command too long (%d characters), truncating\n", command.length());
-        command = command.substr(0, 1000);
+    // Cap input length to keep request payloads bounded.
+    if (command.length() > MCP_MAX_COMMAND_CHARS) {
+        LogPrintf("MCPWorker: Command too long (%d chars), truncating to %d\n",
+                  command.length(), (int)MCP_MAX_COMMAND_CHARS);
+        command = command.substr(0, MCP_MAX_COMMAND_CHARS);
     }
 
     LogPrint(BCLog::NET, "MCPWorker: Extracted command: %s\n", command);
-
     return true;
 }
 
-bool CDepinMCPWorker::ProcessMessage(const CDepinMessage& msg)
+bool CDepinMCPWorker::SendPooledMessage(const std::string& text, const std::vector<std::string>& holders)
 {
-    LogPrintf("MCPWorker: Processing message from %s\n", msg.senderAddress);
-
-    // Check rate limit
-    if (!CheckRateLimit(msg.senderAddress)) {
-        LogPrintf("MCPWorker: Rate limit exceeded for %s\n", msg.senderAddress);
-
-        // Send rate limit message
-        std::string rateLimitMsg = "Rate limit exceeded. Please wait before sending more commands.";
-        SendResponse(rateLimitMsg, msg.senderAddress);
-
+    if (vpwallets.empty() || !vpwallets[0]) {
+        LogPrintf("MCPWorker: No wallet available\n");
         return false;
     }
 
-    // Decrypt message first
-    std::string decryptedMessage;
+    // Validate node address
+    CTxDestination dest = DecodeDestination(nodeAddress);
+    if (!IsValidDestination(dest)) {
+        LogPrintf("MCPWorker: Invalid node address: %s\n", nodeAddress);
+        return false;
+    }
+
+    CDepinMessage newMsg;
+    newMsg.token = depinToken;
+    newMsg.senderAddress = nodeAddress;
+    newMsg.timestamp = GetTime();
+
     std::string error;
-
-    if (!DecryptMessageForAddress(msg.encryptedPayload, nodeAddress, decryptedMessage, error)) {
-        LogPrintf("MCPWorker: Failed to decrypt message: %s\n", error);
+    if (!EncryptMessageForAllRecipients(text, holders, newMsg.encryptedPayload, error)) {
+        LogPrintf("MCPWorker: Failed to encrypt message: %s\n", error);
         return false;
     }
 
-    // Extract command
-    std::string command;
-    if (!ExtractCommand(decryptedMessage, command)) {
-        LogPrintf("MCPWorker: Failed to extract command from message\n");
+    if (!SignDepinMessage(newMsg, nodeAddress)) {
+        LogPrintf("MCPWorker: Failed to sign message\n");
         return false;
     }
 
-    // Send to MCP server
-    std::string response;
-    if (!mcpClient->SendPrompt(command, response)) {
-        LogPrintf("MCPWorker: Failed to get response from MCP server\n");
-
-        // Send error message
-        std::string errorMsg = "Error: Failed to get response from AI server. Please try again later.";
-        SendResponse(errorMsg, msg.senderAddress);
-
+    std::string addError;
+    if (!pDepinMsgPool->AddMessage(newMsg, addError, false)) {
+        LogPrintf("MCPWorker: Failed to add message to pool: %s\n", addError);
         return false;
     }
 
-    LogPrintf("MCPWorker: Received response from MCP (%d bytes)\n", response.length());
-
-    // Send response back to channel
-    if (!SendResponse(response, msg.senderAddress)) {
-        LogPrintf("MCPWorker: Failed to send response to channel\n");
-        return false;
-    }
-
-    LogPrintf("MCPWorker: Successfully processed command and sent response\n");
     return true;
 }
 
 bool CDepinMCPWorker::SendResponse(const std::string& response, const std::string& originalSender)
 {
     try {
-        // Add prefix and model info if configured
-        std::string finalResponse = response;
+        // Build the response prefix (only prepended to the first fragment).
+        std::string prefixPart;
         if (!responsePrefix.empty()) {
-            // Include model name in the response prefix
             std::string modelInfo = mcpClient ? mcpClient->GetModelName() : "unknown";
-            finalResponse = responsePrefix + " [" + modelInfo + "] " + response;
+            prefixPart = responsePrefix + " [" + modelInfo + "] ";
         }
 
-        // Limit response length
-        if (finalResponse.length() > 2000) {
-            LogPrintf("MCPWorker: Response too long (%d characters), truncating\n", finalResponse.length());
-            finalResponse = finalResponse.substr(0, 1997) + "...";
-        }
-
-        LogPrintf("MCPWorker: Sending response to channel (length=%d)\n", finalResponse.length());
-
-        // Get wallet
-        if (vpwallets.empty() || !vpwallets[0]) {
-            LogPrintf("MCPWorker: No wallet available\n");
-            return false;
-        }
-
-        CWallet* pwallet = vpwallets[0];
-
-        // Validate node address
-        CTxDestination dest = DecodeDestination(nodeAddress);
-        if (!IsValidDestination(dest)) {
-            LogPrintf("MCPWorker: Invalid node address: %s\n", nodeAddress);
-            return false;
-        }
-
-        // Get token holders for encryption
+        // Fetch token holders once for all fragments.
         std::string error;
         std::vector<std::string> holders = GetTokenHolders(depinToken, MAX_DEPIN_RECIPIENTS, error);
-
         if (holders.empty()) {
             LogPrintf("MCPWorker: Failed to get token holders: %s\n", error);
             return false;
         }
 
-        // Create message
-        CDepinMessage newMsg;
-        newMsg.token = depinToken;
-        newMsg.senderAddress = nodeAddress;
-        newMsg.timestamp = GetTime();
+        // Split the response into fragments instead of hard-truncating.
+        int fsize = fragmentSize > 0 ? fragmentSize : DEFAULT_DEPIN_MCP_FRAG_SIZE;
+        std::vector<std::string> chunks;
+        size_t pos = 0;
+        while (pos < response.size() && (int)chunks.size() < maxFragments) {
+            chunks.push_back(response.substr(pos, fsize));
+            pos += fsize;
+        }
+        if (chunks.empty()) {
+            chunks.push_back(""); // edge case: empty AI response
+        }
+        bool truncated = pos < response.size();
+        int n = (int)chunks.size();
 
-        // Encrypt message for all token holders
-        if (!EncryptMessageForAllRecipients(finalResponse, holders, newMsg.encryptedPayload, error)) {
-            LogPrintf("MCPWorker: Failed to encrypt message: %s\n", error);
-            return false;
+        if (truncated) {
+            LogPrintf("MCPWorker: Response exceeds %d fragments of %d chars, truncating tail\n",
+                      maxFragments, fsize);
         }
 
-        LogPrintf("MCPWorker: Encrypted message for %d recipients, size: %d bytes\n",
-                  holders.size(), newMsg.encryptedPayload.size());
+        bool ok = true;
+        for (int i = 0; i < n; i++) {
+            std::string text;
+            if (n > 1) {
+                text += "(" + std::to_string(i + 1) + "/" + std::to_string(n) + ") ";
+            }
+            if (i == 0) {
+                text += prefixPart;
+            }
+            text += chunks[i];
+            if (i == n - 1 && truncated) {
+                text += " [...]";
+            }
 
-        // Sign message using wallet
-        if (!SignDepinMessage(newMsg, nodeAddress)) {
-            LogPrintf("MCPWorker: Failed to sign message\n");
-            return false;
+            if (!SendPooledMessage(text, holders)) {
+                ok = false;
+                break;
+            }
         }
 
-        // Add to pool (requires 3 parameters)
-        std::string addError;
-        if (!pDepinMsgPool->AddMessage(newMsg, addError, false)) {
-            LogPrintf("MCPWorker: Failed to add message to pool: %s\n", addError);
-            return false;
+        if (ok) {
+            LogPrintf("MCPWorker: Response sent successfully in %d fragment(s) to %d recipients\n",
+                      n, (int)holders.size());
         }
-
-        LogPrintf("MCPWorker: Response sent successfully\n");
-        return true;
+        return ok;
 
     } catch (const std::exception& e) {
         LogPrintf("MCPWorker: Exception sending response: %s\n", e.what());
@@ -495,26 +577,23 @@ bool CDepinMCPWorker::IsMessageProcessed(const uint256& hash)
 
 void CDepinMCPWorker::MarkAsProcessed(const uint256& hash)
 {
-    {
-        LOCK(cs_processed);
-        processedMessages.insert(hash);
+    LOCK(cs_processed);
+    if (processedMessages.insert(hash).second) {
+        processedOrder.push_back(hash);
+        processedDirty = true;
 
-        // Limit cache size to prevent memory growth
-        // Keep only the most recent 10000 entries
-        if (processedMessages.size() > 10000) {
-            // Remove oldest entry (first in set)
-            auto it = processedMessages.begin();
-            processedMessages.erase(it);
+        // FIFO eviction: drop the oldest entries first (insertion order),
+        // not the lowest hash value.
+        while (processedOrder.size() > MCP_MAX_PROCESSED_CACHE) {
+            const uint256& oldest = processedOrder.front();
+            processedMessages.erase(oldest);
+            processedOrder.pop_front();
         }
     }
-
-    // Persist to disk after each processed message
-    SaveProcessedMessages();
 }
 
 bool CDepinMCPWorker::CheckRateLimit(const std::string& address)
 {
-    // If rate limiting is disabled, always allow
     if (rateLimitPerMinute == 0) {
         return true;
     }
@@ -526,22 +605,114 @@ bool CDepinMCPWorker::CheckRateLimit(const std::string& address)
 
     auto& timestamps = rateLimitMap[address];
 
-    // Remove timestamps outside the window
     while (!timestamps.empty() && timestamps.front() < windowStart) {
         timestamps.pop_front();
     }
 
-    // Check if limit exceeded
     if (timestamps.size() >= static_cast<size_t>(rateLimitPerMinute)) {
-        LogPrint(BCLog::NET, "MCPWorker: Rate limit exceeded for %s (%d/%d)\n",
+        LogPrint(BCLog::NET, "MCPWorker: Per-sender rate limit exceeded for %s (%d/%d)\n",
                  address, timestamps.size(), rateLimitPerMinute);
         return false;
     }
 
-    // Add current timestamp
     timestamps.push_back(now);
-
     return true;
+}
+
+bool CDepinMCPWorker::CheckGlobalRateLimit()
+{
+    if (globalRateLimitPerMinute == 0) {
+        return true;
+    }
+
+    LOCK(cs_globalRate);
+
+    int64_t now = GetTime();
+    int64_t windowStart = now - 60;
+
+    while (!globalRateTimestamps.empty() && globalRateTimestamps.front() < windowStart) {
+        globalRateTimestamps.pop_front();
+    }
+
+    if (globalRateTimestamps.size() >= static_cast<size_t>(globalRateLimitPerMinute)) {
+        LogPrint(BCLog::NET, "MCPWorker: Global rate limit exceeded (%d/%d)\n",
+                 globalRateTimestamps.size(), globalRateLimitPerMinute);
+        return false;
+    }
+
+    globalRateTimestamps.push_back(now);
+    return true;
+}
+
+void CDepinMCPWorker::CleanupStaleState()
+{
+    int64_t now = GetTime();
+
+    // Drop empty / fully-expired per-sender rate-limit buckets.
+    {
+        LOCK(cs_rateLimit);
+        for (auto it = rateLimitMap.begin(); it != rateLimitMap.end();) {
+            auto& dq = it->second;
+            while (!dq.empty() && dq.front() < now - 60) {
+                dq.pop_front();
+            }
+            if (dq.empty()) {
+                it = rateLimitMap.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    // Trim the global window.
+    {
+        LOCK(cs_globalRate);
+        while (!globalRateTimestamps.empty() && globalRateTimestamps.front() < now - 60) {
+            globalRateTimestamps.pop_front();
+        }
+    }
+
+    // Drop idle conversation contexts.
+    if (contextSize > 0) {
+        LOCK(cs_context);
+        for (auto it = contextLastSeen.begin(); it != contextLastSeen.end();) {
+            if (now - it->second > MCP_CONTEXT_IDLE_TTL) {
+                contextMap.erase(it->first);
+                it = contextLastSeen.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+}
+
+std::vector<std::string> CDepinMCPWorker::GetContext(const std::string& sender)
+{
+    LOCK(cs_context);
+    auto it = contextMap.find(sender);
+    if (it == contextMap.end()) {
+        return std::vector<std::string>();
+    }
+    return std::vector<std::string>(it->second.begin(), it->second.end());
+}
+
+void CDepinMCPWorker::AppendContext(const std::string& sender, const std::string& prompt, const std::string& response)
+{
+    LOCK(cs_context);
+    auto& dq = contextMap[sender];
+    dq.push_back(prompt);
+    dq.push_back(response);
+    while ((int)dq.size() > contextSize) {
+        dq.pop_front();
+    }
+    contextLastSeen[sender] = GetTime();
+}
+
+void CDepinMCPWorker::ResetContext(const std::string& sender)
+{
+    LOCK(cs_context);
+    contextMap.erase(sender);
+    contextLastSeen.erase(sender);
 }
 
 fs::path CDepinMCPWorker::GetProcessedMessagesPath() const
@@ -565,7 +736,6 @@ bool CDepinMCPWorker::LoadProcessedMessages()
             return false;
         }
 
-        // Read version
         uint32_t version = 0;
         file.read(reinterpret_cast<char*>(&version), sizeof(version));
         if (version != 1) {
@@ -573,11 +743,9 @@ bool CDepinMCPWorker::LoadProcessedMessages()
             return false;
         }
 
-        // Read count
         uint32_t count = 0;
         file.read(reinterpret_cast<char*>(&count), sizeof(count));
 
-        // Sanity check
         if (count > 100000) {
             LogPrintf("MCPWorker: Processed messages file has too many entries: %u\n", count);
             return false;
@@ -585,8 +753,8 @@ bool CDepinMCPWorker::LoadProcessedMessages()
 
         LOCK(cs_processed);
         processedMessages.clear();
+        processedOrder.clear();
 
-        // Read hashes
         for (uint32_t i = 0; i < count; i++) {
             uint256 hash;
             file.read(reinterpret_cast<char*>(hash.begin()), 32);
@@ -594,10 +762,13 @@ bool CDepinMCPWorker::LoadProcessedMessages()
                 LogPrintf("MCPWorker: Error reading processed messages file at entry %u\n", i);
                 return false;
             }
-            processedMessages.insert(hash);
+            if (processedMessages.insert(hash).second) {
+                processedOrder.push_back(hash); // preserve on-disk (FIFO) order
+            }
         }
 
         file.close();
+        processedDirty = false;
         LogPrintf("MCPWorker: Loaded %u processed message hashes from disk\n", count);
         return true;
 
@@ -612,7 +783,6 @@ bool CDepinMCPWorker::SaveProcessedMessages()
     fs::path path = GetProcessedMessagesPath();
 
     try {
-        // Use temp file and rename for atomicity
         fs::path tempPath = path.string() + ".tmp";
 
         std::ofstream file(tempPath.string(), std::ios::binary | std::ios::trunc);
@@ -623,22 +793,19 @@ bool CDepinMCPWorker::SaveProcessedMessages()
 
         LOCK(cs_processed);
 
-        // Write version
         uint32_t version = 1;
         file.write(reinterpret_cast<const char*>(&version), sizeof(version));
 
-        // Write count
-        uint32_t count = processedMessages.size();
+        uint32_t count = processedOrder.size();
         file.write(reinterpret_cast<const char*>(&count), sizeof(count));
 
-        // Write hashes
-        for (const uint256& hash : processedMessages) {
+        // Write in FIFO order so load reconstructs eviction order.
+        for (const uint256& hash : processedOrder) {
             file.write(reinterpret_cast<const char*>(hash.begin()), 32);
         }
 
         file.close();
 
-        // Atomic rename
         if (fs::exists(path)) {
             fs::remove(path);
         }
@@ -651,6 +818,34 @@ bool CDepinMCPWorker::SaveProcessedMessages()
         LogPrintf("MCPWorker: Exception saving processed messages: %s\n", e.what());
         return false;
     }
+}
+
+void CDepinMCPWorker::FlushProcessedIfDirty()
+{
+    {
+        LOCK(cs_processed);
+        if (!processedDirty) {
+            return;
+        }
+        processedDirty = false; // optimistic; restored below on failure
+    }
+
+    if (!SaveProcessedMessages()) {
+        LOCK(cs_processed);
+        processedDirty = true;
+    }
+}
+
+size_t CDepinMCPWorker::GetProcessedCacheSize()
+{
+    LOCK(cs_processed);
+    return processedMessages.size();
+}
+
+size_t CDepinMCPWorker::GetContextSessions()
+{
+    LOCK(cs_context);
+    return contextMap.size();
 }
 
 std::string CDepinMCPWorker::GetModelName() const
