@@ -1,41 +1,142 @@
-# docker build -f doc/docker/Dockerfile-Linux64-qc -t neurai-linux64-bin .
+# Build with local source (incl. uncommitted fixes) from the repo root:
+#   cd /path/to/Neurai-DePIN
+#   docker build -f doc/docker/Dockerfile-Linux64-qc -t neurai-linux64-bin .
+#
+# Extract the binaries (neuraid, neurai-cli, neurai-tx, neurai-qt) with:
+#   doc/docker/extract-linux64-binaries.sh neurai-linux64-bin ./artifacts/linux64
+#
+# Run the GUI from the image (X11 forwarding example):
+#   xhost +local:docker
+#   docker run --rm -it \
+#     -e DISPLAY=$DISPLAY \
+#     -v /tmp/.X11-unix:/tmp/.X11-unix \
+#     -v neurai-data:/root/.neurai \
+#     neurai-linux64-bin neurai-qt
 
-FROM debian:11
+# ── Stage 1: Build ─────────────────────────────────────────────────────────
+FROM debian:12 AS builder
 
 LABEL maintainer="Asimov"
+LABEL description="Neurai DePIN | native x64 Qt build (multi-stage)"
 
-LABEL version="1.0.5"
+ARG DEBIAN_FRONTEND=noninteractive
 
-LABEL description="Neurai 1.0.5 | Docker for linux x64 bin"
-
-ARG DEBIAN_FRONTEND=nointeractive
-
-RUN apt update
-
-RUN apt-get install -y unzip wget
+# Build deps: toolchain + autotools + xcb/xkb -dev headers needed by Qt5's
+# xcb platform plugin (depends/ builds Qt5 from source against system xcb).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    autoconf \
+    automake \
+    autotools-dev \
+    binutils \
+    bison \
+    bsdmainutils \
+    build-essential \
+    ca-certificates \
+    cmake \
+    curl \
+    git \
+    gnupg \
+    libffi-dev \
+    libfontconfig1-dev \
+    libfreetype6-dev \
+    libssl-dev \
+    libtool \
+    libxcb-cursor-dev \
+    libxcb-icccm4-dev \
+    libxcb-image0-dev \
+    libxcb-keysyms1-dev \
+    libxcb-randr0-dev \
+    libxcb-render-util0-dev \
+    libxcb-shape0-dev \
+    libxcb-shm0-dev \
+    libxcb-sync-dev \
+    libxcb-util-dev \
+    libxcb-xfixes0-dev \
+    libxcb-xkb-dev \
+    libxcb1-dev \
+    libxext-dev \
+    libxkbcommon-dev \
+    libxkbcommon-x11-dev \
+    libxrender-dev \
+    meson \
+    ninja-build \
+    patch \
+    pkg-config \
+    python3 \
+    unzip \
+    wget \
+    xkb-data \
+    xz-utils \
+ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /root
-
 COPY . /root/Neurai
 
-WORKDIR /root/Neurai
-
-RUN scripts/00-install-deps.sh linux
-
+# Build depends/ (boost, libevent, miniupnpc, Qt5, etc.) for native x64.
 WORKDIR /root/Neurai/depends
+RUN make HOST=x86_64-pc-linux-gnu -j"$(nproc)"
 
-RUN make HOST=x86_64-pc-linux-gnu -j2
-
+# BerkeleyDB 4.8 for the wallet, built from source by contrib script.
 WORKDIR /root/Neurai
-
-RUN ./autogen.sh
-
-RUN contrib/install_db4.sh ../
+RUN ./autogen.sh && contrib/install_db4.sh ../
 
 ENV BDB_PREFIX=/root/db4
 
-RUN CONFIG_SITE=$PWD/depends/x86_64-pc-linux-gnu/share/config.site ./configure LIBS="-lm -ldl -lpthread" BDB_LIBS="-L${BDB_PREFIX}/lib -ldb_cxx-4.8" BDB_CFLAGS="-I${BDB_PREFIX}/include" --prefix=$PWD/depends/x86_64-pc-linux-gnu --enable-cxx --disable-shared --disable-tests --disable-gui-tests --disable-maintainer-mode --with-pic
+RUN CONFIG_SITE=$PWD/depends/x86_64-pc-linux-gnu/share/config.site \
+    ./configure \
+      --prefix=$PWD/depends/x86_64-pc-linux-gnu \
+      --disable-shared \
+      --disable-maintainer-mode \
+      --disable-tests \
+      --disable-bench \
+      --disable-gui-tests \
+      --with-gui=qt5 \
+      --with-pic \
+      LDFLAGS="-L${BDB_PREFIX}/lib/" \
+      CPPFLAGS="-I${BDB_PREFIX}/include/"
 
-RUN make -j2
+RUN make -j"$(nproc)" src/neuraid src/neurai-cli src/neurai-tx src/qt/neurai-qt
+
+# ── Stage 2: Runtime ───────────────────────────────────────────────────────
+FROM debian:12
+
+# Runtime libs for neurai-qt (xcb/xkb plugin loaded at startup).
+# Daemon-only users can ignore this — neuraid only needs ca-certificates.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libfontconfig1 \
+    libfreetype6 \
+    libxcb-cursor0 \
+    libxcb-icccm4 \
+    libxcb-image0 \
+    libxcb-keysyms1 \
+    libxcb-randr0 \
+    libxcb-render-util0 \
+    libxcb-shape0 \
+    libxcb-sync1 \
+    libxcb-xfixes0 \
+    libxcb-xkb1 \
+    libxkbcommon0 \
+    libxkbcommon-x11-0 \
+    xkb-data \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /root/Neurai/src/neuraid        /usr/local/bin/neuraid
+COPY --from=builder /root/Neurai/src/neurai-cli     /usr/local/bin/neurai-cli
+COPY --from=builder /root/Neurai/src/neurai-tx      /usr/local/bin/neurai-tx
+COPY --from=builder /root/Neurai/src/qt/neurai-qt   /usr/local/bin/neurai-qt
+
+# Preserve the legacy paths so extract-linux64-binaries.sh keeps working
+# unchanged (`docker cp` follows symlinks).
+RUN mkdir -p /root/Neurai/src/qt && \
+    ln -sf /usr/local/bin/neuraid    /root/Neurai/src/neuraid && \
+    ln -sf /usr/local/bin/neurai-cli /root/Neurai/src/neurai-cli && \
+    ln -sf /usr/local/bin/neurai-tx  /root/Neurai/src/neurai-tx && \
+    ln -sf /usr/local/bin/neurai-qt  /root/Neurai/src/qt/neurai-qt
+
+VOLUME ["/data"]
+
+# P2P, RPC, ZMQ (mainnet). Override at `docker run -p` time for testnet.
+EXPOSE 19100 19101 28332
 
 CMD ["tail", "-f", "/dev/null"]
