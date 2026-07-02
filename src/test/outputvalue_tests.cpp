@@ -84,21 +84,23 @@ std::vector<unsigned char> EncodeAmountLE(int64_t value)
 
 BOOST_FIXTURE_TEST_SUITE(outputvalue_tests, BasicTestingSetup)
 
-BOOST_AUTO_TEST_CASE(outputvalue_disabled_treated_as_nop)
+BOOST_AUTO_TEST_CASE(outputvalue_disabled_is_bad_opcode)
 {
+    // flag off -> BAD_OPCODE (fail-closed, not NOP)
     CTransaction tx(BuildTx());
     CScript script;
-    script << CScriptNum(1) << OP_OUTPUTVALUE << OP_DROP << OP_1;
+    script << CScriptNum(1) << OP_OUTPUTVALUE;
 
     std::vector<std::vector<unsigned char>> result;
     ScriptError err;
     bool ok = RunScript(tx, script, NO_OUTPUTVALUE_FLAGS, result, &err);
-    BOOST_CHECK(ok);
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OK);
+    BOOST_CHECK(!ok);
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
-BOOST_AUTO_TEST_CASE(outputvalue_disabled_discourage_nops_fails)
+BOOST_AUTO_TEST_CASE(outputvalue_disabled_discourage_still_bad_opcode)
 {
+    // flag off -> BAD_OPCODE even with DISCOURAGE_UPGRADABLE_NOPS set (fail-closed)
     CTransaction tx(BuildTx());
     CScript script;
     script << CScriptNum(1) << OP_OUTPUTVALUE;
@@ -107,7 +109,7 @@ BOOST_AUTO_TEST_CASE(outputvalue_disabled_discourage_nops_fails)
     ScriptError err;
     bool ok = RunScript(tx, script, NO_OUTPUTVALUE_FLAGS_DISCOURAGE, result, &err);
     BOOST_CHECK(!ok);
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
 BOOST_AUTO_TEST_CASE(outputvalue_empty_stack_fails)

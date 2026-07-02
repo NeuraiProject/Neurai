@@ -74,22 +74,23 @@ std::vector<unsigned char> EncodeLockTimeLE(uint32_t value)
 
 BOOST_FIXTURE_TEST_SUITE(txlocktime_tests, BasicTestingSetup)
 
-BOOST_AUTO_TEST_CASE(txlocktime_disabled_treated_as_nop)
+BOOST_AUTO_TEST_CASE(txlocktime_disabled_is_bad_opcode)
 {
+    // flag off -> BAD_OPCODE (fail-closed, not NOP)
     CTransaction tx(BuildTx(12345));
     CScript script;
-    script << OP_TXLOCKTIME << OP_1;
+    script << OP_TXLOCKTIME;
 
     std::vector<std::vector<unsigned char>> result;
     ScriptError err;
     bool ok = RunScript(tx, script, NO_TXLOCKTIME_FLAGS, result, &err);
-    BOOST_CHECK(ok);
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OK);
-    BOOST_REQUIRE_EQUAL(result.size(), 1U);
+    BOOST_CHECK(!ok);
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
-BOOST_AUTO_TEST_CASE(txlocktime_disabled_discourage_nops_fails)
+BOOST_AUTO_TEST_CASE(txlocktime_disabled_discourage_still_bad_opcode)
 {
+    // flag off -> BAD_OPCODE even with DISCOURAGE_UPGRADABLE_NOPS set (fail-closed)
     CTransaction tx(BuildTx(12345));
     CScript script;
     script << OP_TXLOCKTIME;
@@ -98,7 +99,7 @@ BOOST_AUTO_TEST_CASE(txlocktime_disabled_discourage_nops_fails)
     ScriptError err;
     bool ok = RunScript(tx, script, NO_TXLOCKTIME_FLAGS_DISCOURAGE, result, &err);
     BOOST_CHECK(!ok);
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
 BOOST_AUTO_TEST_CASE(txlocktime_zero_locktime)

@@ -67,30 +67,30 @@ std::vector<unsigned char> HexBytes(std::initializer_list<unsigned char> bytes)
 
 BOOST_FIXTURE_TEST_SUITE(reversebytes_tests, BasicTestingSetup)
 
-BOOST_AUTO_TEST_CASE(reversebytes_disabled_treated_as_nop)
+BOOST_AUTO_TEST_CASE(reversebytes_disabled_is_bad_opcode)
 {
+    // flag off -> BAD_OPCODE (fail-closed, not NOP)
     CScript script;
-    script << Bytes("abc") << OP_REVERSEBYTES;
+    script << OP_REVERSEBYTES;
 
     std::vector<std::vector<unsigned char>> stack, result;
     ScriptError err;
     bool ok = RunScript(script, NO_REVERSEBYTES_FLAGS, stack, result, &err);
-    BOOST_CHECK(ok);
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OK);
-    BOOST_REQUIRE_EQUAL(result.size(), 1U);
-    BOOST_CHECK(result[0] == Bytes("abc"));
+    BOOST_CHECK(!ok);
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
-BOOST_AUTO_TEST_CASE(reversebytes_disabled_discourage_nops_fails)
+BOOST_AUTO_TEST_CASE(reversebytes_disabled_discourage_still_bad_opcode)
 {
+    // flag off -> BAD_OPCODE even with DISCOURAGE_UPGRADABLE_NOPS set (fail-closed)
     CScript script;
-    script << Bytes("abc") << OP_REVERSEBYTES;
+    script << OP_REVERSEBYTES;
 
     std::vector<std::vector<unsigned char>> stack, result;
     ScriptError err;
     bool ok = RunScript(script, NO_REVERSEBYTES_FLAGS_DISCOURAGE, stack, result, &err);
     BOOST_CHECK(!ok);
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
 BOOST_AUTO_TEST_CASE(reversebytes_empty_stack_fails)

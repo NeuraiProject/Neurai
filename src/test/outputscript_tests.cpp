@@ -131,21 +131,23 @@ BOOST_FIXTURE_TEST_SUITE(outputscript_tests, BasicTestingSetup)
 
 // --- Disabled behavior ---
 
-BOOST_AUTO_TEST_CASE(outputscript_disabled_treated_as_nop)
+BOOST_AUTO_TEST_CASE(outputscript_disabled_is_bad_opcode)
 {
+    // flag off -> BAD_OPCODE (fail-closed, not NOP)
     CTransaction tx(BuildTx());
     CScript script;
-    script << CScriptNum(0) << OP_OUTPUTSCRIPT << OP_DROP << OP_1;
+    script << CScriptNum(0) << OP_OUTPUTSCRIPT;
 
     std::vector<std::vector<unsigned char>> result;
     ScriptError err;
     bool ok = RunScript(tx, script, NO_OUTPUTSCRIPT_FLAGS, result, &err);
-    BOOST_CHECK(ok);
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OK);
+    BOOST_CHECK(!ok);
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
-BOOST_AUTO_TEST_CASE(outputscript_disabled_discourage_nops_fails)
+BOOST_AUTO_TEST_CASE(outputscript_disabled_discourage_still_bad_opcode)
 {
+    // flag off -> BAD_OPCODE even with DISCOURAGE_UPGRADABLE_NOPS set (fail-closed)
     CTransaction tx(BuildTx());
     CScript script;
     script << CScriptNum(0) << OP_OUTPUTSCRIPT;
@@ -154,7 +156,7 @@ BOOST_AUTO_TEST_CASE(outputscript_disabled_discourage_nops_fails)
     ScriptError err;
     bool ok = RunScript(tx, script, NO_OUTPUTSCRIPT_FLAGS_DISCOURAGE, result, &err);
     BOOST_CHECK(!ok);
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
 // --- Error cases ---

@@ -939,12 +939,11 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
 
                     case OP_REVERSEBYTES:
                     {
+                        // NIP-hardfork gating: this byte was unassigned pre-activation, so with its
+                        // flag off it MUST fail with BAD_OPCODE (fail-closed), not act as a NOP.
+                        // See OP_CHAINCONTEXT for the same rule.
                         if (!(flags & SCRIPT_VERIFY_REVERSEBYTES))
-                        {
-                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
-                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
-                            break;
-                        }
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
 
                         if (stack.size() < 1)
                             return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
@@ -956,12 +955,10 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
 
                     case OP_OUTPUTVALUE:
                     {
+                        // NIP-hardfork gating: unassigned byte pre-activation → BAD_OPCODE with
+                        // flag off (fail-closed), not NOP.
                         if (!(flags & SCRIPT_VERIFY_OUTPUTVALUE))
-                        {
-                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
-                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
-                            break;
-                        }
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
 
                         if (stack.size() < 1)
                             return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
@@ -988,12 +985,10 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
 
                     case OP_OUTPUTSCRIPT:
                     {
+                        // NIP-hardfork gating: unassigned byte pre-activation → BAD_OPCODE with
+                        // flag off (fail-closed), not NOP.
                         if (!(flags & SCRIPT_VERIFY_OUTPUTSCRIPT))
-                        {
-                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
-                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
-                            break;
-                        }
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
 
                         if (stack.size() < 1)
                             return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
@@ -1021,12 +1016,10 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         // NIP-024: push the XNA satoshi value of a selected
                         // input's prevout (raw 8-byte LE, or CScriptNum under
                         // the 64-bit-integers opt-in). Symmetric to OP_OUTPUTVALUE.
+                        // NIP-hardfork gating: unassigned byte pre-activation → BAD_OPCODE with
+                        // flag off (fail-closed), not NOP.
                         if (!(flags & SCRIPT_VERIFY_INPUTVALUE))
-                        {
-                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
-                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
-                            break;
-                        }
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
 
                         if (stack.size() < 1)
                             return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
@@ -1163,12 +1156,10 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                     {
                         // NIP-023: push the 32-byte AuthScript v1 commitment
                         // from a selected output's scriptPubKey.
+                        // NIP-hardfork gating: unassigned byte pre-activation → BAD_OPCODE with
+                        // flag off (fail-closed), not NOP.
                         if (!(flags & SCRIPT_VERIFY_OUTPUTAUTHCOMMITMENT))
-                        {
-                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
-                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
-                            break;
-                        }
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
 
                         if (stack.size() < 1)
                             return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
@@ -1188,12 +1179,10 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
 
                     case OP_OUTPUTASSETFIELD:
                     {
+                        // NIP-hardfork gating: unassigned byte pre-activation → BAD_OPCODE with
+                        // flag off (fail-closed), not NOP.
                         if (!(flags & SCRIPT_VERIFY_OUTPUTASSETFIELD))
-                        {
-                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
-                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
-                            break;
-                        }
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
 
                         if (stack.size() < 2)
                             return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
@@ -1229,12 +1218,10 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
 
                     case OP_INPUTASSETFIELD:
                     {
+                        // NIP-hardfork gating: unassigned byte pre-activation → BAD_OPCODE with
+                        // flag off (fail-closed), not NOP.
                         if (!(flags & SCRIPT_VERIFY_INPUTASSETFIELD))
-                        {
-                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
-                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
-                            break;
-                        }
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
 
                         if (stack.size() < 2)
                             return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
@@ -1270,12 +1257,10 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
 
                     case OP_INPUTCOUNT:
                     {
+                        // NIP-hardfork gating: unassigned byte pre-activation → BAD_OPCODE with
+                        // flag off (fail-closed), not NOP.
                         if (!(flags & SCRIPT_VERIFY_INPUTOUTPUTCOUNT))
-                        {
-                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
-                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
-                            break;
-                        }
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
 
                         valtype vchResult;
                         if (!checker.GetInputCount(vchResult))
@@ -1287,12 +1272,10 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
 
                     case OP_OUTPUTCOUNT:
                     {
+                        // NIP-hardfork gating: unassigned byte pre-activation → BAD_OPCODE with
+                        // flag off (fail-closed), not NOP.
                         if (!(flags & SCRIPT_VERIFY_INPUTOUTPUTCOUNT))
-                        {
-                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
-                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
-                            break;
-                        }
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
 
                         valtype vchResult;
                         if (!checker.GetOutputCount(vchResult))
@@ -1309,12 +1292,10 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
 
                     case OP_REFINPUTCOUNT:
                     {
+                        // NIP-hardfork gating: unassigned byte pre-activation → BAD_OPCODE with
+                        // flag off (fail-closed), not NOP.
                         if (!(flags & SCRIPT_VERIFY_REFINPUTS))
-                        {
-                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
-                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
-                            break;
-                        }
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
 
                         valtype vchResult;
                         if (!checker.GetRefInputCount(vchResult))
@@ -1326,12 +1307,10 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
 
                     case OP_REFINPUTFIELD:
                     {
+                        // NIP-hardfork gating: unassigned byte pre-activation → BAD_OPCODE with
+                        // flag off (fail-closed), not NOP.
                         if (!(flags & SCRIPT_VERIFY_REFINPUTS))
-                        {
-                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
-                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
-                            break;
-                        }
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
 
                         // (nRef selector -- field_bytes)
                         if (stack.size() < 2)
@@ -1376,12 +1355,10 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
 
                     case OP_REFINPUTASSETFIELD:
                     {
+                        // NIP-hardfork gating: unassigned byte pre-activation → BAD_OPCODE with
+                        // flag off (fail-closed), not NOP.
                         if (!(flags & SCRIPT_VERIFY_REFINPUTS))
-                        {
-                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
-                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
-                            break;
-                        }
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
 
                         // (nRef selector -- asset_field_bytes)
                         if (stack.size() < 2)
@@ -1420,12 +1397,10 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
 
                     case OP_TXLOCKTIME:
                     {
+                        // NIP-hardfork gating: unassigned byte pre-activation → BAD_OPCODE with
+                        // flag off (fail-closed), not NOP.
                         if (!(flags & SCRIPT_VERIFY_TXLOCKTIME))
-                        {
-                            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
-                                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
-                            break;
-                        }
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
 
                         valtype vchLockTime;
                         if (!checker.GetTxLockTime(vchLockTime))

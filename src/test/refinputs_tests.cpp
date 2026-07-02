@@ -459,37 +459,36 @@ BOOST_AUTO_TEST_CASE(op_refinputcount_zero)
     BOOST_CHECK(RunRefInputScript(tx, refOutputs, script, REFINPUT_FLAGS, result));
 }
 
-BOOST_AUTO_TEST_CASE(op_refinputcount_disabled_nop)
+BOOST_AUTO_TEST_CASE(op_refinputcount_disabled_is_bad_opcode)
 {
+    // flag off -> BAD_OPCODE (fail-closed, not NOP)
     CMutableTransaction mtx = BuildV3TestTx(1, 1, 3);
     CTransaction tx(mtx);
     std::vector<CTxOut> refOutputs = BuildRefOutputs_Plain(3);
 
-    // Without SCRIPT_VERIFY_REFINPUTS, OP_REFINPUTCOUNT is a NOP.
-    // Nothing pushed, nothing consumed. OP_1 provides truthy top.
     CScript script;
-    script << OP_REFINPUTCOUNT << OP_1;
+    script << OP_REFINPUTCOUNT;
 
     std::vector<std::vector<unsigned char>> result;
     ScriptError err;
-    BOOST_CHECK(RunRefInputScript(tx, refOutputs, script, NO_REFINPUT_FLAGS, result, &err));
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OK);
-    BOOST_CHECK_EQUAL(result.size(), 1U); // Only OP_1 on stack
+    BOOST_CHECK(!RunRefInputScript(tx, refOutputs, script, NO_REFINPUT_FLAGS, result, &err));
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
-BOOST_AUTO_TEST_CASE(op_refinputcount_disabled_discourage)
+BOOST_AUTO_TEST_CASE(op_refinputcount_disabled_discourage_still_bad_opcode)
 {
+    // flag off -> BAD_OPCODE even with DISCOURAGE_UPGRADABLE_NOPS set (fail-closed)
     CMutableTransaction mtx = BuildV3TestTx(1, 1, 3);
     CTransaction tx(mtx);
     std::vector<CTxOut> refOutputs = BuildRefOutputs_Plain(3);
 
     CScript script;
-    script << OP_REFINPUTCOUNT << OP_1;
+    script << OP_REFINPUTCOUNT;
 
     std::vector<std::vector<unsigned char>> result;
     ScriptError err;
     BOOST_CHECK(!RunRefInputScript(tx, refOutputs, script, NO_REFINPUT_FLAGS_DISCOURAGE, result, &err));
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
 // =============================================================================
@@ -734,23 +733,20 @@ BOOST_AUTO_TEST_CASE(op_refinputfield_stack_underflow)
     BOOST_CHECK_EQUAL(err, SCRIPT_ERR_INVALID_STACK_OPERATION);
 }
 
-BOOST_AUTO_TEST_CASE(op_refinputfield_disabled_nop)
+BOOST_AUTO_TEST_CASE(op_refinputfield_disabled_is_bad_opcode)
 {
+    // flag off -> BAD_OPCODE (fail-closed, not NOP)
     CMutableTransaction mtx = BuildV3TestTx(1, 1, 1);
     CTransaction tx(mtx);
     std::vector<CTxOut> refOutputs = BuildRefOutputs_Plain(1);
 
-    // Without SCRIPT_VERIFY_REFINPUTS, OP_REFINPUTFIELD is a NOP.
-    // The two arguments (nRef=0, selector=0x01) remain on the stack unconsumed.
-    // Stack ends as [0x00, 0x01]; top element is 0x01 (truthy).
     CScript script;
     script << CScriptNum(0) << std::vector<unsigned char>{0x01} << OP_REFINPUTFIELD;
 
     std::vector<std::vector<unsigned char>> result;
     ScriptError err;
-    BOOST_CHECK(RunRefInputScript(tx, refOutputs, script, NO_REFINPUT_FLAGS, result, &err));
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OK);
-    BOOST_CHECK_EQUAL(result.size(), 2U); // Both args remain on stack
+    BOOST_CHECK(!RunRefInputScript(tx, refOutputs, script, NO_REFINPUT_FLAGS, result, &err));
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
 // =============================================================================
@@ -911,37 +907,36 @@ BOOST_AUTO_TEST_CASE(op_refinputassetfield_ipfs_no_ipfs)
     BOOST_CHECK_EQUAL(err, SCRIPT_ERR_REFINPUTASSETFIELD);
 }
 
-BOOST_AUTO_TEST_CASE(op_refinputassetfield_disabled_nop)
+BOOST_AUTO_TEST_CASE(op_refinputassetfield_disabled_is_bad_opcode)
 {
+    // flag off -> BAD_OPCODE (fail-closed, not NOP)
     std::vector<CTxOut> refOutputs = BuildAssetRefOutputsForNetwork(CBaseChainParams::TESTNET);
     CMutableTransaction mtx = BuildV3TestTx(1, 1, refOutputs.size());
     CTransaction tx(mtx);
 
-    // Without SCRIPT_VERIFY_REFINPUTS, OP_REFINPUTASSETFIELD is a NOP.
-    // The two arguments remain on stack, then OP_1 is pushed.
     CScript script;
-    script << CScriptNum(0) << std::vector<unsigned char>{0x01} << OP_REFINPUTASSETFIELD << OP_1;
+    script << CScriptNum(0) << std::vector<unsigned char>{0x01} << OP_REFINPUTASSETFIELD;
 
     std::vector<std::vector<unsigned char>> result;
     ScriptError err;
-    BOOST_CHECK(RunRefInputScript(tx, refOutputs, script, NO_REFINPUT_FLAGS, result, &err));
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OK);
-    BOOST_CHECK_EQUAL(result.size(), 3U); // [nRef, selector, OP_1]
+    BOOST_CHECK(!RunRefInputScript(tx, refOutputs, script, NO_REFINPUT_FLAGS, result, &err));
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
-BOOST_AUTO_TEST_CASE(op_refinputassetfield_disabled_discourage)
+BOOST_AUTO_TEST_CASE(op_refinputassetfield_disabled_discourage_still_bad_opcode)
 {
+    // flag off -> BAD_OPCODE even with DISCOURAGE_UPGRADABLE_NOPS set (fail-closed)
     std::vector<CTxOut> refOutputs = BuildAssetRefOutputsForNetwork(CBaseChainParams::TESTNET);
     CMutableTransaction mtx = BuildV3TestTx(1, 1, refOutputs.size());
     CTransaction tx(mtx);
 
     CScript script;
-    script << CScriptNum(0) << std::vector<unsigned char>{0x01} << OP_REFINPUTASSETFIELD << OP_1;
+    script << CScriptNum(0) << std::vector<unsigned char>{0x01} << OP_REFINPUTASSETFIELD;
 
     std::vector<std::vector<unsigned char>> result;
     ScriptError err;
     BOOST_CHECK(!RunRefInputScript(tx, refOutputs, script, NO_REFINPUT_FLAGS_DISCOURAGE, result, &err));
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
 // =============================================================================

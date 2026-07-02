@@ -321,25 +321,25 @@ BOOST_AUTO_TEST_CASE(iv_no_prevouts_available_fails)
 
 // --- Flag-gate behavior ---
 
-BOOST_AUTO_TEST_CASE(iv_flag_off_is_nop_on_new_node)
+BOOST_AUTO_TEST_CASE(iv_flag_off_is_bad_opcode)
 {
-    // With the flag off and DISCOURAGE_UPGRADABLE_NOPS off, the opcode
-    // short-circuits to NOP. Selector is NOT popped.
+    // flag off -> BAD_OPCODE (fail-closed, not NOP)
     CTransaction tx(BuildTx());
     auto prevouts = BuildPrevouts();
 
     CScript script;
-    script << OP_1 << CScriptNum(0) << OP_INPUTVALUE << OP_DROP;
+    script << CScriptNum(0) << OP_INPUTVALUE;
 
     std::vector<std::vector<unsigned char>> result;
     ScriptError err;
     bool ok = RunScriptWithPrevouts(tx, prevouts, 0, script, NO_IV_FLAGS, result, &err);
-    BOOST_CHECK(ok);
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OK);
+    BOOST_CHECK(!ok);
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
-BOOST_AUTO_TEST_CASE(iv_flag_off_with_discourage_nops_fails)
+BOOST_AUTO_TEST_CASE(iv_flag_off_with_discourage_still_bad_opcode)
 {
+    // flag off -> BAD_OPCODE even with DISCOURAGE_UPGRADABLE_NOPS set (fail-closed)
     CTransaction tx(BuildTx());
     auto prevouts = BuildPrevouts();
 
@@ -350,7 +350,7 @@ BOOST_AUTO_TEST_CASE(iv_flag_off_with_discourage_nops_fails)
     ScriptError err;
     bool ok = RunScriptWithPrevouts(tx, prevouts, 0, script, NO_IV_FLAGS_DISCOURAGE, result, &err);
     BOOST_CHECK(!ok);
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
 // --- Fee-enforcement covenant demonstration ---

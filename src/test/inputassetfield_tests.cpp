@@ -207,22 +207,23 @@ bool DirectGetInputAssetField(const CTransaction& tx, const std::vector<CTxOut>&
 
 BOOST_FIXTURE_TEST_SUITE(inputassetfield_tests, BasicTestingSetup)
 
-BOOST_AUTO_TEST_CASE(inputassetfield_disabled_treated_as_nop)
+BOOST_AUTO_TEST_CASE(inputassetfield_disabled_is_bad_opcode)
 {
+    // flag off -> BAD_OPCODE (fail-closed, not NOP)
     const std::vector<CTxOut> prevouts = BuildAssetPrevoutsForNetwork(CBaseChainParams::TESTNET);
     CTransaction tx(BuildSpendingTx(prevouts.size()));
     CScript script;
-    script << CScriptNum(1) << std::vector<unsigned char>{0x01} << OP_INPUTASSETFIELD
-           << OP_DROP << OP_DROP << OP_1;
+    script << CScriptNum(1) << std::vector<unsigned char>{0x01} << OP_INPUTASSETFIELD;
 
     std::vector<std::vector<unsigned char>> result;
     ScriptError err;
-    BOOST_CHECK(RunScriptWithPrevouts(tx, prevouts, script, NO_INPUTASSETFIELD_FLAGS, result, &err));
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OK);
+    BOOST_CHECK(!RunScriptWithPrevouts(tx, prevouts, script, NO_INPUTASSETFIELD_FLAGS, result, &err));
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
-BOOST_AUTO_TEST_CASE(inputassetfield_disabled_discourage_nops_fails)
+BOOST_AUTO_TEST_CASE(inputassetfield_disabled_discourage_still_bad_opcode)
 {
+    // flag off -> BAD_OPCODE even with DISCOURAGE_UPGRADABLE_NOPS set (fail-closed)
     const std::vector<CTxOut> prevouts = BuildAssetPrevoutsForNetwork(CBaseChainParams::TESTNET);
     CTransaction tx(BuildSpendingTx(prevouts.size()));
     CScript script;
@@ -231,7 +232,7 @@ BOOST_AUTO_TEST_CASE(inputassetfield_disabled_discourage_nops_fails)
     std::vector<std::vector<unsigned char>> result;
     ScriptError err;
     BOOST_CHECK(!RunScriptWithPrevouts(tx, prevouts, script, NO_INPUTASSETFIELD_FLAGS_DISCOURAGE, result, &err));
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
 BOOST_AUTO_TEST_CASE(inputassetfield_error_cases)

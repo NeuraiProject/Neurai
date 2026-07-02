@@ -184,21 +184,22 @@ bool DirectGetOutputAssetField(const CTransaction& tx, unsigned int nOut, unsign
 
 BOOST_FIXTURE_TEST_SUITE(outputassetfield_tests, BasicTestingSetup)
 
-BOOST_AUTO_TEST_CASE(outputassetfield_disabled_treated_as_nop)
+BOOST_AUTO_TEST_CASE(outputassetfield_disabled_is_bad_opcode)
 {
+    // flag off -> BAD_OPCODE (fail-closed, not NOP)
     CTransaction tx(BuildAssetTxForNetwork(CBaseChainParams::TESTNET));
     CScript script;
-    script << CScriptNum(1) << std::vector<unsigned char>{0x01} << OP_OUTPUTASSETFIELD
-           << OP_DROP << OP_DROP << OP_1;
+    script << CScriptNum(1) << std::vector<unsigned char>{0x01} << OP_OUTPUTASSETFIELD;
 
     std::vector<std::vector<unsigned char>> result;
     ScriptError err;
-    BOOST_CHECK(RunScript(tx, script, NO_OUTPUTASSETFIELD_FLAGS, result, &err));
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OK);
+    BOOST_CHECK(!RunScript(tx, script, NO_OUTPUTASSETFIELD_FLAGS, result, &err));
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
-BOOST_AUTO_TEST_CASE(outputassetfield_disabled_discourage_nops_fails)
+BOOST_AUTO_TEST_CASE(outputassetfield_disabled_discourage_still_bad_opcode)
 {
+    // flag off -> BAD_OPCODE even with DISCOURAGE_UPGRADABLE_NOPS set (fail-closed)
     CTransaction tx(BuildAssetTxForNetwork(CBaseChainParams::TESTNET));
     CScript script;
     script << CScriptNum(1) << std::vector<unsigned char>{0x01} << OP_OUTPUTASSETFIELD;
@@ -206,7 +207,7 @@ BOOST_AUTO_TEST_CASE(outputassetfield_disabled_discourage_nops_fails)
     std::vector<std::vector<unsigned char>> result;
     ScriptError err;
     BOOST_CHECK(!RunScript(tx, script, NO_OUTPUTASSETFIELD_FLAGS_DISCOURAGE, result, &err));
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
 BOOST_AUTO_TEST_CASE(outputassetfield_error_cases)

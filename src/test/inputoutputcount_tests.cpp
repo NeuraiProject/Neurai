@@ -228,62 +228,61 @@ BOOST_AUTO_TEST_CASE(inputcount_within)
 }
 
 // =====================================================================
-// Disabled behavior (NOP-upgradeable)
+// Disabled behavior (flag off -> BAD_OPCODE, fail-closed)
 // =====================================================================
 
-BOOST_AUTO_TEST_CASE(inputcount_disabled_nop)
+BOOST_AUTO_TEST_CASE(inputcount_disabled_is_bad_opcode)
 {
-    // Without the flag, OP_INPUTCOUNT is NOP. Nothing pushed.
-    // Stack ends with only OP_1.
+    // flag off -> BAD_OPCODE (fail-closed, not NOP)
     CTransaction tx(BuildTx(1, 1));
     CScript script;
-    script << OP_INPUTCOUNT << OP_1;
+    script << OP_INPUTCOUNT;
 
     std::vector<std::vector<unsigned char>> result;
     ScriptError err;
     bool ok = RunScript(tx, script, NO_IOCOUNT_FLAGS, result, &err);
-    BOOST_CHECK(ok);
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OK);
-    // Only OP_1 on stack, OP_INPUTCOUNT was NOP
-    BOOST_CHECK_EQUAL(result.size(), 1U);
+    BOOST_CHECK(!ok);
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
-BOOST_AUTO_TEST_CASE(outputcount_disabled_nop)
+BOOST_AUTO_TEST_CASE(outputcount_disabled_is_bad_opcode)
 {
+    // flag off -> BAD_OPCODE (fail-closed, not NOP)
     CTransaction tx(BuildTx(1, 1));
     CScript script;
-    script << OP_OUTPUTCOUNT << OP_1;
+    script << OP_OUTPUTCOUNT;
 
     std::vector<std::vector<unsigned char>> result;
     ScriptError err;
     bool ok = RunScript(tx, script, NO_IOCOUNT_FLAGS, result, &err);
-    BOOST_CHECK(ok);
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OK);
-    BOOST_CHECK_EQUAL(result.size(), 1U);
+    BOOST_CHECK(!ok);
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
-BOOST_AUTO_TEST_CASE(inputcount_disabled_discourage_fails)
+BOOST_AUTO_TEST_CASE(inputcount_disabled_discourage_still_bad_opcode)
 {
+    // flag off -> BAD_OPCODE even with DISCOURAGE_UPGRADABLE_NOPS set (fail-closed)
     CTransaction tx(BuildTx(1, 1));
     CScript script;
-    script << OP_INPUTCOUNT << OP_1;
+    script << OP_INPUTCOUNT;
 
     std::vector<std::vector<unsigned char>> result;
     ScriptError err;
     BOOST_CHECK(!RunScript(tx, script, NO_IOCOUNT_FLAGS_DISCOURAGE, result, &err));
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
-BOOST_AUTO_TEST_CASE(outputcount_disabled_discourage_fails)
+BOOST_AUTO_TEST_CASE(outputcount_disabled_discourage_still_bad_opcode)
 {
+    // flag off -> BAD_OPCODE even with DISCOURAGE_UPGRADABLE_NOPS set (fail-closed)
     CTransaction tx(BuildTx(1, 1));
     CScript script;
-    script << OP_OUTPUTCOUNT << OP_1;
+    script << OP_OUTPUTCOUNT;
 
     std::vector<std::vector<unsigned char>> result;
     ScriptError err;
     BOOST_CHECK(!RunScript(tx, script, NO_IOCOUNT_FLAGS_DISCOURAGE, result, &err));
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
 // =====================================================================

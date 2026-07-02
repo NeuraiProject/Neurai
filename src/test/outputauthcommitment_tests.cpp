@@ -348,26 +348,23 @@ BOOST_AUTO_TEST_CASE(oac_short_script_fails)
 
 // --- Flag-gate behavior ---
 
-BOOST_AUTO_TEST_CASE(oac_flag_off_is_nop_on_new_node)
+BOOST_AUTO_TEST_CASE(oac_flag_off_is_bad_opcode)
 {
-    // With the flag off and DISCOURAGE_UPGRADABLE_NOPS off, the opcode
-    // short-circuits to a NOP. The selector is *not* popped — this mirrors
-    // the behavior of every other DePIN-branch opcode on a flag-off chain.
+    // flag off -> BAD_OPCODE (fail-closed, not NOP)
     CTransaction tx(BuildTx(FixtureCommitment(0x44), FixtureCommitment(0x55)));
     CScript script;
-    // Push 1 so the "true" on top of the stack survives whether or not the
-    // opcode pops and pushes the result.
-    script << OP_1 << CScriptNum(3) << OP_OUTPUTAUTHCOMMITMENT << OP_DROP;
+    script << CScriptNum(3) << OP_OUTPUTAUTHCOMMITMENT;
 
     std::vector<std::vector<unsigned char>> result;
     ScriptError err;
     bool ok = RunScript(tx, script, NO_OAC_FLAGS, result, &err);
-    BOOST_CHECK(ok);
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OK);
+    BOOST_CHECK(!ok);
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
-BOOST_AUTO_TEST_CASE(oac_flag_off_with_discourage_nops_fails)
+BOOST_AUTO_TEST_CASE(oac_flag_off_with_discourage_still_bad_opcode)
 {
+    // flag off -> BAD_OPCODE even with DISCOURAGE_UPGRADABLE_NOPS set (fail-closed)
     CTransaction tx(BuildTx(FixtureCommitment(0x44), FixtureCommitment(0x55)));
     CScript script;
     script << CScriptNum(3) << OP_OUTPUTAUTHCOMMITMENT;
@@ -376,7 +373,7 @@ BOOST_AUTO_TEST_CASE(oac_flag_off_with_discourage_nops_fails)
     ScriptError err;
     bool ok = RunScript(tx, script, NO_OAC_FLAGS_DISCOURAGE, result, &err);
     BOOST_CHECK(!ok);
-    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
 }
 
 // --- Continuity check (canonical covenant self-replication idiom) ---
