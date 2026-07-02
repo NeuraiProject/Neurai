@@ -590,32 +590,11 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
             if (opcode > OP_16 && ++nOpCount > MAX_OPS_PER_SCRIPT)
                 return set_error(serror, SCRIPT_ERR_OP_COUNT);
 
-            // OP_CAT (BIP 347): enabled via SCRIPT_VERIFY_CAT flag
-            if (opcode == OP_CAT && (flags & SCRIPT_VERIFY_CAT)) {
-                // (x1 x2 -- x1+x2)
-                if (stack.size() < 2)
-                    return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
-
-                valtype& vch1 = stacktop(-2);
-                valtype& vch2 = stacktop(-1);
-
-                // Security: concatenation must not exceed the effective per-element size cap.
-                // NIP-018: the cap is 3072 when SCRIPT_VERIFY_CHECKSIGFROMSTACK is set, 520 otherwise.
-                if (vch1.size() + vch2.size() > EffectiveMaxScriptElementSize(flags))
-                    return set_error(serror, SCRIPT_ERR_PUSH_SIZE);
-
-                // Concatenate vch2 onto vch1
-                vch1.insert(vch1.end(), vch2.begin(), vch2.end());
-
-                // Remove vch2 from stack
-                popstack(stack);
-
-                // OP_CAT was handled here — skip the main opcode switch below
-                // (which would fall through to `default: BAD_OPCODE` since OP_CAT
-                //  has no case statement there).
-                continue;
-            }
-            else if (opcode == OP_CAT ||
+            // Disabled opcodes (CVE-2010-5137 lineage): rejected even inside a
+            // non-executed IF branch. OP_CAT (BIP 347) is disabled ONLY when its
+            // flag is off; when SCRIPT_VERIFY_CAT is set it executes as a normal
+            // opcode in the switch below, subject to the fExec guard.
+            if ((opcode == OP_CAT && !(flags & SCRIPT_VERIFY_CAT)) ||
                 opcode == OP_SUBSTR ||
                 opcode == OP_LEFT ||
                 opcode == OP_RIGHT ||
@@ -898,6 +877,30 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         stack.push_back(vchField);
                     }
                         break;
+
+                    case OP_CAT:        // BIP 347 = 0x7e, gated by SCRIPT_VERIFY_CAT
+                    {
+                        // Defensive: OP_CAT without SCRIPT_VERIFY_CAT is already
+                        // rejected as a disabled opcode above; this keeps the case
+                        // self-contained. Reached only in an executed branch (fExec).
+                        if (!(flags & SCRIPT_VERIFY_CAT))
+                            return set_error(serror, SCRIPT_ERR_DISABLED_OPCODE);
+
+                        // (x1 x2 -- x1|x2)
+                        if (stack.size() < 2)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+                        valtype& vch1 = stacktop(-2);
+                        const valtype& vch2 = stacktop(-1);
+
+                        // NIP-018: per-element cap is 3072 with CHECKSIGFROMSTACK, else 520.
+                        if (vch1.size() + vch2.size() > EffectiveMaxScriptElementSize(flags))
+                            return set_error(serror, SCRIPT_ERR_PUSH_SIZE);
+
+                        vch1.insert(vch1.end(), vch2.begin(), vch2.end());
+                        popstack(stack);
+                    }
+                    break;
 
                     case OP_SPLIT:      // NOP8 = 0xb7
                     {

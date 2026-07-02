@@ -69,7 +69,7 @@ BOOST_AUTO_TEST_CASE(cat_basic_concatenation)
     std::vector<unsigned char> expected = {'a', 'b', 'c', 'd'};
 
     CScript script;
-    script << a << b << OP_CAT << expected << OP_EQUAL;
+    script << a << b << OP_CAT << expected << OP_EQUALVERIFY << OP_1;
 
     BOOST_CHECK(RunScript(script, CAT_FLAGS));
 }
@@ -80,7 +80,7 @@ BOOST_AUTO_TEST_CASE(cat_empty_elements)
     std::vector<unsigned char> a = {'a', 'b', 'c'};
     std::vector<unsigned char> empty;
     CScript script;
-    script << a << empty << OP_CAT << a << OP_EQUAL;
+    script << a << empty << OP_CAT << a << OP_EQUALVERIFY << OP_1;
 
     BOOST_CHECK(RunScript(script, CAT_FLAGS));
 }
@@ -90,7 +90,7 @@ BOOST_AUTO_TEST_CASE(cat_both_empty)
     // <""> <""> OP_CAT <""> OP_EQUAL
     std::vector<unsigned char> empty;
     CScript script;
-    script << empty << empty << OP_CAT << empty << OP_EQUAL;
+    script << empty << empty << OP_CAT << empty << OP_EQUALVERIFY << OP_1;
 
     BOOST_CHECK(RunScript(script, CAT_FLAGS));
 }
@@ -183,7 +183,7 @@ BOOST_AUTO_TEST_CASE(cat_stack_depth)
     std::vector<unsigned char> ab = {'a', 'b'};
 
     CScript script;
-    script << x << a << b << OP_CAT << ab << OP_EQUALVERIFY << x << OP_EQUAL;
+    script << x << a << b << OP_CAT << ab << OP_EQUALVERIFY << x << OP_EQUALVERIFY << OP_1;
 
     BOOST_CHECK(RunScript(script, CAT_FLAGS));
 }
@@ -224,6 +224,52 @@ BOOST_AUTO_TEST_CASE(cat_p2wsh_basic)
     ScriptError serror;
     bool result = VerifyScript(scriptSig, scriptPubKey, &witness, CAT_FLAGS, checker, &serror);
     BOOST_CHECK(result);
+}
+
+// ============================================================================
+// Conditional execution: OP_CAT must respect fExec (regression for finding #1)
+// ============================================================================
+
+BOOST_AUTO_TEST_CASE(cat_not_executed_in_false_branch)
+{
+    // OP_0 OP_IF OP_CAT OP_ENDIF OP_1 -> the branch is not taken, so OP_CAT must
+    // be skipped. Before the fix, the early handler ran OP_CAT against an empty
+    // stack and returned INVALID_STACK_OPERATION.
+    CScript script;
+    script << OP_0 << OP_IF << OP_CAT << OP_ENDIF << OP_1;
+
+    BOOST_CHECK(RunScript(script, CAT_FLAGS));
+}
+
+BOOST_AUTO_TEST_CASE(cat_false_branch_does_not_touch_stack)
+{
+    // In the untaken branch OP_CAT must not concatenate: the stack stays [a, b].
+    // The first OP_EQUALVERIFY (b == b) catches the bug; the trailing
+    // OP_EQUALVERIFY OP_1 validates the result without relying on the truthiness
+    // that the helper does not check.
+    std::vector<unsigned char> a = {'a'};
+    std::vector<unsigned char> b = {'b'};
+
+    CScript script;
+    script << a << b << OP_0 << OP_IF << OP_CAT << OP_ENDIF
+           << b << OP_EQUALVERIFY
+           << a << OP_EQUALVERIFY << OP_1;
+
+    BOOST_CHECK(RunScript(script, CAT_FLAGS));
+}
+
+BOOST_AUTO_TEST_CASE(cat_executed_in_true_branch)
+{
+    // Taken branch: the fix does not disable OP_CAT, it only subjects it to fExec.
+    std::vector<unsigned char> a = {'a'};
+    std::vector<unsigned char> b = {'b'};
+    std::vector<unsigned char> ab = {'a', 'b'};
+
+    CScript script;
+    script << a << b << OP_1 << OP_IF << OP_CAT << OP_ENDIF
+           << ab << OP_EQUALVERIFY << OP_1;
+
+    BOOST_CHECK(RunScript(script, CAT_FLAGS));
 }
 
 BOOST_AUTO_TEST_SUITE_END()
