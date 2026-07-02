@@ -163,9 +163,14 @@ test_test_neurai_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 test_test_neurai_LDADD += $(LIBNEURAI_CONSENSUS) $(LIBNEURAI_CRYPTO) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(OQS_LIBS)
 # Static linking is single-pass, so the circular reference between libneurai_consensus
 # (script/interpreter.cpp) and libneurai_crypto (crypto::SHA3_256, Poseidon, ed25519, nip031)
-# is not resolved by archive order alone. Wrap both archives in a linker group so the
-# linker re-scans them until all cross-references are satisfied.
-test_test_neurai_LDADD += -Wl,--start-group $(LIBNEURAI_CONSENSUS) $(LIBNEURAI_CRYPTO) -Wl,--end-group
+# is not resolved by archive order alone. The two archives are therefore listed once more here
+# (in addition to the occurrences above), which lets a single-pass linker re-scan them until all
+# cross-references are satisfied.
+# NOTE: an explicit -Wl,--start-group/--end-group in _LDADD makes autoreconf fail under
+# automake >= 1.16 ("linker flags such as '-Wl,--start-group' belong in test_test_neurai_LDFLAGS"),
+# so it cannot live here. If the repeated listing ever stops resolving the refs, re-introduce the
+# group through an AC_SUBST'd variable so automake does not scan the literal flag.
+test_test_neurai_LDADD += $(LIBNEURAI_CONSENSUS) $(LIBNEURAI_CRYPTO)
 test_test_neurai_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS) -static
 
 if ENABLE_ZMQ

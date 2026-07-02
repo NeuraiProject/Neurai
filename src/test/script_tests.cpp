@@ -1637,13 +1637,13 @@ BOOST_FIXTURE_TEST_SUITE(script_tests, BasicTestingSetup)
         BOOST_CHECK(script.HasValidOps());
         script = ScriptFromHex("ff88ac"); // Script with OP_INVALIDOPCODE explicit
         BOOST_CHECK(!script.HasValidOps());
-        // 0xd8 is the first opcode strictly above MAX_OPCODE
-        // (= OP_CHAINCONTEXT = 0xd7, NIP-026) and therefore invalid.
-        // Historical versions of this test used 0xc0 (→ OP_XNA_ASSET)
-        // and 0xd5 (→ OP_OUTPUTAUTHCOMMITMENT, NIP-023) — both have
-        // since been allocated, so we keep bumping to the next
-        // unassigned byte.
-        script = ScriptFromHex("88acd8");
+        // A byte one past MAX_OPCODE is always invalid, no matter how many
+        // opcodes get allocated later. Derive it from MAX_OPCODE so this test
+        // never goes stale: earlier revisions hardcoded 0xc0, then 0xd5, then
+        // 0xd8, and each byte was subsequently allocated to a real opcode.
+        std::vector<unsigned char> aboveMax = {
+            0x88, 0xac, static_cast<unsigned char>(MAX_OPCODE + 1)};
+        script = CScript(aboveMax.begin(), aboveMax.end());
         BOOST_CHECK(!script.HasValidOps());
     }
 
