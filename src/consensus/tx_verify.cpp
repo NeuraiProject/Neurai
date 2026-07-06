@@ -60,6 +60,34 @@ bool HasAssetOpcodeInExpectedPosition(const CScript& scriptPubKey)
     return false;
 }
 
+} // namespace
+
+// Shared OP_XNA_ASSET placement rule for the two consensus sites (see NIP
+// revision 010). Kept out of the anonymous namespace so it is unit-testable.
+XnaAssetPlacement CheckXnaAssetOutputPlacement(const CScript& scriptPubKey, bool strict)
+{
+    if (!scriptPubKey.Find(OP_XNA_ASSET))
+        return XnaAssetPlacement::Ok;
+
+    if (strict) {
+        // Post-fork / testnet / regtest: any unparseable script containing
+        // OP_XNA_ASSET is rejected.
+        if (!HasAssetOpcodeInExpectedPosition(scriptPubKey))
+            return XnaAssetPlacement::NotInRightLocation;
+        return XnaAssetPlacement::BadAssetScript;
+    }
+
+    // Legacy (origin/main), byte-for-byte: a script *starting* with
+    // OP_XNA_ASSET is accepted even if unparseable; the opcode anywhere else is
+    // rejected. Do NOT use HasAssetOpcodeInExpectedPosition here — it also
+    // accepts the byte-25/34 positions, which origin/main rejected.
+    if (scriptPubKey.empty() || scriptPubKey[0] != OP_XNA_ASSET)
+        return XnaAssetPlacement::NotInRightLocation;
+    return XnaAssetPlacement::Ok;
+}
+
+namespace {
+
 bool GetAssetMetadataFromNewAssetTx(const CTransaction& tx, const std::string& assetName, CNewAsset& asset)
 {
     for (const auto& txout : tx.vout) {
@@ -681,26 +709,16 @@ bool CheckTransaction(const CTransaction& tx, CValidationState &state, bool fChe
                 // OP_XNA_ASSET metadata outputs that are validated separately.
                 continue;
             } else {
-                if (out.scriptPubKey.Find(OP_XNA_ASSET)) {
-                    if (GetParams().GetConsensus().nXNAAssetStrictEnabled) {
-                        // Strict rule (testnet/regtest today, mainnet after the fork):
-                        // any unparseable script containing OP_XNA_ASSET is rejected.
-                        if (!HasAssetOpcodeInExpectedPosition(out.scriptPubKey)) {
-                            return state.DoS(100, false, REJECT_INVALID,
-                                             "bad-txns-op-xna-asset-not-in-right-script-location");
-                        }
-                        return state.DoS(100, false, REJECT_INVALID, "bad-txns-bad-asset-script");
-                    }
-                    // Legacy rule (origin/main, byte-for-byte): a script *starting*
-                    // with OP_XNA_ASSET is accepted even if unparseable; the opcode
-                    // anywhere else is rejected. Do NOT use
-                    // HasAssetOpcodeInExpectedPosition here — it also accepts the
-                    // byte-25/34 positions, which origin/main rejected (see NIP
-                    // revision 010).
-                    if (out.scriptPubKey[0] != OP_XNA_ASSET) {
+                // OP_XNA_ASSET placement rule, gated by network (NIP revision 010).
+                switch (CheckXnaAssetOutputPlacement(out.scriptPubKey,
+                                                     GetParams().GetConsensus().nXNAAssetStrictEnabled)) {
+                    case XnaAssetPlacement::NotInRightLocation:
                         return state.DoS(100, false, REJECT_INVALID,
                                          "bad-txns-op-xna-asset-not-in-right-script-location");
-                    }
+                    case XnaAssetPlacement::BadAssetScript:
+                        return state.DoS(100, false, REJECT_INVALID, "bad-txns-bad-asset-script");
+                    case XnaAssetPlacement::Ok:
+                        break;
                 }
             }
         }
@@ -1074,20 +1092,17 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
                 } else {
                     if (out.scriptPubKey.Find(OP_XNA_ASSET)) {
                         if (AreRestrictedAssetsDeployed()) {
-                            if (GetParams().GetConsensus().nXNAAssetStrictEnabled) {
-                                // Strict rule (testnet/regtest today, mainnet after the fork).
-                                if (!HasAssetOpcodeInExpectedPosition(out.scriptPubKey)) {
+                            // Same placement rule as CheckTransaction, gated by
+                            // network (NIP revision 010).
+                            switch (CheckXnaAssetOutputPlacement(out.scriptPubKey,
+                                                                 GetParams().GetConsensus().nXNAAssetStrictEnabled)) {
+                                case XnaAssetPlacement::NotInRightLocation:
                                     return state.DoS(100, false, REJECT_INVALID,
                                                      "bad-txns-op-xna-asset-not-in-right-script-location", false, "", tx.GetHash());
-                                }
-                                return state.DoS(100, false, REJECT_INVALID, "bad-txns-bad-asset-script", false, "", tx.GetHash());
-                            }
-                            // Legacy rule (origin/main, byte-for-byte): only reject
-                            // when OP_XNA_ASSET is not the first byte. See NIP
-                            // revision 010 (do NOT use HasAssetOpcodeInExpectedPosition).
-                            if (out.scriptPubKey[0] != OP_XNA_ASSET) {
-                                return state.DoS(100, false, REJECT_INVALID,
-                                                 "bad-txns-op-xna-asset-not-in-right-script-location", false, "", tx.GetHash());
+                                case XnaAssetPlacement::BadAssetScript:
+                                    return state.DoS(100, false, REJECT_INVALID, "bad-txns-bad-asset-script", false, "", tx.GetHash());
+                                case XnaAssetPlacement::Ok:
+                                    break;
                             }
                         } else {
                             return state.DoS(100, false, REJECT_INVALID, "bad-txns-bad-asset-script", false, "", tx.GetHash());

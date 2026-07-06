@@ -23,8 +23,31 @@ class CTxOut;
 class uint256;
 class CMessage;
 class CNullAssetTxData;
+class CScript;
 
 /** Transaction validation functions */
+
+/**
+ * Placement verdict for an output that contains OP_XNA_ASSET but is neither a
+ * valid asset script nor a null-asset script. Shared by the two consensus
+ * sites (CheckTransaction and Consensus::CheckTxAssets) so their rules cannot
+ * drift. See NIP/revision/010.
+ */
+enum class XnaAssetPlacement {
+    Ok,                 //!< No OP_XNA_ASSET present, or accepted by the active rule
+    NotInRightLocation, //!< OP_XNA_ASSET present but misplaced -> not-in-right-script-location
+    BadAssetScript,     //!< OP_XNA_ASSET well-placed but unparseable -> bad-asset-script
+};
+
+/**
+ * Evaluate OP_XNA_ASSET placement for a non-asset, non-null-asset output.
+ * @param strict  true = post-fork/testnet/regtest rule (reject any unparseable
+ *                script containing OP_XNA_ASSET); false = legacy origin/main
+ *                rule (accept a script that *starts* with OP_XNA_ASSET, reject
+ *                the opcode anywhere else). The legacy branch must not use the
+ *                position helper — origin/main only ever checked byte 0.
+ */
+XnaAssetPlacement CheckXnaAssetOutputPlacement(const CScript& scriptPubKey, bool strict);
 
 /** Context-independent validity checks */
 bool CheckTransaction(const CTransaction& tx, CValidationState& state, bool fCheckDuplicateInputs=true, bool fMempoolCheck = false, bool fBlockCheck = false);

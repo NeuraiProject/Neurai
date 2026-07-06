@@ -82,6 +82,34 @@ std::string RejectReason(const CScript& spk)
 
 BOOST_FIXTURE_TEST_SUITE(xna_asset_gating_tests, BasicTestingSetup)
 
+// Direct tests of the shared placement helper. Both consensus sites
+// (CheckTransaction and Consensus::CheckTxAssets) route through this one
+// function, so covering it here covers site 2 without building a coins/asset
+// cache or forcing the sticky AreRestrictedAssetsDeployed() global.
+BOOST_AUTO_TEST_CASE(placement_helper_strict_and_lenient)
+{
+    const CScript xnaFirst   = XnaFirstUnparseable();       // starts with 0xc0
+    const CScript outOfPlace  = CScript() << OP_TRUE << OP_XNA_ASSET;
+    const CScript p2pkhAt25   = P2pkhThenXnaAt25();          // 0xc0 at byte 25
+    const CScript noXna       = CScript() << OP_DUP << OP_HASH160
+                                          << std::vector<unsigned char>(20, 0x22)
+                                          << OP_EQUALVERIFY << OP_CHECKSIG;
+
+    // Lenient (origin/main): only a script starting with 0xc0 is accepted.
+    BOOST_CHECK(CheckXnaAssetOutputPlacement(xnaFirst,  /*strict=*/false) == XnaAssetPlacement::Ok);
+    BOOST_CHECK(CheckXnaAssetOutputPlacement(outOfPlace, false) == XnaAssetPlacement::NotInRightLocation);
+    // The loosening trap: 0xc0 at byte 25 must NOT be accepted in lenient mode.
+    BOOST_CHECK(CheckXnaAssetOutputPlacement(p2pkhAt25, false) == XnaAssetPlacement::NotInRightLocation);
+    BOOST_CHECK(CheckXnaAssetOutputPlacement(noXna,     false) == XnaAssetPlacement::Ok);
+
+    // Strict (testnet/regtest today): any unparseable 0xc0 script is rejected.
+    BOOST_CHECK(CheckXnaAssetOutputPlacement(xnaFirst,  /*strict=*/true) == XnaAssetPlacement::BadAssetScript);
+    BOOST_CHECK(CheckXnaAssetOutputPlacement(outOfPlace, true) == XnaAssetPlacement::NotInRightLocation);
+    // byte-25 position is "expected" for the strict helper -> bad-asset-script
+    BOOST_CHECK(CheckXnaAssetOutputPlacement(p2pkhAt25, true) == XnaAssetPlacement::BadAssetScript);
+    BOOST_CHECK(CheckXnaAssetOutputPlacement(noXna,     true) == XnaAssetPlacement::Ok);
+}
+
 // Test 1: the core regression — 0xc0-first, unparseable.
 BOOST_AUTO_TEST_CASE(xna_first_unparseable_gated_by_network)
 {
