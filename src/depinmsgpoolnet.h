@@ -10,6 +10,8 @@
 #include <thread>
 #include <atomic>
 #include <map>
+#include <memory>
+#include <set>
 #include <univalue.h>
 #include "depinmsgpool.h"
 #include "sync.h"
@@ -33,6 +35,7 @@ static const std::string DEPIN_RESP_ERROR = "ERROR";
 static const int DEPIN_SOCKET_TIMEOUT = 30; // segundos
 static const size_t DEPIN_MAX_PROTOCOL_SIZE = 10 * 1024 * 1024; // 10MB
 static const int DEPIN_CHALLENGE_TIMEOUT = 30; // segundos
+static const unsigned int DEFAULT_DEPIN_MAX_CONNECTIONS = 32; // max concurrent client handlers
 
 #ifdef ENABLE_DEPIN_GATEWAY
 enum class DepinChallengeType {
@@ -59,8 +62,24 @@ private:
     int port;
     mutable CCriticalSection cs_server;
 
+    // Managed client handler threads (no detach): lets Stop() unblock and join
+    // every in-flight handler before node teardown destroys shared state.
+    struct CDepinClientThread {
+        std::thread thread;
+        std::shared_ptr<std::atomic_bool> done;
+    };
+
+    std::vector<CDepinClientThread> clientThreads;
+    std::set<int> clientSockets;
+    mutable CCriticalSection cs_clients;
+    std::atomic<unsigned int> activeClients;
+    unsigned int maxClients;
+
     void ThreadServerHandler();
     void HandleClient(int clientSocket, std::string clientIP);
+    void ReapFinishedClientThreads();
+    void JoinClientThreads();
+    void ShutdownClientSockets(); // shutdown() only; the owning handler does the close()
     std::string ProcessRequest(const std::string& request, const std::string& clientIP);
     bool TryProcessJsonRpc(const std::string& request, std::string& response, const std::string& clientIP);
     std::string ProcessJsonRpcRequest(const UniValue& valRequest, const std::string& clientIP);

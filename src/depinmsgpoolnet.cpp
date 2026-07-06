@@ -113,7 +113,8 @@ extern UniValue depinpoolpkey(const JSONRPCRequest& request);
 // ===== Servidor =====
 
 CDepinMsgPoolServer::CDepinMsgPoolServer()
-    : fRunning(false), serverSocket(-1), port(0) {
+    : fRunning(false), serverSocket(-1), port(0), activeClients(0),
+      maxClients(DEFAULT_DEPIN_MAX_CONNECTIONS) {
 }
 
 CDepinMsgPoolServer::~CDepinMsgPoolServer() {
@@ -170,6 +171,8 @@ bool CDepinMsgPoolServer::Start(int listenPort) {
     }
 
     port = listenPort;
+    maxClients = (unsigned int)std::max<int64_t>(
+        1, gArgs.GetArg("-depinmaxconnections", DEFAULT_DEPIN_MAX_CONNECTIONS));
     fRunning = true;
 
     // Start server thread
@@ -180,30 +183,91 @@ bool CDepinMsgPoolServer::Start(int listenPort) {
 }
 
 void CDepinMsgPoolServer::Stop() {
-    if (!fRunning)
+    // Idempotent: only the first caller performs the teardown.
+    bool expected = true;
+    if (!fRunning.compare_exchange_strong(expected, false))
         return;
 
-    fRunning = false;
-
-    // Close socket
+    // Close listener socket to unblock select()/accept()
     if (serverSocket >= 0) {
         shutdown(serverSocket, SHUT_RDWR);
         close(serverSocket);
         serverSocket = -1;
     }
 
-    // Wait for thread to finish
+    // Wait for the accept loop to finish
     if (serverThread.joinable()) {
         serverThread.join();
     }
 
+    // Unblock in-flight handlers stuck in recv()/send(), then wait for all of
+    // them. After this point no handler can touch shared node state.
+    ShutdownClientSockets();
+    JoinClientThreads();
+
     LogPrintf("Chat mempool server stopped\n");
+}
+
+void CDepinMsgPoolServer::ShutdownClientSockets() {
+    LOCK(cs_clients);
+    for (int fd : clientSockets) {
+        // shutdown() only: unblocks the handler's recv()/send(). The handler
+        // owns the fd and is the only one that close()s it; closing here could
+        // race with the handler and hit an fd already reused by the kernel.
+        shutdown(fd, SHUT_RDWR);
+    }
+}
+
+void CDepinMsgPoolServer::JoinClientThreads() {
+    // Move the threads out of the lock before joining: a handler needs
+    // cs_clients to deregister itself from clientSockets.
+    std::vector<std::thread> threads;
+    {
+        LOCK(cs_clients);
+        for (auto& client : clientThreads) {
+            if (client.thread.joinable())
+                threads.push_back(std::move(client.thread));
+        }
+        clientThreads.clear();
+    }
+
+    for (auto& t : threads) {
+        if (t.joinable())
+            t.join();
+    }
+}
+
+void CDepinMsgPoolServer::ReapFinishedClientThreads() {
+    // Join and drop handlers that already finished, so clientThreads does not
+    // grow without bound under many short-lived connections.
+    std::vector<std::thread> finished;
+    {
+        LOCK(cs_clients);
+        for (auto it = clientThreads.begin(); it != clientThreads.end();) {
+            if (it->done && it->done->load()) {
+                if (it->thread.joinable())
+                    finished.push_back(std::move(it->thread));
+                it = clientThreads.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    for (auto& t : finished) {
+        if (t.joinable())
+            t.join();
+    }
 }
 
 void CDepinMsgPoolServer::ThreadServerHandler() {
     LogPrint(BCLog::NET, "Chat mempool server thread started\n");
 
     while (fRunning) {
+        // Reap finished handlers on every iteration (runs at least once per
+        // select() timeout) to keep clientThreads bounded.
+        ReapFinishedClientThreads();
+
         struct sockaddr_in clientAddr;
         socklen_t clientLen = sizeof(clientAddr);
 
@@ -240,68 +304,135 @@ void CDepinMsgPoolServer::ThreadServerHandler() {
             continue;
         }
 
+        // Reject connections accepted while the server is shutting down
+        if (!fRunning) {
+            close(clientSocket);
+            continue;
+        }
+
+        // Limit concurrent handlers (DoS surface)
+        if (activeClients.load() >= maxClients) {
+            std::string busy = "ERROR|Server busy\n";
+            send(clientSocket, busy.c_str(), busy.size(), 0);
+            close(clientSocket);
+            continue;
+        }
+
         // Log connection
         char clientIP[INET_ADDRSTRLEN];
         InetNtopCompat(AF_INET, &clientAddr.sin_addr, clientIP, INET_ADDRSTRLEN);
         LogPrint(BCLog::NET, "Chat mempool: Accepted connection from %s:%d\n",
                 clientIP, ntohs(clientAddr.sin_port));
 
-        // Handle client in separate thread
-        std::thread clientThread(&CDepinMsgPoolServer::HandleClient, this, clientSocket, std::string(clientIP));
-        clientThread.detach();
+        // Handle client in a managed (joinable) thread, registered so Stop()
+        // can unblock and join it before node teardown.
+        auto done = std::make_shared<std::atomic_bool>(false);
+        std::string ip(clientIP);
+
+        bool registered = false;
+        bool counted = false;
+        bool slotCreated = false;
+
+        try {
+            LOCK(cs_clients);
+            clientSockets.insert(clientSocket);
+            registered = true;
+            activeClients.fetch_add(1);
+            counted = true;
+
+            // Create an empty slot first: if the vector throws here, no thread
+            // exists yet. Do NOT construct the thread inside a temporary passed
+            // to push_back — if the vector throws after the temporary thread is
+            // created, the destructor of a joinable std::thread aborts.
+            clientThreads.emplace_back();
+            slotCreated = true;
+            CDepinClientThread& client = clientThreads.back();
+            client.done = done;
+            client.thread = std::thread([this, clientSocket, ip, done]() {
+                HandleClient(clientSocket, ip);
+                done->store(true);
+            });
+        } catch (...) {
+            // Roll back registration so no counter/fd is left without a handler
+            {
+                LOCK(cs_clients);
+                if (slotCreated && !clientThreads.empty() && clientThreads.back().done == done)
+                    clientThreads.pop_back();
+                if (registered)
+                    clientSockets.erase(clientSocket);
+            }
+            if (counted)
+                activeClients.fetch_sub(1);
+            close(clientSocket);
+            LogPrintf("ERROR: Failed to start DePIN client handler thread\n");
+            continue;
+        }
     }
 
     LogPrint(BCLog::NET, "Chat mempool server thread terminated\n");
 }
 
 void CDepinMsgPoolServer::HandleClient(int clientSocket, std::string clientIP) {
-    // Configure timeout
-    struct timeval tv;
-    tv.tv_sec = DEPIN_SOCKET_TIMEOUT;
-    tv.tv_usec = 0;
-    setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
-    setsockopt(clientSocket, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
+    try {
+        // Configure timeout
+        struct timeval tv;
+        tv.tv_sec = DEPIN_SOCKET_TIMEOUT;
+        tv.tv_usec = 0;
+        setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+        setsockopt(clientSocket, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
 
-    // Read request
-    std::string request;
-    char buffer[4096];
-    ssize_t bytesRead;
+        // Read request
+        std::string request;
+        char buffer[4096];
+        ssize_t bytesRead;
+        bool fValid = true;
 
-    while ((bytesRead = recv(clientSocket, buffer, sizeof(buffer) - 1, 0)) > 0) {
-        buffer[bytesRead] = '\0';
-        request += buffer;
+        while ((bytesRead = recv(clientSocket, buffer, sizeof(buffer) - 1, 0)) > 0) {
+            buffer[bytesRead] = '\0';
+            request += buffer;
 
-        // Look for end of message (newline)
-        size_t pos = request.find('\n');
-        if (pos != std::string::npos) {
-            request = request.substr(0, pos);
-            break;
+            // Look for end of message (newline)
+            size_t pos = request.find('\n');
+            if (pos != std::string::npos) {
+                request = request.substr(0, pos);
+                break;
+            }
+
+            // Size limit
+            if (request.size() > DEPIN_MAX_PROTOCOL_SIZE) {
+                std::string error = "ERROR|Request too large\n";
+                send(clientSocket, error.c_str(), error.size(), 0);
+                fValid = false;
+                break;
+            }
         }
 
-        // Límite de tamaño
-        if (request.size() > DEPIN_MAX_PROTOCOL_SIZE) {
-            std::string error = "ERROR|Request too large\n";
-            send(clientSocket, error.c_str(), error.size(), 0);
-            close(clientSocket);
-            return;
+        if (fValid && bytesRead < 0) {
+            LogPrint(BCLog::NET, "ERROR: recv() failed: %s\n", GetSocketErrorMsg().c_str());
+            fValid = false;
         }
+
+        // Do not start new work while the server is shutting down
+        if (fValid && fRunning) {
+            std::string response = ProcessRequest(request, clientIP);
+            response += "\n";
+            send(clientSocket, response.c_str(), response.size(), 0);
+        }
+    } catch (const std::exception& e) {
+        LogPrintf("ERROR: DePIN client handler exception: %s\n", e.what());
+    } catch (...) {
+        LogPrintf("ERROR: DePIN client handler unknown exception\n");
     }
 
-    if (bytesRead < 0) {
-        LogPrint(BCLog::NET, "ERROR: recv() failed: %s\n", GetSocketErrorMsg().c_str());
-        close(clientSocket);
-        return;
+    // Deregister the fd BEFORE closing it: with close-then-erase, Stop() could
+    // see the fd still in the set and shutdown() an fd already closed and
+    // possibly reused by the kernel. The handler owns the fd: only close here.
+    {
+        LOCK(cs_clients);
+        clientSockets.erase(clientSocket);
     }
-
-    // Process request
-    std::string response = ProcessRequest(request, clientIP);
-
-    // Send response
-    response += "\n";
-    send(clientSocket, response.c_str(), response.size(), 0);
-
-    // Close connection
     close(clientSocket);
+    activeClients.fetch_sub(1);
 }
 
 std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request, const std::string& clientIP) {

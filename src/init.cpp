@@ -222,6 +222,16 @@ void PrepareShutdown()
         DumpMempool();
     }
 
+    // Stop DePIN message server before saving/destroying shared resources:
+    // client handlers use pDepinMsgPool, pblocktree, passetsdb and wallets.
+    // Stop() joins the accept loop and every in-flight handler.
+    if (pDepinMsgPoolServer) {
+        LogPrintf("Stopping DePIN message server...\n");
+        pDepinMsgPoolServer->Stop();
+        pDepinMsgPoolServer.reset();
+        LogPrintf("DePIN message server stopped\n");
+    }
+
     // Stop DePIN MCP worker if running
     if (g_depinMCPWorker) {
         LogPrintf("Stopping DePIN MCP worker...\n");
@@ -238,6 +248,11 @@ void PrepareShutdown()
             LogPrintf("WARNING: Failed to save DePIN pool to disk\n");
         }
     }
+
+    // Release the pool only after all its consumers are stopped: the DePIN
+    // server and MCP worker (above) and the scheduler thread, which both the
+    // daemon and Qt paths join before calling PrepareShutdown().
+    pDepinMsgPool.reset();
 
     if (fFeeEstimatesInitialized)
     {
@@ -511,6 +526,7 @@ std::string HelpMessage(HelpMessageMode mode)
     strUsage += HelpMessageOpt("-depinmsg", _("Enable DePIN messaging system (default: 0)"));
     strUsage += HelpMessageOpt("-depinmsgtoken=<token>", _("DePIN token name to monitor for messaging (required when -depinmsg=1)"));
     strUsage += HelpMessageOpt("-depinmsgport=<port>", strprintf(_("DePIN messaging network port (default: %u)"), DEFAULT_DEPIN_MSG_PORT));
+    strUsage += HelpMessageOpt("-depinmaxconnections=<n>", strprintf(_("Maximum concurrent connections to the DePIN messaging server (default: %u)"), DEFAULT_DEPIN_MAX_CONNECTIONS));
     strUsage += HelpMessageOpt("-depinmsgmaxusers=<n>", strprintf(_("Maximum number of DePIN message recipients (default: %u)"), DEFAULT_MAX_DEPIN_RECIPIENTS));
     strUsage += HelpMessageOpt("-depinpoolpersist", strprintf(_("Whether to save the DePIN message pool on shutdown and load on restart (default: %u)"), DEFAULT_DEPINPOOL_PERSIST));
     strUsage += HelpMessageOpt("-depinmsgsize=<n>", strprintf(_("Maximum DePIN message size in bytes (default: %u, max: %u)"), DEFAULT_DEPIN_MESSAGE_SIZE, MAX_DEPIN_MESSAGE_SIZE));
