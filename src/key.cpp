@@ -420,6 +420,19 @@ void CExtKey::Decode(const unsigned char code[BIP32_EXTKEY_SIZE]) {
 // ---- CExtKeyPQ ----
 
 void CExtKeyPQ::SetSeed(const unsigned char* seed, unsigned int nSeedLen) {
+    if (nSeedLen < 32) {
+        // Reject empty/short seeds by leaving the key !IsValid(). An empty
+        // seed would otherwise derive a fixed, publicly computable constant
+        // (HMAC of an empty message under a fixed key) — the same master key
+        // for every caller. Returning here also avoids passing a possibly
+        // null pointer to the HMAC when nSeedLen is 0.
+        pq_seed.clear();
+        memset(chaincode.begin(), 0, 32);
+        nDepth = 0;
+        nChild = 0;
+        memset(vchFingerprint, 0, sizeof(vchFingerprint));
+        return;
+    }
     static const unsigned char hashkey[] = {'N','e','u','r','a','i',' ','P','Q',' ','s','e','e','d'};
     std::vector<unsigned char, secure_allocator<unsigned char>> vout(64);
     CHMAC_SHA512(hashkey, sizeof(hashkey)).Write(seed, nSeedLen).Finalize(vout.data());
@@ -431,6 +444,7 @@ void CExtKeyPQ::SetSeed(const unsigned char* seed, unsigned int nSeedLen) {
 }
 
 bool CExtKeyPQ::Derive(CExtKeyPQ& out, unsigned int _nChild) const {
+    if (!IsValid()) return false;
     if ((_nChild & 0x80000000) == 0) return false;
     std::vector<unsigned char, secure_allocator<unsigned char>> data(37);
     data[0] = 0x00;

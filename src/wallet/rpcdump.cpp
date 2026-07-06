@@ -829,8 +829,13 @@ UniValue getmasterkeyinfo(const JSONRPCRequest& request)
     CKeyID seed_id = pwallet->GetHDChain().seed_id;
     if (!seed_id.IsNull())
     {
-        // Report wallet type
-        if (pwallet->IsPQEnabled())
+        // Report wallet type. Reporting uses the raw persisted flag so a
+        // legacy PQ-without-BIP44 wallet (PQ generation disabled at runtime,
+        // see NIP revision 007) is not silently reported as "Legacy". Only
+        // code that derives PQ material must use the gated IsPQEnabled().
+        if (pwallet->GetHDChain().IsPQEnabled() && !pwallet->GetHDChain().IsBip44())
+            ret.push_back(std::make_pair("wallet_type", "PQ (disabled: no BIP44 seed)"));
+        else if (pwallet->IsPQEnabled())
             ret.push_back(std::make_pair("wallet_type", "PQ (ML-DSA-44)"));
         else if (pwallet->IsBip44Enabled())
             ret.push_back(std::make_pair("wallet_type", "BIP44"));
@@ -946,7 +951,9 @@ UniValue getmasterkeyinfo(const JSONRPCRequest& request)
             ret.push_back(std::make_pair("account_extended_public_key",  b58actextpubkey.ToString()));
         }
 
-        if (pwallet->IsPQEnabled())
+        // Raw flag: a legacy PQ wallet operator still needs to see how many
+        // PQ keys were generated, even with PQ generation gated off.
+        if (pwallet->GetHDChain().IsPQEnabled())
         {
             uint32_t nCoinType = (GetParams().NetworkIDString() == "main") ? 1900 : 1;
             std::string accountPath = strprintf("m/100'/%d'/0'", nCoinType);

@@ -236,18 +236,26 @@ CXpqpub CWallet::GenerateXpqpub(uint32_t chain, uint32_t count, uint32_t offset)
 {
     AssertLockHeld(cs_wallet);
 
+    if (chain != 0 && chain != 1)
+        throw std::runtime_error(std::string(__func__) + ": chain must be 0 (external) or 1 (change)");
+    // Indices are OR-ed with the hardened bit below: past 2^31 they would
+    // alias low indices (the OR is idempotent), and offset + count could wrap
+    // uint32_t. Check in 64-bit arithmetic to avoid wrapping in the check.
+    if ((uint64_t)offset + (uint64_t)count > 0x80000000ULL)
+        throw std::runtime_error(std::string(__func__) + ": offset + count exceeds the hardened index space");
+
     const uint32_t PQ_PURPOSE   = 100;
     const uint32_t PQ_COIN_TYPE = (GetParams().NetworkIDString() == "main") ? 1900 : 1;
     const uint32_t nAccountIndex = 0;
 
-    CExtKeyPQ masterKey;
-    masterKey.SetSeed(g_vchSeed.data(), g_vchSeed.size());
+    CExtKeyPQ masterKey = GetMasterExtKeyPQ();
 
     CExtKeyPQ purposeKey, coinTypeKey, accountKey, chainKey, leafKey;
-    masterKey.Derive(purposeKey,   PQ_PURPOSE    | BIP32_HARDENED_KEY_LIMIT);
-    purposeKey.Derive(coinTypeKey, PQ_COIN_TYPE  | BIP32_HARDENED_KEY_LIMIT);
-    coinTypeKey.Derive(accountKey, nAccountIndex | BIP32_HARDENED_KEY_LIMIT);
-    accountKey.Derive(chainKey,    chain         | BIP32_HARDENED_KEY_LIMIT);
+    if (!masterKey.Derive(purposeKey,   PQ_PURPOSE    | BIP32_HARDENED_KEY_LIMIT) ||
+        !purposeKey.Derive(coinTypeKey, PQ_COIN_TYPE  | BIP32_HARDENED_KEY_LIMIT) ||
+        !coinTypeKey.Derive(accountKey, nAccountIndex | BIP32_HARDENED_KEY_LIMIT) ||
+        !accountKey.Derive(chainKey,    chain         | BIP32_HARDENED_KEY_LIMIT))
+        throw std::runtime_error(std::string(__func__) + ": PQ key derivation failed");
 
     CXpqpub result;
     result.depth  = accountKey.nDepth + 1;
@@ -261,7 +269,8 @@ CXpqpub CWallet::GenerateXpqpub(uint32_t chain, uint32_t count, uint32_t offset)
     leaves.reserve(count);
 
     for (uint32_t i = offset; i < offset + count; ++i) {
-        chainKey.Derive(leafKey, i | BIP32_HARDENED_KEY_LIMIT);
+        if (!chainKey.Derive(leafKey, i | BIP32_HARDENED_KEY_LIMIT))
+            throw std::runtime_error(std::string(__func__) + ": PQ key derivation failed");
         CPubKey pk = leafKey.GetPubKey();
         result.pubkeys.push_back(pk);
         std::vector<unsigned char> pkdata(pk.begin(), pk.end());
@@ -274,6 +283,14 @@ CXpqpub CWallet::GenerateXpqpub(uint32_t chain, uint32_t count, uint32_t offset)
 
 CExtKeyPQ CWallet::GetMasterExtKeyPQ() const
 {
+    // PQ keys derive exclusively from the BIP44 (BIP39) seed, which is 64
+    // bytes. An empty seed would make SetSeed() HMAC an empty message under a
+    // fixed public key, producing the SAME master key for every wallet; a
+    // short seed is likewise a corrupt state. Fail closed on both.
+    if (g_vchSeed.size() < 32)
+        throw std::runtime_error(std::string(__func__) +
+            ": PQ key derivation requires the BIP44 seed, but none (or a truncated one) is loaded "
+            "(non-BIP44 wallet, or encrypted seed not yet decrypted)");
     CExtKeyPQ master;
     master.SetSeed(g_vchSeed.data(), g_vchSeed.size());
     return master;
@@ -294,15 +311,15 @@ CPubKey CWallet::GenerateNewKeyPQ(CWalletDB& walletdb, bool internal)
     const uint32_t nChain = internal ? 1 : 0;
     uint32_t& nChildIndex = internal ? hdChain.nInternalChainCounter : hdChain.nExternalChainCounter;
 
-    CExtKeyPQ masterKey;
-    masterKey.SetSeed(g_vchSeed.data(), g_vchSeed.size());
+    CExtKeyPQ masterKey = GetMasterExtKeyPQ();
 
     CExtKeyPQ purposeKey, coinTypeKey, accountKey, chainKey, leafKey;
-    masterKey.Derive(purposeKey,   PQ_PURPOSE    | BIP32_HARDENED_KEY_LIMIT);
-    purposeKey.Derive(coinTypeKey, PQ_COIN_TYPE  | BIP32_HARDENED_KEY_LIMIT);
-    coinTypeKey.Derive(accountKey, nAccountIndex | BIP32_HARDENED_KEY_LIMIT);
-    accountKey.Derive(chainKey,    nChain        | BIP32_HARDENED_KEY_LIMIT);
-    chainKey.Derive(leafKey,       nChildIndex   | BIP32_HARDENED_KEY_LIMIT);
+    if (!masterKey.Derive(purposeKey,   PQ_PURPOSE    | BIP32_HARDENED_KEY_LIMIT) ||
+        !purposeKey.Derive(coinTypeKey, PQ_COIN_TYPE  | BIP32_HARDENED_KEY_LIMIT) ||
+        !coinTypeKey.Derive(accountKey, nAccountIndex | BIP32_HARDENED_KEY_LIMIT) ||
+        !accountKey.Derive(chainKey,    nChain        | BIP32_HARDENED_KEY_LIMIT) ||
+        !chainKey.Derive(leafKey,       nChildIndex   | BIP32_HARDENED_KEY_LIMIT))
+        throw std::runtime_error(std::string(__func__) + ": PQ key derivation failed");
     nChildIndex++;
 
     CKey secret = leafKey.GetKey();
@@ -1888,7 +1905,11 @@ bool CWallet::IsBip44Enabled() const
 
 bool CWallet::IsPQEnabled() const
 {
-    return IsHDEnabled() && hdChain.IsPQEnabled();
+    // PQ derivation requires the BIP44 seed. A chain with bUsePQ set but no
+    // BIP44 is a corrupt legacy state (see NIP revision 007): treat it as
+    // non-PQ at runtime, without touching the persisted flag — reporting code
+    // that needs the raw historical state must read hdChain.IsPQEnabled().
+    return IsHDEnabled() && hdChain.IsPQEnabled() && hdChain.IsBip44();
 }
 
 int64_t CWalletTx::GetTxTime() const
@@ -5030,6 +5051,15 @@ CWallet* CWallet:: CreateWalletFromFile(const std::string walletFile)
         walletInstance->SetMaxVersion(nMaxVersion);
     }
 
+    // Legacy inconsistent state: PQ flag persisted without a BIP44 seed. Such
+    // a wallet may have generated shared/predictable PQ keys (see NIP revision
+    // 007). IsPQEnabled() gates PQ generation off at runtime; warn loudly and
+    // never rewrite the persisted flag.
+    if (walletInstance->hdChain.IsPQEnabled() && !walletInstance->hdChain.IsBip44()) {
+        InitWarning(strprintf(_("Wallet %s has PQ enabled without a BIP44 seed. Its PQ keys may be "
+            "identical to those of other wallets and must be considered compromised: move any funds "
+            "to fresh addresses. PQ key generation is disabled for this wallet."), walletFile));
+    }
 
     if (fFirstRun)
     {
@@ -5045,6 +5075,12 @@ CWallet* CWallet:: CreateWalletFromFile(const std::string walletFile)
         LogPrintf("parameter interaction: -bip44 wallet enabled: %s\n", gArgs.GetBoolArg("-bip44", true));
 
         if (gArgs.GetBoolArg("-pqwallet", false)) {
+            // PQ keys derive from the BIP44 mnemonic seed: without BIP44 the
+            // seed would be empty and every wallet would derive the same keys.
+            if (!gArgs.GetBoolArg("-bip44", true)) {
+                InitError(_("-pqwallet requires -bip44=1: PQ keys derive from the BIP44 mnemonic seed"));
+                return nullptr;
+            }
             walletInstance->UsePQ(true);
             LogPrintf("parameter interaction: -pqwallet (ML-DSA-44) enabled\n");
         }

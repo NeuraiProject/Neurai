@@ -3603,6 +3603,9 @@ UniValue dumpextkeypq(const JSONRPCRequest& request)
     LOCK2(cs_main, pwallet->cs_wallet);
     EnsureWalletIsUnlocked(pwallet);
 
+    if (!pwallet->IsPQEnabled())
+        throw JSONRPCError(RPC_WALLET_ERROR, "This wallet is not a PQ (ML-DSA-44) wallet");
+
     CExtKeyPQ masterKey = pwallet->GetMasterExtKeyPQ();
     if (!masterKey.IsValid())
         throw JSONRPCError(RPC_WALLET_ERROR, "No HD seed available");
@@ -3634,12 +3637,19 @@ UniValue exportxpqpub(const JSONRPCRequest& request)
     LOCK2(cs_main, pwallet->cs_wallet);
     EnsureWalletIsUnlocked(pwallet);
 
+    if (!pwallet->IsPQEnabled())
+        throw JSONRPCError(RPC_WALLET_ERROR, "This wallet is not a PQ (ML-DSA-44) wallet");
+
     uint32_t count  = request.params[0].get_int();
     uint32_t chain  = request.params.size() > 1 ? (uint32_t)request.params[1].get_int() : 0;
     uint32_t offset = request.params.size() > 2 ? (uint32_t)request.params[2].get_int() : 0;
 
     if (count == 0 || count > 1000)
         throw JSONRPCError(RPC_INVALID_PARAMETER, "count must be between 1 and 1000");
+    if (chain != 0 && chain != 1)
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "chain must be 0 (external) or 1 (change)");
+    if ((uint64_t)offset + (uint64_t)count > 0x80000000ULL)
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "offset + count exceeds the hardened index space");
 
     CXpqpub xpub = pwallet->GenerateXpqpub(chain, count, offset);
 

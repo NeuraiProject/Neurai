@@ -286,4 +286,38 @@ BOOST_AUTO_TEST_CASE(xpqpriv_base58check_encoding)
     BOOST_CHECK(recoveredKey.chaincode == master.chaincode);
 }
 
+// ---- 10. SetSeed rejects empty/short seeds ---------------------------------
+
+BOOST_AUTO_TEST_CASE(setseed_rejects_empty_and_short_seed)
+{
+    // An empty seed must leave the key invalid: deriving from it would HMAC an
+    // empty message under a fixed public key, producing the same master key
+    // for every caller.
+    CExtKeyPQ k;
+    k.SetSeed(nullptr, 0);
+    BOOST_CHECK(!k.IsValid());
+
+    // Derive() on an invalid key must fail instead of reading pq_seed OOB
+    CExtKeyPQ child;
+    BOOST_CHECK(!k.Derive(child, 0x80000000));
+
+    // A short seed (< 32 bytes) is likewise a corrupt state
+    std::vector<unsigned char> short16(16, 0x42);
+    CExtKeyPQ k2;
+    k2.SetSeed(short16.data(), short16.size());
+    BOOST_CHECK(!k2.IsValid());
+
+    // Legitimate lengths keep working: 32 bytes and the 64-byte BIP39 seed
+    std::vector<unsigned char> seed32 = ZeroSeed32();
+    CExtKeyPQ k3;
+    k3.SetSeed(seed32.data(), seed32.size());
+    BOOST_CHECK(k3.IsValid());
+
+    auto seed64 = AbandonSeed64();
+    CExtKeyPQ k4;
+    k4.SetSeed(seed64.data(), seed64.size());
+    BOOST_CHECK(k4.IsValid());
+    BOOST_CHECK(k4.Derive(child, 0x80000000));
+}
+
 BOOST_AUTO_TEST_SUITE_END()
