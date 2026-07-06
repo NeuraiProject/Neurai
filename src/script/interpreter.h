@@ -501,7 +501,12 @@ private:
     const CAmount amount;
     const PrecomputedTransactionData *txdata;
     const CScript* m_spentScriptPubKey;  // scriptPubKey of the UTXO being spent (for OP_TXFIELD)
-    const std::vector<CTxOut>* m_allPrevouts; // prevouts of all inputs, if available
+    // Prevouts of all inputs, if available. Populated by CheckInputs() when
+    // any consuming flag is active (see the SCRIPT_VERIFY_INPUTASSETFIELD |
+    // SCRIPT_VERIFY_INPUTVALUE guard in validation.cpp). Any new opcode that
+    // reads this member must add its flag to that guard, or it will fail
+    // closed exactly like the NIP-024/NIP-022 mismatch (NIP revision 008).
+    const std::vector<CTxOut>* m_allPrevouts;
     const std::vector<CTxOut>* m_refOutputs;  // NIP-014: resolved reference outputs
     ChainContext m_chainContext{};            // NIP-026: chain-position view
 

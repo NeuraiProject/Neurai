@@ -4,16 +4,23 @@
 
 // Tests for NIP-024: OP_INPUTVALUE.
 
+#include "consensus/validation.h"
 #include "script/interpreter.h"
 #include "script/script.h"
 #include "script/script_error.h"
 #include "primitives/transaction.h"
 #include "test/test_neurai.h"
+#include "validation.h"
 
 #include <cstring>
 #include <vector>
 
 #include <boost/test/unit_test.hpp>
+
+// CheckInputs-level regression (NIP revision 008): the prevouts vector that
+// feeds OP_INPUTVALUE is built inside CheckInputs, so script-level tests
+// (which hand-build prevouts) cannot cover the flag-mismatch bug.
+bool CheckInputs(const CTransaction &tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData &txdata, std::vector<CScriptCheck> *pvChecks = nullptr, std::shared_ptr<std::vector<CTxOut>> pRefOutputs = nullptr, ChainContext chainCtx = {}, bool* pfUsesChainContext = nullptr);
 
 static constexpr script_verify_flags IV_FLAGS =
     SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_INPUTVALUE;
@@ -431,6 +438,74 @@ BOOST_AUTO_TEST_CASE(iv_works_via_verifyscript)
                                                          &prevouts),
                              &err));
     BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OK);
+}
+
+// Regression for NIP revision 008: CheckInputs used to build the prevouts
+// vector only under SCRIPT_VERIFY_INPUTASSETFIELD, so a network enabling
+// NIP-024 without NIP-022 made every OP_INPUTVALUE script fail closed with
+// SCRIPT_ERR_INPUTVALUE. The guard must accept either flag.
+// Note: flags here are built explicitly — ValidateCheckInputsForAllFlags in
+// txvalidationcache_tests sweeps only the first 16 bits and never reaches
+// SCRIPT_VERIFY_INPUTASSETFIELD (bit 29) or SCRIPT_VERIFY_INPUTVALUE (bit 33).
+BOOST_AUTO_TEST_CASE(inputvalue_checkinputs_builds_prevouts_without_inputassetfield)
+{
+    LOCK(cs_main);
+
+    CCoinsView view;
+    CCoinsViewCache coins(&view);
+
+    // Covenant: "0 OP_INPUTVALUE <1000 LE8> OP_EQUAL" — reads its own
+    // prevout's value, which only works if CheckInputs built the vector.
+    CScript covenant;
+    covenant << CScriptNum(0) << OP_INPUTVALUE << EncodeLE8(1000) << OP_EQUAL;
+
+    const COutPoint prevout0(uint256S("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), 0);
+    coins.AddCoin(prevout0, Coin(CTxOut(1000, covenant), 10, false), true);
+
+    CMutableTransaction mtx;
+    mtx.nVersion = 2;
+    mtx.vin.emplace_back(prevout0, CScript());
+    mtx.vout.emplace_back(0, CScript() << OP_TRUE);
+
+    const CTransaction tx(mtx);
+    PrecomputedTransactionData txdata(tx);
+
+    // The regression: INPUTVALUE alone (no INPUTASSETFIELD) must be enough
+    // for CheckInputs to build the prevouts. Deferred checks are executed
+    // explicitly — CheckInputs with pvChecks only enqueues them.
+    {
+        CValidationState state;
+        std::vector<CScriptCheck> checks;
+        BOOST_CHECK(CheckInputs(tx, state, coins, true, IV_FLAGS, true, false, txdata, &checks));
+        BOOST_REQUIRE_EQUAL(checks.size(), tx.vin.size());
+        BOOST_CHECK(checks[0]());
+        BOOST_CHECK_EQUAL(checks[0].GetScriptError(), SCRIPT_ERR_OK);
+    }
+
+    // Both flags on (current testnet/regtest combination): unchanged
+    {
+        CValidationState state;
+        std::vector<CScriptCheck> checks;
+        BOOST_CHECK(CheckInputs(tx, state, coins, true,
+                                IV_FLAGS | SCRIPT_VERIFY_INPUTASSETFIELD,
+                                true, false, txdata, &checks));
+        BOOST_REQUIRE_EQUAL(checks.size(), tx.vin.size());
+        BOOST_CHECK(checks[0]());
+        BOOST_CHECK_EQUAL(checks[0].GetScriptError(), SCRIPT_ERR_OK);
+    }
+
+    // INPUTASSETFIELD only: OP_INPUTVALUE stays gated by its own flag and
+    // must fail with BAD_OPCODE (finding #2 behavior — unchanged)
+    {
+        CValidationState state;
+        std::vector<CScriptCheck> checks;
+        BOOST_CHECK(CheckInputs(tx, state, coins, true,
+                                NO_IV_FLAGS | SCRIPT_VERIFY_INPUTASSETFIELD,
+                                true, false, txdata, &checks));
+        BOOST_REQUIRE_EQUAL(checks.size(), tx.vin.size());
+        BOOST_CHECK(!checks[0]());
+        BOOST_CHECK_EQUAL(checks[0].GetScriptError(), SCRIPT_ERR_BAD_OPCODE);
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()

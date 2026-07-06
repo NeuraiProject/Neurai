@@ -413,6 +413,10 @@ private:
     bool cacheStore;
     ScriptError error;
     PrecomputedTransactionData *txdata;
+    // Transports the prevouts vector from CheckInputs() to the signature
+    // checker. Built when any consuming flag is active (OP_INPUTASSETFIELD /
+    // OP_INPUTVALUE — see the guard in CheckInputs); a new opcode reading
+    // m_allPrevouts must extend that guard (NIP revision 008).
     std::shared_ptr<std::vector<CTxOut>> m_allPrevouts;
     std::shared_ptr<std::vector<CTxOut>> m_refOutputs;   // NIP-014
     ChainContext m_chainContext{};                       // NIP-026

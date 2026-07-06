@@ -1858,7 +1858,13 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
             }
 
             std::shared_ptr<std::vector<CTxOut>> pAllPrevouts;
-            if (flags & SCRIPT_VERIFY_INPUTASSETFIELD) {
+            // Prevouts feed every opcode that reads sibling inputs:
+            // OP_INPUTASSETFIELD (NIP-022) and OP_INPUTVALUE (NIP-024). Build
+            // them if EITHER flag is on — gating on a single flag made
+            // OP_INPUTVALUE fail closed on any network enabling NIP-024
+            // without NIP-022. If a future opcode consumes m_allPrevouts, its
+            // flag MUST be added here.
+            if (flags & (SCRIPT_VERIFY_INPUTASSETFIELD | SCRIPT_VERIFY_INPUTVALUE)) {
                 pAllPrevouts = std::make_shared<std::vector<CTxOut>>();
                 pAllPrevouts->reserve(tx.vin.size());
                 for (const CTxIn& txin : tx.vin) {
