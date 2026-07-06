@@ -134,6 +134,7 @@ public:
         consensus.nCHAINCONTEXTEnabled = false; // NIP-026: OP_CHAINCONTEXT not yet active on mainnet
         consensus.nASSETRBFBlockEnabled = false; // NIP-025: asset-AuthScript RBF ban not yet active on mainnet
         consensus.nXNAAssetStrictEnabled = false; // NIP revision 010: keep origin/main OP_XNA_ASSET rule on mainnet until the unified fork
+        consensus.nAssetRip5ActivationByHeightEnabled = false; // NIP revision 004: mainnet uses VersionBits (origin/main), not the height-10 shortcut
         // NIP-028: block-time reduction not active on mainnet
         consensus.nBlockTimeReductionHeight   = std::numeric_limits<int>::max();
         consensus.nPowTargetSpacingPost       = 1 * 60;       // mirror legacy
@@ -349,6 +350,7 @@ public:
         consensus.nCHAINCONTEXTEnabled = true; // NIP-026: OP_CHAINCONTEXT active on testnet
         consensus.nASSETRBFBlockEnabled = true; // NIP-025: asset-AuthScript RBF ban active on testnet
         consensus.nXNAAssetStrictEnabled = true; // NIP revision 010: strict OP_XNA_ASSET rule is de-facto consensus on testnet
+        consensus.nAssetRip5ActivationByHeightEnabled = true; // NIP revision 004: testnet activates assets/RIP5 by height (1)
         // NIP-028: block-time reduction (60s -> 30s) and coupled subsidy halving
         // activate at testnet height 22,700. Halving interval doubled so the
         // wall-clock micro-halving cadence (~10 days) is preserved across the
@@ -565,6 +567,7 @@ public:
         consensus.nCHAINCONTEXTEnabled = true; // NIP-026: OP_CHAINCONTEXT active on regtest
         consensus.nASSETRBFBlockEnabled = true; // NIP-025: asset-AuthScript RBF ban active on regtest
         consensus.nXNAAssetStrictEnabled = true; // NIP revision 010: strict OP_XNA_ASSET rule active on regtest
+        consensus.nAssetRip5ActivationByHeightEnabled = true; // NIP revision 004: inert on regtest (heights are 0 → VersionBits)
         // NIP-028: not active on regtest by default; tests can override via
         // CChainParams::UpdateBlockTimeReduction... if a future opt-in is added.
         consensus.nBlockTimeReductionHeight   = std::numeric_limits<int>::max();

@@ -155,6 +155,16 @@ struct Params {
      *  unified fork and true on testnet/regtest, where it is already consensus.
      *  See NIP/revision/010. */
     bool nXNAAssetStrictEnabled;
+    /** Enable the height-based shortcut in AreAssetsDeployed()/IsRip5Active()
+     *  (assets/RIP5 active once the tip reaches nAssetActivationHeight /
+     *  nMessagingActivationBlock). This is meant for fresh test networks. On
+     *  mainnet it must be false so those functions depend solely on VersionBits,
+     *  exactly like origin/main — the shortcut with mainnet height 10 would
+     *  activate assets on historical blocks that predate the real deployment and
+     *  break IBD. true on testnet; true on regtest too but inert there (its
+     *  heights are 0, so the shortcut's `> 0` guard skips it → VersionBits).
+     *  See NIP/revision/004. */
+    bool nAssetRip5ActivationByHeightEnabled;
     /** NIP-028: activation height for the testnet block-time reduction
      *  (60s → 30s) and coupled subsidy halving. Set to
      *  std::numeric_limits<int>::max() to disable on chains that did

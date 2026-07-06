@@ -6108,10 +6108,16 @@ bool AreAssetsDeployed()
     if (fAssetsIsActive)
         return true;
 
-    int nAssetActivationHeight = GetParams().GetAssetActivationHeight();
-    if (nAssetActivationHeight > 0 && chainActive.Height() >= nAssetActivationHeight) {
-        fAssetsIsActive = true;
-        return true;
+    // Height shortcut only on fresh test networks (NIP revision 004). On
+    // mainnet this stays VersionBits-only, exactly like origin/main — the
+    // shortcut with height 10 would activate assets on historical blocks that
+    // predate the real deployment and break IBD.
+    if (GetParams().GetConsensus().nAssetRip5ActivationByHeightEnabled) {
+        int nAssetActivationHeight = GetParams().GetAssetActivationHeight();
+        if (nAssetActivationHeight > 0 && chainActive.Height() >= nAssetActivationHeight) {
+            fAssetsIsActive = true;
+            return true;
+        }
     }
 
     const ThresholdState thresholdState = VersionBitsTipState(GetParams().GetConsensus(), Consensus::DEPLOYMENT_ASSETS);
@@ -6126,10 +6132,16 @@ bool IsRip5Active()
     if (fRip5IsActive)
         return true;
 
-    int nMessagingActivationBlock = GetParams().MessagingActivationBlock();
-    if (nMessagingActivationBlock > 0 && chainActive.Height() >= nMessagingActivationBlock) {
-        fRip5IsActive = true;
-        return true;
+    // Height shortcut only on fresh test networks (NIP revision 004). On
+    // mainnet this stays VersionBits-only, exactly like origin/main; the
+    // shortcut with height 10 would activate RIP5 (messaging/restricted) on
+    // historical blocks that predate the real deployment and break IBD.
+    if (GetParams().GetConsensus().nAssetRip5ActivationByHeightEnabled) {
+        int nMessagingActivationBlock = GetParams().MessagingActivationBlock();
+        if (nMessagingActivationBlock > 0 && chainActive.Height() >= nMessagingActivationBlock) {
+            fRip5IsActive = true;
+            return true;
+        }
     }
 
     const ThresholdState thresholdState = VersionBitsTipState(GetParams().GetConsensus(), Consensus::DEPLOYMENT_MSG_REST_ASSETS);
