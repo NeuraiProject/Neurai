@@ -198,16 +198,24 @@ void CDepinMsgPoolServer::Stop() {
     if (!fRunning.compare_exchange_strong(expected, false))
         return;
 
-    // Close listener socket to unblock select()/accept()
+    // Unblock select()/accept() in the accept loop. shutdown() only: the fd
+    // must stay open (and the member unchanged) until the accept loop is
+    // joined — closing it here would let the loop select()/accept() on a
+    // closed, possibly kernel-reused fd, or FD_SET(-1) after the reset below.
     if (serverSocket >= 0) {
         shutdown(serverSocket, SHUT_RDWR);
-        close(serverSocket);
-        serverSocket = -1;
     }
 
-    // Wait for the accept loop to finish
+    // Wait for the accept loop to finish. Even if shutdown() does not wake
+    // accept on some platforms, the loop's 1s select() timeout bounds this.
     if (serverThread.joinable()) {
         serverThread.join();
+    }
+
+    // No one references the listener fd anymore: safe to close and reset it
+    if (serverSocket >= 0) {
+        close(serverSocket);
+        serverSocket = -1;
     }
 
     // Unblock in-flight handlers stuck in recv()/send(), then wait for all of
