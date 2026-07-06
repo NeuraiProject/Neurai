@@ -3378,19 +3378,6 @@ void static UpdateTip(CBlockIndex *pindexNew, const CChainParams& chainParams) {
     if (!warningMessages.empty())
         LogPrintf(" warning='%s'", boost::algorithm::join(warningMessages, ", "));
     LogPrintf("\n");
-
-    // Testnet epoch reset: at TESTNET_EPOCH_LENGTH write a reset marker and shut down cleanly.
-    // On next startup, neuraid/neurai-qt will detect the marker, increment the epoch,
-    // wipe blocks/chainstate, and start fresh with a new deterministic genesis.
-    if (chainParams.NetworkIDString() == "test" && pindexNew->nHeight == TESTNET_EPOCH_LENGTH) {
-        LogPrintf("Testnet: reached block %d — scheduling epoch reset\n", TESTNET_EPOCH_LENGTH);
-        fs::path markerFile = GetDataDir() / "testnet_reset";
-        if (FILE* f = fopen(markerFile.string().c_str(), "w")) {
-            fprintf(f, "1");
-            fclose(f);
-        }
-        StartShutdown();
-    }
 }
 
 /** Disconnect chainActive's tip.

@@ -419,25 +419,17 @@ public:
         nKAAAWWWPOWActivationTime = 0xFFFFFFFF;
         nKAWPOWActivationTime = nKAAAWWWPOWActivationTime;
 
-        // Testnet resets every TESTNET_EPOCH_LENGTH blocks (see validation.h) — each epoch
-        // gets its own deterministic genesis derived from TESTNET_BASE_TIME + epoch.
-        // Epoch number is stored in <datadir>/testnet_epoch and managed by neuraid/neurai-qt
-        // before SelectParams() is called. SHA256d genesis mining takes only milliseconds.
+        // Testnet has a fixed, stable genesis: no automatic epoch reset, no dependency on any
+        // local file. The genesis time is a code constant and the block is auto-mined
+        // deterministically at startup (same inputs -> same nonce -> same hash), so every node
+        // converges on the same genesis. This is the epoch-0 genesis the network has always run
+        // (the old auto-reset never fired, so no epoch was ever incremented).
         static const uint32_t TESTNET_BASE_TIME = 1774828800; // 2026-03-30 00:00:00 UTC
 
-        uint32_t nEpoch = 0;
-        {
-            fs::path epochFile = GetDataDir(false) / "testnet_epoch";
-            if (FILE* f = fopen(epochFile.string().c_str(), "r")) {
-                if (fscanf(f, "%u", &nEpoch) != 1) nEpoch = 0;
-                fclose(f);
-            }
-        }
+        uint32_t nGenesisTime = TESTNET_BASE_TIME;
 
-        // Each epoch gets a unique genesis time (BASE_TIME + epoch seconds offset)
-        uint32_t nGenesisTime = TESTNET_BASE_TIME + nEpoch;
-
-        // Auto-mine genesis for this epoch (deterministic: same epoch → same nonce → same hash)
+        // Auto-mine genesis (deterministic). TODO(NIP-hardening): hardcode nonce+hash behind an
+        // assert once the genesis hash no longer depends on bNetwork (see finding #17).
         genesis = CreateGenesisBlock(nGenesisTime, 0, 0x1e00ffff, 2, 50000 * COIN);
         {
             arith_uint256 hashTarget = arith_uint256().SetCompact(genesis.nBits);
@@ -447,8 +439,8 @@ public:
         }
         consensus.hashGenesisBlock = genesis.GetHash();
 
-        LogPrintf("Testnet epoch %u — genesis time: %u  nonce: %u  hash: %s\n",
-            nEpoch, nGenesisTime, genesis.nNonce,
+        LogPrintf("Testnet genesis — time: %u  nonce: %u  hash: %s\n",
+            nGenesisTime, genesis.nNonce,
             consensus.hashGenesisBlock.ToString());
 
         assert(genesis.hashMerkleRoot == uint256S("4b28bf93d960cd83d1889757381d5a587208464e9075bdc0739151fbe15f5951"));

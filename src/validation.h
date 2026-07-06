@@ -118,11 +118,6 @@ static const int MAX_BLOCKTXN_DEPTH = 10;
  *  degree of disordering of blocks on disk (which make reindexing and pruning harder). We'll probably
  *  want to make this a per-peer adaptive value at some point. */
 static const unsigned int BLOCK_DOWNLOAD_WINDOW = 1024;
-/** Number of blocks per testnet epoch. When the chain tip reaches this height,
- *  validation.cpp writes a reset marker and shuts down; on next startup
- *  neuraid/neurai-qt wipes blocks/chainstate and starts fresh under a new
- *  deterministic genesis derived from an incremented epoch counter. */
-static const int TESTNET_EPOCH_LENGTH = 10000000;
 /** Time to wait (in seconds) between writing blocks/block index to disk. */
 static const unsigned int DATABASE_WRITE_INTERVAL = 60 * 60;
 /** Time to wait (in seconds) between flushing chainstate to disk. */

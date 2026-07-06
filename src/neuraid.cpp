@@ -109,31 +109,6 @@ bool AppInit(int argc, char* argv[])
             fprintf(stderr,"Error reading configuration file: %s\n", e.what());
             return false;
         }
-        // Testnet epoch reset: if validation.cpp set the reset marker at TESTNET_EPOCH_LENGTH,
-        // increment the epoch, wipe blocks/chainstate, and delete the marker — all before
-        // SelectParams() constructs chainparams with the new epoch's genesis.
-        if (gArgs.GetBoolArg("-testnet", false)) {
-            fs::path dataDir    = GetDataDir(false);
-            fs::path markerFile = dataDir / "testnet_reset";
-            if (fs::exists(markerFile)) {
-                uint32_t nEpoch = 0;
-                fs::path epochFile = dataDir / "testnet_epoch";
-                if (FILE* f = fopen(epochFile.string().c_str(), "r")) {
-                    fscanf(f, "%u", &nEpoch);
-                    fclose(f);
-                }
-                nEpoch++;
-                fprintf(stdout, "Testnet: epoch reset — starting epoch %u\n", nEpoch);
-                fs::remove_all(dataDir / "blocks");
-                fs::remove_all(dataDir / "chainstate");
-                if (FILE* f = fopen(epochFile.string().c_str(), "w")) {
-                    fprintf(f, "%u", nEpoch);
-                    fclose(f);
-                }
-                fs::remove(markerFile);
-            }
-        }
-
         // Check for -testnet or -regtest parameter (GetParams() calls are only valid after this clause)
         try {
             SelectParams(ChainNameFromCommandLine(), true);

@@ -694,29 +694,6 @@ int main(int argc, char *argv[])
     // - QSettings() will use the new application name after this, resulting in network-specific settings
     // - Needs to be done before createOptionsModel
 
-    // Testnet epoch reset: same logic as neuraid.cpp — must run before SelectParams().
-    if (gArgs.GetBoolArg("-testnet", false)) {
-        fs::path dataDir    = GetDataDir(false);
-        fs::path markerFile = dataDir / "testnet_reset";
-        if (fs::exists(markerFile)) {
-            uint32_t nEpoch = 0;
-            fs::path epochFile = dataDir / "testnet_epoch";
-            if (FILE* f = fopen(epochFile.string().c_str(), "r")) {
-                fscanf(f, "%u", &nEpoch);
-                fclose(f);
-            }
-            nEpoch++;
-            LogPrintf("Testnet: epoch reset — starting epoch %u\n", nEpoch);
-            fs::remove_all(dataDir / "blocks");
-            fs::remove_all(dataDir / "chainstate");
-            if (FILE* f = fopen(epochFile.string().c_str(), "w")) {
-                fprintf(f, "%u", nEpoch);
-                fclose(f);
-            }
-            fs::remove(markerFile);
-        }
-    }
-
     // Check for -testnet or -regtest parameter (GetParams() calls are only valid after this clause)
     try {
         SelectParams(ChainNameFromCommandLine(), true);
