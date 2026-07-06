@@ -175,8 +175,18 @@ bool CDepinMsgPoolServer::Start(int listenPort) {
         1, gArgs.GetArg("-depinmaxconnections", DEFAULT_DEPIN_MAX_CONNECTIONS));
     fRunning = true;
 
-    // Start server thread
-    serverThread = std::thread(&CDepinMsgPoolServer::ThreadServerHandler, this);
+    // Start server thread. fRunning must be true before the thread exists
+    // (the accept loop runs while fRunning), so roll it back if creation fails
+    // instead of letting the exception escape with the listener still open.
+    try {
+        serverThread = std::thread(&CDepinMsgPoolServer::ThreadServerHandler, this);
+    } catch (const std::exception& e) {
+        LogPrintf("ERROR: Failed to start chat mempool server thread: %s\n", e.what());
+        fRunning = false;
+        close(serverSocket);
+        serverSocket = -1;
+        return false;
+    }
 
     LogPrintf("Chat mempool server started on port %d\n", port);
     return true;
