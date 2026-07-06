@@ -133,6 +133,7 @@ public:
         consensus.nINPUTVALUEEnabled = false; // NIP-024: OP_INPUTVALUE not yet active on mainnet
         consensus.nCHAINCONTEXTEnabled = false; // NIP-026: OP_CHAINCONTEXT not yet active on mainnet
         consensus.nASSETRBFBlockEnabled = false; // NIP-025: asset-AuthScript RBF ban not yet active on mainnet
+        consensus.nXNAAssetStrictEnabled = false; // NIP revision 010: keep origin/main OP_XNA_ASSET rule on mainnet until the unified fork
         // NIP-028: block-time reduction not active on mainnet
         consensus.nBlockTimeReductionHeight   = std::numeric_limits<int>::max();
         consensus.nPowTargetSpacingPost       = 1 * 60;       // mirror legacy
@@ -347,6 +348,7 @@ public:
         consensus.nINPUTVALUEEnabled = true; // NIP-024: OP_INPUTVALUE active on testnet
         consensus.nCHAINCONTEXTEnabled = true; // NIP-026: OP_CHAINCONTEXT active on testnet
         consensus.nASSETRBFBlockEnabled = true; // NIP-025: asset-AuthScript RBF ban active on testnet
+        consensus.nXNAAssetStrictEnabled = true; // NIP revision 010: strict OP_XNA_ASSET rule is de-facto consensus on testnet
         // NIP-028: block-time reduction (60s -> 30s) and coupled subsidy halving
         // activate at testnet height 22,700. Halving interval doubled so the
         // wall-clock micro-halving cadence (~10 days) is preserved across the
@@ -562,6 +564,7 @@ public:
         consensus.nINPUTVALUEEnabled = true; // NIP-024: OP_INPUTVALUE active on regtest
         consensus.nCHAINCONTEXTEnabled = true; // NIP-026: OP_CHAINCONTEXT active on regtest
         consensus.nASSETRBFBlockEnabled = true; // NIP-025: asset-AuthScript RBF ban active on regtest
+        consensus.nXNAAssetStrictEnabled = true; // NIP revision 010: strict OP_XNA_ASSET rule active on regtest
         // NIP-028: not active on regtest by default; tests can override via
         // CChainParams::UpdateBlockTimeReduction... if a future opt-in is added.
         consensus.nBlockTimeReductionHeight   = std::numeric_limits<int>::max();

@@ -147,6 +147,14 @@ struct Params {
      *  consensus level. true on testnet/regtest; false on mainnet until future
      *  activation. */
     bool nASSETRBFBlockEnabled;
+    /** Strict rejection of outputs that contain OP_XNA_ASSET but are not a
+     *  valid asset/null-asset script. The legacy (origin/main) rule accepts
+     *  such an output when its script *starts* with OP_XNA_ASSET; the strict
+     *  rule rejects it outright. Enabling this retroactively would fork mainnet
+     *  history, so it is false on mainnet (origin/main behaviour) until the
+     *  unified fork and true on testnet/regtest, where it is already consensus.
+     *  See NIP/revision/010. */
+    bool nXNAAssetStrictEnabled;
     /** NIP-028: activation height for the testnet block-time reduction
      *  (60s → 30s) and coupled subsidy halving. Set to
      *  std::numeric_limits<int>::max() to disable on chains that did
