@@ -526,6 +526,7 @@ std::string HelpMessage(HelpMessageMode mode)
     strUsage += HelpMessageOpt("-depinmsg", _("Enable DePIN messaging system (default: 0)"));
     strUsage += HelpMessageOpt("-depinmsgtoken=<token>", _("DePIN token name to monitor for messaging (required when -depinmsg=1)"));
     strUsage += HelpMessageOpt("-depinmsgport=<port>", strprintf(_("DePIN messaging network port (default: %u)"), DEFAULT_DEPIN_MSG_PORT));
+    strUsage += HelpMessageOpt("-depinmsgbind=<addr>", _("Bind the DePIN messaging server to the given address (default: 0.0.0.0, all interfaces; use 127.0.0.1 for local-only)"));
     strUsage += HelpMessageOpt("-depinmaxconnections=<n>", strprintf(_("Maximum concurrent connections to the DePIN messaging server (default: %u)"), DEFAULT_DEPIN_MAX_CONNECTIONS));
     strUsage += HelpMessageOpt("-depinmsgmaxusers=<n>", strprintf(_("Maximum number of DePIN message recipients (default: %u)"), DEFAULT_MAX_DEPIN_RECIPIENTS));
     strUsage += HelpMessageOpt("-depinpoolpersist", strprintf(_("Whether to save the DePIN message pool on shutdown and load on restart (default: %u)"), DEFAULT_DEPINPOOL_PERSIST));

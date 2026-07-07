@@ -40,7 +40,8 @@ static const unsigned int DEFAULT_DEPIN_MAX_CONNECTIONS = 32; // max concurrent 
 #ifdef ENABLE_DEPIN_GATEWAY
 enum class DepinChallengeType {
     RECEIVE,
-    SEND
+    SEND,
+    ADMIN   // NIP revision 005b: operator-level ops (depinclearmsg) — active token owner
 };
 
 struct CDepinChallenge {

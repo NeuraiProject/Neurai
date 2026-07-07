@@ -15,6 +15,7 @@
 #include "validation.h"
 #include "utiltime.h"
 #include "txdb.h"
+#include "assets/assets.h"   // OWNER_TAG (NIP revision 005b)
 
 #include <cstring>
 #include <sstream>
@@ -150,7 +151,18 @@ bool CDepinMsgPoolServer::Start(int listenPort) {
     struct sockaddr_in serverAddr;
     memset(&serverAddr, 0, sizeof(serverAddr));
     serverAddr.sin_family = AF_INET;
-    serverAddr.sin_addr.s_addr = INADDR_ANY;
+    // NIP revision 005b: public by default (0.0.0.0) — the DePIN port is a
+    // messaging gateway meant for remote access. -depinmsgbind lets an operator
+    // restrict it to a specific interface (e.g. 127.0.0.1 for local-only use).
+    std::string bindAddr = gArgs.GetArg("-depinmsgbind", "0.0.0.0");
+    if (bindAddr == "0.0.0.0") {
+        serverAddr.sin_addr.s_addr = INADDR_ANY;
+    } else if (inet_pton(AF_INET, bindAddr.c_str(), &serverAddr.sin_addr) != 1) {
+        LogPrintf("ERROR: invalid -depinmsgbind address '%s'\n", bindAddr.c_str());
+        close(serverSocket);
+        serverSocket = -1;
+        return false;
+    }
     serverAddr.sin_port = htons(listenPort);
 
     // Bind socket
@@ -495,7 +507,19 @@ std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request, cons
         std::string mode = parts.size() >= 4 ? parts[3] : "GET";
         std::string modeUpper = mode;
         std::transform(modeUpper.begin(), modeUpper.end(), modeUpper.begin(), ::toupper);
-        DepinChallengeType challengeType = (modeUpper == "SEND") ? DepinChallengeType::SEND : DepinChallengeType::RECEIVE;
+
+        // NIP revision 005b: map the mode explicitly and reject unknown modes,
+        // instead of defaulting anything != SEND to RECEIVE (which would turn
+        // an ADMIN request into a RECEIVE challenge).
+        DepinChallengeType challengeType;
+        if (modeUpper == "SEND")
+            challengeType = DepinChallengeType::SEND;
+        else if (modeUpper == "GET" || modeUpper == "RECEIVE")
+            challengeType = DepinChallengeType::RECEIVE;
+        else if (modeUpper == "ADMIN")
+            challengeType = DepinChallengeType::ADMIN;
+        else
+            return "ERROR|Unknown AUTH mode";
 
         std::string error;
         std::string challenge = IssueChallenge(token, address, clientIP, challengeType, error);
@@ -699,6 +723,17 @@ std::string CDepinMsgPoolServer::ProcessJsonRpcRequest(const UniValue& valReques
         return JSONRPCReply(NullUniValue, JSONRPCError(RPC_METHOD_NOT_FOUND, "Only DePIN commands are allowed on this port"), id);
     }
 
+#ifndef ENABLE_DEPIN_GATEWAY
+    // NIP revision 005b: without the gateway (challenge/signature) compiled in,
+    // depinclearmsg cannot be authenticated over the DePIN port. Fail closed;
+    // the operator can still run it via the authenticated node RPC.
+    if (jsonRequest.strMethod == "depinclearmsg") {
+        return JSONRPCReply(NullUniValue,
+            JSONRPCError(RPC_INVALID_REQUEST,
+                "depinclearmsg is not available over the DePIN port in this build; use node RPC"), id);
+    }
+#endif
+
     // 1. Mandatory Pre-auth for Legacy/Gateway commands
 #ifdef ENABLE_DEPIN_GATEWAY
     if (jsonRequest.strMethod == "depinsendmsg" || jsonRequest.strMethod == "depingetmsg") {
@@ -755,6 +790,54 @@ std::string CDepinMsgPoolServer::ProcessJsonRpcRequest(const UniValue& valReques
         }
         jsonRequest.params = trimmed;
         jsonRequest.fSkipWalletCheck = true; // Skip wallet check for authenticated gateway calls
+    }
+
+    // NIP revision 005b: depinclearmsg is a destructive, pool-global operation.
+    // Over the DePIN port it requires a challenge-signature from the OWNER of
+    // the active token (holder of <activeToken>!). The node-RPC path is
+    // unchanged (the operator is already authenticated by rpcuser/rpcpassword).
+    // Remote params: [ mode_or_null, admin_address, challenge, signature ].
+    if (jsonRequest.strMethod == "depinclearmsg") {
+        if (jsonRequest.params.size() != 4) {
+            return JSONRPCReply(NullUniValue,
+                JSONRPCError(RPC_INVALID_PARAMETER,
+                    "depinclearmsg over the DePIN port expects [mode, address, challenge, signature]"), id);
+        }
+
+        // Validate types before get_str() to return a clean error.
+        if (!jsonRequest.params[1].isStr() || !jsonRequest.params[2].isStr() || !jsonRequest.params[3].isStr()) {
+            return JSONRPCReply(NullUniValue,
+                JSONRPCError(RPC_INVALID_PARAMETER, "address, challenge and signature must be strings"), id);
+        }
+
+        const UniValue modeParam = jsonRequest.params[0];
+        std::string address   = jsonRequest.params[1].get_str();
+        std::string challenge = jsonRequest.params[2].get_str();
+        std::string signature = jsonRequest.params[3].get_str();
+        const std::string activeToken = pDepinMsgPool ? pDepinMsgPool->GetActiveToken() : "";
+
+        std::string authError;
+        // 1) The challenge (issued only to the owner, see IssueChallenge/ADMIN) is
+        //    valid and signed by 'address'.
+        std::string messageToSign = strprintf("DEPIN-CLEAR|%s|%s|%s", activeToken, address, challenge);
+        if (!ValidateChallenge(activeToken, address, clientIP, challenge, DepinChallengeType::ADMIN, authError) ||
+            !VerifyChallengeSignature(address, signature, messageToSign, authError)) {
+            return JSONRPCReply(NullUniValue, JSONRPCError(RPC_INVALID_REQUEST, authError), id);
+        }
+        // 2) Defense in depth: 'address' owns the owner asset <activeToken>!.
+        if (!CheckTokenOwnership(address, activeToken + OWNER_TAG, authError)) {
+            return JSONRPCReply(NullUniValue,
+                JSONRPCError(RPC_INVALID_REQUEST, "depinclearmsg requires the active token owner"), id);
+        }
+
+        // Rebuild params for the real RPC (accepts <= 1 param):
+        //   mode null/"" -> []  (remove expired);  otherwise -> [mode]
+        UniValue clearParams(UniValue::VARR);
+        if (!(modeParam.isNull() || (modeParam.isStr() && modeParam.get_str().empty()))) {
+            clearParams.push_back(modeParam);
+        }
+        jsonRequest.params = clearParams;
+        jsonRequest.fSkipWalletCheck = true;
     }
 #endif
 
@@ -839,8 +922,12 @@ std::string CDepinMsgPoolServer::IssueChallenge(const std::string& token, const 
         return "";
     }
 
-    // Verify token ownership BEFORE issuing challenge (prevents DoS)
-    if (!CheckTokenOwnership(address, token, error)) {
+    // Verify token ownership BEFORE issuing challenge (prevents DoS).
+    // NIP revision 005b: an ADMIN challenge (for depinclearmsg) is only issued
+    // to the OWNER of the active token, i.e. the holder of the owner asset
+    // <token>!, not to any holder of the token.
+    const std::string ownershipAsset = (type == DepinChallengeType::ADMIN) ? (token + OWNER_TAG) : token;
+    if (!CheckTokenOwnership(address, ownershipAsset, error)) {
         return "";
     }
 
