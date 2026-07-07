@@ -131,6 +131,7 @@ NEURAI_TESTS =\
   test/outputscript_tests.cpp \
   test/xna_asset_gating_tests.cpp \
   test/asset_activation_gating_tests.cpp \
+  test/asset_script_legacy_tests.cpp \
   test/outputauthcommitment_tests.cpp \
   test/inputvalue_tests.cpp \
   test/chaincontext_tests.cpp \

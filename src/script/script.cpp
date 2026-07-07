@@ -296,58 +296,106 @@ bool CScript::IsAssetScript(int& nType, bool& isOwner) const
 
 bool CScript::IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex) const
 {
-    int assetOpIndex = -1;
     fIsOwner = false;
+
+    // Legacy P2PKH-prefixed asset script (OP_XNA_ASSET at byte 25). Parsed
+    // with origin/main's fixed-offset logic, byte-for-byte: mainnet history
+    // contains scripts with a doubled OP_XNA_ASSET (c0 c0) where "rvn" lands
+    // at byte 28 instead of 27, and OP_PUSHDATA1-encoded payloads with the
+    // same shift. A stricter GetOp-based parser rejected those and stalled
+    // IBD at block 1615824 (NIP revision 011). Note the exact nesting below:
+    // when byte 27 is XNA_R but 28/29 do not complete "rvn", origin/main
+    // REJECTS without trying the byte-28 offset — a condensed if/else-if
+    // would diverge from deployed consensus.
     if (this->size() > 31 &&
         (*this)[0] == OP_DUP &&
         (*this)[1] == OP_HASH160 &&
         (*this)[2] == 0x14 &&
         (*this)[23] == OP_EQUALVERIFY &&
         (*this)[24] == OP_CHECKSIG) {
-        assetOpIndex = 25;
-    } else if (this->size() > 40 &&
-               (*this)[0] == OP_1 &&
-               (*this)[1] == 0x20) {
-        assetOpIndex = 34;
-    } else {
+
+        if ((*this)[25] != OP_XNA_ASSET) {
+            return false;
+        }
+
+        int index = -1;
+        if ((*this)[27] == XNA_R) { // "rvn" starts at 27 (single c0, direct push)
+            if ((*this)[28] == XNA_V)
+                if ((*this)[29] == XNA_N)
+                    index = 30;
+        } else {                    // "rvn" starts at 28 (doubled c0, or OP_PUSHDATA1)
+            if ((*this)[28] == XNA_R)
+                if ((*this)[29] == XNA_V)
+                    if ((*this)[30] == XNA_N)
+                        index = 31;
+        }
+
+        if (index > 0) {
+            nStartingIndex = index + 1; // First byte of the serialized asset data
+            if ((*this)[index] == XNA_T) { // Transfer first: most common case
+                nType = TX_TRANSFER_ASSET;
+                return true;
+            } else if ((*this)[index] == XNA_Q && this->size() > 39) {
+                nType = TX_NEW_ASSET;
+                fIsOwner = false;
+                return true;
+            } else if ((*this)[index] == XNA_O) {
+                nType = TX_NEW_ASSET;
+                fIsOwner = true;
+                return true;
+            } else if ((*this)[index] == XNA_R) {
+                nType = TX_REISSUE_ASSET;
+                return true;
+            }
+        }
         return false;
     }
 
-    CScript::const_iterator pc = begin() + assetOpIndex + 1;
-    opcodetype opcode;
-    std::vector<unsigned char> assetMessage;
-    if ((*this)[assetOpIndex] != OP_XNA_ASSET) {
-        return false;
-    }
+    // AuthScript-prefixed asset script (OP_1 <32-byte commitment>, byte 34).
+    // New DePIN format with no mainnet history: keep the strict GetOp parser.
+    if (this->size() > 40 &&
+        (*this)[0] == OP_1 &&
+        (*this)[1] == 0x20) {
 
-    if (!GetOp(pc, opcode, assetMessage)) {
-        return false;
-    }
+        const int assetOpIndex = 34;
+        CScript::const_iterator pc = begin() + assetOpIndex + 1;
+        opcodetype opcode;
+        std::vector<unsigned char> assetMessage;
+        if ((*this)[assetOpIndex] != OP_XNA_ASSET) {
+            return false;
+        }
 
-    if (assetMessage.size() < 4 || assetMessage[0] != XNA_R || assetMessage[1] != XNA_V || assetMessage[2] != XNA_N) {
-        return false;
-    }
+        if (!GetOp(pc, opcode, assetMessage)) {
+            return false;
+        }
 
-    if (!GetOp(pc, opcode) || opcode != OP_DROP || pc != end()) {
-        return false;
-    }
+        if (assetMessage.size() < 4 || assetMessage[0] != XNA_R || assetMessage[1] != XNA_V || assetMessage[2] != XNA_N) {
+            return false;
+        }
 
-    const int assetDataStartIndex = static_cast<int>((pc - begin()) - 1 - assetMessage.size());
-    nStartingIndex = assetDataStartIndex + 4;
-    if (assetMessage[3] == XNA_T) {
-        nType = TX_TRANSFER_ASSET;
-        return true;
-    } else if (assetMessage[3] == XNA_Q && this->size() > 39) {
-        nType = TX_NEW_ASSET;
-        fIsOwner = false;
-        return true;
-    } else if (assetMessage[3] == XNA_O) {
-        nType = TX_NEW_ASSET;
-        fIsOwner = true;
-        return true;
-    } else if (assetMessage[3] == XNA_R) {
-        nType = TX_REISSUE_ASSET;
-        return true;
+        if (!GetOp(pc, opcode) || opcode != OP_DROP || pc != end()) {
+            return false;
+        }
+
+        const int assetDataStartIndex = static_cast<int>((pc - begin()) - 1 - assetMessage.size());
+        nStartingIndex = assetDataStartIndex + 4;
+        if (assetMessage[3] == XNA_T) {
+            nType = TX_TRANSFER_ASSET;
+            return true;
+        } else if (assetMessage[3] == XNA_Q && this->size() > 39) {
+            nType = TX_NEW_ASSET;
+            fIsOwner = false;
+            return true;
+        } else if (assetMessage[3] == XNA_O) {
+            nType = TX_NEW_ASSET;
+            fIsOwner = true;
+            return true;
+        } else if (assetMessage[3] == XNA_R) {
+            nType = TX_REISSUE_ASSET;
+            return true;
+        }
+
+        return false;
     }
 
     return false;
