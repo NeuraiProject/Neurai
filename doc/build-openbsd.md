@@ -94,7 +94,7 @@ BDB_PREFIX="${NEURAI_ROOT}/db4"
 mkdir -p $BDB_PREFIX
 
 # Fetch the source and verify that it is not tampered with
-curl -o db-4.8.30.NC.tar.gz 'http://download.oracle.com/berkeley-db/db-4.8.30.NC.tar.gz'
+curl -L -o db-4.8.30.NC.tar.gz 'https://github.com/NeuraiProject/berkeley-db-4.8.30/releases/download/4.8.30/db-4.8.30.NC.tar.gz'
 echo '12edc0df75bf9abd7f82f821795bcee50f42cb2e5f76a6a281b85732798364ef  db-4.8.30.NC.tar.gz' | sha256 -c
 # MUST output: (SHA256) db-4.8.30.NC.tar.gz: OK
 tar -xzf db-4.8.30.NC.tar.gz

@@ -25,7 +25,7 @@ sudo reboot
 cd ~
 mkdir build
 cd build
-wget http://download.oracle.com/berkeley-db/db-4.8.30.NC.tar.gz
+wget https://github.com/NeuraiProject/berkeley-db-4.8.30/releases/download/4.8.30/db-4.8.30.NC.tar.gz
 tar -xzvf db-4.8.30.NC.tar.gz
 cd db-4.8.30.NC/build_unix/
 ../dist/configure --enable-cxx

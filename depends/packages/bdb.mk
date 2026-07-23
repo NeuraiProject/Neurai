@@ -1,6 +1,6 @@
 package=bdb
 $(package)_version=4.8.30
-$(package)_download_path=https://download.oracle.com/berkeley-db
+$(package)_download_path=https://github.com/NeuraiProject/berkeley-db-4.8.30/releases/download/4.8.30
 $(package)_file_name=db-$($(package)_version).NC.tar.gz
 $(package)_sha256_hash=12edc0df75bf9abd7f82f821795bcee50f42cb2e5f76a6a281b85732798364ef
 $(package)_build_subdir=build_unix

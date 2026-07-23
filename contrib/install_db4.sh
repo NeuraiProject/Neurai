@@ -23,7 +23,7 @@ expand_path() {
 BDB_PREFIX="$(expand_path ${1})/db4"; shift;
 BDB_VERSION='db-4.8.30.NC'
 BDB_HASH='12edc0df75bf9abd7f82f821795bcee50f42cb2e5f76a6a281b85732798364ef'
-BDB_URL="https://download.oracle.com/berkeley-db/${BDB_VERSION}.tar.gz"
+BDB_URL="https://github.com/NeuraiProject/berkeley-db-4.8.30/releases/download/4.8.30/${BDB_VERSION}.tar.gz"
 
 check_exists() {
   command -v "$1" >/dev/null
@@ -54,7 +54,7 @@ http_get() {
   if [ -f "${2}" ]; then
     echo "File ${2} already exists; not downloading again"
   elif check_exists curl; then
-    curl --insecure --retry 5 "${1}" -o "${2}"
+    curl -L --insecure --retry 5 "${1}" -o "${2}"
   else
     wget --no-check-certificate "${1}" -O "${2}"
   fi
