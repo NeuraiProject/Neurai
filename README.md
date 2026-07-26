@@ -99,8 +99,7 @@ scripthash: 0xc4
 DEPIN NETWORK
 DePIN chat identity uses a dedicated account (100'), external chain, index 0.
 
-Legacy Mainnet DePIN Derivation Path:   m/44'/0'/100'/0/0
-PostQuantum DePIN Derivation Path:      m/44'/1900'/100'/0/0
+Mainnet DePIN Derivation Path:          m/44'/1900'/100'/0/0
 Testnet DePIN Derivation Path:          m/44'/1'/100'/0/0
 ```
 
