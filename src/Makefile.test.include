@@ -62,6 +62,7 @@ NEURAI_TESTS =\
   test/crypto_tests.cpp \
   test/depinecies_tests.cpp \
   test/depinmcpworker_tests.cpp \
+  test/depinmsgpool_tests.cpp \
   test/depinserver_tests.cpp \
   test/cuckoocache_tests.cpp \
   test/DoS_tests.cpp \

@@ -205,9 +205,42 @@ bool CDepinMsgPool::GetDepinMessage(const uint256& hash, CDepinMessage& message)
     return true;
 }
 
+bool ShouldDeliverDepinMessageToAddress(const CDepinMessage& msg, const std::string& address,
+                                         const uint160* addressHash160) {
+    // Sender always receives their own message, regardless of type,
+    // recipientKeys contents, or payload validity.
+    if (msg.senderAddress == address) {
+        return true;
+    }
+
+    if (!addressHash160) {
+        return false;
+    }
+
+    try {
+        CECIESEncryptedMessage eciesMsg;
+        CDataStream ss(msg.encryptedPayload, SER_NETWORK, PROTOCOL_VERSION);
+        ss >> eciesMsg;
+        return eciesMsg.recipientKeys.count(*addressHash160) > 0;
+    } catch (const std::exception& e) {
+        LogPrint(BCLog::NET, "ShouldDeliverDepinMessageToAddress: Failed to deserialize ECIES message: %s\n", e.what());
+        return false;
+    }
+}
+
 std::vector<CDepinMessage> CDepinMsgPool::GetMessagesForAddress(const std::string& address) const {
     LOCK(cs_depinmsgpool);
     std::vector<CDepinMessage> result;
+
+    // Decode the requesting address to hash160 once per call, not once per message.
+    CTxDestination dest = DecodeDestination(address);
+    const CKeyID* keyID = boost::get<CKeyID>(&dest);
+    uint160 addressHash160;
+    const uint160* hashPtr = nullptr;
+    if (keyID) {
+        addressHash160 = uint160(*keyID);
+        hashPtr = &addressHash160;
+    }
 
     // Iterate over mapByTime (chronological order, oldest first) instead of mapMessages (hash order)
     for (const auto& timeEntry : mapByTime) {
@@ -220,45 +253,8 @@ std::vector<CDepinMessage> CDepinMsgPool::GetMessagesForAddress(const std::strin
         }
 
         const CDepinMessage& msg = it->second;
-
-        // Group messages (0x02): accessible to all token holders
-        if (msg.IsGroupMessage()) {
+        if (ShouldDeliverDepinMessageToAddress(msg, address, hashPtr)) {
             result.push_back(msg);
-            continue;
-        }
-
-        // Private messages (0x01): accessible to sender OR recipient
-        if (msg.IsPrivateMessage()) {
-            // Always include messages sent by this address
-            if (msg.senderAddress == address) {
-                result.push_back(msg);
-                continue;
-            }
-
-            // For messages from other senders, check if address is a recipient
-            // by verifying if its hash160 is in the ECIES recipientKeys map
-            // NO decryption needed - just check if the key exists
-            try {
-                // Deserialize ECIES message to access recipientKeys map
-                CECIESEncryptedMessage eciesMsg;
-                CDataStream ss(msg.encryptedPayload, SER_NETWORK, PROTOCOL_VERSION);
-                ss >> eciesMsg;
-
-                // Convert address to hash160
-                CTxDestination dest = DecodeDestination(address);
-                const CKeyID* keyID = boost::get<CKeyID>(&dest);
-                if (keyID) {
-                    uint160 addressHash160(*keyID);
-
-                    // Check if this address is in the recipient list
-                    if (eciesMsg.recipientKeys.count(addressHash160) > 0) {
-                        result.push_back(msg);
-                    }
-                }
-            } catch (const std::exception& e) {
-                // If deserialization fails, skip this message
-                LogPrint(BCLog::NET, "GetMessagesForAddress: Failed to deserialize ECIES message: %s\n", e.what());
-            }
         }
     }
 

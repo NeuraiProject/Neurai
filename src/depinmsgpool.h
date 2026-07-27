@@ -156,6 +156,13 @@ bool CheckTokenOwnership(const std::string& address, const std::string& token, s
 bool CheckAddressHasPublicKey(const std::string& address, CPubKey& pubkey, std::string& error);
 std::vector<std::string> GetTokenHolders(const std::string& token, unsigned int maxHolders, std::string& error);
 
+// Decide whether a given address should receive this message from the pool.
+// Sender always sees their own message; otherwise checks recipientKeys
+// membership by hash160 (no decryption attempted, no private key needed).
+// addressHash160 must be pre-decoded once by the caller (see GetMessagesForAddress).
+bool ShouldDeliverDepinMessageToAddress(const CDepinMessage& msg, const std::string& address,
+                                         const uint160* addressHash160);
+
 // Encrypt message for ALL recipients at once (ECIES hybrid encryption)
 // Creates a single CECIESEncryptedMessage with:
 //   - Message encrypted once with AES

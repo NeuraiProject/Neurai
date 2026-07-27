@@ -1056,9 +1056,8 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
         }
     }
 
-    // Fetch pool contents with filtering
-    // Group messages (0x02): accessible to all token holders
-    // Private messages (0x01): filtered by decryption capability (only sender/recipient can access)
+    // Fetch pool contents with filtering. Both message types (group and private)
+    // are filtered by recipientKeys membership; the sender always sees their own messages.
     std::vector<CDepinMessage> messages = pDepinMsgPool->GetMessagesForAddress(address);
 
     UniValue resultArray(UniValue::VARR);
