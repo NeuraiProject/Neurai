@@ -60,6 +60,7 @@ NEURAI_TESTS =\
   test/refinputs_tests.cpp \
   test/compress_tests.cpp \
   test/crypto_tests.cpp \
+  test/depin_subasset_tests.cpp \
   test/depinecies_tests.cpp \
   test/depinmcpworker_tests.cpp \
   test/depinmsgpool_tests.cpp \

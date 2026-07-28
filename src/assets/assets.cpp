@@ -230,6 +230,12 @@ std::string GetParentName(const std::string& name)
         index = name.find_last_of(SUB_NAME_DELIMITER);
     } else if (type == AssetType::RESTRICTED) {
         return name;
+    } else if (type == AssetType::DEPIN) {
+        // Sub-DEPIN ("&TOKEN/SUB") resolves to its immediate parent, matching the
+        // AssetType::SUB policy above (branch delegation is intentional).
+        // A root DEPIN ("&TOKEN") has no '/', so index stays npos and the name is
+        // returned unchanged below, like ROOT/QUALIFIER/RESTRICTED.
+        index = name.find_last_of(SUB_NAME_DELIMITER);
     }
 
     if (std::string::npos != index)
@@ -677,7 +683,11 @@ bool CTransaction::VerifyNewAsset(std::string& strError) const {
         return false;
     }
 
-    if (assetType == AssetType::SUB) {
+    // Sub-assets require spending the parent's owner token, so only the parent's
+    // owner can create names under it. Sub-DEPIN ("&TOKEN/SUB") is AssetType::DEPIN,
+    // not AssetType::SUB, so it needs an explicit check here; a root DEPIN
+    // ("&TOKEN") has no parent and is excluded by IsAssetNameASubDEPIN().
+    if (assetType == AssetType::SUB || IsAssetNameASubDEPIN(asset.strName)) {
         std::string root = GetParentName(asset.strName);
         bool fOwnerOutFound = false;
         for (auto out : this->vout) {
@@ -3423,6 +3433,11 @@ bool CreateAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, const s
         }
     }
 
+    // Sub-DEPIN ("&TOKEN/SUB") needs the parent owner token like any other sub-asset,
+    // but it is AssetType::DEPIN rather than AssetType::SUB. Bulk issuance is limited
+    // to UNIQUE above, so a DEPIN issuance always carries exactly one asset here.
+    const bool fIsSubDepin = assets.size() == 1 && IsAssetNameASubDEPIN(assets.front().strName);
+
     // Assign the correct burn amount and the correct burn address depending on the type of asset issuance that is happening
     CAmount burnAmount = GetBurnAmount(assetType) * assets.size();
     CScript scriptPubKey = GetScriptForDestination(DecodeDestination(GetBurnAddress(assetType)));
@@ -3452,7 +3467,7 @@ bool CreateAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, const s
     vecSend.push_back(recipient);
 
     // If the asset is a subasset or unique asset. We need to send the ownertoken change back to ourselfs
-    if (assetType == AssetType::SUB || assetType == AssetType::UNIQUE || assetType == AssetType::MSGCHANNEL) {
+    if (assetType == AssetType::SUB || assetType == AssetType::UNIQUE || assetType == AssetType::MSGCHANNEL || fIsSubDepin) {
         // Get the script for the destination address for the assets
         CScript scriptTransferOwnerAsset = GetScriptForDestination(DecodeDestination(change_address));
 
@@ -3474,7 +3489,7 @@ bool CreateAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, const s
     }
 
     // Get the owner outpoints if this is a subasset or unique asset
-    if (assetType == AssetType::SUB || assetType == AssetType::UNIQUE || assetType == AssetType::MSGCHANNEL) {
+    if (assetType == AssetType::SUB || assetType == AssetType::UNIQUE || assetType == AssetType::MSGCHANNEL || fIsSubDepin) {
         // Verify that this wallet is the owner for the asset, and get the owner asset outpoint
         for (auto asset : assets) {
             if (!VerifyWalletHasAsset(parentName + OWNER_TAG, error)) {
