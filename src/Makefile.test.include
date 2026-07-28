@@ -152,6 +152,7 @@ NEURAI_TESTS += \
   wallet/test/wallet_test_fixture.cpp \
   wallet/test/wallet_test_fixture.h \
   wallet/test/accounting_tests.cpp \
+  wallet/test/depin_subasset_wallet_tests.cpp \
   wallet/test/wallet_tests.cpp \
   wallet/test/pqwallet_guard_tests.cpp \
   wallet/test/crypto_tests.cpp
