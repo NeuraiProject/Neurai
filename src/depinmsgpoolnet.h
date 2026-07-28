@@ -34,6 +34,9 @@ static const std::string DEPIN_RESP_ERROR = "ERROR";
 // Configuración
 static const int DEPIN_SOCKET_TIMEOUT = 30; // segundos
 static const size_t DEPIN_MAX_PROTOCOL_SIZE = 10 * 1024 * 1024; // 10MB
+// GETMESSAGES serves exactly one address, so its address field can never
+// legitimately be longer than a single encoded address.
+static const size_t MAX_DEPIN_ADDRESS_FIELD_SIZE = 128;
 static const int DEPIN_CHALLENGE_TIMEOUT = 30; // segundos
 static const unsigned int DEFAULT_DEPIN_MAX_CONNECTIONS = 32; // max concurrent client handlers
 
@@ -98,6 +101,10 @@ private:
 
     std::map<std::string, CDepinChallenge> mapChallenges;
     mutable CCriticalSection cs_challenges;
+
+    // Lets unit tests inject an already-valid challenge, bypassing
+    // IssueChallenge()'s on-chain token-ownership lookups.
+    friend struct DepinServerTester;
 #endif
 
 public:

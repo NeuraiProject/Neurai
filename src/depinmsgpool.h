@@ -92,6 +92,10 @@ public:
 // Chat message mempool
 class CDepinMsgPool {
 private:
+    // Lets unit tests enable a pool without Initialize()'s
+    // fAssetIndex/fPubKeyIndex/passetsdb preconditions.
+    friend struct DepinServerTester;
+
     mutable CCriticalSection cs_depinmsgpool;
 
     std::string activeToken;                    // Token active in this pool
@@ -171,6 +175,13 @@ std::vector<std::string> GetTokenHolders(const std::string& token, unsigned int 
 // addressHash160 must be pre-decoded once by the caller (see GetMessagesForAddress).
 bool ShouldDeliverDepinMessageToAddress(const CDepinMessage& msg, const std::string& address,
                                          const uint160* addressHash160);
+
+// Apply ShouldDeliverDepinMessageToAddress over a collection, preserving order.
+// Split out from GetMessagesForAddress so the delivery policy can be tested on a
+// whole message set without a live CDepinMsgPool/passetsdb.
+std::vector<CDepinMessage> FilterDepinMessagesForAddress(const std::vector<CDepinMessage>& messages,
+                                                         const std::string& address,
+                                                         const uint160* addressHash160);
 
 // Encrypt message for ALL recipients at once (ECIES hybrid encryption)
 // Creates a single CECIESEncryptedMessage with:

@@ -190,6 +190,63 @@ BOOST_AUTO_TEST_CASE(malformed_input_is_rejected_without_throwing)
     BOOST_CHECK(!ShouldDeliverDepinMessageToAddress(validMsg, "not-a-valid-address", nullptr));
 }
 
+// FilterDepinMessagesForAddress: the collection-level behaviour that
+// GetMessagesForAddress delegates to. Covers ordering and a mix of
+// deliverable/undeliverable messages, which the single-message tests above
+// cannot catch.
+BOOST_AUTO_TEST_CASE(filter_keeps_only_deliverable_messages_in_order)
+{
+    // Two wallets: `mine` is the querying address, `other` is a stranger.
+    CKey mineKey;
+    std::string mineAddress = NewAddress(mineKey);
+    uint160 mineHash;
+    BOOST_REQUIRE(AddressToHash160(mineAddress, mineHash));
+
+    CKey otherKey;
+    std::string otherAddress = NewAddress(otherKey);
+
+    CKey senderKey;
+    std::string senderAddress = NewAddress(senderKey);
+
+    std::string error;
+
+    // (1) Addressed to me -> delivered
+    std::map<std::string, CPubKey> toMe;
+    toMe[mineAddress] = mineKey.GetPubKey();
+    CECIESEncryptedMessage eciesToMe;
+    BOOST_REQUIRE(ECIESEncryptMessage("for me", toMe, eciesToMe, error));
+    CDepinMessage msgToMe = BuildMessage(0x02, senderAddress, eciesToMe);
+
+    // (2) Addressed to somebody else -> filtered out
+    std::map<std::string, CPubKey> toOther;
+    toOther[otherAddress] = otherKey.GetPubKey();
+    CECIESEncryptedMessage eciesToOther;
+    BOOST_REQUIRE(ECIESEncryptMessage("not for me", toOther, eciesToOther, error));
+    CDepinMessage msgToOther = BuildMessage(0x02, senderAddress, eciesToOther);
+
+    // (3) Sent by me, addressed to somebody else -> delivered (sender shortcut)
+    CDepinMessage msgFromMe = BuildMessage(0x02, mineAddress, eciesToOther);
+
+    // (4) Corrupted payload from a third party -> filtered out, no throw
+    CDepinMessage msgCorrupted = BuildMessage(0x02, senderAddress, eciesToOther);
+    msgCorrupted.encryptedPayload = {0xDE, 0xAD};
+
+    std::vector<CDepinMessage> all = {msgToMe, msgToOther, msgFromMe, msgCorrupted};
+    std::vector<CDepinMessage> filtered = FilterDepinMessagesForAddress(all, mineAddress, &mineHash);
+
+    BOOST_REQUIRE_EQUAL(filtered.size(), 2u);
+    // Input order is preserved: the message addressed to me comes before the one I sent.
+    BOOST_CHECK(filtered[0].GetHash() == msgToMe.GetHash());
+    BOOST_CHECK(filtered[1].GetHash() == msgFromMe.GetHash());
+
+    // A stranger with no hash160 available gets nothing at all here.
+    std::vector<CDepinMessage> none = FilterDepinMessagesForAddress(all, "not-a-valid-address", nullptr);
+    BOOST_CHECK(none.empty());
+
+    // Empty input stays empty.
+    BOOST_CHECK(FilterDepinMessagesForAddress({}, mineAddress, &mineHash).empty());
+}
+
 // IsValidDepinMessagingToken: token-type gating for -depinmsgtoken.
 // These call the free function directly (no fAssetIndex/fPubKeyIndex/
 // passetsdb setup needed), same isolation approach as the

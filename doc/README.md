@@ -117,11 +117,22 @@ Any other RPC method is rejected, so exposing port 19002 does not give attackers
    # → CHALLENGE|abcd1234...|30
    ```
 2. Client signs the message `DEPIN-GET|<token>|<address>|<challenge>` (standard message-signature with `strMessageMagic`).
-3. Client sends the signed fetch request (challenge valid for 30s):
+3. Client sends the signed fetch request (challenge valid for 30s). The address
+   field must contain **exactly the authenticated address** — the challenge only
+   proves control of that one:
    ```bash
-   printf 'GETMESSAGES|&MYTOKEN|NXa,NXb|NXholder...|<base64sig>|abcd1234...' | nc node.example.com 19002
+   printf 'GETMESSAGES|&MYTOKEN|NXholder...|NXholder...|<base64sig>|abcd1234...' | nc node.example.com 19002
    ```
 4. Server verifies ownership + signature before returning encrypted payload. If the client fails to answer within 30 seconds, the challenge expires and the connection is closed.
+
+> **One address per request.** Listing several addresses (`NXa,NXb`) is rejected
+> with `ERROR|Only the authenticated address may be queried`: otherwise any
+> authenticated holder could pull the encrypted payloads addressed to another
+> holder. A wallet holding the token at several addresses repeats the
+> AUTH → sign → GETMESSAGES cycle once per address and merges the results,
+> discarding duplicates by message hash (a group message can be addressed to
+> more than one of its addresses). `neurai-cli depingetmsg` does this
+> automatically.
 
 ### Remote message sending handshake
 

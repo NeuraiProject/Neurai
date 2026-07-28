@@ -249,9 +249,20 @@ bool ShouldDeliverDepinMessageToAddress(const CDepinMessage& msg, const std::str
     }
 }
 
+std::vector<CDepinMessage> FilterDepinMessagesForAddress(const std::vector<CDepinMessage>& messages,
+                                                         const std::string& address,
+                                                         const uint160* addressHash160) {
+    std::vector<CDepinMessage> result;
+    for (const CDepinMessage& msg : messages) {
+        if (ShouldDeliverDepinMessageToAddress(msg, address, addressHash160)) {
+            result.push_back(msg);
+        }
+    }
+    return result;
+}
+
 std::vector<CDepinMessage> CDepinMsgPool::GetMessagesForAddress(const std::string& address) const {
     LOCK(cs_depinmsgpool);
-    std::vector<CDepinMessage> result;
 
     // Decode the requesting address to hash160 once per call, not once per message.
     CTxDestination dest = DecodeDestination(address);
@@ -263,23 +274,20 @@ std::vector<CDepinMessage> CDepinMsgPool::GetMessagesForAddress(const std::strin
         hashPtr = &addressHash160;
     }
 
-    // Iterate over mapByTime (chronological order, oldest first) instead of mapMessages (hash order)
+    // Collect in chronological order (mapByTime, oldest first) rather than hash
+    // order, then let the free function above apply the delivery policy so that
+    // policy is unit-testable without a live pool.
+    std::vector<CDepinMessage> ordered;
+    ordered.reserve(mapByTime.size());
     for (const auto& timeEntry : mapByTime) {
-        const uint256& msgHash = timeEntry.second;
-
-        // Get the actual message from mapMessages
-        auto it = mapMessages.find(msgHash);
+        auto it = mapMessages.find(timeEntry.second);
         if (it == mapMessages.end()) {
             continue;  // Should not happen, but be defensive
         }
-
-        const CDepinMessage& msg = it->second;
-        if (ShouldDeliverDepinMessageToAddress(msg, address, hashPtr)) {
-            result.push_back(msg);
-        }
+        ordered.push_back(it->second);
     }
 
-    return result;
+    return FilterDepinMessagesForAddress(ordered, address, hashPtr);
 }
 
 std::vector<CDepinMessage> CDepinMsgPool::GetAllMessages() const {
@@ -767,38 +775,49 @@ bool QueryRemoteDepinMsgPool(CWallet* pwallet,
         return false;
     }
 
-    std::string authAddress = myAddresses.front();
-
     LogPrint(BCLog::NET, "QueryRemoteDepinMsgPool: Connecting to %s:%d for token %s\n",
              ipAddress, port, token);
 
-    std::string challenge;
-    int expiresIn = 0;
-    if (!CDepinMsgPoolClient::RequestChallenge(ipAddress, port, token, authAddress,
-                                               challenge, expiresIn, error, false)) {
-        LogPrint(BCLog::NET, "QueryRemoteDepinMsgPool: Challenge failed: %s\n", error);
-        return false;
+    // GETMESSAGES only serves the address that completed the challenge, so a
+    // wallet holding the token at several addresses must authenticate once per
+    // address instead of listing them all in a single request.
+    std::set<uint256> seenHashes;
+    for (const std::string& addr : myAddresses) {
+        std::string challenge;
+        int expiresIn = 0;
+        if (!CDepinMsgPoolClient::RequestChallenge(ipAddress, port, token, addr,
+                                                   challenge, expiresIn, error, false)) {
+            LogPrint(BCLog::NET, "QueryRemoteDepinMsgPool: Challenge failed for %s: %s\n", addr, error);
+            return false;
+        }
+
+        std::string signature;
+        if (!SignDepinChallenge(pwallet, addr, token, challenge, signature, error)) {
+            LogPrint(BCLog::NET, "QueryRemoteDepinMsgPool: Failed to sign challenge for %s: %s\n", addr, error);
+            return false;
+        }
+
+        std::vector<CDepinMessage> addrMessages;
+        if (!CDepinMsgPoolClient::QueryMessages(ipAddress, port, token,
+                                                {addr}, addr, signature, challenge,
+                                                addrMessages, error)) {
+            LogPrint(BCLog::NET, "QueryRemoteDepinMsgPool: Query failed for %s: %s\n", addr, error);
+            return false;
+        }
+
+        // A group message can list several of this wallet's addresses as
+        // recipients, so the same message may come back once per address.
+        for (const CDepinMessage& msg : addrMessages) {
+            if (seenHashes.insert(msg.GetHash()).second) {
+                messages.push_back(msg);
+            }
+        }
     }
 
-    std::string signature;
-    if (!SignDepinChallenge(pwallet, authAddress, token, challenge, signature, error)) {
-        LogPrint(BCLog::NET, "QueryRemoteDepinMsgPool: Failed to sign challenge: %s\n", error);
-        return false;
-    }
+    LogPrint(BCLog::NET, "QueryRemoteDepinMsgPool: Successfully retrieved %d messages for %d addresses\n",
+            messages.size(), myAddresses.size());
 
-    bool success = CDepinMsgPoolClient::QueryMessages(ipAddress, port, token,
-                                                     myAddresses, authAddress,
-                                                     signature, challenge,
-                                                     messages, error);
-
-    if (success) {
-        LogPrint(BCLog::NET, "QueryRemoteDepinMsgPool: Successfully retrieved %d messages\n",
-                messages.size());
-    } else {
-        LogPrint(BCLog::NET, "QueryRemoteDepinMsgPool: Failed: %s\n", error);
-    }
-
-    return success;
+    return true;
 }
 
 bool SignDepinChallenge(CWallet* pwallet,

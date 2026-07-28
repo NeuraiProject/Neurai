@@ -986,7 +986,7 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
                 "  \"messages\": [...],               (array) Array of message objects (same structure as above)\n"
                 "  \"has_more\": true|false           (boolean) Whether more messages are available\n"
                 "}\n"
-                "\nNote: Private messages are only returned if the address is sender or can decrypt the message.\n"
+                "\nNote: Both message types are filtered by recipientKeys membership; the sender always sees their own messages.\n"
                 "\nResult (privacy layer active):\n"
                 "{\n"
                 "  \"encrypted\": \"hex_blob\"        (string) Full JSON response encrypted with ECIES\n"

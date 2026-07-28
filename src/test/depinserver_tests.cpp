@@ -6,9 +6,16 @@
 // clients, concurrent-connection limit and basic request round-trip.
 
 #include "depinmsgpoolnet.h"
+#include "depinmsgpool.h"
 #include "util.h"
 #include "utiltime.h"
 #include "test/test_neurai.h"
+#include "base58.h"
+#include "hash.h"
+#include "key.h"
+#include "pubkey.h"
+#include "utilstrencodings.h"
+#include "validation.h" // strMessageMagic
 
 #include <boost/test/unit_test.hpp>
 
@@ -71,6 +78,41 @@ std::string ReadLine(int sock)
 }
 
 } // namespace
+
+#ifdef ENABLE_DEPIN_GATEWAY
+// Test accessor (friend of both classes): lets us stand up an enabled pool and a
+// pre-validated challenge without Initialize()'s passetsdb/index preconditions
+// or IssueChallenge()'s on-chain token-ownership lookup. Same approach as
+// DepinMCPWorkerTester in depinmcpworker_tests.cpp.
+struct DepinServerTester {
+    static void EnablePool(CDepinMsgPool& pool, const std::string& token)
+    {
+        pool.fEnabled = true;
+        pool.activeToken = token;
+    }
+
+    static void InjectChallenge(CDepinMsgPoolServer& server, const CDepinChallenge& challenge)
+    {
+        LOCK(server.cs_challenges);
+        server.mapChallenges[challenge.nonce] = challenge;
+    }
+};
+
+namespace {
+
+std::string SignChallengeMessage(const CKey& key, const std::string& message)
+{
+    CHashWriter ss(SER_GETHASH, 0);
+    ss << strMessageMagic;
+    ss << message;
+
+    std::vector<unsigned char> vchSig;
+    if (!key.SignCompact(ss.GetHash(), vchSig)) return "";
+    return EncodeBase64(vchSig.data(), vchSig.size());
+}
+
+} // namespace
+#endif // ENABLE_DEPIN_GATEWAY
 
 BOOST_FIXTURE_TEST_SUITE(depinserver_tests, BasicTestingSetup)
 
@@ -150,6 +192,78 @@ BOOST_AUTO_TEST_CASE(depinserver_busy_limit)
     gArgs.ForceSetArg("-depinmaxconnections",
                       strprintf("%u", DEFAULT_DEPIN_MAX_CONNECTIONS));
 }
+
+#ifdef ENABLE_DEPIN_GATEWAY
+// Security regression: the challenge only proves control of authAddress, so
+// GETMESSAGES must refuse to serve any other address. Before the fix it was
+// enough for authAddress to appear somewhere in the list and every listed
+// address was served, letting an authenticated holder pull another holder's
+// encrypted payloads.
+BOOST_AUTO_TEST_CASE(depinserver_getmessages_rejects_foreign_address)
+{
+    const std::string token = "&TESTTOKEN";
+
+    // Stand up an enabled pool for the duration of the test.
+    std::unique_ptr<CDepinMsgPool> previousPool = std::move(pDepinMsgPool);
+    pDepinMsgPool.reset(new CDepinMsgPool());
+    DepinServerTester::EnablePool(*pDepinMsgPool, token);
+
+    CDepinMsgPoolServer server;
+    int port = StartServerOnFreePort(server);
+    BOOST_REQUIRE(port > 0);
+
+    // A authenticates; B is a third party whose messages A must not receive.
+    CKey keyA;
+    keyA.MakeNewKey(true);
+    const std::string addressA = EncodeDestination(keyA.GetPubKey().GetID());
+
+    CKey keyB;
+    keyB.MakeNewKey(true);
+    const std::string addressB = EncodeDestination(keyB.GetPubKey().GetID());
+
+    // Inject a challenge that is already valid for A. Empty clientIP so
+    // ValidateChallenge() skips the IP match.
+    CDepinChallenge challenge;
+    challenge.token = token;
+    challenge.address = addressA;
+    challenge.nonce = "testnonce0123456789";
+    challenge.clientIP = "";
+    challenge.expiry = GetTime() + DEPIN_CHALLENGE_TIMEOUT;
+    challenge.type = DepinChallengeType::RECEIVE;
+
+    const std::string toSign = strprintf("DEPIN-GET|%s|%s|%s", token, addressA, challenge.nonce);
+    const std::string signature = SignChallengeMessage(keyA, toSign);
+    BOOST_REQUIRE(!signature.empty());
+
+    // Authenticated as A but asking for "A,B" -> must be refused outright.
+    DepinServerTester::InjectChallenge(server, challenge);
+    int sock = ConnectClient(port);
+    BOOST_REQUIRE(sock >= 0);
+    std::string req = strprintf("GETMESSAGES|%s|%s,%s|%s|%s|%s\n",
+                                token, addressA, addressB, addressA, signature, challenge.nonce);
+    BOOST_REQUIRE(send(sock, req.c_str(), req.size(), 0) == (ssize_t)req.size());
+    std::string response = ReadLine(sock);
+    close(sock);
+    BOOST_CHECK_MESSAGE(response.find("ERROR|") == 0,
+                        "expected refusal, got: " + response);
+
+    // Sanity check that the refusal above is about the extra address and not a
+    // broken handshake: the same credentials asking only for A must succeed.
+    DepinServerTester::InjectChallenge(server, challenge);
+    sock = ConnectClient(port);
+    BOOST_REQUIRE(sock >= 0);
+    req = strprintf("GETMESSAGES|%s|%s|%s|%s|%s\n",
+                    token, addressA, addressA, signature, challenge.nonce);
+    BOOST_REQUIRE(send(sock, req.c_str(), req.size(), 0) == (ssize_t)req.size());
+    response = ReadLine(sock);
+    close(sock);
+    BOOST_CHECK_MESSAGE(response.find("OK|") == 0,
+                        "expected success for own address, got: " + response);
+
+    server.Stop();
+    pDepinMsgPool = std::move(previousPool);
+}
+#endif // ENABLE_DEPIN_GATEWAY
 
 BOOST_AUTO_TEST_SUITE_END()
 

@@ -615,6 +615,15 @@ std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request, cons
             return strprintf("ERROR|Token mismatch. Server has: %s", pDepinMsgPool->GetActiveToken());
         }
 
+        // Only a single address is ever accepted (see the check below), so
+        // reject anything that cannot be one before splitting: the request as a
+        // whole may be up to DEPIN_MAX_PROTOCOL_SIZE (10 MB), and splitting a
+        // multi-megabyte comma list just to reject it afterwards is free work
+        // for an attacker, done while holding cs_depinmsgpool downstream.
+        if (addressesStr.size() > MAX_DEPIN_ADDRESS_FIELD_SIZE) {
+            return "ERROR|Address field too large";
+        }
+
         // Parse addresses
         std::vector<std::string> addresses;
         std::stringstream addrSS(addressesStr);
@@ -627,26 +636,18 @@ std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request, cons
             return "ERROR|No addresses provided";
         }
 
-        bool authFound = false;
-        for (const auto& addr : addresses) {
-            if (addr == authAddress) {
-                authFound = true;
-                break;
-            }
+        // The challenge/signature above only proves control of authAddress, so
+        // the request may not ask for anything else: previously it was enough
+        // for authAddress to appear somewhere in the list, and every listed
+        // address was then served, letting any authenticated holder pull the
+        // encrypted payloads addressed to someone else. Exactly one address,
+        // and it must be the authenticated one.
+        if (addresses.size() != 1 || addresses[0] != authAddress) {
+            return "ERROR|Only the authenticated address may be queried";
         }
-
-        if (!authFound) {
-            return "ERROR|Authenticated address not present in request";
-        }
-
-        // Get messages for those addresses
-        std::vector<CDepinMessage> messages;
 
         try {
-            for (const std::string& address : addresses) {
-                std::vector<CDepinMessage> addrMessages = pDepinMsgPool->GetMessagesForAddress(address);
-                messages.insert(messages.end(), addrMessages.begin(), addrMessages.end());
-            }
+            std::vector<CDepinMessage> messages = pDepinMsgPool->GetMessagesForAddress(authAddress);
 
             // Serialize messages with exception handling
             CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
@@ -655,8 +656,8 @@ std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request, cons
             // Convert to hex
             std::string hex = HexStr(ss.begin(), ss.end());
 
-            LogPrint(BCLog::NET, "GETMESSAGES: Successfully serialized %d messages for %d addresses\n",
-                    messages.size(), addresses.size());
+            LogPrint(BCLog::NET, "GETMESSAGES: Successfully serialized %d messages for %s\n",
+                    messages.size(), authAddress);
 
             return "OK|" + hex;
         } catch (const std::exception& e) {
