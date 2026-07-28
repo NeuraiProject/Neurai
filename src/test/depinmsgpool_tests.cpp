@@ -231,7 +231,9 @@ BOOST_AUTO_TEST_CASE(filter_keeps_only_deliverable_messages_in_order)
     CDepinMessage msgCorrupted = BuildMessage(0x02, senderAddress, eciesToOther);
     msgCorrupted.encryptedPayload = {0xDE, 0xAD};
 
-    std::vector<CDepinMessage> all = {msgToMe, msgToOther, msgFromMe, msgCorrupted};
+    // Pointers, mirroring how GetMessagesForAddress feeds the pool contents in
+    // without copying them.
+    std::vector<const CDepinMessage*> all = {&msgToMe, &msgToOther, &msgFromMe, &msgCorrupted};
     std::vector<CDepinMessage> filtered = FilterDepinMessagesForAddress(all, mineAddress, &mineHash);
 
     BOOST_REQUIRE_EQUAL(filtered.size(), 2u);
@@ -243,8 +245,10 @@ BOOST_AUTO_TEST_CASE(filter_keeps_only_deliverable_messages_in_order)
     std::vector<CDepinMessage> none = FilterDepinMessagesForAddress(all, "not-a-valid-address", nullptr);
     BOOST_CHECK(none.empty());
 
-    // Empty input stays empty.
+    // Empty input stays empty, and null entries are skipped rather than crashing.
     BOOST_CHECK(FilterDepinMessagesForAddress({}, mineAddress, &mineHash).empty());
+    std::vector<const CDepinMessage*> withNull = {nullptr, &msgToMe};
+    BOOST_CHECK_EQUAL(FilterDepinMessagesForAddress(withNull, mineAddress, &mineHash).size(), 1u);
 }
 
 // IsValidDepinMessagingToken: token-type gating for -depinmsgtoken.

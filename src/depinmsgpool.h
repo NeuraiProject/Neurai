@@ -179,7 +179,10 @@ bool ShouldDeliverDepinMessageToAddress(const CDepinMessage& msg, const std::str
 // Apply ShouldDeliverDepinMessageToAddress over a collection, preserving order.
 // Split out from GetMessagesForAddress so the delivery policy can be tested on a
 // whole message set without a live CDepinMsgPool/passetsdb.
-std::vector<CDepinMessage> FilterDepinMessagesForAddress(const std::vector<CDepinMessage>& messages,
+// Takes pointers so callers holding the pool lock never have to copy the whole
+// pool (up to 1 GB of payloads) just to filter it; only delivered messages are
+// copied into the result. Null entries are skipped.
+std::vector<CDepinMessage> FilterDepinMessagesForAddress(const std::vector<const CDepinMessage*>& messages,
                                                          const std::string& address,
                                                          const uint160* addressHash160);
 

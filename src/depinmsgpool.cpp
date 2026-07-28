@@ -249,13 +249,13 @@ bool ShouldDeliverDepinMessageToAddress(const CDepinMessage& msg, const std::str
     }
 }
 
-std::vector<CDepinMessage> FilterDepinMessagesForAddress(const std::vector<CDepinMessage>& messages,
+std::vector<CDepinMessage> FilterDepinMessagesForAddress(const std::vector<const CDepinMessage*>& messages,
                                                          const std::string& address,
                                                          const uint160* addressHash160) {
     std::vector<CDepinMessage> result;
-    for (const CDepinMessage& msg : messages) {
-        if (ShouldDeliverDepinMessageToAddress(msg, address, addressHash160)) {
-            result.push_back(msg);
+    for (const CDepinMessage* msg : messages) {
+        if (msg && ShouldDeliverDepinMessageToAddress(*msg, address, addressHash160)) {
+            result.push_back(*msg);
         }
     }
     return result;
@@ -274,17 +274,20 @@ std::vector<CDepinMessage> CDepinMsgPool::GetMessagesForAddress(const std::strin
         hashPtr = &addressHash160;
     }
 
-    // Collect in chronological order (mapByTime, oldest first) rather than hash
-    // order, then let the free function above apply the delivery policy so that
-    // policy is unit-testable without a live pool.
-    std::vector<CDepinMessage> ordered;
+    // Collect pointers in chronological order (mapByTime, oldest first) rather
+    // than hash order, then let the free function above apply the delivery
+    // policy, so that policy stays unit-testable without a live pool.
+    // Pointers, not copies: the pool holds up to MAX_DEPIN_POOL_SIZE_MB (1 GB)
+    // of payloads and this runs under cs_depinmsgpool, so only the messages
+    // actually being delivered may be copied.
+    std::vector<const CDepinMessage*> ordered;
     ordered.reserve(mapByTime.size());
     for (const auto& timeEntry : mapByTime) {
         auto it = mapMessages.find(timeEntry.second);
         if (it == mapMessages.end()) {
             continue;  // Should not happen, but be defensive
         }
-        ordered.push_back(it->second);
+        ordered.push_back(&it->second);
     }
 
     return FilterDepinMessagesForAddress(ordered, address, hashPtr);
@@ -781,6 +784,10 @@ bool QueryRemoteDepinMsgPool(CWallet* pwallet,
     // GETMESSAGES only serves the address that completed the challenge, so a
     // wallet holding the token at several addresses must authenticate once per
     // address instead of listing them all in a single request.
+    // Accumulate locally and only hand the result over once every address has
+    // succeeded: this call is all-or-nothing, and a caller that ignores the
+    // return value must not end up reading a half-filled list.
+    std::vector<CDepinMessage> mergedMessages;
     std::set<uint256> seenHashes;
     for (const std::string& addr : myAddresses) {
         std::string challenge;
@@ -809,10 +816,12 @@ bool QueryRemoteDepinMsgPool(CWallet* pwallet,
         // recipients, so the same message may come back once per address.
         for (const CDepinMessage& msg : addrMessages) {
             if (seenHashes.insert(msg.GetHash()).second) {
-                messages.push_back(msg);
+                mergedMessages.push_back(msg);
             }
         }
     }
+
+    messages.swap(mergedMessages);
 
     LogPrint(BCLog::NET, "QueryRemoteDepinMsgPool: Successfully retrieved %d messages for %d addresses\n",
             messages.size(), myAddresses.size());

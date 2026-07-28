@@ -100,6 +100,28 @@ struct DepinServerTester {
 
 namespace {
 
+// RAII: swaps in a fresh enabled pool and restores the previous global on the
+// way out, including when a BOOST_REQUIRE throws mid-test. Also stops the
+// server it owns, so a failure cannot leak a listening socket or an enabled
+// pool into later test cases.
+struct ScopedGatewayPool {
+    std::unique_ptr<CDepinMsgPool> previous;
+    CDepinMsgPoolServer& server;
+
+    ScopedGatewayPool(CDepinMsgPoolServer& serverIn, const std::string& token)
+        : previous(std::move(pDepinMsgPool)), server(serverIn)
+    {
+        pDepinMsgPool.reset(new CDepinMsgPool());
+        DepinServerTester::EnablePool(*pDepinMsgPool, token);
+    }
+
+    ~ScopedGatewayPool()
+    {
+        server.Stop();
+        pDepinMsgPool = std::move(previous);
+    }
+};
+
 std::string SignChallengeMessage(const CKey& key, const std::string& message)
 {
     CHashWriter ss(SER_GETHASH, 0);
@@ -203,12 +225,10 @@ BOOST_AUTO_TEST_CASE(depinserver_getmessages_rejects_foreign_address)
 {
     const std::string token = "&TESTTOKEN";
 
-    // Stand up an enabled pool for the duration of the test.
-    std::unique_ptr<CDepinMsgPool> previousPool = std::move(pDepinMsgPool);
-    pDepinMsgPool.reset(new CDepinMsgPool());
-    DepinServerTester::EnablePool(*pDepinMsgPool, token);
-
     CDepinMsgPoolServer server;
+    // Restores the global pool and stops the server even if a check below throws.
+    ScopedGatewayPool scopedPool(server, token);
+
     int port = StartServerOnFreePort(server);
     BOOST_REQUIRE(port > 0);
 
@@ -259,9 +279,6 @@ BOOST_AUTO_TEST_CASE(depinserver_getmessages_rejects_foreign_address)
     close(sock);
     BOOST_CHECK_MESSAGE(response.find("OK|") == 0,
                         "expected success for own address, got: " + response);
-
-    server.Stop();
-    pDepinMsgPool = std::move(previousPool);
 }
 #endif // ENABLE_DEPIN_GATEWAY
 
