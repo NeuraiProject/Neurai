@@ -150,6 +150,15 @@ public:
 extern std::unique_ptr<CDepinMsgPool> pDepinMsgPool;
 
 // Helper functions
+
+// Validate that `token` is both a well-formed asset name AND specifically a
+// DEPIN (soulbound "&TOKEN" / "&TOKEN/SUB") asset. DePIN messaging is
+// intentionally restricted to DEPIN-typed tokens; other otherwise-valid
+// asset types (ROOT, SUB, QUALIFIER, RESTRICTED, MSGCHANNEL, UNIQUE, ...)
+// are rejected here even though IsAssetNameValid() alone would accept them.
+// Does not require fAssetIndex/fPubKeyIndex/passetsdb.
+bool IsValidDepinMessagingToken(const std::string& token, std::string& error);
+
 bool VerifyDepinMessageSignature(const CDepinMessage& message);
 bool SignDepinMessage(CDepinMessage& message, const std::string& senderAddress);
 bool CheckTokenOwnership(const std::string& address, const std::string& token, std::string& error);

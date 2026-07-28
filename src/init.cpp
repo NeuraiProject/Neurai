@@ -524,7 +524,7 @@ std::string HelpMessage(HelpMessageMode mode)
 
     strUsage += HelpMessageGroup(_("DePIN options:"));
     strUsage += HelpMessageOpt("-depinmsg", _("Enable DePIN messaging system (default: 0)"));
-    strUsage += HelpMessageOpt("-depinmsgtoken=<token>", _("DePIN token name to monitor for messaging (required when -depinmsg=1)"));
+    strUsage += HelpMessageOpt("-depinmsgtoken=<token>", _("DEPIN token name to monitor for messaging, must start with '&' (required when -depinmsg=1; DEPIN assets are testnet/regtest only)"));
     strUsage += HelpMessageOpt("-depinmsgport=<port>", strprintf(_("DePIN messaging network port (default: %u)"), DEFAULT_DEPIN_MSG_PORT));
     strUsage += HelpMessageOpt("-depinmsgbind=<addr>", _("Bind the DePIN messaging server to the given address (default: 0.0.0.0, all interfaces; use 127.0.0.1 for local-only)"));
     strUsage += HelpMessageOpt("-depinmaxconnections=<n>", strprintf(_("Maximum concurrent connections to the DePIN messaging server (default: %u)"), DEFAULT_DEPIN_MAX_CONNECTIONS));
@@ -1370,7 +1370,16 @@ static bool LockDataDirectory(bool probeOnly)
         std::string token = gArgs.GetArg("-depinmsgtoken", "");
         if (token.empty()) {
             return InitError(_("DePIN messaging enabled but no token specified. "
-                            "Use -depinmsgtoken=TOKENNAME"));
+                            "Use -depinmsgtoken=&TOKENNAME"));
+        }
+
+        // Fail fast here (Step 4) rather than inside CDepinMsgPool::Initialize()
+        // (Step 11): an operator with a pending reindex would otherwise wait for
+        // the whole block index load before learning the token is unusable.
+        // Safe to call GetParams() indirectly: SelectParams() already ran.
+        std::string tokenError;
+        if (!IsValidDepinMessagingToken(token, tokenError)) {
+            return InitError(strprintf(_("Invalid -depinmsgtoken '%s': %s"), token, tokenError));
         }
     }
 

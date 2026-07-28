@@ -95,10 +95,10 @@ Example calls using `nc` (or any TCP client):
 
 ```bash
 # Send a message via the remote node (explicit sender address optional)
-printf '{"jsonrpc":"2.0","id":1,"method":"depinsendmsg","params":["MYTOKEN","203.0.113.5","Hello team!","NXfromAddress..."]}'   | nc 203.0.113.10 19002
+printf '{"jsonrpc":"2.0","id":1,"method":"depinsendmsg","params":["&MYTOKEN","203.0.113.5","Hello team!","NXfromAddress..."]}'   | nc 203.0.113.10 19002
 
 # Retrieve and decrypt messages using the node wallet
-printf '{"jsonrpc":"2.0","id":2,"method":"depingetmsg","params":["MYTOKEN"]}'   | nc 203.0.113.10 19002
+printf '{"jsonrpc":"2.0","id":2,"method":"depingetmsg","params":["&MYTOKEN"]}'   | nc 203.0.113.10 19002
 ```
 
 Server replies follow JSON-RPC as well:
@@ -113,13 +113,13 @@ Any other RPC method is rejected, so exposing port 19002 does not give attackers
 
 1. Client requests a challenge for one of its token-holding addresses:
    ```bash
-   printf 'AUTH|MYTOKEN|NXholder...' | nc node.example.com 19002
+   printf 'AUTH|&MYTOKEN|NXholder...' | nc node.example.com 19002
    # → CHALLENGE|abcd1234...|30
    ```
 2. Client signs the message `DEPIN-GET|<token>|<address>|<challenge>` (standard message-signature with `strMessageMagic`).
 3. Client sends the signed fetch request (challenge valid for 30s):
    ```bash
-   printf 'GETMESSAGES|MYTOKEN|NXa,NXb|NXholder...|<base64sig>|abcd1234...' | nc node.example.com 19002
+   printf 'GETMESSAGES|&MYTOKEN|NXa,NXb|NXholder...|<base64sig>|abcd1234...' | nc node.example.com 19002
    ```
 4. Server verifies ownership + signature before returning encrypted payload. If the client fails to answer within 30 seconds, the challenge expires and the connection is closed.
 
@@ -129,13 +129,13 @@ To keep the send endpoint lightweight, port 19002 now uses the same challenge/re
 
 1. Request a SEND challenge:
    ```bash
-   printf 'AUTH|MYTOKEN|NXfromAddress...|SEND\n' | nc node.example.com 19002
+   printf 'AUTH|&MYTOKEN|NXfromAddress...|SEND\n' | nc node.example.com 19002
    # → CHALLENGE|ef01ab..|30
    ```
-2. Sign `DEPIN-SEND|MYTOKEN|NXfromAddress...|ef01ab..` (compact/base64 signature, identical to `signmessage`).
+2. Sign `DEPIN-SEND|&MYTOKEN|NXfromAddress...|ef01ab..` (compact/base64 signature, identical to `signmessage`).
 3. Call `depinsendmsg` and append `fromaddress`, `challenge`, and `signature` as the last parameters:
    ```bash
-   printf '{"jsonrpc":"2.0","id":10,"method":"depinsendmsg","params":["MYTOKEN","192.168.1.50","Hello team","NXfromAddress...","ef01ab..","<base64sig>"]}\n' \
+   printf '{"jsonrpc":"2.0","id":10,"method":"depinsendmsg","params":["&MYTOKEN","192.168.1.50","Hello team","NXfromAddress...","ef01ab..","<base64sig>"]}\n' \
      | nc node.example.com 19002
    ```
 4. The server validates the challenge/signature within 30 seconds and only then performs the expensive holder-lookup/encryption. If the signature fails or the nonce expires, restart at step 1.
@@ -164,13 +164,17 @@ assetindex=1
 neuraid -reindex
 ```
 
-#### 2. Existing Token
-You must specify a valid token that exists on the Neurai blockchain:
-- Can be a **ROOT** token (e.g., `MYTOKEN`)
-- Can be a **QUALIFIER** token (e.g., `#MEMBERS`)
-- Can be a **RESTRICTED** token (e.g., `$SECURITY`)
+#### 2. Existing DEPIN Token
+You must specify a valid **DEPIN** token (soulbound asset) that exists on the Neurai blockchain:
+- Must be a **DEPIN** token, i.e. a name starting with `&` (e.g., `&MYTOKEN`)
+- Can also be a **sub-DEPIN** token (e.g., `&MYTOKEN/DEVICE`)
 
-**Recommendation**: Use QUALIFIER tokens (`#TOKEN`) for exclusive groups.
+Other asset types (ROOT, QUALIFIER `#`, RESTRICTED `$`, MSGCHANNEL, UNIQUE) are
+**rejected**: the node will refuse to start with `Invalid -depinmsgtoken`.
+
+**⚠️ Network availability**: DEPIN assets are currently only available on
+**testnet and regtest**. Mainnet support will be added once the feature is
+thoroughly tested, so DePIN messaging cannot be enabled on mainnet for now.
 
 
 ### Message Sending Flow
@@ -207,7 +211,7 @@ If `FROM_ADDRESS` is present the node signs/encrypts with that exact wallet addr
 #### CDepinMessage
 ```cpp
 struct CDepinMessage {
-    string token;                    // "MYTOKEN"
+    string token;                    // "&MYTOKEN"
     string senderAddress;            // "NXa1b2c3d4e5f6..."
     int64_t timestamp;               // 1699564800 (UNIX time)
     vector<unsigned char> signature; // Sender's ECDSA signature
@@ -248,8 +252,8 @@ assetindex=1
 # Enable DePIN messaging
 depinmsg=1
 
-# Required token for chat
-depinmsgtoken=MYTOKEN
+# Required DEPIN token for chat (must start with &, testnet/regtest only)
+depinmsgtoken=&MYTOKEN
 
 # Server port (optional, default: 19002)
 depinmsgport=19002
@@ -282,7 +286,7 @@ neurai-cli getblockchaininfo
 ```ini
 assetindex=1
 depinmsg=1
-depinmsgtoken=#TEAM       # Use QUALIFIER
+depinmsgtoken=&TEAM       # DEPIN (soulbound) token — testnet/regtest only
 depinmsgmaxusers=10
 ```
 
@@ -290,7 +294,7 @@ depinmsgmaxusers=10
 ```ini
 assetindex=1
 depinmsg=1
-depinmsgtoken=COMMUNITY
+depinmsgtoken=&COMMUNITY
 depinmsgmaxusers=20
 ```
 
@@ -298,7 +302,7 @@ depinmsgmaxusers=20
 ```ini
 assetindex=1
 depinmsg=1
-depinmsgtoken=#MEMBERS
+depinmsgtoken=&MEMBERS
 depinmsgmaxusers=50
 ```
 
@@ -329,10 +333,10 @@ neurai-cli depinsendmsg "TOKEN" force_remote "DEST_IP[:PORT]" "MESSAGE" ["FROM_A
 **Example**:
 ```bash
 # Automatic address selection (local pool enabled)
-neurai-cli depinsendmsg "MYTOKEN" 0 "192.168.1.100" "Hello team!"
+neurai-cli depinsendmsg "&MYTOKEN" 0 "192.168.1.100" "Hello team!"
 
 # Remote send from a lightweight node (uses challenge automatically)
-neurai-cli depinsendmsg "MYTOKEN" 1 "192.168.1.100:19005" "Hello team!" "NXspecificAddress..."
+neurai-cli depinsendmsg "&MYTOKEN" 1 "192.168.1.100:19005" "Hello team!" "NXspecificAddress..."
 ```
 
 **Output**:
@@ -364,16 +368,16 @@ neurai-cli depingetmsg "TOKEN" "REMOTE_IP" [PORT]
 
 **Local Example**:
 ```bash
-neurai-cli depingetmsg "MYTOKEN"
+neurai-cli depingetmsg "&MYTOKEN"
 ```
 
 **Remote Example**:
 ```bash
 # Query node at 192.168.1.78
-neurai-cli depingetmsg "MYTOKEN" "192.168.1.78"
+neurai-cli depingetmsg "&MYTOKEN" "192.168.1.78"
 
 # Query node on different port
-neurai-cli depingetmsg "MYTOKEN" "192.168.1.78" 19003
+neurai-cli depingetmsg "&MYTOKEN" "192.168.1.78" 19003
 ```
 
 **Output**:
@@ -406,7 +410,7 @@ neurai-cli depingetmsginfo
 ```json
 {
   "enabled": true,
-  "token": "MYTOKEN",
+  "token": "&MYTOKEN",
   "port": 19002,
   "maxrecipients": 20,
   "messages": 42,
@@ -427,7 +431,7 @@ neurai-cli depinclearmsg
 #### 5. List Token Holders
 
 ```bash
-neurai-cli listaddressesbyasset "MYTOKEN"
+neurai-cli listaddressesbyasset "&MYTOKEN"
 ```
 
 **Output**:

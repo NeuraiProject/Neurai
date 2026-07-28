@@ -53,6 +53,26 @@ CDepinMsgPool::CDepinMsgPool()
       nMaxPoolSizeMB(DEFAULT_DEPIN_POOL_SIZE_MB) {
 }
 
+bool IsValidDepinMessagingToken(const std::string& token, std::string& error)
+{
+    AssetType type;
+    if (!IsAssetNameValid(token, type, error)) {
+        return false;
+    }
+
+    if (type != AssetType::DEPIN) {
+        error = strprintf(
+            "Token '%s' is a valid asset name but not a DEPIN token. DePIN messaging "
+            "requires a soulbound DEPIN token (name starting with '%c', e.g. '%cMYTOKEN' "
+            "or a sub-token like '%cMYTOKEN/DEVICE'). DEPIN tokens are currently only "
+            "available on testnet and regtest.",
+            token, DEPIN_CHAR, DEPIN_CHAR, DEPIN_CHAR);
+        return false;
+    }
+
+    return true;
+}
+
 bool CDepinMsgPool::Initialize(const std::string& token, unsigned int port, unsigned int maxRecipients,
                                unsigned int maxMessageSize, unsigned int messageExpiryHours, unsigned int maxPoolSizeMB) {
     LOCK(cs_depinmsgpool);
@@ -71,10 +91,11 @@ bool CDepinMsgPool::Initialize(const std::string& token, unsigned int port, unsi
         return false;
     }
 
-    // Verify that the token is valid
-    AssetType type;
+    // Verify that the token is valid AND is a DEPIN (soulbound) token.
+    // DePIN messaging is scoped to DEPIN tokens only; see
+    // IsValidDepinMessagingToken() for the rationale.
     std::string error;
-    if (!IsAssetNameValid(token, type, error)) {
+    if (!IsValidDepinMessagingToken(token, error)) {
         LogPrintf("ERROR: Invalid chat mempool token '%s': %s\n", token, error);
         return false;
     }

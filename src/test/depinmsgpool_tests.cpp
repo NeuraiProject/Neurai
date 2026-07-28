@@ -5,6 +5,7 @@
 #include "depinmsgpool.h"
 #include "depinecies.h"
 #include "test/test_neurai.h"
+#include "chainparams.h"
 #include "key.h"
 #include "pubkey.h"
 #include "base58.h"
@@ -14,6 +15,26 @@
 #include <boost/test/unit_test.hpp>
 #include <string>
 #include <vector>
+
+namespace {
+
+// RAII guard: SelectParams mutates the global CChainParams; restore it so the
+// switch does not leak into later test cases. Mirrors the same helper already
+// duplicated per test file in asset_activation_gating_tests.cpp /
+// xna_asset_gating_tests.cpp (no shared header for it yet).
+struct NetworkGuard {
+    std::string previous;
+    explicit NetworkGuard(const std::string& net) : previous(GetParams().NetworkIDString()) {
+        SelectParams(net);
+    }
+    ~NetworkGuard() {
+        if (previous == "main") SelectParams(CBaseChainParams::MAIN);
+        else if (previous == "test") SelectParams(CBaseChainParams::TESTNET);
+        else SelectParams(CBaseChainParams::REGTEST);
+    }
+};
+
+} // namespace
 
 BOOST_FIXTURE_TEST_SUITE(depinmsgpool_tests, BasicTestingSetup)
 
@@ -167,6 +188,61 @@ BOOST_AUTO_TEST_CASE(malformed_input_is_rejected_without_throwing)
     uint160 unusedHash;
     BOOST_CHECK(!AddressToHash160("not-a-valid-address", unusedHash));
     BOOST_CHECK(!ShouldDeliverDepinMessageToAddress(validMsg, "not-a-valid-address", nullptr));
+}
+
+// IsValidDepinMessagingToken: token-type gating for -depinmsgtoken.
+// These call the free function directly (no fAssetIndex/fPubKeyIndex/
+// passetsdb setup needed), same isolation approach as the
+// ShouldDeliverDepinMessageToAddress tests above.
+
+// A syntactically valid ROOT token is rejected: DePIN messaging requires
+// a DEPIN (soulbound) token, not just any valid asset name.
+BOOST_AUTO_TEST_CASE(token_root_rejected_not_depin)
+{
+    NetworkGuard g(CBaseChainParams::MAIN);
+    std::string error;
+    BOOST_CHECK(!IsValidDepinMessagingToken("MYTOKEN", error));
+    BOOST_CHECK(error.find("DEPIN") != std::string::npos);
+}
+
+// A syntactically valid QUALIFIER token is rejected for the same reason.
+BOOST_AUTO_TEST_CASE(token_qualifier_rejected_not_depin)
+{
+    NetworkGuard g(CBaseChainParams::MAIN);
+    std::string error;
+    BOOST_CHECK(!IsValidDepinMessagingToken("#TEAM", error));
+    BOOST_CHECK(error.find("DEPIN") != std::string::npos);
+}
+
+// A DEPIN token ("&...") is accepted where DEPIN assets are enabled.
+BOOST_AUTO_TEST_CASE(token_depin_accepted_on_testnet)
+{
+    NetworkGuard g(CBaseChainParams::TESTNET);
+    std::string error;
+    BOOST_CHECK(IsValidDepinMessagingToken("&VALIDTOKEN", error));
+    BOOST_CHECK(error.empty());
+}
+
+// Sub-DEPIN tokens ("&TOKEN/SUB") share AssetType::DEPIN with plain DEPIN
+// tokens (there is no separate SUB_DEPIN enum value) and must be accepted too.
+BOOST_AUTO_TEST_CASE(token_sub_depin_accepted_on_regtest)
+{
+    NetworkGuard g(CBaseChainParams::REGTEST);
+    std::string error;
+    BOOST_CHECK(IsValidDepinMessagingToken("&VALIDTOKEN/DEVICE", error));
+    BOOST_CHECK(error.empty());
+}
+
+// The same DEPIN-named token is rejected on mainnet -- but by the pre-existing
+// network gate inside IsAssetNameValid(), not by our type check. Assert on the
+// *network* wording so a future regression that swaps in the generic
+// "not a DEPIN token" message gets caught.
+BOOST_AUTO_TEST_CASE(token_depin_rejected_on_mainnet_by_network_gate)
+{
+    NetworkGuard g(CBaseChainParams::MAIN);
+    std::string error;
+    BOOST_CHECK(!IsValidDepinMessagingToken("&VALIDTOKEN", error));
+    BOOST_CHECK(error.find("testnet and regtest") != std::string::npos);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
