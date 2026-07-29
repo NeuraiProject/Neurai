@@ -511,7 +511,11 @@ std::string JSONRPCExecBatch(const JSONRPCRequest& jreq, const UniValue& vReq)
  * Process named arguments into a vector of positional arguments, based on the
  * passed-in specification for the RPC call's arguments.
  */
-static inline JSONRPCRequest transformNamedArguments(const JSONRPCRequest& in, const std::vector<std::string>& argNames)
+// Not static: the tests need to assert the positional vector this produces.
+// The shape matters as much as the absence of an exception -- an argName list
+// that leaves a hole yields [a, null, c], which several RPCs then dereference
+// with an unguarded get_str(). See src/test/depin_rpc_params_tests.cpp.
+JSONRPCRequest transformNamedArguments(const JSONRPCRequest& in, const std::vector<std::string>& argNames)
 {
     JSONRPCRequest out = in;
     out.params = UniValue(UniValue::VARR);

@@ -68,6 +68,18 @@ void SetRPCWarmupFinished();
 bool RPCIsInWarmup(std::string *outStatus);
 
 /**
+ * Turn a request with named parameters into one with positional parameters,
+ * following a command's argNames. An entry of the form "a|b" accepts either
+ * name; gaps between supplied parameters are filled with JSON nulls.
+ *
+ * Exposed so tests can assert the resulting vector rather than only that the
+ * call did not throw: a name that binds to the wrong slot produces a hole, and
+ * an RPC that reads that position with an unguarded get_str() then fails with a
+ * type error instead of doing what was asked.
+ */
+JSONRPCRequest transformNamedArguments(const JSONRPCRequest& in, const std::vector<std::string>& argNames);
+
+/**
  * Type-check arguments; throws JSONRPCError if wrong type given. Does not check that
  * the right number of arguments are passed, just that any passed are the correct type.
  */

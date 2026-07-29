@@ -35,6 +35,7 @@
 #include "timedata.h"
 #include "util.h"
 #include "utilmoneystr.h"
+#include "utilstrencodings.h" // ParseInt64, used by ParseFlexibleInt64
 #include "wallet/coincontrol.h"
 #include "wallet/feebumper.h"
 #include "wallet/wallet.h"
@@ -502,6 +503,33 @@ class CPubKey;
 class CKey;
 bool DeriveDepinPoolKeys(CWallet* pwallet, CKey& privKey, CPubKey& pubkey, std::string& derivationPath, std::string& error);
 #endif
+
+/**
+ * Read an integer that may arrive as a JSON number or as a string.
+ *
+ * neurai-cli hands every argument over as a string unless the method is listed
+ * in vRPCConvertParams (rpc/client.cpp). Two DePIN parameters cannot be listed
+ * there -- depingetpoolcontent's `verbose` and depinclearmsg's `mode` accept a
+ * word ("all", "raw") as well as a number, and the conversion layer throws on
+ * any argument that is not valid JSON -- so their numeric form has to be
+ * recognised here instead.
+ *
+ * Acceptance is strict: ParseInt64() rejects empty strings, padding, embedded
+ * NULs and trailing characters, so "7x", " 7" and "1.5" stay errors rather than
+ * silently becoming 7. Callers decide what a rejection means; this function
+ * only reports it.
+ */
+static bool ParseFlexibleInt64(const UniValue& value, int64_t& out)
+{
+    if (value.isNum()) {
+        out = value.get_int64();
+        return true;
+    }
+    if (value.isStr()) {
+        return ParseInt64(value.get_str(), &out);
+    }
+    return false;
+}
 
 UniValue depingetmsginfo(const JSONRPCRequest& request)
 {
@@ -1220,7 +1248,12 @@ UniValue depingetmsg(const JSONRPCRequest& request)
     std::string specificAddress;
 
     // Check if this is a remote query
-    if (request.params.size() >= 2 && !request.params[1].get_str().empty()) {
+    // isNull() as well as size(): the "destination_or_address|fromaddress" alias
+    // means a named call can never leave a hole here today, but that is a
+    // property of the argNames list rather than of this code, and an edit to
+    // that list would otherwise turn into a type error thrown from here.
+    if (request.params.size() >= 2 && !request.params[1].isNull() &&
+        !request.params[1].get_str().empty()) {
         std::string param1 = request.params[1].get_str();
 
         // Check if param1 is an IP address (remote) or a Neurai address (local with fromaddress)
@@ -1250,7 +1283,8 @@ UniValue depingetmsg(const JSONRPCRequest& request)
             }
 
             // params[2] would be fromaddress if present
-            if (request.params.size() >= 3 && !request.params[2].get_str().empty()) {
+            if (request.params.size() >= 3 && !request.params[2].isNull() &&
+                !request.params[2].get_str().empty()) {
                 specificAddress = request.params[2].get_str();
             }
         } else {
@@ -1552,14 +1586,26 @@ UniValue depinclearmsg(const JSONRPCRequest& request)
         // Default: Remove only expired messages
         pDepinMsgPool->RemoveExpiredMessages(currentTime);
     } else if (request.params.size() == 1) {
+        int64_t hoursThreshold = 0;
         if (request.params[0].isStr() && request.params[0].get_str() == "all") {
             // Mode: Remove ALL messages
             pDepinMsgPool->Clear();
-        } else if (request.params[0].isNum()) {
-            // Mode: Remove messages older than X hours
-            int64_t hoursThreshold = request.params[0].get_int64();
+        } else if (ParseFlexibleInt64(request.params[0], hoursThreshold)) {
+            // Mode: Remove messages older than X hours. Accepts the number sent
+            // over JSON-RPC and the string neurai-cli produces; anything that is
+            // not a strict integer falls through to the error below rather than
+            // being coerced.
             if (hoursThreshold < 0) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Hours threshold must be positive");
+            }
+            // The multiplication below overflows for absurd inputs, which is
+            // reachable now that the CLI can get here at all. A threshold past
+            // the pool's own expiry already removes everything, so capping is
+            // not a loss of function.
+            const int64_t maxHours = std::numeric_limits<int64_t>::max() / 3600;
+            if (hoursThreshold > maxHours) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER,
+                                   strprintf("Hours threshold must not exceed %d", maxHours));
             }
 
             int64_t ageThreshold = hoursThreshold * 3600; // Convert hours to seconds
@@ -1661,6 +1707,11 @@ UniValue depingetpoolcontent(const JSONRPCRequest& request)
             fVerbose = request.params[0].get_int() != 0;
         } else if (request.params[0].isStr()) {
             std::string val = request.params[0].get_str();
+            int64_t numeric = 0;
+            // Order matters: words first, then a strict integer, then the
+            // remaining word forms. "1" and "0" give the same answer by either
+            // of the last two routes; the order is fixed so it does not depend
+            // on how the next person reads this.
             if (val == "all") {
                 fVerbose = true;
                 fShowAll = true;
@@ -1668,17 +1719,29 @@ UniValue depingetpoolcontent(const JSONRPCRequest& request)
             } else if (val == "raw") {
                 fVerbose = true;
                 fShowRaw = true;
+            } else if (ParseFlexibleInt64(request.params[0], numeric)) {
+                // A numeric string must mean what the number means. Falling
+                // through to the word test below would make "120" false while
+                // the number 120 is true -- the same value meaning opposite
+                // things depending on whether it arrived via CLI or JSON-RPC.
+                fVerbose = numeric != 0;
             } else {
                 fVerbose = (val == "true" || val == "1");
             }
         }
     }
-    if (request.params.size() > 1) senderFilter = request.params[1].get_str();
-    if (request.params.size() > 2) recipientFilter = request.params[2].get_str();
-    if (request.params.size() > 3) startTime = request.params[3].get_int64();
-    if (request.params.size() > 4) endTime = request.params[4].get_int64();
-    if (request.params.size() > 5 && !fShowAll) limit = request.params[5].get_int();
-    if (request.params.size() > 6 && !fShowAll) offset = request.params[6].get_int();
+    // Each optional parameter is checked for null, not only for presence.
+    // transformNamedArguments() fills the gaps between named parameters with
+    // JSON nulls (rpc/server.cpp), so `depingetpoolcontent limit=10` arrives as
+    // [verbose, null, null, null, null, 10]; get_str()/get_int64() on those
+    // nulls throws "JSON value is not a string as expected" before the RPC does
+    // anything. A JSON-RPC caller passing explicit nulls hit the same edge.
+    if (request.params.size() > 1 && !request.params[1].isNull()) senderFilter = request.params[1].get_str();
+    if (request.params.size() > 2 && !request.params[2].isNull()) recipientFilter = request.params[2].get_str();
+    if (request.params.size() > 3 && !request.params[3].isNull()) startTime = request.params[3].get_int64();
+    if (request.params.size() > 4 && !request.params[4].isNull()) endTime = request.params[4].get_int64();
+    if (request.params.size() > 5 && !request.params[5].isNull() && !fShowAll) limit = request.params[5].get_int();
+    if (request.params.size() > 6 && !request.params[6].isNull() && !fShowAll) offset = request.params[6].get_int();
 
     // Validate limits (unless showing all)
     if (!fShowAll) {
@@ -2203,19 +2266,25 @@ static const CRPCCommand commands[] =
             { "messages",       "clearmessages",              &clearmessages,              {}},
             // DePIN Messaging Commands
             { "depin messaging",          "depingetmsginfo",            &depingetmsginfo,            {}},
-            { "depin messaging",          "depingetpoolcontent",        &depingetpoolcontent,        {}},
+            { "depin messaging",          "depingetpoolcontent",        &depingetpoolcontent,        {"verbose", "sender_address", "recipient_address", "start_time", "end_time", "limit", "offset"}},
             { "depin messaging",          "depinpoolstats",             &depinpoolstats,             {}},
             { "depin messaging",          "depinsubmitmsg",             &depinsubmitmsg,             {"hexmessage"}},
-            { "depin messaging",          "depinreceivemsg",            &depinreceivemsg,            {"token", "address", "timestamp"}},
+            { "depin messaging",          "depinreceivemsg",            &depinreceivemsg,            {"token", "address", "timestamp", "after_hash", "limit"}},
             { "depin messaging",          "depinmcpstatus",             &depinmcpstatus,             {}},
             { "depin messaging",          "depingetancestorrecipients", &depingetancestorrecipients, {"token", "max_results", "stop_at"}},
 #ifdef ENABLE_WALLET
             { "depin messaging",          "depinpoolpkey",              &depinpoolpkey,              {}},
 #ifdef ENABLE_DEPIN_GATEWAY
             { "depin messaging",          "depinsendmsg",               &depinsendmsg,               {"token", "ip", "message", "fromaddress", "port"}},
-            { "depin messaging",          "depingetmsg",                &depingetmsg,                {"token"}},
+            // The second parameter is an IP or an address, and the third only
+            // applies when the second is an IP. The "a|b" alias
+            // (transformNamedArguments, rpc/server.cpp) lets the local form be
+            // written as `fromaddress=N...`; with a plain list that name binds
+            // to the third slot, the second is filled with a JSON null, and
+            // this RPC's unguarded params[1].get_str() throws.
+            { "depin messaging",          "depingetmsg",                &depingetmsg,                {"token", "destination_or_address|fromaddress", "fromaddress"}},
 #endif
-            { "depin messaging",          "depinclearmsg",              &depinclearmsg,              {}},
+            { "depin messaging",          "depinclearmsg",              &depinclearmsg,              {"mode"}},
 #endif
     };
 
