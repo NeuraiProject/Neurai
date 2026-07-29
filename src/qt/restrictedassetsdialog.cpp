@@ -1182,33 +1182,13 @@ bool RestrictedAssetsDialog::findDepinHolderAddress(const std::string& assetName
 
     LOCK2(cs_main, model->getWallet()->cs_wallet);
 
-    std::set<CTxDestination> destinations;
-    for (const auto& entry : model->getWallet()->mapWallet) {
-        const CWalletTx& wtx = entry.second;
-        for (unsigned int i = 0; i < wtx.tx->vout.size(); ++i) {
-            CTxDestination dest;
-            if (ExtractDestination(wtx.tx->vout[i].scriptPubKey, dest)) {
-                destinations.insert(dest);
-            }
-        }
-    }
-
-    for (const auto& dest : destinations) {
-        std::string address = EncodeDestination(dest);
-        if (!AddressHasAssetToken(*passets, assetName, address)) {
-            continue;
-        }
-
-        if (AddressHasDEPINOwnerToken(*passets, assetName, address)) {
-            foundOwnerControlledHolding = true;
-            continue;
-        }
-
-        holderAddress = address;
-        return true;
-    }
-
-    return false;
+    // Both questions used to be answered through -assetindex, which is a local
+    // option that defaults to off: on a normal node this dialog found no holder
+    // for an asset the wallet actually had. They are different questions and
+    // take different helpers -- "who holds &X" walks the wallet's own outputs,
+    // "is that the owner-token address" resolves the owner token separately.
+    return GetWalletAssetHolderAddress(model->getWallet(), assetName, holderAddress,
+                                       foundOwnerControlledHolding);
 }
 
 bool RestrictedAssetsDialog::findDepinOwnerAddress(const std::string& assetName, std::string& ownerAddress) const
@@ -2082,7 +2062,14 @@ void RestrictedAssetsDialog::depinCheck()
         failed = true;
     }
 
-    if (!failed && AddressHasDEPINOwnerToken(*passets, assetName.toStdString(), address.toStdString())) {
+    // Early warning from wallet state, not from -assetindex. Consensus decides
+    // this structurally; this dialog only sees the owner token if this wallet
+    // holds it, which is the case that matters here since managing restrictions
+    // already requires it (fAdministrator above).
+    std::string depinOwnerAddress;
+    if (!failed &&
+        GetWalletOwnerTokenAddress(model->getWallet(), assetName.toStdString() + OWNER_TAG, depinOwnerAddress) &&
+        depinOwnerAddress == address.toStdString()) {
         setDepinWarning(tr("The address holding the DEPIN owner token cannot be frozen or revoked"));
         return;
     }

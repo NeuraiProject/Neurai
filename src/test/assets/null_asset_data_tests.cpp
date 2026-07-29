@@ -11,6 +11,7 @@
 #include <base58.h>
 #include <chainparams.h>
 #include <key.h>
+#include <coins.h>
 #include <validation.h>
 
 BOOST_FIXTURE_TEST_SUITE(null_asset_data_tests, BasicTestingSetup)
@@ -161,12 +162,15 @@ BOOST_FIXTURE_TEST_SUITE(null_asset_data_contextual_tests, DePINContextualTestin
         muttx.vout.emplace_back(0, nullDataScript);
         const CTransaction tx(muttx);
 
+        CCoinsView coinsBase;
+        CCoinsViewCache coinsView(&coinsBase);
+
         CAssetsCache cache;
         const std::string ownerChangeAddress = EncodeDestination(ownerChangeDest);
         cache.mapAssetsAddressAmount[std::make_pair(assetName + OWNER_TAG, ownerChangeAddress)] = OWNER_ASSET_AMOUNT;
 
         std::string error;
-        BOOST_CHECK_MESSAGE(ContextualCheckNullAssetTxOut(tx.vout[1], &tx, &cache, error),
+        BOOST_CHECK_MESSAGE(ContextualCheckNullAssetTxOut(tx.vout[1], &tx, coinsView, &cache, error),
                             "DEPIN owner freeze PQ contextual check failed: " + error);
         BOOST_CHECK(error.empty());
         BOOST_CHECK_EQUAL(TxContainsDEPINOwnerTokenTransfer(tx, assetName), true);
@@ -197,6 +201,9 @@ BOOST_FIXTURE_TEST_SUITE(null_asset_data_contextual_tests, DePINContextualTestin
         muttx.vout.emplace_back(0, nullDataScript);
         const CTransaction tx(muttx);
 
+        CCoinsView coinsBase;
+        CCoinsViewCache coinsView(&coinsBase);
+
         CAssetsCache cache;
         const std::string ownerChangeAddress = EncodeDestination(ownerChangeDest);
         cache.mapAssetsAddressAmount[std::make_pair(assetName + OWNER_TAG, ownerChangeAddress)] = OWNER_ASSET_AMOUNT;
@@ -205,7 +212,7 @@ BOOST_FIXTURE_TEST_SUITE(null_asset_data_contextual_tests, DePINContextualTestin
         passets->setNewRestrictedAddressToAdd.insert(CAssetCacheRestrictedAddress(assetName, targetAddress, RestrictedType::FREEZE_ADDRESS));
 
         std::string error;
-        BOOST_CHECK_MESSAGE(ContextualCheckNullAssetTxOut(tx.vout[1], &tx, &cache, error),
+        BOOST_CHECK_MESSAGE(ContextualCheckNullAssetTxOut(tx.vout[1], &tx, coinsView, &cache, error),
                             "DEPIN owner unfreeze PQ contextual check failed: " + error);
         BOOST_CHECK(error.empty());
     }
@@ -227,9 +234,12 @@ BOOST_FIXTURE_TEST_SUITE(null_asset_data_contextual_tests, DePINContextualTestin
         muttx.vout.emplace_back(0, nullDataScript);
         const CTransaction tx(muttx);
 
+        CCoinsView coinsBase;
+        CCoinsViewCache coinsView(&coinsBase);
+
         CAssetsCache cache;
         std::string error;
-        BOOST_CHECK_MESSAGE(ContextualCheckNullAssetTxOut(tx.vout[0], &tx, &cache, error),
+        BOOST_CHECK_MESSAGE(ContextualCheckNullAssetTxOut(tx.vout[0], &tx, coinsView, &cache, error),
                             "DEPIN self-revoke PQ contextual check failed: " + error);
         BOOST_CHECK(error.empty());
         BOOST_CHECK_EQUAL(TxContainsDEPINOwnerTokenTransfer(tx, assetName), false);

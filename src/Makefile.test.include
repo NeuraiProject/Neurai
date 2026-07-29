@@ -61,6 +61,7 @@ NEURAI_TESTS =\
   test/compress_tests.cpp \
   test/crypto_tests.cpp \
   test/depin_ancestor_recipients_tests.cpp \
+  test/depin_assetindex_consensus_tests.cpp \
   test/depin_rpc_params_tests.cpp \
   test/depin_subasset_tests.cpp \
   test/depinecies_tests.cpp \

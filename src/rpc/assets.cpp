@@ -92,7 +92,17 @@ UniValue UpdateDEPINAddressRestriction(const JSONRPCRequest &request, const int8
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Neurai address: ") + address);
     }
 
-    if (AddressHasDEPINOwnerToken(*passets, assetName, address)) {
+    // Early warning only. Consensus decides this for real, structurally, from
+    // the transaction's inputs and outputs (ContextualCheckNullAssetTxOut).
+    // Asking the wallet keeps the message useful without depending on
+    // -assetindex, which is a local option: the previous check here answered
+    // "no" on any node without the index, so it silently stopped protecting.
+    //
+    // The wallet only sees what it controls. If the owner token lives
+    // elsewhere, this says nothing rather than claiming the address is clean.
+    std::string walletOwnerAddress;
+    if (GetWalletOwnerTokenAddress(pwallet, assetName + OWNER_TAG, walletOwnerAddress) &&
+        walletOwnerAddress == address) {
         throw JSONRPCError(RPC_INVALID_PARAMETER, "The address holding the DEPIN owner token cannot be frozen or revoked");
     }
 
@@ -3286,6 +3296,25 @@ UniValue listdepinholders(const JSONRPCRequest& request)
 
 UniValue checkdepinvalidity(const JSONRPCRequest& request)
 {
+    // Before the deployment check, so a node that cannot answer says so instead
+    // of falling through to the generic help text. Guarded on !fHelp so that
+    // `help checkdepinvalidity` keeps working on a default node -- listdepinholders
+    // puts the same check at the very top and loses its help output as a result.
+    //
+    // This RPC answers for an arbitrary address, so the asset index genuinely is
+    // the right tool: it is an informational query, not consensus. What was wrong
+    // is how it failed. Without the index GetBestAssetAddressAmount() returns
+    // false and the call used to report "has_asset": false, indistinguishable
+    // from an address that really does not hold the token -- a wrong answer
+    // wearing a correct one's clothes.
+    if (!request.fHelp && !fAssetIndex) {
+        throw JSONRPCError(RPC_MISC_ERROR,
+                           "checkdepinvalidity requires -assetindex to answer for an arbitrary "
+                           "address. Restart with -assetindex, which requires a -reindex. Without "
+                           "it this node cannot tell whether the address holds the asset, and "
+                           "reporting \"not held\" would be a wrong answer rather than a missing one.");
+    }
+
     if (request.fHelp || !AreAssetsDeployed() || request.params.size() != 2)
         throw std::runtime_error(
             "checkdepinvalidity \"asset_name\" \"address\"\n"
@@ -3444,35 +3473,12 @@ UniValue selfrevokedepin(const JSONRPCRequest& request)
     std::string holderAddress = "";
     bool fFoundOwnerControlledHolding = false;
 
-    // Get all addresses in the wallet
-    std::set<CTxDestination> destinations;
-    for (const auto& entry : pwallet->mapWallet) {
-        const CWalletTx& wtx = entry.second;
-        for (unsigned int i = 0; i < wtx.tx->vout.size(); ++i) {
-            const CTxOut& txout = wtx.tx->vout[i];
-            CTxDestination dest;
-            if (ExtractDestination(txout.scriptPubKey, dest)) {
-                destinations.insert(dest);
-            }
-        }
-    }
-
-    // Check each address for the DEPIN asset
-    for (const auto& dest : destinations) {
-        std::string address = EncodeDestination(dest);
-        CAmount addrBalance = 0;
-        if (GetBestAssetAddressAmount(*passets, assetName, address)) {
-            addrBalance = passets->mapAssetsAddressAmount.at(std::make_pair(assetName, address));
-            if (addrBalance > 0) {
-                if (AddressHasDEPINOwnerToken(*passets, assetName, address)) {
-                    fFoundOwnerControlledHolding = true;
-                    continue;
-                }
-                holderAddress = address;
-                break;
-            }
-        }
-    }
+    // Ask the wallet, not the asset index. This used to walk every wallet
+    // address calling GetBestAssetAddressAmount(), which resolves through
+    // -assetindex: on a default node (DEFAULT_ASSETINDEX = false) the loop found
+    // nothing and this RPC reported "does not hold" for an asset the wallet was
+    // holding. AvailableAssets answers from the wallet's own outputs.
+    GetWalletAssetHolderAddress(pwallet, assetName, holderAddress, fFoundOwnerControlledHolding);
 
     if (holderAddress.empty()) {
         if (fFoundOwnerControlledHolding) {

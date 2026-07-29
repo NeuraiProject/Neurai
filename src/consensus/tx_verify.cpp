@@ -877,7 +877,7 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
                                      "bad-tx-null-asset-data-before-restricted-assets-activated");
 
                 if (txout.scriptPubKey.IsNullAssetTxDataScript()) {
-                    if (!ContextualCheckNullAssetTxOut(txout, &tx, assetCache, strError, myNullAssetData))
+                    if (!ContextualCheckNullAssetTxOut(txout, &tx, inputs, assetCache, strError, myNullAssetData))
                         return state.DoS(100, false, REJECT_INVALID, strError, false, "", tx.GetHash());
                 } else if (txout.scriptPubKey.IsNullGlobalRestrictionAssetTxDataScript()) {
                     if (!ContextualCheckGlobalAssetTxOut(txout, assetCache, strError))

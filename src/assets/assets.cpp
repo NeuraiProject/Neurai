@@ -3265,6 +3265,45 @@ bool TxContainsDEPINOwnerTokenTransfer(const CTransaction& tx, const std::string
     return TxContainsAssetTransfer(tx, assetName + OWNER_TAG);
 }
 
+bool TxSpendsDEPINOwnerTokenFromAddress(const CTransaction& tx, const CCoinsViewCache& inputs,
+                                        const std::string& assetName, const std::string& address)
+{
+    const std::string ownerTokenName = assetName + OWNER_TAG;
+
+    for (const auto& txin : tx.vin) {
+        const Coin& coin = inputs.AccessCoin(txin.prevout);
+        if (coin.IsSpent())
+            continue;
+
+        int inputType = 0;
+        bool fInputIsOwner = false;
+        if (!coin.out.scriptPubKey.IsAssetScript(inputType, fInputIsOwner))
+            continue;
+
+        // The owner token as it comes out of issuance.
+        if (inputType == TX_NEW_ASSET && fInputIsOwner) {
+            std::string inputOwnerName;
+            std::string inputOwnerAddress;
+            if (OwnerAssetFromScript(coin.out.scriptPubKey, inputOwnerName, inputOwnerAddress) &&
+                inputOwnerName == ownerTokenName && inputOwnerAddress == address) {
+                return true;
+            }
+        }
+
+        // The owner token as it comes out of any later transfer. Both shapes
+        // have to be covered: missing this one would let the check be bypassed
+        // by simply having moved the token once.
+        CAssetTransfer inputTransfer;
+        std::string inputAddress;
+        if (TransferAssetFromScript(coin.out.scriptPubKey, inputTransfer, inputAddress) &&
+            inputTransfer.strName == ownerTokenName && inputAddress == address) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 #ifdef ENABLE_WALLET
 //! sets _balances_ with the total quantity of each owned asset
 bool GetAllMyAssetBalances(std::map<std::string, std::vector<COutput> >& outputs, std::map<std::string, CAmount>& amounts, const int confirmations, const std::string& prefix) {
@@ -3336,7 +3375,12 @@ std::string DecodeAssetData(std::string encoded)
 };
 
 #ifdef ENABLE_WALLET
-static bool GetWalletOwnerTokenAddress(CWallet* pwallet, const std::string& ownerTokenName, std::string& ownerAddress)
+// Not static: the RPC and GUI pre-checks need it. It answers "where does the
+// owner token live?" from the wallet's own outputs (AvailableAssets), so unlike
+// AddressHasDEPINOwnerToken it does not depend on -assetindex. It only sees what
+// this wallet controls, which makes it fit for an early warning and unfit as a
+// rule -- consensus stays the authority.
+bool GetWalletOwnerTokenAddress(CWallet* pwallet, const std::string& ownerTokenName, std::string& ownerAddress)
 {
     ownerAddress.clear();
 
@@ -3370,6 +3414,61 @@ static bool GetWalletOwnerTokenAddress(CWallet* pwallet, const std::string& owne
     }
 
     ownerAddress.clear();
+    return false;
+}
+
+// Same idea as GetWalletOwnerTokenAddress, for the asset itself. Replaces the
+// GetBestAssetAddressAmount() loops that used to do this: those go through
+// -assetindex, so on a default node they found nothing and the wallet reported
+// not holding a token it was in fact holding.
+bool GetWalletAssetHolderAddress(CWallet* pwallet, const std::string& assetName,
+                                 std::string& holderAddress, bool& fFoundOwnerControlledHolding)
+{
+    holderAddress.clear();
+    fFoundOwnerControlledHolding = false;
+
+    if (!pwallet) {
+        return false;
+    }
+
+    std::map<std::string, std::vector<COutput>> mapAssetCoins;
+    pwallet->AvailableAssets(mapAssetCoins, true, nullptr, 1, MAX_MONEY, MAX_MONEY, 0, 0);
+
+    const auto it = mapAssetCoins.find(assetName);
+    if (it == mapAssetCoins.end()) {
+        return false;
+    }
+
+    // Where this wallet keeps the owner token, if it has it at all. Used only to
+    // skip that address: it is the one that cannot self-revoke.
+    std::string ownerAddress;
+    const bool fHasOwnerToken = GetWalletOwnerTokenAddress(pwallet, assetName + OWNER_TAG, ownerAddress);
+
+    for (const auto& output : it->second) {
+        if (!output.tx || !output.tx->tx || output.i >= output.tx->tx->vout.size()) {
+            continue;
+        }
+
+        const CScript& script = output.tx->tx->vout[output.i].scriptPubKey;
+
+        CAssetTransfer transfer;
+        std::string address;
+        if (!TransferAssetFromScript(script, transfer, address) || transfer.strName != assetName) {
+            CNewAsset issued;
+            if (!AssetFromScript(script, issued, address) || issued.strName != assetName) {
+                continue;
+            }
+        }
+
+        if (fHasOwnerToken && address == ownerAddress) {
+            fFoundOwnerControlledHolding = true;
+            continue;
+        }
+
+        holderAddress = address;
+        return true;
+    }
+
     return false;
 }
 
@@ -4635,10 +4734,11 @@ bool VerifyRestrictedAddressChange(CAssetsCache& cache, const CNullAssetTxData& 
     if (!VerifyNullAssetDataFlag(data.flag, strError))
         return false;
 
-    if (IsAssetNameADEPIN(data.asset_name) && AddressHasDEPINOwnerToken(cache, data.asset_name, address)) {
-        strError = "bad-txns-depin-owner-holder-address-cannot-be-revoked";
-        return false;
-    }
+    // No DEPIN branch here. This function is only ever reached for restricted
+    // ("$") names -- both dispatches, ContextualCheckNullAssetTxOut and
+    // CreateTransferAssetTransaction, test IsAssetNameAnRestricted() first --
+    // and a name cannot start with both '$' and '&'. The DEPIN guard that used
+    // to sit here was unreachable, and it depended on fAssetIndex.
 
     // Get the current status of the asset and the given address
     bool fIsFrozen = cache.CheckForAddressRestriction(data.asset_name, address, true);
@@ -4661,15 +4761,26 @@ bool VerifyRestrictedAddressChange(CAssetsCache& cache, const CNullAssetTxData& 
     return true;
 }
 
+/**
+ * State half of the owner freeze/unfreeze check: flag validity and whether the
+ * transition makes sense against the current restriction state. Deliberately
+ * does NOT decide whether `address` holds the owner token.
+ *
+ * That question is answered structurally by the caller, from the transaction's
+ * inputs and outputs (see ContextualCheckNullAssetTxOut). It cannot live here
+ * for two reasons: the wallet calls this during CreateTransferAssetTransaction,
+ * when the transaction does not exist yet and has no inputs to look at; and the
+ * previous answer went through AddressHasDEPINOwnerToken -> fAssetIndex, a
+ * local option that made consensus differ between nodes.
+ *
+ * Everything left in here is index-free: CheckForAddressRestriction and
+ * CheckForDEPINSelfRestriction read the pending sets, the LRU and
+ * prestricteddb, never fAssetIndex.
+ */
 bool VerifyDEPINOwnerChange(CAssetsCache& cache, const CNullAssetTxData& data, const std::string& address, std::string& strError)
 {
     if (!VerifyNullAssetDataFlag(data.flag, strError))
         return false;
-
-    if (AddressHasDEPINOwnerToken(cache, data.asset_name, address)) {
-        strError = "bad-txns-depin-owner-holder-address-cannot-be-revoked";
-        return false;
-    }
 
     const bool fIsOwnerFrozen = cache.CheckForAddressRestriction(data.asset_name, address, true);
     const bool fIsSelfRevoked = cache.CheckForDEPINSelfRestriction(data.asset_name, address, true);
@@ -4776,7 +4887,7 @@ bool CheckVerifierAssetTxOut(const CTxOut& txout, std::string& strError)
     return true;
 }
 ///////////////
-bool ContextualCheckNullAssetTxOut(const CTxOut& txout, const CTransaction* tx, CAssetsCache* assetCache, std::string& strError, std::vector<std::pair<std::string, CNullAssetTxData>>* myNullAssetData)
+bool ContextualCheckNullAssetTxOut(const CTxOut& txout, const CTransaction* tx, const CCoinsViewCache& inputs, CAssetsCache* assetCache, std::string& strError, std::vector<std::pair<std::string, CNullAssetTxData>>* myNullAssetData)
 {
     // Get the data from the script
     CNullAssetTxData data;
@@ -4798,7 +4909,22 @@ bool ContextualCheckNullAssetTxOut(const CTxOut& txout, const CTransaction* tx, 
                 return false;
         } else if (IsAssetNameADEPIN(data.asset_name)) {
             if (tx && TxContainsDEPINOwnerTokenTransfer(*tx, data.asset_name)) {
+                // "The address holding the owner token cannot be frozen or
+                // revoked", decided structurally in both directions:
+                //
+                //   salida -> el owner token estaba fuera y acaba aqui
+                //   entrada -> el owner token estaba aqui y sale en esta tx
+                //
+                // The second half used to be AddressHasDEPINOwnerToken(), which
+                // resolves through fAssetIndex -- a local, off-by-default option.
+                // Nodes with and without the index disagreed on the same
+                // transaction. See TxSpendsDEPINOwnerTokenFromAddress() for why
+                // reading the inputs answers exactly the same question.
                 if (TxContainsAssetTransferToAddress(*tx, data.asset_name + OWNER_TAG, address)) {
+                    strError = "bad-txns-depin-owner-holder-address-cannot-be-revoked";
+                    return false;
+                }
+                if (TxSpendsDEPINOwnerTokenFromAddress(*tx, inputs, data.asset_name, address)) {
                     strError = "bad-txns-depin-owner-holder-address-cannot-be-revoked";
                     return false;
                 }

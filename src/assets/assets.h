@@ -66,6 +66,7 @@ class CDataStream;
 class CTransaction;
 class CTxOut;
 class Coin;
+class CCoinsViewCache;
 class CWallet;
 class CReserveKey;
 class CWalletTx;
@@ -561,6 +562,30 @@ bool TxContainsAssetTransfer(const CTransaction& tx, const std::string& assetNam
 bool TxContainsAssetTransferToAddress(const CTransaction& tx, const std::string& assetName, const std::string& address);
 bool TxContainsDEPINOwnerTokenTransfer(const CTransaction& tx, const std::string& assetName);
 
+/**
+ * Did `address` hold the owner token of `assetName` before this transaction?
+ *
+ * Answered structurally, from the inputs, rather than by asking an address ->
+ * asset index. That matters because `fAssetIndex` is a local option that
+ * defaults to off: a consensus rule that consults it gives different verdicts on
+ * different nodes.
+ *
+ * The answer is exact, not an approximation, and it rests on three facts:
+ *   1. This is only asked when the transaction transfers the owner token
+ *      (the dispatch in ContextualCheckNullAssetTxOut).
+ *   2. Transferring an asset requires spending it, for the same total
+ *      (consensus/tx_verify.cpp, the inputs/outputs balance check).
+ *   3. An owner token is indivisible (OWNER_UNITS = 0) and issued once, so
+ *      exactly one UTXO of it exists at any time.
+ * Therefore the transaction must be spending that one UTXO, and looking at
+ * whose it was answers the question completely.
+ *
+ * Takes the coins view by reference on purpose: an optional pointer would let a
+ * caller omit it and accept a transaction without having checked anything.
+ */
+bool TxSpendsDEPINOwnerTokenFromAddress(const CTransaction& tx, const CCoinsViewCache& inputs,
+                                        const std::string& assetName, const std::string& address);
+
 
 //! Decode and Encode IPFS hashes, or OIP hashes
 std::string DecodeAssetData(std::string encoded);
@@ -572,6 +597,26 @@ std::string EncodeIPFS(std::string decoded);
 
 bool GetAllMyAssetBalances(std::map<std::string, std::vector<COutput> >& outputs, std::map<std::string, CAmount>& amounts, const int confirmations = 0, const std::string& prefix = "");
 bool GetMyAssetBalance(const std::string& name, CAmount& balance, const int& confirmations);
+
+/**
+ * Wallet-only answers to "who holds what", built on AvailableAssets so they do
+ * not need -assetindex. They see only what this wallet controls, so they are
+ * good for an early warning or for picking one of your own addresses, and are
+ * not a substitute for a consensus rule.
+ *
+ * Locking: AvailableCoinsAll takes LOCK2(cs_main, cs_wallet) internally and
+ * both are recursive, so holding them beforehand is harmless and omitting them
+ * is not a crash. A caller that ACTS on the answer should still hold cs_wallet
+ * across the call and the decision, or the wallet may change in between -- the
+ * RPC callers do (LOCK2(cs_main, pwallet->cs_wallet) at the top). The GUI
+ * validation slot does not, and does not need to: its answer is only a warning.
+ */
+bool GetWalletOwnerTokenAddress(CWallet* pwallet, const std::string& ownerTokenName, std::string& ownerAddress);
+
+//! First wallet address holding a positive balance of `assetName`, skipping any
+//! address that also holds its owner token (those cannot self-revoke).
+bool GetWalletAssetHolderAddress(CWallet* pwallet, const std::string& assetName,
+                                 std::string& holderAddress, bool& fFoundOwnerControlledHolding);
 
 //! Creates new asset issuance transaction
 bool CreateAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, const CNewAsset& asset, const std::string& address, std::pair<int, std::string>& error, CWalletTx& wtxNew, CReserveKey& reservekey, CAmount& nFeeRequired, std::string* verifier_string = nullptr);
@@ -613,7 +658,12 @@ bool CheckNewAsset(const CNewAsset& asset, std::string& strError);
 bool CheckReissueAsset(const CReissueAsset& asset, std::string& strError);
 
 //// Contextual Check functions
-bool ContextualCheckNullAssetTxOut(const CTxOut& txout, const CTransaction* tx, CAssetsCache* assetCache, std::string& strError, std::vector<std::pair<std::string, CNullAssetTxData>>* myNullAssetData = nullptr);
+/**
+ * `inputs` is a mandatory reference, not an optional pointer: the DEPIN owner
+ * branch decides authorisation from the transaction's inputs, and a caller that
+ * could omit them would accept the transaction without having checked.
+ */
+bool ContextualCheckNullAssetTxOut(const CTxOut& txout, const CTransaction* tx, const CCoinsViewCache& inputs, CAssetsCache* assetCache, std::string& strError, std::vector<std::pair<std::string, CNullAssetTxData>>* myNullAssetData = nullptr);
 bool ContextualCheckGlobalAssetTxOut(const CTxOut& txout, CAssetsCache* assetCache, std::string& strError);
 bool ContextualCheckVerifierAssetTxOut(const CTxOut& txout, CAssetsCache* assetCache, std::string& strError);
 bool ContextualCheckVerifierString(CAssetsCache* cache, const std::string& verifier, const std::string& check_address, std::string& strError, ErrorReport* errorReport = nullptr);
