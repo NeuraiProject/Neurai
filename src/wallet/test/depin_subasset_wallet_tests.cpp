@@ -17,12 +17,14 @@
 #include "wallet/wallet.h"
 
 #include "assets/assets.h"
+#include "assets/assetdb.h"
 #include "assets/assettypes.h"
 #include "base58.h"
 #include "chainparams.h"
 #include "consensus/consensus.h"
 #include "consensus/validation.h"
 #include "miner.h"
+#include "net.h" // g_connman
 #include "test/test_neurai.h"
 #include "validation.h"
 #include "wallet/coincontrol.h"
@@ -46,6 +48,13 @@ struct DepinWalletSetup : public TestingSetup {
 
     DepinWalletSetup() : TestingSetup(CBaseChainParams::TESTNET)
     {
+        // TestingSetup builds passets but not the asset database/cache, and
+        // connecting a block that issues an asset dereferences passetsdb
+        // unguarded (assets.cpp CAssetsCache::DumpCacheToDatabase,
+        // validation.cpp WriteBlockUndoAssetData). In-memory, wiped per test.
+        passetsdb = new CAssetsDB(1 << 20, true, true);
+        passetsCache = new CLRUCache<std::string, CDatabasedAssetData>(MAX_CACHE_ASSETS_SIZE);
+
         coinbaseKey.MakeNewKey(true);
         const CScript coinbaseScript = GetScriptForRawPubKey(coinbaseKey.GetPubKey());
 
@@ -59,11 +68,19 @@ struct DepinWalletSetup : public TestingSetup {
         wallet.reset(new CWallet(std::unique_ptr<CWalletDBWrapper>(new CWalletDBWrapper(&bitdb, "depin_subasset_wallet_test.dat"))));
         bool firstRun = false;
         wallet->LoadWallet(firstRun);
+        // CommitTransaction() only reaches AcceptToMemoryPool() when broadcast
+        // is enabled; without this an issuance would be committed to the wallet
+        // but never enter the mempool, so it could never be mined.
+        wallet->SetBroadcastTransactions(true);
         {
             LOCK(wallet->cs_wallet);
             wallet->AddKeyPubKey(coinbaseKey, coinbaseKey.GetPubKey());
         }
-        wallet->ScanForWalletTransactions(chainActive.Genesis(), nullptr);
+        // fUpdate=true is required: the issuance is already in mapWallet from
+        // CommitTransaction, and AddToWalletIfInvolvingMe() bails out on
+        // already-known transactions unless told to update them, leaving the
+        // freshly mined block position (and therefore the depth) unset.
+        wallet->ScanForWalletTransactions(chainActive.Genesis(), nullptr, true);
 
         // VerifyWalletHasAsset() resolves the wallet through vpwallets[0].
         vpwallets.insert(vpwallets.begin(), wallet.get());
@@ -75,14 +92,22 @@ struct DepinWalletSetup : public TestingSetup {
         wallet.reset();
         ::bitdb.Flush(true);
         ::bitdb.Reset();
+
+        delete passetsCache;
+        passetsCache = nullptr;
+        delete passetsdb;
+        passetsdb = nullptr;
     }
 
-    void MineBlock(const CScript& scriptPubKey)
+    // includeMempool=false mines an empty block (BlockAssembler would otherwise
+    // pull in whatever is pending); true keeps the assembler's selection, which
+    // is how a committed issuance gets confirmed.
+    void MineBlock(const CScript& scriptPubKey, bool includeMempool = false)
     {
         const CChainParams& chainparams = GetParams();
         std::unique_ptr<CBlockTemplate> pblocktemplate = BlockAssembler(chainparams).CreateNewBlock(scriptPubKey);
         CBlock& block = pblocktemplate->block;
-        block.vtx.resize(1);
+        if (!includeMempool) block.vtx.resize(1);
 
         unsigned int extraNonce = 0;
         IncrementExtraNonce(&block, chainActive.Tip(), extraNonce);
@@ -98,34 +123,59 @@ struct DepinWalletSetup : public TestingSetup {
         ProcessNewBlock(chainparams, shared_pblock, true, nullptr);
     }
 
-    // Give the wallet a confirmed UTXO holding `assetName`, so AvailableAssets()
-    // reports it and coin selection can spend it. Returns the funding txid.
-    uint256 GiveWalletAsset(const std::string& assetName, CAmount amount)
+    // Build an issuance for `assetName` through the real CreateAssetTransaction
+    // path. Returns the wallet transaction; does not confirm it.
+    CWalletTx BuildIssuance(const std::string& assetName, CAmount amount,
+                            std::pair<int, std::string>& error, bool& ok)
     {
-        CPubKey pubkey;
-        BOOST_REQUIRE(wallet->GetKeyFromPool(pubkey));
-        CScript script = GetScriptForDestination(pubkey.GetID());
-        CAssetTransfer transfer(assetName, amount);
-        transfer.ConstructTransaction(script);
+        CNewAsset asset(assetName, amount, DEPIN_ASSET_UNITS, 0, 0, "");
+        CCoinControl coinControl;
+        CWalletTx wtx;
+        CReserveKey reservekey(wallet.get());
+        CAmount nFeeRequired = 0;
 
-        CMutableTransaction mtx;
-        mtx.vin.resize(1);
-        // A non-null prevout on purpose: a null one would make this look like a
-        // coinbase, and AvailableCoins() would then skip it as immature.
-        mtx.vin[0].prevout = COutPoint(GetRandHash(), 0);
-        mtx.vout.resize(1);
-        mtx.vout[0].nValue = 0;
-        mtx.vout[0].scriptPubKey = script;
+        CPubKey destPubKey;
+        BOOST_REQUIRE(wallet->GetKeyFromPool(destPubKey));
 
-        CWalletTx wtx(wallet.get(), MakeTransactionRef(mtx));
-        // Index 1, i.e. not the coinbase slot, and one confirmation deep so the
-        // wallet considers it trusted.
-        wtx.SetMerkleBranch(chainActive.Tip(), 1);
-        {
-            LOCK(wallet->cs_wallet);
-            wallet->AddToWallet(wtx);
-        }
-        return wtx.GetHash();
+        ok = CreateAssetTransaction(wallet.get(), coinControl, asset,
+                                    EncodeDestination(destPubKey.GetID()),
+                                    error, wtx, reservekey, nFeeRequired);
+        return wtx;
+    }
+
+    // Issue `assetName` for real: build it, commit it to the mempool and mine
+    // it, so the wallet ends up owning the asset and its owner token through
+    // the same path a node would take. No synthetic UTXOs.
+    void IssueAssetAndConfirm(const std::string& assetName, CAmount amount)
+    {
+        std::pair<int, std::string> error;
+        bool ok = false;
+        CWalletTx wtx = BuildIssuance(assetName, amount, error, ok);
+        BOOST_REQUIRE_MESSAGE(ok, "issuing " + assetName + ": " + error.second);
+
+        CReserveKey reservekey(wallet.get());
+        CValidationState state;
+        BOOST_REQUIRE_MESSAGE(wallet->CommitTransaction(wtx, reservekey, g_connman.get(), state),
+                              "committing " + assetName + ": " + state.GetRejectReason());
+
+        // Fail at the real point of breakage rather than later, on a confusing
+        // "wallet doesn't have the asset".
+        BOOST_REQUIRE_MESSAGE(mempool.exists(wtx.GetHash()),
+                              "issuance of " + assetName + " never reached the mempool");
+
+        MineBlock(GetScriptForRawPubKey(coinbaseKey.GetPubKey()), /*includeMempool=*/true);
+
+        BOOST_REQUIRE_MESSAGE(!mempool.exists(wtx.GetHash()),
+                              "issuance of " + assetName + " was not mined into a block");
+
+        // This fixture runs no scheduler thread, so validation-interface
+        // callbacks that would normally update the wallet are unreliable
+        // (see the comment in TestingSetup). Refresh explicitly.
+        // fUpdate=true is required: the issuance is already in mapWallet from
+        // CommitTransaction, and AddToWalletIfInvolvingMe() bails out on
+        // already-known transactions unless told to update them, leaving the
+        // freshly mined block position (and therefore the depth) unset.
+        wallet->ScanForWalletTransactions(chainActive.Genesis(), nullptr, true);
     }
 };
 
@@ -157,34 +207,36 @@ BOOST_AUTO_TEST_CASE(subdepin_issuance_attaches_parent_owner)
     BOOST_REQUIRE(AreAssetsDeployed());
     BOOST_REQUIRE(wallet->GetBalance() > 0);
 
-    const uint256 ownerFundingTxid = GiveWalletAsset(PARENT_ASSET + OWNER_TAG, OWNER_ASSET_AMOUNT);
+    // Issue the parent for real and mine it, so &PADRE! is a genuine confirmed
+    // UTXO produced by a consensus-valid issuance.
+    IssueAssetAndConfirm(PARENT_ASSET, CAmount(1000 * COIN));
 
     // Precondition: the wallet really does see the owner token.
     std::pair<int, std::string> verifyError;
     BOOST_REQUIRE_MESSAGE(VerifyWalletHasAsset(PARENT_ASSET + OWNER_TAG, verifyError),
                           verifyError.second);
 
-    CNewAsset child(CHILD_ASSET, CAmount(100 * COIN), DEPIN_ASSET_UNITS, 0, 0, "");
-    CCoinControl coinControl;
-    CWalletTx wtxNew;
-    CReserveKey reservekey(wallet.get());
-    CAmount nFeeRequired = 0;
+    // Which UTXO holds it, so we can assert the child issuance spends that one.
+    std::map<std::string, std::vector<COutput>> mapAssetCoins;
+    {
+        LOCK2(cs_main, wallet->cs_wallet);
+        wallet->AvailableAssets(mapAssetCoins);
+    }
+    BOOST_REQUIRE(mapAssetCoins.count(PARENT_ASSET + OWNER_TAG));
+    BOOST_REQUIRE(!mapAssetCoins[PARENT_ASSET + OWNER_TAG].empty());
+    const uint256 ownerUtxoTxid = mapAssetCoins[PARENT_ASSET + OWNER_TAG][0].tx->GetHash();
+
     std::pair<int, std::string> error;
-
-    CPubKey destPubKey;
-    BOOST_REQUIRE(wallet->GetKeyFromPool(destPubKey));
-    const std::string destAddress = EncodeDestination(destPubKey.GetID());
-
-    BOOST_REQUIRE_MESSAGE(
-        CreateAssetTransaction(wallet.get(), coinControl, child, destAddress, error, wtxNew, reservekey, nFeeRequired),
-        error.second);
+    bool ok = false;
+    CWalletTx wtxNew = BuildIssuance(CHILD_ASSET, CAmount(100 * COIN), error, ok);
+    BOOST_REQUIRE_MESSAGE(ok, error.second);
 
     const CTransaction& tx = *wtxNew.tx;
 
-    // It spends the owner-token UTXO we planted...
+    // It spends the real owner-token UTXO...
     bool spendsOwnerUtxo = false;
     for (const CTxIn& in : tx.vin) {
-        if (in.prevout.hash == ownerFundingTxid) {
+        if (in.prevout.hash == ownerUtxoTxid) {
             spendsOwnerUtxo = true;
             break;
         }
@@ -207,23 +259,15 @@ BOOST_AUTO_TEST_CASE(subdepin_issuance_without_parent_owner_is_refused)
     BOOST_REQUIRE(AreAssetsDeployed());
     BOOST_REQUIRE(wallet->GetBalance() > 0);
 
-    // Deliberately no GiveWalletAsset() call here.
+    // Deliberately no IssueAssetAndConfirm(PARENT_ASSET) call here.
     std::pair<int, std::string> verifyError;
     BOOST_REQUIRE(!VerifyWalletHasAsset(PARENT_ASSET + OWNER_TAG, verifyError));
 
-    CNewAsset child(CHILD_ASSET, CAmount(100 * COIN), DEPIN_ASSET_UNITS, 0, 0, "");
-    CCoinControl coinControl;
-    CWalletTx wtxNew;
-    CReserveKey reservekey(wallet.get());
-    CAmount nFeeRequired = 0;
     std::pair<int, std::string> error;
+    bool ok = true;
+    CWalletTx wtxNew = BuildIssuance(CHILD_ASSET, CAmount(100 * COIN), error, ok);
 
-    CPubKey destPubKey;
-    BOOST_REQUIRE(wallet->GetKeyFromPool(destPubKey));
-    const std::string destAddress = EncodeDestination(destPubKey.GetID());
-
-    BOOST_CHECK(!CreateAssetTransaction(wallet.get(), coinControl, child, destAddress,
-                                        error, wtxNew, reservekey, nFeeRequired));
+    BOOST_CHECK(!ok);
     BOOST_CHECK_MESSAGE(error.second.find(PARENT_ASSET + OWNER_TAG) != std::string::npos,
                         "expected the VerifyWalletHasAsset error naming " + PARENT_ASSET + OWNER_TAG +
                             ", got: " + error.second);
@@ -238,20 +282,10 @@ BOOST_AUTO_TEST_CASE(root_depin_issuance_needs_no_owner_token)
 {
     BOOST_REQUIRE(AreAssetsDeployed());
 
-    CNewAsset root("&OTRORAIZ", CAmount(100 * COIN), DEPIN_ASSET_UNITS, 0, 0, "");
-    CCoinControl coinControl;
-    CWalletTx wtxNew;
-    CReserveKey reservekey(wallet.get());
-    CAmount nFeeRequired = 0;
     std::pair<int, std::string> error;
-
-    CPubKey destPubKey;
-    BOOST_REQUIRE(wallet->GetKeyFromPool(destPubKey));
-    const std::string destAddress = EncodeDestination(destPubKey.GetID());
-
-    BOOST_CHECK_MESSAGE(
-        CreateAssetTransaction(wallet.get(), coinControl, root, destAddress, error, wtxNew, reservekey, nFeeRequired),
-        error.second);
+    bool ok = false;
+    BuildIssuance("&OTRORAIZ", CAmount(100 * COIN), error, ok);
+    BOOST_CHECK_MESSAGE(ok, error.second);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
