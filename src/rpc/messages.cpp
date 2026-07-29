@@ -1941,6 +1941,121 @@ UniValue depinmcpstatus(const JSONRPCRequest& request)
     return result;
 }
 
+UniValue depingetancestorrecipients(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 3)
+        throw std::runtime_error(
+                "depingetancestorrecipients \"token\" ( max_results ) ( \"stop_at\" )\n"
+                "\nList the active holders of a DEPIN branch: the deduplicated union of the\n"
+                "holders of the given token and of every one of its '/'-separated ancestors,\n"
+                "each with the public key it has revealed on chain.\n"
+                "\nActive means: positive balance, public key revealed, and not blocked by an\n"
+                "owner freeze or by self-revocation. Restriction is per (asset, address), so an\n"
+                "address that is active in at least one ancestor is returned even if it revoked\n"
+                "itself in another -- holding the root already grants visibility over the branch.\n"
+                "\nThe query is exact: '&TEST' returns holders of '&TEST' only, never of\n"
+                "'&TEST/APPLE', '&TESTING' or '&TEST.FOO'. Every derived ancestor must exist; a\n"
+                "missing intermediate level is an error rather than something skipped.\n"
+                "\nThis command is informational. It does not know about -depinmsgmaxusers, does\n"
+                "not decide whether a message fits in a pool, and a truncated result must not be\n"
+                "treated as a complete recipient set.\n"
+                "\nRequires -assetindex and -pubkeyindex.\n"
+                "\nArguments:\n"
+                "1. \"token\"        (string, required) DEPIN token, e.g. \"&TEST/APPLE/GOLDEN\"\n"
+                "2. max_results   (numeric, optional, default=" + std::to_string(DEFAULT_DEPIN_ANCESTOR_RECIPIENTS_LIMIT) + ") Maximum recipients to return\n"
+                "                 (1.." + std::to_string(MAX_DEPIN_ANCESTOR_RECIPIENTS_HARD_CAP) + ")\n"
+                "3. \"stop_at\"      (string, optional) Stop deriving ancestors at this token,\n"
+                "                 inclusive. Must be the token itself or one of its ancestors.\n"
+                "                 Omitted: derive up to the absolute root.\n"
+                "\nResult:\n"
+                "{\n"
+                "  \"token\": \"name\",                    (string) Token queried\n"
+                "  \"stop_at\": \"name\",                  (string) Where derivation stopped (\"\" = root)\n"
+                "  \"ancestors\": [\"name\", ...],         (array) Token first, then each ancestor\n"
+                "  \"recipients\": [                     (array) Active holders, ordered by address\n"
+                "    {\n"
+                "      \"address\": \"address\",           (string) Holder address\n"
+                "      \"pubkey\": \"hex\"                 (string) Public key revealed on chain\n"
+                "    }, ...\n"
+                "  ],\n"
+                "  \"returned\": n,                      (numeric) Number of recipients returned\n"
+                "  \"max_results\": n,                   (numeric) Limit applied\n"
+                "  \"truncated\": true|false,            (boolean) True if more eligible recipients exist\n"
+                "  \"skipped_no_pubkey\": n,             (numeric) Addresses dropped for lacking a usable\n"
+                "                                       revealed public key\n"
+                "  \"skipped_no_pubkey_complete\": bool, (boolean) False when truncated: the count then\n"
+                "                                       covers only the addresses examined\n"
+                "  \"skipped_restricted\": n,            (numeric) Addresses dropped as frozen or\n"
+                "                                       self-revoked in every ancestor they hold\n"
+                "  \"skipped_restricted_complete\": bool (boolean) Same rule as above\n"
+                "}\n"
+                "\nExamples:\n"
+                + HelpExampleCli("depingetancestorrecipients", "\"&TEST/APPLE/GOLDEN\"")
+                + HelpExampleCli("depingetancestorrecipients", "\"&TEST/APPLE/GOLDEN\" 50 \"&TEST/APPLE\"")
+                + HelpExampleRpc("depingetancestorrecipients", "\"&TEST/APPLE/GOLDEN\", 50, \"&TEST/APPLE\"")
+        );
+
+    const std::string token = request.params[0].get_str();
+
+    size_t maxResults = DEFAULT_DEPIN_ANCESTOR_RECIPIENTS_LIMIT;
+    if (request.params.size() > 1 && !request.params[1].isNull()) {
+        const int64_t requested = request.params[1].get_int64();
+        if (requested <= 0) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "max_results must be at least 1");
+        }
+        if (requested > (int64_t)MAX_DEPIN_ANCESTOR_RECIPIENTS_HARD_CAP) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER,
+                               strprintf("max_results must not exceed %u",
+                                         (unsigned int)MAX_DEPIN_ANCESTOR_RECIPIENTS_HARD_CAP));
+        }
+        maxResults = (size_t)requested;
+    }
+
+    std::string stopAt;
+    if (request.params.size() > 2 && !request.params[2].isNull()) {
+        stopAt = request.params[2].get_str();
+    }
+
+    // No lock or flush here on purpose: GetDepinAncestorRecipients() owns that
+    // contract so every caller gets it, not only this one.
+    // RPC_MISC_ERROR rather than RPC_INVALID_PARAMETER: the function reports
+    // missing indexes and databases through the same channel as a bad token, so
+    // the code cannot honestly claim the caller's parameters were at fault.
+    CDepinAncestorRecipients recipients;
+    std::string error;
+    if (!GetDepinAncestorRecipients(token, maxResults, recipients, error, stopAt)) {
+        throw JSONRPCError(RPC_MISC_ERROR, error);
+    }
+
+    UniValue ancestors(UniValue::VARR);
+    for (const std::string& ancestor : recipients.ancestors) {
+        ancestors.push_back(ancestor);
+    }
+
+    UniValue entries(UniValue::VARR);
+    for (const CDepinRecipient& recipient : recipients.recipients) {
+        UniValue entry(UniValue::VOBJ);
+        entry.push_back(Pair("address", recipient.address));
+        entry.push_back(Pair("pubkey", HexStr(recipient.pubkey.begin(), recipient.pubkey.end())));
+        entries.push_back(entry);
+    }
+
+    UniValue result(UniValue::VOBJ);
+    result.push_back(Pair("token", recipients.token));
+    result.push_back(Pair("stop_at", recipients.stopAt));
+    result.push_back(Pair("ancestors", ancestors));
+    result.push_back(Pair("recipients", entries));
+    result.push_back(Pair("returned", (uint64_t)recipients.recipients.size()));
+    result.push_back(Pair("max_results", (uint64_t)recipients.maxResults));
+    result.push_back(Pair("truncated", recipients.truncated));
+    result.push_back(Pair("skipped_no_pubkey", (uint64_t)recipients.skippedNoPubKey));
+    result.push_back(Pair("skipped_no_pubkey_complete", recipients.skippedNoPubKeyComplete));
+    result.push_back(Pair("skipped_restricted", (uint64_t)recipients.skippedRestricted));
+    result.push_back(Pair("skipped_restricted_complete", recipients.skippedRestrictedComplete));
+
+    return result;
+}
+
 #ifdef ENABLE_WALLET
 bool DeriveDepinPoolKeys(CWallet* pwallet, CKey& privKey, CPubKey& pubkey, std::string& derivationPath, std::string& error)
 {
@@ -2093,6 +2208,7 @@ static const CRPCCommand commands[] =
             { "depin messaging",          "depinsubmitmsg",             &depinsubmitmsg,             {"hexmessage"}},
             { "depin messaging",          "depinreceivemsg",            &depinreceivemsg,            {"token", "address", "timestamp"}},
             { "depin messaging",          "depinmcpstatus",             &depinmcpstatus,             {}},
+            { "depin messaging",          "depingetancestorrecipients", &depingetancestorrecipients, {"token", "max_results", "stop_at"}},
 #ifdef ENABLE_WALLET
             { "depin messaging",          "depinpoolpkey",              &depinpoolpkey,              {}},
 #ifdef ENABLE_DEPIN_GATEWAY

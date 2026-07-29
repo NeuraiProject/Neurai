@@ -93,6 +93,35 @@ public:
 
     bool AddressDir(std::vector<std::pair<std::string, CAmount> >& vecAssetAmount, int& totalEntries, const bool& fGetTotal, const std::string& address, const size_t count, const long start);
     bool AssetAddressDir(std::vector<std::pair<std::string, CAmount> >& vecAddressAmount, int& totalEntries, const bool& fGetTotal, const std::string& assetName, const size_t count, const long start);
+
+    /**
+     * Holders of several assets in one pass, keyed by exact asset name.
+     *
+     * Exists so a caller that needs N assets at once (an ancestor chain, for
+     * example) pays for one flush instead of N: unlike AssetAddressDir() this
+     * function deliberately does NOT call FlushStateToDisk(). The caller must
+     * flush once beforehand, under cs_main, and keep that lock while reading
+     * so every asset resolves against the same chain state.
+     *
+     * Each name is matched with exact equality (key.second.first == assetName),
+     * never by prefix: sharing leading characters does not make two assets
+     * related, and LevelDB orders these keys by name LENGTH before content
+     * anyway (Serialize(std::string) writes the length first), so a prefix scan
+     * would be both wrong and expensive.
+     *
+     * maxRowsTotal bounds the (asset, address) rows accepted across all names.
+     * Reading exactly maxRowsTotal rows is not an overflow; finding one more is,
+     * and that sets hitRowLimit -- the scan then stops and the output is
+     * incomplete. Callers must treat hitRowLimit as an error, not as a
+     * truncated-but-usable result.
+     *
+     * Rows are sorted by address so the output does not depend on LevelDB's
+     * physical ordering.
+     */
+    bool AssetAddressDirMulti(const std::vector<std::string>& assetNames,
+                              std::map<std::string, std::vector<std::pair<std::string, CAmount> > >& out,
+                              size_t maxRowsTotal,
+                              bool& hitRowLimit);
 };
 
 

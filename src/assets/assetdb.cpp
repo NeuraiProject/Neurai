@@ -13,6 +13,9 @@
 
 #include <boost/thread.hpp>
 
+#include <algorithm>
+#include <memory>
+
 static const char ASSET_FLAG = 'A';
 static const char ASSET_ADDRESS_QUANTITY_FLAG = 'B';
 static const char ADDRESS_ASSET_QUANTITY_FLAG = 'C';
@@ -384,6 +387,67 @@ bool CAssetsDB::AssetAddressDir(std::vector<std::pair<std::string, CAmount> >& v
         } else {
             break;
         }
+    }
+
+    return true;
+}
+
+// Holders of several assets in one pass. See assetdb.h for the contract; the
+// two things worth repeating at the implementation site are that this function
+// must never call FlushStateToDisk() (that is the whole reason it exists rather
+// than N calls to AssetAddressDir above), and that names are matched by exact
+// equality rather than by prefix.
+bool CAssetsDB::AssetAddressDirMulti(const std::vector<std::string>& assetNames,
+                                     std::map<std::string, std::vector<std::pair<std::string, CAmount> > >& out,
+                                     size_t maxRowsTotal,
+                                     bool& hitRowLimit)
+{
+    out.clear();
+    hitRowLimit = false;
+
+    size_t rowsAccepted = 0;
+
+    for (const std::string& assetName : assetNames) {
+        // A repeated name would otherwise append its rows twice; ancestor
+        // chains are unique, but the guard keeps the contract simple.
+        if (out.count(assetName))
+            continue;
+
+        std::vector<std::pair<std::string, CAmount> >& rows = out[assetName];
+
+        std::unique_ptr<CDBIterator> pcursor(NewIterator());
+        pcursor->Seek(std::make_pair(ASSET_ADDRESS_QUANTITY_FLAG, std::make_pair(assetName, std::string())));
+
+        while (pcursor->Valid()) {
+            boost::this_thread::interruption_point();
+
+            std::pair<char, std::pair<std::string, std::string> > key;
+            if (!pcursor->GetKey(key) || key.first != ASSET_ADDRESS_QUANTITY_FLAG ||
+                key.second.first != assetName) {
+                break;
+            }
+
+            // This row is one past the budget: the working set can no longer be
+            // collected in full, so report it instead of silently cutting.
+            if (rowsAccepted == maxRowsTotal) {
+                hitRowLimit = true;
+                break;
+            }
+
+            CAmount amount;
+            if (!pcursor->GetValue(amount)) {
+                return error("%s: failed to read Asset Address Quantity for %s", __func__, assetName);
+            }
+
+            rows.emplace_back(key.second.second, amount);
+            rowsAccepted += 1;
+            pcursor->Next();
+        }
+
+        std::sort(rows.begin(), rows.end());
+
+        if (hitRowLimit)
+            break;
     }
 
     return true;

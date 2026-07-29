@@ -64,6 +64,11 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "listassets", 1, "verbose" },
     { "listassets", 2, "count" },
     { "listassets", 3, "start" },
+    // Without this the CLI passes max_results as a string and get_int64()
+    // throws "JSON value is not an integer as expected" before the RPC body
+    // ever runs. Only reachable through neurai-cli, so a unit test that builds
+    // the UniValue itself cannot see it.
+    { "depingetancestorrecipients", 1, "max_results" },
     { "setmocktime", 0, "timestamp" },
     { "generate", 0, "nblocks" },
     { "generate", 1, "maxtries" },

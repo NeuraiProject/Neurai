@@ -7,6 +7,8 @@
 
 #include <boost/thread.hpp>
 
+#include <memory>
+
 static const char DB_FLAG = 'D';
 static const char VERIFIER_FLAG = 'V';
 static const char ADDRESS_QULAIFIER_FLAG = 'T';
@@ -234,6 +236,50 @@ bool CRestrictedDB::GetGlobalRestrictions(std::vector<std::string>& restrictions
             break;
         }
     }
+
+    return true;
+}
+
+namespace {
+
+// Collect the second half of every (flag, (address, assetName)) key that belongs
+// to `address`. One ranged seek; the iterator is reusable across flags because
+// Seek() repositions it.
+void SeekAddressFlag(CDBIterator& cursor, char flag, const std::string& address,
+                     std::set<std::string>& out)
+{
+    cursor.Seek(std::make_pair(flag, std::make_pair(address, std::string())));
+
+    while (cursor.Valid()) {
+        boost::this_thread::interruption_point();
+        std::pair<char, std::pair<std::string, std::string> > key;
+        if (cursor.GetKey(key) && key.first == flag && key.second.first == address) {
+            out.insert(key.second.second);
+            cursor.Next();
+        } else {
+            break;
+        }
+    }
+}
+
+} // namespace
+
+// See restricteddb.h for the contract. Two points bear repeating here: there is
+// no FlushStateToDisk() on purpose (GetAddressRestrictions above has one, and
+// copying its body would reintroduce a global flush per address), and the two
+// flags are separate ranges -- the flag is the first component of the key, so
+// 'R' and 'S' are never contiguous with one another.
+bool CRestrictedDB::GetAddressDepinRestrictions(const std::string& address,
+                                                std::set<std::string>& ownerFrozen,
+                                                std::set<std::string>& selfRevoked)
+{
+    ownerFrozen.clear();
+    selfRevoked.clear();
+
+    std::unique_ptr<CDBIterator> pcursor(NewIterator());
+
+    SeekAddressFlag(*pcursor, RESTRICTED_ADDRESS_FLAG, address, ownerFrozen);
+    SeekAddressFlag(*pcursor, SELF_RESTRICTED_FLAG, address, selfRevoked);
 
     return true;
 }

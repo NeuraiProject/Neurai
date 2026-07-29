@@ -8,6 +8,10 @@
 
 #include <dbwrapper.h>
 
+#include <set>
+#include <string>
+#include <vector>
+
 class CRestrictedDB  : public CDBWrapper {
 
 public:
@@ -54,6 +58,33 @@ public:
     bool GetAddressQualifiers(std::string& address, std::vector<std::string>& qualifiers);
     bool GetAddressRestrictions(std::string& address, std::vector<std::string>& restrictions);
     bool GetGlobalRestrictions(std::vector<std::string>& restrictions);
+
+    /**
+     * Both ways a DEPIN asset can be blocked for one address, in a single call:
+     * ownerFrozen  -- the token owner froze this address (RESTRICTED_ADDRESS_FLAG)
+     * selfRevoked  -- the holder revoked itself       (SELF_RESTRICTED_FLAG)
+     *
+     * Restriction keys are (FLAG, (address, assetName)), so every restriction of
+     * one address is contiguous within its flag. This does two ranged seeks --
+     * one per flag, sharing a single iterator so both see the same snapshot --
+     * instead of one point read per (asset, address) pair. Membership is then
+     * resolved in memory by the caller, which keeps the cost per address
+     * independent of how many assets it is checked against.
+     *
+     * It cannot be expressed as two calls to GetAddressRestrictions(): that one
+     * only scans RESTRICTED_ADDRESS_FLAG (there is no ranged read of
+     * SELF_RESTRICTED_FLAG anywhere else), and it starts with an unconditional
+     * FlushStateToDisk(). This function deliberately does NOT flush -- a caller
+     * looping over addresses would otherwise trigger one global flush per
+     * address. Flush once beforehand, under cs_main, and hold that lock.
+     *
+     * Note this reads the database only. Restrictions added by the current
+     * block and not yet dumped live in CAssetsCache's pending sets; flushing
+     * before the call is what makes the database the authority.
+     */
+    bool GetAddressDepinRestrictions(const std::string& address,
+                                     std::set<std::string>& ownerFrozen,
+                                     std::set<std::string>& selfRevoked);
 
     bool CheckForAddressRootQualifier(const std::string& address, const std::string& qualifier);
 

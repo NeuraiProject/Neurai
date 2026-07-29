@@ -5,6 +5,8 @@
 #ifndef NEURAI_DEPINMSGPOOL_H
 #define NEURAI_DEPINMSGPOOL_H
 
+#include <atomic>
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <map>
@@ -13,11 +15,13 @@
 #include "uint256.h"
 #include "serialize.h"
 #include "amount.h"
+// CDepinRecipient holds a CPubKey by value, so the full definition is needed
+// here; a forward declaration would not do.
+#include "pubkey.h"
 
 #ifdef ENABLE_WALLET
 class CWallet;
 #endif
-class CPubKey;
 
 // Configuration defaults
 static const unsigned int DEFAULT_DEPIN_MSG_PORT = 19002;
@@ -36,6 +40,26 @@ static const unsigned int MAX_DEPIN_POOL_SIZE_MB = 1000;  // 1GB max
 static const bool DEFAULT_DEPINPOOL_PERSIST = false;
 static const uint32_t DEPINPOOL_MAGIC_BYTES = 0xD0D1D2D3;
 static const uint32_t DEPINPOOL_FILE_VERSION = 1;
+
+// Ancestor-recipient queries (GetDepinAncestorRecipients, below).
+// These are query limits, NOT messaging limits: they have nothing to do with
+// MAX_DEPIN_RECIPIENTS / -depinmsgmaxusers and never decide whether a message
+// can be sent.
+static const size_t DEFAULT_DEPIN_ANCESTOR_RECIPIENTS_LIMIT = 1000;
+static const size_t MAX_DEPIN_ANCESTOR_RECIPIENTS_HARD_CAP = 10000;
+
+// Bound on the WORKING SET, distinct from maxResults: the order of the result
+// is fixed before truncation, so every positive-balance row has to be collected
+// and sorted before anything can be cut. Expressed in (asset, address) rows
+// because that is what AssetAddressDirMulti counts; unique addresses can never
+// exceed that number, so it bounds memory just as well.
+static const size_t MAX_DEPIN_ANCESTOR_SCAN_ROWS = 100000;
+
+// Termination guard for ancestor derivation. Names are far shorter than this
+// allows (121 characters on testnet, >= 3 per component, so ~30 levels), and
+// the derivation loop shrinks the name every step anyway; the cap just keeps a
+// corrupted input from producing an unbounded vector.
+static const size_t MAX_DEPIN_ANCESTOR_DEPTH = 64;
 
 // Primary chat message structure with ECIES hybrid encryption
 // Uses a single CECIESEncryptedMessage shared by all recipients
@@ -168,6 +192,104 @@ bool SignDepinMessage(CDepinMessage& message, const std::string& senderAddress);
 bool CheckTokenOwnership(const std::string& address, const std::string& token, std::string& error);
 bool CheckAddressHasPublicKey(const std::string& address, CPubKey& pubkey, std::string& error);
 std::vector<std::string> GetTokenHolders(const std::string& token, unsigned int maxHolders, std::string& error);
+
+// One active holder of a DEPIN branch, with the key needed to encrypt for it.
+struct CDepinRecipient {
+    std::string address;
+    CPubKey pubkey;
+};
+
+// Result of GetDepinAncestorRecipients(). Purely informational: it carries no
+// notion of whether the set fits in a message.
+struct CDepinAncestorRecipients {
+    std::string token;                      // token the query was made for
+    std::string stopAt;                     // where derivation stopped ("" = absolute root)
+    std::vector<std::string> ancestors;     // token first, then each ancestor up to stopAt/root
+    std::vector<CDepinRecipient> recipients;
+
+    // Addresses examined and dropped. With truncated == false these counts
+    // cover the whole query; with truncated == true they only cover the
+    // addresses examined before the extra eligible recipient was found, which
+    // is what the *Complete flags say (both are simply !truncated).
+    size_t skippedNoPubKey;
+    bool skippedNoPubKeyComplete;
+    size_t skippedRestricted;
+    bool skippedRestrictedComplete;
+
+    size_t maxResults;
+    bool truncated;
+
+    CDepinAncestorRecipients()
+        : skippedNoPubKey(0), skippedNoPubKeyComplete(true),
+          skippedRestricted(0), skippedRestrictedComplete(true),
+          maxResults(0), truncated(false) {}
+};
+
+// Access-pattern instrumentation for GetDepinAncestorRecipients().
+//
+// These counters exist so the tests can assert the *shape* of the query rather
+// than only its result: one flush per call, restrictions resolved once per
+// address instead of once per (asset, address) pair, and no pubkey lookup for
+// an address already dropped by restriction. Those are the regressions that are
+// easy to introduce here and invisible to a functional test -- the answer stays
+// correct while the cost explodes.
+//
+// Counting is confined to GetDepinAncestorRecipients(); the flush counter in
+// particular only sees the flush that function performs. A helper that grew its
+// own raw FlushStateToDisk() call would not be counted here, which is why
+// AssetAddressDirMulti() and GetAddressDepinRestrictions() are additionally
+// tested with a null pcoinsTip -- flushing then crashes rather than passing.
+struct CDepinAncestorRecipientsStats {
+    std::atomic<uint64_t> flushCalls;
+    std::atomic<uint64_t> restrictionQueries;
+    std::atomic<uint64_t> pubkeyQueries;
+
+    CDepinAncestorRecipientsStats() : flushCalls(0), restrictionQueries(0), pubkeyQueries(0) {}
+
+    void Reset() {
+        flushCalls = 0;
+        restrictionQueries = 0;
+        pubkeyQueries = 0;
+    }
+};
+extern CDepinAncestorRecipientsStats gDepinAncestorRecipientsStats;
+
+// Active holders of a DEPIN branch: the deduplicated union of the holders of
+// `token` and of every one of its '/'-separated ancestors, each with the public
+// key revealed on chain. "Active" means positive balance, revealed public key,
+// and not blocked by owner-freeze or self-revocation.
+//
+// The query is exact at every step: `token` must be a DEPIN asset that exists,
+// ancestors are derived by stripping one component at a time, and each one is
+// validated and required to exist. Holders are read with exact name equality,
+// never by prefix -- querying "&TEST" does not reach "&TEST/APPLE", "&TESTING"
+// or "&TEST.FOO".
+//
+// stopAt must be `token` itself or one of its ancestors; derivation then stops
+// there, inclusive. Empty (the default) derives up to the absolute root.
+//
+// Restriction is per (asset, address): an address is eligible if it is active in
+// at least ONE of the ancestors where it holds a balance. Holding the root
+// already grants visibility over the branch, so revoking in a section does not
+// take that away.
+//
+// maxResults is a query limit, not a messaging limit. If more eligible
+// recipients exist, the first maxResults in address order are returned and
+// truncated is set -- the order is fixed before any cut, so a restricted or
+// key-less address never displaces a valid one later in the ordering.
+//
+// The function takes cs_main and flushes once itself; that contract belongs to
+// it, not to the caller. Taking cs_main beforehand is harmless (it is a
+// recursive mutex), but it must NOT be called while holding a lock that is
+// elsewhere acquired after cs_main -- cs_depinmsgpool, for instance.
+//
+// Requires fAssetIndex, fPubKeyIndex, passetsdb, pblocktree, pcoinsTip and
+// prestricteddb; a missing one is a named error, never an empty result.
+bool GetDepinAncestorRecipients(const std::string& token,
+                                size_t maxResults,
+                                CDepinAncestorRecipients& result,
+                                std::string& error,
+                                const std::string& stopAt = "");
 
 // Decide whether a given address should receive this message from the pool.
 // Sender always sees their own message; otherwise checks recipientKeys

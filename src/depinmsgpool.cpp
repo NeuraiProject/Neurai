@@ -664,6 +664,306 @@ std::vector<std::string> GetTokenHolders(const std::string& token, unsigned int 
     return addresses;
 }
 
+// ---------------------------------------------------------------------------
+// Ancestor recipients
+// ---------------------------------------------------------------------------
+
+CDepinAncestorRecipientsStats gDepinAncestorRecipientsStats;
+
+namespace {
+
+// assets.cpp keeps SUB_NAME_DELIMITER file-static (assets.cpp:75); this is the
+// same '/' that separates the components of a sub-DEPIN name.
+const char DEPIN_SECTION_DELIMITER = '/';
+
+// The single flush point of an ancestor query, wrapped only so the tests can
+// count it. See CDepinAncestorRecipientsStats for what the counter does and
+// does not catch.
+void DepinAncestorFlushOnce()
+{
+    gDepinAncestorRecipientsStats.flushCalls++;
+    FlushStateToDisk();
+}
+
+// Ancestors of `token`, itself first, up to `stopAt` (inclusive) or to the
+// absolute root when stopAt is empty.
+//
+// Strips one '/'-separated component at a time rather than calling
+// GetParentName(), which would re-run IsAssetNameValid() -- regex plus a
+// network check -- at every level. Each derived name is validated explicitly by
+// the caller right afterwards, so nothing is skipped, only done once.
+bool DeriveDepinAncestors(const std::string& token, const std::string& stopAt,
+                          std::vector<std::string>& ancestors, std::string& error)
+{
+    ancestors.clear();
+
+    std::string current = token;
+    while (true) {
+        ancestors.push_back(current);
+
+        if (!stopAt.empty() && current == stopAt)
+            return true;
+
+        if (ancestors.size() >= MAX_DEPIN_ANCESTOR_DEPTH) {
+            error = strprintf("Token '%s' has more than %u ancestor levels", token,
+                              (unsigned int)MAX_DEPIN_ANCESTOR_DEPTH);
+            return false;
+        }
+
+        const size_t pos = current.find_last_of(DEPIN_SECTION_DELIMITER);
+        if (pos == std::string::npos)
+            break;
+
+        current = current.substr(0, pos);
+    }
+
+    // Reached the root without matching stopAt, so it was never on this branch.
+    if (!stopAt.empty()) {
+        error = strprintf("stop_at '%s' is neither '%s' nor one of its '/'-separated ancestors",
+                          stopAt, token);
+        return false;
+    }
+
+    return true;
+}
+
+// Does `pubkey`, as stored in -pubkeyindex for `address`, actually belong to it?
+//
+// The index is keyed by destination, but a corrupted or hostile entry could
+// hand back a key that hashes elsewhere; encrypting for it would produce a
+// payload the holder cannot open. Only P2PKH destinations qualify: the DePIN
+// encryption layer keys recipients by uint160(CKeyID) (depinecies.cpp), so a
+// script or AuthScript address can never be a recipient regardless of what the
+// index holds.
+bool PubKeyMatchesAddress(const std::string& address, const CPubKey& pubkey)
+{
+    CTxDestination dest = DecodeDestination(address);
+    const CKeyID* keyID = boost::get<CKeyID>(&dest);
+    if (!keyID)
+        return false;
+
+    return pubkey.GetID() == *keyID;
+}
+
+} // namespace
+
+bool GetDepinAncestorRecipients(const std::string& token,
+                                size_t maxResults,
+                                CDepinAncestorRecipients& result,
+                                std::string& error,
+                                const std::string& stopAt)
+{
+    result = CDepinAncestorRecipients();
+    result.token = token;
+    result.stopAt = stopAt;
+    result.maxResults = maxResults;
+
+    if (maxResults == 0) {
+        error = "max_results must be at least 1";
+        return false;
+    }
+    if (maxResults > MAX_DEPIN_ANCESTOR_RECIPIENTS_HARD_CAP) {
+        error = strprintf("max_results %u exceeds the hard cap of %u", (unsigned int)maxResults,
+                          (unsigned int)MAX_DEPIN_ANCESTOR_RECIPIENTS_HARD_CAP);
+        return false;
+    }
+
+    // The lock and the flush belong to this function, not to its callers: it is
+    // public and reusable, and a caller that forgot either would get an
+    // incoherent answer with no warning. cs_main is recursive, so a caller that
+    // already holds it (depinsendmsg does) is unaffected.
+    LOCK(cs_main);
+
+    // Preconditions first, BEFORE the flush. Not merely to avoid paying for a
+    // global flush on the way to an error: FlushStateToDisk() dereferences
+    // pcoinsTip unguarded in its main path (validation.cpp:3202) and pblocktree
+    // unguarded in its pruning branch (validation.cpp:3165). With either null,
+    // flushing first would not produce a precondition error, it would take the
+    // node down. Everything below then reads chain state under the same cs_main
+    // that has already been taken, so nothing changes between check and use.
+    if (!fAssetIndex) {
+        error = "Asset index is required but not enabled. Restart with -assetindex and -reindex";
+        return false;
+    }
+    if (!fPubKeyIndex) {
+        error = "Public key index is required but not enabled. Restart with -pubkeyindex and -reindex-chainstate";
+        return false;
+    }
+    if (!passetsdb) {
+        error = "Asset database not available";
+        return false;
+    }
+    if (!pblocktree) {
+        error = "Block tree database not available";
+        return false;
+    }
+    if (!pcoinsTip) {
+        error = "Coins view not available";
+        return false;
+    }
+    // Emphasised because its absence fails OPEN. CheckForDEPINRestriction() and
+    // friends consult prestricteddb under `if (prestricteddb)` and return false
+    // when it is null, so every address would look unrestricted: self-revoked
+    // and frozen holders would be returned as recipients, silently and with the
+    // appearance of a correct answer.
+    if (!prestricteddb) {
+        error = "Restricted asset database not available; restriction state cannot be read, "
+                "and treating every address as unrestricted would return revoked and frozen holders";
+        return false;
+    }
+
+    // Name validation and ancestor derivation are pure, so they run before the
+    // flush too -- a malformed token should not cost a global flush.
+    if (!IsValidDepinMessagingToken(token, error))
+        return false;
+
+    if (!stopAt.empty()) {
+        std::string stopAtError;
+        if (!IsValidDepinMessagingToken(stopAt, stopAtError)) {
+            error = strprintf("Invalid stop_at '%s': %s", stopAt, stopAtError);
+            return false;
+        }
+    }
+
+    std::vector<std::string> ancestors;
+    if (!DeriveDepinAncestors(token, stopAt, ancestors, error))
+        return false;
+
+    for (const std::string& ancestor : ancestors) {
+        std::string ancestorError;
+        if (!IsValidDepinMessagingToken(ancestor, ancestorError)) {
+            error = strprintf("Derived ancestor '%s' of '%s' is not a valid DEPIN token: %s",
+                              ancestor, token, ancestorError);
+            return false;
+        }
+    }
+
+    // Single flush of the query. Everything read below -- asset existence,
+    // holders, restrictions -- is read from disk, so this is what makes the
+    // databases authoritative for state produced by recently connected blocks.
+    DepinAncestorFlushOnce();
+
+    // Each ancestor must exist exactly. A missing intermediate level is an
+    // error, never something to skip on the way to the root: silently jumping
+    // over it would answer a different question than the one asked.
+    for (const std::string& ancestor : ancestors) {
+        CNewAsset asset;
+        int assetHeight = 0;
+        uint256 assetBlockHash;
+        if (!passetsdb->ReadAssetData(ancestor, asset, assetHeight, assetBlockHash)) {
+            if (ancestor == token) {
+                error = strprintf("DEPIN token '%s' does not exist", token);
+            } else {
+                error = strprintf("Ancestor '%s' of token '%s' does not exist", ancestor, token);
+            }
+            return false;
+        }
+    }
+
+    std::map<std::string, std::vector<std::pair<std::string, CAmount> > > rowsByAsset;
+    bool hitRowLimit = false;
+    if (!passetsdb->AssetAddressDirMulti(ancestors, rowsByAsset, MAX_DEPIN_ANCESTOR_SCAN_ROWS, hitRowLimit)) {
+        error = strprintf("Failed to query holders of '%s' and its ancestors from the asset index", token);
+        return false;
+    }
+
+    // Reaching the exploration bound is an error, not a truncation. truncated
+    // promises "these are the first N in a deterministic order"; here the
+    // working set was never collected in full, so sorting what arrived and
+    // returning its head would be an arbitrary answer wearing a correct one's
+    // clothes.
+    if (hitRowLimit) {
+        error = strprintf("Resolving '%s' exceeds the exploration limit of %u (asset, address) rows. "
+                          "The branch (%u ancestors, starting at '%s') is too large to resolve in a "
+                          "single call; this is an error rather than a truncated result because the "
+                          "candidate set was never collected in full.",
+                          token, (unsigned int)MAX_DEPIN_ANCESTOR_SCAN_ROWS,
+                          (unsigned int)ancestors.size(), ancestors.back());
+        return false;
+    }
+
+    // Group by address, dropping non-positive balances. std::map orders the
+    // addresses lexicographically, which is what makes the result -- and
+    // therefore the truncation point -- independent of LevelDB's physical
+    // ordering.
+    std::map<std::string, std::vector<std::string> > activeAssetsByAddress;
+    for (const auto& assetRows : rowsByAsset) {
+        for (const auto& row : assetRows.second) {
+            if (row.second <= 0)
+                continue;
+            activeAssetsByAddress[row.first].push_back(assetRows.first);
+        }
+    }
+
+    // Walk the addresses in that order, evaluating each one COMPLETELY before
+    // moving on. Restrictions and public keys are interleaved per address, not
+    // resolved in two passes: a prior full pass over restrictions would work,
+    // but it would destroy the early stop -- a branch with 200,000 addresses
+    // and maxResults = 10 would do 400,000 restriction seeks before looking at
+    // a single public key. Interleaved, both costs are bounded by the same
+    // thing (addresses examined until enough eligible ones are found), which is
+    // also why skippedRestrictedComplete can follow the same rule as
+    // skippedNoPubKeyComplete.
+    for (const auto& entry : activeAssetsByAddress) {
+        const std::string& address = entry.first;
+
+        // (a) Two ranged seeks for this address -- not one lookup per ancestor.
+        std::set<std::string> ownerFrozen;
+        std::set<std::string> selfRevoked;
+        gDepinAncestorRecipientsStats.restrictionQueries++;
+        if (!prestricteddb->GetAddressDepinRestrictions(address, ownerFrozen, selfRevoked)) {
+            error = strprintf("Failed to read restriction state for address '%s'", address);
+            return false;
+        }
+
+        // (b) Membership resolved in memory. One active pair is enough: holding
+        // an ancestor already grants visibility over the branch, so revoking in
+        // a section does not withdraw what the root grants. Deciding this after
+        // looking at ALL of the address's pairs is what keeps skippedRestricted
+        // from counting addresses that are still active elsewhere.
+        bool hasActivePair = false;
+        for (const std::string& assetName : entry.second) {
+            if (ownerFrozen.count(assetName) || selfRevoked.count(assetName))
+                continue;
+            hasActivePair = true;
+            break;
+        }
+        if (!hasActivePair) {
+            result.skippedRestricted++;
+            continue;  // deliberately no public-key lookup for a dropped address
+        }
+
+        // (c) and (d): the public key, and only then.
+        CPubKey pubkey;
+        std::string pubkeyError;
+        gDepinAncestorRecipientsStats.pubkeyQueries++;
+        if (!CheckAddressHasPublicKey(address, pubkey, pubkeyError) ||
+            !PubKeyMatchesAddress(address, pubkey)) {
+            result.skippedNoPubKey++;
+            continue;
+        }
+
+        // This is the (maxResults + 1)-th eligible recipient: the probe that
+        // distinguishes "exactly at the limit" from "there are more". It proves
+        // truncation and does not enter the response.
+        if (result.recipients.size() == maxResults) {
+            result.truncated = true;
+            break;
+        }
+
+        CDepinRecipient recipient;
+        recipient.address = address;
+        recipient.pubkey = pubkey;
+        result.recipients.push_back(recipient);
+    }
+
+    result.ancestors = ancestors;
+    result.skippedNoPubKeyComplete = !result.truncated;
+    result.skippedRestrictedComplete = !result.truncated;
+
+    return true;
+}
+
 bool EncryptMessageForAllRecipients(const std::string& message,
                                      const std::vector<std::string>& recipientAddresses,
                                      std::vector<unsigned char>& encryptedData,
