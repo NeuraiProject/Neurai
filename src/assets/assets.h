@@ -586,6 +586,31 @@ bool TxContainsDEPINOwnerTokenTransfer(const CTransaction& tx, const std::string
 bool TxSpendsDEPINOwnerTokenFromAddress(const CTransaction& tx, const CCoinsViewCache& inputs,
                                         const std::string& assetName, const std::string& address);
 
+/**
+ * Is this transaction a valid DEPIN self-revocation of `assetName`?
+ *
+ * The pattern -- the only exception to the soulbound rule -- is a
+ * self-relocation: every input of the asset comes from one address A, every
+ * output of the asset pays that same A, and the transaction carries exactly one
+ * self-revocation null data (flag 1) for (assetName, A). Spending the asset's
+ * own UTXOs is the authorisation: it proves key control of A and tenure of the
+ * token in a single act, with no address->asset index involved.
+ *
+ * Aggregated over the WHOLE transaction, never per output: judging a single
+ * output "looks fine" is exactly the slip that would let a second output smuggle
+ * the token elsewhere, and evaluating inside the caller's vout loop would make
+ * the verdict depend on output ordering. Amount conservation is NOT re-checked
+ * here -- the existing inputs/outputs balance rule already enforces it for every
+ * asset, and duplicating a consensus rule is how two copies drift apart.
+ *
+ * Fails closed: any asset input or output that cannot be parsed denies the
+ * exception, because "all at one address" cannot be claimed over a set that was
+ * not read in full. Owner-token involvement (either direction) also denies it:
+ * that form is the owner's, not the holder's.
+ */
+bool IsDepinSelfRevocationTransaction(const CTransaction& tx, const CCoinsViewCache& inputs,
+                                      const std::string& assetName, std::string& strError);
+
 
 //! Decode and Encode IPFS hashes, or OIP hashes
 std::string DecodeAssetData(std::string encoded);
@@ -617,6 +642,14 @@ bool GetWalletOwnerTokenAddress(CWallet* pwallet, const std::string& ownerTokenN
 //! address that also holds its owner token (those cannot self-revoke).
 bool GetWalletAssetHolderAddress(CWallet* pwallet, const std::string& assetName,
                                  std::string& holderAddress, bool& fFoundOwnerControlledHolding);
+
+//! One concrete UTXO of `assetName` at such an address, with its exact amount.
+//! The self-revocation self-transfer must spend a specific outpoint and return
+//! exactly its amount; the aggregate balance would let coin selection recruit
+//! inputs from other addresses and break the consensus pattern intermittently.
+bool GetWalletAssetHolderOutpoint(CWallet* pwallet, const std::string& assetName,
+                                  std::string& holderAddress, COutPoint& outpointRet,
+                                  CAmount& amountRet, bool& fFoundOwnerControlledHolding);
 
 //! Creates new asset issuance transaction
 bool CreateAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, const CNewAsset& asset, const std::string& address, std::pair<int, std::string>& error, CWalletTx& wtxNew, CReserveKey& reservekey, CAmount& nFeeRequired, std::string* verifier_string = nullptr);

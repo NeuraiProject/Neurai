@@ -937,9 +937,25 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
 
                 const bool transfersOwnerToken = TxContainsAssetTransfer(tx, ownerTokenName);
                 if (!spendsOwnerToken || !transfersOwnerToken) {
-                    return state.DoS(100, false, REJECT_INVALID,
-                                   "bad-txns-depin-transfer-not-by-owner: DEPIN assets can only be transferred by the owner",
-                                   false, "", tx.GetHash());
+                    // Single exception to the soulbound rule: a self-revocation.
+                    // The holder relocates the asset to its own address --
+                    // every input and every output of the asset at the same
+                    // address, plus exactly one self-revocation null data for
+                    // that (asset, address) -- so the token never changes
+                    // hands. Spending the asset's own UTXO is the proof of key
+                    // control and tenure; no index is consulted.
+                    //
+                    // Only the ownerless form qualifies. A transaction that
+                    // spends or transfers the owner token is the owner acting,
+                    // and keeps today's rule unchanged.
+                    std::string selfRevokeError;
+                    const bool fIsSelfRevocation = !spendsOwnerToken && !transfersOwnerToken &&
+                        IsDepinSelfRevocationTransaction(tx, inputs, transfer.strName, selfRevokeError);
+                    if (!fIsSelfRevocation) {
+                        return state.DoS(100, false, REJECT_INVALID,
+                                       "bad-txns-depin-transfer-not-by-owner: DEPIN assets can only be transferred by the owner",
+                                       false, "", tx.GetHash());
+                    }
                 }
             }
 

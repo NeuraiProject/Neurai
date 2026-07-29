@@ -3438,8 +3438,14 @@ UniValue selfrevokedepin(const JSONRPCRequest& request)
             "selfrevokedepin \"asset_name\"\n"
             + AssetActivationWarning() +
             "\nSelf-revoke a DEPIN asset held in this wallet\n"
+            "\nBuilds a self-transfer: one UTXO of the asset is spent and returned to its own\n"
+            "\naddress together with the revocation marker. Spending that UTXO is the proof of\n"
+            "\nownership, so the address needs no XNA of its own; the fee is paid by the wallet.\n"
             "\nThe asset will be marked as invalid but will remain in the address\n"
-            "\nThis action can only be undone by the asset owner\n"
+            "\nThis action can only be undone by the asset owner (unfreezedepin). If the\n"
+            "\nrevoked address also held the owner token, the owner must first move the owner\n"
+            "\ntoken to another address and then unfreeze; this wallet refuses to auto-pick\n"
+            "\nthat address for exactly that reason.\n"
 
             "\nArguments:\n"
             "1. \"asset_name\"       (string, required) The DEPIN asset name (must start with &)\n"
@@ -3469,19 +3475,26 @@ UniValue selfrevokedepin(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Not a valid DEPIN asset (must start with &)");
     }
 
-    // Find which address in the wallet holds this DEPIN asset
+    // One concrete UTXO of the asset, at an address the wallet controls. The
+    // consensus pattern is a self-relocation -- every input and output of the
+    // asset at the same address plus the flag-1 null data -- so the wallet must
+    // pin a specific outpoint and re-transfer exactly its amount. Asking for the
+    // aggregate balance would let coin selection recruit UTXOs from other
+    // addresses and produce a transaction consensus rejects intermittently.
+    //
+    // AvailableAssets answers from the wallet's own outputs; no -assetindex.
     std::string holderAddress = "";
+    COutPoint revokeOutpoint;
+    CAmount revokeAmount = 0;
     bool fFoundOwnerControlledHolding = false;
-
-    // Ask the wallet, not the asset index. This used to walk every wallet
-    // address calling GetBestAssetAddressAmount(), which resolves through
-    // -assetindex: on a default node (DEFAULT_ASSETINDEX = false) the loop found
-    // nothing and this RPC reported "does not hold" for an asset the wallet was
-    // holding. AvailableAssets answers from the wallet's own outputs.
-    GetWalletAssetHolderAddress(pwallet, assetName, holderAddress, fFoundOwnerControlledHolding);
+    GetWalletAssetHolderOutpoint(pwallet, assetName, holderAddress, revokeOutpoint,
+                                 revokeAmount, fFoundOwnerControlledHolding);
 
     if (holderAddress.empty()) {
         if (fFoundOwnerControlledHolding) {
+            // Consensus permits an owner self-revocation, but recovering takes
+            // two transactions (move the owner token off the address, then
+            // unfreeze), so the wallet refuses to auto-pick that address.
             throw JSONRPCError(RPC_INVALID_REQUEST, "The address holding the DEPIN owner token cannot self-revoke");
         }
         throw JSONRPCError(RPC_WALLET_ERROR, "This wallet does not hold the specified DEPIN asset");
@@ -3496,6 +3509,10 @@ UniValue selfrevokedepin(const JSONRPCRequest& request)
     CWalletTx transaction;
     CAmount nRequiredFee;
     CCoinControl ctrl;
+    // Restrict asset inputs to exactly the pinned outpoint. With
+    // fAllowOtherInputs=false (the default), AvailableCoinsAll exposes only
+    // selected asset outpoints to coin selection (wallet.cpp).
+    ctrl.SelectAsset(revokeOutpoint);
 
     // Create change address
     CTxDestination change_dest;
@@ -3506,15 +3523,37 @@ UniValue selfrevokedepin(const JSONRPCRequest& request)
     std::string change_address = EncodeDestination(change_dest);
 
     std::pair<int, std::string> error;
+
+    // The self-transfer: the pinned UTXO back to its own address, exact amount.
     std::vector< std::pair<CAssetTransfer, std::string> > vTransfers;
+    vTransfers.emplace_back(std::make_pair(CAssetTransfer(assetName, revokeAmount), holderAddress));
 
     // Create the null asset data with flag=1 (self-revoke)
     std::vector< std::pair<CNullAssetTxData, std::string> > vecAssetData;
     vecAssetData.push_back(std::make_pair(CNullAssetTxData(assetName, 1), holderAddress));
 
-    // Create the Transaction (no asset transfers needed, just the null data)
+    // CreateTransferAssetTransaction recognises the self-revocation pattern and
+    // does NOT attach the owner token (attaching it would reclassify the action
+    // as an owner freeze).
     if (!CreateTransferAssetTransaction(pwallet, ctrl, vTransfers, "", error, transaction, reservekey, nRequiredFee, &vecAssetData))
         throw JSONRPCError(error.first, error.second);
+
+    // Belt and braces before broadcasting: the transaction must spend the
+    // pinned outpoint and no other asset input, or consensus will reject it --
+    // better to fail here with a cause than to broadcast an invalid tx.
+    {
+        bool fSpendsPinned = false;
+        for (const CTxIn& txin : transaction.tx->vin) {
+            if (txin.prevout == revokeOutpoint) {
+                fSpendsPinned = true;
+                break;
+            }
+        }
+        if (!fSpendsPinned) {
+            throw JSONRPCError(RPC_WALLET_ERROR,
+                               "Internal error: the built transaction does not spend the selected asset UTXO");
+        }
+    }
 
     // Send the Transaction to the network
     std::string txid;

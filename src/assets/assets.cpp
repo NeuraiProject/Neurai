@@ -3304,6 +3304,136 @@ bool TxSpendsDEPINOwnerTokenFromAddress(const CTransaction& tx, const CCoinsView
     return false;
 }
 
+bool IsDepinSelfRevocationTransaction(const CTransaction& tx, const CCoinsViewCache& inputs,
+                                      const std::string& assetName, std::string& strError)
+{
+    const std::string ownerTokenName = assetName + OWNER_TAG;
+
+    // --- Output side: one fresh pass over the WHOLE vout, deliberately not the
+    // caller's loop position. The soulbound rule runs inside a per-output loop,
+    // and the self-revocation null data usually sits AFTER the transfer in vout
+    // order (the wallet appends null datas last); deciding from a partial view
+    // would make the verdict depend on output ordering.
+    std::string revokeAddress;
+    unsigned int nNullData = 0;
+    std::set<std::string> transferOutAddresses;
+
+    for (const auto& txout : tx.vout) {
+        if (txout.scriptPubKey.IsNullAssetTxDataScript()) {
+            CNullAssetTxData nullData;
+            std::string nullAddress;
+            if (!AssetNullDataFromScript(txout.scriptPubKey, nullData, nullAddress)) {
+                strError = "self-revoke: unreadable null asset data";
+                return false;
+            }
+            if (nullData.asset_name != assetName)
+                continue;
+
+            // Exactly one action for this asset, and it must be a revocation
+            // (flag 1). Counting instead of taking the first is what rejects a
+            // second, conflicting null data for another address.
+            nNullData++;
+            if (nullData.flag != 1) {
+                strError = "self-revoke: null data flag is not a self-revocation";
+                return false;
+            }
+            revokeAddress = nullAddress;
+            continue;
+        }
+
+        int nType = 0;
+        bool fIsOwner = false;
+        if (!txout.scriptPubKey.IsAssetScript(nType, fIsOwner))
+            continue;
+
+        CAssetOutputEntry outEntry;
+        if (!GetAssetData(txout.scriptPubKey, outEntry)) {
+            // Fail closed: an asset output that cannot be read might be this
+            // asset. "All outputs at one address" cannot be asserted over a set
+            // that was not read in full.
+            strError = "self-revoke: unreadable asset output";
+            return false;
+        }
+
+        if (outEntry.assetName == ownerTokenName) {
+            // Any owner-token output reclassifies the action as the owner's;
+            // the exception is only for the ownerless form.
+            strError = "self-revoke: transaction moves the owner token";
+            return false;
+        }
+        if (outEntry.assetName != assetName)
+            continue;
+
+        if (outEntry.type != TX_TRANSFER_ASSET) {
+            // Issuing or reissuing the asset in the same transaction is not a
+            // self-relocation, whatever else the transaction carries.
+            strError = "self-revoke: transaction issues or reissues the asset";
+            return false;
+        }
+
+        const std::string outAddress = EncodeDestination(outEntry.destination);
+        if (outAddress.empty()) {
+            strError = "self-revoke: asset output with unextractable destination";
+            return false;
+        }
+        transferOutAddresses.insert(outAddress);
+    }
+
+    if (nNullData != 1) {
+        strError = "self-revoke: expected exactly one self-revocation null data for the asset";
+        return false;
+    }
+    if (transferOutAddresses.size() != 1 || *transferOutAddresses.begin() != revokeAddress) {
+        strError = "self-revoke: every asset output must pay the revoked address";
+        return false;
+    }
+
+    // --- Input side: every input of the asset must come from the revoked
+    // address. Spending those UTXOs is the whole proof -- it demonstrates key
+    // control of the address AND tenure of the token in one act, with no
+    // address->asset index involved. The amounts need no checking here: the
+    // inputs/outputs balance rule already rejects any mismatch for every asset.
+    bool fSpendsAssetFromRevokedAddress = false;
+    for (const auto& txin : tx.vin) {
+        const Coin& coin = inputs.AccessCoin(txin.prevout);
+        if (coin.IsSpent())
+            continue;
+        if (!coin.out.scriptPubKey.IsAssetScript())
+            continue;
+
+        CAssetOutputEntry inEntry;
+        if (!GetAssetData(coin.out.scriptPubKey, inEntry)) {
+            strError = "self-revoke: unreadable asset input";
+            return false;
+        }
+
+        if (inEntry.assetName == ownerTokenName) {
+            strError = "self-revoke: transaction spends the owner token";
+            return false;
+        }
+        if (inEntry.assetName != assetName)
+            continue;
+
+        // Both shapes count: the issuance output the owner distributed to this
+        // address (the common case -- a soulbound token has usually never
+        // moved) and a transfer output if it ever did move.
+        if (EncodeDestination(inEntry.destination) != revokeAddress) {
+            strError = "self-revoke: asset input from a different address";
+            return false;
+        }
+        fSpendsAssetFromRevokedAddress = true;
+    }
+
+    if (!fSpendsAssetFromRevokedAddress) {
+        strError = "self-revoke: transaction does not spend the asset from the revoked address";
+        return false;
+    }
+
+    strError.clear();
+    return true;
+}
+
+
 #ifdef ENABLE_WALLET
 //! sets _balances_ with the total quantity of each owned asset
 bool GetAllMyAssetBalances(std::map<std::string, std::vector<COutput> >& outputs, std::map<std::string, CAmount>& amounts, const int confirmations, const std::string& prefix) {
@@ -3466,6 +3596,75 @@ bool GetWalletAssetHolderAddress(CWallet* pwallet, const std::string& assetName,
         }
 
         holderAddress = address;
+        return true;
+    }
+
+    return false;
+}
+
+// One concrete UTXO of `assetName`, for the self-revocation self-transfer.
+//
+// A specific outpoint with its exact amount, not the address's aggregate
+// balance: asking for the aggregate lets coin selection top the amount up with
+// UTXOs from OTHER addresses, which breaks the consensus pattern ("every input
+// of the asset at the revoked address") intermittently -- it depends on what
+// UTXOs the wallet happens to hold when the call is made. One outpoint,
+// re-transferred for exactly its amount, can never recruit extra inputs.
+//
+// Skips addresses that also hold the owner token, same as
+// GetWalletAssetHolderAddress: consensus permits an owner self-revocation, but
+// recovering from it takes two transactions (move &X! away, then unfreeze), so
+// the wallet does not auto-pick that address.
+bool GetWalletAssetHolderOutpoint(CWallet* pwallet, const std::string& assetName,
+                                  std::string& holderAddress, COutPoint& outpointRet,
+                                  CAmount& amountRet, bool& fFoundOwnerControlledHolding)
+{
+    holderAddress.clear();
+    outpointRet.SetNull();
+    amountRet = 0;
+    fFoundOwnerControlledHolding = false;
+
+    if (!pwallet) {
+        return false;
+    }
+
+    std::map<std::string, std::vector<COutput>> mapAssetCoins;
+    pwallet->AvailableAssets(mapAssetCoins, true, nullptr, 1, MAX_MONEY, MAX_MONEY, 0, 0);
+
+    const auto it = mapAssetCoins.find(assetName);
+    if (it == mapAssetCoins.end()) {
+        return false;
+    }
+
+    std::string ownerAddress;
+    const bool fHasOwnerToken = GetWalletOwnerTokenAddress(pwallet, assetName + OWNER_TAG, ownerAddress);
+
+    for (const auto& output : it->second) {
+        if (!output.tx || !output.tx->tx || output.i >= output.tx->tx->vout.size()) {
+            continue;
+        }
+
+        const CScript& script = output.tx->tx->vout[output.i].scriptPubKey;
+        CAssetOutputEntry entry;
+        if (!GetAssetData(script, entry) || entry.assetName != assetName) {
+            continue;
+        }
+        if (entry.nAmount <= 0) {
+            continue;
+        }
+
+        const std::string address = EncodeDestination(entry.destination);
+        if (address.empty()) {
+            continue;
+        }
+        if (fHasOwnerToken && address == ownerAddress) {
+            fFoundOwnerControlledHolding = true;
+            continue;
+        }
+
+        holderAddress = address;
+        outpointRet = COutPoint(output.tx->GetHash(), output.i);
+        amountRet = entry.nAmount;
         return true;
     }
 
@@ -3874,6 +4073,28 @@ bool CreateTransferAssetTransaction(CWallet* pwallet, const CCoinControl& coinCo
 
         const std::string ownerTokenName = transfer.first.strName + OWNER_TAG;
         if (depinOwnerTransfersAdded.count(ownerTokenName)) {
+            continue;
+        }
+
+        // Self-revocation: a self-transfer accompanied by its own flag-1 null
+        // data for the same asset and the same address must go out WITHOUT the
+        // owner token. Attaching it would reclassify the action as an owner
+        // freeze (classification is by owner-token presence), and requiring it
+        // would break the ordinary holder, who does not have it. Consensus
+        // validates the full pattern; this only stops the wallet from
+        // sabotaging it.
+        bool fIsSelfRevocation = false;
+        if (nullAssetTxData) {
+            for (const auto& nullPair : *nullAssetTxData) {
+                if (nullPair.first.asset_name == transfer.first.strName &&
+                    nullPair.first.flag == 1 &&
+                    nullPair.second == transfer.second) {
+                    fIsSelfRevocation = true;
+                    break;
+                }
+            }
+        }
+        if (fIsSelfRevocation) {
             continue;
         }
 
@@ -4810,10 +5031,15 @@ bool VerifySelfRestrictionChange(CAssetsCache& cache, const CNullAssetTxData& da
         return false;
     }
 
-    if (AddressHasDEPINOwnerToken(cache, data.asset_name, address)) {
-        strError = "bad-txns-depin-owner-holder-address-cannot-self-revoke";
-        return false;
-    }
+    // No owner-token guard here, on purpose. It used to reject when the address
+    // held the owner token, via AddressHasDEPINOwnerToken -> fAssetIndex -- a
+    // local, off-by-default option, so nodes disagreed on the same transaction.
+    // The check is the proof of a negative ("this address does NOT hold an
+    // unspent &X!"), which a single transaction cannot demonstrate; it cannot be
+    // rebuilt structurally. An owner self-revoking is a voluntary act by the
+    // party with the most authority, reversible via unfreezedepin (after moving
+    // the owner token off the address first -- the structural owner checks
+    // reject spending it from, or returning it to, the revoked address).
 
     // Check if already self-revoked
     if (cache.CheckForDEPINSelfRestriction(data.asset_name, address, true)) {

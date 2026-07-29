@@ -63,6 +63,7 @@ NEURAI_TESTS =\
   test/depin_ancestor_recipients_tests.cpp \
   test/depin_assetindex_consensus_tests.cpp \
   test/depin_rpc_params_tests.cpp \
+  test/depin_selfrevoke_tests.cpp \
   test/depin_subasset_tests.cpp \
   test/depinecies_tests.cpp \
   test/depinmcpworker_tests.cpp \
@@ -155,6 +156,7 @@ NEURAI_TESTS += \
   wallet/test/wallet_test_fixture.cpp \
   wallet/test/wallet_test_fixture.h \
   wallet/test/accounting_tests.cpp \
+  wallet/test/depin_selfrevoke_wallet_tests.cpp \
   wallet/test/depin_subasset_wallet_tests.cpp \
   wallet/test/wallet_tests.cpp \
   wallet/test/pqwallet_guard_tests.cpp \
