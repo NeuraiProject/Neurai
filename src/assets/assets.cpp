@@ -21,6 +21,8 @@
 #include <rpc/protocol.h>
 #include <net.h>
 #include "assets.h"
+
+#include <atomic>
 #include "assetdb.h"
 #include "assettypes.h"
 #include "protocol.h"
@@ -3304,9 +3306,22 @@ bool TxSpendsDEPINOwnerTokenFromAddress(const CTransaction& tx, const CCoinsView
     return false;
 }
 
+// Regression instrumentation, not API: counts evaluations so the tests can
+// pin "once per (transaction, asset)" -- the memo in CheckTxAssets is what
+// keeps a split self-revocation from turning quadratic, and the answer stays
+// correct without it, so only this counter can see the regression. The cost in
+// production is one relaxed atomic increment on a rare code path; accepted
+// explicitly, because this file is compiled once into the server library and a
+// test-only macro would strip it from the test binary too. Deliberately NOT
+// declared in assets.h: the test declares the extern itself, so this never
+// becomes part of the assets interface.
+std::atomic<uint64_t> gDepinSelfRevocationEvaluations{0};
+
 bool IsDepinSelfRevocationTransaction(const CTransaction& tx, const CCoinsViewCache& inputs,
                                       const std::string& assetName, std::string& strError)
 {
+    gDepinSelfRevocationEvaluations.fetch_add(1, std::memory_order_relaxed);
+
     const std::string ownerTokenName = assetName + OWNER_TAG;
 
     // --- Output side: one fresh pass over the WHOLE vout, deliberately not the

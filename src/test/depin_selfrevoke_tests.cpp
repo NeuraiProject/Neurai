@@ -39,8 +39,13 @@
 
 #include <boost/test/unit_test.hpp>
 
+#include <atomic>
 #include <string>
 #include <vector>
+
+// Regression instrumentation defined in assets.cpp. Deliberately declared here
+// rather than in assets.h: it is a test seam, not part of the assets API.
+extern std::atomic<uint64_t> gDepinSelfRevocationEvaluations;
 
 namespace {
 
@@ -605,6 +610,76 @@ BOOST_AUTO_TEST_CASE(no_asset_input_is_denied)
     BOOST_CHECK(!IsDepinSelfRevocationTransaction(fixture.Tx(), fixture.view, ASSET, error));
     BOOST_CHECK_MESSAGE(error.find("does not spend the asset") != std::string::npos,
                         "unexpected denial reason: " + error);
+}
+
+// The exception is evaluated ONCE per (transaction, asset), however many
+// outputs the self-transfer is split into. The helper scans every vin and
+// vout, and the soulbound rule fires once per &X output; without the memo in
+// CheckTxAssets the cost is quadratic in a shape the transaction author
+// controls -- a split self-revocation, the very form test 6c allows. The
+// answer stays correct either way, so only the evaluation counter can see it.
+BOOST_AUTO_TEST_CASE(split_self_revocation_is_evaluated_once)
+{
+    const std::string holder = NewAddress();
+    const unsigned int kOutputs = 60;
+
+    TxFixture fixture;
+    fixture.AddInput(TransferScript(ASSET, 100 * kOutputs, holder));
+    for (unsigned int n = 0; n < kOutputs; ++n) {
+        fixture.AddOutput(TransferScript(ASSET, 100, holder));
+    }
+    fixture.AddOutput(NullDataScript(ASSET, 1, holder));
+
+    gDepinSelfRevocationEvaluations = 0;
+    std::string reason;
+    BOOST_CHECK_MESSAGE(CheckAssets(fixture, reason),
+                        "split self-revocation rejected: " + reason);
+    BOOST_CHECK_EQUAL(gDepinSelfRevocationEvaluations.load(), 1U);
+
+    // A rejection is cached across that asset's outputs too: the denied shape
+    // is evaluated once, not once per output.
+    TxFixture bad;
+    const std::string other = NewAddress();
+    bad.AddInput(TransferScript(ASSET, 300, holder));
+    bad.AddOutput(TransferScript(ASSET, 100, holder));
+    bad.AddOutput(TransferScript(ASSET, 100, holder));
+    bad.AddOutput(TransferScript(ASSET, 100, other));   // breaks the pattern
+    bad.AddOutput(NullDataScript(ASSET, 1, holder));
+
+    gDepinSelfRevocationEvaluations = 0;
+    BOOST_CHECK(!CheckAssets(bad, reason));
+    BOOST_CHECK_EQUAL(gDepinSelfRevocationEvaluations.load(), 1U);
+}
+
+// The memo key is the ASSET, not the transaction: two DEPIN assets self-revoked
+// in one transaction get one evaluation each, and each verdict stands on its
+// own. A memo collapsed to a single per-transaction flag would report one
+// evaluation here -- and worse, reuse the first asset's verdict for the second.
+BOOST_AUTO_TEST_CASE(two_assets_in_one_transaction_are_evaluated_separately)
+{
+    const std::string OTHER_ASSET = "&GADGET";
+    const std::string holderA = NewAddress();
+    const std::string holderB = NewAddress();
+
+    TxFixture fixture;
+    fixture.AddInput(TransferScript(ASSET, 100, holderA));
+    fixture.AddInput(TransferScript(OTHER_ASSET, 40, holderB));
+    fixture.AddOutput(TransferScript(ASSET, 60, holderA));
+    fixture.AddOutput(TransferScript(OTHER_ASSET, 40, holderB));
+    fixture.AddOutput(NullDataScript(ASSET, 1, holderA));
+    fixture.AddOutput(TransferScript(ASSET, 40, holderA));
+    {
+        CNullAssetTxData data(OTHER_ASSET, 1);
+        CScript script = GetScriptForNullAssetDataDestination(DecodeDestination(holderB));
+        data.ConstructTransaction(script);
+        fixture.AddOutput(script);
+    }
+
+    gDepinSelfRevocationEvaluations = 0;
+    std::string reason;
+    BOOST_CHECK_MESSAGE(CheckAssets(fixture, reason),
+                        "double self-revocation rejected: " + reason);
+    BOOST_CHECK_EQUAL(gDepinSelfRevocationEvaluations.load(), 2U);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

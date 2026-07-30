@@ -855,6 +855,17 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
 
     // Create map that stores the amount of an asset transaction output. Used to verify no assets are burned
     std::map<std::string, CAmount> totalOutputs;
+
+    // Memo for the self-revocation exception, one verdict per DEPIN asset.
+    // IsDepinSelfRevocationTransaction() scans every vin and vout, and the
+    // soulbound rule below runs once per TX_TRANSFER_ASSET output of that same
+    // asset -- and a valid self-revocation may split its self-transfer across
+    // many outputs (that shape is deliberately allowed). Without the memo the
+    // cost is quadratic in the output count, in consensus code an attacker
+    // chooses the shape of. The verdict only depends on (tx, inputs, asset),
+    // all invariant across this loop, so one evaluation per asset is exact.
+    std::map<std::string, bool> mapDepinSelfRevocationVerdict;
+
     int index = 0;
     int64_t currentTime = GetTime();
     std::string strError = "";
@@ -948,9 +959,17 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
                     // Only the ownerless form qualifies. A transaction that
                     // spends or transfers the owner token is the owner acting,
                     // and keeps today's rule unchanged.
-                    std::string selfRevokeError;
-                    const bool fIsSelfRevocation = !spendsOwnerToken && !transfersOwnerToken &&
-                        IsDepinSelfRevocationTransaction(tx, inputs, transfer.strName, selfRevokeError);
+                    bool fIsSelfRevocation = false;
+                    if (!spendsOwnerToken && !transfersOwnerToken) {
+                        auto memo = mapDepinSelfRevocationVerdict.find(transfer.strName);
+                        if (memo == mapDepinSelfRevocationVerdict.end()) {
+                            std::string selfRevokeError;
+                            memo = mapDepinSelfRevocationVerdict.emplace(
+                                transfer.strName,
+                                IsDepinSelfRevocationTransaction(tx, inputs, transfer.strName, selfRevokeError)).first;
+                        }
+                        fIsSelfRevocation = memo->second;
+                    }
                     if (!fIsSelfRevocation) {
                         return state.DoS(100, false, REJECT_INVALID,
                                        "bad-txns-depin-transfer-not-by-owner: DEPIN assets can only be transferred by the owner",
