@@ -47,6 +47,68 @@ Is a private and temporary messaging system for Neurai that enables encrypted co
   - Receive and decrypt messages
 - Automatic ownership verification
 
+### 6. Hierarchical Sections
+
+Sub-assets of the pool token act as chat **sections** with downward
+visibility. With `-depinmsgtoken=&TEST`:
+
+- `&TEST` is the root; `&TEST/GENERAL` and `&TEST/OTHERS` are sections
+  (creating a sub-DEPIN requires the parent's owner token, so only the root
+  owner can open sections).
+- An **active** holder of `&TEST` reads and writes in the root and in every
+  descendant section.
+- A holder of only `&TEST/GENERAL` participates there and in its descendants,
+  never in the root or in sibling sections.
+
+"Active" means: positive balance, not frozen by the owner (`freezedepin`) and
+not self-revoked (`selfrevokedepin`). Access is inherited per (asset, address)
+pair: an address revoked in a section but still holding the active root keeps
+access — the root grants the branch, a section-level revocation cannot take
+that away.
+
+**How it works**: the `token` parameter of `depinsendmsg`, `depingetmsg`,
+`depinreceivemsg` and the gateway commands accepts a section name. Sending to
+a section encrypts for the active holders of the section **and of every
+ancestor up to the pool root**; reading with a section token returns only that
+section's subtree (its "tab"). `depinlistsections` lists the sections for UI
+tabs — over the unauthenticated DePIN port it serves **names only**; the
+address mode (per-address access and message counters) requires node RPC.
+`depinclearmsg` accepts an optional scope so a section owner can purge their
+subtree (never parents or siblings). Old clients that only ever use the root
+token are unaffected — the root's subtree is the whole pool.
+
+**Remote sends** query the serving pool's `INFO` first and scope the recipient
+set to that pool's root and `maxRecipients`. This is deliberate: the pool's
+port exposes raw payloads, so every extra `recipientKeys` entry is an extra
+reader — encrypting up to the absolute root would include holders of ancestors
+the pool does not even serve. If `INFO` cannot be queried, the send fails
+rather than guess the scope.
+
+**Recipient limit**: a send **fails** (never silently truncates) when the
+union of eligible holders across the ancestor chain exceeds
+`MAX_DEPIN_RECIPIENTS` (50). A leaf section can hit the limit before the root
+does, because it aggregates the holders of all its ancestors.
+
+**Privacy limits** (read before relying on sections):
+
+- Section names, the hierarchy (`&TEST/GENERAL` → `&TEST`) and token holdings
+  are **public on chain**. Sections protect message *content* (ECIES), not
+  membership. Opaque labels (`&TEST/K7M2Q`) hide meaning from casual
+  observers, but not existence, hierarchy or holdings.
+- "The root sees everything" only holds for holders with a **revealed public
+  key**; holders that never spent from their address are skipped (reported as
+  `skipped_no_pubkey` in `depinsendmsg`).
+- `recipientKeys` is a snapshot chosen by the sender: sections compute the
+  legitimate recipient set, but cannot prove a sender did not add an external
+  public key. The pool caps the recipient *count* per message as hardening.
+- The token filter in `depinreceivemsg` is a convenience scope, **not access
+  control** — that RPC requires no proof of ownership (unlike gateway
+  `AUTH`+`GETMESSAGES`). What an address can actually read is fixed
+  cryptographically by `recipientKeys` + ECIES.
+- A pool configured on a deep section (`-depinmsgtoken=&TEST/GENERAL`) serves
+  only that subtree: holders of `&TEST` are outside it for that node.
+  Configure the pool at the root of what it is meant to serve.
+
 ---
 
 ## Technical Architecture

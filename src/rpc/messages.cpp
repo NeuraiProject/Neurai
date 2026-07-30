@@ -611,7 +611,10 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
                 "depinsendmsg \"token\" \"ip[:port]\" \"message\" \"fromaddress\" (port)\n"
                 "\nSend an encrypted message through a remote DePIN gateway (challenge/response)\n"
                 "\nArguments:\n"
-                "1. \"token\"        (string, required) Token name\n"
+                "1. \"token\"        (string, required) Token name. May be a section (sub-asset) such as\n"
+                "                  \"&TOKEN/GENERAL\": recipients are the active holders of the section\n"
+                "                  and of every ancestor up to the pool root; sending is authorized by\n"
+                "                  holding the section or any ancestor.\n"
                 "2. \"ip[:port]\"    (string, required) Target node address (optional :port to contact remote gateway)\n"
                 "3. \"message\"      (string, required) Message to send (max 1KB)\n"
                 "4. \"fromaddress\" (string, required) Wallet address used for signing/encryption\n"
@@ -620,7 +623,11 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
                 "{\n"
                 "  \"result\": \"success\",          (string) Status\n"
                 "  \"hash\": \"hash\",                (string) Message hash\n"
+                "  \"token\": \"name\",               (string) Token/section the message was sent to\n"
+                "  \"ancestors\": [...],           (array) Ancestor chain whose holders form the recipient set\n"
                 "  \"recipients\": n,              (numeric) Number of recipients\n"
+                "  \"skipped_no_pubkey\": n,       (numeric) Holders skipped for lacking a revealed public key\n"
+                "  \"skipped_restricted\": n,      (numeric) Holders skipped as frozen or self-revoked\n"
                 "  \"timestamp\": n                (numeric) Message timestamp\n"
                 "}\n"
                 "\nExamples:\n"
@@ -633,9 +640,6 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
     if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
         return NullUniValue;
     }
-
-    LOCK2(cs_main, pwallet->cs_wallet);
-    EnsureWalletIsUnlocked(pwallet);
 
     std::string token = request.params[0].get_str();
     std::string destinationParam = request.params[1].get_str();
@@ -699,6 +703,44 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
                                    message.size(), MAX_DEPIN_MESSAGE_SIZE));
     }
 
+    // Determine if this is a local or remote operation
+    // Local if: no gateway host specified OR server-authenticated request
+    localPoolActive = localPoolActive || gatewayHost.empty();
+
+    // Remote scope query BEFORE taking cs_main/cs_wallet: this is network I/O
+    // against the serving node, and that node's INFO handler may itself take
+    // cs_main (pool-pubkey derivation). When client and server share a
+    // process -- a self-send, or the in-process tests -- holding the locks
+    // across the round-trip stalls both sides until the socket times out.
+    //
+    // The serving pool's root becomes the derivation stopAt and its
+    // maxRecipients the resolution limit: deriving to the absolute root would
+    // encrypt for holders of ancestors the pool does not serve, and its port
+    // exposes raw payloads, so an extra recipientKeys entry is an extra
+    // reader. No INFO, no send -- guessing the scope would be that leak.
+    std::string recipientsStopAt;
+    size_t recipientsLimit = MAX_DEPIN_RECIPIENTS;
+    if (!localPoolActive) {
+        CDepinMsgPoolClient::CDepinRemoteServerInfo remoteInfo;
+        std::string infoError;
+        if (!CDepinMsgPoolClient::GetRemoteServerInfo(gatewayHost, gatewayPortFromAddress,
+                                                      remoteInfo, infoError)) {
+            throw JSONRPCError(RPC_MISC_ERROR,
+                              strprintf("Failed to query the remote pool configuration (INFO): %s. "
+                                       "Refusing to guess the recipient scope.", infoError));
+        }
+        if (!IsDepinSectionOrRoot(token, remoteInfo.token)) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER,
+                              strprintf("Token '%s' is not served by the remote pool (its root is '%s')",
+                                       token, remoteInfo.token));
+        }
+        recipientsStopAt = remoteInfo.token;
+        recipientsLimit = std::min<size_t>(remoteInfo.maxRecipients, MAX_DEPIN_RECIPIENTS);
+    }
+
+    LOCK2(cs_main, pwallet->cs_wallet);
+    EnsureWalletIsUnlocked(pwallet);
+
     auto ensureWalletOwnsAddress = [&](const std::string& addr, bool enforceTokenOwnership) {
         CTxDestination dest = DecodeDestination(addr);
         if (!IsValidDestination(dest)) {
@@ -720,56 +762,94 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
         }
     };
 
-    // Determine if this is a local or remote operation
-    // Local if: no gateway host specified OR server-authenticated request
-    localPoolActive = localPoolActive || gatewayHost.empty();
-
     std::map<std::string, std::vector<COutput>> mapAssetCoins;
     pwallet->AvailableAssets(mapAssetCoins);
 
-    auto walletHasTokenAtAddress = [&](const std::string& addr) {
-        if (!mapAssetCoins.count(token)) {
-            return false;
-        }
-        for (const auto& out : mapAssetCoins[token]) {
-            CTxDestination dest;
-            if (ExtractDestination(out.tx->tx->vout[out.i].scriptPubKey, dest)) {
-                if (EncodeDestination(dest) == addr) {
-                    return true;
+    // Sections: sending to "&TEST/GENERAL" is authorized by holding the section
+    // OR any of its ancestors ("&TEST" grants the whole branch), so the wallet
+    // check walks the ancestor chain instead of demanding the exact token.
+    std::string ancestorsError;
+    std::vector<std::string> tokenAncestors;
+    if (!DeriveDepinAncestors(token, "", tokenAncestors, ancestorsError)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, ancestorsError);
+    }
+
+    auto walletHasBranchTokenAtAddress = [&](const std::string& addr) {
+        for (const std::string& ancestor : tokenAncestors) {
+            if (!mapAssetCoins.count(ancestor)) {
+                continue;
+            }
+            for (const auto& out : mapAssetCoins[ancestor]) {
+                CTxDestination dest;
+                if (ExtractDestination(out.tx->tx->vout[out.i].scriptPubKey, dest)) {
+                    if (EncodeDestination(dest) == addr) {
+                        return true;
+                    }
                 }
             }
         }
         return false;
     };
 
-    auto requireAddressWithTokens = [&](const std::string& addr) {
-        // Only check wallet ownership if NOT called from DePIN server
-        if (!request.fSkipWalletCheck) {
-            ensureWalletOwnsAddress(addr, false);
-        }
-        if (!walletHasTokenAtAddress(addr)) {
-            throw JSONRPCError(RPC_WALLET_ERROR,
-                              strprintf("Wallet does not own any %s tokens at %s", token, addr));
-        }
-    };
-
     // ========== PREPARE MESSAGE (always local, regardless of destination) ==========
 
-    // Verify sender owns address and has token (not needed if server-authenticated)
+    // Verify sender owns address and has a branch token (not needed if server-authenticated)
     if (!request.fSkipWalletCheck) {
-        requireAddressWithTokens(senderAddress);
-        if (!walletHasTokenAtAddress(senderAddress)) {
+        ensureWalletOwnsAddress(senderAddress, false);
+        if (!walletHasBranchTokenAtAddress(senderAddress)) {
             throw JSONRPCError(RPC_WALLET_ERROR,
-                              strprintf("Wallet does not own any %s tokens at %s", token, senderAddress));
+                              strprintf("Wallet does not own %s or any of its ancestor tokens at %s",
+                                       token, senderAddress));
         }
     }
 
-    // Get token holders (needed for encryption)
+    // Recipients: the ACTIVE holders of the token and of every ancestor UP TO
+    // THE SERVING POOL'S ROOT, resolved by GetDepinAncestorRecipients -- exact
+    // reads, one flush, freeze/self-revoke respected, missing pubkeys skipped
+    // and counted. For a remote send the scope was fixed above from the remote
+    // INFO, before the locks; the local pool fills it here.
+    if (localPoolActive) {
+        if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
+            throw JSONRPCError(RPC_MISC_ERROR, "DePIN messaging pool is not enabled");
+        }
+        recipientsStopAt = pDepinMsgPool->GetActiveToken();
+        // Never zero: Initialize() rejects maxRecipients == 0, and the remote
+        // branch above gets the same guarantee from GetRemoteServerInfo().
+        recipientsLimit = std::min<size_t>(pDepinMsgPool->GetMaxRecipients(), MAX_DEPIN_RECIPIENTS);
+    }
+
     std::string error;
-    std::vector<std::string> holders = GetTokenHolders(token, MAX_DEPIN_RECIPIENTS, error);
+    CDepinAncestorRecipients branchRecipients;
+    if (!GetDepinAncestorRecipients(token, recipientsLimit, branchRecipients, error,
+                                    recipientsStopAt)) {
+        throw JSONRPCError(RPC_MISC_ERROR, strprintf("Failed to get token holders: %s", error));
+    }
+
+    // The messaging limit is a hard error, never a silent cut: sending to the
+    // first N of an unknown set would misrepresent who received the message.
+    if (branchRecipients.truncated) {
+        std::string ancestorList;
+        for (const std::string& ancestor : branchRecipients.ancestors) {
+            if (!ancestorList.empty()) ancestorList += ", ";
+            ancestorList += ancestor;
+        }
+        throw JSONRPCError(RPC_MISC_ERROR,
+                          strprintf("Section '%s' resolves to more than %u eligible recipients "
+                                   "(the serving pool's limit is %u). The recipient set is the "
+                                   "union of holders of: %s.",
+                                   token, (unsigned int)recipientsLimit,
+                                   (unsigned int)recipientsLimit, ancestorList));
+    }
+
+    std::vector<std::string> holders;
+    for (const CDepinRecipient& recipient : branchRecipients.recipients) {
+        holders.push_back(recipient.address);
+    }
 
     if (holders.empty()) {
-        throw JSONRPCError(RPC_MISC_ERROR, strprintf("Failed to get token holders: %s", error));
+        throw JSONRPCError(RPC_MISC_ERROR,
+                          strprintf("No eligible recipients for '%s': every holder is restricted "
+                                   "or has no revealed public key", token));
     }
 
     // Create message
@@ -838,7 +918,18 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
     UniValue result(UniValue::VOBJ);
     result.push_back(Pair("result", "success"));
     result.push_back(Pair("hash", chatMsg.GetHash().ToString()));
+    result.push_back(Pair("token", chatMsg.token));
+    UniValue ancestorsArr(UniValue::VARR);
+    for (const std::string& ancestor : branchRecipients.ancestors) {
+        ancestorsArr.push_back(ancestor);
+    }
+    result.push_back(Pair("ancestors", ancestorsArr));
     result.push_back(Pair("recipients", (int)holders.size()));
+    // Surface what was dropped: an address without a revealed public key is
+    // silently unreachable otherwise, and "the root sees everything" only holds
+    // for holders with a revealed key.
+    result.push_back(Pair("skipped_no_pubkey", (int)branchRecipients.skippedNoPubKey));
+    result.push_back(Pair("skipped_restricted", (int)branchRecipients.skippedRestricted));
     result.push_back(Pair("timestamp", chatMsg.timestamp));
     result.push_back(Pair("destination", localPoolActive ? "local" : gatewayHost));
 
@@ -942,10 +1033,13 @@ UniValue depinsubmitmsg(const JSONRPCRequest& request)
                           strprintf("Failed to deserialize message: %s", e.what()));
     }
 
-    // Verify token matches pool configuration
-    if (chatMsg.token != pDepinMsgPool->GetActiveToken()) {
+    // Verify the token is the configured token or a section inside its
+    // subtree. Exact equality here used to reject section messages before they
+    // ever reached AddMessage; the subtree check keeps the fast rejection for
+    // foreign tokens without blocking sections.
+    if (!IsDepinSectionOrRoot(chatMsg.token, pDepinMsgPool->GetActiveToken())) {
         throw JSONRPCError(RPC_INVALID_PARAMETER,
-                          strprintf("Token '%s' does not match configured token '%s'",
+                          strprintf("Token '%s' is not configured token '%s' or a section inside it",
                                    chatMsg.token, pDepinMsgPool->GetActiveToken()));
     }
 
@@ -957,9 +1051,13 @@ UniValue depinsubmitmsg(const JSONRPCRequest& request)
                                    chatMsg.senderAddress));
     }
 
-    // Verify sender owns the token
+    // Verify sender has active inherited access to the message's token (a
+    // balance-only check would let frozen or self-revoked holders through).
+    // AddMessage repeats this authoritatively; this pre-check exists to return
+    // a verification-class error instead of a generic pool failure.
     std::string error;
-    if (!CheckTokenOwnership(chatMsg.senderAddress, chatMsg.token, error)) {
+    if (!HasDepinSectionAccess(chatMsg.senderAddress, chatMsg.token,
+                               pDepinMsgPool->GetActiveToken(), error)) {
         throw JSONRPCError(RPC_VERIFY_ERROR,
                           strprintf("Sender verification failed: %s", error));
     }
@@ -1034,10 +1132,14 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
     const std::string token = request.params[0].get_str();
     const std::string address = request.params[1].get_str();
 
-    // Verify token matches pool configuration
-    if (token != pDepinMsgPool->GetActiveToken()) {
+    // The token may be a section inside the configured subtree; it then acts
+    // as the tab scope below. NOTE this scope is convenience, not access
+    // control: this RPC does not require proof of ownership (unlike
+    // AUTH+GETMESSAGES on the gateway) -- what an address can actually read is
+    // fixed cryptographically by recipientKeys + ECIES.
+    if (!IsDepinSectionOrRoot(token, pDepinMsgPool->GetActiveToken())) {
         throw JSONRPCError(RPC_INVALID_PARAMETER,
-                          strprintf("Token '%s' does not match configured token '%s'",
+                          strprintf("Token '%s' is not configured token '%s' or a section inside it",
                                    token, pDepinMsgPool->GetActiveToken()));
     }
 
@@ -1085,8 +1187,10 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
     }
 
     // Fetch pool contents with filtering. Both message types (group and private)
-    // are filtered by recipientKeys membership; the sender always sees their own messages.
-    std::vector<CDepinMessage> messages = pDepinMsgPool->GetMessagesForAddress(address);
+    // are filtered by recipientKeys membership; the sender always sees their own
+    // messages. The requested token is the scope: asking for a section returns
+    // only that section's subtree, asking for the root returns everything.
+    std::vector<CDepinMessage> messages = pDepinMsgPool->GetMessagesForAddress(address, token);
 
     UniValue resultArray(UniValue::VARR);
     bool foundAnchor = afterHash.empty();  // If no hash, start from beginning
@@ -1212,7 +1316,8 @@ UniValue depingetmsg(const JSONRPCRequest& request)
                 "depingetmsg \"token\" (\"ip[:port]\"|\"fromaddress\") (\"fromaddress\")\n"
                 "\nRetrieve and decrypt DePIN messages for your addresses\n"
                 "\nArguments:\n"
-                "1. \"token\"        (string, required) Token name\n"
+                "1. \"token\"        (string, required) Token name. May be a section (sub-asset) such as\n"
+                "                    \"&TOKEN/GENERAL\"; only that section's subtree is returned\n"
                 "2. \"ip[:port]\" OR \"fromaddress\" (string, optional)\n"
                 "                    - IP address with optional port (e.g., \"192.168.1.31\" or \"192.168.1.31:19002\")\n"
                 "                    - OR Neurai address for local query with specific address\n"
@@ -1223,6 +1328,7 @@ UniValue depingetmsg(const JSONRPCRequest& request)
                 "  {\n"
                 "    \"recipient\": \"address\",      (string) Recipient address (your address)\n"
                 "    \"sender\": \"address\",         (string) Sender address\n"
+                "    \"token\": \"name\",             (string) Token/section the message belongs to\n"
                 "    \"message\": \"text\",           (string) Decrypted message\n"
                 "    \"message_type\": \"private|group\", (string) Message type (private=1-to-1, group=broadcast)\n"
                 "    \"timestamp\": n,              (numeric) Unix timestamp\n"
@@ -1312,51 +1418,44 @@ UniValue depingetmsg(const JSONRPCRequest& request)
         LOCK2(cs_main, pwallet->cs_wallet);
         EnsureWalletIsUnlocked(pwallet);
 
-        // Get local addresses that own the token
+        // Get local addresses that own a token of the branch: the requested
+        // token, any of its ancestors (they grant the subtree), or any section
+        // inside it (their holders can decrypt their own section's messages).
         std::set<std::string> myAddresses;
+        auto assetInBranch = [&token](const std::string& name) {
+            return IsDepinSectionOrRoot(name, token) || IsDepinSectionOrRoot(token, name);
+        };
 
-        if (!specificAddress.empty()) {
-            // Use only the specified address
-            myAddresses.insert(specificAddress);
-
-            // Verify it owns the token
+        {
             std::map<std::string, std::vector<COutput>> mapAssetCoins;
             pwallet->AvailableAssets(mapAssetCoins);
 
-            bool hasToken = false;
-            if (mapAssetCoins.count(token)) {
-                for (const auto& out : mapAssetCoins[token]) {
+            std::set<std::string> branchAddresses;
+            for (const auto& assetEntry : mapAssetCoins) {
+                if (!assetInBranch(assetEntry.first)) {
+                    continue;
+                }
+                for (const auto& out : assetEntry.second) {
                     CTxDestination dest;
                     if (ExtractDestination(out.tx->tx->vout[out.i].scriptPubKey, dest)) {
-                        if (EncodeDestination(dest) == specificAddress) {
-                            hasToken = true;
-                            break;
-                        }
+                        branchAddresses.insert(EncodeDestination(dest));
                     }
                 }
             }
 
-            if (!hasToken) {
-                throw JSONRPCError(RPC_WALLET_ERROR,
-                                  strprintf("Address %s does not own any %s tokens", specificAddress, token));
-            }
-        } else {
-            // Get all addresses with token
-            std::map<std::string, std::vector<COutput>> mapAssetCoins;
-            pwallet->AvailableAssets(mapAssetCoins);
-
-            if (mapAssetCoins.count(token)) {
-                for (const auto& out : mapAssetCoins[token]) {
-                    CTxDestination dest;
-                    if (ExtractDestination(out.tx->tx->vout[out.i].scriptPubKey, dest)) {
-                        myAddresses.insert(EncodeDestination(dest));
-                    }
+            if (!specificAddress.empty()) {
+                if (!branchAddresses.count(specificAddress)) {
+                    throw JSONRPCError(RPC_WALLET_ERROR,
+                                      strprintf("Address %s does not own %s or any related branch token",
+                                               specificAddress, token));
                 }
-            }
-
-            if (myAddresses.empty()) {
-                throw JSONRPCError(RPC_WALLET_ERROR,
-                                  strprintf("Wallet does not own any %s tokens", token));
+                myAddresses.insert(specificAddress);
+            } else {
+                myAddresses = branchAddresses;
+                if (myAddresses.empty()) {
+                    throw JSONRPCError(RPC_WALLET_ERROR,
+                                      strprintf("Wallet does not own any %s tokens", token));
+                }
             }
         }
 
@@ -1395,6 +1494,12 @@ UniValue depingetmsg(const JSONRPCRequest& request)
                     continue;
                 }
 
+                // Tab scope: the requested token bounds what this call shows,
+                // even if an older server returned the whole pool.
+                if (!IsDepinSectionOrRoot(msg.token, token)) {
+                    continue;
+                }
+
                 // Try to decrypt with each owned address
                 bool decrypted = false;
                 for (const std::string& myAddress : myAddresses) {
@@ -1408,6 +1513,7 @@ UniValue depingetmsg(const JSONRPCRequest& request)
                             UniValue msgObj(UniValue::VOBJ);
                             msgObj.push_back(Pair("recipient", myAddress));
                             msgObj.push_back(Pair("sender", msg.senderAddress));
+                            msgObj.push_back(Pair("token", msg.token));
                             msgObj.push_back(Pair("message", decryptedMessage));
                             std::string msgTypeStr = (msg.messageType == 0x01) ? "private" : "group";
                             msgObj.push_back(Pair("message_type", msgTypeStr));
@@ -1450,58 +1556,52 @@ UniValue depingetmsg(const JSONRPCRequest& request)
 
     LOCK2(cs_main, pwallet->cs_wallet);
 
-    // Verify token
-    if (token != pDepinMsgPool->GetActiveToken()) {
+    // The token may be a section inside the configured subtree; it then acts
+    // as the tab scope for the loop below.
+    if (!IsDepinSectionOrRoot(token, pDepinMsgPool->GetActiveToken())) {
         throw JSONRPCError(RPC_INVALID_PARAMETER,
-                          strprintf("Token '%s' does not match configured token '%s'",
+                          strprintf("Token '%s' is not configured token '%s' or a section inside it",
                                    token, pDepinMsgPool->GetActiveToken()));
     }
 
-    // Get all wallet addresses that own the token
+    // Get all wallet addresses that own a token of the branch: the requested
+    // token, any of its ancestors (they grant the subtree), or any section
+    // inside it (their holders can decrypt their own section's messages).
     std::set<std::string> myAddresses;
+    auto assetInBranch = [&token](const std::string& name) {
+        return IsDepinSectionOrRoot(name, token) || IsDepinSectionOrRoot(token, name);
+    };
 
-    if (!specificAddress.empty()) {
-        // Use only the specified address
-        myAddresses.insert(specificAddress);
-
-        // Verify it owns the token
+    {
         std::map<std::string, std::vector<COutput>> mapAssetCoins;
         pwallet->AvailableAssets(mapAssetCoins);
 
-        bool hasToken = false;
-        if (mapAssetCoins.count(token)) {
-            for (const auto& out : mapAssetCoins[token]) {
+        std::set<std::string> branchAddresses;
+        for (const auto& assetEntry : mapAssetCoins) {
+            if (!assetInBranch(assetEntry.first)) {
+                continue;
+            }
+            for (const auto& out : assetEntry.second) {
                 CTxDestination dest;
                 if (ExtractDestination(out.tx->tx->vout[out.i].scriptPubKey, dest)) {
-                    if (EncodeDestination(dest) == specificAddress) {
-                        hasToken = true;
-                        break;
-                    }
+                    branchAddresses.insert(EncodeDestination(dest));
                 }
             }
         }
 
-        if (!hasToken) {
-            throw JSONRPCError(RPC_WALLET_ERROR,
-                              strprintf("Address %s does not own any %s tokens", specificAddress, token));
-        }
-    } else {
-        // Get all addresses with token
-        std::map<std::string, std::vector<COutput>> mapAssetCoins;
-        pwallet->AvailableAssets(mapAssetCoins);
-
-        if (mapAssetCoins.count(token)) {
-            for (const auto& out : mapAssetCoins[token]) {
-                CTxDestination dest;
-                if (ExtractDestination(out.tx->tx->vout[out.i].scriptPubKey, dest)) {
-                    myAddresses.insert(EncodeDestination(dest));
-                }
+        if (!specificAddress.empty()) {
+            if (!branchAddresses.count(specificAddress)) {
+                throw JSONRPCError(RPC_WALLET_ERROR,
+                                  strprintf("Address %s does not own %s or any related branch token",
+                                           specificAddress, token));
             }
-        }
-
-        if (myAddresses.empty()) {
-            throw JSONRPCError(RPC_WALLET_ERROR,
-                              strprintf("Wallet does not own any %s tokens", token));
+            myAddresses.insert(specificAddress);
+        } else {
+            myAddresses = branchAddresses;
+            if (myAddresses.empty()) {
+                throw JSONRPCError(RPC_WALLET_ERROR,
+                                  strprintf("Wallet does not own any %s tokens", token));
+            }
         }
     }
 
@@ -1512,6 +1612,11 @@ UniValue depingetmsg(const JSONRPCRequest& request)
     std::set<uint256> processedMessages;  // To avoid duplicates
 
     for (const CDepinMessage& msg : allMessages) {
+        // Tab scope: only the requested token's subtree.
+        if (!IsDepinSectionOrRoot(msg.token, token)) {
+            continue;
+        }
+
         // Avoid processing the same message multiple times
         uint256 msgHash = msg.GetHash();
         if (processedMessages.count(msgHash)) {
@@ -1530,6 +1635,7 @@ UniValue depingetmsg(const JSONRPCRequest& request)
                 UniValue msgObj(UniValue::VOBJ);
                 msgObj.push_back(Pair("recipient", myAddress));
                 msgObj.push_back(Pair("sender", msg.senderAddress));
+                msgObj.push_back(Pair("token", msg.token));
                 msgObj.push_back(Pair("message", decryptedMessage));
                 std::string msgTypeStr = (msg.messageType == 0x01) ? "private" : "group";
                 msgObj.push_back(Pair("message_type", msgTypeStr));
@@ -1551,15 +1657,18 @@ UniValue depingetmsg(const JSONRPCRequest& request)
 
 UniValue depinclearmsg(const JSONRPCRequest& request)
 {
-    if (request.fHelp || request.params.size() > 1)
+    if (request.fHelp || request.params.size() > 2)
         throw std::runtime_error(
-                "depinclearmsg ( \"all\" | hours )\n"
+                "depinclearmsg ( \"all\" | hours ) ( \"scope\" )\n"
                 "\nRemove messages from DePIN messaging pool\n"
                 "\nArguments:\n"
                 "1. mode    (string or numeric, optional) Cleanup mode:\n"
                 "           - omitted: Remove only expired messages (default)\n"
                 "           - \"all\": Remove ALL messages from pool\n"
                 "           - <hours>: Remove messages older than specified hours (numeric)\n"
+                "2. scope   (string, optional) Section token. When given, only messages of that\n"
+                "           section's subtree are removed; parents and siblings are untouched.\n"
+                "           Omitted or \"\" keeps the historical pool-wide behavior.\n"
                 "\nResult:\n"
                 "{\n"
                 "  \"removed\": n,        (numeric) Number of messages removed\n"
@@ -1569,6 +1678,7 @@ UniValue depinclearmsg(const JSONRPCRequest& request)
                 + HelpExampleCli("depinclearmsg", "")
                 + HelpExampleCli("depinclearmsg", "\"all\"")
                 + HelpExampleCli("depinclearmsg", "7")
+                + HelpExampleCli("depinclearmsg", "\"all\" \"&TOKEN/GENERAL\"")
                 + HelpExampleRpc("depinclearmsg", "")
                 + HelpExampleRpc("depinclearmsg", "\"all\"")
                 + HelpExampleRpc("depinclearmsg", "7")
@@ -1578,18 +1688,36 @@ UniValue depinclearmsg(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_MISC_ERROR, "DePIN messaging pool is not enabled");
     }
 
+    // Optional scope: bounds every mode below to one section's subtree.
+    std::string scopeToken;
+    if (request.params.size() >= 2 && !request.params[1].isNull() &&
+        !request.params[1].get_str().empty()) {
+        scopeToken = request.params[1].get_str();
+        if (!IsDepinSectionOrRoot(scopeToken, pDepinMsgPool->GetActiveToken())) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER,
+                              strprintf("Scope '%s' is not configured token '%s' or a section inside it",
+                                       scopeToken, pDepinMsgPool->GetActiveToken()));
+        }
+    }
+
     size_t sizeBefore = pDepinMsgPool->Size();
     int64_t currentTime = GetTime();
 
-    // Determine cleanup mode
-    if (request.params.size() == 0) {
+    // Determine cleanup mode. Only an ABSENT or null mode means the default:
+    // an empty string stays an error, exactly as before sections (the gateway
+    // pre-auth maps its ""/null mode to null before calling here).
+    if (request.params.size() == 0 || request.params[0].isNull()) {
         // Default: Remove only expired messages
-        pDepinMsgPool->RemoveExpiredMessages(currentTime);
-    } else if (request.params.size() == 1) {
+        pDepinMsgPool->RemoveExpiredMessages(currentTime, scopeToken);
+    } else {
         int64_t hoursThreshold = 0;
         if (request.params[0].isStr() && request.params[0].get_str() == "all") {
-            // Mode: Remove ALL messages
-            pDepinMsgPool->Clear();
+            // Mode: Remove ALL messages (of the scope, when one was given)
+            if (scopeToken.empty()) {
+                pDepinMsgPool->Clear();
+            } else {
+                pDepinMsgPool->ClearScope(scopeToken);
+            }
         } else if (ParseFlexibleInt64(request.params[0], hoursThreshold)) {
             // Mode: Remove messages older than X hours. Accepts the number sent
             // over JSON-RPC and the string neurai-cli produces; anything that is
@@ -1609,7 +1737,7 @@ UniValue depinclearmsg(const JSONRPCRequest& request)
             }
 
             int64_t ageThreshold = hoursThreshold * 3600; // Convert hours to seconds
-            pDepinMsgPool->RemoveMessagesOlderThan(currentTime, ageThreshold);
+            pDepinMsgPool->RemoveMessagesOlderThan(currentTime, ageThreshold, scopeToken);
         } else {
             throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter. Use \"all\" or a numeric value for hours");
         }
@@ -2119,6 +2247,102 @@ UniValue depingetancestorrecipients(const JSONRPCRequest& request)
     return result;
 }
 
+UniValue depinlistsections(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() > 1)
+        throw std::runtime_error(
+                "depinlistsections ( \"address\" )\n"
+                "\nList the sections (sub-assets) of the pool's active token, for UI tabs.\n"
+                "The list is served from a per-tip snapshot; section names are public on\n"
+                "chain, so no address is needed to see them. Message counters, however,\n"
+                "are only exposed for sections the given address has access to -- counts\n"
+                "of an unreadable section would leak metadata. For the same reason the\n"
+                "address mode is only served over node RPC: the DePIN port is\n"
+                "unauthenticated and answers the bare form (names only) there.\n"
+                "\nArguments:\n"
+                "1. \"address\"   (string, optional) Report this address's access per section\n"
+                "\nResult:\n"
+                "[\n"
+                "  {\n"
+                "    \"name\": \"&TOKEN/GENERAL\",   (string) Full section token\n"
+                "    \"label\": \"GENERAL\",         (string) Name relative to the pool root (\"\" = root)\n"
+                "    \"depth\": n,                 (numeric) Levels below the pool root (0 = root)\n"
+                "    \"access\": true|false,       (boolean, only with address) Active inherited access\n"
+                "    \"messages\": n               (numeric, only with address and access) Messages in\n"
+                "                                 this section's subtree\n"
+                "  },\n"
+                "  ...\n"
+                "]\n"
+                "\nExamples:\n"
+                + HelpExampleCli("depinlistsections", "")
+                + HelpExampleCli("depinlistsections", "\"NXyouraddress...\"")
+                + HelpExampleRpc("depinlistsections", "")
+        );
+
+    if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
+        throw JSONRPCError(RPC_MISC_ERROR, "DePIN messaging pool is not enabled");
+    }
+
+    std::string address;
+    if (request.params.size() >= 1 && !request.params[0].isNull() &&
+        !request.params[0].get_str().empty()) {
+        address = request.params[0].get_str();
+        CTxDestination dest = DecodeDestination(address);
+        if (!IsValidDestination(dest)) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
+        }
+        // Distinguish "cannot answer" from "no access" up front: after this,
+        // a false from HasDepinSectionAccess means no access, not a missing
+        // database answered with a false reason.
+        if (!fAssetIndex) {
+            throw JSONRPCError(RPC_MISC_ERROR,
+                              "Asset index is required but not enabled. Restart with -assetindex and -reindex");
+        }
+        if (!passetsdb) {
+            throw JSONRPCError(RPC_MISC_ERROR, "Asset database not available");
+        }
+        if (!prestricteddb) {
+            throw JSONRPCError(RPC_MISC_ERROR, "Restricted asset database not available");
+        }
+    }
+
+    std::vector<std::string> sections;
+    std::string error;
+    if (!pDepinMsgPool->GetSections(sections, error)) {
+        throw JSONRPCError(RPC_MISC_ERROR, error);
+    }
+
+    const std::string activeToken = pDepinMsgPool->GetActiveToken();
+
+    UniValue result(UniValue::VARR);
+    for (const std::string& section : sections) {
+        const std::string label = GetDepinSectionLabel(section, activeToken);
+
+        int depth = 0;
+        if (!label.empty()) {
+            depth = 1 + (int)std::count(label.begin(), label.end(), '/');
+        }
+
+        UniValue obj(UniValue::VOBJ);
+        obj.push_back(Pair("name", section));
+        obj.push_back(Pair("label", label));
+        obj.push_back(Pair("depth", depth));
+
+        if (!address.empty()) {
+            std::string accessError;
+            const bool hasAccess = HasDepinSectionAccess(address, section, activeToken, accessError);
+            obj.push_back(Pair("access", hasAccess));
+            if (hasAccess) {
+                obj.push_back(Pair("messages", (uint64_t)pDepinMsgPool->CountMessagesInScope(section)));
+            }
+        }
+
+        result.push_back(obj);
+    }
+
+    return result;
+}
+
 #ifdef ENABLE_WALLET
 bool DeriveDepinPoolKeys(CWallet* pwallet, CKey& privKey, CPubKey& pubkey, std::string& derivationPath, std::string& error)
 {
@@ -2272,6 +2496,7 @@ static const CRPCCommand commands[] =
             { "depin messaging",          "depinreceivemsg",            &depinreceivemsg,            {"token", "address", "timestamp", "after_hash", "limit"}},
             { "depin messaging",          "depinmcpstatus",             &depinmcpstatus,             {}},
             { "depin messaging",          "depingetancestorrecipients", &depingetancestorrecipients, {"token", "max_results", "stop_at"}},
+            { "depin messaging",          "depinlistsections",          &depinlistsections,          {"address"}},
 #ifdef ENABLE_WALLET
             { "depin messaging",          "depinpoolpkey",              &depinpoolpkey,              {}},
 #ifdef ENABLE_DEPIN_GATEWAY
@@ -2284,7 +2509,7 @@ static const CRPCCommand commands[] =
             // this RPC's unguarded params[1].get_str() throws.
             { "depin messaging",          "depingetmsg",                &depingetmsg,                {"token", "destination_or_address|fromaddress", "fromaddress"}},
 #endif
-            { "depin messaging",          "depinclearmsg",              &depinclearmsg,              {"mode"}},
+            { "depin messaging",          "depinclearmsg",              &depinclearmsg,              {"mode", "scope"}},
 #endif
     };
 

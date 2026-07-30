@@ -28,6 +28,7 @@
 #include "assets/assetdb.h"
 #include "assets/assets.h"
 #include "assets/assettypes.h"
+#include "assets/restricteddb.h"
 #include "base58.h"
 #include "chainparams.h"
 #include "depinmsgpool.h"
@@ -126,6 +127,7 @@ struct DepinRpcParamsSetup : public TestingSetup {
     bool prevPubKeyIndex;
     CAssetsDB* prevAssetsDb;
     CLRUCache<std::string, CDatabasedAssetData>* prevAssetsCache;
+    CRestrictedDB* prevRestrictedDb;
     std::unique_ptr<CDepinMsgPool> prevPool;
 
     CKey senderKey;
@@ -139,11 +141,15 @@ struct DepinRpcParamsSetup : public TestingSetup {
         prevPubKeyIndex = fPubKeyIndex;
         prevAssetsDb = passetsdb;
         prevAssetsCache = passetsCache;
+        prevRestrictedDb = prestricteddb;
 
         fAssetIndex = true;
         fPubKeyIndex = true;
         passetsdb = new CAssetsDB(1 << 20, true, true);
         passetsCache = new CLRUCache<std::string, CDatabasedAssetData>(MAX_CACHE_ASSETS_SIZE);
+        // AddMessage() authorization (sections) refuses to run without the
+        // restriction database -- a null prestricteddb would fail OPEN.
+        prestricteddb = new CRestrictedDB(1 << 20, true, true);
 
         senderKey.MakeNewKey(true);
         senderAddress = EncodeDestination(senderKey.GetPubKey().GetID());
@@ -163,8 +169,10 @@ struct DepinRpcParamsSetup : public TestingSetup {
     {
         pDepinMsgPool = std::move(prevPool);
 
+        delete prestricteddb;
         delete passetsCache;
         delete passetsdb;
+        prestricteddb = prevRestrictedDb;
         passetsCache = prevAssetsCache;
         passetsdb = prevAssetsDb;
 
@@ -366,8 +374,9 @@ BOOST_AUTO_TEST_CASE(argnames_match_the_implementation)
         {"depingetpoolcontent", {"verbose", "sender_address", "recipient_address",
                                  "start_time", "end_time", "limit", "offset"}},
         {"depinreceivemsg", {"token", "address", "timestamp", "after_hash", "limit"}},
-        {"depinclearmsg", {"mode"}},
+        {"depinclearmsg", {"mode", "scope"}},
         {"depingetancestorrecipients", {"token", "max_results", "stop_at"}},
+        {"depinlistsections", {"address"}},
     };
 #ifdef ENABLE_DEPIN_GATEWAY
     // Only registered in a gateway build.

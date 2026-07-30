@@ -269,7 +269,9 @@ void CDepinMCPWorker::WorkerLoop()
                 std::string decrypted;
                 if (ValidateMessage(msg, decrypted)) {
                     // Mark only after a successful enqueue so dropped/aborted messages retry.
-                    if (EnqueueTask(msg.senderAddress, decrypted)) {
+                    // The message's own token travels with the task: the reply
+                    // must go back to the section it was asked in.
+                    if (EnqueueTask(msg.senderAddress, decrypted, msg.token)) {
                         MarkAsProcessed(hash);
                         enqueuedThisCycle++;
                     }
@@ -301,7 +303,7 @@ void CDepinMCPWorker::WorkerLoop()
 void CDepinMCPWorker::TaskLoop()
 {
     while (true) {
-        std::pair<std::string, std::string> task;
+        MCPTask task;
         {
             std::unique_lock<std::mutex> lk(taskMutex);
             taskCv.wait(lk, [this] { return shouldStop.load() || !taskQueue.empty(); });
@@ -319,7 +321,7 @@ void CDepinMCPWorker::TaskLoop()
 
         tasksInFlight++;
         try {
-            ProcessTask(task.first, task.second);
+            ProcessTask(task.sender, task.decrypted, task.token);
         } catch (const std::exception& e) {
             LogPrintf("MCPWorker: Exception processing task: %s\n", e.what());
             totalErrors++;
@@ -328,20 +330,22 @@ void CDepinMCPWorker::TaskLoop()
     }
 }
 
-bool CDepinMCPWorker::EnqueueTask(const std::string& sender, const std::string& decryptedMessage)
+bool CDepinMCPWorker::EnqueueTask(const std::string& sender, const std::string& decryptedMessage,
+                                  const std::string& msgToken)
 {
     std::unique_lock<std::mutex> lk(taskMutex);
     taskCv.wait(lk, [this] { return shouldStop.load() || taskQueue.size() < MCP_MAX_TASK_QUEUE; });
     if (shouldStop.load()) {
         return false;
     }
-    taskQueue.emplace_back(sender, decryptedMessage);
+    taskQueue.push_back(MCPTask{sender, decryptedMessage, msgToken});
     lk.unlock();
     taskCv.notify_all();
     return true;
 }
 
-void CDepinMCPWorker::ProcessTask(const std::string& sender, const std::string& decryptedMessage)
+void CDepinMCPWorker::ProcessTask(const std::string& sender, const std::string& decryptedMessage,
+                                  const std::string& msgToken)
 {
     LogPrintf("MCPWorker: Processing command from %s\n", sender);
 
@@ -349,7 +353,7 @@ void CDepinMCPWorker::ProcessTask(const std::string& sender, const std::string& 
     if (!CheckGlobalRateLimit() || !CheckRateLimit(sender)) {
         LogPrintf("MCPWorker: Rate limit exceeded for %s\n", sender);
         totalRateLimited++;
-        SendResponse("Rate limit exceeded. Please wait before sending more commands.", sender);
+        SendResponse("Rate limit exceeded. Please wait before sending more commands.", sender, msgToken);
         return;
     }
 
@@ -364,7 +368,7 @@ void CDepinMCPWorker::ProcessTask(const std::string& sender, const std::string& 
     // Special command: clear this sender's conversation context.
     if (contextSize > 0 && command == "reset") {
         ResetContext(sender);
-        SendResponse("Conversation context cleared.", sender);
+        SendResponse("Conversation context cleared.", sender, msgToken);
         totalCommandsProcessed++;
         return;
     }
@@ -379,7 +383,7 @@ void CDepinMCPWorker::ProcessTask(const std::string& sender, const std::string& 
     if (!mcpClient->SendWithContext(command, context, response)) {
         LogPrintf("MCPWorker: Failed to get response from MCP server\n");
         totalErrors++;
-        SendResponse("Error: Failed to get response from AI server. Please try again later.", sender);
+        SendResponse("Error: Failed to get response from AI server. Please try again later.", sender, msgToken);
         return;
     }
 
@@ -389,7 +393,7 @@ void CDepinMCPWorker::ProcessTask(const std::string& sender, const std::string& 
         AppendContext(sender, command, response);
     }
 
-    if (SendResponse(response, sender)) {
+    if (SendResponse(response, sender, msgToken)) {
         LogPrintf("MCPWorker: Successfully processed command and sent response\n");
         totalCommandsProcessed++;
     } else {
@@ -400,8 +404,8 @@ void CDepinMCPWorker::ProcessTask(const std::string& sender, const std::string& 
 
 bool CDepinMCPWorker::ValidateMessage(const CDepinMessage& msg, std::string& decryptedOut)
 {
-    // Check if message is for our token
-    if (msg.token != depinToken) {
+    // Check if message is for our token or a section inside its subtree
+    if (!IsDepinSectionOrRoot(msg.token, depinToken)) {
         return false;
     }
 
@@ -461,7 +465,8 @@ bool CDepinMCPWorker::ExtractCommand(const std::string& message, std::string& co
     return true;
 }
 
-bool CDepinMCPWorker::SendPooledMessage(const std::string& text, const std::vector<std::string>& holders)
+bool CDepinMCPWorker::SendPooledMessage(const std::string& text, const std::vector<std::string>& holders,
+                                        const std::string& msgToken)
 {
     if (vpwallets.empty() || !vpwallets[0]) {
         LogPrintf("MCPWorker: No wallet available\n");
@@ -476,7 +481,7 @@ bool CDepinMCPWorker::SendPooledMessage(const std::string& text, const std::vect
     }
 
     CDepinMessage newMsg;
-    newMsg.token = depinToken;
+    newMsg.token = msgToken;
     newMsg.senderAddress = nodeAddress;
     newMsg.timestamp = GetTime();
 
@@ -500,7 +505,8 @@ bool CDepinMCPWorker::SendPooledMessage(const std::string& text, const std::vect
     return true;
 }
 
-bool CDepinMCPWorker::SendResponse(const std::string& response, const std::string& originalSender)
+bool CDepinMCPWorker::SendResponse(const std::string& response, const std::string& originalSender,
+                                   const std::string& msgToken)
 {
     try {
         // Build the response prefix (only prepended to the first fragment).
@@ -510,11 +516,40 @@ bool CDepinMCPWorker::SendResponse(const std::string& response, const std::strin
             prefixPart = responsePrefix + " [" + modelInfo + "] ";
         }
 
-        // Fetch token holders once for all fragments.
+        // Recipients of the reply: the ACTIVE holders of the section the
+        // question was asked in, plus its ancestors up to the monitored token
+        // (they see the whole subtree). Resolved by GetDepinAncestorRecipients
+        // -- freeze/self-revoke respected, missing pubkeys skipped. This runs
+        // on a task thread with no pool lock held, so the resolver's cs_main +
+        // flush contract is fine here.
+        // The reply is published through the LOCAL pool's AddMessage, which
+        // caps recipientKeys at the pool's own maxRecipients -- resolve with
+        // that limit, not the global hard cap, so an oversized set fails here
+        // with a clear log instead of at AddMessage. Never zero: Initialize()
+        // rejects maxRecipients == 0.
+        size_t recipientsLimit = MAX_DEPIN_RECIPIENTS;
+        if (pDepinMsgPool && pDepinMsgPool->IsEnabled()) {
+            recipientsLimit = std::min<size_t>(pDepinMsgPool->GetMaxRecipients(), MAX_DEPIN_RECIPIENTS);
+        }
+
         std::string error;
-        std::vector<std::string> holders = GetTokenHolders(depinToken, MAX_DEPIN_RECIPIENTS, error);
+        CDepinAncestorRecipients branchRecipients;
+        if (!GetDepinAncestorRecipients(msgToken, recipientsLimit, branchRecipients,
+                                        error, depinToken)) {
+            LogPrintf("MCPWorker: Failed to get recipients for %s: %s\n", msgToken, error);
+            return false;
+        }
+        if (branchRecipients.truncated) {
+            LogPrintf("MCPWorker: Recipient set of %s exceeds the pool limit of %u, not replying\n",
+                      msgToken, (unsigned int)recipientsLimit);
+            return false;
+        }
+        std::vector<std::string> holders;
+        for (const CDepinRecipient& recipient : branchRecipients.recipients) {
+            holders.push_back(recipient.address);
+        }
         if (holders.empty()) {
-            LogPrintf("MCPWorker: Failed to get token holders: %s\n", error);
+            LogPrintf("MCPWorker: No eligible recipients for %s\n", msgToken);
             return false;
         }
 
@@ -551,7 +586,7 @@ bool CDepinMCPWorker::SendResponse(const std::string& response, const std::strin
                 text += " [...]";
             }
 
-            if (!SendPooledMessage(text, holders)) {
+            if (!SendPooledMessage(text, holders, msgToken)) {
                 ok = false;
                 break;
             }

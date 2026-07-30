@@ -91,6 +91,14 @@ struct DepinServerTester {
         pool.activeToken = token;
     }
 
+    // Only reachable this way: Initialize() rejects maxRecipients == 0, so a
+    // zero can only come from a hostile or broken server. The tester plays
+    // that server.
+    static void SetMaxRecipients(CDepinMsgPool& pool, unsigned int n)
+    {
+        pool.nMaxRecipients = n;
+    }
+
     static void InjectChallenge(CDepinMsgPoolServer& server, const CDepinChallenge& challenge)
     {
         LOCK(server.cs_challenges);
@@ -279,6 +287,152 @@ BOOST_AUTO_TEST_CASE(depinserver_getmessages_rejects_foreign_address)
     close(sock);
     BOOST_CHECK_MESSAGE(response.find("OK|") == 0,
                         "expected success for own address, got: " + response);
+}
+
+// Sections: a challenge is bound to the token it was issued for. One issued
+// for a section must not authenticate a query for the root (or vice versa) --
+// ValidateChallenge() compares the stored token, so no server change was
+// needed for this property, but it must not regress.
+BOOST_AUTO_TEST_CASE(depinserver_section_challenge_is_bound_to_its_token)
+{
+    const std::string rootToken = "&TESTTOKEN";
+    const std::string sectionToken = "&TESTTOKEN/GENERAL";
+
+    CDepinMsgPoolServer server;
+    ScopedGatewayPool scopedPool(server, rootToken);
+
+    int port = StartServerOnFreePort(server);
+    BOOST_REQUIRE(port > 0);
+
+    CKey keyA;
+    keyA.MakeNewKey(true);
+    const std::string addressA = EncodeDestination(keyA.GetPubKey().GetID());
+
+    CDepinChallenge challenge;
+    challenge.token = sectionToken;
+    challenge.address = addressA;
+    challenge.nonce = "sectionnonce0123456789";
+    challenge.clientIP = "";
+    challenge.expiry = GetTime() + DEPIN_CHALLENGE_TIMEOUT;
+    challenge.type = DepinChallengeType::RECEIVE;
+
+    // Replay attempt: challenge issued for the SECTION, used against the ROOT.
+    // The signature is made over the root form so only the stored token can
+    // reject it.
+    const std::string toSignRoot = strprintf("DEPIN-GET|%s|%s|%s", rootToken, addressA, challenge.nonce);
+    const std::string rootSignature = SignChallengeMessage(keyA, toSignRoot);
+    BOOST_REQUIRE(!rootSignature.empty());
+
+    DepinServerTester::InjectChallenge(server, challenge);
+    int sock = ConnectClient(port);
+    BOOST_REQUIRE(sock >= 0);
+    std::string req = strprintf("GETMESSAGES|%s|%s|%s|%s|%s\n",
+                                rootToken, addressA, addressA, rootSignature, challenge.nonce);
+    BOOST_REQUIRE(send(sock, req.c_str(), req.size(), 0) == (ssize_t)req.size());
+    std::string response = ReadLine(sock);
+    close(sock);
+    BOOST_CHECK_MESSAGE(response.find("ERROR|") == 0,
+                        "section challenge must not serve the root, got: " + response);
+
+    // The same challenge used for the token it was issued for: accepted.
+    const std::string toSignSection = strprintf("DEPIN-GET|%s|%s|%s", sectionToken, addressA, challenge.nonce);
+    const std::string sectionSignature = SignChallengeMessage(keyA, toSignSection);
+    BOOST_REQUIRE(!sectionSignature.empty());
+
+    DepinServerTester::InjectChallenge(server, challenge);
+    sock = ConnectClient(port);
+    BOOST_REQUIRE(sock >= 0);
+    req = strprintf("GETMESSAGES|%s|%s|%s|%s|%s\n",
+                    sectionToken, addressA, addressA, sectionSignature, challenge.nonce);
+    BOOST_REQUIRE(send(sock, req.c_str(), req.size(), 0) == (ssize_t)req.size());
+    response = ReadLine(sock);
+    close(sock);
+    BOOST_CHECK_MESSAGE(response.find("OK|") == 0,
+                        "expected success for the challenge's own token, got: " + response);
+}
+
+// GetRemoteServerInfo against a live server: the INFO reply's fields land on
+// the right names. The previous parser assumed an old OK|token|count|expiry
+// layout and read the CIPHER field as the expiry, failing on every current
+// server with stoi("AES-256-GCM") -- which is what fed depinsendmsg the wrong
+// recipient scope for remote sends.
+BOOST_AUTO_TEST_CASE(depinserver_remote_info_parses_current_format)
+{
+    const std::string token = "&TESTTOKEN/APPLE";
+
+    CDepinMsgPoolServer server;
+    ScopedGatewayPool scopedPool(server, token);
+    int port = StartServerOnFreePort(server);
+    BOOST_REQUIRE(port > 0);
+
+    CDepinMsgPoolClient::CDepinRemoteServerInfo info;
+    std::string error;
+    BOOST_REQUIRE_MESSAGE(CDepinMsgPoolClient::GetRemoteServerInfo("127.0.0.1", port, info, error),
+                          error);
+    BOOST_CHECK_EQUAL(info.token, token);
+    BOOST_CHECK_EQUAL(info.maxRecipients, DEFAULT_MAX_DEPIN_RECIPIENTS);
+    BOOST_CHECK_EQUAL(info.maxMessageSize, DEFAULT_DEPIN_MESSAGE_SIZE);
+    BOOST_CHECK_EQUAL(info.messageExpiryHours, (int64_t)DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS);
+    BOOST_CHECK_EQUAL(info.cipher, "AES-256-GCM");
+
+    // The back-compat wrapper reports the same expiry (depingetmsg relies on it).
+    int64_t expiry = 0;
+    BOOST_REQUIRE_MESSAGE(CDepinMsgPoolClient::GetRemoteServerInfo("127.0.0.1", port, expiry, error),
+                          error);
+    BOOST_CHECK_EQUAL(expiry, (int64_t)DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS);
+}
+
+// A server announcing maxRecipients == 0 is broken or hostile (Initialize()
+// refuses that configuration): the client must return a named error, never
+// hand the zero to a consumer that would quietly turn it into a default.
+// depinsendmsg fails closed through this same path.
+BOOST_AUTO_TEST_CASE(depinserver_remote_info_rejects_zero_max_recipients)
+{
+    CDepinMsgPoolServer server;
+    ScopedGatewayPool scopedPool(server, "&TESTTOKEN");
+    DepinServerTester::SetMaxRecipients(*pDepinMsgPool, 0);
+    int port = StartServerOnFreePort(server);
+    BOOST_REQUIRE(port > 0);
+
+    CDepinMsgPoolClient::CDepinRemoteServerInfo info;
+    std::string error;
+    BOOST_CHECK(!CDepinMsgPoolClient::GetRemoteServerInfo("127.0.0.1", port, info, error));
+    BOOST_CHECK_MESSAGE(error.find("maxRecipients=0") != std::string::npos, error);
+}
+
+// Sections: over the unauthenticated DePIN port, depinlistsections serves
+// names only. The address mode reports access and per-section counters for
+// ANY address the caller names, so honoring it here would hand out another
+// holder's tab metadata without a challenge.
+BOOST_AUTO_TEST_CASE(depinserver_port_listsections_is_names_only)
+{
+    CDepinMsgPoolServer server;
+    ScopedGatewayPool scopedPool(server, "&TESTTOKEN");
+    int port = StartServerOnFreePort(server);
+    BOOST_REQUIRE(port > 0);
+
+    // Address mode: refused at the port, before the RPC ever runs.
+    int sock = ConnectClient(port);
+    BOOST_REQUIRE(sock >= 0);
+    std::string req = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"depinlistsections\","
+                      "\"params\":[\"NSomeAddress\"]}\n";
+    BOOST_REQUIRE(send(sock, req.c_str(), req.size(), 0) == (ssize_t)req.size());
+    std::string response = ReadLine(sock);
+    close(sock);
+    BOOST_CHECK_MESSAGE(response.find("lists section names only") != std::string::npos,
+                        "expected the names-only refusal, got: " + response);
+
+    // The bare form passes the gate (whatever it then returns, it is not the
+    // gate's refusal -- this fixture has no asset DB, so the RPC itself may
+    // error, which is fine: the property under test is the gate).
+    sock = ConnectClient(port);
+    BOOST_REQUIRE(sock >= 0);
+    req = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"depinlistsections\",\"params\":[]}\n";
+    BOOST_REQUIRE(send(sock, req.c_str(), req.size(), 0) == (ssize_t)req.size());
+    response = ReadLine(sock);
+    close(sock);
+    BOOST_CHECK_MESSAGE(response.find("lists section names only") == std::string::npos,
+                        "the bare form must not hit the names-only gate: " + response);
 }
 #endif // ENABLE_DEPIN_GATEWAY
 

@@ -2000,6 +2000,24 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
 
         LogPrintf("DePIN messaging initialized for token: %s on port %d\n", token, port);
 
+        // Sections change the send limit from silent truncation to a hard
+        // error: warn NOW if the root alone already exceeds it, instead of
+        // letting the operator discover it on the first failed send. Advisory
+        // only -- any failure here (indexes still warming up, token not yet
+        // issued) skips the warning, never startup. Outside the pool lock, as
+        // GetDepinAncestorRecipients requires.
+        {
+            CDepinAncestorRecipients rootRecipients;
+            std::string recipientsError;
+            if (GetDepinAncestorRecipients(token, MAX_DEPIN_RECIPIENTS, rootRecipients,
+                                           recipientsError, token) &&
+                rootRecipients.truncated) {
+                LogPrintf("WARNING: DePIN token %s already has more than %u eligible recipients; "
+                          "depinsendmsg to it will fail until the holder set shrinks\n",
+                          token, MAX_DEPIN_RECIPIENTS);
+            }
+        }
+
         // Load persisted DePIN pool if enabled
         if (gArgs.GetBoolArg("-depinpoolpersist", DEFAULT_DEPINPOOL_PERSIST)) {
             if (!pDepinMsgPool->LoadFromDisk()) {

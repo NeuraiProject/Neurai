@@ -159,11 +159,27 @@ public:
 
     static bool Ping(const std::string& host, int port, std::string& error);
 
-    static bool GetInfo(const std::string& host, int port,
-                       std::string& token, int& messageCount,
-                       std::string& error);
+    // Remote pool configuration as published by the INFO command
+    // (OK|token|port|cipher|maxRecipients|maxMessageSize|expiryHours|...).
+    // A remote send needs `token` (the subtree the pool serves, used as the
+    // recipient-derivation stopAt) and `maxRecipients` (its messaging limit);
+    // resolving to the absolute root instead would encrypt for holders of
+    // ancestors the pool does not serve, who could then decrypt payloads
+    // fetched from the pool's public port.
+    struct CDepinRemoteServerInfo {
+        std::string token;
+        int port = 0;
+        std::string cipher;
+        unsigned int maxRecipients = 0;
+        unsigned int maxMessageSize = 0;
+        int64_t messageExpiryHours = 0;
+    };
 
-    // Get remote server configuration (JSON-RPC depingetmsginfo)
+    static bool GetRemoteServerInfo(const std::string& host, int port,
+                                    CDepinRemoteServerInfo& info,
+                                    std::string& error);
+
+    // Back-compat wrapper: expiry only.
     static bool GetRemoteServerInfo(const std::string& host, int port,
                                    int64_t& messageExpiryHours,
                                    std::string& error);

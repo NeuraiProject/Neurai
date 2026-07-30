@@ -27,6 +27,22 @@ struct DepinMCPWorkerTester
 
     static void MarkAsProcessed(CDepinMCPWorker& w, const uint256& h) { w.MarkAsProcessed(h); }
     static bool IsMessageProcessed(CDepinMCPWorker& w, const uint256& h) { return w.IsMessageProcessed(h); }
+
+    static bool EnqueueTask(CDepinMCPWorker& w, const std::string& sender,
+                            const std::string& msg, const std::string& token)
+    {
+        return w.EnqueueTask(sender, msg, token);
+    }
+    static CDepinMCPWorker::MCPTask FrontTask(CDepinMCPWorker& w)
+    {
+        std::lock_guard<std::mutex> lk(w.taskMutex);
+        return w.taskQueue.front();
+    }
+    static size_t QueueSize(CDepinMCPWorker& w)
+    {
+        std::lock_guard<std::mutex> lk(w.taskMutex);
+        return w.taskQueue.size();
+    }
 };
 
 namespace {
@@ -131,6 +147,24 @@ BOOST_AUTO_TEST_CASE(processed_cache_fifo_eviction)
     // Re-marking an existing hash does not grow the cache
     DepinMCPWorkerTester::MarkAsProcessed(w, HashFromInt(total - 1));
     BOOST_CHECK_EQUAL(w.GetProcessedCacheSize(), MCP_MAX_PROCESSED_CACHE);
+}
+
+// Sections: the token an incoming message carried travels with the task
+// through the queue, verbatim. This is the seam that makes the worker reply
+// in the section the question was asked in -- if the queue dropped or
+// replaced it, the bot would answer a section's question at the root, leaking
+// the conversation to the whole root audience.
+BOOST_AUTO_TEST_CASE(task_queue_carries_message_token)
+{
+    CDepinMCPWorker w;
+
+    BOOST_REQUIRE(DepinMCPWorkerTester::EnqueueTask(w, "addrA", "/ai hola", "&TOKEN/GENERAL"));
+    BOOST_REQUIRE_EQUAL(DepinMCPWorkerTester::QueueSize(w), 1U);
+
+    const auto task = DepinMCPWorkerTester::FrontTask(w);
+    BOOST_CHECK_EQUAL(task.sender, "addrA");
+    BOOST_CHECK_EQUAL(task.decrypted, "/ai hola");
+    BOOST_CHECK_EQUAL(task.token, "&TOKEN/GENERAL");
 }
 
 BOOST_AUTO_TEST_SUITE_END()

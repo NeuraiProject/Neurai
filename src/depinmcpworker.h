@@ -64,8 +64,17 @@ private:
     std::atomic<bool> shouldStop;
 
     // Task pool (concurrent AI requests)
+    // One queued command. `token` is the token the incoming message carried
+    // (the monitored token or a section inside it); every reply goes back to
+    // that same token -- answering a section's question at the root would leak
+    // the conversation to the whole root audience.
+    struct MCPTask {
+        std::string sender;
+        std::string decrypted;
+        std::string token;
+    };
     std::vector<std::thread> taskPool;
-    std::deque<std::pair<std::string, std::string>> taskQueue; // (senderAddress, decryptedMessage)
+    std::deque<MCPTask> taskQueue;
     std::mutex taskMutex;
     std::condition_variable taskCv;
     std::atomic<int> tasksInFlight;
@@ -123,10 +132,12 @@ private:
 
     /** Enqueue a decrypted command for a task thread. Blocks while the queue is full.
      *  @return false if the worker is shutting down (caller should not mark it processed). */
-    bool EnqueueTask(const std::string& sender, const std::string& decryptedMessage);
+    bool EnqueueTask(const std::string& sender, const std::string& decryptedMessage,
+                     const std::string& msgToken);
 
     /** Run a single command end-to-end (rate limit, AI request, response). */
-    void ProcessTask(const std::string& sender, const std::string& decryptedMessage);
+    void ProcessTask(const std::string& sender, const std::string& decryptedMessage,
+                     const std::string& msgToken);
 
     /** Validate a message and, on success, return its decrypted text (single decrypt). */
     bool ValidateMessage(const CDepinMessage& msg, std::string& decryptedOut);
@@ -153,11 +164,15 @@ private:
     void FlushProcessedIfDirty();
     fs::path GetProcessedMessagesPath() const;
 
-    /** Encrypt+sign+publish a single pooled message for all token holders. */
-    bool SendPooledMessage(const std::string& text, const std::vector<std::string>& holders);
+    /** Encrypt+sign+publish a single pooled message under `msgToken` for `holders`. */
+    bool SendPooledMessage(const std::string& text, const std::vector<std::string>& holders,
+                           const std::string& msgToken);
 
-    /** Send an AI response back to the channel, fragmenting it if too long. */
-    bool SendResponse(const std::string& response, const std::string& originalSender);
+    /** Send an AI response back to the section it was asked in, fragmenting it
+     *  if too long. Recipients are the active holders of msgToken and of its
+     *  ancestors up to the monitored token. */
+    bool SendResponse(const std::string& response, const std::string& originalSender,
+                      const std::string& msgToken);
 
 public:
     CDepinMCPWorker();

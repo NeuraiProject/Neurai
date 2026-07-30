@@ -133,6 +133,16 @@ private:
     unsigned int nMessageExpiryHours;   // Message expiry time in hours
     unsigned int nMaxPoolSizeMB;        // Maximum pool size in MB
 
+    // Per-tip snapshot of the sections under activeToken (see GetSections()).
+    // Its own lock, never cs_depinmsgpool: rebuilding is a full asset-directory
+    // scan and must not stall message delivery.
+    mutable CCriticalSection cs_sectionCache;
+    uint256 sectionSnapshotTip;
+    std::vector<std::string> sectionSnapshot;
+
+    // Erase `hashes` from both indexes. Caller holds cs_depinmsgpool.
+    void EraseMessages(const std::vector<uint256>& hashes);
+
 public:
     CDepinMsgPool();
 
@@ -154,14 +164,32 @@ public:
     // Message handling
     bool AddMessage(const CDepinMessage& message, std::string& error, bool skipSignatureCheck = false);
     bool GetDepinMessage(const uint256& hash, CDepinMessage& message) const;
-    std::vector<CDepinMessage> GetMessagesForAddress(const std::string& address) const;
+    // scopeToken "" keeps the historical behavior (every message); otherwise
+    // only messages whose token is scopeToken or a section inside it are
+    // considered. The scope is a TAB filter, not access control: delivery is
+    // still decided by recipientKeys membership.
+    std::vector<CDepinMessage> GetMessagesForAddress(const std::string& address,
+                                                     const std::string& scopeToken = "") const;
     std::vector<CDepinMessage> GetAllMessages() const;
     size_t GetMessageCount() const;
+    size_t CountMessagesInScope(const std::string& scopeToken) const;
 
-    // Cleanup
-    void RemoveExpiredMessages(int64_t currentTime);
-    void RemoveMessagesOlderThan(int64_t currentTime, int64_t ageThresholdSeconds);
+    // Cleanup. scopeToken "" keeps the historical pool-wide behavior; otherwise
+    // only messages inside that subtree are touched -- the owner of a section
+    // may purge what it controls, never parents or siblings.
+    void RemoveExpiredMessages(int64_t currentTime, const std::string& scopeToken = "");
+    void RemoveMessagesOlderThan(int64_t currentTime, int64_t ageThresholdSeconds,
+                                 const std::string& scopeToken = "");
     void Clear();
+    size_t ClearScope(const std::string& scopeToken);
+
+    // Sub-assets of the active token at the current chain tip, activeToken
+    // itself first. Backed by a per-tip snapshot with its OWN lock
+    // (cs_sectionCache) so the underlying asset-directory scan never blocks
+    // message delivery; invalidation is lazy on tip change, so reorgs need no
+    // hook. Lock order: cs_main -> cs_sectionCache; this method never takes
+    // cs_depinmsgpool. Authorization is deliberately NOT cached anywhere.
+    bool GetSections(std::vector<std::string>& sections, std::string& error);
 
     // Stats
     size_t Size() const;
@@ -186,6 +214,67 @@ extern std::unique_ptr<CDepinMsgPool> pDepinMsgPool;
 // are rejected here even though IsAssetNameValid() alone would accept them.
 // Does not require fAssetIndex/fPubKeyIndex/passetsdb.
 bool IsValidDepinMessagingToken(const std::string& token, std::string& error);
+
+// ---------------------------------------------------------------------------
+// Section hierarchy helpers. All three are pure string derivation -- no
+// database, no locks -- which is what makes them usable both from the hot
+// read path (scope filtering) and from authorization.
+// ---------------------------------------------------------------------------
+
+// Ancestors of `token`, itself first, up to `stopAt` (inclusive) or up to the
+// absolute root when stopAt is empty. Errors if stopAt is neither `token` nor
+// one of its '/'-separated ancestors, or if the depth guard
+// (MAX_DEPIN_ANCESTOR_DEPTH) is exceeded. This is THE ancestor derivation of
+// the messaging layer; GetDepinAncestorRecipients() and HasDepinSectionAccess()
+// both call it, so there is exactly one notion of "parent of" in the code.
+bool DeriveDepinAncestors(const std::string& token, const std::string& stopAt,
+                          std::vector<std::string>& ancestors, std::string& error);
+
+// True iff `name` is `root` itself or lives inside root's '/'-subtree: the
+// character after the root prefix must be exactly '/'. "&TESTING" and
+// "&TEST.FOO" are NOT inside "&TEST"; "&TEST/GENERAL" and "&TEST/A/B" are.
+bool IsDepinSectionOrRoot(const std::string& name, const std::string& root);
+
+// UI label of `name` relative to `root`: "" for the root itself,
+// "GENERAL" for "&TEST/GENERAL" under "&TEST", "A/B" for "&TEST/A/B".
+// Returns `name` unchanged when it is not inside root's subtree.
+std::string GetDepinSectionLabel(const std::string& name, const std::string& root);
+
+// ---------------------------------------------------------------------------
+// Section authorization: may `address` read/write in section `sectionToken` of
+// the pool rooted at `root`? True iff the address holds an ACTIVE pair
+// (positive balance, no owner-freeze 'R', no self-revocation 'S') of
+// sectionToken or of any ancestor up to `root` -- holding the root grants the
+// whole branch, so a section-level revocation does not withdraw it.
+//
+// Lock and freshness contract (deliberate, see the sections NIP): this runs
+// inside AddMessage() under cs_depinmsgpool, where calling
+// GetDepinAncestorRecipients() is forbidden (it takes cs_main and flushes) and
+// where CAssetsCache methods such as CheckForDEPINRestriction() would race --
+// they read passets' dirty sets and write passetsRestrictionCache, state that
+// mutates during block validation under cs_main. So this function performs
+// ONLY direct database reads (ReadAssetAddressQuantity, ReadRestrictedAddress,
+// ReadSelfRestriction), which LevelDB serves concurrently without a lock. Its
+// freshness is therefore the flushed state -- the same the pool's ownership
+// check has always had -- with balance and restrictions read at the SAME level
+// rather than mixing disk balances with half-connected in-memory restrictions.
+//
+// Preconditions, each a named error BEFORE any read: fAssetIndex (without the
+// index "no balance" would be indistinguishable from "cannot answer"),
+// passetsdb, prestricteddb (restrictions read from a null pointer would fail
+// OPEN and let frozen/revoked holders publish). Denying with a false reason is
+// as misleading as granting too much, so a missing dependency is an error,
+// never "no access".
+bool HasDepinSectionAccess(const std::string& address, const std::string& sectionToken,
+                           const std::string& root, std::string& error);
+
+// Same relation for owner tokens: the owner of a section controls its subtree,
+// the owner of the root controls everything. Ancestors are derived over the
+// BASE names and OWNER_TAG is re-appended per level -- "&TEST/GENERAL!" is not
+// a component of anything. Owner tokens cannot be frozen or self-revoked, so
+// "active" reduces to positive balance and prestricteddb is not required.
+bool HasDepinSectionOwnerAccess(const std::string& address, const std::string& sectionToken,
+                                const std::string& root, std::string& error);
 
 bool VerifyDepinMessageSignature(const CDepinMessage& message);
 bool SignDepinMessage(CDepinMessage& message, const std::string& senderAddress);
@@ -295,8 +384,16 @@ bool GetDepinAncestorRecipients(const std::string& token,
 // Sender always sees their own message; otherwise checks recipientKeys
 // membership by hash160 (no decryption attempted, no private key needed).
 // addressHash160 must be pre-decoded once by the caller (see GetMessagesForAddress).
+//
+// scopeToken "" is byte-for-byte the historical behavior. Non-empty, the
+// message's token must be scopeToken or a section inside it; the check runs
+// BEFORE the sender shortcut (a sender's own message from another section must
+// not leak into the wrong tab) and before the ECIES deserialization (the
+// expensive part). The scope separates tabs; it is NOT access control -- what
+// an address can decrypt is still fixed by recipientKeys.
 bool ShouldDeliverDepinMessageToAddress(const CDepinMessage& msg, const std::string& address,
-                                         const uint160* addressHash160);
+                                         const uint160* addressHash160,
+                                         const std::string& scopeToken = "");
 
 // Apply ShouldDeliverDepinMessageToAddress over a collection, preserving order.
 // Split out from GetMessagesForAddress so the delivery policy can be tested on a
@@ -306,7 +403,8 @@ bool ShouldDeliverDepinMessageToAddress(const CDepinMessage& msg, const std::str
 // copied into the result. Null entries are skipped.
 std::vector<CDepinMessage> FilterDepinMessagesForAddress(const std::vector<const CDepinMessage*>& messages,
                                                          const std::string& address,
-                                                         const uint160* addressHash160);
+                                                         const uint160* addressHash160,
+                                                         const std::string& scopeToken = "");
 
 // Encrypt message for ALL recipients at once (ECIES hybrid encryption)
 // Creates a single CECIESEncryptedMessage with:

@@ -33,6 +33,7 @@ UniValue depinmcpstatus(const JSONRPCRequest& request);
 UniValue depinclearmsg(const JSONRPCRequest& request);
 UniValue depinpoolpkey(const JSONRPCRequest& request);
 UniValue depinsubmitmsg(const JSONRPCRequest& request);
+UniValue depinlistsections(const JSONRPCRequest& request);
 #ifdef ENABLE_WALLET
 #include "wallet/wallet.h"
 extern std::vector<CWalletRef> vpwallets;
@@ -610,8 +611,10 @@ std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request, cons
             return "ERROR|" + error;
         }
 
-        // Verify token
-        if (token != pDepinMsgPool->GetActiveToken()) {
+        // Verify token: the active token or a section inside its subtree. The
+        // challenge above was bound to this same token at issue time, so a
+        // section challenge cannot be replayed against the root.
+        if (!IsDepinSectionOrRoot(token, pDepinMsgPool->GetActiveToken())) {
             return strprintf("ERROR|Token mismatch. Server has: %s", pDepinMsgPool->GetActiveToken());
         }
 
@@ -647,7 +650,9 @@ std::string CDepinMsgPoolServer::ProcessRequest(const std::string& request, cons
         }
 
         try {
-            std::vector<CDepinMessage> messages = pDepinMsgPool->GetMessagesForAddress(authAddress);
+            // The requested token is the scope: a section query returns only
+            // that section's subtree, the root returns the whole pool.
+            std::vector<CDepinMessage> messages = pDepinMsgPool->GetMessagesForAddress(authAddress, token);
 
             // Serialize messages with exception handling
             CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
@@ -793,54 +798,103 @@ std::string CDepinMsgPoolServer::ProcessJsonRpcRequest(const UniValue& valReques
         jsonRequest.fSkipWalletCheck = true; // Skip wallet check for authenticated gateway calls
     }
 
-    // NIP revision 005b: depinclearmsg is a destructive, pool-global operation.
-    // Over the DePIN port it requires a challenge-signature from the OWNER of
-    // the active token (holder of <activeToken>!). The node-RPC path is
-    // unchanged (the operator is already authenticated by rpcuser/rpcpassword).
-    // Remote params: [ mode_or_null, admin_address, challenge, signature ].
+    // NIP revision 005b: depinclearmsg is a destructive operation. Over the
+    // DePIN port it requires a challenge-signature from an OWNER. The node-RPC
+    // path is unchanged (the operator is already authenticated by
+    // rpcuser/rpcpassword).
+    // Remote params, two accepted shapes:
+    //   [ mode_or_null, admin_address, challenge, signature ]           (pool-wide)
+    //   [ mode_or_null, scope, admin_address, challenge, signature ]    (one subtree)
+    // With a scope, the ADMIN challenge must have been issued FOR that scope
+    // token, and owner authority is inherited: the owner of the section or of
+    // any ancestor up to the pool root. Purging a subtree never touches
+    // parents or siblings -- the same shape of authority as reading and
+    // writing there, and purging upward would be an escalation.
     if (jsonRequest.strMethod == "depinclearmsg") {
-        if (jsonRequest.params.size() != 4) {
+        if (jsonRequest.params.size() != 4 && jsonRequest.params.size() != 5) {
             return JSONRPCReply(NullUniValue,
                 JSONRPCError(RPC_INVALID_PARAMETER,
-                    "depinclearmsg over the DePIN port expects [mode, address, challenge, signature]"), id);
+                    "depinclearmsg over the DePIN port expects [mode, address, challenge, signature] "
+                    "or [mode, scope, address, challenge, signature]"), id);
         }
 
+        const bool hasScope = (jsonRequest.params.size() == 5);
+        const size_t base = hasScope ? 2 : 1;
+
         // Validate types before get_str() to return a clean error.
-        if (!jsonRequest.params[1].isStr() || !jsonRequest.params[2].isStr() || !jsonRequest.params[3].isStr()) {
+        for (size_t i = base; i < base + 3; ++i) {
+            if (!jsonRequest.params[i].isStr()) {
+                return JSONRPCReply(NullUniValue,
+                    JSONRPCError(RPC_INVALID_PARAMETER, "address, challenge and signature must be strings"), id);
+            }
+        }
+        if (hasScope && !jsonRequest.params[1].isStr()) {
             return JSONRPCReply(NullUniValue,
-                JSONRPCError(RPC_INVALID_PARAMETER, "address, challenge and signature must be strings"), id);
+                JSONRPCError(RPC_INVALID_PARAMETER, "scope must be a string"), id);
         }
 
         const UniValue modeParam = jsonRequest.params[0];
-        std::string address   = jsonRequest.params[1].get_str();
-        std::string challenge = jsonRequest.params[2].get_str();
-        std::string signature = jsonRequest.params[3].get_str();
+        std::string scope     = hasScope ? jsonRequest.params[1].get_str() : "";
+        std::string address   = jsonRequest.params[base].get_str();
+        std::string challenge = jsonRequest.params[base + 1].get_str();
+        std::string signature = jsonRequest.params[base + 2].get_str();
         const std::string activeToken = pDepinMsgPool ? pDepinMsgPool->GetActiveToken() : "";
+        const std::string authToken = scope.empty() ? activeToken : scope;
 
         std::string authError;
-        // 1) The challenge (issued only to the owner, see IssueChallenge/ADMIN) is
-        //    valid and signed by 'address'.
-        std::string messageToSign = strprintf("DEPIN-CLEAR|%s|%s|%s", activeToken, address, challenge);
-        if (!ValidateChallenge(activeToken, address, clientIP, challenge, DepinChallengeType::ADMIN, authError) ||
+        if (!scope.empty() && !IsDepinSectionOrRoot(scope, activeToken)) {
+            return JSONRPCReply(NullUniValue,
+                JSONRPCError(RPC_INVALID_PARAMETER,
+                    strprintf("Scope '%s' is not configured token '%s' or a section inside it",
+                              scope, activeToken)), id);
+        }
+
+        // 1) The challenge (issued only to an owner, see IssueChallenge/ADMIN)
+        //    was issued for authToken and is signed by 'address'.
+        std::string messageToSign = strprintf("DEPIN-CLEAR|%s|%s|%s", authToken, address, challenge);
+        if (!ValidateChallenge(authToken, address, clientIP, challenge, DepinChallengeType::ADMIN, authError) ||
             !VerifyChallengeSignature(address, signature, messageToSign, authError)) {
             return JSONRPCReply(NullUniValue, JSONRPCError(RPC_INVALID_REQUEST, authError), id);
         }
-        // 2) Defense in depth: 'address' owns the owner asset <activeToken>!.
-        if (!CheckTokenOwnership(address, activeToken + OWNER_TAG, authError)) {
+        // 2) Defense in depth: 'address' holds the owner token of authToken or
+        //    of one of its ancestors up to the pool root.
+        if (!HasDepinSectionOwnerAccess(address, authToken, activeToken, authError)) {
             return JSONRPCReply(NullUniValue,
-                JSONRPCError(RPC_INVALID_REQUEST, "depinclearmsg requires the active token owner"), id);
+                JSONRPCError(RPC_INVALID_REQUEST, "depinclearmsg requires an owner of the token or an ancestor"), id);
         }
 
-        // Rebuild params for the real RPC (accepts <= 1 param):
-        //   mode null/"" -> []  (remove expired);  otherwise -> [mode]
+        // Rebuild params for the real RPC (accepts <= 2 params):
+        //   [mode?] or [mode_or_null, scope]
         UniValue clearParams(UniValue::VARR);
-        if (!(modeParam.isNull() || (modeParam.isStr() && modeParam.get_str().empty()))) {
-            clearParams.push_back(modeParam);
+        const bool modeGiven = !(modeParam.isNull() || (modeParam.isStr() && modeParam.get_str().empty()));
+        if (scope.empty()) {
+            if (modeGiven) {
+                clearParams.push_back(modeParam);
+            }
+        } else {
+            clearParams.push_back(modeGiven ? modeParam : NullUniValue);
+            clearParams.push_back(UniValue(scope));
         }
         jsonRequest.params = clearParams;
         jsonRequest.fSkipWalletCheck = true;
     }
 #endif
+
+    // Sections: over the DePIN port, depinlistsections serves NAMES only.
+    // Its address mode reports access and per-section message counters, and
+    // this port is unauthenticated -- honoring the parameter here would hand
+    // any caller another address's tab metadata, which is exactly what the
+    // counters-only-with-access rule exists to prevent. The full mode stays
+    // available on node RPC (operator-authenticated); a holder can prove
+    // access to a section's messages through AUTH+GETMESSAGES instead.
+    if (jsonRequest.strMethod == "depinlistsections" &&
+        jsonRequest.params.size() > 0 && !jsonRequest.params[0].isNull() &&
+        !(jsonRequest.params[0].isStr() && jsonRequest.params[0].get_str().empty())) {
+        return JSONRPCReply(NullUniValue,
+            JSONRPCError(RPC_INVALID_PARAMETER,
+                "depinlistsections over the DePIN port lists section names only; "
+                "the address mode requires node RPC"), id);
+    }
 
     UniValue result = NullUniValue;
     UniValue error = NullUniValue;
@@ -858,6 +912,8 @@ std::string CDepinMsgPoolServer::ProcessJsonRpcRequest(const UniValue& valReques
             result = depinpoolstats(jsonRequest);
         } else if (jsonRequest.strMethod == "depinmcpstatus") {
             result = depinmcpstatus(jsonRequest);
+        } else if (jsonRequest.strMethod == "depinlistsections") {
+            result = depinlistsections(jsonRequest);
         }
 #ifdef ENABLE_WALLET
         else if (jsonRequest.strMethod == "depinclearmsg") {
@@ -908,7 +964,11 @@ std::string CDepinMsgPoolServer::IssueChallenge(const std::string& token, const 
         return "";
     }
 
-    if (token != pDepinMsgPool->GetActiveToken()) {
+    // The requested token may be a section inside the served subtree. The
+    // challenge stores the token it was issued for and ValidateChallenge()
+    // compares it, so a challenge for a section can never be replayed against
+    // the root or a sibling.
+    if (!IsDepinSectionOrRoot(token, pDepinMsgPool->GetActiveToken())) {
         error = strprintf("Token mismatch. Server has: %s", pDepinMsgPool->GetActiveToken());
         return "";
     }
@@ -923,13 +983,20 @@ std::string CDepinMsgPoolServer::IssueChallenge(const std::string& token, const 
         return "";
     }
 
-    // Verify token ownership BEFORE issuing challenge (prevents DoS).
+    // Verify access BEFORE issuing challenge (prevents DoS). Inherited and
+    // ACTIVE: holding the token or any ancestor up to the pool root grants the
+    // section, frozen and self-revoked pairs do not count.
     // NIP revision 005b: an ADMIN challenge (for depinclearmsg) is only issued
-    // to the OWNER of the active token, i.e. the holder of the owner asset
-    // <token>!, not to any holder of the token.
-    const std::string ownershipAsset = (type == DepinChallengeType::ADMIN) ? (token + OWNER_TAG) : token;
-    if (!CheckTokenOwnership(address, ownershipAsset, error)) {
-        return "";
+    // to an OWNER -- of the requested section or of any ancestor up to the
+    // root -- not to any holder.
+    if (type == DepinChallengeType::ADMIN) {
+        if (!HasDepinSectionOwnerAccess(address, token, pDepinMsgPool->GetActiveToken(), error)) {
+            return "";
+        }
+    } else {
+        if (!HasDepinSectionAccess(address, token, pDepinMsgPool->GetActiveToken(), error)) {
+            return "";
+        }
     }
 
     // Verify that address has public key registered in blockchain (prevents DoS from non-spending addresses)
@@ -1294,52 +1361,8 @@ bool CDepinMsgPoolClient::Ping(const std::string& host, int port, std::string& e
     return true;
 }
 
-bool CDepinMsgPoolClient::GetInfo(const std::string& host, int port,
-                                 std::string& token, int& messageCount,
-                                 std::string& error) {
-    std::string request = DEPIN_CMD_INFO;
-    std::string response;
-
-    if (!SendRequest(host, port, request, response, error)) {
-        return false;
-    }
-
-    // Parse: OK|token|count|expiryhours (expiryhours is optional for backward compatibility)
-    size_t pos1 = response.find('|');
-    if (pos1 == std::string::npos) {
-        error = "Invalid INFO response format";
-        return false;
-    }
-
-    size_t pos2 = response.find('|', pos1 + 1);
-    if (pos2 == std::string::npos) {
-        error = "Invalid INFO response format";
-        return false;
-    }
-
-    std::string status = response.substr(0, pos1);
-    if (status != "OK") {
-        error = "Server error: " + response.substr(pos1 + 1);
-        return false;
-    }
-
-    token = response.substr(pos1 + 1, pos2 - pos1 - 1);
-
-    // Check if there's a third field (expiryhours)
-    size_t pos3 = response.find('|', pos2 + 1);
-    if (pos3 != std::string::npos) {
-        // New format: OK|token|count|expiryhours
-        messageCount = std::stoi(response.substr(pos2 + 1, pos3 - pos2 - 1));
-    } else {
-        // Old format: OK|token|count
-        messageCount = std::stoi(response.substr(pos2 + 1));
-    }
-
-    return true;
-}
-
 bool CDepinMsgPoolClient::GetRemoteServerInfo(const std::string& host, int port,
-                                              int64_t& messageExpiryHours,
+                                              CDepinRemoteServerInfo& info,
                                               std::string& error) {
     // Use INFO command to get server configuration
     std::string request = DEPIN_CMD_INFO;
@@ -1349,40 +1372,66 @@ bool CDepinMsgPoolClient::GetRemoteServerInfo(const std::string& host, int port,
         return false;
     }
 
-    // Parse: OK|token|count|expiryhours
-    size_t pos1 = response.find('|');
-    if (pos1 == std::string::npos) {
-        error = "Invalid INFO response format";
+    // The server answers
+    //   OK|token|port|cipher|maxRecipients|maxMessageSize|expiryHours|maxPoolSizeMB|...
+    // (ProcessRequest, INFO). The previous parser here assumed an old
+    // OK|token|count|expiry layout and read the CIPHER field as the expiry, so
+    // it failed on every current server with stoi("AES-256-GCM"). Split all
+    // fields and index them by position instead.
+    std::vector<std::string> fields;
+    std::stringstream ss(response);
+    std::string field;
+    while (std::getline(ss, field, '|')) {
+        fields.push_back(field);
+    }
+
+    if (fields.empty() || fields[0] != "OK") {
+        error = "Server error: " + response;
+        return false;
+    }
+    if (fields.size() < 7) {
+        error = "Server INFO response has too few fields (old version)";
         return false;
     }
 
-    size_t pos2 = response.find('|', pos1 + 1);
-    if (pos2 == std::string::npos) {
-        error = "Invalid INFO response format";
-        return false;
-    }
-
-    size_t pos3 = response.find('|', pos2 + 1);
-    if (pos3 == std::string::npos) {
-        error = "Server does not support message expiry info (old version)";
-        return false;
-    }
-
-    std::string status = response.substr(0, pos1);
-    if (status != "OK") {
-        error = "Server error: " + response.substr(pos1 + 1);
-        return false;
-    }
-
-    // Extract expiry hours (third field)
-    std::string expiryStr = response.substr(pos3 + 1);
     try {
-        messageExpiryHours = std::stoi(expiryStr);
+        info.token = fields[1];
+        info.port = std::stoi(fields[2]);
+        info.cipher = fields[3];
+        info.maxRecipients = (unsigned int)std::stoul(fields[4]);
+        info.maxMessageSize = (unsigned int)std::stoul(fields[5]);
+        info.messageExpiryHours = std::stoll(fields[6]);
     } catch (const std::exception& e) {
-        error = strprintf("Failed to parse expiry hours: %s", e.what());
+        error = strprintf("Failed to parse INFO response: %s", e.what());
         return false;
     }
 
+    if (info.token.empty()) {
+        error = "Server INFO response carries no token";
+        return false;
+    }
+
+    // Defense in depth: Initialize() refuses maxRecipients == 0, so no honest
+    // server announces it. Failing here keeps every consumer (depinsendmsg's
+    // scope decision above all) from turning a nonsensical limit into a
+    // default instead of an error.
+    if (info.maxRecipients == 0) {
+        error = "Server INFO announces maxRecipients=0; a pool that accepts no "
+                "recipients cannot carry a message";
+        return false;
+    }
+
+    return true;
+}
+
+bool CDepinMsgPoolClient::GetRemoteServerInfo(const std::string& host, int port,
+                                              int64_t& messageExpiryHours,
+                                              std::string& error) {
+    CDepinRemoteServerInfo info;
+    if (!GetRemoteServerInfo(host, port, info, error)) {
+        return false;
+    }
+    messageExpiryHours = info.messageExpiryHours;
     return true;
 }
 

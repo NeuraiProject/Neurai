@@ -24,6 +24,8 @@
 #include "wallet/wallet.h"
 #endif
 
+#include <algorithm>
+
 std::unique_ptr<CDepinMsgPool> pDepinMsgPool;
 
 // CDepinMessage implementation
@@ -106,6 +108,15 @@ bool CDepinMsgPool::Initialize(const std::string& token, unsigned int port, unsi
         return false;
     }
 
+    // A pool with maxRecipients == 0 can never carry a message: the payload
+    // size cap multiplies by it and the recipientKeys count check rejects
+    // anything >= 1 recipient. Reject the misconfiguration at startup instead
+    // of booting a pool that silently drops everything.
+    if (maxRecipients == 0) {
+        LogPrintf("ERROR: -depinmsgmaxusers must be at least 1\n");
+        return false;
+    }
+
     // Token existence is not validated to allow server configuration before token creation
     // or during reindex when asset index may not be fully populated
     activeToken = token;
@@ -133,9 +144,11 @@ bool CDepinMsgPool::AddMessage(const CDepinMessage& message, std::string& error,
         return false;
     }
 
-    // Verify that the token matches
-    if (message.token != activeToken) {
-        error = strprintf("Message token '%s' does not match active token '%s'",
+    // Verify that the token is the active token or a section (sub-asset)
+    // inside its subtree. The root itself always qualifies, so a pre-sections
+    // client that only ever sends the configured token is unaffected.
+    if (!IsDepinSectionOrRoot(message.token, activeToken)) {
+        error = strprintf("Message token '%s' is not active token '%s' or a section inside it",
                          message.token, activeToken);
         return false;
     }
@@ -175,6 +188,25 @@ bool CDepinMsgPool::AddMessage(const CDepinMessage& message, std::string& error,
         return false;
     }
 
+    // Hardening, independent of sections: recipientKeys is a snapshot chosen by
+    // the sender (public keys are public), so the byte-size cap above was the
+    // only bound on how many recipients a message could claim. Cap the count
+    // itself. A payload that does not deserialize is NOT rejected here --
+    // delivery already drops those per-recipient -- so this stays a cap, not a
+    // format gate.
+    try {
+        CECIESEncryptedMessage eciesProbe;
+        CDataStream ssProbe(message.encryptedPayload, SER_NETWORK, PROTOCOL_VERSION);
+        ssProbe >> eciesProbe;
+        if (eciesProbe.recipientKeys.size() > nMaxRecipients) {
+            error = strprintf("Message addresses %d recipients, maximum is %d",
+                             eciesProbe.recipientKeys.size(), nMaxRecipients);
+            return false;
+        }
+    } catch (const std::exception&) {
+        // Undeserializable payloads keep today's behavior: accepted, undeliverable.
+    }
+
     // Verify pool size limit
     size_t currentPoolSize = DynamicMemoryUsage();
     size_t maxPoolSizeBytes = (size_t)nMaxPoolSizeMB * 1024 * 1024;  // Convert MB to bytes
@@ -194,8 +226,14 @@ bool CDepinMsgPool::AddMessage(const CDepinMessage& message, std::string& error,
         LogPrintf("AddMessage: Skipping signature check for pre-authenticated message\n");
     }
 
-    // Verify that the sender owns the token
-    if (!CheckTokenOwnership(message.senderAddress, activeToken, error)) {
+    // Verify that the sender has ACTIVE inherited access to the message's own
+    // token -- not merely a balance of the pool root. This is the authoritative
+    // write check: it runs against message.token (the previous code checked
+    // activeToken, which is what made publishing from a section impossible) and
+    // it excludes frozen and self-revoked pairs. HasDepinSectionAccess performs
+    // only direct database reads, which is what makes it callable here under
+    // cs_depinmsgpool -- see its contract in depinmsgpool.h.
+    if (!HasDepinSectionAccess(message.senderAddress, message.token, activeToken, error)) {
         return false;
     }
 
@@ -227,7 +265,16 @@ bool CDepinMsgPool::GetDepinMessage(const uint256& hash, CDepinMessage& message)
 }
 
 bool ShouldDeliverDepinMessageToAddress(const CDepinMessage& msg, const std::string& address,
-                                         const uint160* addressHash160) {
+                                         const uint160* addressHash160,
+                                         const std::string& scopeToken) {
+    // Scope first: BEFORE the sender shortcut (a sender's own message from
+    // another section must not appear in the wrong tab) and before the ECIES
+    // deserialization below (the expensive part). Empty scope is the
+    // historical behavior, untouched.
+    if (!scopeToken.empty() && !IsDepinSectionOrRoot(msg.token, scopeToken)) {
+        return false;
+    }
+
     // Sender always receives their own message, regardless of type,
     // recipientKeys contents, or payload validity.
     if (msg.senderAddress == address) {
@@ -251,17 +298,19 @@ bool ShouldDeliverDepinMessageToAddress(const CDepinMessage& msg, const std::str
 
 std::vector<CDepinMessage> FilterDepinMessagesForAddress(const std::vector<const CDepinMessage*>& messages,
                                                          const std::string& address,
-                                                         const uint160* addressHash160) {
+                                                         const uint160* addressHash160,
+                                                         const std::string& scopeToken) {
     std::vector<CDepinMessage> result;
     for (const CDepinMessage* msg : messages) {
-        if (msg && ShouldDeliverDepinMessageToAddress(*msg, address, addressHash160)) {
+        if (msg && ShouldDeliverDepinMessageToAddress(*msg, address, addressHash160, scopeToken)) {
             result.push_back(*msg);
         }
     }
     return result;
 }
 
-std::vector<CDepinMessage> CDepinMsgPool::GetMessagesForAddress(const std::string& address) const {
+std::vector<CDepinMessage> CDepinMsgPool::GetMessagesForAddress(const std::string& address,
+                                                                const std::string& scopeToken) const {
     LOCK(cs_depinmsgpool);
 
     // Decode the requesting address to hash160 once per call, not once per message.
@@ -290,7 +339,7 @@ std::vector<CDepinMessage> CDepinMsgPool::GetMessagesForAddress(const std::strin
         ordered.push_back(&it->second);
     }
 
-    return FilterDepinMessagesForAddress(ordered, address, hashPtr);
+    return FilterDepinMessagesForAddress(ordered, address, hashPtr, scopeToken);
 }
 
 std::vector<CDepinMessage> CDepinMsgPool::GetAllMessages() const {
@@ -307,70 +356,65 @@ size_t CDepinMsgPool::GetMessageCount() const {
     return mapMessages.size();
 }
 
-void CDepinMsgPool::RemoveExpiredMessages(int64_t currentTime) {
+void CDepinMsgPool::EraseMessages(const std::vector<uint256>& hashes) {
+    for (const auto& hash : hashes) {
+        auto it = mapMessages.find(hash);
+        if (it != mapMessages.end()) {
+            int64_t timestamp = it->second.timestamp;
+            mapMessages.erase(it);
+
+            // Remove from mapByTime
+            auto range = mapByTime.equal_range(timestamp);
+            for (auto timeIt = range.first; timeIt != range.second; ) {
+                if (timeIt->second == hash) {
+                    timeIt = mapByTime.erase(timeIt);
+                } else {
+                    ++timeIt;
+                }
+            }
+        }
+    }
+}
+
+void CDepinMsgPool::RemoveExpiredMessages(int64_t currentTime, const std::string& scopeToken) {
     LOCK(cs_depinmsgpool);
 
     std::vector<uint256> toRemove;
     int64_t expiryTime = GetMessageExpiryTime();
 
     for (const auto& entry : mapMessages) {
+        if (!scopeToken.empty() && !IsDepinSectionOrRoot(entry.second.token, scopeToken)) {
+            continue;
+        }
         if (entry.second.IsExpired(currentTime, expiryTime)) {
             toRemove.push_back(entry.first);
         }
     }
 
-    for (const auto& hash : toRemove) {
-        auto it = mapMessages.find(hash);
-        if (it != mapMessages.end()) {
-            int64_t timestamp = it->second.timestamp;
-            mapMessages.erase(it);
-
-            // Remove from mapByTime
-            auto range = mapByTime.equal_range(timestamp);
-            for (auto timeIt = range.first; timeIt != range.second; ) {
-                if (timeIt->second == hash) {
-                    timeIt = mapByTime.erase(timeIt);
-                } else {
-                    ++timeIt;
-                }
-            }
-        }
-    }
+    EraseMessages(toRemove);
 
     if (!toRemove.empty()) {
         LogPrint(BCLog::MEMPOOL, "Removed %d expired chat messages\n", toRemove.size());
     }
 }
 
-void CDepinMsgPool::RemoveMessagesOlderThan(int64_t currentTime, int64_t ageThresholdSeconds) {
+void CDepinMsgPool::RemoveMessagesOlderThan(int64_t currentTime, int64_t ageThresholdSeconds,
+                                            const std::string& scopeToken) {
     LOCK(cs_depinmsgpool);
 
     std::vector<uint256> toRemove;
 
     for (const auto& entry : mapMessages) {
+        if (!scopeToken.empty() && !IsDepinSectionOrRoot(entry.second.token, scopeToken)) {
+            continue;
+        }
         int64_t messageAge = currentTime - entry.second.timestamp;
         if (messageAge > ageThresholdSeconds) {
             toRemove.push_back(entry.first);
         }
     }
 
-    for (const auto& hash : toRemove) {
-        auto it = mapMessages.find(hash);
-        if (it != mapMessages.end()) {
-            int64_t timestamp = it->second.timestamp;
-            mapMessages.erase(it);
-
-            // Remove from mapByTime
-            auto range = mapByTime.equal_range(timestamp);
-            for (auto timeIt = range.first; timeIt != range.second; ) {
-                if (timeIt->second == hash) {
-                    timeIt = mapByTime.erase(timeIt);
-                } else {
-                    ++timeIt;
-                }
-            }
-        }
-    }
+    EraseMessages(toRemove);
 
     if (!toRemove.empty()) {
         int64_t hoursThreshold = ageThresholdSeconds / 3600;
@@ -383,6 +427,39 @@ void CDepinMsgPool::Clear() {
     mapMessages.clear();
     mapByTime.clear();
     LogPrint(BCLog::MEMPOOL, "Chat mempool cleared\n");
+}
+
+size_t CDepinMsgPool::ClearScope(const std::string& scopeToken) {
+    LOCK(cs_depinmsgpool);
+
+    std::vector<uint256> toRemove;
+    for (const auto& entry : mapMessages) {
+        if (IsDepinSectionOrRoot(entry.second.token, scopeToken)) {
+            toRemove.push_back(entry.first);
+        }
+    }
+
+    EraseMessages(toRemove);
+
+    if (!toRemove.empty()) {
+        LogPrint(BCLog::MEMPOOL, "Removed %d chat messages in scope %s\n",
+                 toRemove.size(), scopeToken);
+    }
+    return toRemove.size();
+}
+
+size_t CDepinMsgPool::CountMessagesInScope(const std::string& scopeToken) const {
+    LOCK(cs_depinmsgpool);
+    if (scopeToken.empty()) {
+        return mapMessages.size();
+    }
+    size_t count = 0;
+    for (const auto& entry : mapMessages) {
+        if (IsDepinSectionOrRoot(entry.second.token, scopeToken)) {
+            count++;
+        }
+    }
+    return count;
 }
 
 size_t CDepinMsgPool::Size() const {
@@ -416,6 +493,70 @@ int64_t CDepinMsgPool::GetNewestMessageTime() const {
     if (mapByTime.empty())
         return 0;
     return mapByTime.rbegin()->first;
+}
+
+bool CDepinMsgPool::GetSections(std::vector<std::string>& sections, std::string& error) {
+    if (!fEnabled) {
+        error = "Chat mempool is not enabled";
+        return false;
+    }
+    if (!passetsdb) {
+        error = "Asset database not available";
+        return false;
+    }
+
+    // Lazy invalidation on tip change: zero work while nobody asks, reorgs
+    // covered for free (any tip change invalidates), and nothing runs inside
+    // the validation thread. Lock order cs_main -> cs_sectionCache.
+    uint256 tip;
+    {
+        LOCK(cs_main);
+        if (chainActive.Tip()) {
+            tip = chainActive.Tip()->GetBlockHash();
+        }
+    }
+
+    {
+        LOCK(cs_sectionCache);
+        if (!tip.IsNull() && tip == sectionSnapshotTip && !sectionSnapshot.empty()) {
+            sections = sectionSnapshot;
+            return true;
+        }
+    }
+
+    // Build OUTSIDE the cache lock: AssetDir is a full scan of the asset
+    // keyspace (plus its own flush under cs_main), and holding cs_sectionCache
+    // through it would serialize concurrent readers behind disk work. Two
+    // concurrent builders only waste work; the last swap wins.
+    //
+    // The '/'-terminated wildcard prefix already excludes "&TESTING" and
+    // "&TEST.FOO"; IsDepinSectionOrRoot below is a belt-and-braces recheck.
+    std::vector<CDatabasedAssetData> subAssets;
+    if (!passetsdb->AssetDir(subAssets, activeToken + "/*", MAX_CACHE_ASSETS_SIZE, 0)) {
+        error = strprintf("Failed to enumerate sections of '%s' from the asset database", activeToken);
+        return false;
+    }
+
+    std::vector<std::string> built;
+    built.push_back(activeToken);  // the root is always the first tab
+    for (const auto& data : subAssets) {
+        const std::string& name = data.asset.strName;
+        if (name != activeToken && IsDepinSectionOrRoot(name, activeToken)) {
+            built.push_back(name);
+        }
+    }
+    // AssetDir returns LevelDB key order (length-first); sort everything after
+    // the root lexicographically so the tab order is stable and human.
+    std::sort(built.begin() + 1, built.end());
+
+    {
+        LOCK(cs_sectionCache);
+        sectionSnapshotTip = tip;
+        sectionSnapshot = built;
+    }
+
+    sections = built;
+    return true;
 }
 
 // Auxiliary functions
@@ -590,6 +731,107 @@ bool CheckTokenOwnership(const std::string& address, const std::string& token, s
     return true;
 }
 
+// Shared preconditions of the two authorization checks below. Each absence is a
+// named error BEFORE any read: answering "no access" for a database the node
+// cannot read would deny with a false reason, which misleads exactly like
+// granting too much. fRequireRestrictions distinguishes the holder check (needs
+// prestricteddb: reading restrictions from a null pointer fails OPEN, letting
+// frozen and self-revoked holders publish) from the owner check (owner tokens
+// cannot be frozen or self-revoked, so it only reads balances).
+static bool CheckDepinAccessPreconditions(bool fRequireRestrictions, std::string& error)
+{
+    if (!fAssetIndex) {
+        error = "Asset index is required but not enabled. Restart with -assetindex and -reindex";
+        return false;
+    }
+    if (!passetsdb) {
+        error = "Asset database not available";
+        return false;
+    }
+    if (fRequireRestrictions && !prestricteddb) {
+        error = "Restricted asset database not available; restriction state cannot be read, "
+                "and treating every address as unrestricted would let frozen and revoked "
+                "holders publish";
+        return false;
+    }
+    return true;
+}
+
+bool HasDepinSectionAccess(const std::string& address, const std::string& sectionToken,
+                           const std::string& root, std::string& error)
+{
+    // See the header for the lock/freshness contract: this runs under
+    // cs_depinmsgpool, so ONLY direct database reads are allowed here -- no
+    // GetDepinAncestorRecipients (cs_main + flush), no CAssetsCache methods
+    // (they touch passets' dirty sets and passetsRestrictionCache, cs_main
+    // domain). Three exact reads per ancestor, nothing else.
+    if (!CheckDepinAccessPreconditions(true, error))
+        return false;
+
+    if (!IsValidDepinMessagingToken(sectionToken, error))
+        return false;
+    std::string rootError;
+    if (!IsValidDepinMessagingToken(root, rootError)) {
+        error = strprintf("Invalid pool root '%s': %s", root, rootError);
+        return false;
+    }
+
+    std::vector<std::string> ancestors;
+    if (!DeriveDepinAncestors(sectionToken, root, ancestors, error))
+        return false;
+
+    for (const std::string& ancestor : ancestors) {
+        CAmount quantity = 0;
+        if (!passetsdb->ReadAssetAddressQuantity(ancestor, address, quantity))
+            continue;
+        if (quantity <= 0)
+            continue;
+        if (prestricteddb->ReadRestrictedAddress(address, ancestor))
+            continue;  // owner freeze 'R'
+        if (prestricteddb->ReadSelfRestriction(address, ancestor))
+            continue;  // self-revocation 'S'
+        return true;
+    }
+
+    error = strprintf("Address '%s' holds no active balance of '%s' or of any of its "
+                      "ancestors up to '%s'", address, sectionToken, root);
+    return false;
+}
+
+bool HasDepinSectionOwnerAccess(const std::string& address, const std::string& sectionToken,
+                                const std::string& root, std::string& error)
+{
+    if (!CheckDepinAccessPreconditions(false, error))
+        return false;
+
+    if (!IsValidDepinMessagingToken(sectionToken, error))
+        return false;
+    std::string rootError;
+    if (!IsValidDepinMessagingToken(root, rootError)) {
+        error = strprintf("Invalid pool root '%s': %s", root, rootError);
+        return false;
+    }
+
+    // Derive over the BASE names and re-append OWNER_TAG per level:
+    // "&TEST/GENERAL!" is not a component of anything, so deriving over the
+    // owner name itself would answer a meaningless question.
+    std::vector<std::string> ancestors;
+    if (!DeriveDepinAncestors(sectionToken, root, ancestors, error))
+        return false;
+
+    for (const std::string& ancestor : ancestors) {
+        CAmount quantity = 0;
+        if (passetsdb->ReadAssetAddressQuantity(ancestor + OWNER_TAG, address, quantity) &&
+            quantity > 0) {
+            return true;
+        }
+    }
+
+    error = strprintf("Address '%s' does not hold the owner token of '%s' or of any of its "
+                      "ancestors up to '%s'", address, sectionToken, root);
+    return false;
+}
+
 std::vector<std::string> GetTokenHolders(const std::string& token, unsigned int maxHolders, std::string& error) {
     // REQUIRES -assetindex (already verified in Initialize)
     if (!fAssetIndex) {
@@ -685,6 +927,8 @@ void DepinAncestorFlushOnce()
     FlushStateToDisk();
 }
 
+} // namespace
+
 // Ancestors of `token`, itself first, up to `stopAt` (inclusive) or to the
 // absolute root when stopAt is empty.
 //
@@ -726,6 +970,29 @@ bool DeriveDepinAncestors(const std::string& token, const std::string& stopAt,
 
     return true;
 }
+
+bool IsDepinSectionOrRoot(const std::string& name, const std::string& root)
+{
+    if (root.empty() || name.size() < root.size())
+        return false;
+    if (name.compare(0, root.size(), root) != 0)
+        return false;
+    // The character after the root prefix decides everything: end-of-string is
+    // the root itself, '/' is a section, anything else ("&TESTING", "&TEST.FOO")
+    // is a different asset that merely shares a prefix.
+    return name.size() == root.size() || name[root.size()] == DEPIN_SECTION_DELIMITER;
+}
+
+std::string GetDepinSectionLabel(const std::string& name, const std::string& root)
+{
+    if (!IsDepinSectionOrRoot(name, root))
+        return name;
+    if (name.size() == root.size())
+        return "";
+    return name.substr(root.size() + 1);
+}
+
+namespace {
 
 // Does `pubkey`, as stored in -pubkeyindex for `address`, actually belong to it?
 //
