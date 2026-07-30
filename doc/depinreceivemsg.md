@@ -1,234 +1,192 @@
-# Implementation Guide for DePIN Clients (depinreceivemsg)
+# DePIN client integration guide
 
-This documentation details the operation of the `depinreceivemsg` RPC command to facilitate the creation of client libraries (especially for AIs or web wallets).
+This document describes the RPC surface that an external, non-custodial
+DePIN client or library needs in order to read and decrypt messages. It is
+written for clients that hold the user's private key themselves; the node
+returns encrypted messages and does not decrypt their content for the client.
 
-## 1. Introduction to the Endpoint
-The `depinreceivemsg` command allows a client to retrieve encrypted messages from the Neurai DePIN pool. Unlike `depingetmsg`, this endpoint is designed for environments where the server does not have access to the user's keys (non-custodial).
+DePIN messaging is experimental and off-chain. Token names, token holdings,
+section names, and the hierarchy are public blockchain data. Message content
+is protected by encryption, not the existence or membership of a channel.
 
-### RPC Call Parameters
-1. **`token`** (string): The DePIN asset name (e.g., `NEURAI_POOL`). It must match the token configured on the node.
-2. **`address`** (string): Client's Neurai address. It's used for access filtering and, optionally, for total response encryption.
-3. **`timestamp`** (numeric, optional): Initial Unix time. The node will return messages with a timestamp greater than or equal to `(timestamp - 1)`.
+## Concepts
 
----
+The node pool is configured with a DePIN token such as `&NEWS`. That token is
+the pool root. Its sub-assets are hierarchical sections:
 
-## 2. Data Flow and Encryption
-The system uses a double-layer protection scheme when the necessary security conditions are met.
+```
+&NEWS
+&NEWS/GENERAL
+&NEWS/GENERAL/SPORT
+```
 
-### A. Privacy Layer (Optional)
-If the server has an active pool key and the client has previously revealed their public key, the server will return an encrypted JSON object:
+A request for `&NEWS` covers the whole pool subtree. A request for
+`&NEWS/GENERAL` covers that section and its descendants, but not its parent or
+siblings.
+
+An address is *active* for an asset only when it has a positive balance and is
+neither owner-frozen nor self-revoked for that `(asset, address)` pair. Access
+is inherited: a holder of `&NEWS` has access to every descendant; a holder of
+only `&NEWS/GENERAL` has access only to that branch.
+
+## `depinreceivemsg`
+
+```
+depinreceivemsg "token" "address" (timestamp) ("after_hash") (limit)
+```
+
+Arguments:
+
+1. `token` — pool root or a section served by the node.
+2. `address` — the client address used as the recipient selector and, when
+   available, as the response-encryption target.
+3. `timestamp` — optional Unix timestamp. When non-zero, messages whose
+   timestamp is at least `timestamp - 1` are returned.
+4. `after_hash` — optional cursor. Use `""` to start at the oldest available
+   message.
+5. `limit` — optional page size. `0` or omitted returns the unpaginated,
+   backwards-compatible array. Values above 1000 are rejected.
+
+Example JSON-RPC request:
 
 ```json
 {
-  "encrypted": "hex_blob_ecies"
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "depinreceivemsg",
+  "params": ["&NEWS/GENERAL", "N...", 0, "", 25]
 }
 ```
 
-**Client Action:**
-1. Deserialize the `hex_blob_ecies` (`CECIESEncryptedMessage` format).
-2. Decrypt the content using the **Client's Private Key** and the **Pool's Public Key**.
-3. The result will be the JSON array of messages described in section B.
-
-### B. Standard Response (Message Array)
-If the privacy layer is not active or has already been decrypted, an array of objects is received:
-
-```json
-[
-  {
-    "hash": "...",
-    "token": "...",
-    "sender": "...",
-    "timestamp": 123456789,
-    "message_type": "private|group",
-    "encrypted_payload_hex": "...",
-    "signature_hex": "..."
-  }
-]
-```
-
----
-
-## 3. Individual Message Decryption (`encrypted_payload_hex`)
-The `encrypted_payload_hex` field contains the actual DePIN message, which is encrypted for multiple recipients (token holders).
-
-### Payload Structure:
-The payload follows a hybrid ECIES scheme:
-1. **AES Key per Recipient:** A list of blocks where each block is an AES key encrypted with the public key of a specific recipient.
-2. **Symmetrically Encrypted Data:** The actual message encrypted with the aforementioned AES key.
-
-### Decryption Steps:
-1. **Search:** The client must iterate through the recipient blocks looking for the one encrypted with its own public key.
-2. **ECIES Decryption:** Use your own private key to obtain the 256-bit AES key.
-3. **AES Decryption:** Use the AES key to decrypt the message body (usually plain text or internal JSON).
-
----
-
-## 4. Security Validation
-It is CRITICAL that the library performs these validations:
-1. **Signature:** Validate `signature_hex` using the `sender` address and the message hash.
-2. **Token:** Confirm that the `token` in the object matches the expected one.
-3. **Origin:** If the privacy layer was used, validate that the server is who it claims to be using its pool key.
-
----
-
-## 5. Cryptographic Requirements
-- **Secp256k1:** For ECDSA signatures and ECDH key derivation.
-- **ECIES:** Asymmetric encryption standard (based on Electrum/Bitcoin style).
-- **AES-256-GCM/CBC:** For symmetric encryption of message data.
-- **Base58Check:** For handling Neurai addresses.
-
----
-
-## 6. Pagination for Memory-Limited Devices
-
-For devices like ESP32 with limited memory, you can use pagination to receive messages in small batches.
-
-### Additional Parameters:
-4. **`after_hash`** (string, optional): Hash of the last received message. Empty `""` starts from the beginning.
-5. **`limit`** (numeric, optional): Maximum number of messages to return per request. `0` or omitted = no limit.
-
-### Paginated Response:
-When using `limit > 0`, the response includes metadata:
+With `limit > 0`, the result is:
 
 ```json
 {
   "messages": [
     {
-      "hash": "a1b2c3d4e5f6...",
-      "token": "NEURAI_POOL",
-      "sender": "NXn...",
-      "timestamp": 1704067200,
-      "message_type": "private",
+      "hash": "...",
+      "token": "&NEWS/GENERAL",
+      "sender": "N...",
+      "timestamp": 1730000000,
+      "message_type": "group",
       "encrypted_payload_hex": "...",
       "signature_hex": "..."
-    },
-    ...
-  ],
-  "has_more": true
-}
-```
-
-### Pagination Flow:
-
-1. **First request** (without previous messages):
-   ```bash
-   depinreceivemsg("NEURAI_POOL", "NXaddress", 0, "", 5)
-   ```
-   - `after_hash = ""` indicates starting from the beginning.
-   - `limit = 5` requests a maximum of 5 messages.
-   - Response: **The 5 oldest messages** (chronologically sorted) + `has_more: true`.
-
-2. **Subsequent requests** (with cursor):
-   ```bash
-   depinreceivemsg("NEURAI_POOL", "NXaddress", 0, "last_msg_hash", 5)
-   ```
-   - `after_hash = "last_msg_hash"` continues after the last one received.
-   - Response: next 5 messages + `has_more: true/false`.
-
-3. **Completion**:
-   - When `has_more: false`, no more messages are available.
-
-### Usage Example (ESP32 in C++):
-
-```cpp
-#include <ArduinoJson.h>
-#include <HTTPClient.h>
-
-void syncDePINMessages() {
-    String lastHash = "";
-    bool hasMore = true;
-    int messagesProcessed = 0;
-
-    while (hasMore) {
-        // Construct JSON-RPC request
-        DynamicJsonDocument request(512);
-        request["jsonrpc"] = "2.0";
-        request["id"] = "1";
-        request["method"] = "depinreceivemsg";
-        request["params"][0] = "NEURAI_POOL";
-        request["params"][1] = MY_NEURAI_ADDRESS;
-        request["params"][2] = 0;           // timestamp (0 = all)
-        request["params"][3] = lastHash;    // cursor
-        request["params"][4] = 5;           // batch of 5 messages
-
-        // Send HTTP request
-        HTTPClient http;
-        http.begin(NODE_URL);
-        http.addHeader("Content-Type", "application/json");
-
-        String payload;
-        serializeJson(request, payload);
-        int httpCode = http.POST(payload);
-
-        // Process response
-        if (httpCode == 200) {
-            DynamicJsonDocument response(16384);
-            DeserializationError error = deserializeJson(response, http.getString());
-
-            if (!error) {
-                JsonArray messages = response["result"]["messages"];
-
-                for (JsonObject msg : messages) {
-                    // Decrypt and process message
-                    String hash = msg["hash"].as<String>();
-                    String encryptedPayload = msg["encrypted_payload_hex"].as<String>();
-
-                    // Here you implement your decryption logic
-                    decryptAndStoreMessage(encryptedPayload);
-
-                    lastHash = hash;  // Save for next iteration
-                    messagesProcessed++;
-                }
-
-                // Check if there are more messages
-                hasMore = response["result"]["has_more"] | false;
-
-                Serial.printf("Processed %d messages. Has more: %s\n",
-                             messagesProcessed, hasMore ? "true" : "false");
-            } else {
-                Serial.println("Error deserializing JSON");
-                hasMore = false;
-            }
-        } else {
-            Serial.printf("HTTP Error: %d\n", httpCode);
-            hasMore = false;
-        }
-
-        http.end();
-        delay(100);  // Small pause between requests
     }
-
-    Serial.printf("Sync complete. Total messages: %d\n", messagesProcessed);
+  ],
+  "has_more": false
 }
 ```
 
-### Combined with Timestamp:
+Without pagination, the result is the `messages` array directly. Messages are
+ordered from oldest to newest. Save the last returned `hash` and use it as
+`after_hash` for the next page. Supplying a hash that is not in the address's
+visible result is an error.
 
-You can combine pagination with a timestamp filter to sync only new messages:
+### Scope is not authentication
 
-```bash
-# First request: messages since January 1st, batch of 3
-depinreceivemsg("NEURAI_POOL", "NXaddress", 1704067200, "", 3)
-# Response: 3 oldest messages since that date
+`depinreceivemsg` validates the address syntax but does **not** ask the caller
+to prove ownership of that address. Its `token` argument is a convenient UI
+scope, not an authorization mechanism. The actual visibility rule is the
+cryptographic recipient list embedded in each message; an address can decrypt
+only a payload encrypted for its revealed public key. A sender also sees its
+own messages.
 
-# Second request: next batch since that date
-depinreceivemsg("NEURAI_POOL", "NXaddress", 1704067200, "last_hash", 3)
-# Response: next 3 messages since that date
+Clients exposed to an untrusted transport should use the gateway
+challenge/response protocol for authenticated reads, or otherwise treat this
+RPC as an untrusted retrieval endpoint and enforce cryptographic validation
+locally.
+
+## Response privacy layer
+
+When the node has a wallet available and the requested address has a revealed
+public key, the whole RPC result may be wrapped as:
+
+```json
+{ "encrypted": "hex_ecies_blob" }
 ```
 
-### Advantages of Pagination:
+Deserialize the blob as `CECIESEncryptedMessage` and decrypt it with the
+private key for the requested address. The plaintext is exactly the array or
+paginated object described above. A library must handle both wrapped and plain
+responses.
 
-- **Reduced memory**: Process 5-10 messages at a time instead of 50+.
-- **Gradual processing**: ECIES decryption distributed over multiple cycles.
-- **Fail recovery**: If it fails mid-sync, you can continue from `lastHash`.
-- **Backward compatible**: Standard clients can still use the traditional method without `limit`.
+This wrapper encrypts to the client address; it is not, by itself, an
+authenticated server-identity protocol. Use a trusted node RPC connection or
+authenticate the transport/server separately when that property is required.
 
-### Important Notes:
+This transport/privacy wrapper is independent from the message payload
+encryption below.
 
-1. **Message Order**: Messages are returned in **chronological order** (oldest to newest). This facilitates sequential processing on devices with limited memory.
+## Decrypting `encrypted_payload_hex`
 
-2. **Privacy layer**: If active, the entire response (including `has_more` metadata) comes encrypted in the `encrypted` field.
+DePIN group messages use hybrid encryption:
 
-3. **Maximum Limit**: The server will reject `limit > 1000` to prevent abuse.
+1. The sender encrypts the content once with a fresh symmetric key.
+2. One ECIES-wrapped copy of that symmetric key is included for every
+   recipient public key.
+3. The recipient locates its wrapped key, decrypts it with its private key,
+   then decrypts the common content.
 
-4. **Hash Not Found**: If you specify an `after_hash` that doesn't exist, you will receive an `after_hash not found in available messages` error.
+The recipient set is fixed when the message is sent. Acquiring a token later,
+revealing a public key later, or being un-frozen later does not grant access to
+older ciphertexts that did not include that key.
+
+## Required client validation
+
+Before displaying a decrypted message, a library should:
+
+1. Verify `signature_hex` against the message hash and `sender` address.
+2. Verify that the returned `token` belongs to the requested scope. For a
+   root request, any descendant is valid; for `&NEWS/GENERAL`, only
+   `&NEWS/GENERAL` and its descendants are valid. Do not require literal token
+   equality for a subtree request.
+3. Reject malformed, duplicated, or unexpectedly large encrypted payloads
+   according to the library's own resource limits.
+4. Authenticate the RPC transport or expected server separately when that
+   property is required; the optional response wrapper alone does not provide
+   server authentication.
+
+## Recipient discovery for send-capable clients
+
+Clients that encrypt messages themselves can resolve candidate recipients with:
+
+```
+depingetancestorrecipients "token" (max_results) ("stop_at")
+```
+
+It returns the active, deduplicated union of holders of the requested token
+and its ancestors, with their revealed public keys. `stop_at` is inclusive and
+lets a caller stop at a configured pool root; omitted means the absolute root.
+The result is exact by asset name: querying `&TOKEN` never matches
+`&TOKEN/CHILD` or `&TOKENE`.
+
+This is an informational query, not a sending decision. It may return
+`truncated: true`; a truncated list must never be used as a complete group
+recipient list. Check the `*_complete` flags before interpreting skipped
+counts as totals. The command requires both `-assetindex` and `-pubkeyindex`.
+
+For ordinary remote sending, prefer `depinsendmsg`: it queries the remote
+pool's `INFO` first, uses that pool's root as `stop_at`, and applies the
+remote pool's recipient limit before encrypting. This prevents encrypting for
+holders of ancestors that the remote pool does not serve.
+
+## Related RPCs
+
+- `depingetmsg` — wallet-backed local or remote retrieval and decryption.
+- `depinsendmsg` — wallet-backed remote send and signing.
+- `depinlistsections` — section names for UI tabs. Its optional address mode
+  adds access and message counters, but is intentionally available only over
+  node RPC; the unauthenticated DePIN port returns names only.
+- `depingetmsginfo` — pool configuration and status.
+
+## Compatibility and limits
+
+- Legacy clients that request only the pool root keep their previous scope:
+  the root includes the complete served subtree.
+- A pool configured at `&NEWS/GENERAL` serves only that subtree. Holders of
+  `&NEWS` are not automatically recipients for that different pool.
+- The sending pool has a configured recipient maximum (hard-capped at 50).
+  Sending fails rather than silently dropping recipients when the eligible
+  set exceeds it.
+- A holder without a revealed public key cannot be included in ECIES group
+  encryption. This is expected and is reported by sender-side RPCs.
