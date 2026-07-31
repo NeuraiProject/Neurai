@@ -151,10 +151,19 @@ Before displaying a decrypted message, a library should:
 
    where `serialize()`/`vector()` are Bitcoin-style serializations
    (compact-size length prefix followed by the bytes) and `messageType` is
-   `0x01` for private or `0x02` for group. This is the only accepted format:
-   signatures over the legacy preimage (the same fields without
-   `messageType`) are rejected. The signature is DER-encoded secp256k1 by the
-   key behind the sender's revealed public key.
+   `0x01` for private or `0x02` for group. This is the only signature format
+   the node accepts for normally signed messages, including everything
+   submitted through `depinsubmitmsg`: signatures over the legacy preimage
+   (the same fields without `messageType`) are rejected. The signature is
+   DER-encoded secp256k1 by the key behind the sender's revealed public key.
+
+   Exception: messages accepted through the pre-authenticated gateway path of
+   `depinsendmsg` are authorized by the gateway challenge/response instead of
+   a message signature. The node stores a 65-byte all-zero sentinel in
+   `signature_hex` and skips signature verification for them, so they cannot
+   be verified cryptographically. Whether to display them is a client policy
+   decision tied to how much it trusts the serving gateway session — see
+   "Scope is not authentication" above.
 2. Verify that the returned `token` belongs to the requested scope. For a
    root request, any descendant is valid; for `&NEWS/GENERAL`, only
    `&NEWS/GENERAL` and its descendants are valid. Do not require literal token
