@@ -135,7 +135,26 @@ older ciphertexts that did not include that key.
 
 Before displaying a decrypted message, a library should:
 
-1. Verify `signature_hex` against the message hash and `sender` address.
+1. Verify `signature_hex` against the message hash and `sender` address. The
+   signed hash is the message identifier itself — the `hash` field — computed
+   as:
+
+   ```text
+   doubleSHA256(
+     serialize(token) ||
+     serialize(senderAddress) ||
+     int64(timestamp) ||
+     uint8(messageType) ||
+     vector(encryptedPayload)
+   )
+   ```
+
+   where `serialize()`/`vector()` are Bitcoin-style serializations
+   (compact-size length prefix followed by the bytes) and `messageType` is
+   `0x01` for private or `0x02` for group. This is the only accepted format:
+   signatures over the legacy preimage (the same fields without
+   `messageType`) are rejected. The signature is DER-encoded secp256k1 by the
+   key behind the sender's revealed public key.
 2. Verify that the returned `token` belongs to the requested scope. For a
    root request, any descendant is valid; for `&NEWS/GENERAL`, only
    `&NEWS/GENERAL` and its descendants are valid. Do not require literal token

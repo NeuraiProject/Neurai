@@ -616,45 +616,22 @@ bool VerifyDepinMessageSignature(const CDepinMessage& message) {
         return false;
     }
 
-    // Construct message hash for verification
-    // Hash format (v2.1.3+): SHA256(token || senderAddress || timestamp || messageType || encryptedPayload)
-    CHashWriter ss(SER_GETHASH, 0);
-    ss << message.token;
-    ss << message.senderAddress;
-    ss << message.timestamp;
-    ss << message.messageType;
-    ss << message.encryptedPayload;
-    uint256 messageHash = ss.GetHash();
+    // The signed hash is the message identifier itself:
+    // doubleSHA256(token || senderAddress || timestamp || messageType || encryptedPayload)
+    uint256 messageHash = message.GetHash();
 
-    // Try to verify with new format (includes messageType)
     if (senderPubKey.Verify(messageHash, message.signature)) {
-        return true;  // New format verified successfully
+        return true;
     }
 
-    // Fallback for backward compatibility: try old format without messageType
-    // This supports messages created before v2.1.3
-    CHashWriter ssOld(SER_GETHASH, 0);
-    ssOld << message.token;
-    ssOld << message.senderAddress;
-    ssOld << message.timestamp;
-    ssOld << message.encryptedPayload;
-    uint256 messageHashOld = ssOld.GetHash();
-
-    if (senderPubKey.Verify(messageHashOld, message.signature)) {
-        LogPrintf("VerifyDepinMessageSignature: Verified with old format (pre-v2.1.3)\n");
-        return true;  // Old format verified successfully
-    }
-
-    // Both formats failed
-    LogPrintf("VerifyDepinMessageSignature: Signature verification failed (tried both formats)\n");
+    LogPrintf("VerifyDepinMessageSignature: Signature verification failed\n");
     LogPrintf("  Sender: %s\n", message.senderAddress);
     LogPrintf("  Token: %s\n", message.token);
     LogPrintf("  Timestamp: %d\n", message.timestamp);
     LogPrintf("  MessageType: 0x%02x\n", message.messageType);
     LogPrintf("  Signature size: %d bytes\n", message.signature.size());
     LogPrintf("  Signature hex: %s\n", HexStr(message.signature));
-    LogPrintf("  Message hash (new): %s\n", messageHash.ToString());
-    LogPrintf("  Message hash (old): %s\n", messageHashOld.ToString());
+    LogPrintf("  Message hash: %s\n", messageHash.ToString());
     LogPrintf("  Sender pubkey: %s\n", HexStr(senderPubKey));
     LogPrintf("  EncryptedPayload size: %d bytes\n", message.encryptedPayload.size());
     return false;
@@ -689,14 +666,9 @@ bool SignDepinMessage(CDepinMessage& message, const std::string& senderAddress) 
         return false;
     }
 
-    // Construct message hash
-    // Must match the format used in VerifyDepinMessageSignature
-    CHashWriter ss(SER_GETHASH, 0);
-    ss << message.token;
-    ss << message.senderAddress;
-    ss << message.timestamp;
-    ss << message.encryptedPayload;
-    uint256 messageHash = ss.GetHash();
+    // Sign the message identifier (GetHash). messageType is covered by the
+    // hash, so it must already hold its final value when signing.
+    uint256 messageHash = message.GetHash();
 
     // Sign
     if (!privKey.Sign(messageHash, message.signature)) {

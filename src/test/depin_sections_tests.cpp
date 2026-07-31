@@ -246,17 +246,11 @@ uint160 Hash160Of(const std::string& address)
     return uint160(*keyID);
 }
 
-// Sign a message the way depinsubmitmsg's VerifyDepinMessageSignature expects
-// (v2.1.3+ format: token || sender || timestamp || messageType || payload).
+// Sign a message the way depinsubmitmsg's VerifyDepinMessageSignature expects:
+// the signed hash is the message identifier itself (GetHash).
 void SignMessageWithKey(CDepinMessage& msg, const CKey& key)
 {
-    CHashWriter ss(SER_GETHASH, 0);
-    ss << msg.token;
-    ss << msg.senderAddress;
-    ss << msg.timestamp;
-    ss << msg.messageType;
-    ss << msg.encryptedPayload;
-    BOOST_REQUIRE(key.Sign(ss.GetHash(), msg.signature));
+    BOOST_REQUIRE(key.Sign(msg.GetHash(), msg.signature));
 }
 
 UniValue CallDepinRPC(const std::string& method, const UniValue& params)

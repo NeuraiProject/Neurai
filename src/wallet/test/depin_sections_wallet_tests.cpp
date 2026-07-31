@@ -436,4 +436,36 @@ BOOST_AUTO_TEST_CASE(remote_send_scopes_recipients_to_the_serving_pool)
 }
 #endif // ENABLE_DEPIN_GATEWAY && !WIN32
 
+// SignDepinMessage (the wallet signing path) and VerifyDepinMessageSignature
+// agree on a single preimage: the message identifier (GetHash), which covers
+// messageType. Flipping the type after signing must invalidate the signature;
+// under the removed pre-v2.1.3 fallback it did not.
+BOOST_AUTO_TEST_CASE(sign_depin_message_roundtrip)
+{
+    CKey senderKey;
+    senderKey.MakeNewKey(true);
+    const CPubKey senderPubKey = senderKey.GetPubKey();
+    const std::string senderAddress = EncodeDestination(senderPubKey.GetID());
+
+    // SignDepinMessage looks the key up in vpwallets[0]; verification reads
+    // the revealed pubkey from the index.
+    {
+        LOCK(wallet->cs_wallet);
+        BOOST_REQUIRE(wallet->AddKeyPubKey(senderKey, senderPubKey));
+    }
+    CTxDestination dest = DecodeDestination(senderAddress);
+    CDestinationIndexData addressData;
+    BOOST_REQUIRE(GetDestinationIndexData(dest, addressData));
+    std::vector<std::pair<CPubKeyIndexKey, CPubKeyIndexValue> > entries;
+    entries.emplace_back(CPubKeyIndexKey(addressData), CPubKeyIndexValue(senderPubKey, 1, uint256()));
+    BOOST_REQUIRE(pblocktree->WritePubKeyIndex(entries));
+
+    CDepinMessage msg = MakeMessage(PARENT_ASSET, senderAddress);
+    BOOST_REQUIRE(SignDepinMessage(msg, senderAddress));
+    BOOST_CHECK(VerifyDepinMessageSignature(msg));
+
+    msg.messageType = 0x01;
+    BOOST_CHECK(!VerifyDepinMessageSignature(msg));
+}
+
 BOOST_AUTO_TEST_SUITE_END()

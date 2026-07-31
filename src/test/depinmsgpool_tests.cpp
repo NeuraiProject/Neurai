@@ -5,12 +5,21 @@
 #include "depinmsgpool.h"
 #include "depinecies.h"
 #include "test/test_neurai.h"
+#include "assets/assetdb.h"
+#include "assets/assets.h"
+#include "assets/restricteddb.h"
 #include "chainparams.h"
+#include "hash.h"
 #include "key.h"
 #include "pubkey.h"
+#include "pubkeyindex.h"
 #include "base58.h"
+#include "script/standard.h"
 #include "streams.h"
 #include "random.h"
+#include "txdb.h"
+#include "utiltime.h"
+#include "validation.h"
 
 #include <boost/test/unit_test.hpp>
 #include <string>
@@ -304,6 +313,169 @@ BOOST_AUTO_TEST_CASE(token_depin_rejected_on_mainnet_by_network_gate)
     std::string error;
     BOOST_CHECK(!IsValidDepinMessagingToken("&VALIDTOKEN", error));
     BOOST_CHECK(error.find("testnet and regtest") != std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// Signature format: the signed hash IS the message identifier (GetHash), so
+// the signature covers messageType. The pre-v2.1.3 preimage -- the same
+// fields without messageType -- is no longer accepted anywhere.
+// ---------------------------------------------------------------------------
+
+// VerifyDepinMessageSignature reads the pubkey index, and the AddMessage path
+// additionally reads the asset and restriction databases. Mirrors
+// DepinSectionsSetup in depin_sections_tests.cpp (helpers are duplicated per
+// test file, same as NetworkGuard above).
+struct DepinSignatureSetup : public TestingSetup {
+    bool prevAssetIndex;
+    bool prevPubKeyIndex;
+    CAssetsDB* prevAssetsDb;
+    CLRUCache<std::string, CDatabasedAssetData>* prevAssetsCache;
+    CRestrictedDB* prevRestrictedDb;
+
+    DepinSignatureSetup() : TestingSetup(CBaseChainParams::REGTEST)
+    {
+        prevAssetIndex = fAssetIndex;
+        prevPubKeyIndex = fPubKeyIndex;
+        prevAssetsDb = passetsdb;
+        prevAssetsCache = passetsCache;
+        prevRestrictedDb = prestricteddb;
+
+        fAssetIndex = true;
+        fPubKeyIndex = true;
+
+        passetsdb = new CAssetsDB(1 << 20, true, true);
+        passetsCache = new CLRUCache<std::string, CDatabasedAssetData>(MAX_CACHE_ASSETS_SIZE);
+        prestricteddb = new CRestrictedDB(1 << 20, true, true);
+    }
+
+    ~DepinSignatureSetup()
+    {
+        delete prestricteddb;
+        delete passetsCache;
+        delete passetsdb;
+
+        prestricteddb = prevRestrictedDb;
+        passetsCache = prevAssetsCache;
+        passetsdb = prevAssetsDb;
+
+        fPubKeyIndex = prevPubKeyIndex;
+        fAssetIndex = prevAssetIndex;
+    }
+
+    // A sender whose pubkey is revealed in the index -- what
+    // VerifyDepinMessageSignature reads to verify.
+    CKey NewRevealedSender(std::string& addressOut)
+    {
+        CKey key;
+        key.MakeNewKey(true);
+        const CPubKey pubkey = key.GetPubKey();
+        addressOut = EncodeDestination(pubkey.GetID());
+
+        CTxDestination dest = DecodeDestination(addressOut);
+        CDestinationIndexData addressData;
+        BOOST_REQUIRE(GetDestinationIndexData(dest, addressData));
+        std::vector<std::pair<CPubKeyIndexKey, CPubKeyIndexValue> > entries;
+        entries.emplace_back(CPubKeyIndexKey(addressData), CPubKeyIndexValue(pubkey, 1, uint256()));
+        BOOST_REQUIRE(pblocktree->WritePubKeyIndex(entries));
+        return key;
+    }
+
+    CDepinMessage BuildSignableMessage(const std::string& token, const std::string& sender)
+    {
+        CDepinMessage msg;
+        msg.token = token;
+        msg.senderAddress = sender;
+        msg.timestamp = GetTime();
+        msg.messageType = 0x02;
+        msg.encryptedPayload = {0x01, 0x02, 0x03};  // undeserializable: cap probe passes it
+        return msg;
+    }
+
+    // The pre-v2.1.3 preimage: same fields, without messageType.
+    uint256 LegacyPreimageHash(const CDepinMessage& msg)
+    {
+        CHashWriter ss(SER_GETHASH, 0);
+        ss << msg.token;
+        ss << msg.senderAddress;
+        ss << msg.timestamp;
+        ss << msg.encryptedPayload;
+        return ss.GetHash();
+    }
+};
+
+// RAII: swap in an Initialize()d global pool, restore the previous one
+// (duplicated per test file, same as in depin_sections_tests.cpp).
+struct ScopedInitializedPool {
+    std::unique_ptr<CDepinMsgPool> previous;
+
+    explicit ScopedInitializedPool(const std::string& token)
+        : previous(std::move(pDepinMsgPool))
+    {
+        pDepinMsgPool.reset(new CDepinMsgPool());
+        BOOST_REQUIRE(pDepinMsgPool->Initialize(token, DEFAULT_DEPIN_MSG_PORT,
+                                                DEFAULT_MAX_DEPIN_RECIPIENTS,
+                                                DEFAULT_DEPIN_MESSAGE_SIZE,
+                                                DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS,
+                                                DEFAULT_DEPIN_POOL_SIZE_MB));
+    }
+
+    ~ScopedInitializedPool()
+    {
+        pDepinMsgPool = std::move(previous);
+    }
+};
+
+// A signature over GetHash verifies, and flipping messageType afterwards
+// invalidates it. Under the old fallback that mutation kept verifying (the
+// legacy preimage ignored the type), which also let the mutated copy re-enter
+// the pool as a "new" message: GetHash does include messageType.
+BOOST_FIXTURE_TEST_CASE(signature_covers_messagetype, DepinSignatureSetup)
+{
+    std::string sender;
+    CKey key = NewRevealedSender(sender);
+
+    CDepinMessage msg = BuildSignableMessage("&TEST", sender);
+    BOOST_REQUIRE(key.Sign(msg.GetHash(), msg.signature));
+    BOOST_CHECK(VerifyDepinMessageSignature(msg));
+
+    msg.messageType = 0x01;
+    BOOST_CHECK(!VerifyDepinMessageSignature(msg));
+}
+
+// A signature produced over the legacy preimage is rejected outright.
+BOOST_FIXTURE_TEST_CASE(legacy_preimage_is_rejected, DepinSignatureSetup)
+{
+    std::string sender;
+    CKey key = NewRevealedSender(sender);
+
+    CDepinMessage msg = BuildSignableMessage("&TEST", sender);
+    BOOST_REQUIRE(key.Sign(LegacyPreimageHash(msg), msg.signature));
+
+    BOOST_CHECK(!VerifyDepinMessageSignature(msg));
+}
+
+// The pool write path (what depinsendmsg and depinsubmitmsg funnel into)
+// accepts the current format and rejects the legacy one.
+BOOST_FIXTURE_TEST_CASE(addmessage_enforces_current_signature_format, DepinSignatureSetup)
+{
+    ScopedInitializedPool pool("&TEST");
+
+    std::string sender;
+    CKey key = NewRevealedSender(sender);
+    BOOST_REQUIRE(passetsdb->WriteAssetAddressQuantity("&TEST", sender, 10));
+
+    std::string error;
+
+    CDepinMessage good = BuildSignableMessage("&TEST", sender);
+    BOOST_REQUIRE(key.Sign(good.GetHash(), good.signature));
+    BOOST_CHECK_MESSAGE(pDepinMsgPool->AddMessage(good, error, /*skipSignatureCheck=*/false), error);
+
+    CDepinMessage legacy = BuildSignableMessage("&TEST", sender);
+    legacy.timestamp += 1;  // distinct hash, so rejection cannot come from dedup
+    BOOST_REQUIRE(key.Sign(LegacyPreimageHash(legacy), legacy.signature));
+    error.clear();
+    BOOST_CHECK(!pDepinMsgPool->AddMessage(legacy, error, /*skipSignatureCheck=*/false));
+    BOOST_CHECK_MESSAGE(error.find("signature") != std::string::npos, error);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
