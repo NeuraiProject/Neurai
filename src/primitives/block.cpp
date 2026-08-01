@@ -34,6 +34,11 @@ void BlockNetwork::SetNetwork(const std::string& net)
         fSHA256Mining = true;
     } else if (net == "regtest") {
         fOnRegtest = true;
+        // Regtest was always meant to mine SHA256d like testnet (see the
+        // "SHA256 regtest" genesis comments in chainparams.cpp), but this
+        // flag was only ever set for testnet, silently leaving regtest on
+        // the X16R path with real DGW retargeting.
+        fSHA256Mining = true;
     }
 }
 
