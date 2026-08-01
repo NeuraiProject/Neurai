@@ -10,6 +10,10 @@ $(package)_config_opts=--disable-shared --enable-cxx --disable-replication
 $(package)_config_opts_mingw32=--enable-mingw
 $(package)_config_opts_linux=--with-pic
 $(package)_cxxflags=-std=c++11
+# GCC >= 14 makes implicit function declarations an error, which breaks the
+# 2010-era mutex/latch detection in bdb's configure ("Unable to find a mutex
+# implementation"). Relax it back to a warning for this package only.
+$(package)_cflags+=-Wno-error=implicit-function-declaration -Wno-error=implicit-int
 endef
 
 define $(package)_preprocess_cmds
