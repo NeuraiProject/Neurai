@@ -2828,7 +2828,7 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
                                  REJECT_INVALID, "bad-txns-nonfinal");
             }
 
-            if (fAddressIndex || fSpentIndex)
+            if (fAddressIndex || fSpentIndex || fPubKeyIndex)
             {
                 for (size_t j = 0; j < tx.vin.size(); j++) {
 

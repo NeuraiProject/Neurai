@@ -468,4 +468,81 @@ BOOST_AUTO_TEST_CASE(sign_depin_message_roundtrip)
     BOOST_CHECK(!VerifyDepinMessageSignature(msg));
 }
 
+// The pubkey index must ingest keys revealed by P2PKH spends even when
+// -addressindex and -spentindex are OFF -- this fixture's exact
+// configuration. ConnectBlock's extraction loop used to sit under
+// `if (fAddressIndex || fSpentIndex)`, so a node with only -pubkeyindex
+// indexed nothing. The coinbases here are P2PK, whose spends reveal no
+// pubkey in the scriptSig, so the test builds the revealing P2PKH spend
+// itself: fund a P2PKH output for coinbaseKey, then spend exactly that
+// outpoint.
+BOOST_AUTO_TEST_CASE(pubkeyindex_ingests_p2pkh_spend_without_addressindex)
+{
+    BOOST_REQUIRE(!fAddressIndex);
+    BOOST_REQUIRE(!fSpentIndex);
+
+    const CPubKey senderPubKey = coinbaseKey.GetPubKey();
+    const std::string senderAddress = EncodeDestination(senderPubKey.GetID());
+    const CScript p2pkh = GetScriptForDestination(senderPubKey.GetID());
+
+    CPubKey indexed;
+    std::string error;
+    BOOST_CHECK(!CheckAddressHasPublicKey(senderAddress, indexed, error));
+
+    // tx1: a P2PKH UTXO for coinbaseKey, funded from the P2PK coinbases.
+    // Large enough to cover tx2's payment and fee on its own:
+    // CCoinControl::fAllowOtherInputs is false by default, so tx2 can only
+    // draw from this outpoint.
+    CWalletTx wtx1;
+    {
+        CReserveKey reservekey(wallet.get());
+        CAmount fee = 0;
+        int changePos = -1;
+        std::string failReason;
+        CCoinControl noControl;
+        CRecipient to{p2pkh, 10 * COIN, false};
+        BOOST_REQUIRE_MESSAGE(wallet->CreateTransaction({to}, wtx1, reservekey, fee, changePos,
+                                                        failReason, noControl), failReason);
+        CValidationState state;
+        BOOST_REQUIRE(wallet->CommitTransaction(wtx1, reservekey, g_connman.get(), state));
+    }
+    MineBlock(GetScriptForRawPubKey(coinbaseKey.GetPubKey()), /*includeMempool=*/true);
+    wallet->ScanForWalletTransactions(chainActive.Genesis(), nullptr, true);
+
+    int nOut = -1;
+    for (size_t i = 0; i < wtx1.tx->vout.size(); ++i) {
+        if (wtx1.tx->vout[i].scriptPubKey == p2pkh) { nOut = (int)i; break; }
+    }
+    BOOST_REQUIRE(nOut >= 0);
+
+    // Paying TO the address reveals nothing; only spending FROM it does.
+    BOOST_CHECK(!CheckAddressHasPublicKey(senderAddress, indexed, error));
+
+    // tx2: spend exactly that outpoint. Its scriptSig [sig, pubkey] is what
+    // ConnectBlock's extractor indexes.
+    CWalletTx wtx2;
+    {
+        CReserveKey reservekey(wallet.get());
+        CAmount fee = 0;
+        int changePos = -1;
+        std::string failReason;
+        CCoinControl control;
+        control.Select(COutPoint(wtx1.GetHash(), nOut));
+        CPubKey destPubKey;
+        BOOST_REQUIRE(wallet->GetKeyFromPool(destPubKey));
+        CRecipient to{GetScriptForDestination(destPubKey.GetID()), 5 * COIN, false};
+        BOOST_REQUIRE_MESSAGE(wallet->CreateTransaction({to}, wtx2, reservekey, fee, changePos,
+                                                        failReason, control), failReason);
+        BOOST_REQUIRE_EQUAL(wtx2.tx->vin.size(), 1U);
+        BOOST_REQUIRE(wtx2.tx->vin[0].prevout == COutPoint(wtx1.GetHash(), nOut));
+        CValidationState state;
+        BOOST_REQUIRE(wallet->CommitTransaction(wtx2, reservekey, g_connman.get(), state));
+    }
+    MineBlock(GetScriptForRawPubKey(coinbaseKey.GetPubKey()), /*includeMempool=*/true);
+
+    error.clear();
+    BOOST_CHECK_MESSAGE(CheckAddressHasPublicKey(senderAddress, indexed, error), error);
+    BOOST_CHECK(indexed == senderPubKey);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
