@@ -584,9 +584,16 @@ public:
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days
         consensus.nPowTargetSpacing = 1 * 60;
-        consensus.fPowAllowMinDifficultyBlocks = false;
-        consensus.fPowNoRetargeting = false;
-        consensus.nRuleChangeActivationThreshold = 1000; 
+        // Standard regtest convention (Bitcoin/Ravencoin): both flags on, so
+        // DarkGravityWave takes its dedicated min-difficulty branch and the
+        // 180-block window is never evaluated. With the previous values,
+        // mining past nDGWActivationBlock ran the real retarget over a
+        // window of near-powLimit targets, whose arithmetic overflows
+        // arith_uint256 (see pow.cpp DarkGravityWave) and made difficulty
+        // oscillate wildly.
+        consensus.fPowAllowMinDifficultyBlocks = true;
+        consensus.fPowNoRetargeting = true;
+        consensus.nRuleChangeActivationThreshold = 1000;
         consensus.nMinerConfirmationWindow = 2016; 
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].bit = 28;
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nStartTime = 0;

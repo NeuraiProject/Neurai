@@ -6,9 +6,11 @@
 
 #include "chain.h"
 #include "chainparams.h"
+#include "hash.h"
 #include "pow.h"
 #include "random.h"
 #include "util.h"
+#include "utilstrencodings.h"
 #include "test/test_neurai.h"
 
 #include <boost/test/unit_test.hpp>
@@ -95,6 +97,58 @@ BOOST_FIXTURE_TEST_SUITE(pow_tests, BasicTestingSetup)
             int64_t tdiff = GetBlockProofEquivalentTime(*p1, *p2, *p3, chainParams->GetConsensus());
             BOOST_CHECK_EQUAL(tdiff, p1->GetBlockTime() - p2->GetBlockTime());
         }
+    }
+
+    // bNetwork is a process-wide global that SetNetwork only ever flips to
+    // true, and the test harness never calls it (fixtures use
+    // SelectParams(chain) without fForceBlockNetwork) -- save and restore
+    // all three flags so the switch cannot leak into other suites.
+    struct BlockNetworkGuard
+    {
+        bool prevTestnet;
+        bool prevRegtest;
+        bool prevSHA256;
+        BlockNetworkGuard()
+            : prevTestnet(bNetwork.fOnTestnet),
+              prevRegtest(bNetwork.fOnRegtest),
+              prevSHA256(bNetwork.fSHA256Mining) {}
+        ~BlockNetworkGuard()
+        {
+            bNetwork.fOnTestnet = prevTestnet;
+            bNetwork.fOnRegtest = prevRegtest;
+            bNetwork.fSHA256Mining = prevSHA256;
+        }
+    };
+
+    // Regression for the regtest mining algorithm: SetNetwork("regtest")
+    // must select double-SHA256 header hashing, the same path testnet uses.
+    // Before the fix only "test" set fSHA256Mining, silently leaving the
+    // regtest daemon on X16R with real DGW retargeting.
+    BOOST_AUTO_TEST_CASE(regtest_header_hash_is_sha256d)
+    {
+        BlockNetworkGuard guard;
+        bNetwork.SetNetwork("regtest");
+        BOOST_CHECK(bNetwork.fOnRegtest);
+        BOOST_CHECK(bNetwork.fSHA256Mining);
+
+        CBlockHeader header;
+        header.nVersion = 2;
+        header.hashPrevBlock = uint256S("0x01");
+        header.hashMerkleRoot = uint256S("0x02");
+        header.nTime = 1700000000; // pre-KAWPOW-activation: must not matter
+        header.nBits = 0x207fffff;
+        header.nNonce = 7;
+
+        const uint256 expected = Hash(BEGIN(header.nVersion), END(header.nNonce));
+        BOOST_CHECK_EQUAL(header.GetHash().ToString(), expected.ToString());
+
+        // GetHashFull must take the same path and report no KAWPOW mix hash.
+        uint256 mix_hash = uint256S("0xff");
+        BOOST_CHECK_EQUAL(header.GetHashFull(mix_hash).ToString(), expected.ToString());
+        BOOST_CHECK(mix_hash.IsNull());
+
+        // And it is genuinely not the X16R-family hash regtest used to compute.
+        BOOST_CHECK(header.GetHash() != header.GetX16RHash());
     }
 
 BOOST_AUTO_TEST_SUITE_END()
