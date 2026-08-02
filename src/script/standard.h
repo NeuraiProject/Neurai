@@ -93,7 +93,7 @@ public:
 
 /**
  * WitnessV1AuthScript: a 32-byte AuthScript commitment.
- * Encoded as a Bech32m address with HRP "nq" (mainnet), "tnq" (testnet), "rnq" (regtest).
+ * Encoded as a Bech32m address with HRP "nq" (mainnet), "tnq" (testnet/regtest).
  * scriptPubKey: OP_1 <32-byte-commitment>
  */
 class WitnessV1AuthScript : public uint256

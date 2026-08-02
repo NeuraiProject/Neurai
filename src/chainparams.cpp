@@ -683,7 +683,7 @@ public:
         base58Prefixes[EXT_PUBLIC_KEY]    = {0x04, 0x35, 0x87, 0xCF};
         base58Prefixes[EXT_SECRET_KEY]    = {0x04, 0x35, 0x83, 0x94};
         base58Prefixes[EXT_PQ_SECRET_KEY] = {0x04, 0x35, 0x81, 0xD5}; // tpqp... (regtest)
-        strBech32HRP = "rnq";
+        strBech32HRP = "tnq";
 
         // Neurai BIP44 cointype in regtest
         nExtCoinType = 1;
