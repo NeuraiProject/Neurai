@@ -23,8 +23,9 @@ unsigned nMaxDatacarrierBytes = MAX_OP_RETURN_RELAY;
 
 unsigned int GetMaxOPReturnRelay()
 {
-    // Use larger OP_RETURN size in testnet for testing purposes
-    if (GetParams().NetworkIDString() == "test") {
+    // Use larger OP_RETURN size in testnet/regtest for testing purposes
+    const std::string& network = GetParams().NetworkIDString();
+    if (network == CBaseChainParams::TESTNET || network == CBaseChainParams::REGTEST) {
         return MAX_OP_RETURN_RELAY_TESTNET;
     }
     return MAX_OP_RETURN_RELAY;

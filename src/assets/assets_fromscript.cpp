@@ -40,7 +40,9 @@ static bool AreDEPINAssetsEnabledOnCurrentNetwork()
 
 int GetMaxAssetNameLength()
 {
-    if (GetParams().NetworkIDString() == "test")
+    // Extended names apply wherever DePIN assets are enabled (testnet and
+    // regtest); mainnet keeps the legacy limit until its migration.
+    if (AreDEPINAssetsEnabledOnCurrentNetwork())
         return MAX_NAME_LENGTH_TESTNET;
     return MAX_NAME_LENGTH;
 }

@@ -567,7 +567,7 @@ public:
         consensus.nCHAINCONTEXTEnabled = true; // NIP-026: OP_CHAINCONTEXT active on regtest
         consensus.nASSETRBFBlockEnabled = true; // NIP-025: asset-AuthScript RBF ban active on regtest
         consensus.nXNAAssetStrictEnabled = true; // NIP revision 010: strict OP_XNA_ASSET rule active on regtest
-        consensus.nAssetRip5ActivationByHeightEnabled = true; // NIP revision 004: inert on regtest (heights are 0 → VersionBits)
+        consensus.nAssetRip5ActivationByHeightEnabled = true; // regtest activates assets/RIP5 by height (1), parity with testnet
         // NIP-028: not active on regtest by default; tests can override via
         // CChainParams::UpdateBlockTimeReduction... if a future opt-in is added.
         consensus.nBlockTimeReductionHeight   = std::numeric_limits<int>::max();
@@ -722,9 +722,9 @@ public:
         nMinReorganizationPeers = 4;
         nMinReorganizationAge = 60 * 60 * 12;
 
-        nAssetActivationHeight = 0; 
-        nMessagingActivationBlock = 0; 
-        nRestrictedActivationBlock = 0; 
+        nAssetActivationHeight = 1; // Asset activated block height (parity with testnet)
+        nMessagingActivationBlock = 1; // Messaging activated block height
+        nRestrictedActivationBlock = 1; // Restricted activated block height
 
 
         /** XNA End **/

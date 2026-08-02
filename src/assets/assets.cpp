@@ -42,10 +42,7 @@
 std::map<uint256, std::string> mapReissuedTx;
 std::map<std::string, uint256> mapReissuedAssets;
 
-// excluding owner tag ('!')
-static const auto MAX_NAME_LENGTH = 31;
-static const auto MAX_NAME_LENGTH_TESTNET = 121;
-static const auto MAX_CHANNEL_NAME_LENGTH = 12;
+// Name length limits live in assets_fromscript.cpp (GetMaxAssetNameLength).
 
 static bool AreDEPINAssetsEnabledOnCurrentNetwork()
 {

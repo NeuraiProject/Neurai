@@ -5493,6 +5493,14 @@ void UnloadBlockIndex()
     for (int b = 0; b < VERSIONBITS_NUM_BITS; b++) {
         warningcache[b].clear();
     }
+    // The sticky activation flags cache VersionBits/height state derived from
+    // the chain being unloaded; reset them so a fresh chain (tests, reindex)
+    // re-evaluates them instead of inheriting the previous chain's answer.
+    fAssetsIsActive = false;
+    fRip5IsActive = false;
+    fTransferScriptIsActive = false;
+    fEnforcedValuesIsActive = false;
+    fCheckCoinbaseAssetsIsActive = false;
 
     for (BlockMap::value_type& entry : mapBlockIndex) {
         delete entry.second;

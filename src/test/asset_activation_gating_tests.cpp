@@ -5,13 +5,17 @@
 // NIP revision 004: the height-based shortcut in AreAssetsDeployed()/
 // IsRip5Active() must be gated by nAssetRip5ActivationByHeightEnabled, off on
 // mainnet (VersionBits only, like origin/main) and on for fresh test networks.
-// AreAssetsDeployed()/IsRip5Active() depend on chainActive and a sticky global,
-// so they are not cheaply unit-testable; the per-network contract of the flag
-// is the stable thing to assert.
+// The per-network contract of the flag is asserted below; the lifecycle of the
+// sticky globals behind AreAssetsDeployed()/IsRip5Active() (latch on a live
+// chain, reset on UnloadBlockIndex) is covered by
+// sticky_activation_flags_reset_on_unload, which drives a real chain via
+// TestChain100Setup.
 
 #include "chainparams.h"
 #include "consensus/params.h"
 #include "test/test_neurai.h"
+#include "validation.h"
+#include "versionbits.h"
 
 #include <string>
 
@@ -52,12 +56,35 @@ BOOST_AUTO_TEST_CASE(asset_rip5_height_shortcut_flag_per_network)
     }
     {
         NetworkGuard g(CBaseChainParams::REGTEST);
-        // Regtest: flag on, but inert because its heights are 0 (the shortcut's
-        // `> 0` guard skips it → VersionBits); behaviour unchanged either way.
+        // Regtest mirrors testnet: assets/RIP5 activate by height (1).
         BOOST_CHECK(GetParams().GetConsensus().nAssetRip5ActivationByHeightEnabled);
-        BOOST_CHECK_EQUAL(GetParams().GetAssetActivationHeight(), 0);
-        BOOST_CHECK_EQUAL(GetParams().MessagingActivationBlock(), 0u);
+        BOOST_CHECK_EQUAL(GetParams().GetAssetActivationHeight(), 1);
+        BOOST_CHECK_EQUAL(GetParams().MessagingActivationBlock(), 1u);
+        BOOST_CHECK_EQUAL(GetParams().RestrictedActivationBlock(), 1u);
     }
+}
+
+// Regression test for the state leak that broke versionbits_tests (147
+// failures): a regtest chain activates assets via the height shortcut, and the
+// sticky flag in validation.cpp used to survive UnloadBlockIndex(), so a later
+// mainnet fixture saw AreAssetsDeployed() == true and ComputeBlockVersion()
+// emitted VERSIONBITS_TOP_BITS_ASSETS (bit 28 set) instead of
+// VERSIONBITS_TOP_BITS. The cycle exercised here is regtest-active →
+// UnloadBlockIndex() → mainnet.
+BOOST_FIXTURE_TEST_CASE(sticky_activation_flags_reset_on_unload, TestChain100Setup)
+{
+    // The 100-block regtest chain is past nAssetActivationHeight (1), so the
+    // height shortcut has latched the sticky flag inside validation.cpp.
+    BOOST_CHECK(AreAssetsDeployed());
+
+    UnloadBlockIndex();
+
+    NetworkGuard g(CBaseChainParams::MAIN);
+    BOOST_CHECK(!AreAssetsDeployed());
+    // The exact symptom seen in versionbits_tests: the assets-only version bit
+    // must not leak into mainnet block versions.
+    const int32_t assetsOnlyBits = VERSIONBITS_TOP_BITS_ASSETS & ~VERSIONBITS_TOP_BITS;
+    BOOST_CHECK_EQUAL(ComputeBlockVersion(nullptr, GetParams().GetConsensus()) & assetsOnlyBits, 0);
 }
 
 // Guard against a future regression that zeroes the mainnet heights: those
