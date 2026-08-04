@@ -70,7 +70,7 @@ CMutableTransaction BuildIssuanceTx(const std::string& assetName,
     if (!parentOwnerToTransfer.empty()) {
         CScript transferScript = NewDestinationScript();
         CAssetTransfer transfer(parentOwnerToTransfer, OWNER_ASSET_AMOUNT);
-        transfer.ConstructTransaction(transferScript);
+        transfer.ConstructTransaction(transferScript, AssetMarker::LEGACY_RVN);
         mutTx.vout.emplace_back(0, transferScript);
     }
 
@@ -78,12 +78,12 @@ CMutableTransaction BuildIssuanceTx(const std::string& assetName,
 
     // Owner token of the asset being created (second to last output)
     CScript ownerScript = NewDestinationScript();
-    asset.ConstructOwnerTransaction(ownerScript);
+    asset.ConstructOwnerTransaction(ownerScript, AssetMarker::LEGACY_RVN);
     mutTx.vout.emplace_back(0, ownerScript);
 
     // Asset data (must be the last output)
     CScript assetScript = NewDestinationScript();
-    asset.ConstructTransaction(assetScript);
+    asset.ConstructTransaction(assetScript, AssetMarker::LEGACY_RVN);
     mutTx.vout.emplace_back(0, assetScript);
 
     return mutTx;

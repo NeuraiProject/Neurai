@@ -22,7 +22,7 @@ BOOST_FIXTURE_TEST_SUITE(restricted_tests, BasicTestingSetup)
         CScript newRestrictedScript = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
 
         CNewAsset restricted_asset("$RESTRICTED_NAME", 5);
-        restricted_asset.ConstructTransaction(newRestrictedScript);
+        restricted_asset.ConstructTransaction(newRestrictedScript, AssetMarker::LEGACY_RVN);
 
         CTxOut out(0, newRestrictedScript);
 
@@ -47,7 +47,7 @@ BOOST_FIXTURE_TEST_SUITE(restricted_tests, BasicTestingSetup)
         CScript newRestrictedScript = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
 
         CNewAsset restricted_asset("NOT_RESTRICTED_NAME", 5);
-        restricted_asset.ConstructTransaction(newRestrictedScript);
+        restricted_asset.ConstructTransaction(newRestrictedScript, AssetMarker::LEGACY_RVN);
 
         CTxOut out(0, newRestrictedScript);
 
@@ -75,7 +75,7 @@ BOOST_FIXTURE_TEST_SUITE(restricted_tests, BasicTestingSetup)
         // Add the parent transaction for sub qualifier tx
         CAssetTransfer parentTransfer("RESTRICTED_NAME!", OWNER_ASSET_AMOUNT);
         CScript parentScript = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
-        parentTransfer.ConstructTransaction(parentScript);
+        parentTransfer.ConstructTransaction(parentScript, AssetMarker::LEGACY_RVN);
         CTxOut parentOut(0, parentScript);
 
         // Add the CNullVerifierString tx
@@ -87,12 +87,12 @@ BOOST_FIXTURE_TEST_SUITE(restricted_tests, BasicTestingSetup)
         // Create the new restricted Script
         CScript newRestrictedScript = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
         CNewAsset restricted_asset("$RESTRICTED_NAME", 5 * COIN, 0, 0, 0, "");
-        restricted_asset.ConstructTransaction(newRestrictedScript);
+        restricted_asset.ConstructTransaction(newRestrictedScript, AssetMarker::LEGACY_RVN);
         CTxOut assetOut(0, newRestrictedScript);
 
         // Create a fake owner script
         CScript newRestrictedAssetOwnerScript = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
-        restricted_asset.ConstructOwnerTransaction(newRestrictedAssetOwnerScript);
+        restricted_asset.ConstructOwnerTransaction(newRestrictedAssetOwnerScript, AssetMarker::LEGACY_RVN);
         CTxOut ownerOut(0, newRestrictedAssetOwnerScript);
         /// Finish Creating CTxOut to use in the tests ///
 

@@ -92,7 +92,7 @@ CScript OwnerTransferScript(const std::string& address)
 {
     CAssetTransfer transfer(ASSET + OWNER_TAG, OWNER_ASSET_AMOUNT);
     CScript script = GetScriptForDestination(DecodeDestination(address));
-    transfer.ConstructTransaction(script);
+    transfer.ConstructTransaction(script, AssetMarker::LEGACY_RVN);
     return script;
 }
 
@@ -102,7 +102,7 @@ CScript OwnerIssuanceScript(const std::string& address)
 {
     CNewAsset asset(ASSET, 1000 * COIN, DEPIN_ASSET_UNITS, 0, 0, "");
     CScript script = GetScriptForDestination(DecodeDestination(address));
-    asset.ConstructOwnerTransaction(script);
+    asset.ConstructOwnerTransaction(script, AssetMarker::LEGACY_RVN);
     return script;
 }
 

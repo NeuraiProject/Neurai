@@ -58,7 +58,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // Create the asset scriptPubKey
         CAssetTransfer asset("NEURAITEST", 1000);
         CScript scriptPubKey = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
-        asset.ConstructTransaction(scriptPubKey);
+        asset.ConstructTransaction(scriptPubKey, AssetMarker::LEGACY_RVN);
 
         CCoinsView view;
         CCoinsViewCache coins(&view);
@@ -94,7 +94,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // The outputs are assigning a destination to 1000 Assets
         // This test should pass because all assets are assigned a destination
         std::vector<std::pair<std::string, uint256>> vReissueAssets;
-        BOOST_CHECK_MESSAGE(Consensus::CheckTxAssets(tx, state, coins, nullptr, false, vReissueAssets, true), "CheckTxAssets Failed");
+        BOOST_CHECK_MESSAGE(Consensus::CheckTxAssets(tx, state, coins, nullptr, 0, false, vReissueAssets, true), "CheckTxAssets Failed");
     }
 
     BOOST_AUTO_TEST_CASE(asset_tx_not_valid_test)
@@ -106,7 +106,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // Create the asset scriptPubKey
         CAssetTransfer asset("NEURAITEST", 1000);
         CScript scriptPubKey = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
-        asset.ConstructTransaction(scriptPubKey);
+        asset.ConstructTransaction(scriptPubKey, AssetMarker::LEGACY_RVN);
 
         CCoinsView view;
         CCoinsViewCache coins(&view);
@@ -134,7 +134,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // This should fail because 900 NEURAI doesn't have a destination
         CAssetTransfer assetTransfer("NEURAITEST", 100);
         CScript scriptLess = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
-        assetTransfer.ConstructTransaction(scriptLess);
+        assetTransfer.ConstructTransaction(scriptLess, AssetMarker::LEGACY_RVN);
 
         CTxOut txOut2;
         txOut2.nValue = 0;
@@ -151,7 +151,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // The outputs are assigning a destination to only 100 Assets
         // This should fail because 900 Assets aren't being assigned a destination (Trying to burn 900 Assets)
         std::vector<std::pair<std::string, uint256>> vReissueAssets;
-        BOOST_CHECK_MESSAGE(!Consensus::CheckTxAssets(tx, state, coins, nullptr, false, vReissueAssets, true), "CheckTxAssets should have failed");
+        BOOST_CHECK_MESSAGE(!Consensus::CheckTxAssets(tx, state, coins, nullptr, 0, false, vReissueAssets, true), "CheckTxAssets should have failed");
     }
 
     BOOST_AUTO_TEST_CASE(asset_tx_valid_multiple_outs_test)
@@ -163,7 +163,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // Create the asset scriptPubKey
         CAssetTransfer asset("NEURAITEST", 1000);
         CScript scriptPubKey = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
-        asset.ConstructTransaction(scriptPubKey);
+        asset.ConstructTransaction(scriptPubKey, AssetMarker::LEGACY_RVN);
 
         CCoinsView view;
         CCoinsViewCache coins(&view);
@@ -192,7 +192,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         {
             CAssetTransfer asset2("NEURAITEST", 100);
             CScript scriptPubKey2 = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
-            asset2.ConstructTransaction(scriptPubKey2);
+            asset2.ConstructTransaction(scriptPubKey2, AssetMarker::LEGACY_RVN);
 
             CTxOut txOut2;
             txOut2.nValue = 0;
@@ -212,7 +212,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // The outputs are assigned 100 Assets to 10 destinations (10 * 100) = 1000
         // This test should pass all assets that are being spent are assigned to a destination
         std::vector<std::pair<std::string, uint256>> vReissueAssets;
-        BOOST_CHECK_MESSAGE(Consensus::CheckTxAssets(tx, state, coins, nullptr, false, vReissueAssets, true), "CheckTxAssets failed");
+        BOOST_CHECK_MESSAGE(Consensus::CheckTxAssets(tx, state, coins, nullptr, 0, false, vReissueAssets, true), "CheckTxAssets failed");
     }
 
     BOOST_AUTO_TEST_CASE(asset_tx_multiple_outs_invalid_test)
@@ -224,7 +224,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // Create the asset scriptPubKey
         CAssetTransfer asset("NEURAITEST", 1000);
         CScript scriptPubKey = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
-        asset.ConstructTransaction(scriptPubKey);
+        asset.ConstructTransaction(scriptPubKey, AssetMarker::LEGACY_RVN);
 
         CCoinsView view;
         CCoinsViewCache coins(&view);
@@ -253,7 +253,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         {
             CAssetTransfer asset2("NEURAITEST", 100);
             CScript scriptPubKey2 = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
-            asset2.ConstructTransaction(scriptPubKey2);
+            asset2.ConstructTransaction(scriptPubKey2, AssetMarker::LEGACY_RVN);
 
             CTxOut txOut2;
             txOut2.nValue = 0;
@@ -273,7 +273,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // The outputs are assigning 100 Assets to 12 destinations (12 * 100 = 1200)
         // This test should fail because the Outputs are greater than the inputs
         std::vector<std::pair<std::string, uint256>> vReissueAssets;
-        BOOST_CHECK_MESSAGE(!Consensus::CheckTxAssets(tx, state, coins, nullptr, false, vReissueAssets, true), "CheckTxAssets passed when it should have failed");
+        BOOST_CHECK_MESSAGE(!Consensus::CheckTxAssets(tx, state, coins, nullptr, 0, false, vReissueAssets, true), "CheckTxAssets passed when it should have failed");
     }
 
     BOOST_AUTO_TEST_CASE(asset_tx_multiple_assets_test)
@@ -285,15 +285,15 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // Create the asset scriptPubKeys
         CAssetTransfer asset("NEURAITEST", 1000);
         CScript scriptPubKey = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
-        asset.ConstructTransaction(scriptPubKey);
+        asset.ConstructTransaction(scriptPubKey, AssetMarker::LEGACY_RVN);
 
         CAssetTransfer asset2("NEURAITESTTEST", 1000);
         CScript scriptPubKey2 = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
-        asset2.ConstructTransaction(scriptPubKey2);
+        asset2.ConstructTransaction(scriptPubKey2, AssetMarker::LEGACY_RVN);
 
         CAssetTransfer asset3("NEURAITESTTESTTEST", 1000);
         CScript scriptPubKey3 = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
-        asset3.ConstructTransaction(scriptPubKey3);
+        asset3.ConstructTransaction(scriptPubKey3, AssetMarker::LEGACY_RVN);
 
         CCoinsView view;
         CCoinsViewCache coins(&view);
@@ -350,7 +350,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
             // Add the first asset
             CAssetTransfer outAsset("NEURAITEST", 100);
             CScript outScript = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
-            outAsset.ConstructTransaction(outScript);
+            outAsset.ConstructTransaction(outScript, AssetMarker::LEGACY_RVN);
 
             CTxOut txOutNew;
             txOutNew.nValue = 0;
@@ -361,7 +361,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
             // Add the second asset
             CAssetTransfer outAsset2("NEURAITESTTEST", 100);
             CScript outScript2 = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
-            outAsset2.ConstructTransaction(outScript2);
+            outAsset2.ConstructTransaction(outScript2, AssetMarker::LEGACY_RVN);
 
             CTxOut txOutNew2;
             txOutNew2.nValue = 0;
@@ -372,7 +372,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
             // Add the third asset
             CAssetTransfer outAsset3("NEURAITESTTESTTEST", 100);
             CScript outScript3 = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
-            outAsset3.ConstructTransaction(outScript3);
+            outAsset3.ConstructTransaction(outScript3, AssetMarker::LEGACY_RVN);
 
             CTxOut txOutNew3;
             txOutNew3.nValue = 0;
@@ -393,7 +393,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // The outputs are spending 100 Assets to 10 destinations (10 * 100 = 1000) (of each NEURAI, NEURAITEST, NEURAITESTTEST)
         // This test should pass because for each asset that is spent. It is assigned a destination
         std::vector<std::pair<std::string, uint256>> vReissueAssets;
-        BOOST_CHECK_MESSAGE(Consensus::CheckTxAssets(tx, state, coins, nullptr, false, vReissueAssets, true), state.GetDebugMessage());
+        BOOST_CHECK_MESSAGE(Consensus::CheckTxAssets(tx, state, coins, nullptr, 0, false, vReissueAssets, true), state.GetDebugMessage());
 
 
         // Try it not but only spend 900 of each asset instead of 1000
@@ -405,7 +405,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
             // Add the first asset
             CAssetTransfer outAsset("NEURAITEST", 100);
             CScript outScript = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
-            outAsset.ConstructTransaction(outScript);
+            outAsset.ConstructTransaction(outScript, AssetMarker::LEGACY_RVN);
 
             CTxOut txOutNew;
             txOutNew.nValue = 0;
@@ -416,7 +416,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
             // Add the second asset
             CAssetTransfer outAsset2("NEURAITESTTEST", 100);
             CScript outScript2 = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
-            outAsset2.ConstructTransaction(outScript2);
+            outAsset2.ConstructTransaction(outScript2, AssetMarker::LEGACY_RVN);
 
             CTxOut txOutNew2;
             txOutNew2.nValue = 0;
@@ -427,7 +427,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
             // Add the third asset
             CAssetTransfer outAsset3("NEURAITESTTESTTEST", 100);
             CScript outScript3 = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
-            outAsset3.ConstructTransaction(outScript3);
+            outAsset3.ConstructTransaction(outScript3, AssetMarker::LEGACY_RVN);
 
             CTxOut txOutNew3;
             txOutNew3.nValue = 0;
@@ -446,7 +446,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // Check the transaction that contains inputs that are spending 1000 Assets for 3 different assets
         // While only outputs only contain 900 Assets being sent to a destination
         // This should fail because 100 of each Asset isn't being sent to a destination (Trying to burn 100 Assets each)
-        BOOST_CHECK_MESSAGE(!Consensus::CheckTxAssets(tx2, state, coins, nullptr, false, vReissueAssets, true), "CheckTxAssets should have failed");
+        BOOST_CHECK_MESSAGE(!Consensus::CheckTxAssets(tx2, state, coins, nullptr, 0, false, vReissueAssets, true), "CheckTxAssets should have failed");
     }
 
     BOOST_AUTO_TEST_CASE(asset_tx_issue_units_test)
@@ -519,7 +519,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // Create the reissue asset
         CReissueAsset reissueAsset("ENFORCE_VALUE", 100, 8, true, "");
         CScript scriptPubKey = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
-        reissueAsset.ConstructTransaction(scriptPubKey);
+        reissueAsset.ConstructTransaction(scriptPubKey, AssetMarker::LEGACY_RVN);
 
         // Create an invalid reissue asset with nValue not equal to zero
         CTxOut txOut;
@@ -606,7 +606,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // Create a transfer asset
         CAssetTransfer transferAsset("COINBASE_TEST", 100);
         CScript scriptPubKey = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
-        transferAsset.ConstructTransaction(scriptPubKey);
+        transferAsset.ConstructTransaction(scriptPubKey, AssetMarker::LEGACY_RVN);
 
         // Add the transfer asset script into the coinbase
         coinbaseTx.vout[1].scriptPubKey = scriptPubKey;
@@ -646,7 +646,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
 
         CNewAsset newAsset("PQASSET", 1000 * COIN, 0, 1, 0, "");
         CScript newAssetScript = GetScriptForDestination(pqDestination);
-        newAsset.ConstructTransaction(newAssetScript);
+        newAsset.ConstructTransaction(newAssetScript, AssetMarker::LEGACY_RVN);
 
         int type = 0;
         bool isOwner = false;
@@ -677,7 +677,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
 
         CAssetTransfer transferAsset("PQASSET", 1 * COIN);
         CScript transferScript = GetScriptForDestination(pqDestination);
-        transferAsset.ConstructTransaction(transferScript);
+        transferAsset.ConstructTransaction(transferScript, AssetMarker::LEGACY_RVN);
         BOOST_CHECK(transferScript.IsAssetScript(type, isOwner, startIndex));
         BOOST_CHECK_EQUAL(type, TX_TRANSFER_ASSET);
         BOOST_CHECK(GetAssetScriptWitnessProgram(transferScript, witnessVersion, witnessProgram));
@@ -687,7 +687,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
 
         CReissueAsset reissueAsset("PQASSET", 10 * COIN, 0, 1, "");
         CScript reissueScript = GetScriptForDestination(pqDestination);
-        reissueAsset.ConstructTransaction(reissueScript);
+        reissueAsset.ConstructTransaction(reissueScript, AssetMarker::LEGACY_RVN);
         BOOST_CHECK(reissueScript.IsAssetScript(type, isOwner, startIndex));
         BOOST_CHECK_EQUAL(type, TX_REISSUE_ASSET);
         BOOST_CHECK(GetAssetScriptWitnessProgram(reissueScript, witnessVersion, witnessProgram));
@@ -713,7 +713,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         CTxDestination pqDestination = GetDefaultPQAuthScriptDestination(pubkey);
         CAssetTransfer asset("PQASSET", 1 * COIN);
         CScript assetScript = GetScriptForDestination(pqDestination);
-        asset.ConstructTransaction(assetScript);
+        asset.ConstructTransaction(assetScript, AssetMarker::LEGACY_RVN);
 
         CMutableTransaction txFrom;
         txFrom.nVersion = 1;
@@ -773,7 +773,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         CTxDestination pqDestination = GetDefaultPQAuthScriptDestination(pubkey);
         CNewAsset asset("PQOWNER", 100 * COIN, 0, 1, 0, "");
         CScript ownerScript = GetScriptForDestination(pqDestination);
-        asset.ConstructOwnerTransaction(ownerScript);
+        asset.ConstructOwnerTransaction(ownerScript, AssetMarker::LEGACY_RVN);
 
         CMutableTransaction txFrom;
         txFrom.nVersion = 1;

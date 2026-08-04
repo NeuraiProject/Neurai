@@ -296,7 +296,14 @@ bool CScript::IsAssetScript(int& nType, bool& isOwner) const
 
 bool CScript::IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex) const
 {
+    AssetMarker marker;
+    return IsAssetScript(nType, fIsOwner, nStartingIndex, marker);
+}
+
+bool CScript::IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex, AssetMarker& marker) const
+{
     fIsOwner = false;
+    marker = AssetMarker::LEGACY_RVN;
 
     // Legacy P2PKH-prefixed asset script (OP_XNA_ASSET at byte 25). Parsed
     // with origin/main's fixed-offset logic, byte-for-byte: mainnet history
@@ -328,6 +335,26 @@ bool CScript::IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex) con
                 if ((*this)[29] == XNA_V)
                     if ((*this)[30] == XNA_N)
                         index = 31;
+        }
+
+        // NIP-040: "xna" is only tried when the legacy logic above did not
+        // match, so every script the deployed parser accepts keeps its exact
+        // classification. The offset structure mirrors the legacy nesting,
+        // including the branch that rejects without trying offset 28 when
+        // byte 27 starts the prefix but does not complete it.
+        if (index < 0) {
+            if ((*this)[27] == XNA_X) { // "xna" starts at 27 (single c0, direct push)
+                if ((*this)[28] == XNA_N)
+                    if ((*this)[29] == XNA_A)
+                        index = 30;
+            } else {                    // "xna" starts at 28 (doubled c0, or OP_PUSHDATA1)
+                if ((*this)[28] == XNA_X)
+                    if ((*this)[29] == XNA_N)
+                        if ((*this)[30] == XNA_A)
+                            index = 31;
+            }
+            if (index > 0)
+                marker = AssetMarker::NEURAI_XNA;
         }
 
         if (index > 0) {
@@ -369,7 +396,15 @@ bool CScript::IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex) con
             return false;
         }
 
-        if (assetMessage.size() < 4 || assetMessage[0] != XNA_R || assetMessage[1] != XNA_V || assetMessage[2] != XNA_N) {
+        if (assetMessage.size() < 4) {
+            return false;
+        }
+        if (assetMessage[0] == XNA_R && assetMessage[1] == XNA_V && assetMessage[2] == XNA_N) {
+            marker = AssetMarker::LEGACY_RVN;
+        } else if (assetMessage[0] == XNA_X && assetMessage[1] == XNA_N && assetMessage[2] == XNA_A) {
+            // NIP-040 marker; mixes like "xnn" or "xnav" fall through to reject.
+            marker = AssetMarker::NEURAI_XNA;
+        } else {
             return false;
         }
 

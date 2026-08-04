@@ -155,6 +155,13 @@ struct Params {
      *  unified fork and true on testnet/regtest, where it is already consensus.
      *  See NIP/revision/010. */
     bool nXNAAssetStrictEnabled;
+    /** NIP-040: height at which the asset marker migrates from "rvn" to
+     *  "xna". Below this height ordinary asset outputs must carry the legacy
+     *  "rvn" marker and "xna" outputs are invalid; at and above it the rule
+     *  inverts. Inputs are never affected: legacy UTXOs stay spendable
+     *  forever. std::numeric_limits<int>::max() on chains that have not
+     *  scheduled the fork (mainnet until the second release). See NIP/040. */
+    int nAssetMarkerNip040Height;
     /** Enable the height-based shortcut in AreAssetsDeployed()/IsRip5Active()
      *  (assets/RIP5 active once the tip reaches nAssetActivationHeight /
      *  nMessagingActivationBlock). This is meant for fresh test networks. On

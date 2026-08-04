@@ -129,8 +129,8 @@ public:
     bool IsNull() const;
     std::string ToString();
 
-    void ConstructTransaction(CScript& script) const;
-    void ConstructOwnerTransaction(CScript& script) const;
+    void ConstructTransaction(CScript& script, AssetMarker marker) const;
+    void ConstructOwnerTransaction(CScript& script, AssetMarker marker) const;
 
     ADD_SERIALIZE_METHODS;
 
@@ -230,7 +230,7 @@ public:
 
     CAssetTransfer(const std::string& strAssetName, const CAmount& nAmount, const std::string& message = "", const int64_t& nExpireTime = 0);
     bool IsValid(std::string& strError) const;
-    void ConstructTransaction(CScript& script) const;
+    void ConstructTransaction(CScript& script, AssetMarker marker) const;
     bool ContextualCheckAgainstVerifyString(CAssetsCache *assetCache, const std::string& address, std::string& strError) const;
 };
 
@@ -270,7 +270,7 @@ public:
     }
 
     CReissueAsset(const std::string& strAssetName, const CAmount& nAmount, const int& nUnits, const int& nReissuable, const std::string& strIPFSHash);
-    void ConstructTransaction(CScript& script) const;
+    void ConstructTransaction(CScript& script, AssetMarker marker) const;
     bool IsNull() const;
 };
 

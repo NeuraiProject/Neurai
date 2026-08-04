@@ -22,7 +22,7 @@ BOOST_FIXTURE_TEST_SUITE(unique_tests, BasicTestingSetup)
         CScript newUniqueScript = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
 
         CNewAsset unique_asset("ROOT#UNIQUE1", 1 , 0 , 0, 0, "");
-        unique_asset.ConstructTransaction(newUniqueScript);
+        unique_asset.ConstructTransaction(newUniqueScript, AssetMarker::LEGACY_RVN);
 
         CTxOut out(0, newUniqueScript);
 
@@ -48,7 +48,7 @@ BOOST_FIXTURE_TEST_SUITE(unique_tests, BasicTestingSetup)
         CScript newUniqueScript = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
 
         CNewAsset unique_asset("$NOT_UNIQUE", 1 , 0 , 0, 0, "");
-        unique_asset.ConstructTransaction(newUniqueScript);
+        unique_asset.ConstructTransaction(newUniqueScript, AssetMarker::LEGACY_RVN);
 
         CTxOut out(0, newUniqueScript);
 

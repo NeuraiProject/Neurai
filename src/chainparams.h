@@ -82,6 +82,7 @@ public:
     const CCheckpointData& Checkpoints() const { return checkpointData; }
     const ChainTxData& TxData() const { return chainTxData; }
     void UpdateVersionBitsParameters(Consensus::DeploymentPos d, int64_t nStartTime, int64_t nTimeout);
+    void UpdateAssetMarkerNip040Height(int nHeight);
     void TurnOffSegwit();
     void TurnOffCSV();
     void TurnOffBIP34();
@@ -239,6 +240,14 @@ void SelectParams(const std::string& chain, bool fForceBlockNetwork = false);
  * Allows modifying the Version Bits regtest parameters.
  */
 void UpdateVersionBitsParameters(Consensus::DeploymentPos d, int64_t nStartTime, int64_t nTimeout);
+
+/**
+ * NIP-040 (regtest/tests only): override the asset marker fork height.
+ * Regtest defaults to the INT_MAX sentinel so existing functional tests keep
+ * producing legacy markers; the NIP-040 functional test opts in via
+ * -nip040height and unit tests call this directly.
+ */
+void UpdateAssetMarkerNip040Height(int nHeight);
 
 void TurnOffSegwit();
 

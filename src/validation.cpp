@@ -731,7 +731,8 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         } // end LOCK(pool.cs)
 
         CAmount nFees = 0;
-        if (!Consensus::CheckTxInputs(tx, state, view, GetSpendHeight(view), nFees)) {
+        const int nSpendHeight = GetSpendHeight(view);
+        if (!Consensus::CheckTxInputs(tx, state, view, nSpendHeight, nFees)) {
             return error("%s: Consensus::CheckTxInputs: %s, %s", __func__, tx.GetHash().ToString(), FormatStateMessage(state));
         }
 
@@ -744,7 +745,7 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         }
 
         if (AreAssetsDeployed()) {
-            if (!Consensus::CheckTxAssets(tx, state, view, GetCurrentAssetCache(), true, vReissueAssets))
+            if (!Consensus::CheckTxAssets(tx, state, view, GetCurrentAssetCache(), nSpendHeight, true, vReissueAssets))
                 return error("%s: Consensus::CheckTxAssets: %s, %s", __func__, tx.GetHash().ToString(),
                              FormatStateMessage(state));
         }
@@ -1810,6 +1811,25 @@ static void MempoolRemoveForNewTip(CTxMemPool& pool,
     });
 }
 
+// NIP-040: run on every tip change, in both directions, independent of the
+// NIP-026 chain-context machinery (that helper only visits tagged entries
+// and is gated on nCHAINCONTEXTEnabled). Only walks the mempool when the
+// marker activation state of the mempool's target height actually flips:
+// connecting H-1 turns the "rvn" outputs unminable, disconnecting back to
+// H-2 turns the "xna" outputs unminable.
+static void MempoolCheckAssetMarkerTransition(CTxMemPool& pool,
+                                              int nOldCandidateHeight,
+                                              int nNewCandidateHeight,
+                                              const Consensus::Params& params)
+{
+    AssertLockHeld(cs_main);
+    const bool fWasActive = IsAssetMarkerNip040Active(nOldCandidateHeight, params);
+    const bool fIsActive = IsAssetMarkerNip040Active(nNewCandidateHeight, params);
+    if (fWasActive == fIsActive)
+        return;
+    pool.removeForAssetMarkerTransition(fIsActive);
+}
+
 /**
  * Check whether all inputs of this transaction are valid (no double spends, scripts & sigs, amounts)
  * This does not modify the UTXO set.
@@ -2806,7 +2826,7 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
 
             if (AreAssetsDeployed()) {
                 std::vector<std::pair<std::string, uint256>> vReissueAssets;
-                if (!Consensus::CheckTxAssets(tx, state, view, assetsCache, false, vReissueAssets, false, &setMessages, block.nTime, &myNullAssetData)) {
+                if (!Consensus::CheckTxAssets(tx, state, view, assetsCache, pindex->nHeight, false, vReissueAssets, false, &setMessages, block.nTime, &myNullAssetData)) {
                     state.SetFailedTransaction(tx.GetHash());
                     return error("%s: Consensus::CheckTxAssets: %s, %s", __func__, tx.GetHash().ToString(),
                                  FormatStateMessage(state));
@@ -3440,6 +3460,12 @@ bool static DisconnectTip(CValidationState& state, const CChainParams& chainpara
 
     // Update chainActive and related variables.
     UpdateTip(pindexDelete->pprev, chainparams);
+    // NIP-040: the mempool's target height moved back from
+    // pindexDelete->nHeight + 1 to pindexDelete->nHeight; if that crossed
+    // the marker fork, evict the outputs that are no longer minable.
+    MempoolCheckAssetMarkerTransition(mempool, pindexDelete->nHeight + 1,
+                                      pindexDelete->nHeight,
+                                      chainparams.GetConsensus());
     // NIP-026: flush the script-execution cache so that HEIGHT / MTP
     // observations baked into prior hits cannot be re-served at the new
     // tip, then evict mempool entries whose OP_CHAINCONTEXT-dependent
@@ -3629,6 +3655,12 @@ bool static ConnectTip(CValidationState& state, const CChainParams& chainparams,
     disconnectpool.removeForBlock(blockConnecting.vtx);
     // Update chainActive & related variables.
     UpdateTip(pindexNew, chainparams);
+    // NIP-040: the mempool's target height advanced from pindexNew->nHeight
+    // to pindexNew->nHeight + 1; if that crossed the marker fork (i.e. we
+    // just connected H-1), evict the legacy-marker outputs.
+    MempoolCheckAssetMarkerTransition(mempool, pindexNew->nHeight,
+                                      pindexNew->nHeight + 1,
+                                      chainparams.GetConsensus());
     // NIP-026: see DisconnectTip — flushing here closes the stale-cache
     // window for every tip advance, including the reorg case (which
     // goes DisconnectTip → ConnectTip; both sides must flush).

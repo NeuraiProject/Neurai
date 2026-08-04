@@ -249,7 +249,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tests, BasicTestingSetup)
         // Create the asset scriptPubKey
         CAssetTransfer asset("NEURAI", 1000);
         CScript scriptPubKey = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
-        asset.ConstructTransaction(scriptPubKey);
+        asset.ConstructTransaction(scriptPubKey, AssetMarker::LEGACY_RVN);
 
         CTxOut txOut;
         txOut.nValue = 0;
@@ -270,7 +270,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tests, BasicTestingSetup)
         // Create the asset scriptPubKey
         CNewAsset asset("NEURAI", 1000, 8, 1, 0, "");
         CScript scriptPubKey = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
-        asset.ConstructTransaction(scriptPubKey);
+        asset.ConstructTransaction(scriptPubKey, AssetMarker::LEGACY_RVN);
 
         CTxOut txOut;
         txOut.nValue = 0;

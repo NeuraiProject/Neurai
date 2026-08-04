@@ -603,6 +603,15 @@ public:
     // with the fresh ChainContext and returns true to evict.
     void removeForNewTip(std::function<bool(const CTxMemPoolEntry&)> shouldEvict);
 
+    // NIP-040: evict every transaction (and its descendants) whose asset
+    // outputs carry the marker the next block can no longer include:
+    // legacy "rvn" once the fork activates for the candidate height,
+    // "xna" when a disconnect moves the candidate height back below it.
+    // Called from ConnectTip/DisconnectTip only when the activation state
+    // of the mempool's target height actually flips, so the full walk does
+    // not run on every block.
+    void removeForAssetMarkerTransition(bool fNip040Active);
+
     void clear();
     void _clear(); //lock free
     bool CompareDepthAndScore(const uint256& hasha, const uint256& hashb);

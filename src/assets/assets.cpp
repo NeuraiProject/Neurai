@@ -23,6 +23,7 @@
 #include "assets.h"
 
 #include <atomic>
+#include <limits>
 #include "assetdb.h"
 #include "assettypes.h"
 #include "protocol.h"
@@ -336,12 +337,48 @@ CDatabasedAssetData::CDatabasedAssetData()
     this->SetNull();
 }
 
+bool IsAssetMarkerNip040Active(int nHeight, const Consensus::Params& params)
+{
+    // INT_MAX is the "fork not scheduled" sentinel, explicitly inactive even
+    // for a (theoretical) candidate height of INT_MAX.
+    if (params.nAssetMarkerNip040Height == std::numeric_limits<int>::max())
+        return false;
+    return nHeight >= params.nAssetMarkerNip040Height;
+}
+
+AssetMarker MarkerForNewAssetOutput(int nTargetHeight, const Consensus::Params& params)
+{
+    return IsAssetMarkerNip040Active(nTargetHeight, params) ? AssetMarker::NEURAI_XNA
+                                                            : AssetMarker::LEGACY_RVN;
+}
+
+AssetMarker MarkerForNextBlockOutput()
+{
+    LOCK(cs_main);
+    return MarkerForNewAssetOutput(chainActive.Height() + 1, GetParams().GetConsensus());
+}
+
+// NIP-040: the only two places marker bytes may come from are this helper and
+// the dual parser in script.cpp — no scattered "rvn"/"xna" literals.
+static void AppendAssetMarkerPrefix(std::vector<unsigned char>& vchMessage, AssetMarker marker)
+{
+    if (marker == AssetMarker::NEURAI_XNA) {
+        vchMessage.push_back(XNA_X); // x
+        vchMessage.push_back(XNA_N); // n
+        vchMessage.push_back(XNA_A); // a
+    } else {
+        vchMessage.push_back(XNA_R); // r
+        vchMessage.push_back(XNA_V); // v
+        vchMessage.push_back(XNA_N); // n
+    }
+}
+
 /**
  * Constructs a CScript that carries the asset name and quantity and adds to to the end of the given script
  * @param dest - The destination that the asset will belong to
  * @param script - This script needs to be a pay to address script
  */
-void CNewAsset::ConstructTransaction(CScript& script) const
+void CNewAsset::ConstructTransaction(CScript& script, AssetMarker marker) const
 {
     NormalizeAssetDestinationScript(script);
 
@@ -349,16 +386,14 @@ void CNewAsset::ConstructTransaction(CScript& script) const
     ssAsset << *this;
 
     std::vector<unsigned char> vchMessage;
-    vchMessage.push_back(XNA_R); // r
-    vchMessage.push_back(XNA_V); // v
-    vchMessage.push_back(XNA_N); // n
+    AppendAssetMarkerPrefix(vchMessage, marker);
     vchMessage.push_back(XNA_Q); // q
 
     vchMessage.insert(vchMessage.end(), ssAsset.begin(), ssAsset.end());
     script << OP_XNA_ASSET << ToByteVector(vchMessage) << OP_DROP;
 }
 
-void CNewAsset::ConstructOwnerTransaction(CScript& script) const
+void CNewAsset::ConstructOwnerTransaction(CScript& script, AssetMarker marker) const
 {
     NormalizeAssetDestinationScript(script);
 
@@ -366,9 +401,7 @@ void CNewAsset::ConstructOwnerTransaction(CScript& script) const
     ssOwner << std::string(this->strName + OWNER_TAG);
 
     std::vector<unsigned char> vchMessage;
-    vchMessage.push_back(XNA_R); // r
-    vchMessage.push_back(XNA_V); // v
-    vchMessage.push_back(XNA_N); // n
+    AppendAssetMarkerPrefix(vchMessage, marker);
     vchMessage.push_back(XNA_O); // o
 
     vchMessage.insert(vchMessage.end(), ssOwner.begin(), ssOwner.end());
@@ -1207,7 +1240,7 @@ bool CAssetTransfer::ContextualCheckAgainstVerifyString(CAssetsCache *assetCache
     return true;
 }
 
-void CAssetTransfer::ConstructTransaction(CScript& script) const
+void CAssetTransfer::ConstructTransaction(CScript& script, AssetMarker marker) const
 {
     NormalizeAssetDestinationScript(script);
 
@@ -1215,9 +1248,7 @@ void CAssetTransfer::ConstructTransaction(CScript& script) const
     ssTransfer << *this;
 
     std::vector<unsigned char> vchMessage;
-    vchMessage.push_back(XNA_R); // r
-    vchMessage.push_back(XNA_V); // v
-    vchMessage.push_back(XNA_N); // n
+    AppendAssetMarkerPrefix(vchMessage, marker);
     vchMessage.push_back(XNA_T); // t
 
     vchMessage.insert(vchMessage.end(), ssTransfer.begin(), ssTransfer.end());
@@ -1235,7 +1266,7 @@ CReissueAsset::CReissueAsset(const std::string &strAssetName, const CAmount &nAm
     this->nUnits = nUnits;
 }
 
-void CReissueAsset::ConstructTransaction(CScript& script) const
+void CReissueAsset::ConstructTransaction(CScript& script, AssetMarker marker) const
 {
     NormalizeAssetDestinationScript(script);
 
@@ -1243,9 +1274,7 @@ void CReissueAsset::ConstructTransaction(CScript& script) const
     ssReissue << *this;
 
     std::vector<unsigned char> vchMessage;
-    vchMessage.push_back(XNA_R); // r
-    vchMessage.push_back(XNA_V); // v
-    vchMessage.push_back(XNA_N); // n
+    AppendAssetMarkerPrefix(vchMessage, marker);
     vchMessage.push_back(XNA_R); // r
 
     vchMessage.insert(vchMessage.end(), ssReissue.begin(), ssReissue.end());
@@ -3776,13 +3805,16 @@ bool CreateAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, const s
     CRecipient recipient = {scriptPubKey, burnAmount, fSubtractFeeFromAmount};
     vecSend.push_back(recipient);
 
+    // NIP-040: one marker for every asset output this transaction constructs.
+    const AssetMarker assetMarker = MarkerForNextBlockOutput();
+
     // If the asset is a subasset or unique asset. We need to send the ownertoken change back to ourselfs
     if (assetType == AssetType::SUB || assetType == AssetType::UNIQUE || assetType == AssetType::MSGCHANNEL || fIsSubDepin) {
         // Get the script for the destination address for the assets
         CScript scriptTransferOwnerAsset = GetScriptForDestination(DecodeDestination(change_address));
 
         CAssetTransfer assetTransfer(parentName + OWNER_TAG, OWNER_ASSET_AMOUNT);
-        assetTransfer.ConstructTransaction(scriptTransferOwnerAsset);
+        assetTransfer.ConstructTransaction(scriptTransferOwnerAsset, assetMarker);
         CRecipient rec = {scriptTransferOwnerAsset, 0, fSubtractFeeFromAmount};
         vecSend.push_back(rec);
     }
@@ -3793,7 +3825,7 @@ bool CreateAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, const s
         CScript scriptTransferQualifierAsset = GetScriptForDestination(DecodeDestination(change_address));
 
         CAssetTransfer assetTransfer(parentName, OWNER_ASSET_AMOUNT);
-        assetTransfer.ConstructTransaction(scriptTransferQualifierAsset);
+        assetTransfer.ConstructTransaction(scriptTransferQualifierAsset, assetMarker);
         CRecipient rec = {scriptTransferQualifierAsset, 0, fSubtractFeeFromAmount};
         vecSend.push_back(rec);
     }
@@ -3831,7 +3863,7 @@ bool CreateAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, const s
         }
 
         CAssetTransfer assetTransfer(strStripped + OWNER_TAG, OWNER_ASSET_AMOUNT);
-        assetTransfer.ConstructTransaction(scriptTransferOwnerAsset);
+        assetTransfer.ConstructTransaction(scriptTransferOwnerAsset, assetMarker);
 
         CRecipient ownerRec = {scriptTransferOwnerAsset, 0, fSubtractFeeFromAmount};
         vecSend.push_back(ownerRec);
@@ -3851,7 +3883,7 @@ bool CreateAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, const s
         vecSend.push_back(rec);
     }
 
-    if (!pwallet->CreateTransactionWithAssets(vecSend, wtxNew, reservekey, nFeeRequired, nChangePosRet, strTxError, coinControl, assets, DecodeDestination(address), assetType)) {
+    if (!pwallet->CreateTransactionWithAssets(vecSend, wtxNew, reservekey, nFeeRequired, nChangePosRet, strTxError, coinControl, assets, DecodeDestination(address), assetType, assetMarker)) {
         if (!fSubtractFeeFromAmount && burnAmount + nFeeRequired > curBalance)
             strTxError = strprintf("Error: This transaction requires a transaction fee of at least %s", FormatMoney(nFeeRequired));
         error = std::make_pair(RPC_WALLET_ERROR, strTxError);
@@ -3978,12 +4010,15 @@ bool CreateReissueAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, 
     // Get the script for the destination address for the assets
     CScript scriptTransferOwnerAsset = GetScriptForDestination(DecodeDestination(owner_change_address));
 
+    // NIP-040: one marker for every asset output this transaction constructs.
+    const AssetMarker assetMarker = MarkerForNextBlockOutput();
+
     if (asset_type == AssetType::RESTRICTED) {
         CAssetTransfer assetTransfer(stripped_asset_name + OWNER_TAG, OWNER_ASSET_AMOUNT);
-        assetTransfer.ConstructTransaction(scriptTransferOwnerAsset);
+        assetTransfer.ConstructTransaction(scriptTransferOwnerAsset, assetMarker);
     } else {
         CAssetTransfer assetTransfer(asset_name + OWNER_TAG, OWNER_ASSET_AMOUNT);
-        assetTransfer.ConstructTransaction(scriptTransferOwnerAsset);
+        assetTransfer.ConstructTransaction(scriptTransferOwnerAsset, assetMarker);
     }
 
     if (asset_type == AssetType::RESTRICTED) {
@@ -4041,7 +4076,7 @@ bool CreateReissueAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, 
     CRecipient recipient2 = {scriptTransferOwnerAsset, 0, fSubtractFeeFromAmount};
     vecSend.push_back(recipient);
     vecSend.push_back(recipient2);
-    if (!pwallet->CreateTransactionWithReissueAsset(vecSend, wtxNew, reservekey, nFeeRequired, nChangePosRet, strTxError, coinControl, reissueAsset, DecodeDestination(address))) {
+    if (!pwallet->CreateTransactionWithReissueAsset(vecSend, wtxNew, reservekey, nFeeRequired, nChangePosRet, strTxError, coinControl, reissueAsset, DecodeDestination(address), assetMarker)) {
         if (!fSubtractFeeFromAmount && burnAmount + nFeeRequired > curBalance)
             strTxError = strprintf("Error: This transaction requires a transaction fee of at least %s", FormatMoney(nFeeRequired));
         error = std::make_pair(RPC_WALLET_ERROR, strTxError);
@@ -4133,6 +4168,9 @@ bool CreateTransferAssetTransaction(CWallet* pwallet, const CCoinControl& coinCo
         depinOwnerTransfersAdded.insert(ownerTokenName);
     }
 
+    // NIP-040: one marker for every asset output this transaction constructs.
+    const AssetMarker assetMarker = MarkerForNextBlockOutput();
+
     // Loop through all transfers and create scriptpubkeys for them
     for (auto transfer : transfers) {
         std::string address = transfer.second;
@@ -4199,7 +4237,7 @@ bool CreateTransferAssetTransaction(CWallet* pwallet, const CCoinControl& coinCo
 
         // Update the scriptPubKey with the transfer asset information
         CAssetTransfer assetTransfer(asset_name, nAmount, message, expireTime);
-        assetTransfer.ConstructTransaction(scriptPubKey);
+        assetTransfer.ConstructTransaction(scriptPubKey, assetMarker);
 
         CRecipient recipient = {scriptPubKey, 0, fSubtractFeeFromAmount};
         vecSend.push_back(recipient);
@@ -4276,7 +4314,7 @@ bool CreateTransferAssetTransaction(CWallet* pwallet, const CCoinControl& coinCo
     }
 
     // Create and send the transaction
-    if (!pwallet->CreateTransactionWithTransferAsset(vecSend, wtxNew, reservekey, nFeeRequired, nChangePosRet, strTxError, coinControl)) {
+    if (!pwallet->CreateTransactionWithTransferAsset(vecSend, wtxNew, reservekey, nFeeRequired, nChangePosRet, strTxError, coinControl, assetMarker)) {
         if (!fSubtractFeeFromAmount && nFeeRequired > curBalance) {
             error = std::make_pair(RPC_WALLET_ERROR, strprintf("Error: This transaction requires a transaction fee of at least %s", FormatMoney(nFeeRequired)));
             return false;

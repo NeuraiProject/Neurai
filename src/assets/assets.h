@@ -16,12 +16,18 @@
 #include <unordered_map>
 #include <list>
 
+// Historic marker prefix bytes: "rvn" (inherited from Ravencoin). The bytes
+// written on-chain by legacy outputs, despite the XNA_* names.
 #define XNA_R 114
 #define XNA_V 118
 #define XNA_N 110
+// Operation bytes, shared by both marker prefixes.
 #define XNA_Q 113
 #define XNA_T 116
 #define XNA_O 111
+// NIP-040 marker prefix bytes: "xna" ('n' is XNA_N above).
+#define XNA_X 120
+#define XNA_A 97
 
 #define DEFAULT_UNITS 0
 #define DEFAULT_REISSUABLE 1
@@ -44,6 +50,23 @@
  * ROOT/SUB names reserve one extra character for the OWNER_TAG ('!').
  */
 int GetMaxAssetNameLength();
+
+namespace Consensus {
+struct Params;
+}
+
+/** NIP-040: true once the candidate height is at or past the marker fork. */
+bool IsAssetMarkerNip040Active(int nHeight, const Consensus::Params& params);
+
+/** NIP-040: marker every newly constructed asset output must carry when it is
+ *  meant to confirm at nTargetHeight. Callers resolve this once from the
+ *  target height and pass it to the four asset script constructors. */
+AssetMarker MarkerForNewAssetOutput(int nTargetHeight, const Consensus::Params& params);
+
+/** NIP-040: convenience for wallet/RPC construction paths — marker for an
+ *  output meant to confirm in the next block of the active chain. Takes
+ *  cs_main (recursive, so safe when the caller already holds it). */
+AssetMarker MarkerForNextBlockOutput();
 
 #define RESTRICTED_CHAR '$'
 #define QUALIFIER_CHAR '#'

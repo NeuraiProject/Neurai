@@ -32,6 +32,7 @@ NEURAI_TESTS =\
   test/assets/asset_tests.cpp \
   test/assets/serialization_tests.cpp \
   test/assets/asset_tx_tests.cpp \
+  test/assets/asset_marker_nip040_tests.cpp \
   test/assets/cache_tests.cpp \
   test/assets/asset_reissue_tests.cpp \
   test/assets/messaging_tests.cpp \

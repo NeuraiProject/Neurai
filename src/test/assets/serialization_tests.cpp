@@ -32,7 +32,7 @@ BOOST_FIXTURE_TEST_SUITE(serialization_tests, BasicTestingSetup)
 
         CScript scriptPubKey = GetScriptForDestination(dest);
 
-        asset.ConstructTransaction(scriptPubKey);
+        asset.ConstructTransaction(scriptPubKey, AssetMarker::LEGACY_RVN);
 
         CNewAsset serializedAsset;
         std::string address;
@@ -48,7 +48,7 @@ BOOST_FIXTURE_TEST_SUITE(serialization_tests, BasicTestingSetup)
         // Bare asset
         CNewAsset asset2("SERIALIZATION", 100000000);
         scriptPubKey = GetScriptForDestination(dest);
-        asset2.ConstructTransaction(scriptPubKey);
+        asset2.ConstructTransaction(scriptPubKey, AssetMarker::LEGACY_RVN);
         CNewAsset serializedAsset2;
         BOOST_CHECK_MESSAGE(AssetFromScript(scriptPubKey, serializedAsset2, address), "Failed to get asset from script");
         BOOST_CHECK_MESSAGE(address == strTestAddress, "Addresses weren't equal");
@@ -63,7 +63,7 @@ BOOST_FIXTURE_TEST_SUITE(serialization_tests, BasicTestingSetup)
         // Asset with txid hash instead of ipfs hash
         CNewAsset asset3("SERIALIZATION", 100000000, 0, 1, 1, DecodeAssetData("9c2c8e121a0139ba39bffd3ca97267bca9d4c0c1e84ac0c34a883c28e7a912ca"));
         scriptPubKey = GetScriptForDestination(dest);
-        asset3.ConstructTransaction(scriptPubKey);
+        asset3.ConstructTransaction(scriptPubKey, AssetMarker::LEGACY_RVN);
         CNewAsset serializedAsset3;
         BOOST_CHECK_MESSAGE(AssetFromScript(scriptPubKey, serializedAsset3, address), "Failed to get asset from script");
         BOOST_CHECK_MESSAGE(address == strTestAddress, "Addresses weren't equal");
@@ -93,7 +93,7 @@ BOOST_FIXTURE_TEST_SUITE(serialization_tests, BasicTestingSetup)
 
         CScript scriptPubKey = GetScriptForDestination(dest);
 
-        reissue.ConstructTransaction(scriptPubKey);
+        reissue.ConstructTransaction(scriptPubKey, AssetMarker::LEGACY_RVN);
 
         CReissueAsset serializedAsset;
         std::string address;
@@ -106,7 +106,7 @@ BOOST_FIXTURE_TEST_SUITE(serialization_tests, BasicTestingSetup)
         // Empty IPFS
         CReissueAsset reissue2(name, 100000000, 0, 0, "");
         scriptPubKey = GetScriptForDestination(dest);
-        reissue2.ConstructTransaction(scriptPubKey);
+        reissue2.ConstructTransaction(scriptPubKey, AssetMarker::LEGACY_RVN);
         CReissueAsset serializedAsset2;
         BOOST_CHECK_MESSAGE(ReissueAssetFromScript(scriptPubKey, serializedAsset2, address), "Failed to get asset from script");
         BOOST_CHECK_MESSAGE(address == strTestAddress, "Addresses weren't equal");
@@ -117,7 +117,7 @@ BOOST_FIXTURE_TEST_SUITE(serialization_tests, BasicTestingSetup)
         // Txid Hash instead of IPFS
         CReissueAsset reissue3(name, 100000000, 0, 0, DecodeAssetData("9c2c8e121a0139ba39bffd3ca97267bca9d4c0c1e84ac0c34a883c28e7a912ca"));
         scriptPubKey = GetScriptForDestination(dest);
-        reissue3.ConstructTransaction(scriptPubKey);
+        reissue3.ConstructTransaction(scriptPubKey, AssetMarker::LEGACY_RVN);
         CReissueAsset serializedAsset3;
         BOOST_CHECK_MESSAGE(ReissueAssetFromScript(scriptPubKey, serializedAsset3, address), "Failed to get asset from script");
         BOOST_CHECK_MESSAGE(address == strTestAddress, "Addresses weren't equal");
@@ -144,7 +144,7 @@ BOOST_FIXTURE_TEST_SUITE(serialization_tests, BasicTestingSetup)
 
         CScript scriptPubKey = GetScriptForDestination(dest);
 
-        asset.ConstructOwnerTransaction(scriptPubKey);
+        asset.ConstructOwnerTransaction(scriptPubKey, AssetMarker::LEGACY_RVN);
 
         std::string strOwnerName;
         std::string address;
@@ -162,7 +162,7 @@ BOOST_FIXTURE_TEST_SUITE(serialization_tests, BasicTestingSetup)
         CNewAsset restricted_asset("$RESTRICTED", 1000, 8, 0, 1, "QmRAQB6YaCyidP37UdDnjFY5vQuiBrcqdyoW1CuDgwxkD4");
 
         CScript scriptPubKey = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
-        restricted_asset.ConstructTransaction(scriptPubKey);
+        restricted_asset.ConstructTransaction(scriptPubKey, AssetMarker::LEGACY_RVN);
 
         BOOST_CHECK_MESSAGE(IsScriptNewRestrictedAsset(scriptPubKey), "Script wasn't a restricted asset");
     }
@@ -174,7 +174,7 @@ BOOST_FIXTURE_TEST_SUITE(serialization_tests, BasicTestingSetup)
         CNewAsset message_channel("RESTRICTED~CHANNEL", 1000, 0, 0, 1, "QmRAQB6YaCyidP37UdDnjFY5vQuiBrcqdyoW1CuDgwxkD4");
 
         CScript scriptPubKey = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
-        message_channel.ConstructTransaction(scriptPubKey);
+        message_channel.ConstructTransaction(scriptPubKey, AssetMarker::LEGACY_RVN);
 
         BOOST_CHECK_MESSAGE(IsScriptNewMsgChannelAsset(scriptPubKey), "Script wasn't a message channel");
     }

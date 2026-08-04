@@ -481,6 +481,15 @@ private:
  */
 typedef prevector<28, unsigned char> CScriptBase;
 
+/** NIP-040: which 3-byte prefix an asset payload carries. LEGACY_RVN is the
+ *  historic "rvn" marker inherited from Ravencoin; NEURAI_XNA is the "xna"
+ *  marker required for new outputs once NIP-040 activates. The marker never
+ *  participates in asset identity — that is always the serialized name. */
+enum class AssetMarker : uint8_t {
+    LEGACY_RVN,
+    NEURAI_XNA,
+};
+
 /** Serialized script, used inside transaction inputs and outputs */
 class CScript : public CScriptBase
 {
@@ -753,6 +762,10 @@ public:
 
     /** XNA START */
     enum class txnouttype;
+    /** NIP-040 dual parser: also reports which marker ("rvn"/"xna") the
+     *  payload carries. The legacy "rvn" logic runs first, byte-for-byte
+     *  unchanged; "xna" is only tried when it does not match. */
+    bool IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex, AssetMarker& marker) const;
     bool IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex) const;
     bool IsAssetScript(int& nType, bool& fIsOwner) const;
     bool IsAssetScript() const;

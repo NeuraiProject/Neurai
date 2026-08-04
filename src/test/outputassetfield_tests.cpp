@@ -68,7 +68,7 @@ CMutableTransaction BuildAssetTxForNetwork(const std::string& chain)
         out.nValue = 0;
         out.scriptPubKey = GetScriptForDestination(dest);
         CAssetTransfer transfer("GOLD", 25 * COIN);
-        transfer.ConstructTransaction(out.scriptPubKey);
+        transfer.ConstructTransaction(out.scriptPubKey, AssetMarker::LEGACY_RVN);
         tx.vout.push_back(out);
     }
 
@@ -79,7 +79,7 @@ CMutableTransaction BuildAssetTxForNetwork(const std::string& chain)
         out.scriptPubKey = GetScriptForDestination(dest);
         CNewAsset asset("NEWASSET", 100 * COIN, 2, 1, 1,
                         DecodeAssetData("QmacSRmrkVmvJfbCpmU6pK72furJ8E8fbKHindrLxmYMQo"));
-        asset.ConstructTransaction(out.scriptPubKey);
+        asset.ConstructTransaction(out.scriptPubKey, AssetMarker::LEGACY_RVN);
         tx.vout.push_back(out);
     }
 
@@ -89,7 +89,7 @@ CMutableTransaction BuildAssetTxForNetwork(const std::string& chain)
         out.nValue = 0;
         out.scriptPubKey = GetScriptForDestination(dest);
         CReissueAsset reissue("REISSUEASSET", 5 * COIN, -1, 0, "");
-        reissue.ConstructTransaction(out.scriptPubKey);
+        reissue.ConstructTransaction(out.scriptPubKey, AssetMarker::LEGACY_RVN);
         tx.vout.push_back(out);
     }
 
@@ -100,7 +100,7 @@ CMutableTransaction BuildAssetTxForNetwork(const std::string& chain)
         out.scriptPubKey = GetScriptForDestination(dest);
         CReissueAsset reissue("HASHEDASSET", 7 * COIN, 0, 1,
                               DecodeAssetData("9c2c8e121a0139ba39bffd3ca97267bca9d4c0c1e84ac0c34a883c28e7a912ca"));
-        reissue.ConstructTransaction(out.scriptPubKey);
+        reissue.ConstructTransaction(out.scriptPubKey, AssetMarker::LEGACY_RVN);
         tx.vout.push_back(out);
     }
 
@@ -110,7 +110,7 @@ CMutableTransaction BuildAssetTxForNetwork(const std::string& chain)
         out.nValue = 0;
         out.scriptPubKey = GetScriptForDestination(dest);
         CNewAsset asset("OWNERROOT", COIN);
-        asset.ConstructOwnerTransaction(out.scriptPubKey);
+        asset.ConstructOwnerTransaction(out.scriptPubKey, AssetMarker::LEGACY_RVN);
         tx.vout.push_back(out);
     }
 
@@ -156,7 +156,7 @@ CMutableTransaction BuildDEPINTxForNetwork(const std::string& chain)
     out.nValue = 0;
     out.scriptPubKey = GetScriptForDestination(dest);
     CAssetTransfer transfer("&SENSOR", COIN);
-    transfer.ConstructTransaction(out.scriptPubKey);
+    transfer.ConstructTransaction(out.scriptPubKey, AssetMarker::LEGACY_RVN);
     tx.vout.push_back(out);
 
     return tx;

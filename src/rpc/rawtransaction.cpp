@@ -710,6 +710,10 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
 
     auto currentActiveAssetCache = GetCurrentAssetCache();
 
+    // NIP-040: one marker for every asset output this transaction constructs.
+    // The RPC builders never expose the choice; consensus enforces it by height.
+    const AssetMarker assetMarker = MarkerForNextBlockOutput();
+
     // Build ordered output list.
     // Object format: enforces no duplicate addresses (backward compatible).
     // Array format:  allows duplicate addresses — use this when the same address
@@ -831,12 +835,12 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
                     }
 
                     // Construct the asset transaction
-                    asset.ConstructTransaction(scriptPubKey);
+                    asset.ConstructTransaction(scriptPubKey, assetMarker);
 
                     AssetType type;
                     if (IsAssetNameValid(asset.strName, type)) {
                         if (type != AssetType::UNIQUE && type != AssetType::MSGCHANNEL) {
-                            asset.ConstructOwnerTransaction(ownerPubKey);
+                            asset.ConstructOwnerTransaction(ownerPubKey, assetMarker);
 
                             // Push the scriptPubKey into the vouts.
                             CTxOut ownerOut(0, ownerPubKey);
@@ -880,7 +884,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
                     // Create the scripts for the change of the ownership token
                     CScript scriptTransferOwnerAsset = GetScriptForDestination(destination);
                     CAssetTransfer assetTransfer(root_name.get_str() + OWNER_TAG, OWNER_ASSET_AMOUNT);
-                    assetTransfer.ConstructTransaction(scriptTransferOwnerAsset);
+                    assetTransfer.ConstructTransaction(scriptTransferOwnerAsset, assetMarker);
 
                     // Create the CTxOut for the owner token
                     CTxOut out(0, scriptTransferOwnerAsset);
@@ -907,7 +911,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
 
                         // Construct the asset transaction
                         scriptPubKey = GetScriptForDestination(destination);
-                        asset.ConstructTransaction(scriptPubKey);
+                        asset.ConstructTransaction(scriptPubKey, assetMarker);
 
                         // Push the scriptPubKey into the vouts.
                         CTxOut out(0, scriptPubKey);
@@ -988,11 +992,11 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
                         owner_asset_transfer_script = GetScriptForDestination(destination);
 
                     CAssetTransfer transfer_owner(asset_name.get_str() + OWNER_TAG, OWNER_ASSET_AMOUNT);
-                    transfer_owner.ConstructTransaction(owner_asset_transfer_script);
+                    transfer_owner.ConstructTransaction(owner_asset_transfer_script, assetMarker);
 
                     // Create the scripts for the reissued assets
                     CScript scriptReissueAsset = GetScriptForDestination(destination);
-                    reissueObj.ConstructTransaction(scriptReissueAsset);
+                    reissueObj.ConstructTransaction(scriptReissueAsset, assetMarker);
 
                     // Create the CTxOut for the owner token
                     CTxOut out(0, owner_asset_transfer_script);
@@ -1033,7 +1037,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
 
                         // Construct transaction
                         CScript scriptPubKey = GetScriptForDestination(destination);
-                        transfer.ConstructTransaction(scriptPubKey);
+                        transfer.ConstructTransaction(scriptPubKey, assetMarker);
 
                         // Push into vouts
                         CTxOut out(0, scriptPubKey);
@@ -1085,7 +1089,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
 
                     // Construct transaction
                     CScript scriptPubKey = GetScriptForDestination(destination);
-                    transfer.ConstructTransaction(scriptPubKey);
+                    transfer.ConstructTransaction(scriptPubKey, assetMarker);
 
                     // Push into vouts
                     CTxOut out(0, scriptPubKey);
@@ -1168,7 +1172,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
 
                     // Construct the restricted issuance script
                     CScript restricted_issuance_script = GetScriptForDestination(destination);
-                    asset.ConstructTransaction(restricted_issuance_script);
+                    asset.ConstructTransaction(restricted_issuance_script, assetMarker);
 
                     // Construct the owner change script
                     CScript owner_asset_transfer_script;
@@ -1178,7 +1182,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
                         owner_asset_transfer_script = GetScriptForDestination(destination);
 
                     CAssetTransfer transfer_owner(strAssetName.substr(1, strAssetName.size()) + OWNER_TAG, OWNER_ASSET_AMOUNT);
-                    transfer_owner.ConstructTransaction(owner_asset_transfer_script);
+                    transfer_owner.ConstructTransaction(owner_asset_transfer_script, assetMarker);
 
                     // Construct the verifier string script
                     CScript verifier_string_script;
@@ -1299,11 +1303,11 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
                         owner_asset_transfer_script = GetScriptForDestination(destination);
 
                     CAssetTransfer transfer_owner(RestrictedNameToOwnerName(asset_name.get_str()), OWNER_ASSET_AMOUNT);
-                    transfer_owner.ConstructTransaction(owner_asset_transfer_script);
+                    transfer_owner.ConstructTransaction(owner_asset_transfer_script, assetMarker);
 
                     // Create the scripts for the reissued assets
                     CScript scriptReissueAsset = GetScriptForDestination(destination);
-                    reissueObj.ConstructTransaction(scriptReissueAsset);
+                    reissueObj.ConstructTransaction(scriptReissueAsset, assetMarker);
 
                     // Construct the verifier string script
                     CScript verifier_string_script;
@@ -1398,7 +1402,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
 
                     // Construct the issuance script
                     CScript issuance_script = GetScriptForDestination(destination);
-                    asset.ConstructTransaction(issuance_script);
+                    asset.ConstructTransaction(issuance_script, assetMarker);
 
                     // Construct the root change script if issuing subqualifier
                     CScript root_asset_transfer_script;
@@ -1410,7 +1414,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
                             root_asset_transfer_script = GetScriptForDestination(destination);
 
                         CAssetTransfer transfer_root(GetParentName(strAssetName), changeQty);
-                        transfer_root.ConstructTransaction(root_asset_transfer_script);
+                        transfer_root.ConstructTransaction(root_asset_transfer_script, assetMarker);
                     }
 
                     // Create the CTxOut for each script we need to issue
@@ -1457,7 +1461,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
                     // change
                     CScript change_script = GetScriptForDestination(destination);
                     CAssetTransfer transfer_change(strQualifier, changeQty);
-                    transfer_change.ConstructTransaction(change_script);
+                    transfer_change.ConstructTransaction(change_script, assetMarker);
                     CTxOut out_change(0, change_script);
                     rawTx.vout.push_back(out_change);
 
@@ -1494,7 +1498,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
                     // owner change
                     CScript change_script = GetScriptForDestination(destination);
                     CAssetTransfer transfer_change(RestrictedNameToOwnerName(strAssetName), OWNER_ASSET_AMOUNT);
-                    transfer_change.ConstructTransaction(change_script);
+                    transfer_change.ConstructTransaction(change_script, assetMarker);
                     CTxOut out_change(0, change_script);
                     rawTx.vout.push_back(out_change);
 
@@ -1523,7 +1527,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
                     // owner change
                     CScript change_script = GetScriptForDestination(destination);
                     CAssetTransfer transfer_change(RestrictedNameToOwnerName(strAssetName), OWNER_ASSET_AMOUNT);
-                    transfer_change.ConstructTransaction(change_script);
+                    transfer_change.ConstructTransaction(change_script, assetMarker);
                     CTxOut out_change(0, change_script);
                     rawTx.vout.push_back(out_change);
 

@@ -631,6 +631,7 @@ std::string HelpMessage(HelpMessageMode mode)
         strUsage += HelpMessageOpt("-limitdescendantcount=<n>", strprintf("Do not accept transactions if any ancestor would have <n> or more in-mempool descendants (default: %u)", DEFAULT_DESCENDANT_LIMIT));
         strUsage += HelpMessageOpt("-limitdescendantsize=<n>", strprintf("Do not accept transactions if any ancestor would have more than <n> kilobytes of in-mempool descendants (default: %u).", DEFAULT_DESCENDANT_SIZE_LIMIT));
         strUsage += HelpMessageOpt("-vbparams=deployment:start:end", "Use given start/end times for specified version bits deployment (regtest-only)");
+        strUsage += HelpMessageOpt("-nip040height=<n>", "Override the NIP-040 asset marker fork height (regtest-only)");
     }
     strUsage += HelpMessageOpt("-debug=<category>", strprintf(_("Output debugging information (default: %u, supplying <category> is optional)"), 0) + ". " +
         _("If <category> is not supplied or if <category> = 1, output all debugging information.") + " " + _("<category> can be:") + " " + ListLogCategories() + ".");
@@ -1335,6 +1336,19 @@ bool AppInitParameterInteraction()
                 return InitError(strprintf("Invalid deployment (%s)", vDeploymentParams[0]));
             }
         }
+    }
+
+    if (gArgs.IsArgSet("-nip040height")) {
+        // NIP-040: allow overriding the asset marker fork height for testing
+        if (!chainparams.MineBlocksOnDemand()) {
+            return InitError("NIP-040 marker height may only be overridden on regtest.");
+        }
+        int64_t nHeight;
+        if (!ParseInt64(gArgs.GetArg("-nip040height", ""), &nHeight) || nHeight < 0 || nHeight > std::numeric_limits<int>::max()) {
+            return InitError(strprintf("Invalid -nip040height (%s)", gArgs.GetArg("-nip040height", "")));
+        }
+        UpdateAssetMarkerNip040Height(static_cast<int>(nHeight));
+        LogPrintf("Setting NIP-040 asset marker fork height to %ld\n", nHeight);
     }
     return true;
 }

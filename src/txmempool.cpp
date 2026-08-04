@@ -840,6 +840,38 @@ void CTxMemPool::removeForNewTip(std::function<bool(const CTxMemPoolEntry&)> sho
     RemoveStaged(setAllRemoves, false, MemPoolRemovalReason::REORG);
 }
 
+void CTxMemPool::removeForAssetMarkerTransition(bool fNip040Active)
+{
+    // NIP-040: the caller detected that IsAssetMarkerNip040Active() flipped
+    // for the mempool's candidate height. Every asset output must now carry
+    // the marker matching the new state; transactions with the stale marker
+    // can never be mined at the new target height, so drop them with their
+    // descendants. Inputs are never inspected — spending legacy UTXOs is
+    // always valid.
+    LOCK(cs);
+    setEntries txToRemove;
+    for (indexed_transaction_set::const_iterator it = mapTx.begin(); it != mapTx.end(); it++) {
+        for (const CTxOut& txout : it->GetTx().vout) {
+            int nType = 0;
+            bool fIsOwner = false;
+            int nStartingIndex = 0;
+            AssetMarker marker = AssetMarker::LEGACY_RVN;
+            if (!txout.scriptPubKey.IsAssetScript(nType, fIsOwner, nStartingIndex, marker))
+                continue;
+            if ((fNip040Active && marker == AssetMarker::LEGACY_RVN) ||
+                (!fNip040Active && marker == AssetMarker::NEURAI_XNA)) {
+                txToRemove.insert(it);
+                break;
+            }
+        }
+    }
+    setEntries setAllRemoves;
+    for (txiter it : txToRemove) {
+        CalculateDescendants(it, setAllRemoves);
+    }
+    RemoveStaged(setAllRemoves, false, MemPoolRemovalReason::REORG);
+}
+
 void CTxMemPool::removeConflicts(const CTransaction &tx)
 {
     // Remove transactions which depend on inputs of tx, recursively
@@ -986,7 +1018,7 @@ void CTxMemPool::removeForBlock(const std::vector<CTransactionRef>& vtx, unsigne
                     if (i != mapTx.end()) {
                         CValidationState state;
                         std::vector<std::pair<std::string, uint256>> vReissueAssets;
-                        if (!setAlreadyRemoving.count(hash) && !Consensus::CheckTxAssets(i->GetTx(), state, pcoinsTip, passets, false, vReissueAssets)) {
+                        if (!setAlreadyRemoving.count(hash) && !Consensus::CheckTxAssets(i->GetTx(), state, pcoinsTip, passets, nBlockHeight + 1, false, vReissueAssets)) {
                             entries.push_back(&*i);
                             trans.emplace_back(i->GetTx());
                             setAlreadyRemoving.insert(hash);
@@ -1097,7 +1129,7 @@ static void CheckInputsAndUpdateCoins(const CTransaction& tx, CCoinsViewCache& m
     /** XNA START */
     if (AreAssetsDeployed()) {
         std::vector<std::pair<std::string, uint256>> vReissueAssets;
-        bool fCheckAssets = Consensus::CheckTxAssets(tx, state, mempoolDuplicate, passets, false, vReissueAssets);
+        bool fCheckAssets = Consensus::CheckTxAssets(tx, state, mempoolDuplicate, passets, static_cast<int>(spendheight), false, vReissueAssets);
         assert(fCheckResult && fCheckAssets);
     } else
         assert(fCheckResult);

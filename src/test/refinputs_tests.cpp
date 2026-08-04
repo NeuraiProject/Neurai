@@ -132,7 +132,7 @@ std::vector<CTxOut> BuildAssetRefOutputsForNetwork(const std::string& chain)
         out.nValue = 0;
         out.scriptPubKey = GetScriptForDestination(dest);
         CAssetTransfer transfer("MYASSET", 100 * COIN);
-        transfer.ConstructTransaction(out.scriptPubKey);
+        transfer.ConstructTransaction(out.scriptPubKey, AssetMarker::LEGACY_RVN);
         refs.push_back(out);
     }
 
@@ -143,7 +143,7 @@ std::vector<CTxOut> BuildAssetRefOutputsForNetwork(const std::string& chain)
         out.scriptPubKey = GetScriptForDestination(dest);
         CNewAsset asset("TESTASSET", 500 * COIN, 8, 1, 1,
                         DecodeAssetData("QmacSRmrkVmvJfbCpmU6pK72furJ8E8fbKHindrLxmYMQo"));
-        asset.ConstructTransaction(out.scriptPubKey);
+        asset.ConstructTransaction(out.scriptPubKey, AssetMarker::LEGACY_RVN);
         refs.push_back(out);
     }
 
@@ -153,7 +153,7 @@ std::vector<CTxOut> BuildAssetRefOutputsForNetwork(const std::string& chain)
         out.nValue = 0;
         out.scriptPubKey = GetScriptForDestination(dest);
         CNewAsset asset("NOIPFS", 200 * COIN, 4, 0, 0, "");
-        asset.ConstructTransaction(out.scriptPubKey);
+        asset.ConstructTransaction(out.scriptPubKey, AssetMarker::LEGACY_RVN);
         refs.push_back(out);
     }
 

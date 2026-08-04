@@ -155,7 +155,7 @@ BOOST_FIXTURE_TEST_SUITE(null_asset_data_contextual_tests, DePINContextualTestin
 
         CAssetTransfer ownerTransfer(assetName + OWNER_TAG, OWNER_ASSET_AMOUNT);
         CScript ownerTransferScript = GetScriptForDestination(ownerChangeDest);
-        ownerTransfer.ConstructTransaction(ownerTransferScript);
+        ownerTransfer.ConstructTransaction(ownerTransferScript, AssetMarker::LEGACY_RVN);
 
         CMutableTransaction muttx;
         muttx.vout.emplace_back(0, ownerTransferScript);
@@ -194,7 +194,7 @@ BOOST_FIXTURE_TEST_SUITE(null_asset_data_contextual_tests, DePINContextualTestin
 
         CAssetTransfer ownerTransfer(assetName + OWNER_TAG, OWNER_ASSET_AMOUNT);
         CScript ownerTransferScript = GetScriptForDestination(ownerChangeDest);
-        ownerTransfer.ConstructTransaction(ownerTransferScript);
+        ownerTransfer.ConstructTransaction(ownerTransferScript, AssetMarker::LEGACY_RVN);
 
         CMutableTransaction muttx;
         muttx.vout.emplace_back(0, ownerTransferScript);

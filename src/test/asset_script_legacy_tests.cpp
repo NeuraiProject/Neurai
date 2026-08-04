@@ -93,7 +93,7 @@ BOOST_AUTO_TEST_CASE(single_op_xna_asset_still_recognized)
 {
     CScript spk = P2pkhPrefix();
     CAssetTransfer transfer("GOLD", 25 * COIN);
-    transfer.ConstructTransaction(spk);
+    transfer.ConstructTransaction(spk, AssetMarker::LEGACY_RVN);
 
     int nType = 0;
     bool fIsOwner = true;
@@ -115,7 +115,7 @@ BOOST_AUTO_TEST_CASE(authscript_asset_still_recognized)
 {
     CScript spk = CScript() << OP_1 << std::vector<unsigned char>(32, 0xab);
     CAssetTransfer transfer("GOLD", 25 * COIN);
-    transfer.ConstructTransaction(spk);
+    transfer.ConstructTransaction(spk, AssetMarker::LEGACY_RVN);
 
     int nType = 0;
     bool fIsOwner = true;

@@ -32,7 +32,7 @@ CScript MakeAssetAuthScriptSpk(const std::string& assetName, CAmount amount,
     CTxDestination dest = WitnessV1AuthScript(commitment);
     CScript spk = GetScriptForDestination(dest);
     CAssetTransfer transfer(assetName, amount);
-    transfer.ConstructTransaction(spk);
+    transfer.ConstructTransaction(spk, AssetMarker::LEGACY_RVN);
     return spk;
 }
 
@@ -45,7 +45,7 @@ CScript MakeAssetP2PKHSpk(const std::string& assetName, CAmount amount,
     CTxDestination dest = CKeyID(uint160(pkh));
     CScript spk = GetScriptForDestination(dest);
     CAssetTransfer transfer(assetName, amount);
-    transfer.ConstructTransaction(spk);
+    transfer.ConstructTransaction(spk, AssetMarker::LEGACY_RVN);
     return spk;
 }
 

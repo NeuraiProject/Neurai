@@ -812,7 +812,7 @@ bool Consensus::CheckTxInputs(const CTransaction& tx, CValidationState& state, c
 }
 
 //! Check to make sure that the inputs and outputs CAmount match exactly.
-bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, const CCoinsViewCache& inputs, CAssetsCache* assetCache, bool fCheckMempool, std::vector<std::pair<std::string, uint256> >& vPairReissueAssets, const bool fRunningUnitTests, std::set<CMessage>* setMessages, int64_t nBlocktime,   std::vector<std::pair<std::string, CNullAssetTxData>>* myNullAssetData)
+bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, const CCoinsViewCache& inputs, CAssetsCache* assetCache, int nCandidateHeight, bool fCheckMempool, std::vector<std::pair<std::string, uint256> >& vPairReissueAssets, const bool fRunningUnitTests, std::set<CMessage>* setMessages, int64_t nBlocktime,   std::vector<std::pair<std::string, CNullAssetTxData>>* myNullAssetData)
 {
     // are the actual inputs available?
     if (!inputs.HaveInputs(tx)) {
@@ -870,13 +870,28 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
     int64_t currentTime = GetTime();
     std::string strError = "";
     int i = 0;
+
+    // NIP-040: outputs must carry the marker that matches the candidate
+    // height. Inputs are exempt (parsed above without any marker rule), so
+    // legacy UTXOs stay spendable forever and convert on spend.
+    const bool fNip040Active = IsAssetMarkerNip040Active(nCandidateHeight, GetParams().GetConsensus());
+
     for (const auto& txout : tx.vout) {
         i++;
         bool fIsAsset = false;
         int nType = 0;
         bool fIsOwner = false;
-        if (txout.scriptPubKey.IsAssetScript(nType, fIsOwner))
+        int nStartingIndex = 0;
+        AssetMarker marker = AssetMarker::LEGACY_RVN;
+        if (txout.scriptPubKey.IsAssetScript(nType, fIsOwner, nStartingIndex, marker))
             fIsAsset = true;
+
+        if (fIsAsset) {
+            if (!fNip040Active && marker == AssetMarker::NEURAI_XNA)
+                return state.DoS(100, false, REJECT_INVALID, "bad-txns-asset-marker-before-nip040", false, "", tx.GetHash());
+            if (fNip040Active && marker == AssetMarker::LEGACY_RVN)
+                return state.DoS(100, false, REJECT_INVALID, "bad-txns-legacy-asset-marker-after-nip040", false, "", tx.GetHash());
+        }
 
         if (assetCache) {
             if (fIsAsset && !AreAssetsDeployed())

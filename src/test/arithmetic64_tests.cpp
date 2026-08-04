@@ -77,7 +77,7 @@ CMutableTransaction BuildAssetTx()
     out.nValue = 0;
     out.scriptPubKey = GetScriptForDestination(dest);
     CAssetTransfer transfer("GOLD", 25 * COIN);
-    transfer.ConstructTransaction(out.scriptPubKey);
+    transfer.ConstructTransaction(out.scriptPubKey, AssetMarker::LEGACY_RVN);
     tx.vout.push_back(out);
 
     return tx;

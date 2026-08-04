@@ -66,7 +66,7 @@ std::vector<CTxOut> BuildAssetPrevoutsForNetwork(const std::string& chain)
         out.nValue = 0;
         out.scriptPubKey = GetScriptForDestination(dest);
         CAssetTransfer transfer("GOLD", 25 * COIN);
-        transfer.ConstructTransaction(out.scriptPubKey);
+        transfer.ConstructTransaction(out.scriptPubKey, AssetMarker::LEGACY_RVN);
         prevouts.push_back(out);
     }
 
@@ -77,7 +77,7 @@ std::vector<CTxOut> BuildAssetPrevoutsForNetwork(const std::string& chain)
         out.scriptPubKey = GetScriptForDestination(dest);
         CNewAsset asset("NEWASSET", 100 * COIN, 2, 1, 1,
                         DecodeAssetData("QmacSRmrkVmvJfbCpmU6pK72furJ8E8fbKHindrLxmYMQo"));
-        asset.ConstructTransaction(out.scriptPubKey);
+        asset.ConstructTransaction(out.scriptPubKey, AssetMarker::LEGACY_RVN);
         prevouts.push_back(out);
     }
 
@@ -87,7 +87,7 @@ std::vector<CTxOut> BuildAssetPrevoutsForNetwork(const std::string& chain)
         out.nValue = 0;
         out.scriptPubKey = GetScriptForDestination(dest);
         CReissueAsset reissue("REISSUEASSET", 5 * COIN, -1, 0, "");
-        reissue.ConstructTransaction(out.scriptPubKey);
+        reissue.ConstructTransaction(out.scriptPubKey, AssetMarker::LEGACY_RVN);
         prevouts.push_back(out);
     }
 
@@ -98,7 +98,7 @@ std::vector<CTxOut> BuildAssetPrevoutsForNetwork(const std::string& chain)
         out.scriptPubKey = GetScriptForDestination(dest);
         CReissueAsset reissue("HASHEDASSET", 7 * COIN, 0, 1,
                               DecodeAssetData("9c2c8e121a0139ba39bffd3ca97267bca9d4c0c1e84ac0c34a883c28e7a912ca"));
-        reissue.ConstructTransaction(out.scriptPubKey);
+        reissue.ConstructTransaction(out.scriptPubKey, AssetMarker::LEGACY_RVN);
         prevouts.push_back(out);
     }
 
@@ -108,7 +108,7 @@ std::vector<CTxOut> BuildAssetPrevoutsForNetwork(const std::string& chain)
         out.nValue = 0;
         out.scriptPubKey = GetScriptForDestination(dest);
         CNewAsset asset("OWNERROOT", COIN);
-        asset.ConstructOwnerTransaction(out.scriptPubKey);
+        asset.ConstructOwnerTransaction(out.scriptPubKey, AssetMarker::LEGACY_RVN);
         prevouts.push_back(out);
     }
 
@@ -146,7 +146,7 @@ std::vector<CTxOut> BuildDEPINPrevoutsForNetwork(const std::string& chain)
     out.nValue = 0;
     out.scriptPubKey = GetScriptForDestination(dest);
     CAssetTransfer transfer("&SENSOR", COIN);
-    transfer.ConstructTransaction(out.scriptPubKey);
+    transfer.ConstructTransaction(out.scriptPubKey, AssetMarker::LEGACY_RVN);
     prevouts.push_back(out);
 
     return prevouts;
@@ -417,7 +417,7 @@ BOOST_AUTO_TEST_CASE(inputassetfield_checkinputs_enqueued_path_integration)
     assetPrevout.nValue = 0;
     assetPrevout.scriptPubKey = GetScriptForDestination(dest);
     CAssetTransfer transfer("GOLD", 25 * COIN);
-    transfer.ConstructTransaction(assetPrevout.scriptPubKey);
+    transfer.ConstructTransaction(assetPrevout.scriptPubKey, AssetMarker::LEGACY_RVN);
 
     const COutPoint prevout0(uint256S("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), 0);
     const COutPoint prevout1(uint256S("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"), 1);

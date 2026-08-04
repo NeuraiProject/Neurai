@@ -85,7 +85,7 @@ CScript TransferScript(const std::string& name, CAmount amount, const std::strin
 {
     CAssetTransfer transfer(name, amount);
     CScript script = GetScriptForDestination(DecodeDestination(address));
-    transfer.ConstructTransaction(script);
+    transfer.ConstructTransaction(script, AssetMarker::LEGACY_RVN);
     return script;
 }
 
@@ -95,7 +95,7 @@ CScript IssuanceScript(const std::string& name, CAmount amount, const std::strin
 {
     CNewAsset asset(name, amount, DEPIN_ASSET_UNITS, 0, 0, "");
     CScript script = GetScriptForDestination(DecodeDestination(address));
-    asset.ConstructTransaction(script);
+    asset.ConstructTransaction(script, AssetMarker::LEGACY_RVN);
     return script;
 }
 
@@ -103,7 +103,7 @@ CScript OwnerTransferScript(const std::string& address)
 {
     CAssetTransfer transfer(ASSET + OWNER_TAG, OWNER_ASSET_AMOUNT);
     CScript script = GetScriptForDestination(DecodeDestination(address));
-    transfer.ConstructTransaction(script);
+    transfer.ConstructTransaction(script, AssetMarker::LEGACY_RVN);
     return script;
 }
 
@@ -154,6 +154,7 @@ bool CheckAssets(const TxFixture& fixture, std::string& reason)
     // the inputs/outputs balance rule run regardless. The null-data STATE
     // checks are exercised separately through ContextualCheckNullAssetTxOut.
     const bool ok = Consensus::CheckTxAssets(tx, state, fixture.view, nullptr,
+                                             /*nCandidateHeight=*/0,
                                              /*fCheckMempool=*/false, vReissue,
                                              /*fRunningUnitTests=*/true,
                                              /*setMessages=*/nullptr, /*nBlocktime=*/0,
