@@ -243,9 +243,9 @@ void UpdateVersionBitsParameters(Consensus::DeploymentPos d, int64_t nStartTime,
 
 /**
  * NIP-040 (regtest/tests only): override the asset marker fork height.
- * Regtest defaults to the INT_MAX sentinel so existing functional tests keep
- * producing legacy markers; the NIP-040 functional test opts in via
- * -nip040height and unit tests call this directly.
+ * Regtest defaults to height 1 (xna-native), so functional tests exercise
+ * the new format by default; the migration functional test moves the
+ * frontier with -nip040height and unit tests call this directly.
  */
 void UpdateAssetMarkerNip040Height(int nHeight);
 

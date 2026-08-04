@@ -20,7 +20,7 @@ def truncate(number, digits=8):
 
 
 # noinspection PyTypeChecker,PyUnboundLocalVariable,PyUnresolvedReferences
-def get_first_unspent(self: object, node: object, needed: float = 500.1) -> object:
+def get_first_unspent(self: object, node: object, needed: float = 1100.1) -> object:
     # Find the first unspent with enough required for transaction
     for n in range(0, len(node.listunspent())):
         unspent = node.listunspent()[n]
@@ -36,8 +36,8 @@ def get_tx_issue_hex(self, node, asset_name, asset_quantity, asset_units=0):
     unspent = get_first_unspent(self, node)
     inputs = [{k: unspent[k] for k in ['txid', 'vout']}]
     outputs = {
-        'n1issueAssetXXXXXXXXXXXXXXXXWdnemQ': 500,
-        change_address: truncate(float(unspent['amount']) - 500.1),
+        'tBURNXXXXXXXXXXXXXXXXXXXXXXXVZLroy': 1000,
+        change_address: truncate(float(unspent['amount']) - 1000.1),
         to_address: {
             'issue': {
                 'asset_name':       asset_name,
@@ -94,8 +94,8 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
             {k: unspent[k] for k in ['txid', 'vout']},
         ]
         outputs = {
-            'n1ReissueAssetXXXXXXXXXXXXXXWG9NLd': 100,
-            n0.getnewaddress(): truncate(float(unspent['amount']) - 100.1),
+            'tBURNXXXXXXXXXXXXXXXXXXXXXXXVZLroy': 200,
+            n0.getnewaddress(): truncate(float(unspent['amount']) - 200.1),
             to_address: {
                 'reissue': {
                     'asset_name':       asset_name,
@@ -136,7 +136,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         tx = CTransaction()
         f = BytesIO(hex_str_to_bytes(tx_hex))
         tx.deserialize(f)
-        xnar = '72766e72'  # xnar
+        xnar = '786e6172'  # xnar
         op_drop = '75'
         for n in range(0, len(tx.vout)):
             out = tx.vout[n]
@@ -159,7 +159,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         tx = CTransaction()
         f = BytesIO(hex_str_to_bytes(tx_hex))
         tx.deserialize(f)
-        xnat = '72766e74'  # xnat
+        xnat = '786e6174'  # xnat
         # remove the owner output from vout
         bad_vout = list(filter(lambda out_script: xnat not in bytes_to_hex_str(out_script.scriptPubKey), tx.vout))
         tx.vout = bad_vout
@@ -195,7 +195,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         tx = CTransaction()
         f = BytesIO(hex_str_to_bytes(tx_issue_hex))
         tx.deserialize(f)
-        xnao = '72766e6f'  # xnao
+        xnao = '786e616f'  # xnao
         # remove the owner output from vout
         bad_vout = list(filter(lambda out_script: xnao not in bytes_to_hex_str(out_script.scriptPubKey), tx.vout))
         tx.vout = bad_vout
@@ -209,7 +209,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         tx = CTransaction()
         f = BytesIO(hex_str_to_bytes(tx_issue_hex))
         tx.deserialize(f)
-        xnao = '72766e6f'  # xnao
+        xnao = '786e616f'  # xnao
         # find the owner output from vout and insert a duplicate back in
         owner_vout = list(filter(lambda out_script: xnao in bytes_to_hex_str(out_script.scriptPubKey), tx.vout))[0]
         tx.vout.insert(-1, owner_vout)
@@ -223,7 +223,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         tx = CTransaction()
         f = BytesIO(hex_str_to_bytes(tx_issue_hex))
         tx.deserialize(f)
-        xnaq = '72766e71'  # xnaq
+        xnaq = '786e6171'  # xnaq
         # remove the owner output from vout
         bad_vout = list(filter(lambda out_script: xnaq not in bytes_to_hex_str(out_script.scriptPubKey), tx.vout))
         tx.vout = bad_vout
@@ -237,7 +237,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         tx = CTransaction()
         f = BytesIO(hex_str_to_bytes(tx_issue_hex))
         tx.deserialize(f)
-        xnao = '72766e6f'  # xnao
+        xnao = '786e616f'  # xnao
         op_drop = '75'
         # change the owner name
         for n in range(0, len(tx.vout)):
@@ -263,7 +263,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         tx = CTransaction()
         f = BytesIO(hex_str_to_bytes(tx_issue_hex))
         tx.deserialize(f)
-        xnao = '72766e6f'  # xnao
+        xnao = '786e616f'  # xnao
         XNAO = '52564e4f'  # XNAO
         # change the owner output script type to be invalid
         for n in range(0, len(tx.vout)):
@@ -274,7 +274,9 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
                 tx.vout[n].scriptPubKey = hex_str_to_bytes(tampered_script)
         tx_bad_issue = bytes_to_hex_str(tx.serialize())
         tx_bad_issue_signed = n0.signrawtransaction(tx_bad_issue)['hex']
-        assert_raises_rpc_error(-26, "bad-txns-op-xna-asset-not-in-right-script-location",
+        # Strict placement rule (regtest, NIP revision 010): OP_XNA_ASSET sits
+        # at its expected position but the payload is unparseable
+        assert_raises_rpc_error(-26, "bad-txns-bad-asset-script",
                                 n0.sendrawtransaction, tx_bad_issue_signed)
 
         ########################################
@@ -296,8 +298,8 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         unspent = get_first_unspent(self, n0)
         inputs = [{k: unspent[k] for k in ['txid', 'vout']}]
         outputs = {
-            'n1issueAssetXXXXXXXXXXXXXXXXWdnemQ': 500,
-            change_address: truncate(float(unspent['amount']) - 500.1),
+            'tBURNXXXXXXXXXXXXXXXXXXXXXXXVZLroy': 1000,
+            change_address: truncate(float(unspent['amount']) - 1000.1),
             to_address: {
                 'issue': {
                     'asset_name':       'TEST_ASSET',
@@ -330,8 +332,8 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         ]
 
         outputs = {
-            'n1ReissueAssetXXXXXXXXXXXXXXWG9NLd': 100,
-            change_address: truncate(float(unspent['amount']) - 100.1),
+            'tBURNXXXXXXXXXXXXXXXXXXXXXXXVZLroy': 200,
+            change_address: truncate(float(unspent['amount']) - 200.1),
             to_address: {
                 'reissue': {
                     'asset_name':       'TEST_ASSET',
@@ -396,7 +398,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         tx = CTransaction()
         f = BytesIO(hex_str_to_bytes(tx_hex))
         tx.deserialize(f)
-        xnat = '72766e74'  # xnat
+        xnat = '786e6174'  # xnat
         op_drop = '75'
         # change asset outputs from 400,600 to 500,500
         for i in range(1, 3):
@@ -459,7 +461,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         tx = CTransaction()
         f = BytesIO(hex_str_to_bytes(tx_hex))
         tx.deserialize(f)
-        xnat = '72766e74'  # xnat
+        xnat = '786e6174'  # xnat
         op_drop = '75'
         # change asset name
         for n in range(0, len(tx.vout)):
@@ -485,7 +487,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         tx = CTransaction()
         f = BytesIO(hex_str_to_bytes(tx_hex))
         tx.deserialize(f)
-        xnat = '72766e74'  # xnat
+        xnat = '786e6174'  # xnat
         op_drop = '75'
         # change asset name
         for n in range(0, len(tx.vout)):
@@ -509,7 +511,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         tx = CTransaction()
         f = BytesIO(hex_str_to_bytes(tx_hex))
         tx.deserialize(f)
-        xnat = '72766e74'  # xnat
+        xnat = '786e6174'  # xnat
         # remove the transfer output from vout
         bad_vout = list(filter(lambda out_script: xnat not in bytes_to_hex_str(out_script.scriptPubKey), tx.vout))
         tx.vout = bad_vout
@@ -533,8 +535,10 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         self.log.info("Testing unique assets...")
         n0 = self.nodes[0]
 
-        bad_burn = "n1BurnXXXXXXXXXXXXXXXXXXXXXXU1qejP"
-        unique_burn = "n1issueUniqueAssetXXXXXXXXXXS4695i"
+        # Unified burn scheme: every burn type shares one address, so a "bad
+        # burn address" is simply any ordinary (non-burn) address.
+        bad_burn = n0.getnewaddress()
+        unique_burn = "tBURNXXXXXXXXXXXXXXXXXXXXXXXVZLroy"
 
         root = "RINGU"
         owner = f"{root}!"
@@ -554,7 +558,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
             {k: unspent_asset_owner[k] for k in ['txid', 'vout']},
         ]
 
-        burn = 5 * len(asset_tags)
+        burn = 10 * len(asset_tags)
 
         ############################################
         # try first with bad burn address
@@ -620,9 +624,9 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
             {k: unspent_asset_owner[k] for k in ['txid', 'vout']},
         ]
 
-        burn = 5
+        burn = 10
         outputs = {
-            'n1issueUniqueAssetXXXXXXXXXXS4695i': burn,
+            'tBURNXXXXXXXXXXXXXXXXXXXXXXXVZLroy': burn,
             change_address: truncate(float(unspent['amount']) - (burn + 0.01)),
             owner_change_address: {
                 'transfer': {
@@ -684,8 +688,8 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         # issue
         inputs = [{k: unspent[k] for k in ['txid', 'vout']}]
         outputs = {
-            'n1issueAssetXXXXXXXXXXXXXXXXWdnemQ': 500,
-            change_address: truncate(float(unspent['amount']) - 500.0001),
+            'tBURNXXXXXXXXXXXXXXXXXXXXXXXVZLroy': 1000,
+            change_address: truncate(float(unspent['amount']) - 1000.0001),
             to_address: {
                 'issue': {
                     'asset_name':       asset_name,
@@ -709,8 +713,8 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
             {k: unspent_asset_owner[k] for k in ['txid', 'vout']},
         ]
         outputs = {
-            'n1ReissueAssetXXXXXXXXXXXXXXWG9NLd': 100,
-            change_address: truncate(float(unspent['amount']) - 100.0001),
+            'tBURNXXXXXXXXXXXXXXXXXXXXXXXVZLroy': 200,
+            change_address: truncate(float(unspent['amount']) - 200.0001),
             to_address: {
                 'reissue': {
                     'asset_name':       asset_name,
@@ -725,9 +729,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         self.log.info("Testing issue with invalid burn and address...")
         n0 = self.nodes[0]
 
-        unique_burn = "n1issueUniqueAssetXXXXXXXXXXS4695i"
-        issue_burn = "n1issueAssetXXXXXXXXXXXXXXXXWdnemQ"
-        sub_burn = "n1issueSubAssetXXXXXXXXXXXXXbNiH6v"
+        issue_burn = "tBURNXXXXXXXXXXXXXXXXXXXXXXXVZLroy"
 
         asset_name = "BURN_TEST"
 
@@ -741,7 +743,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
 
         ############################################
         # start with invalid burn amount and valid address
-        burn = 499
+        burn = 999
         outputs = {
             issue_burn: burn,
             change_address: truncate(float(unspent['amount']) - (burn + 0.01)),
@@ -762,7 +764,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
 
         ############################################
         # switch to invalid burn amount again
-        burn = 501
+        burn = 1001
         outputs = {
             issue_burn: burn,
             change_address: truncate(float(unspent['amount']) - (burn + 0.0001)),
@@ -782,30 +784,11 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         assert_raises_rpc_error(-26, "bad-txns-issue-burn-not-found", n0.sendrawtransaction, signed_hex)
 
         ############################################
-        # switch to valid burn amount, but sending it to the sub asset burn address
-        burn = 500
+        # switch to valid burn amount, but sending it to a non-burn address
+        # (the burn scheme is unified, so "wrong address" means any ordinary one)
+        burn = 1000
         outputs = {
-            sub_burn: burn,
-            change_address: truncate(float(unspent['amount']) - (burn + 0.0001)),
-            to_address: {
-                'issue': {
-                    'asset_name':       asset_name,
-                    'asset_quantity':   1,
-                    'units':            0,
-                    'reissuable':       1,
-                    'has_ipfs':         1,
-                    'ipfs_hash':        "QmWWQSuPMS6aXCbZKpEjPHPUZN2NjB3YrhJTHsV4X3vb2t"
-                }
-            }
-        }
-        hex_data = n0.createrawtransaction(inputs, outputs)
-        signed_hex = n0.signrawtransaction(hex_data)['hex']
-        assert_raises_rpc_error(-26, "bad-txns-issue-burn-not-found", n0.sendrawtransaction, signed_hex)
-
-        ############################################
-        # switch burn address to unique address
-        outputs = {
-            unique_burn: burn,
+            n0.getnewaddress(): burn,
             change_address: truncate(float(unspent['amount']) - (burn + 0.0001)),
             to_address: {
                 'issue': {
@@ -848,10 +831,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         self.log.info("Testing issue sub invalid amount and address...")
         n0 = self.nodes[0]
 
-        unique_burn = "n1issueUniqueAssetXXXXXXXXXXS4695i"
-        issue_burn = "n1issueAssetXXXXXXXXXXXXXXXXWdnemQ"
-        reissue_burn = "n1ReissueAssetXXXXXXXXXXXXXXWG9NLd"
-        sub_burn = "n1issueSubAssetXXXXXXXXXXXXXbNiH6v"
+        sub_burn = "tBURNXXXXXXXXXXXXXXXXXXXXXXXVZLroy"
 
         asset_name = "ISSUE_SUB_INVALID"
         owner = f"{asset_name}!"
@@ -870,7 +850,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
             {k: unspent_asset_owner[k] for k in ['txid', 'vout']},
         ]
 
-        burn = 99
+        burn = 199
         asset_name_sub = asset_name + '/SUB1'
 
         ############################################
@@ -900,7 +880,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
 
         ############################################
         # switch to invalid burn amount again
-        burn = 101
+        burn = 201
         outputs = {
             sub_burn: burn,
             change_address: truncate(float(unspent['amount']) - (burn + 0.0001)),
@@ -925,60 +905,11 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         assert_raises_rpc_error(-26, "bad-txns-issue-burn-not-found", n0.sendrawtransaction, signed_hex)
 
         ############################################
-        # switch to valid burn amount, but sending it to the issue asset burn address
-        burn = 100
+        # switch to valid burn amount, but sending it to a non-burn address
+        # (the burn scheme is unified, so "wrong address" means any ordinary one)
+        burn = 200
         outputs = {
-            issue_burn: burn,
-            change_address: truncate(float(unspent['amount']) - (burn + 0.0001)),
-            owner_change_address: {
-                'transfer': {
-                    owner: 1,
-                }
-            },
-            to_address: {
-                'issue': {
-                    'asset_name':       asset_name_sub,
-                    'asset_quantity':   1,
-                    'units':            0,
-                    'reissuable':       1,
-                    'has_ipfs':         1,
-                    'ipfs_hash':        "QmWWQSuPMS6aXCbZKpEjPHPUZN2NjB3YrhJTHsV4X3vb2t"
-                }
-            }
-        }
-        hex_data = n0.createrawtransaction(inputs, outputs)
-        signed_hex = n0.signrawtransaction(hex_data)['hex']
-        assert_raises_rpc_error(-26, "bad-txns-issue-burn-not-found", n0.sendrawtransaction, signed_hex)
-
-        ############################################
-        # switch burn address to reissue address, should be invalid because it needs to be sub asset burn address
-        outputs = {
-            reissue_burn: burn,
-            change_address: truncate(float(unspent['amount']) - (burn + 0.0001)),
-            owner_change_address: {
-                'transfer': {
-                    owner: 1,
-                }
-            },
-            to_address: {
-                'issue': {
-                    'asset_name':       asset_name_sub,
-                    'asset_quantity':   1,
-                    'units':            0,
-                    'reissuable':       1,
-                    'has_ipfs':         1,
-                    'ipfs_hash':        "QmWWQSuPMS6aXCbZKpEjPHPUZN2NjB3YrhJTHsV4X3vb2t"
-                }
-            }
-        }
-        hex_data = n0.createrawtransaction(inputs, outputs)
-        signed_hex = n0.signrawtransaction(hex_data)['hex']
-        assert_raises_rpc_error(-26, "bad-txns-issue-burn-not-found", n0.sendrawtransaction, signed_hex)
-
-        ############################################
-        # switch burn address to unique address, should be invalid because it needs to be sub asset burn address
-        outputs = {
-            unique_burn: burn,
+            n0.getnewaddress(): burn,
             change_address: truncate(float(unspent['amount']) - (burn + 0.0001)),
             owner_change_address: {
                 'transfer': {
@@ -1031,7 +962,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         self.log.info("Testing issue with extra issues in the tx...")
         n0 = self.nodes[0]
 
-        issue_burn = "n1issueAssetXXXXXXXXXXXXXXXXWdnemQ"
+        issue_burn = "tBURNXXXXXXXXXXXXXXXXXXXXXXXVZLroy"
 
         asset_name = "ISSUE_MULTIPLE_TEST"
         asset_name_multiple = "ISSUE_MULTIPLE_TEST_2"
@@ -1048,7 +979,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
 
         ############################################
         # Try tampering with an asset by adding another issue
-        burn = 500
+        burn = 1000
         outputs = {
             issue_burn: burn,
             change_address: truncate(float(unspent['amount']) - (burn + 0.001)),
@@ -1081,8 +1012,8 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         self.log.info("Testing issue with an extra sub asset issue in the tx...")
         n0 = self.nodes[0]
 
-        issue_burn = "n1issueAssetXXXXXXXXXXXXXXXXWdnemQ"
-        sub_burn =   "n1issueSubAssetXXXXXXXXXXXXXbNiH6v"
+        issue_burn = "tBURNXXXXXXXXXXXXXXXXXXXXXXXVZLroy"
+        sub_burn =   "tBURNXXXXXXXXXXXXXXXXXXXXXXXVZLroy"
 
         # create the root asset that the sub asset will try to be created from
         root = "ISSUE_SUB_MULTIPLE_TEST"
@@ -1108,7 +1039,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
 
         ############################################
         # Try tampering with an asset transaction by having a sub asset issue hidden in the transaction
-        burn = 500
+        burn = 1000
         outputs = {
             issue_burn: burn,
             change_address: truncate(float(unspent['amount']) - (burn + 0.0001)),
@@ -1144,7 +1075,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
 
         ############################################
         # Try tampering with an issue sub asset transaction by having another owner token transfer
-        burn = 100
+        burn = 200
         second_owner_change_address = n0.getnewaddress()
         outputs = {
             sub_burn: burn,
@@ -1292,7 +1223,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         tx = CTransaction()
         f = BytesIO(hex_str_to_bytes(tx_issue_sub_hex))
         tx.deserialize(f)
-        xnat = '72766e74'  # xnat
+        xnat = '786e6174'  # xnat
         op_drop = '75'
         # change the transfer amount
         for n in range(0, len(tx.vout)):
@@ -1368,7 +1299,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         tx = CTransaction()
         f = BytesIO(hex_str_to_bytes(tx_transfer_hex))
         tx.deserialize(f)
-        xnat = '72766e74'  # xnat
+        xnat = '786e6174'  # xnat
         op_drop = '75'
         # change the transfer amounts = 0
         for n in range(0, len(tx.vout)):
@@ -1434,7 +1365,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         tx = CTransaction()
         f = BytesIO(hex_str_to_bytes(tx_transfer_hex))
         tx.deserialize(f)
-        xnat = '72766e74'  # xnat
+        xnat = '786e6174'  # xnat
         op_drop = '75'
 
         # create a new issue CTxOut
@@ -1446,7 +1377,7 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
         issue_script.name = b'BYTE_ISSUE'
         issue_script.amount = 1
         issue_serialized = bytes_to_hex_str(issue_script.serialize())
-        xnaq = '72766e71'  # xnaq
+        xnaq = '786e6171'  # xnaq
 
         for n in range(0, len(tx.vout)):
             out = tx.vout[n]

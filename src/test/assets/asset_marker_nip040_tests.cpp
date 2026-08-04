@@ -55,10 +55,10 @@ struct ParsedAsset {
     AssetMarker marker = AssetMarker::LEGACY_RVN;
 };
 
-// Regtest ships with the INT_MAX sentinel (fork not scheduled) so existing
-// functional tests keep emitting legacy markers; these tests inject a finite
-// height and restore the sentinel on scope exit. Select the network BEFORE
-// creating the guard — it mutates the currently selected params.
+// Regtest ships xna-native (fork at height 1); these tests move the fork
+// height to exercise the frontier and the sentinel, restoring the previous
+// value on scope exit. Select the network BEFORE creating the guard — it
+// mutates the currently selected params.
 class Nip040HeightGuard
 {
 public:
@@ -90,11 +90,21 @@ BOOST_AUTO_TEST_CASE(activation_helper_boundary)
 {
     SelectParams(CBaseChainParams::REGTEST);
 
-    // Default is the INT_MAX sentinel: fork not scheduled, explicitly
-    // inactive even for a candidate height of INT_MAX itself.
+    // Regtest: xna native from block 1 so functional tests exercise the new
+    // format by default. Only the genesis height itself predates the fork.
     {
         const Consensus::Params& regtest = GetParams().GetConsensus();
-        BOOST_REQUIRE_EQUAL(regtest.nAssetMarkerNip040Height, std::numeric_limits<int>::max());
+        BOOST_REQUIRE_EQUAL(regtest.nAssetMarkerNip040Height, 1);
+        BOOST_CHECK(!IsAssetMarkerNip040Active(0, regtest));
+        BOOST_CHECK(IsAssetMarkerNip040Active(1, regtest));
+        BOOST_CHECK(MarkerForNewAssetOutput(1, regtest) == AssetMarker::NEURAI_XNA);
+    }
+
+    // The INT_MAX sentinel means "fork not scheduled": explicitly inactive
+    // even for a candidate height of INT_MAX itself.
+    {
+        Nip040HeightGuard guard(std::numeric_limits<int>::max());
+        const Consensus::Params& regtest = GetParams().GetConsensus();
         BOOST_CHECK(!IsAssetMarkerNip040Active(std::numeric_limits<int>::max(), regtest));
         BOOST_CHECK(MarkerForNewAssetOutput(std::numeric_limits<int>::max(), regtest) == AssetMarker::LEGACY_RVN);
     }
@@ -114,8 +124,20 @@ BOOST_AUTO_TEST_CASE(activation_helper_boundary)
         BOOST_CHECK(MarkerForNewAssetOutput(H + 1, regtest) == AssetMarker::NEURAI_XNA);
     }
 
-    // The guard restored the sentinel.
-    BOOST_CHECK_EQUAL(GetParams().GetConsensus().nAssetMarkerNip040Height, std::numeric_limits<int>::max());
+    // The guards restored the block-1 default.
+    BOOST_CHECK_EQUAL(GetParams().GetConsensus().nAssetMarkerNip040Height, 1);
+
+    // Testnet: migration fork on the live chain at 303,000 — legacy below,
+    // xna at and after. (Reset-to-1 planned when testnet restarts.)
+    SelectParams(CBaseChainParams::TESTNET);
+    {
+        const Consensus::Params& testnet = GetParams().GetConsensus();
+        BOOST_CHECK_EQUAL(testnet.nAssetMarkerNip040Height, 303000);
+        BOOST_CHECK(!IsAssetMarkerNip040Active(302999, testnet));
+        BOOST_CHECK(IsAssetMarkerNip040Active(303000, testnet));
+        BOOST_CHECK(MarkerForNewAssetOutput(302999, testnet) == AssetMarker::LEGACY_RVN);
+        BOOST_CHECK(MarkerForNewAssetOutput(303000, testnet) == AssetMarker::NEURAI_XNA);
+    }
 
     // Mainnet has not scheduled the fork: never active, whatever the height.
     SelectParams(CBaseChainParams::MAIN);

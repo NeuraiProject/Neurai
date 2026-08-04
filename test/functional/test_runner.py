@@ -117,6 +117,7 @@ BASE_SCRIPTS= [
     'feature_versionbits_warning.py',
     'rpc_spentindex.py',
     'feature_rawassettransactions.py',
+    'feature_nip040_marker_migration.py',
     'wallet_importmulti.py',
     'wallet_labels.py',
     'wallet_import_with_label.py',
