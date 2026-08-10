@@ -4,7 +4,6 @@
 # toolchains that scripts/00-install-deps.sh expects.
 #
 # Build:
-#   cd /home/mark/src/AAA-experimento/Neurai-DePIN
 #   docker build -f doc/docker/Dockerfile-Linux64-qc-bookworm -t neurai-pq .
 
 FROM debian:12
