@@ -97,7 +97,8 @@ $(package)_config_opts += -DQT_FEATURE_undocommand=OFF
 $(package)_config_opts += -DQT_FEATURE_undogroup=OFF
 $(package)_config_opts += -DQT_FEATURE_undostack=OFF
 $(package)_config_opts += -DQT_FEATURE_undoview=OFF
-$(package)_config_opts += -DQT_FEATURE_wizard=OFF
+# QtUiTools, required to build lrelease for qttranslations, includes
+# QtWidgets/qwizard.h even with Qt Designer disabled.
 $(package)_config_opts += -DQT_FEATURE_xml=OFF
 
 # --- Linux: XCB platform, system freetype/fontconfig, D-Bus runtime ---

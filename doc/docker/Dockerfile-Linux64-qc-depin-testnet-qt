@@ -12,10 +12,9 @@ LABEL description="Neurai DePIN (PQ) | native x64 build with regtest support"
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Native x64 build deps only (no cross-compile, no GUI). Matches what
-# depends/ + configure actually need to build neuraid with the wallet and
-# PQ paths enabled. Skips the wider apt list from scripts/00-install-deps.sh
-# (which targets bookworm/bullseye cross-compile workflows).
+# Native x64 build tools. Third-party libraries, including Qt and Wayland,
+# are built reproducibly by depends/; Meson is the host build tool used by
+# libwayland and therefore belongs in this image.
 RUN apt-get update -qqy && apt-get install -qqy --no-install-recommends \
         autoconf \
         automake \
@@ -31,6 +30,7 @@ RUN apt-get update -qqy && apt-get install -qqy --no-install-recommends \
         git \
         libtool \
         make \
+        meson \
         ninja-build \
         patch \
         pkg-config \
@@ -42,10 +42,9 @@ RUN apt-get update -qqy && apt-get install -qqy --no-install-recommends \
 
 WORKDIR /root
 
-COPY ../../ /root/Neurai
+COPY . /root/Neurai
 
-# Build depends/ (boost, libevent, miniupnpc, etc. for x86_64-pc-linux-gnu).
-# NO_QT=1 skips Qt/Wayland/X11 chains we don't need for the headless daemon.
+# Build depends/ (including Qt, XCB and Wayland) for native x86_64 Linux.
 WORKDIR /root/Neurai/depends
 RUN make HOST=x86_64-pc-linux-gnu -j"$(nproc)"
 
@@ -55,7 +54,7 @@ RUN ./autogen.sh && contrib/install_db4.sh ../
 
 ENV BDB_PREFIX=/root/db4
 
-# Configure + build neuraid + neurai-cli.
+# Configure + build the daemon, CLI and Qt GUI.
 RUN CONFIG_SITE=$PWD/depends/x86_64-pc-linux-gnu/share/config.site \
     ./configure \
         LIBS="-lm -ldl -lpthread" \
@@ -68,12 +67,15 @@ RUN CONFIG_SITE=$PWD/depends/x86_64-pc-linux-gnu/share/config.site \
         --disable-gui-tests \
         --disable-bench \
         --disable-maintainer-mode \
-        --with-gui=yes \
+        --with-gui=qt6 \
+        --with-tx \
         --with-pic && \
-    make -j"$(nproc)" src/neuraid src/neurai-cli
+    make -C src -j"$(nproc)" neuraid neurai-cli neurai-tx qt/neurai-qt
 
 # Symlink to standard locations so the e2e harness finds them on PATH.
 RUN ln -sf /root/Neurai/src/neuraid    /usr/local/bin/neuraid && \
-    ln -sf /root/Neurai/src/neurai-cli /usr/local/bin/neurai-cli
+    ln -sf /root/Neurai/src/neurai-cli /usr/local/bin/neurai-cli && \
+    ln -sf /root/Neurai/src/neurai-tx  /usr/local/bin/neurai-tx && \
+    ln -sf /root/Neurai/src/qt/neurai-qt /usr/local/bin/neurai-qt
 
 CMD ["tail", "-f", "/dev/null"]
