@@ -13,6 +13,7 @@
 #include "checkpoints.h"
 #include "coins.h"
 #include "consensus/validation.h"
+#include "net_processing.h"
 #include "validation.h"
 #include "core_io.h"
 #include "policy/feerate.h"
@@ -1524,6 +1525,62 @@ UniValue getblockchaininfo(const JSONRPCRequest& request)
     return obj;
 }
 
+UniValue getibdstatus(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 0) {
+        throw std::runtime_error(
+            "getibdstatus\n"
+            "Returns header synchronization timing collected since process start.\n"
+            "request_to_response_us includes peer response and local queueing time.\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"blocks\": n,                         (numeric) current active-chain height\n"
+            "  \"headers\": n,                        (numeric) best validated header height\n"
+            "  \"header_batches\": n,                 (numeric) requested header batches received\n"
+            "  \"headers_in_batches\": n,             (numeric) headers in those batches\n"
+            "  \"average_request_to_response_us\": n, (numeric) average request-to-response time\n"
+            "  \"average_validation_us\": n,          (numeric) average local processing time\n"
+            "  \"peers\": [ ... ]                      (array) per-peer timing counters\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getibdstatus", "")
+            + HelpExampleRpc("getibdstatus", "")
+        );
+    }
+
+    // Snapshot the metrics before taking cs_main so no RPC call can invert
+    // the lock order used by header processing.
+    const HeaderSyncStats stats = GetHeaderSyncStats();
+    UniValue result(UniValue::VOBJ);
+    {
+        LOCK(cs_main);
+        result.push_back(Pair("blocks", chainActive.Height()));
+        result.push_back(Pair("headers", pindexBestHeader ? pindexBestHeader->nHeight : -1));
+    }
+    result.push_back(Pair("header_batches", (int64_t)stats.batches));
+    result.push_back(Pair("headers_in_batches", (int64_t)stats.headers));
+    result.push_back(Pair("unsolicited_header_responses", (int64_t)stats.unsolicited_responses));
+    result.push_back(Pair("average_request_to_response_us", stats.average_request_to_response_us));
+    result.push_back(Pair("average_validation_us", stats.average_validation_us));
+
+    UniValue peers(UniValue::VARR);
+    for (const HeaderSyncPeerStats& peer : stats.peers) {
+        UniValue item(UniValue::VOBJ);
+        item.push_back(Pair("nodeid", peer.node_id));
+        item.push_back(Pair("request_start_height", peer.request_start_height));
+        item.push_back(Pair("batches", (int64_t)peer.batches));
+        item.push_back(Pair("headers", (int64_t)peer.headers));
+        item.push_back(Pair("last_batch_headers", peer.last_batch_headers));
+        item.push_back(Pair("last_request_to_response_us", peer.last_request_to_response_us));
+        item.push_back(Pair("last_validation_us", peer.last_validation_us));
+        item.push_back(Pair("average_request_to_response_us", peer.average_request_to_response_us));
+        item.push_back(Pair("average_validation_us", peer.average_validation_us));
+        peers.push_back(item);
+    }
+    result.push_back(Pair("peers", peers));
+    return result;
+}
+
 /** Comparison function for sorting the getchaintips heads.  */
 struct CompareBlocksByHeight
 {
@@ -1914,6 +1971,7 @@ static const CRPCCommand commands[] =
   //  --------------------- ------------------------  -----------------------  ----------
     { "blockchain",         "clearmempool",           &clearmempool,           {} },
     { "blockchain",         "getblockchaininfo",      &getblockchaininfo,      {} },
+    { "blockchain",         "getibdstatus",           &getibdstatus,           {} },
     { "blockchain",         "getchaintxstats",        &getchaintxstats,        {"nblocks", "blockhash"} },
     { "blockchain",         "getbestblockhash",       &getbestblockhash,       {} },
     { "blockchain",         "getblockcount",          &getblockcount,          {} },

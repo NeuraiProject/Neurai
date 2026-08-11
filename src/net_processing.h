@@ -12,6 +12,9 @@
 #include "validationinterface.h"
 #include "consensus/params.h"
 
+#include <cstdint>
+#include <vector>
+
 /** Default for -maxorphantx, maximum number of orphan transactions kept in memory */
 static const unsigned int DEFAULT_MAX_ORPHAN_TRANSACTIONS = 100;
 /** Expiration time for orphan transactions in seconds */
@@ -77,6 +80,35 @@ struct CNodeStateStats {
     int nCommonHeight;
     std::vector<int> vHeightInFlight;
 };
+
+/** Header-sync timing collected since process start.
+ *
+ * request_to_response_us includes the peer response time and local queueing;
+ * it is intentionally not presented as a raw network RTT.
+ */
+struct HeaderSyncPeerStats {
+    NodeId node_id{0};
+    int request_start_height{-1};
+    uint64_t batches{0};
+    uint64_t headers{0};
+    int last_batch_headers{0};
+    int64_t last_request_to_response_us{0};
+    int64_t last_validation_us{0};
+    int64_t average_request_to_response_us{0};
+    int64_t average_validation_us{0};
+};
+
+struct HeaderSyncStats {
+    uint64_t batches{0};
+    uint64_t headers{0};
+    uint64_t unsolicited_responses{0};
+    int64_t average_request_to_response_us{0};
+    int64_t average_validation_us{0};
+    std::vector<HeaderSyncPeerStats> peers;
+};
+
+/** Return header-sync timing collected since process start. */
+HeaderSyncStats GetHeaderSyncStats();
 
 /** Get statistics from node state */
 bool GetNodeStateStats(NodeId nodeid, CNodeStateStats &stats);

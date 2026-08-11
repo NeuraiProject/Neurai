@@ -76,6 +76,64 @@ namespace {
     /** Number of nodes with fSyncStarted. */
     int nSyncStarted = 0;
 
+    struct HeaderSyncPeerMetrics {
+        HeaderSyncPeerStats stats;
+        int64_t pending_request_us{0};
+        uint256 pending_start_hash{};
+        int64_t total_request_to_response_us{0};
+        int64_t total_validation_us{0};
+    };
+
+    CCriticalSection cs_header_sync_metrics;
+    std::map<NodeId, HeaderSyncPeerMetrics> header_sync_metrics GUARDED_BY(cs_header_sync_metrics);
+    uint64_t header_sync_batches GUARDED_BY(cs_header_sync_metrics) = 0;
+    uint64_t header_sync_headers GUARDED_BY(cs_header_sync_metrics) = 0;
+    uint64_t header_sync_unsolicited_responses GUARDED_BY(cs_header_sync_metrics) = 0;
+    int64_t header_sync_total_request_to_response_us GUARDED_BY(cs_header_sync_metrics) = 0;
+    int64_t header_sync_total_validation_us GUARDED_BY(cs_header_sync_metrics) = 0;
+
+    void RecordHeadersRequest(NodeId nodeid, const CBlockIndex* start)
+    {
+        LOCK(cs_header_sync_metrics);
+        HeaderSyncPeerMetrics& peer = header_sync_metrics[nodeid];
+        peer.stats.node_id = nodeid;
+        peer.stats.request_start_height = start->nHeight;
+        peer.pending_start_hash = start->GetBlockHash();
+        peer.pending_request_us = GetTimeMicros();
+    }
+
+    void RecordHeadersResponse(NodeId nodeid, const std::vector<CBlockHeader>& headers, int64_t validation_us)
+    {
+        LOCK(cs_header_sync_metrics);
+        HeaderSyncPeerMetrics& peer = header_sync_metrics[nodeid];
+        peer.stats.node_id = nodeid;
+        // A peer may announce headers while a getheaders response is in
+        // flight. Count only the response that actually connects to the
+        // locator used in our outstanding request.
+        if (peer.pending_request_us == 0 || headers.front().hashPrevBlock != peer.pending_start_hash) {
+            ++header_sync_unsolicited_responses;
+            return;
+        }
+
+        const size_t header_count = headers.size();
+        const int64_t request_to_response_us = GetTimeMicros() - peer.pending_request_us;
+        peer.pending_request_us = 0;
+        ++peer.stats.batches;
+        peer.stats.headers += header_count;
+        peer.stats.last_batch_headers = header_count;
+        peer.stats.last_request_to_response_us = request_to_response_us;
+        peer.stats.last_validation_us = validation_us;
+        peer.total_request_to_response_us += request_to_response_us;
+        peer.total_validation_us += validation_us;
+        peer.stats.average_request_to_response_us = peer.total_request_to_response_us / peer.stats.batches;
+        peer.stats.average_validation_us = peer.total_validation_us / peer.stats.batches;
+
+        ++header_sync_batches;
+        header_sync_headers += header_count;
+        header_sync_total_request_to_response_us += request_to_response_us;
+        header_sync_total_validation_us += validation_us;
+    }
+
     /**
      * Sources of received blocks, saved to be able to send them reject
      * messages or ban them when processing happens afterwards. Protected by
@@ -138,6 +196,24 @@ namespace {
     /** Expiration-time ordered list of (expire time, relay map entry) pairs, protected by cs_main). */
     std::deque<std::pair<int64_t, MapRelay::iterator>> vRelayExpiration;
 } // namespace
+
+HeaderSyncStats GetHeaderSyncStats()
+{
+    LOCK(cs_header_sync_metrics);
+    HeaderSyncStats result;
+    result.batches = header_sync_batches;
+    result.headers = header_sync_headers;
+    result.unsolicited_responses = header_sync_unsolicited_responses;
+    if (result.batches != 0) {
+        result.average_request_to_response_us = header_sync_total_request_to_response_us / result.batches;
+        result.average_validation_us = header_sync_total_validation_us / result.batches;
+    }
+    result.peers.reserve(header_sync_metrics.size());
+    for (const auto& item : header_sync_metrics) {
+        result.peers.push_back(item.second.stats);
+    }
+    return result;
+}
 
 namespace {
 
@@ -1287,6 +1363,7 @@ bool static ProcessHeadersMessage(CNode *pfrom, CConnman *connman, const std::ve
 {
     const CNetMsgMaker msgMaker(pfrom->GetSendVersion());
     size_t nCount = headers.size();
+    const int64_t validation_start_us = GetTimeMicros();
 
     if (nCount == 0) {
         // Nothing interesting. Stop asking this peers for more headers.
@@ -1389,6 +1466,8 @@ bool static ProcessHeadersMessage(CNode *pfrom, CConnman *connman, const std::ve
         }
     }
 
+    RecordHeadersResponse(pfrom->GetId(), headers, GetTimeMicros() - validation_start_us);
+
     {
         LOCK(cs_main);
         CNodeState *nodestate = State(pfrom->GetId());
@@ -1413,6 +1492,7 @@ bool static ProcessHeadersMessage(CNode *pfrom, CConnman *connman, const std::ve
             // TODO: optimize: if pindexLast is an ancestor of chainActive.Tip or pindexBestHeader, continue
             // from there instead.
             LogPrint(BCLog::NET, "more getheaders (%d) to end to peer=%d (startheight:%d)\n", pindexLast->nHeight, pfrom->GetId(), pfrom->nStartingHeight);
+            RecordHeadersRequest(pfrom->GetId(), pindexLast);
             connman->PushMessage(pfrom, msgMaker.Make(NetMsgType::GETHEADERS, chainActive.GetLocator(pindexLast), uint256()));
         }
 
@@ -3398,6 +3478,7 @@ bool PeerLogicValidation::SendMessages(CNode* pto, std::atomic<bool>& interruptM
                 if (pindexStart->pprev)
                     pindexStart = pindexStart->pprev;
                 LogPrint(BCLog::NET, "initial getheaders (%d) to peer=%d (startheight:%d)\n", pindexStart->nHeight, pto->GetId(), pto->nStartingHeight);
+                RecordHeadersRequest(pto->GetId(), pindexStart);
                 connman->PushMessage(pto, msgMaker.Make(NetMsgType::GETHEADERS, chainActive.GetLocator(pindexStart), uint256()));
             }
         }
