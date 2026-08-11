@@ -27,6 +27,7 @@ QT_BEGIN_NAMESPACE
 class QDateTime;
 class QMenu;
 class QItemSelection;
+class QTimer;
 QT_END_NAMESPACE
 
 /** Local Neurai RPC console. */
@@ -74,6 +75,8 @@ private Q_SLOTS:
     void on_sldGraphRange_valueChanged(int value);
     /** update traffic statistics */
     void updateTrafficStats(quint64 totalBytesIn, quint64 totalBytesOut);
+    /** update the header-sync diagnostics shown in the Information tab */
+    void updateHeaderSyncStats();
     void resizeEvent(QResizeEvent *event);
     void showEvent(QShowEvent *event);
     void hideEvent(QHideEvent *event);
@@ -166,6 +169,7 @@ private:
     int consoleFontSize;
     QCompleter *autoCompleter;
     QThread thread;
+    QTimer *headerSyncTimer;
 
     /** Update UI with latest network info from model. */
     void updateNetworkState();

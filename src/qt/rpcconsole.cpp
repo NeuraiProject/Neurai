@@ -17,6 +17,7 @@
 #include "platformstyle.h"
 #include "chainparams.h"
 #include "netbase.h"
+#include "net_processing.h"
 #include "rpc/server.h"
 #include "rpc/client.h"
 #include "util.h"
@@ -435,7 +436,8 @@ RPCConsole::RPCConsole(const PlatformStyle *_platformStyle, QWidget *parent) :
     platformStyle(_platformStyle),
     peersTableContextMenu(0),
     banTableContextMenu(0),
-    consoleFontSize(0)
+    consoleFontSize(0),
+    headerSyncTimer(new QTimer(this))
 {
     ui->setupUi(this);
     QSettings settings;
@@ -461,6 +463,7 @@ RPCConsole::RPCConsole(const PlatformStyle *_platformStyle, QWidget *parent) :
     connect(ui->fontBiggerButton, SIGNAL(clicked()), this, SLOT(fontBigger()));
     connect(ui->fontSmallerButton, SIGNAL(clicked()), this, SLOT(fontSmaller()));
     connect(ui->btnClearTrafficGraph, SIGNAL(clicked()), ui->trafficGraph, SLOT(clear()));
+    connect(headerSyncTimer, SIGNAL(timeout()), this, SLOT(updateHeaderSyncStats()));
 
     // Wallet Repair Buttons
     connect(ui->btn_rescan, SIGNAL(clicked()), this, SLOT(walletRescan()));
@@ -560,6 +563,9 @@ void RPCConsole::setClientModel(ClientModel *model)
 
         updateNetworkState();
         connect(model, SIGNAL(networkActiveChanged(bool)), this, SLOT(setNetworkActive(bool)));
+
+        updateHeaderSyncStats();
+        headerSyncTimer->start(1000);
 
         updateTrafficStats(model->getTotalBytesRecv(), model->getTotalBytesSent());
         connect(model, SIGNAL(bytesChanged(quint64,quint64)), this, SLOT(updateTrafficStats(quint64, quint64)));
@@ -672,6 +678,7 @@ void RPCConsole::setClientModel(ClientModel *model)
         startExecutor();
     }
     if (!model) {
+        headerSyncTimer->stop();
         // Client model is being set to 0, this means shutdown() is about to be called.
         // Make sure we clean up the executor thread
         Q_EMIT stopExecutor();
@@ -882,6 +889,33 @@ void RPCConsole::setNumBlocks(int count, const QDateTime& blockDate, double nVer
         ui->numberOfBlocks->setText(QString::number(count));
         ui->lastBlockTime->setText(blockDate.toString());
     }
+}
+
+void RPCConsole::updateHeaderSyncStats()
+{
+    if (!clientModel)
+        return;
+
+    const HeaderSyncStats stats = GetHeaderSyncStats();
+    ui->headerSyncBatches->setText(QString::number((qulonglong)stats.batches));
+    ui->headerSyncHeaders->setText(QString::number((qulonglong)stats.headers));
+
+    const QString requestTime = QString::number(stats.average_request_to_response_us / 1000.0, 'f', 2) + " ms";
+    const QString validationTime = QString::number(stats.average_validation_us / 1000.0, 'f', 2) + " ms";
+    ui->headerSyncTimings->setText(tr("Response: %1 · validation: %2").arg(requestTime, validationTime));
+
+    if (stats.peers.empty()) {
+        ui->headerSyncLastBatch->setText(tr("Waiting for a requested headers batch"));
+        return;
+    }
+
+    const HeaderSyncPeerStats& peer = stats.peers.front();
+    ui->headerSyncLastBatch->setText(
+        tr("Peer %1: %2 headers; last response %3 ms; validation %4 ms")
+            .arg(peer.node_id)
+            .arg(peer.last_batch_headers)
+            .arg(QString::number(peer.last_request_to_response_us / 1000.0, 'f', 2))
+            .arg(QString::number(peer.last_validation_us / 1000.0, 'f', 2)));
 }
 
 void RPCConsole::setMempoolSize(long numberOfTxs, size_t dynUsage)
