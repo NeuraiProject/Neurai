@@ -78,6 +78,12 @@ struct Params {
     uint256 defaultAssumeValid;
     bool nSegwitEnabled;
     bool nCSVEnabled;
+    /** First block height at which a KAWPOW header's declared nHeight must match
+     *  the contextual chain height (pindexPrev->nHeight + 1). Blocks at or above
+     *  this height are rejected with "bad-blk-height" if the two disagree.
+     *  Comparison uses >=, so this is the first enforced height. Use INT_MAX to
+     *  leave the rule unscheduled on a network. */
+    int nKAWPOWHeaderHeightCheckActivation;
 };
 } // namespace Consensus
 

@@ -1528,6 +1528,17 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
     bool fLoaded = false;
     while (!fLoaded && !fRequestShutdown) {
         bool fReset = fReindex;
+        // Consensus-derived databases (basic assets and restricted assets) must be
+        // wiped and rebuilt together with the chainstate on -reindex-chainstate and on
+        // the automatic chainstate rebuild below. Otherwise replaying blocks can hit an
+        // asset or restriction left over from an abandoned branch and abort on re-issue.
+        // messages / myrestricted / rewards are intentionally left untouched here.
+        const bool fWipeDerivedState = fReset || fReindexChainState;
+        // Set when the load detects the chainstate tip is missing from the sanitized
+        // block index and we deliberately break out to retry with a chainstate rebuild
+        // (below). An explicit flag, not an empty error string, so an unrelated future
+        // break is never silently treated as a retry.
+        bool fRebuildChainState = false;
         std::string strLoadError;
 
         uiInterface.InitMessage(_("Loading block index..."));
@@ -1572,7 +1583,7 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
                     delete pDistributeSnapshotDb;
 
                     // Basic assets
-                    passetsdb = new CAssetsDB(nBlockTreeDBCache, false, fReset);
+                    passetsdb = new CAssetsDB(nBlockTreeDBCache, false, fWipeDerivedState);
                     passets = new CAssetsCache();
                     passetsCache = new CLRUCache<std::string, CDatabasedAssetData>(MAX_CACHE_ASSETS_SIZE);
 
@@ -1587,7 +1598,7 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
                     pmyrestricteddb = new CMyRestrictedDB(nBlockTreeDBCache, false, false);
 
                     // Restricted assets
-                    prestricteddb = new CRestrictedDB(nBlockTreeDBCache, false, fReset);
+                    prestricteddb = new CRestrictedDB(nBlockTreeDBCache, false, fWipeDerivedState);
                     passetsVerifierCache = new CLRUCache<std::string, CNullAssetTxVerifierString>(
                             MAX_CACHE_ASSETS_SIZE);
                     passetsQualifierCache = new CLRUCache<std::string, int8_t>(MAX_CACHE_ASSETS_SIZE);
@@ -1712,6 +1723,27 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
 
                 bool is_coinsview_empty = fReset || fReindexChainState || pcoinsTip->GetBestBlock().IsNull();
                 if (!is_coinsview_empty) {
+                    // If the chainstate tip is no longer present in the block index, the
+                    // coins database is ahead of the block index. This happens when the
+                    // recovery pass in LoadBlockIndexDB pruned a contaminated subtree that
+                    // included the active tip. Rebuild the chainstate from the block files
+                    // instead of failing: retry the load loop with a chainstate reindex
+                    // (block files and block index are kept). This is safe and specific:
+                    // it only triggers when the tip is missing from the freshly sanitized
+                    // index.
+                    const uint256 bestBlockHash = pcoinsTip->GetBestBlock();
+                    bool fTipMissing = false;
+                    {
+                        LOCK(cs_main); // mapBlockIndex must be accessed under cs_main
+                        fTipMissing = !bestBlockHash.IsNull() &&
+                                      mapBlockIndex.find(bestBlockHash) == mapBlockIndex.end();
+                    }
+                    if (fTipMissing) {
+                        LogPrintf("Coins database is ahead of the block index, rebuilding chainstate\n");
+                        fReindexChainState = true;
+                        fRebuildChainState = true;
+                        break; // retry the load loop with a chainstate rebuild (no prompt)
+                    }
                     // LoadChainTip sets chainActive based on pcoinsTip's best block
                     if (!LoadChainTip(chainparams)) {
                         strLoadError = _("Error initializing block database");
@@ -1766,6 +1798,11 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
         } while(false);
 
         if (!fLoaded && !fRequestShutdown) {
+            // Automatic chainstate rebuild: retry the load loop silently (no reindex
+            // prompt) when we deliberately broke out to rebuild the chainstate.
+            if (fRebuildChainState) {
+                continue;
+            }
             // first suggest a reindex
             if (!fReset) {
                 bool fRet = uiInterface.ThreadSafeQuestion(

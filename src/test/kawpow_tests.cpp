@@ -7,6 +7,10 @@
 
 #include <boost/test/unit_test.hpp>
 
+#include <consensus/params.h>
+#include <primitives/block.h>
+#include <validation.h>
+
 #include <crypto/ethash/lib/ethash/endianness.hpp>
 #include <crypto/ethash/include/ethash/progpow.hpp>
 
@@ -137,6 +141,47 @@ BOOST_AUTO_TEST_CASE(kawpow_search)
     auto r = progpow::hash(ctx, 0, {}, 395);
     BOOST_CHECK(sr.final_hash == r.final_hash);
     BOOST_CHECK(sr.mix_hash == r.mix_hash);
+}
+
+// Consensus rule: once nKAWPOWHeaderHeightCheckActivation is reached, a KAWPOW
+// header's declared nHeight must equal the contextual chain height. This closes the
+// checkpoint-shortcut vector where a block above the last checkpoint declares a
+// height below it to skip real KAWPOW verification.
+BOOST_AUTO_TEST_CASE(kawpow_header_height_rule)
+{
+    const uint32_t savedActivation = nKAWPOWActivationTime;
+
+    Consensus::Params params{};
+    params.nKAWPOWHeaderHeightCheckActivation = 1000;
+
+    CBlockHeader header;
+
+    // Treat KAWPOW as active for any nTime in this block of checks.
+    nKAWPOWActivationTime = 0;
+    header.nTime = 1;
+
+    // Below the activation height the rule is inert, even on a mismatch.
+    header.nHeight = 42;
+    BOOST_CHECK(CheckKAWPOWHeaderHeight(header, 999, params));
+
+    // At/after activation, the declared height must equal the contextual height.
+    header.nHeight = 1000;
+    BOOST_CHECK(CheckKAWPOWHeaderHeight(header, 1000, params));   // honest match -> accepted
+
+    header.nHeight = 500;                                         // the attack shape:
+    BOOST_CHECK(!CheckKAWPOWHeaderHeight(header, 1000, params));  // declared < real -> rejected
+
+    header.nHeight = 2000;
+    BOOST_CHECK(!CheckKAWPOWHeaderHeight(header, 1000, params));  // declared > real -> rejected
+
+    // Pre-KAWPOW headers (nTime below KAWPOW activation) never trigger the rule,
+    // because they do not carry a meaningful serialized nHeight.
+    nKAWPOWActivationTime = 100;
+    header.nTime = 50;                                            // < activation
+    header.nHeight = 500;
+    BOOST_CHECK(CheckKAWPOWHeaderHeight(header, 1000, params));   // gated off -> accepted
+
+    nKAWPOWActivationTime = savedActivation;
 }
 
 BOOST_AUTO_TEST_SUITE_END()
