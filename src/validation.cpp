@@ -4777,6 +4777,37 @@ CBlockIndex * InsertBlockIndex(uint256 hash)
     return pindexNew;
 }
 
+size_t PruneBrokenBlockIndex(BlockMap& blockIndex)
+{
+    // Order by height so a parent is always visited before its children (a child's
+    // height is always parent height + 1). A placeholder entry, created for a parent
+    // that was never loaded, keeps its default nBits == 0; genesis and every real
+    // block have nBits != 0. Mark those placeholders and every descendant as broken.
+    std::vector<std::pair<int, CBlockIndex*> > vByHeight;
+    vByHeight.reserve(blockIndex.size());
+    for (const std::pair<uint256, CBlockIndex*>& item : blockIndex)
+        vByHeight.push_back(std::make_pair(item.second->nHeight, item.second));
+    sort(vByHeight.begin(), vByHeight.end());
+
+    std::set<CBlockIndex*> setBroken;
+    for (const std::pair<int, CBlockIndex*>& item : vByHeight) {
+        CBlockIndex* pindex = item.second;
+        if (pindex->nBits == 0)
+            setBroken.insert(pindex);                 // unfilled placeholder (missing parent)
+        else if (pindex->pprev && setBroken.count(pindex->pprev))
+            setBroken.insert(pindex);                 // descends from a broken entry
+    }
+
+    // The whole broken subtree is in setBroken and no surviving entry references any of
+    // them (a block whose pprev is broken was itself marked broken), so it is safe to
+    // both unlink and free them here.
+    for (CBlockIndex* pindex : setBroken) {
+        blockIndex.erase(pindex->GetBlockHash());
+        delete pindex;
+    }
+    return setBroken.size();
+}
+
 bool static LoadBlockIndexDB(const CChainParams& chainparams)
 {
     if (!pblocktree->LoadBlockIndexGuts(chainparams.GetConsensus(), InsertBlockIndex))
@@ -4784,42 +4815,17 @@ bool static LoadBlockIndexDB(const CChainParams& chainparams)
 
     boost::this_thread::interruption_point();
 
-    // Recovery pass: remove block index entries that cannot be trusted.
+    // Recovery pass: remove block index entries that cannot be trusted after load.
     // LoadBlockIndexGuts skips on-disk entries whose reconstructed header no longer
     // satisfies PoW (e.g. an index contaminated by the KAWPOW header-height issue).
-    // Skipping such a parent leaves a placeholder entry behind, created when a child
-    // referenced the now-missing parent hash. A placeholder has no header data so its
-    // nBits stays 0, while genesis and every real block always have nBits != 0. Drop
-    // those placeholders and every descendant so they cannot pollute chainwork, block
-    // index candidates or pindexBestHeader below. On a healthy index this is a no-op.
+    // Skipping such a parent leaves a placeholder entry behind (nBits == 0); drop it
+    // and every descendant so they cannot pollute chainwork, candidates or best-header
+    // below. On a healthy index this is a no-op.
     {
-        std::vector<std::pair<int, CBlockIndex*> > vByHeight;
-        vByHeight.reserve(mapBlockIndex.size());
-        for (const std::pair<uint256, CBlockIndex*>& item : mapBlockIndex)
-            vByHeight.push_back(std::make_pair(item.second->nHeight, item.second));
-        sort(vByHeight.begin(), vByHeight.end());
-
-        std::set<CBlockIndex*> setBroken;
-        for (const std::pair<int, CBlockIndex*>& item : vByHeight) {
-            CBlockIndex* pindex = item.second;
-            if (pindex->nBits == 0)
-                setBroken.insert(pindex);                 // unfilled placeholder (missing parent)
-            else if (pindex->pprev && setBroken.count(pindex->pprev))
-                setBroken.insert(pindex);                 // descends from a broken entry
-        }
-
-        if (!setBroken.empty()) {
-            LogPrintf("%s: pruning %u block index entr%s with a missing or inconsistent ancestor\n",
-                      __func__, (unsigned)setBroken.size(), setBroken.size() == 1 ? "y" : "ies");
-            // The whole broken subtree is in setBroken and no surviving entry references
-            // any of them (a block whose pprev is broken was itself marked broken above),
-            // so it is safe to both unlink and free them here. A contaminated index may
-            // hold many descendants, so freeing avoids leaking them for the process life.
-            for (CBlockIndex* pindex : setBroken) {
-                mapBlockIndex.erase(pindex->GetBlockHash());
-                delete pindex;
-            }
-        }
+        size_t nPruned = PruneBrokenBlockIndex(mapBlockIndex);
+        if (nPruned > 0)
+            LogPrintf("%s: pruned %u block index entr%s with a missing or inconsistent ancestor\n",
+                      __func__, (unsigned)nPruned, nPruned == 1 ? "y" : "ies");
     }
 
     // Calculate nChainWork

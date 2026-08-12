@@ -459,6 +459,12 @@ bool CheckBlock(const CBlock& block, CValidationState& state, const Consensus::P
  *  activation height, or a pre-KAWPOW header). Exposed for unit testing. */
 bool CheckKAWPOWHeaderHeight(const CBlockHeader& block, int nHeight, const Consensus::Params& consensusParams);
 
+/** Remove block index entries left unusable after loading: placeholder entries
+ *  (nBits == 0, created for a parent that was never loaded) and every entry that
+ *  descends from one. Unlinks and frees them; returns the number removed. Exposed
+ *  for unit testing. */
+size_t PruneBrokenBlockIndex(BlockMap& blockIndex);
+
 /** Check a block is completely valid from start to finish (only works on top of our current best block, with cs_main held) */
 bool TestBlockValidity(CValidationState& state, const CChainParams& chainparams, const CBlock& block, CBlockIndex* pindexPrev, bool fCheckPOW = true, bool fCheckMerkleRoot = true);
 
