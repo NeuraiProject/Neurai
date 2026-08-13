@@ -1,6 +1,5 @@
-# docker build -f doc/docker/Dockerfile-Linux64-fix -t neurai-fix .
-# Same as Dockerfile-Linux64-bin, but builds the LOCAL source (this fix branch)
-# instead of cloning from GitHub, and uses -j16.
+# docker build -f doc/docker/bin/Dockerfile-Linux64-fix -t neurai-fix .
+# Same as Dockerfile-Linux64-bin, but builds the local source tree.
 
 FROM debian:11
 
@@ -10,7 +9,7 @@ LABEL version="1.0.6-fix"
 
 LABEL description="Neurai 1.0.6 | KAWPOW header-height fix | Docker for linux x64 bin"
 
-ARG DEBIAN_FRONTEND=nointeractive
+ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt update
 

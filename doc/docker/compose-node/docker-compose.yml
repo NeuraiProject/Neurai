@@ -1,0 +1,32 @@
+services:
+  neurai:
+    build:
+      context: ./node
+      args:
+        NEURAI_REPOSITORY: https://github.com/NeuraiProject/Neurai.git
+        NEURAI_REF: ${NEURAI_REF:-1.0.6}
+    image: neurai-node:local
+    restart: unless-stopped
+    ports:
+      - "19000:19000"
+    environment:
+      NEURAI_TXINDEX: ${NEURAI_TXINDEX:-0}
+      NEURAI_ASSETINDEX: ${NEURAI_ASSETINDEX:-0}
+      NEURAI_ADDRESSINDEX: ${NEURAI_ADDRESSINDEX:-0}
+      NEURAI_TIMESTAMPINDEX: ${NEURAI_TIMESTAMPINDEX:-0}
+      NEURAI_REST: ${NEURAI_REST:-0}
+      NEURAI_PRUNE: ${NEURAI_PRUNE:-0}
+      NEURAI_MAX_CONNECTIONS: ${NEURAI_MAX_CONNECTIONS:-125}
+      NEURAI_RPC_USER: ${NEURAI_RPC_USER:-}
+      NEURAI_RPC_PASSWORD: ${NEURAI_RPC_PASSWORD:-}
+      NEURAI_ZMQ_PUB_HASH_BLOCK: ${NEURAI_ZMQ_PUB_HASH_BLOCK:-}
+      NEURAI_ZMQ_PUB_HASH_TX: ${NEURAI_ZMQ_PUB_HASH_TX:-}
+      NEURAI_ZMQ_PUB_RAW_BLOCK: ${NEURAI_ZMQ_PUB_RAW_BLOCK:-}
+      NEURAI_ZMQ_PUB_RAW_TX: ${NEURAI_ZMQ_PUB_RAW_TX:-}
+      NEURAI_ZMQ_PUB_RAW_MESSAGE: ${NEURAI_ZMQ_PUB_RAW_MESSAGE:-}
+      NEURAI_EXTRA_CONF: ${NEURAI_EXTRA_CONF:-}
+    volumes:
+      - neurai-data:/data
+
+volumes:
+  neurai-data:

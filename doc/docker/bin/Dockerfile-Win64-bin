@@ -1,0 +1,34 @@
+# Build the local source tree into Windows x86_64 Qt binaries.
+# Export with: docker build -f doc/docker/bin/Dockerfile-Win64-bin \
+#   --target artifacts --output type=local,dest=build-out/win64 .
+
+FROM debian:11 AS build
+
+LABEL maintainer="Asimov"
+LABEL description="Neurai Windows x86_64 Qt cross-build"
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends git unzip wget ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /root/Neurai
+COPY . .
+
+RUN scripts/00-install-deps.sh windows
+
+WORKDIR /root/Neurai/depends
+RUN make HOST=x86_64-w64-mingw32 -j2
+
+WORKDIR /root/Neurai
+RUN ./autogen.sh
+RUN CONFIG_SITE=$PWD/depends/x86_64-w64-mingw32/share/config.site ./configure \
+    --host=x86_64-w64-mingw32 --prefix=$PWD/depends/x86_64-w64-mingw32 \
+    --enable-cxx --disable-shared --disable-tests --disable-bench --disable-gui-tests \
+    --with-gui=qt5 --with-qtdbus=no --with-pic
+RUN make -j2
+
+FROM scratch AS artifacts
+COPY --from=build /root/Neurai/src/neuraid.exe /neuraid.exe
+COPY --from=build /root/Neurai/src/neurai-cli.exe /neurai-cli.exe
+COPY --from=build /root/Neurai/src/qt/neurai-qt.exe /neurai-qt.exe

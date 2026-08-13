@@ -1,0 +1,32 @@
+# Build the local source tree into Linux x86_64 node binaries.
+# Export with: docker build -f doc/docker/bin/Dockerfile-Node-Linux \
+#   --target artifacts --output type=local,dest=build-out/node-linux .
+
+FROM debian:11 AS build
+
+LABEL maintainer="Asimov"
+LABEL description="Neurai Linux x86_64 node build"
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends git unzip wget ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /root/Neurai
+COPY . .
+
+RUN scripts/00-install-deps.sh linux
+
+WORKDIR /root/Neurai/depends
+RUN make HOST=x86_64-pc-linux-gnu NO_QT=1 -j2
+
+WORKDIR /root/Neurai
+RUN ./autogen.sh
+RUN CONFIG_SITE=$PWD/depends/x86_64-pc-linux-gnu/share/config.site ./configure \
+    --prefix=$PWD/depends/x86_64-pc-linux-gnu \
+    --enable-cxx --disable-shared --disable-tests --disable-bench --with-gui=no --with-pic
+RUN make -j2
+
+FROM scratch AS artifacts
+COPY --from=build /root/Neurai/src/neuraid /neuraid
+COPY --from=build /root/Neurai/src/neurai-cli /neurai-cli
