@@ -282,13 +282,12 @@ public:
         nKAWPOWActivationTime = nKAAAWWWPOWActivationTime;
         // First height at which a KAWPOW header's declared nHeight must match the
         // contextual chain height (see ContextualCheckBlockHeader, "bad-blk-height").
-        // Test value for local validation only; replace with an audited/coordinated
-        // future height (or INT_MAX until audited) before any production release.
-        consensus.nKAWPOWHeaderHeightCheckActivation = 1733712;
-        // Asset transfer overflow / range enforcement in CheckTxAssets.
-        // Test value for local validation only; for production use an audited FUTURE
-        // height (shareable with KAWPOW only if KAWPOW is not yet activated).
-        consensus.nAssetTransferOverflowCheckActivation = 1733712;
+        // Production activation of the mandatory soft fork, coordinated ~2026-08-16
+        // (Sunday). Shared with the asset-overflow rule below (single activation).
+        consensus.nKAWPOWHeaderHeightCheckActivation = 1739500;
+        // Asset transfer overflow / range enforcement in CheckTxAssets. Same
+        // production activation height as the KAWPOW header-height fix (~2026-08-16).
+        consensus.nAssetTransferOverflowCheckActivation = 1739500;
     }
 };
 
