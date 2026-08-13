@@ -66,7 +66,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // The outputs are assigning a destination to 1000 Assets
         // This test should pass because all assets are assigned a destination
         std::vector<std::pair<std::string, uint256>> vReissueAssets;
-        BOOST_CHECK_MESSAGE(Consensus::CheckTxAssets(tx, state, coins, nullptr, false, vReissueAssets, true), "CheckTxAssets Failed");
+        BOOST_CHECK_MESSAGE(Consensus::CheckTxAssets(tx, state, coins, nullptr, false, false, vReissueAssets, true), "CheckTxAssets Failed");
     }
 
     BOOST_AUTO_TEST_CASE(asset_tx_not_valid_test)
@@ -123,7 +123,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // The outputs are assigning a destination to only 100 Assets
         // This should fail because 900 Assets aren't being assigned a destination (Trying to burn 900 Assets)
         std::vector<std::pair<std::string, uint256>> vReissueAssets;
-        BOOST_CHECK_MESSAGE(!Consensus::CheckTxAssets(tx, state, coins, nullptr, false, vReissueAssets, true), "CheckTxAssets should have failed");
+        BOOST_CHECK_MESSAGE(!Consensus::CheckTxAssets(tx, state, coins, nullptr, false, false, vReissueAssets, true), "CheckTxAssets should have failed");
     }
 
     BOOST_AUTO_TEST_CASE(asset_tx_valid_multiple_outs_test)
@@ -184,7 +184,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // The outputs are assigned 100 Assets to 10 destinations (10 * 100) = 1000
         // This test should pass all assets that are being spent are assigned to a destination
         std::vector<std::pair<std::string, uint256>> vReissueAssets;
-        BOOST_CHECK_MESSAGE(Consensus::CheckTxAssets(tx, state, coins, nullptr, false, vReissueAssets, true), "CheckTxAssets failed");
+        BOOST_CHECK_MESSAGE(Consensus::CheckTxAssets(tx, state, coins, nullptr, false, false, vReissueAssets, true), "CheckTxAssets failed");
     }
 
     BOOST_AUTO_TEST_CASE(asset_tx_multiple_outs_invalid_test)
@@ -245,7 +245,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // The outputs are assigning 100 Assets to 12 destinations (12 * 100 = 1200)
         // This test should fail because the Outputs are greater than the inputs
         std::vector<std::pair<std::string, uint256>> vReissueAssets;
-        BOOST_CHECK_MESSAGE(!Consensus::CheckTxAssets(tx, state, coins, nullptr, false, vReissueAssets, true), "CheckTxAssets passed when it should have failed");
+        BOOST_CHECK_MESSAGE(!Consensus::CheckTxAssets(tx, state, coins, nullptr, false, false, vReissueAssets, true), "CheckTxAssets passed when it should have failed");
     }
 
     BOOST_AUTO_TEST_CASE(asset_tx_multiple_assets_test)
@@ -365,7 +365,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // The outputs are spending 100 Assets to 10 destinations (10 * 100 = 1000) (of each NEURAI, NEURAITEST, NEURAITESTTEST)
         // This test should pass because for each asset that is spent. It is assigned a destination
         std::vector<std::pair<std::string, uint256>> vReissueAssets;
-        BOOST_CHECK_MESSAGE(Consensus::CheckTxAssets(tx, state, coins, nullptr, false, vReissueAssets, true), state.GetDebugMessage());
+        BOOST_CHECK_MESSAGE(Consensus::CheckTxAssets(tx, state, coins, nullptr, false, false, vReissueAssets, true), state.GetDebugMessage());
 
 
         // Try it not but only spend 900 of each asset instead of 1000
@@ -418,7 +418,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // Check the transaction that contains inputs that are spending 1000 Assets for 3 different assets
         // While only outputs only contain 900 Assets being sent to a destination
         // This should fail because 100 of each Asset isn't being sent to a destination (Trying to burn 100 Assets each)
-        BOOST_CHECK_MESSAGE(!Consensus::CheckTxAssets(tx2, state, coins, nullptr, false, vReissueAssets, true), "CheckTxAssets should have failed");
+        BOOST_CHECK_MESSAGE(!Consensus::CheckTxAssets(tx2, state, coins, nullptr, false, false, vReissueAssets, true), "CheckTxAssets should have failed");
     }
 
     BOOST_AUTO_TEST_CASE(asset_tx_issue_units_test)
@@ -606,5 +606,152 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         bitdb.Reset();
     }
 #endif
+
+    // Asset transfer overflow / range enforcement (fEnforceAssetOverflow gate).
+    BOOST_AUTO_TEST_CASE(asset_tx_overflow_test)
+    {
+        BOOST_TEST_MESSAGE("Running Asset TX Overflow Test");
+        SelectParams(CBaseChainParams::MAIN);
+
+        const CAmount over = MAX_MONEY + 1;
+
+        // (a) Individual amount > MAX_MONEY, input == output (no summed overflow).
+        //     Pre-activation (enforce=false) keeps historical behavior (accepted);
+        //     activated (enforce=true) rejects. No signed overflow is ever executed.
+        {
+            CAssetTransfer big("NEURAITEST", over);
+            CScript script = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
+            big.ConstructTransaction(script);
+
+            CCoinsView view;
+            CCoinsViewCache coins(&view);
+            CTxOut txOut; txOut.nValue = 0; txOut.scriptPubKey = script;
+            COutPoint outpoint(uint256S("BF50CB9A63BE0019171456252989A459A7D0A5F494735278290079D22AB704A2"), 1);
+            coins.AddCoin(outpoint, Coin(txOut, 10, 0), true);
+
+            CMutableTransaction mutTx;
+            CTxIn vin; vin.prevout = outpoint;
+            mutTx.vin.emplace_back(vin);
+            mutTx.vout.emplace_back(txOut);   // output carries the same amount -> input == output
+            CTransaction tx(mutTx);
+
+            std::vector<std::pair<std::string, uint256>> vReissueAssets;
+
+            CValidationState s1;
+            BOOST_CHECK_MESSAGE(Consensus::CheckTxAssets(tx, s1, coins, nullptr, false, false, vReissueAssets, true),
+                                "pre-activation should accept the > MAX_MONEY transfer");
+
+            CValidationState s2;
+            BOOST_CHECK_MESSAGE(!Consensus::CheckTxAssets(tx, s2, coins, nullptr, false, true, vReissueAssets, true),
+                                "activated rule should reject the > MAX_MONEY transfer");
+            BOOST_CHECK_EQUAL(s2.GetRejectReason(), "bad-txns-input-asset-amount-toolarge");
+        }
+
+        // (b) Checked sum: two in-range outputs (each == MAX_MONEY) of the same asset
+        //     whose running sum exceeds MAX_MONEY. The gate rejects BEFORE the +=,
+        //     so no int64 overflow (UB) is executed.
+        {
+            CAssetTransfer inAsset("NEURAITEST", 1000);
+            CScript scriptIn = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
+            inAsset.ConstructTransaction(scriptIn);
+
+            CCoinsView view;
+            CCoinsViewCache coins(&view);
+            CTxOut txIn; txIn.nValue = 0; txIn.scriptPubKey = scriptIn;
+            COutPoint outpoint(uint256S("AF50CB9A63BE0019171456252989A459A7D0A5F494735278290079D22AB70401"), 1);
+            coins.AddCoin(outpoint, Coin(txIn, 10, 0), true);
+
+            CAssetTransfer outAsset("NEURAITEST", MAX_MONEY);
+            CScript scriptOut = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
+            outAsset.ConstructTransaction(scriptOut);
+            CTxOut txOut; txOut.nValue = 0; txOut.scriptPubKey = scriptOut;
+
+            CMutableTransaction mutTx;
+            CTxIn vin; vin.prevout = outpoint;
+            mutTx.vin.emplace_back(vin);
+            mutTx.vout.emplace_back(txOut);
+            mutTx.vout.emplace_back(txOut);   // second output pushes the running sum over MAX_MONEY
+            CTransaction tx(mutTx);
+
+            std::vector<std::pair<std::string, uint256>> vReissueAssets;
+            CValidationState s;
+            BOOST_CHECK_MESSAGE(!Consensus::CheckTxAssets(tx, s, coins, nullptr, false, true, vReissueAssets, true),
+                                "activated rule should reject the summed-overflow transfer");
+            BOOST_CHECK_EQUAL(s.GetRejectReason(), "bad-txns-transfer-asset-totalOutputs-toolarge");
+        }
+    }
+
+    // Additional coverage: individual output too large, negative input, input running
+    // sum too large, and an exactly-MAX_MONEY honest transfer accepted with enforcement.
+    BOOST_AUTO_TEST_CASE(asset_tx_overflow_cases_test)
+    {
+        BOOST_TEST_MESSAGE("Running Asset TX Overflow Cases Test");
+        SelectParams(CBaseChainParams::MAIN);
+
+        const CAmount over = MAX_MONEY + 1;
+        const uint256 base = uint256S("BF50CB9A63BE0019171456252989A459A7D0A5F494735278290079D22AB704A2");
+
+        auto assetScript = [](CAmount amount) {
+            CAssetTransfer t("NEURAITEST", amount);
+            CScript s = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
+            t.ConstructTransaction(s);
+            return s;
+        };
+        auto buildTx = [&](CCoinsViewCache& coins, const std::vector<CAmount>& ins, const std::vector<CAmount>& outs) {
+            CMutableTransaction mutTx;
+            for (size_t i = 0; i < ins.size(); ++i) {
+                CTxOut o; o.nValue = 0; o.scriptPubKey = assetScript(ins[i]);
+                COutPoint op(base, (uint32_t)(i + 1));
+                coins.AddCoin(op, Coin(o, 10, 0), true);
+                CTxIn vin; vin.prevout = op;
+                mutTx.vin.emplace_back(vin);
+            }
+            for (CAmount a : outs) {
+                CTxOut o; o.nValue = 0; o.scriptPubKey = assetScript(a);
+                mutTx.vout.emplace_back(o);
+            }
+            return CTransaction(mutTx);
+        };
+        auto reject = [&](const std::vector<CAmount>& ins, const std::vector<CAmount>& outs) {
+            CCoinsView view; CCoinsViewCache coins(&view);
+            CTransaction tx = buildTx(coins, ins, outs);
+            CValidationState state;
+            std::vector<std::pair<std::string, uint256>> vReissueAssets;
+            bool ok = Consensus::CheckTxAssets(tx, state, coins, nullptr, false, true, vReissueAssets, true);
+            BOOST_CHECK(!ok);
+            return state.GetRejectReason();
+        };
+
+        // Individual output > MAX_MONEY (input in range) -> transfer-amount-toolarge.
+        BOOST_CHECK_EQUAL(reject({MAX_MONEY}, {over}), "bad-txns-transfer-asset-amount-toolarge");
+
+        // Negative input amount -> input-amount-negative.
+        BOOST_CHECK_EQUAL(reject({-1}, {1}), "bad-txns-input-asset-amount-negative");
+
+        // Two in-range inputs whose running sum exceeds MAX_MONEY -> totalInputs-toolarge.
+        BOOST_CHECK_EQUAL(reject({MAX_MONEY, MAX_MONEY}, {1}), "bad-txns-input-asset-totalInputs-toolarge");
+
+        // Honest transfer of exactly MAX_MONEY is accepted with enforcement active.
+        {
+            CCoinsView view; CCoinsViewCache coins(&view);
+            CTransaction tx = buildTx(coins, {MAX_MONEY}, {MAX_MONEY});
+            CValidationState state;
+            std::vector<std::pair<std::string, uint256>> vReissueAssets;
+            BOOST_CHECK_MESSAGE(Consensus::CheckTxAssets(tx, state, coins, nullptr, false, true, vReissueAssets, true),
+                                "exactly MAX_MONEY honest transfer should be accepted with enforcement");
+        }
+    }
+
+    // The height gate itself: IsAssetTransferOverflowActive reads the static activation
+    // height and uses >=, so H_FIX-1 is inactive and H_FIX is active.
+    BOOST_AUTO_TEST_CASE(asset_transfer_overflow_gate_test)
+    {
+        BOOST_TEST_MESSAGE("Running Asset Transfer Overflow Gate Test");
+        SelectParams(CBaseChainParams::MAIN);
+        const int h = GetParams().GetConsensus().nAssetTransferOverflowCheckActivation;
+        BOOST_CHECK(!IsAssetTransferOverflowActive(h - 1));
+        BOOST_CHECK(IsAssetTransferOverflowActive(h));
+        BOOST_CHECK(IsAssetTransferOverflowActive(h + 1));
+    }
 
 BOOST_AUTO_TEST_SUITE_END()

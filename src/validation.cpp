@@ -665,7 +665,7 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         }
 
         if (AreAssetsDeployed()) {
-            if (!Consensus::CheckTxAssets(tx, state, view, GetCurrentAssetCache(), true, vReissueAssets))
+            if (!Consensus::CheckTxAssets(tx, state, view, GetCurrentAssetCache(), true, IsAssetTransferOverflowActive(GetSpendHeight(view)), vReissueAssets))
                 return error("%s: Consensus::CheckTxAssets: %s, %s", __func__, tx.GetHash().ToString(),
                              FormatStateMessage(state));
         }
@@ -1588,6 +1588,11 @@ int GetSpendHeight(const CCoinsViewCache& inputs)
     LOCK(cs_main);
     CBlockIndex* pindexPrev = mapBlockIndex.find(inputs.GetBestBlock())->second;
     return pindexPrev->nHeight + 1;
+}
+
+bool IsAssetTransferOverflowActive(int nHeight)
+{
+    return nHeight >= GetParams().GetConsensus().nAssetTransferOverflowCheckActivation;
 }
 
 
@@ -2573,7 +2578,7 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
 
             if (AreAssetsDeployed()) {
                 std::vector<std::pair<std::string, uint256>> vReissueAssets;
-                if (!Consensus::CheckTxAssets(tx, state, view, assetsCache, false, vReissueAssets, false, &setMessages, block.nTime, &myNullAssetData)) {
+                if (!Consensus::CheckTxAssets(tx, state, view, assetsCache, false, IsAssetTransferOverflowActive(pindex->nHeight), vReissueAssets, false, &setMessages, block.nTime, &myNullAssetData)) {
                     state.SetFailedTransaction(tx.GetHash());
                     return error("%s: Consensus::CheckTxAssets: %s, %s", __func__, tx.GetHash().ToString(),
                                  FormatStateMessage(state));
@@ -4146,6 +4151,21 @@ std::vector<unsigned char> GenerateCoinbaseCommitment(CBlock& block, const CBloc
 /** Context-dependent validity checks.
  *  By "context", we mean only the previous block headers, but not the UTXO
  *  set; UTXO-related validity checks are done in ConnectBlock(). */
+bool CheckKAWPOWHeaderHeight(const CBlockHeader& block, int nHeight, const Consensus::Params& consensusParams)
+{
+    // Not yet activated on this chain / at this height.
+    if (nHeight < consensusParams.nKAWPOWHeaderHeightCheckActivation)
+        return true;
+    // Pre-KAWPOW headers do not carry a meaningful nHeight (it is not serialized
+    // before KAWPOW activation), so the rule does not apply to them. This gate also
+    // matches CheckBlockHeader's checkpoint shortcut, so every header that can take
+    // that shortcut is covered here.
+    if (block.nTime < nKAWPOWActivationTime)
+        return true;
+    // The declared header height must equal the real chain height.
+    return block.nHeight == static_cast<uint32_t>(nHeight);
+}
+
 static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationState& state, const CChainParams& params, const CBlockIndex* pindexPrev, int64_t nAdjustedTime)
 {
     assert(pindexPrev != nullptr);
@@ -4170,6 +4190,23 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationSta
     const Consensus::Params& consensusParams = params.GetConsensus();
     if (block.nBits != GetNextWorkRequired(pindexPrev, &block, consensusParams))
         return state.DoS(100, false, REJECT_INVALID, "bad-diffbits", false, "incorrect proof of work");
+
+    // Enforce that a KAWPOW header's declared height matches the real chain
+    // height derived from its parent. Without this, CheckBlockHeader's checkpoint
+    // shortcut (which validates PoW using only the miner-supplied mix_hash and
+    // trusts block.nHeight) can be triggered by a block that sits above the last
+    // checkpoint but declares a height below it, letting an attacker skip real
+    // KAWPOW work. This must live in the contextual check: only here is the true
+    // height (pindexPrev->nHeight + 1) known. Gated on nKAWPOWActivationTime so it
+    // never touches pre-KAWPOW headers, which do not carry nHeight; that gate also
+    // matches the checkpoint shortcut's own gate, so every block eligible for the
+    // shortcut is subject to this rule.
+    if (!CheckKAWPOWHeaderHeight(block, nHeight, consensusParams)) {
+        return state.DoS(100,
+            error("%s: declared header height %u does not match chain height %d",
+                  __func__, block.nHeight, nHeight),
+            REJECT_INVALID, "bad-blk-height");
+    }
 
     // Check against checkpoints
     if (fCheckpointsEnabled) {
@@ -4745,12 +4782,56 @@ CBlockIndex * InsertBlockIndex(uint256 hash)
     return pindexNew;
 }
 
+size_t PruneBrokenBlockIndex(BlockMap& blockIndex)
+{
+    // Order by height so a parent is always visited before its children (a child's
+    // height is always parent height + 1). A placeholder entry, created for a parent
+    // that was never loaded, keeps its default nBits == 0; genesis and every real
+    // block have nBits != 0. Mark those placeholders and every descendant as broken.
+    std::vector<std::pair<int, CBlockIndex*> > vByHeight;
+    vByHeight.reserve(blockIndex.size());
+    for (const std::pair<uint256, CBlockIndex*>& item : blockIndex)
+        vByHeight.push_back(std::make_pair(item.second->nHeight, item.second));
+    sort(vByHeight.begin(), vByHeight.end());
+
+    std::set<CBlockIndex*> setBroken;
+    for (const std::pair<int, CBlockIndex*>& item : vByHeight) {
+        CBlockIndex* pindex = item.second;
+        if (pindex->nBits == 0)
+            setBroken.insert(pindex);                 // unfilled placeholder (missing parent)
+        else if (pindex->pprev && setBroken.count(pindex->pprev))
+            setBroken.insert(pindex);                 // descends from a broken entry
+    }
+
+    // The whole broken subtree is in setBroken and no surviving entry references any of
+    // them (a block whose pprev is broken was itself marked broken), so it is safe to
+    // both unlink and free them here.
+    for (CBlockIndex* pindex : setBroken) {
+        blockIndex.erase(pindex->GetBlockHash());
+        delete pindex;
+    }
+    return setBroken.size();
+}
+
 bool static LoadBlockIndexDB(const CChainParams& chainparams)
 {
     if (!pblocktree->LoadBlockIndexGuts(chainparams.GetConsensus(), InsertBlockIndex))
         return false;
 
     boost::this_thread::interruption_point();
+
+    // Recovery pass: remove block index entries that cannot be trusted after load.
+    // LoadBlockIndexGuts skips on-disk entries whose reconstructed header no longer
+    // satisfies PoW (e.g. an index contaminated by the KAWPOW header-height issue).
+    // Skipping such a parent leaves a placeholder entry behind (nBits == 0); drop it
+    // and every descendant so they cannot pollute chainwork, candidates or best-header
+    // below. On a healthy index this is a no-op.
+    {
+        size_t nPruned = PruneBrokenBlockIndex(mapBlockIndex);
+        if (nPruned > 0)
+            LogPrintf("%s: pruned %u block index entr%s with a missing or inconsistent ancestor\n",
+                      __func__, (unsigned)nPruned, nPruned == 1 ? "y" : "ies");
+    }
 
     // Calculate nChainWork
     std::vector<std::pair<int, CBlockIndex*> > vSortedByHeight;

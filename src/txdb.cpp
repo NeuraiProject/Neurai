@@ -463,6 +463,7 @@ bool CBlockTreeDB::LoadBlockIndexGuts(const Consensus::Params& consensusParams, 
 
     pcursor->Seek(std::make_pair(DB_BLOCK_INDEX, uint256()));
 
+    int nSkipped = 0;
     // Load mapBlockIndex
     while (pcursor->Valid()) {
         boost::this_thread::interruption_point();
@@ -470,8 +471,31 @@ bool CBlockTreeDB::LoadBlockIndexGuts(const Consensus::Params& consensusParams, 
         if (pcursor->GetKey(key) && key.first == DB_BLOCK_INDEX) {
             CDiskBlockIndex diskindex;
             if (pcursor->GetValue(diskindex)) {
+                // Reconstruct the block hash from the stored header fields and verify
+                // it still satisfies PoW before trusting this entry. A mismatch means
+                // the on-disk index is inconsistent, e.g. an entry contaminated by the
+                // KAWPOW header-height issue: its hash was produced with a declared
+                // height that differs from the height stored in the index, so the
+                // reconstruction no longer matches. Skip the entry and keep loading
+                // instead of aborting the whole node; the affected subtree is pruned
+                // later in LoadBlockIndexDB and the node can rebuild.
+                uint256 blockHash = diskindex.GetBlockHash();
+                if (!CheckProofOfWork(blockHash, diskindex.nBits, consensusParams)) {
+                    // Log the first entries individually (capped, so a heavily
+                    // contaminated index cannot bloat debug.log); the total is reported
+                    // once the loop finishes.
+                    if (nSkipped < 32)
+                        LogPrintf("%s: WARNING: skipping inconsistent block index entry (PoW mismatch) hash=%s height=%d\n",
+                                  __func__, blockHash.ToString(), diskindex.nHeight);
+                    else if (nSkipped == 32)
+                        LogPrintf("%s: WARNING: further inconsistent block index entries suppressed (total reported below)\n", __func__);
+                    nSkipped++;
+                    pcursor->Next();
+                    continue;
+                }
+
                 // Construct block index object
-                CBlockIndex* pindexNew = insertBlockIndex(diskindex.GetBlockHash());
+                CBlockIndex* pindexNew = insertBlockIndex(blockHash);
                 pindexNew->pprev          = insertBlockIndex(diskindex.hashPrev);
                 pindexNew->nHeight        = diskindex.nHeight;
                 pindexNew->nFile          = diskindex.nFile;
@@ -486,10 +510,6 @@ bool CBlockTreeDB::LoadBlockIndexGuts(const Consensus::Params& consensusParams, 
                 pindexNew->nTx            = diskindex.nTx;
                 pindexNew->nNonce64       = diskindex.nNonce64;
                 pindexNew->mix_hash       = diskindex.mix_hash;
-                pindexNew->nHeight        = diskindex.nHeight;
-
-                if (!CheckProofOfWork(pindexNew->GetBlockHash(), pindexNew->nBits, consensusParams))
-                    return error("%s: CheckProofOfWork failed: %s", __func__, pindexNew->ToString());
 
                 pcursor->Next();
             } else {
@@ -499,6 +519,10 @@ bool CBlockTreeDB::LoadBlockIndexGuts(const Consensus::Params& consensusParams, 
             break;
         }
     }
+
+    if (nSkipped > 0)
+        LogPrintf("%s: skipped %d inconsistent block index entr%s; affected descendants are pruned during index load\n",
+                  __func__, nSkipped, nSkipped == 1 ? "y" : "ies");
 
     return true;
 }

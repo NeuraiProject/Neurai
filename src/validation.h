@@ -453,6 +453,18 @@ bool ReadBlockFromDisk(CBlock& block, const CBlockIndex* pindex, const Consensus
 /** Context-independent validity checks */
 bool CheckBlock(const CBlock& block, CValidationState& state, const Consensus::Params& consensusParams, bool fCheckPOW = true, bool fCheckMerkleRoot = true, bool fDBCheck = false);
 
+/** Consensus rule: once nKAWPOWHeaderHeightCheckActivation is reached, a KAWPOW
+ *  header's declared nHeight must equal the contextual chain height. Returns true
+ *  when the header satisfies the rule or the rule is not in force for it (below the
+ *  activation height, or a pre-KAWPOW header). Exposed for unit testing. */
+bool CheckKAWPOWHeaderHeight(const CBlockHeader& block, int nHeight, const Consensus::Params& consensusParams);
+
+/** Remove block index entries left unusable after loading: placeholder entries
+ *  (nBits == 0, created for a parent that was never loaded) and every entry that
+ *  descends from one. Unlinks and frees them; returns the number removed. Exposed
+ *  for unit testing. */
+size_t PruneBrokenBlockIndex(BlockMap& blockIndex);
+
 /** Check a block is completely valid from start to finish (only works on top of our current best block, with cs_main held) */
 bool TestBlockValidity(CValidationState& state, const CChainParams& chainparams, const CBlock& block, CBlockIndex* pindexPrev, bool fCheckPOW = true, bool fCheckMerkleRoot = true);
 
@@ -563,6 +575,11 @@ extern CDistributeSnapshotRequestDB *pDistributeSnapshotDb;
  * This is also true for mempool checks.
  */
 int GetSpendHeight(const CCoinsViewCache& inputs);
+
+/** True if the asset-transfer overflow/range enforcement in CheckTxAssets is active at
+ *  nHeight on the current network. Reads the static consensus activation height (not a
+ *  mutable global flag), so it is deterministic and reorg-safe. */
+bool IsAssetTransferOverflowActive(int nHeight);
 
 extern VersionBitsCache versionbitscache;
 

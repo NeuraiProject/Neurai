@@ -155,10 +155,10 @@ public:
         uint32_t nGenesisTime = 1681720840;
 
         // The best chain should have at least this much work
-        consensus.nMinimumChainWork = uint256S("0x0000000000000000000000000000000000000000000000000000bc45d3c25c5f"); // block 58000
+        consensus.nMinimumChainWork = uint256S("0x000000000000000000000000000000000000000000000004875780a8b78c7f02"); // block 1733712
 
         // By default assume that the signatures in ancestors of this block are valid.
-        consensus.defaultAssumeValid = uint256S("0x00000000155b81afb6ac20009e45eb98c9810fb4dd5501e9f636c7951ae5f768"); // block 58000
+        consensus.defaultAssumeValid = uint256S("0x000000000065bd9be24a1328484cc1904c5d6f8bc8986088bb1f84c26bed6897"); // Verified mainnet block 1733712
 
         /**
          * The message start string is designed to be unlikely to occur in normal data.
@@ -226,7 +226,11 @@ public:
                 { 304000, uint256S("0x000000000001b89a5b02d73f9835199d64e1fac2f276bc7b8783eaa3d8ab2d30")},
                 { 432000, uint256S("0x000000000001ce8ae0ee5a9a629ac8434a7e2ed371112a1737dadc5a7ae5b200")},
 	            { 1180000, uint256S("0x00000000000b01a49d709ff53ab480765cff9136bbd7237be66fd6ef079faa19")},
-                { 1330000, uint256S("0x00000000000e22514b7645a6901c97cf91e227fc9615a536f69ae4e1e53a9785")}
+                { 1330000, uint256S("0x00000000000e22514b7645a6901c97cf91e227fc9615a536f69ae4e1e53a9785")},
+                // Consensus decision (v1.0.6, KAWPOW header-height fix): upgraded nodes
+                // reject any fork below this block that does not connect to it. Must be
+                // coordinated and announced. Aligned with nKAWPOWHeaderHeightCheckActivation.
+                { 1733712, uint256S("0x000000000065bd9be24a1328484cc1904c5d6f8bc8986088bb1f84c26bed6897")}
             }
         };
 
@@ -274,8 +278,16 @@ public:
         nMessagingActivationBlock = 10; // Messaging activated block height
         nRestrictedActivationBlock = 10; // Restricted activated block height
 	    
-        nKAAAWWWPOWActivationTime = nGenesisTime + 1; 
+        nKAAAWWWPOWActivationTime = nGenesisTime + 1;
         nKAWPOWActivationTime = nKAAAWWWPOWActivationTime;
+        // First height at which a KAWPOW header's declared nHeight must match the
+        // contextual chain height (see ContextualCheckBlockHeader, "bad-blk-height").
+        // Production activation of the mandatory soft fork, coordinated ~2026-08-16
+        // (Sunday). Shared with the asset-overflow rule below (single activation).
+        consensus.nKAWPOWHeaderHeightCheckActivation = 1739500;
+        // Asset transfer overflow / range enforcement in CheckTxAssets. Same
+        // production activation height as the KAWPOW header-height fix (~2026-08-16).
+        consensus.nAssetTransferOverflowCheckActivation = 1739500;
     }
 };
 
@@ -432,6 +444,11 @@ public:
 	    
         nKAAAWWWPOWActivationTime = nGenesisTime + 1;
         nKAWPOWActivationTime = nKAAAWWWPOWActivationTime;
+        // KAWPOW is active from genesis on testnet, so enforce the header-height
+        // rule from height 0 (see ContextualCheckBlockHeader, "bad-blk-height").
+        consensus.nKAWPOWHeaderHeightCheckActivation = 0;
+        // Asset transfer overflow/range enforcement active from height 0 on testnet.
+        consensus.nAssetTransferOverflowCheckActivation = 0;
         /** XNA End **/
     }
 };
@@ -578,6 +595,11 @@ public:
 
         nKAAAWWWPOWActivationTime = 3582830167;
         nKAWPOWActivationTime = nKAAAWWWPOWActivationTime;
+        // Enforce the header-height rule from height 0. Regtest keeps KAWPOW
+        // effectively disabled (far-future activation), so the rule stays inert here.
+        consensus.nKAWPOWHeaderHeightCheckActivation = 0;
+        // Asset transfer overflow/range enforcement active from height 0 on regtest.
+        consensus.nAssetTransferOverflowCheckActivation = 0;
         /** XNA End **/
     }
 };
