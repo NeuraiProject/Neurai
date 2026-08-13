@@ -1,5 +1,6 @@
 buildspecs
 Jenkinsfile
+/build-out/
 *.tar.gz
 
 *.exe
