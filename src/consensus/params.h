@@ -84,6 +84,11 @@ struct Params {
      *  Comparison uses >=, so this is the first enforced height. Use INT_MAX to
      *  leave the rule unscheduled on a network. */
     int nKAWPOWHeaderHeightCheckActivation;
+    /** First block height at which asset transfer amounts (inputs and outputs) are
+     *  enforced to be within [0, MAX_MONEY] with a checked sum per asset, closing the
+     *  int64 overflow / negative-amount inflation vector in CheckTxAssets. Comparison
+     *  uses >=. Use INT_MAX to leave the rule unscheduled on a network. */
+    int nAssetTransferOverflowCheckActivation;
 };
 } // namespace Consensus
 

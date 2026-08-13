@@ -970,7 +970,7 @@ void CTxMemPool::removeForBlock(const std::vector<CTransactionRef>& vtx, unsigne
                     if (i != mapTx.end()) {
                         CValidationState state;
                         std::vector<std::pair<std::string, uint256>> vReissueAssets;
-                        if (!setAlreadyRemoving.count(hash) && !Consensus::CheckTxAssets(i->GetTx(), state, pcoinsTip, passets, false, vReissueAssets)) {
+                        if (!setAlreadyRemoving.count(hash) && !Consensus::CheckTxAssets(i->GetTx(), state, pcoinsTip, passets, false, IsAssetTransferOverflowActive(GetSpendHeight(*pcoinsTip)), vReissueAssets)) {
                             entries.push_back(&*i);
                             trans.emplace_back(i->GetTx());
                             setAlreadyRemoving.insert(hash);
@@ -1063,7 +1063,7 @@ static void CheckInputsAndUpdateCoins(const CTransaction& tx, CCoinsViewCache& m
     /** XNA START */
     if (AreAssetsDeployed()) {
         std::vector<std::pair<std::string, uint256>> vReissueAssets;
-        bool fCheckAssets = Consensus::CheckTxAssets(tx, state, mempoolDuplicate, passets, false, vReissueAssets);
+        bool fCheckAssets = Consensus::CheckTxAssets(tx, state, mempoolDuplicate, passets, false, IsAssetTransferOverflowActive((int)spendheight), vReissueAssets);
         assert(fCheckResult && fCheckAssets);
     } else
         assert(fCheckResult);

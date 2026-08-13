@@ -604,7 +604,7 @@ bool Consensus::CheckTxInputs(const CTransaction& tx, CValidationState& state, c
 }
 
 //! Check to make sure that the inputs and outputs CAmount match exactly.
-bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, const CCoinsViewCache& inputs, CAssetsCache* assetCache, bool fCheckMempool, std::vector<std::pair<std::string, uint256> >& vPairReissueAssets, const bool fRunningUnitTests, std::set<CMessage>* setMessages, int64_t nBlocktime,   std::vector<std::pair<std::string, CNullAssetTxData>>* myNullAssetData)
+bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, const CCoinsViewCache& inputs, CAssetsCache* assetCache, bool fCheckMempool, bool fEnforceAssetOverflow, std::vector<std::pair<std::string, uint256> >& vPairReissueAssets, const bool fRunningUnitTests, std::set<CMessage>* setMessages, int64_t nBlocktime,   std::vector<std::pair<std::string, CNullAssetTxData>>* myNullAssetData)
 {
     // are the actual inputs available?
     if (!inputs.HaveInputs(tx)) {
@@ -627,11 +627,19 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
             if (!GetAssetData(coin.out.scriptPubKey, data))
                 return state.DoS(100, false, REJECT_INVALID, "bad-txns-failed-to-get-asset-from-script", false, "", tx.GetHash());
 
-            // Add to the total value of assets in the inputs
-            if (totalInputs.count(data.assetName))
-                totalInputs.at(data.assetName) += data.nAmount;
-            else
-                totalInputs.insert(make_pair(data.assetName, data.nAmount));
+            // Add to the total value of assets in the inputs. Checked sum: reject
+            // out-of-range amounts and prevent int64 overflow BEFORE mutating the
+            // accumulator (0 is allowed on inputs, coherent with MoneyRange).
+            CAmount runningIn = totalInputs.count(data.assetName) ? totalInputs.at(data.assetName) : 0;
+            if (fEnforceAssetOverflow) {
+                if (data.nAmount < 0)
+                    return state.DoS(100, false, REJECT_INVALID, "bad-txns-input-asset-amount-negative", false, "", tx.GetHash());
+                if (data.nAmount > MAX_MONEY)
+                    return state.DoS(100, false, REJECT_INVALID, "bad-txns-input-asset-amount-toolarge", false, "", tx.GetHash());
+                if (runningIn > MAX_MONEY - data.nAmount)
+                    return state.DoS(100, false, REJECT_INVALID, "bad-txns-input-asset-totalInputs-toolarge", false, "", tx.GetHash());
+            }
+            totalInputs[data.assetName] = runningIn + data.nAmount;
 
             if (AreMessagesDeployed()) {
                 mapAddresses.insert(make_pair(data.assetName,EncodeDestination(data.destination)));
@@ -692,11 +700,19 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
             if (!ContextualCheckTransferAsset(assetCache, transfer, address, strError))
                 return state.DoS(100, false, REJECT_INVALID, strError, false, "", tx.GetHash());
 
-            // Add to the total value of assets in the outputs
-            if (totalOutputs.count(transfer.strName))
-                totalOutputs.at(transfer.strName) += transfer.nAmount;
-            else
-                totalOutputs.insert(make_pair(transfer.strName, transfer.nAmount));
+            // Add to the total value of assets in the outputs. Checked sum: reject
+            // out-of-range amounts and prevent int64 overflow BEFORE mutating the
+            // accumulator (negative already rejected by ContextualCheckTransferAsset).
+            CAmount runningOut = totalOutputs.count(transfer.strName) ? totalOutputs.at(transfer.strName) : 0;
+            if (fEnforceAssetOverflow) {
+                if (transfer.nAmount < 0)
+                    return state.DoS(100, false, REJECT_INVALID, "bad-txns-transfer-asset-amount-negative", false, "", tx.GetHash());
+                if (transfer.nAmount > MAX_MONEY)
+                    return state.DoS(100, false, REJECT_INVALID, "bad-txns-transfer-asset-amount-toolarge", false, "", tx.GetHash());
+                if (runningOut > MAX_MONEY - transfer.nAmount)
+                    return state.DoS(100, false, REJECT_INVALID, "bad-txns-transfer-asset-totalOutputs-toolarge", false, "", tx.GetHash());
+            }
+            totalOutputs[transfer.strName] = runningOut + transfer.nAmount;
 
             if (!fRunningUnitTests) {
                 if (IsAssetNameAnOwner(transfer.strName)) {

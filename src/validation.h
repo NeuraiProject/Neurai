@@ -576,6 +576,11 @@ extern CDistributeSnapshotRequestDB *pDistributeSnapshotDb;
  */
 int GetSpendHeight(const CCoinsViewCache& inputs);
 
+/** True if the asset-transfer overflow/range enforcement in CheckTxAssets is active at
+ *  nHeight on the current network. Reads the static consensus activation height (not a
+ *  mutable global flag), so it is deterministic and reorg-safe. */
+bool IsAssetTransferOverflowActive(int nHeight);
+
 extern VersionBitsCache versionbitscache;
 
 /**

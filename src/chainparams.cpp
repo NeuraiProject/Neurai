@@ -285,6 +285,10 @@ public:
         // Test value for local validation only; replace with an audited/coordinated
         // future height (or INT_MAX until audited) before any production release.
         consensus.nKAWPOWHeaderHeightCheckActivation = 1733712;
+        // Asset transfer overflow / range enforcement in CheckTxAssets.
+        // Test value for local validation only; for production use an audited FUTURE
+        // height (shareable with KAWPOW only if KAWPOW is not yet activated).
+        consensus.nAssetTransferOverflowCheckActivation = 1733712;
     }
 };
 
@@ -444,6 +448,8 @@ public:
         // KAWPOW is active from genesis on testnet, so enforce the header-height
         // rule from height 0 (see ContextualCheckBlockHeader, "bad-blk-height").
         consensus.nKAWPOWHeaderHeightCheckActivation = 0;
+        // Asset transfer overflow/range enforcement active from height 0 on testnet.
+        consensus.nAssetTransferOverflowCheckActivation = 0;
         /** XNA End **/
     }
 };
@@ -593,6 +599,8 @@ public:
         // Enforce the header-height rule from height 0. Regtest keeps KAWPOW
         // effectively disabled (far-future activation), so the rule stays inert here.
         consensus.nKAWPOWHeaderHeightCheckActivation = 0;
+        // Asset transfer overflow/range enforcement active from height 0 on regtest.
+        consensus.nAssetTransferOverflowCheckActivation = 0;
         /** XNA End **/
     }
 };

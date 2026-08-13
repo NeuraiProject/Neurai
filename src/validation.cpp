@@ -665,7 +665,7 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         }
 
         if (AreAssetsDeployed()) {
-            if (!Consensus::CheckTxAssets(tx, state, view, GetCurrentAssetCache(), true, vReissueAssets))
+            if (!Consensus::CheckTxAssets(tx, state, view, GetCurrentAssetCache(), true, IsAssetTransferOverflowActive(GetSpendHeight(view)), vReissueAssets))
                 return error("%s: Consensus::CheckTxAssets: %s, %s", __func__, tx.GetHash().ToString(),
                              FormatStateMessage(state));
         }
@@ -1588,6 +1588,11 @@ int GetSpendHeight(const CCoinsViewCache& inputs)
     LOCK(cs_main);
     CBlockIndex* pindexPrev = mapBlockIndex.find(inputs.GetBestBlock())->second;
     return pindexPrev->nHeight + 1;
+}
+
+bool IsAssetTransferOverflowActive(int nHeight)
+{
+    return nHeight >= GetParams().GetConsensus().nAssetTransferOverflowCheckActivation;
 }
 
 
@@ -2573,7 +2578,7 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
 
             if (AreAssetsDeployed()) {
                 std::vector<std::pair<std::string, uint256>> vReissueAssets;
-                if (!Consensus::CheckTxAssets(tx, state, view, assetsCache, false, vReissueAssets, false, &setMessages, block.nTime, &myNullAssetData)) {
+                if (!Consensus::CheckTxAssets(tx, state, view, assetsCache, false, IsAssetTransferOverflowActive(pindex->nHeight), vReissueAssets, false, &setMessages, block.nTime, &myNullAssetData)) {
                     state.SetFailedTransaction(tx.GetHash());
                     return error("%s: Consensus::CheckTxAssets: %s, %s", __func__, tx.GetHash().ToString(),
                                  FormatStateMessage(state));
