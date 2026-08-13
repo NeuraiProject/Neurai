@@ -1,0 +1,42 @@
+# docker build -f doc/docker/Dockerfile-Linux64-fix -t neurai-fix .
+# Same as Dockerfile-Linux64-bin, but builds the LOCAL source (this fix branch)
+# instead of cloning from GitHub, and uses -j16.
+
+FROM debian:11
+
+LABEL maintainer="Asimov"
+
+LABEL version="1.0.6-fix"
+
+LABEL description="Neurai 1.0.6 | KAWPOW header-height fix | Docker for linux x64 bin"
+
+ARG DEBIAN_FRONTEND=nointeractive
+
+RUN apt update
+
+RUN apt-get install -y git unzip wget
+
+WORKDIR /root
+
+COPY . /root/Neurai/
+
+WORKDIR /root/Neurai
+
+RUN scripts/00-install-deps.sh linux
+
+WORKDIR /root/Neurai/depends
+
+RUN make HOST=x86_64-pc-linux-gnu -j16
+
+WORKDIR /root/Neurai
+
+RUN ./autogen.sh
+
+# install_db4.sh removed: depends/ already builds Berkeley DB (bdb.mk), and the
+# script's config.guess download from savannah now fails its checksum. configure
+# picks up bdb (and every other dependency) from the depends config.site below.
+RUN CONFIG_SITE=$PWD/depends/x86_64-pc-linux-gnu/share/config.site ./configure --prefix=$PWD/depends/x86_64-pc-linux-gnu --enable-cxx --disable-shared --disable-tests --disable-gui-tests --with-pic
+
+RUN make -j16
+
+CMD ["tail", "-f", "/dev/null"]

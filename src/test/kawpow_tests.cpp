@@ -279,3 +279,11 @@ BOOST_AUTO_TEST_CASE(prune_broken_block_index_removes_orphaned_subtree)
 }
 
 BOOST_AUTO_TEST_SUITE_END()
+
+// NOTE: an end-to-end integration test (mine a KAWPOW header with a mismatched declared
+// height and assert ProcessNewBlockHeaders -> ContextualCheckBlockHeader returns
+// "bad-blk-height") was prototyped here on a regtest fixture, but clean main's regtest
+// chainparams currently abort in CRegTestParams (its hardcoded genesis hash assertion
+// fails), so no regtest-based test can run. That is a pre-existing issue unrelated to
+// this fix. The rule's decision, the exploited mechanism, and the index recovery are
+// covered by the unit tests above; re-add the integration test once regtest is fixed.
