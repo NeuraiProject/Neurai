@@ -14,14 +14,28 @@ port=${NEURAI_P2P_PORT:-19000}
 rpcport=${NEURAI_RPC_PORT:-19001}
 rpcbind=${NEURAI_RPC_BIND:-127.0.0.1}
 rpcallowip=${NEURAI_RPC_ALLOW_IP:-127.0.0.1}
+rpcthreads=${NEURAI_RPC_THREADS:-4}
+rpcworkqueue=${NEURAI_RPC_WORK_QUEUE:-16}
 rest=${NEURAI_REST:-0}
+disablewallet=${NEURAI_DISABLE_WALLET:-0}
+walletbroadcast=${NEURAI_WALLET_BROADCAST:-1}
+walletrbf=${NEURAI_WALLET_RBF:-0}
 txindex=${NEURAI_TXINDEX:-0}
 assetindex=${NEURAI_ASSETINDEX:-0}
 addressindex=${NEURAI_ADDRESSINDEX:-0}
 timestampindex=${NEURAI_TIMESTAMPINDEX:-0}
+spentindex=${NEURAI_SPENTINDEX:-0}
 maxconnections=${NEURAI_MAX_CONNECTIONS:-125}
 prune=${NEURAI_PRUNE:-0}
+dbcache=${NEURAI_DB_CACHE:-450}
+par=${NEURAI_SCRIPT_THREADS:-0}
+maxmempool=${NEURAI_MAX_MEMPOOL:-300}
+persistmempool=${NEURAI_PERSIST_MEMPOOL:-1}
 EOF
+
+    if [ -n "${NEURAI_WALLET_FILE:-}" ]; then
+        printf 'wallet=%s\n' "${NEURAI_WALLET_FILE}" >> "${config_file}"
+    fi
 
     if [ -n "${NEURAI_RPC_USER:-}" ] || [ -n "${NEURAI_RPC_PASSWORD:-}" ]; then
         if [ -z "${NEURAI_RPC_USER:-}" ] || [ -z "${NEURAI_RPC_PASSWORD:-}" ]; then

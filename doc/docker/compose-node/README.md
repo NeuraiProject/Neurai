@@ -18,7 +18,12 @@ default; do not add a public `19001` mapping unless authentication and
 
 The environment values in `.env` initialize `neurai.conf` only on the first
 start of a volume. For later changes, edit the persisted configuration and run
-`docker compose restart`.
+`docker compose restart`. The example includes wallet, RPC, index, cache,
+script-thread, mempool, and ZMQ settings. Wallet support is enabled by default.
+
+Changing index settings after syncing is not immediate: `assetindex` requires
+`-reindex`, while address, spent, and timestamp indexes require
+`-reindex-chainstate`. Do not enable `prune` together with `txindex`.
 
 ZMQ publishers can be enabled at first start with the `NEURAI_ZMQ_PUB_*`
 variables in `.env`. For example, `NEURAI_ZMQ_PUB_RAW_TX=tcp://0.0.0.0:28332`

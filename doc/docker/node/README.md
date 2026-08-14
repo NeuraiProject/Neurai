@@ -22,13 +22,16 @@ docker run -d --name neurai-node --restart unless-stopped \
 cookie, and `neurai.conf`. The entrypoint creates `neurai.conf` only when it is
 missing; it never overwrites an existing configuration.
 
-On the first start, the following environment variables configure the generated
-file: `NEURAI_TXINDEX`, `NEURAI_ASSETINDEX`, `NEURAI_ADDRESSINDEX`,
-`NEURAI_TIMESTAMPINDEX`, `NEURAI_REST`, `NEURAI_PRUNE`,
-`NEURAI_MAX_CONNECTIONS`, `NEURAI_RPC_USER`, `NEURAI_RPC_PASSWORD`, and
-`NEURAI_EXTRA_CONF`. `NEURAI_EXTRA_CONF` accepts newline-separated `neurai.conf`
-entries. To change a running node's configuration later, edit `/data/neurai.conf`
-and restart the container.
+On the first start, environment variables configure the generated file. This
+includes wallet options (`NEURAI_DISABLE_WALLET`, `NEURAI_WALLET_FILE`), indexes
+(`NEURAI_TXINDEX`, `NEURAI_ASSETINDEX`, `NEURAI_ADDRESSINDEX`,
+`NEURAI_TIMESTAMPINDEX`, `NEURAI_SPENTINDEX`), RPC settings
+(`NEURAI_RPC_PORT`, `NEURAI_RPC_BIND`, `NEURAI_RPC_ALLOW_IP`,
+`NEURAI_RPC_THREADS`, `NEURAI_RPC_WORK_QUEUE`), and resource settings
+(`NEURAI_DB_CACHE`, `NEURAI_SCRIPT_THREADS`, `NEURAI_MAX_MEMPOOL`).
+`NEURAI_EXTRA_CONF` accepts newline-separated `neurai.conf` entries. To change
+an existing node, edit `/data/neurai.conf` and restart the container. Index
+changes require the appropriate reindexing procedure.
 
 ZMQ is available through `NEURAI_ZMQ_PUB_HASH_BLOCK`,
 `NEURAI_ZMQ_PUB_HASH_TX`, `NEURAI_ZMQ_PUB_RAW_BLOCK`,
