@@ -40,10 +40,15 @@ in `/data`:
 docker build -t neurai-node:local doc/docker/node
 docker volume create neurai-data
 docker run -d --name neurai-node --restart unless-stopped \
+  --stop-timeout 300 \
+  --log-opt max-size=10m --log-opt max-file=3 \
   -p 19000:19000 \
   -v neurai-data:/data \
   neurai-node:local
 ```
+
+`--stop-timeout` gives `neuraid` time to flush its databases on shutdown, and
+the log options rotate the container log so it cannot grow unbounded.
 
 The volume persists the blockchain, wallet data, RPC cookie, and `neurai.conf`.
 The configuration file is generated only when it does not already exist, so
@@ -80,6 +85,21 @@ NEURAI_ZMQ_PUB_RAW_TX=tcp://0.0.0.0:28332
 
 It can then connect to `tcp://neurai:28332`. ZMQ has no authentication; do not
 publish that port to an untrusted network.
+
+## Publish a release to Docker Hub
+
+`docker-hub/` contains one directory per published release. Each is
+self-contained, pins the release tag, and produces the image pushed to the
+`neuraiproject/neurai-node` repository:
+
+```bash
+cd doc/docker/docker-hub/1.0.6
+docker build -t neuraiproject/neurai-node:v1.0.6 .
+docker push neuraiproject/neurai-node:v1.0.6
+```
+
+See `docker-hub/1.0.6/README.md` for the full publish checklist and a Compose
+example that runs the published image without building anything locally.
 
 ## Check status and logs
 

@@ -1,11 +1,7 @@
+# Runs the published Docker Hub image; nothing is built locally.
 services:
   neurai:
-    build:
-      context: ./node
-      args:
-        NEURAI_REPOSITORY: https://github.com/NeuraiProject/Neurai.git
-        NEURAI_REF: ${NEURAI_REF:-1.0.6}
-    image: neurai-node:local
+    image: neuraiproject/neurai-node:${NEURAI_IMAGE_TAG:-v1.0.6}
     restart: unless-stopped
     # neuraid needs time to flush its databases on shutdown; killing it early
     # can force a long reindex on the next start.

@@ -13,10 +13,16 @@ Run a persistent mainnet node:
 ```bash
 docker volume create neurai-data
 docker run -d --name neurai-node --restart unless-stopped \
+  --stop-timeout 300 \
+  --log-opt max-size=10m --log-opt max-file=3 \
   -p 19000:19000 \
   -v neurai-data:/data \
   neurai-node:local
 ```
+
+`--stop-timeout 300` gives `neuraid` time to flush its databases on shutdown
+instead of being killed after the 10-second default, and the log options rotate
+the container log so it cannot grow unbounded.
 
 `/data` is the persistent volume and contains the blockchain, wallet data, RPC
 cookie, and `neurai.conf`. The entrypoint creates `neurai.conf` only when it is
