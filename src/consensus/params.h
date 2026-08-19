@@ -78,6 +78,22 @@ struct Params {
     uint256 defaultAssumeValid;
     bool nSegwitEnabled;
     bool nCSVEnabled;
+    /** First block height at which a KAWPOW header's declared nHeight must match
+     *  the contextual chain height (pindexPrev->nHeight + 1). Blocks at or above
+     *  this height are rejected with "bad-blk-height" if the two disagree.
+     *  Comparison uses >=, so this is the first enforced height. The rule only
+     *  applies to KAWPOW headers (nTime >= nKAWPOWActivationTime), so it is inert
+     *  on SHA256d chains (testnet/regtest). Use std::numeric_limits<int>::max()
+     *  to leave the rule unscheduled on a network. Ported from origin/main
+     *  d741868/e81ad45 (v1.0.6 KAWPOW header-height fix). */
+    int nKAWPOWHeaderHeightCheckActivation;
+    /** First block height at which asset transfer amounts (inputs and outputs) are
+     *  enforced to be within [0, MAX_MONEY] with a checked sum per asset, closing the
+     *  int64 overflow / negative-amount inflation vector in CheckTxAssets. Comparison
+     *  uses >= (see IsAssetTransferOverflowActive). std::numeric_limits<int>::max()
+     *  is the "not scheduled" sentinel and is explicitly inactive, like
+     *  nAssetMarkerNip040Height. Ported from origin/main 9568f3b. */
+    int nAssetTransferOverflowCheckActivation;
     /** Enable post-quantum (ML-DSA-44) witness v1 verification.
      *  true on testnet/regtest; false on mainnet until future activation. */
     bool nPQWitnessEnabled;

@@ -346,6 +346,15 @@ bool IsAssetMarkerNip040Active(int nHeight, const Consensus::Params& params)
     return nHeight >= params.nAssetMarkerNip040Height;
 }
 
+bool IsAssetTransferOverflowActive(int nHeight, const Consensus::Params& params)
+{
+    // Same sentinel semantics as NIP-040: INT_MAX means "not scheduled", explicitly
+    // inactive even for a (theoretical) candidate height of INT_MAX.
+    if (params.nAssetTransferOverflowCheckActivation == std::numeric_limits<int>::max())
+        return false;
+    return nHeight >= params.nAssetTransferOverflowCheckActivation;
+}
+
 AssetMarker MarkerForNewAssetOutput(int nTargetHeight, const Consensus::Params& params)
 {
     return IsAssetMarkerNip040Active(nTargetHeight, params) ? AssetMarker::NEURAI_XNA

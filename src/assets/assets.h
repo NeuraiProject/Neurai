@@ -58,6 +58,13 @@ struct Params;
 /** NIP-040: true once the candidate height is at or past the marker fork. */
 bool IsAssetMarkerNip040Active(int nHeight, const Consensus::Params& params);
 
+/** origin/main 9568f3b: true once the candidate height is at or past
+ *  nAssetTransferOverflowCheckActivation (>=), i.e. CheckTxAssets must enforce the
+ *  [0, MAX_MONEY] range and checked per-asset sums on transfer amounts.
+ *  std::numeric_limits<int>::max() is the "not scheduled" sentinel and is
+ *  explicitly inactive, even for a candidate height of INT_MAX. */
+bool IsAssetTransferOverflowActive(int nHeight, const Consensus::Params& params);
+
 /** NIP-040: marker every newly constructed asset output must carry when it is
  *  meant to confirm at nTargetHeight. Callers resolve this once from the
  *  target height and pass it to the four asset script constructors. */
