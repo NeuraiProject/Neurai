@@ -26,7 +26,7 @@
 #include "policy/fees.h"
 #include "policy/policy.h"
 #include "policy/rbf.h"
-#include "depinmsgpoolnet.h"
+#include "depinchallenge.h"
 #include "depinmcpworker.h"
 #include "rpc/mining.h"
 #include "rpc/safemode.h"
@@ -42,6 +42,10 @@
 #include "wallet/walletdb.h"
 #include "depinecies.h"
 #include "depinmsgpool.h"
+#include "depinpoolkey.h"
+#ifdef ENABLE_WALLET
+#include "wallet/depinpoolkeyload.h"
+#endif
 
 std::string MessageActivationWarning()
 {
@@ -501,18 +505,16 @@ UniValue viewmyrestrictedaddresses(const JSONRPCRequest& request) {
 class CWallet;
 class CPubKey;
 class CKey;
-bool DeriveDepinPoolKeys(CWallet* pwallet, CKey& privKey, CPubKey& pubkey, std::string& derivationPath, std::string& error);
 #endif
 
 /**
  * Read an integer that may arrive as a JSON number or as a string.
  *
  * neurai-cli hands every argument over as a string unless the method is listed
- * in vRPCConvertParams (rpc/client.cpp). Two DePIN parameters cannot be listed
- * there -- depingetpoolcontent's `verbose` and depinclearmsg's `mode` accept a
- * word ("all", "raw") as well as a number, and the conversion layer throws on
- * any argument that is not valid JSON -- so their numeric form has to be
- * recognised here instead.
+ * in vRPCConvertParams (rpc/client.cpp). One DePIN parameter cannot be listed
+ * there -- depinclearmsg's `mode` accepts a word ("all") as well as a number,
+ * and the conversion layer throws on any argument that is not valid JSON -- so
+ * its numeric form has to be recognised here instead.
  *
  * Acceptance is strict: ParseInt64() rejects empty strings, padding, embedded
  * NULs and trailing characters, so "7x", " 7" and "1.5" stay errors rather than
@@ -541,7 +543,6 @@ UniValue depingetmsginfo(const JSONRPCRequest& request)
                 "{\n"
                 "  \"enabled\": true|false,        (boolean) Whether DePIN messaging is enabled\n"
                 "  \"token\": \"name\",              (string) Active token name\n"
-                "  \"port\": n,                    (numeric) Listening port\n"
                 "  \"cipher\": \"name\",            (string) Encryption cipher used by the pool\n"
                 "  \"maxrecipients\": n,           (numeric) Maximum recipients per message\n"
                 "  \"maxmessagesize\": n,          (numeric) Maximum message size in bytes\n"
@@ -552,6 +553,13 @@ UniValue depingetmsginfo(const JSONRPCRequest& request)
                 "  \"memoryusagemb\": n,           (numeric) Memory usage in MB\n"
                 "  \"oldestmessage\": \"time\",      (string) Timestamp of oldest message\n"
                 "  \"newestmessage\": \"time\"       (string) Timestamp of newest message\n"
+                "  \"protocol\": 2,                  (numeric) DePIN RPC protocol version\n"
+                "  \"depinpoolpkey\": \"hex\",        (string) Pool public key (encrypt depinsubmitmsg envelopes for it; verifies poolsig)\n"
+                "  \"depinpoolkeyaddress\": \"addr\", (string) P2PKH address of the pool key (verifymessage-compatible)\n"
+                "  \"depinpoolkeyowner\": \"addr\",   (string) Token owner address that signed the pool key\n"
+                "  \"depinpoolkeysig\": \"base64\",   (string) Owner signature over \"DEPIN-POOLKEY|<token>|<pubkey>\"\n"
+                "  \"depinwallet\": \"file\",        (string) Wallet the pool key is derived from\n"
+                "  \"poolsig\": \"base64\"           (string) Pool-key signature over this response (see depinreceivemsg help)\n"
                 "}\n"
                 "\nExamples:\n"
                 + HelpExampleCli("depingetmsginfo", "")
@@ -565,7 +573,6 @@ UniValue depingetmsginfo(const JSONRPCRequest& request)
     UniValue obj(UniValue::VOBJ);
     obj.push_back(Pair("enabled", pDepinMsgPool->IsEnabled()));
     obj.push_back(Pair("token", pDepinMsgPool->GetActiveToken()));
-    obj.push_back(Pair("port", (int)pDepinMsgPool->GetPort()));
     obj.push_back(Pair("cipher", pDepinMsgPool->GetEncryptionCipher()));
     obj.push_back(Pair("maxrecipients", (int)pDepinMsgPool->GetMaxRecipients()));
     obj.push_back(Pair("maxmessagesize", (int)pDepinMsgPool->GetMaxMessageSize()));
@@ -583,42 +590,41 @@ UniValue depingetmsginfo(const JSONRPCRequest& request)
     if (newest > 0)
         obj.push_back(Pair("newestmessage", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", newest)));
 
-    // depinpoolpkey integration
-    std::string poolPKey = "0";
-#ifdef ENABLE_WALLET
-    CWallet* const pwallet = GetWalletForJSONRPCRequest(request);
-    if (pwallet && !pwallet->IsCrypted()) {
-        CPubKey pubkey;
-        CKey privKey;
-        std::string derivationPath;
-        std::string error;
-        if (DeriveDepinPoolKeys(pwallet, privKey, pubkey, derivationPath, error)) {
-            poolPKey = HexStr(pubkey.begin(), pubkey.end());
-        }
+    // The service identity: pool public key, the owner signature that vouches
+    // for it, and which wallet it came from. Clients anchor depinpoolpkey out
+    // of band (their own node, configuration, or first-use pinning) and verify
+    // depinpoolkeysig locally; nothing served here is trusted on its own.
+    obj.push_back(Pair("protocol", DEPIN_RPC_PROTOCOL_VERSION));
+    CKey poolKey;
+    CPubKey poolPubKey;
+    if (GetDepinPoolKey(poolKey, poolPubKey)) {
+        obj.push_back(Pair("depinpoolpkey", HexStr(poolPubKey.begin(), poolPubKey.end())));
+        obj.push_back(Pair("depinpoolkeyaddress", EncodeDestination(poolPubKey.GetID())));
+        obj.push_back(Pair("depinpoolkeyowner", GetDepinPoolKeyOwner()));
+        obj.push_back(Pair("depinpoolkeysig", GetDepinPoolKeySig()));
+        obj.push_back(Pair("depinwallet", GetDepinPoolKeyWalletName()));
     }
-#endif
-    obj.push_back(Pair("depinpoolpkey", poolPKey));
 
-    return obj;
+    return FinishDepinResponse(obj, "depingetmsginfo", pDepinMsgPool->GetActiveToken(), "", "", nullptr);
 }
 
 #ifdef ENABLE_WALLET
-#ifdef ENABLE_DEPIN_GATEWAY
 UniValue depinsendmsg(const JSONRPCRequest& request)
 {
-    if (request.fHelp || request.params.size() < 3 || request.params.size() > 5)
+    if (request.fHelp || request.params.size() != 3)
         throw std::runtime_error(
-                "depinsendmsg \"token\" \"ip[:port]\" \"message\" \"fromaddress\" (port)\n"
-                "\nSend an encrypted message through a remote DePIN gateway (challenge/response)\n"
+                "depinsendmsg \"token\" \"message\" \"fromaddress\"\n"
+                "\nEncrypt, sign and add a message to this node's DePIN pool\n"
+                "\nThe pool must be enabled on this node (-depinmsg) and the wallet must hold\n"
+                "the token, or one of its ancestors, at fromaddress. To publish through a\n"
+                "remote node, prepare the message client-side and call its depinsubmitmsg.\n"
                 "\nArguments:\n"
                 "1. \"token\"        (string, required) Token name. May be a section (sub-asset) such as\n"
                 "                  \"&TOKEN/GENERAL\": recipients are the active holders of the section\n"
                 "                  and of every ancestor up to the pool root; sending is authorized by\n"
                 "                  holding the section or any ancestor.\n"
-                "2. \"ip[:port]\"    (string, required) Target node address (optional :port to contact remote gateway)\n"
-                "3. \"message\"      (string, required) Message to send (max 1KB)\n"
-                "4. \"fromaddress\" (string, required) Wallet address used for signing/encryption\n"
-                "5. port           (numeric, optional) Destination message port (defaults to 19002). Only used when specified after fromaddress\n"
+                "2. \"message\"      (string, required) Message to send (max 1KB)\n"
+                "3. \"fromaddress\"  (string, required) Wallet address used for signing/encryption\n"
                 "\nResult:\n"
                 "{\n"
                 "  \"result\": \"success\",          (string) Status\n"
@@ -631,9 +637,8 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
                 "  \"timestamp\": n                (numeric) Message timestamp\n"
                 "}\n"
                 "\nExamples:\n"
-                + HelpExampleCli("depinsendmsg", "\"MYTOKEN\" \"192.168.1.100\" \"Hello team!\" \"NXsender...\"")
-                + HelpExampleCli("depinsendmsg", "\"MYTOKEN\" \"192.168.1.100:19005\" \"Hello team!\" \"NXsender...\" 19005")
-                + HelpExampleRpc("depinsendmsg", "\"MYTOKEN\", \"192.168.1.100\", \"Hello team!\", \"NXsender...\"")
+                + HelpExampleCli("depinsendmsg", "\"&MYTOKEN\" \"Hello team!\" \"NXsender...\"")
+                + HelpExampleRpc("depinsendmsg", "\"&MYTOKEN\", \"Hello team!\", \"NXsender...\"")
         );
 
     CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
@@ -641,61 +646,12 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
         return NullUniValue;
     }
 
-    std::string token = request.params[0].get_str();
-    std::string destinationParam = request.params[1].get_str();
-    std::string message = request.params[2].get_str();
-    std::string senderAddress = request.params.size() >= 4 ? request.params[3].get_str() : "";
+    const std::string token = request.params[0].get_str();
+    const std::string message = request.params[1].get_str();
+    const std::string senderAddress = request.params[2].get_str();
     if (senderAddress.empty()) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER, "fromaddress is required for remote send");
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "fromaddress is required");
     }
-
-    int paramIndex = 4;
-
-    int destinationPort = DEFAULT_DEPIN_MSG_PORT;
-    bool destinationPortProvided = false;
-    if (request.params.size() >= paramIndex + 1) {
-        destinationPort = request.params[paramIndex].get_int();
-        if (destinationPort <= 0 || destinationPort > 65535) {
-            throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid destination port");
-        }
-        destinationPortProvided = true;
-    }
-
-    auto parseHostPort = [](const std::string& input, std::string& hostOut, int& portOut) {
-        hostOut = input;
-        portOut = DEFAULT_DEPIN_MSG_PORT;
-        size_t pos = input.rfind(':');
-        if (pos != std::string::npos && pos + 1 < input.size()) {
-            std::string portStr = input.substr(pos + 1);
-            bool numeric = !portStr.empty() && std::all_of(portStr.begin(), portStr.end(), [](unsigned char c) {
-                return std::isdigit(c);
-            });
-            if (numeric) {
-                hostOut = input.substr(0, pos);
-                portOut = atoi(portStr.c_str());
-            }
-        }
-    };
-
-    // If called from DePIN server (pre-authenticated), force local processing
-    bool localPoolActive = request.fSkipWalletCheck;
-
-    std::string gatewayHost;
-    int gatewayPortFromAddress = DEFAULT_DEPIN_MSG_PORT;
-    parseHostPort(destinationParam, gatewayHost, gatewayPortFromAddress);
-    if (!destinationPortProvided) {
-        destinationPort = gatewayPortFromAddress;
-    }
-    if (gatewayPortFromAddress <= 0 || gatewayPortFromAddress > 65535) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid gateway port");
-    }
-
-    std::string targetHost = gatewayHost;
-    int targetPort = destinationPort;
-    if (targetPort <= 0 || targetPort > 65535) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid destination port");
-    }
-    std::string ipAddress = targetHost;
 
     if (message.size() > MAX_DEPIN_MESSAGE_SIZE) {
         throw JSONRPCError(RPC_INVALID_PARAMETER,
@@ -703,64 +659,33 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
                                    message.size(), MAX_DEPIN_MESSAGE_SIZE));
     }
 
-    // Determine if this is a local or remote operation
-    // Local if: no gateway host specified OR server-authenticated request
-    localPoolActive = localPoolActive || gatewayHost.empty();
+    if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
+        throw JSONRPCError(RPC_MISC_ERROR, "DePIN messaging pool is not enabled");
+    }
 
-    // Remote scope query BEFORE taking cs_main/cs_wallet: this is network I/O
-    // against the serving node, and that node's INFO handler may itself take
-    // cs_main (pool-pubkey derivation). When client and server share a
-    // process -- a self-send, or the in-process tests -- holding the locks
-    // across the round-trip stalls both sides until the socket times out.
-    //
-    // The serving pool's root becomes the derivation stopAt and its
-    // maxRecipients the resolution limit: deriving to the absolute root would
-    // encrypt for holders of ancestors the pool does not serve, and its port
-    // exposes raw payloads, so an extra recipientKeys entry is an extra
-    // reader. No INFO, no send -- guessing the scope would be that leak.
-    std::string recipientsStopAt;
-    size_t recipientsLimit = MAX_DEPIN_RECIPIENTS;
-    if (!localPoolActive) {
-        CDepinMsgPoolClient::CDepinRemoteServerInfo remoteInfo;
-        std::string infoError;
-        if (!CDepinMsgPoolClient::GetRemoteServerInfo(gatewayHost, gatewayPortFromAddress,
-                                                      remoteInfo, infoError)) {
-            throw JSONRPCError(RPC_MISC_ERROR,
-                              strprintf("Failed to query the remote pool configuration (INFO): %s. "
-                                       "Refusing to guess the recipient scope.", infoError));
-        }
-        if (!IsDepinSectionOrRoot(token, remoteInfo.token)) {
-            throw JSONRPCError(RPC_INVALID_PARAMETER,
-                              strprintf("Token '%s' is not served by the remote pool (its root is '%s')",
-                                       token, remoteInfo.token));
-        }
-        recipientsStopAt = remoteInfo.token;
-        recipientsLimit = std::min<size_t>(remoteInfo.maxRecipients, MAX_DEPIN_RECIPIENTS);
+    // The token must be the pool root or a section inside its subtree.
+    // AddMessage would refuse anything else, but failing here avoids resolving
+    // recipients and encrypting for nothing.
+    if (!IsDepinSectionOrRoot(token, pDepinMsgPool->GetActiveToken())) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER,
+                          strprintf("Token '%s' is not configured token '%s' or a section inside it",
+                                   token, pDepinMsgPool->GetActiveToken()));
     }
 
     LOCK2(cs_main, pwallet->cs_wallet);
     EnsureWalletIsUnlocked(pwallet);
 
-    auto ensureWalletOwnsAddress = [&](const std::string& addr, bool enforceTokenOwnership) {
-        CTxDestination dest = DecodeDestination(addr);
+    {
+        const CTxDestination dest = DecodeDestination(senderAddress);
         if (!IsValidDestination(dest)) {
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
-                              strprintf("Invalid address: %s", addr));
+                              strprintf("Invalid address: %s", senderAddress));
         }
-
-        // Debug logging
-        isminetype mine = IsMine(*pwallet, dest);
-        LogPrintf("DEBUG depinsendmsg: Checking address %s, IsMine result: %d, wallet name: %s\n",
-                  addr, mine, pwallet->GetName());
-
-        if (!mine) {
+        if (!IsMine(*pwallet, dest)) {
             throw JSONRPCError(RPC_WALLET_ERROR,
-                              strprintf("Address %s is not part of this wallet", addr));
+                              strprintf("Address %s is not part of this wallet", senderAddress));
         }
-        if (!enforceTokenOwnership) {
-            return;
-        }
-    };
+    }
 
     std::map<std::string, std::vector<COutput>> mapAssetCoins;
     pwallet->AvailableAssets(mapAssetCoins);
@@ -774,49 +699,35 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_PARAMETER, ancestorsError);
     }
 
-    auto walletHasBranchTokenAtAddress = [&](const std::string& addr) {
-        for (const std::string& ancestor : tokenAncestors) {
-            if (!mapAssetCoins.count(ancestor)) {
-                continue;
-            }
-            for (const auto& out : mapAssetCoins[ancestor]) {
-                CTxDestination dest;
-                if (ExtractDestination(out.tx->tx->vout[out.i].scriptPubKey, dest)) {
-                    if (EncodeDestination(dest) == addr) {
-                        return true;
-                    }
-                }
+    bool walletHasBranchToken = false;
+    for (const std::string& ancestor : tokenAncestors) {
+        if (!mapAssetCoins.count(ancestor)) {
+            continue;
+        }
+        for (const auto& out : mapAssetCoins[ancestor]) {
+            CTxDestination dest;
+            if (ExtractDestination(out.tx->tx->vout[out.i].scriptPubKey, dest) &&
+                EncodeDestination(dest) == senderAddress) {
+                walletHasBranchToken = true;
+                break;
             }
         }
-        return false;
-    };
-
-    // ========== PREPARE MESSAGE (always local, regardless of destination) ==========
-
-    // Verify sender owns address and has a branch token (not needed if server-authenticated)
-    if (!request.fSkipWalletCheck) {
-        ensureWalletOwnsAddress(senderAddress, false);
-        if (!walletHasBranchTokenAtAddress(senderAddress)) {
-            throw JSONRPCError(RPC_WALLET_ERROR,
-                              strprintf("Wallet does not own %s or any of its ancestor tokens at %s",
-                                       token, senderAddress));
-        }
+        if (walletHasBranchToken) break;
+    }
+    if (!walletHasBranchToken) {
+        throw JSONRPCError(RPC_WALLET_ERROR,
+                          strprintf("Wallet does not own %s or any of its ancestor tokens at %s",
+                                   token, senderAddress));
     }
 
     // Recipients: the ACTIVE holders of the token and of every ancestor UP TO
-    // THE SERVING POOL'S ROOT, resolved by GetDepinAncestorRecipients -- exact
-    // reads, one flush, freeze/self-revoke respected, missing pubkeys skipped
-    // and counted. For a remote send the scope was fixed above from the remote
-    // INFO, before the locks; the local pool fills it here.
-    if (localPoolActive) {
-        if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
-            throw JSONRPCError(RPC_MISC_ERROR, "DePIN messaging pool is not enabled");
-        }
-        recipientsStopAt = pDepinMsgPool->GetActiveToken();
-        // Never zero: Initialize() rejects maxRecipients == 0, and the remote
-        // branch above gets the same guarantee from GetRemoteServerInfo().
-        recipientsLimit = std::min<size_t>(pDepinMsgPool->GetMaxRecipients(), MAX_DEPIN_RECIPIENTS);
-    }
+    // THE POOL'S ROOT, resolved by GetDepinAncestorRecipients -- exact reads,
+    // one flush, freeze/self-revoke respected, missing pubkeys skipped and
+    // counted. Deriving past the pool root would encrypt for holders the pool
+    // does not serve, and an extra recipientKeys entry is an extra reader.
+    // The limit is never zero: Initialize() rejects maxRecipients == 0.
+    const std::string recipientsStopAt = pDepinMsgPool->GetActiveToken();
+    const size_t recipientsLimit = std::min<size_t>(pDepinMsgPool->GetMaxRecipients(), MAX_DEPIN_RECIPIENTS);
 
     std::string error;
     CDepinAncestorRecipients branchRecipients;
@@ -868,51 +779,13 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
     LogPrintf("depinsendmsg: Encrypted message for %d recipients, total size: %d bytes\n",
               holders.size(), chatMsg.encryptedPayload.size());
 
-    // ALWAYS sign the message (security requirement)
-    // Client must always sign, even for remote sends
-    if (!request.fSkipWalletCheck) {
-        if (!SignDepinMessage(chatMsg, senderAddress)) {
-            throw JSONRPCError(RPC_WALLET_ERROR, "Failed to sign message");
-        }
-        LogPrintf("depinsendmsg: Message signed by %s\n", senderAddress);
-    } else {
-        // Server-authenticated path: signature already validated via challenge/response
-        // Use empty signature to indicate pre-authentication
-        chatMsg.signature.resize(65, 0);
-        LogPrintf("depinsendmsg: Using pre-authenticated signature (server path)\n");
+    // The sender always signs; the pool re-verifies the signature on insert.
+    if (!SignDepinMessage(chatMsg, senderAddress)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to sign message");
     }
 
-    // ========== DELIVER MESSAGE (local or remote) ==========
-
-    if (localPoolActive) {
-        // LOCAL: Add directly to pool
-        // Verify pool is available for local operations
-        if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
-            throw JSONRPCError(RPC_MISC_ERROR, "DePIN messaging pool is not enabled");
-        }
-
-        LogPrintf("depinsendmsg: Adding to local pool\n");
-        if (!pDepinMsgPool->AddMessage(chatMsg, error, request.fSkipWalletCheck)) {
-            throw JSONRPCError(RPC_MISC_ERROR, strprintf("Failed to add message: %s", error));
-        }
-    } else {
-        // REMOTE: Send serialized message to remote node
-        LogPrintf("depinsendmsg: Sending to remote node %s:%d\n", gatewayHost, gatewayPortFromAddress);
-
-        // Serialize the complete message
-        CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
-        ss << chatMsg;
-        std::vector<unsigned char> serializedMsg(ss.begin(), ss.end());
-        std::string hexMsg = HexStr(serializedMsg);
-
-        // Send to remote node (already authenticated)
-        UniValue remoteResult;
-        if (!CDepinMsgPoolClient::SubmitSerializedMessage(gatewayHost, gatewayPortFromAddress,
-                                                          hexMsg, remoteResult, error)) {
-            throw JSONRPCError(RPC_MISC_ERROR, strprintf("Failed to submit to remote: %s", error));
-        }
-
-        LogPrintf("depinsendmsg: Successfully submitted to remote node\n");
+    if (!pDepinMsgPool->AddMessage(chatMsg, error, /*skipSignatureCheck=*/false)) {
+        throw JSONRPCError(RPC_MISC_ERROR, strprintf("Failed to add message: %s", error));
     }
 
     UniValue result(UniValue::VOBJ);
@@ -931,38 +804,220 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
     result.push_back(Pair("skipped_no_pubkey", (int)branchRecipients.skippedNoPubKey));
     result.push_back(Pair("skipped_restricted", (int)branchRecipients.skippedRestricted));
     result.push_back(Pair("timestamp", chatMsg.timestamp));
-    result.push_back(Pair("destination", localPoolActive ? "local" : gatewayHost));
 
     return result;
 }
-#endif
+#endif // ENABLE_WALLET
+
+UniValue depinchallenge(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 2 || request.params.size() > 3)
+        throw std::runtime_error(
+                "depinchallenge \"token\" \"address\" ( \"type\" )\n"
+                "\nIssue a single-use challenge proving control of a holder's address to the\n"
+                "authenticated DePIN RPCs (depinreceivemsg, depinlistsections, depinclearmsg).\n"
+                "\nThe reply is encrypted for the address's revealed public key, so only its\n"
+                "owner can read the nonce. Within " + std::to_string(DEPIN_CHALLENGE_TIMEOUT) + " seconds, sign\n"
+                "  \"DEPIN-GET|<token>|<address>|<nonce>\"    (type receive)\n"
+                "  \"DEPIN-CLEAR|<token>|<address>|<nonce>\"  (type admin)\n"
+                "with signmessage (or depinsignchallenge on a node holding the key) and pass\n"
+                "the nonce and the signature to the RPC. A nonce is bound to token, address\n"
+                "and type, is consumed by its first valid use, and expires otherwise. Only a\n"
+                "holder gets one: the access checks run before anything is issued.\n"
+                "\nArguments:\n"
+                "1. \"token\"    (string, required) Pool root or a section inside it\n"
+                "2. \"address\"  (string, required) Holder address (P2PKH with its public key revealed on chain)\n"
+                "3. \"type\"     (string, optional, default=receive) \"receive\": holder of the token or an ancestor;\n"
+                "               \"admin\": owner of the token or an ancestor (for depinclearmsg)\n"
+                "\nResult (encrypted for the address, plus poolsig; decrypted content):\n"
+                "{\n"
+                "  \"challenge\": \"hex\",    (string) 64-hex nonce\n"
+                "  \"expires_in\": n,        (numeric) Seconds until it expires\n"
+                "  \"type\": \"receive\"      (string) Challenge type\n"
+                "}\n"
+                "\nExamples:\n"
+                + HelpExampleCli("depinchallenge", "\"&MYTOKEN/SEC\" \"NXholder...\"")
+                + HelpExampleCli("depinchallenge", "\"&MYTOKEN\" \"NXowner...\" \"admin\"")
+                + HelpExampleRpc("depinchallenge", "\"&MYTOKEN/SEC\", \"NXholder...\"")
+        );
+
+    if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
+        throw JSONRPCError(RPC_MISC_ERROR, "DePIN messaging pool is not enabled");
+    }
+
+    const std::string token = request.params[0].get_str();
+    const std::string address = request.params[1].get_str();
+    DepinChallengeType type = DepinChallengeType::RECEIVE;
+    if (request.params.size() >= 3 && !request.params[2].isNull() && !request.params[2].get_str().empty()) {
+        if (!ParseDepinChallengeType(request.params[2].get_str(), type)) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "type must be \"receive\" or \"admin\"");
+        }
+    }
+
+    std::string nonce;
+    std::string error;
+    CPubKey pubkey;
+    if (!IssueDepinChallengeForAddress(token, address, type, pDepinMsgPool->GetActiveToken(),
+                                       nonce, pubkey, error)) {
+        throw JSONRPCError(RPC_INVALID_REQUEST, error);
+    }
+
+    UniValue result(UniValue::VOBJ);
+    result.push_back(Pair("challenge", nonce));
+    result.push_back(Pair("expires_in", (int)DEPIN_CHALLENGE_TIMEOUT));
+    result.push_back(Pair("type", DepinChallengeTypeName(type)));
+    return FinishDepinResponse(result, "depinchallenge", token, address, "", &pubkey);
+}
+
+#ifdef ENABLE_WALLET
+UniValue depinsignchallenge(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 3 || request.params.size() > 4)
+        throw std::runtime_error(
+                "depinsignchallenge \"address\" \"token\" \"challenge\" ( \"type\" )\n"
+                "\nSign a DePIN challenge with a wallet key: the client half of depinchallenge.\n"
+                "Equivalent to signmessage over \"DEPIN-GET|token|address|challenge\" (receive)\n"
+                "or \"DEPIN-CLEAR|token|address|challenge\" (admin).\n"
+                "\nArguments:\n"
+                "1. \"address\"    (string, required) Wallet address the challenge was issued to\n"
+                "2. \"token\"      (string, required) Token the challenge was issued for\n"
+                "3. \"challenge\"  (string, required) The nonce (decrypted depinchallenge reply)\n"
+                "4. \"type\"       (string, optional, default=receive) \"receive\" or \"admin\"\n"
+                "\nResult:\n"
+                "{\n"
+                "  \"signature\": \"base64\",  (string) Compact signature to pass to the RPC\n"
+                "  \"preimage\": \"text\"      (string) What was signed\n"
+                "}\n"
+                "\nExamples:\n"
+                + HelpExampleCli("depinsignchallenge", "\"NXholder...\" \"&MYTOKEN/SEC\" \"<nonce>\"")
+                + HelpExampleRpc("depinsignchallenge", "\"NXowner...\", \"&MYTOKEN\", \"<nonce>\", \"admin\"")
+        );
+
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+
+    const std::string address = request.params[0].get_str();
+    const std::string token = request.params[1].get_str();
+    const std::string challenge = request.params[2].get_str();
+    DepinChallengeType type = DepinChallengeType::RECEIVE;
+    if (request.params.size() >= 4 && !request.params[3].isNull() && !request.params[3].get_str().empty()) {
+        if (!ParseDepinChallengeType(request.params[3].get_str(), type)) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "type must be \"receive\" or \"admin\"");
+        }
+    }
+
+    LOCK2(cs_main, pwallet->cs_wallet);
+    EnsureWalletIsUnlocked(pwallet);
+
+    std::string signature;
+    std::string error;
+    if (!SignDepinChallenge(pwallet, address, token, challenge, signature, error, type)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, error);
+    }
+
+    UniValue result(UniValue::VOBJ);
+    result.push_back(Pair("signature", signature));
+    result.push_back(Pair("preimage", DepinChallengePreimage(type, token, address, challenge)));
+    return result;
+}
+
+UniValue depindecrypt(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 2)
+        throw std::runtime_error(
+                "depindecrypt \"address\" \"encrypted\"\n"
+                "\nOpen an encrypted DePIN reply (depinchallenge, depinreceivemsg, ...) with a\n"
+                "wallet key: the client half of the transport layer, for scripting with\n"
+                "neurai-cli. Verify the reply's poolsig first; this RPC does not.\n"
+                "\nArguments:\n"
+                "1. \"address\"    (string, required) Wallet address the reply was encrypted for\n"
+                "2. \"encrypted\"  (string, required) The reply's \"encrypted\" hex\n"
+                "\nResult:\n"
+                "The decrypted JSON value (a string if the plaintext is not JSON)\n"
+                "\nExamples:\n"
+                + HelpExampleCli("depindecrypt", "\"NXholder...\" \"<hex>\"")
+                + HelpExampleRpc("depindecrypt", "\"NXholder...\", \"<hex>\"")
+        );
+
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+
+    const std::string address = request.params[0].get_str();
+    const std::string encryptedHex = request.params[1].get_str();
+
+    const CTxDestination dest = DecodeDestination(address);
+    const CKeyID* keyID = boost::get<CKeyID>(&dest);
+    if (!IsValidDestination(dest) || !keyID) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
+    }
+    if (!IsHex(encryptedHex)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "encrypted must be hex");
+    }
+
+    LOCK2(cs_main, pwallet->cs_wallet);
+    EnsureWalletIsUnlocked(pwallet);
+
+    CKey key;
+    if (!pwallet->GetKey(*keyID, key)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, strprintf("Private key for %s not in wallet", address));
+    }
+
+    CECIESEncryptedMessage ecies;
+    try {
+        CDataStream ss(ParseHex(encryptedHex), SER_NETWORK, PROTOCOL_VERSION);
+        ss >> ecies;
+    } catch (const std::exception& e) {
+        throw JSONRPCError(RPC_DESERIALIZATION_ERROR, strprintf("Failed to deserialize encrypted reply: %s", e.what()));
+    }
+
+    std::string plaintext;
+    std::string error;
+    if (!ECIESDecryptMessage(ecies, key, address, plaintext, error)) {
+        throw JSONRPCError(RPC_VERIFY_ERROR, strprintf("Failed to decrypt: %s", error));
+    }
+
+    UniValue decoded;
+    if (!decoded.read(plaintext)) {
+        return UniValue(plaintext);
+    }
+    return decoded;
+}
+#endif // ENABLE_WALLET
 
 // New secure endpoint: receives pre-encrypted and signed messages
 UniValue depinsubmitmsg(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() != 1)
         throw std::runtime_error(
-                "depinsubmitmsg \"hexmessage\"|{\"sender\":\"...\",\"encrypted\":\"...\"}\n"
+                "depinsubmitmsg {\"sender\":\"...\",\"encrypted\":\"...\"}\n"
                 "\nSubmit a pre-encrypted and signed DePIN message to the pool\n"
-                "\nThis is the secure protocol where the client prepares the complete message\n"
-                "(encryption + signature) and the server only validates and stores it.\n"
-                "\nThis command also supports an optional privacy layer where the entire message\n"
-                "is wrapped in a second layer of encryption for the server's pool key.\n"
+                "\nThe client prepares the complete message (recipient encryption + signature),\n"
+                "serializes it and wraps the hex in an ECIES envelope for the pool key\n"
+                "(depingetmsginfo.depinpoolpkey); the node opens the envelope, validates and\n"
+                "stores. The envelope is mandatory: there is no bare-hex form. The sender must\n"
+                "have revealed its public key on chain, and the reply is encrypted for it.\n"
                 "\nArguments:\n"
-                "1. \"hexmessage\"     (string) Hex-encoded serialized CDepinMessage\n"
-                "   OR\n"
-                "   {                  (json object) Wrapped encrypted message\n"
+                "1. {                  (json object, required) Wrapped encrypted message\n"
                 "     \"sender\": \"...\", (string, required) Sender address\n"
                 "     \"encrypted\": \"...\" (string, required) Hex-encoded ECIES wrapper\n"
                 "   }\n"
                 "\nResult:\n"
+                "{\n"
+                "  \"encrypted\": \"hex\",            (string) ECIES blob for the sender's revealed public key\n"
+                "  \"poolsig\": \"base64\"            (string) Pool-key signature over the encrypted hex\n"
+                "}\n"
+                "Decrypted, \"encrypted\" contains:\n"
                 "{\n"
                 "  \"result\": \"success\",           (string) Status\n"
                 "  \"hash\": \"hash\",                (string) Message hash\n"
                 "  \"timestamp\": n                  (numeric) Unix timestamp\n"
                 "}\n"
                 "\nExamples:\n"
-                + HelpExampleCli("depinsubmitmsg", "\"0a3f2e...\"")
+                + HelpExampleCli("depinsubmitmsg", "'{\"sender\":\"NX...\",\"encrypted\":\"...\"}'")
                 + HelpExampleRpc("depinsubmitmsg", "{\"sender\":\"NX...\",\"encrypted\":\"...\"}")
         );
 
@@ -970,47 +1025,43 @@ UniValue depinsubmitmsg(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_MISC_ERROR, "DePIN messaging pool is not enabled");
     }
 
+    // Only the wrapped form exists: the serialized message travels inside an
+    // ECIES envelope for the pool key, so an RPC proxy in between sees neither
+    // the sender's recipient list nor the payload.
+    if (!request.params[0].isObject()) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER,
+                          "depinsubmitmsg expects {\"sender\": address, \"encrypted\": hex}: wrap the "
+                          "serialized message for the pool key (depingetmsginfo.depinpoolpkey)");
+    }
+    const UniValue& wrapped = request.params[0].get_obj();
+    if (!wrapped.exists("sender") || !wrapped.exists("encrypted")) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Wrapped message must contain 'sender' and 'encrypted'");
+    }
+    const std::string wrappedSender = wrapped["sender"].get_str();
+    const std::string encryptedHex = wrapped["encrypted"].get_str();
+
+    CKey poolPrivKey;
+    CPubKey poolPubKey;
+    if (!GetDepinPoolKey(poolPrivKey, poolPubKey)) {
+        throw JSONRPCError(RPC_MISC_ERROR, "DePIN pool key not loaded: the service is not available on this node");
+    }
+
+    if (!IsHex(encryptedHex)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Encrypted data must be hex-encoded");
+    }
+
+    CECIESEncryptedMessage eciesMsg;
+    try {
+        CDataStream ss(ParseHex(encryptedHex), SER_NETWORK, PROTOCOL_VERSION);
+        ss >> eciesMsg;
+    } catch (const std::exception& e) {
+        throw JSONRPCError(RPC_DESERIALIZATION_ERROR, strprintf("Failed to deserialize ECIES wrapper: %s", e.what()));
+    }
+
     std::string hexMessage;
-    if (request.params[0].isObject()) {
-        UniValue wrapped = request.params[0].get_obj();
-        if (!wrapped.exists("sender") || !wrapped.exists("encrypted")) {
-            throw JSONRPCError(RPC_INVALID_PARAMETER, "Wrapped message must contain 'sender' and 'encrypted'");
-        }
-        std::string encryptedHex = wrapped["encrypted"].get_str();
-        
-#ifdef ENABLE_WALLET
-        // Get server's private key
-        CWallet* const pwallet = GetWalletForJSONRPCRequest(request);
-        CPubKey serverPubKey;
-        CKey serverPrivKey;
-        std::string derivationPath;
-        std::string error;
-        if (!pwallet || !DeriveDepinPoolKeys(pwallet, serverPrivKey, serverPubKey, derivationPath, error)) {
-             throw JSONRPCError(RPC_WALLET_ERROR, "Server privacy layer requires an active and unlocked wallet with a DePIN pool key");
-        }
-        
-        // Deserialize ECIES message
-        if (!IsHex(encryptedHex)) {
-            throw JSONRPCError(RPC_INVALID_PARAMETER, "Encrypted data must be hex-encoded");
-        }
-        
-        CECIESEncryptedMessage eciesMsg;
-        try {
-            CDataStream ss(ParseHex(encryptedHex), SER_NETWORK, PROTOCOL_VERSION);
-            ss >> eciesMsg;
-        } catch (const std::exception& e) {
-            throw JSONRPCError(RPC_DESERIALIZATION_ERROR, strprintf("Failed to deserialize ECIES wrapper: %s", e.what()));
-        }
-        
-        // Decrypt using server's private key
-        if (!ECIESDecryptMessage(eciesMsg, serverPrivKey, EncodeDestination(serverPubKey.GetID()), hexMessage, error)) {
-            throw JSONRPCError(RPC_VERIFY_ERROR, strprintf("Failed to decrypt outer privacy shell: %s", error));
-        }
-#else
-        throw JSONRPCError(RPC_MISC_ERROR, "Server privacy layer requires ENABLE_WALLET");
-#endif
-    } else {
-        hexMessage = request.params[0].get_str();
+    std::string decryptError;
+    if (!ECIESDecryptMessage(eciesMsg, poolPrivKey, EncodeDestination(poolPubKey.GetID()), hexMessage, decryptError)) {
+        throw JSONRPCError(RPC_VERIFY_ERROR, strprintf("Failed to decrypt outer privacy shell: %s", decryptError));
     }
 
     // Decode hex
@@ -1041,6 +1092,26 @@ UniValue depinsubmitmsg(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_PARAMETER,
                           strprintf("Token '%s' is not configured token '%s' or a section inside it",
                                    chatMsg.token, pDepinMsgPool->GetActiveToken()));
+    }
+
+    // The envelope's sender is who the reply is encrypted for; it must be the
+    // address that signed the message inside.
+    if (wrappedSender != chatMsg.senderAddress) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER,
+                          strprintf("Envelope sender %s does not match the signed message sender %s",
+                                   wrappedSender, chatMsg.senderAddress));
+    }
+
+    // The reply is encrypted for the sender, so the sender must have revealed
+    // its public key (the signature check below needs it anyway). Refused
+    // here, before anything is verified or stored: there is no plaintext
+    // fallback.
+    CPubKey senderPubKey;
+    std::string pubkeyError;
+    if (!CheckAddressHasPublicKey(chatMsg.senderAddress, senderPubKey, pubkeyError)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
+                          strprintf("Sender has no revealed public key, and responses are always encrypted: %s",
+                                   pubkeyError));
     }
 
     // ALWAYS verify signature (critical security check)
@@ -1075,25 +1146,29 @@ UniValue depinsubmitmsg(const JSONRPCRequest& request)
     result.push_back(Pair("hash", chatMsg.GetHash().ToString()));
     result.push_back(Pair("timestamp", chatMsg.timestamp));
 
-    return result;
+    // Encrypted for the sender, whose key was resolved above.
+    return FinishDepinResponse(result, "depinsubmitmsg", chatMsg.token, chatMsg.senderAddress, "", &senderPubKey);
 }
 
 // New non-wallet endpoint: retrieves encrypted pool messages (no decryption)
 UniValue depinreceivemsg(const JSONRPCRequest& request)
 {
-    if (request.fHelp || request.params.size() < 2 || request.params.size() > 5)
+    if (request.fHelp || request.params.size() < 4 || request.params.size() > 7)
         throw std::runtime_error(
-                "depinreceivemsg \"token\" \"address\" (timestamp) (\"after_hash\") (limit)\n"
-                "\nRetrieve DePIN messages from the pool with optional pagination\n"
-                "\nThis endpoint returns the messages. If the server has a DePIN pool key\n"
-                "and the requester's address has a revealed public key, the response will be\n"
-                "fully encrypted using the privacy layer.\n"
+                "depinreceivemsg \"token\" \"address\" \"challenge\" \"signature\" ( timestamp \"after_hash\" limit )\n"
+                "\nRetrieve a holder's DePIN messages from the pool, with optional pagination\n"
+                "\nThe caller proves control of the address with a challenge from depinchallenge\n"
+                "(type receive) signed by that address. The reply is always encrypted for the\n"
+                "address's revealed public key and signed with the pool key (poolsig over\n"
+                "\"DEPIN-RESP|depinreceivemsg|<token>|<address>|<challenge>|<sha256 of the encrypted hex>\").\n"
                 "\nArguments:\n"
-                "1. \"token\"      (string, required) Token name\n"
-                "2. \"address\"    (string, required) Neurai address (used as access selector and encryption target)\n"
-                "3. timestamp    (numeric, optional) Unix time. Return only messages with timestamp >= (timestamp-1 if timestamp>0)\n"
-                "4. \"after_hash\" (string, optional) Hash of last received message for pagination. Empty \"\" starts from beginning\n"
-                "5. limit        (numeric, optional) Maximum messages to return. 0 or omitted = no limit (return all)\n"
+                "1. \"token\"      (string, required) Token name (pool root or a section inside it)\n"
+                "2. \"address\"    (string, required) Holder address (access selector and encryption target)\n"
+                "3. \"challenge\"  (string, required) Nonce from depinchallenge, issued for this token and address\n"
+                "4. \"signature\"  (string, required) Base64 signature of \"DEPIN-GET|<token>|<address>|<challenge>\"\n"
+                "5. timestamp    (numeric, optional) Unix time. Return only messages with timestamp >= (timestamp-1 if timestamp>0)\n"
+                "6. \"after_hash\" (string, optional) Hash of last received message for pagination. Empty \"\" starts from beginning\n"
+                "7. limit        (numeric, optional) Maximum messages to return. 0 or omitted = no limit (return all)\n"
                 "\nResult (without pagination - backward compatible):\n"
                 "[\n"
                 "  {\n"
@@ -1118,11 +1193,9 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
                 "  \"encrypted\": \"hex_blob\"        (string) Full JSON response encrypted with ECIES\n"
                 "}\n"
                 "\nExamples:\n"
-                + HelpExampleCli("depinreceivemsg", "\"TOKEN\" \"NeuraiAddress\"")
-                + HelpExampleCli("depinreceivemsg", "\"TOKEN\" \"NeuraiAddress\" 1730000000")
-                + HelpExampleCli("depinreceivemsg", "\"TOKEN\" \"NeuraiAddress\" 0 \"\" 5")
-                + HelpExampleCli("depinreceivemsg", "\"TOKEN\" \"NeuraiAddress\" 0 \"abc123...\" 5")
-                + HelpExampleRpc("depinreceivemsg", "\"TOKEN\", \"NeuraiAddress\", 0, \"\", 5")
+                + HelpExampleCli("depinreceivemsg", "\"&TOKEN\" \"NXaddress\" \"<challenge>\" \"<signature>\"")
+                + HelpExampleCli("depinreceivemsg", "\"&TOKEN\" \"NXaddress\" \"<challenge>\" \"<signature>\" 0 \"\" 5")
+                + HelpExampleRpc("depinreceivemsg", "\"&TOKEN\", \"NXaddress\", \"<challenge>\", \"<signature>\", 0, \"\", 5")
         );
 
     if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
@@ -1133,10 +1206,9 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
     const std::string address = request.params[1].get_str();
 
     // The token may be a section inside the configured subtree; it then acts
-    // as the tab scope below. NOTE this scope is convenience, not access
-    // control: this RPC does not require proof of ownership (unlike
-    // AUTH+GETMESSAGES on the gateway) -- what an address can actually read is
-    // fixed cryptographically by recipientKeys + ECIES.
+    // as the tab scope below. The challenge proves control of the address;
+    // what the address can actually read is fixed cryptographically by
+    // recipientKeys + ECIES regardless.
     if (!IsDepinSectionOrRoot(token, pDepinMsgPool->GetActiveToken())) {
         throw JSONRPCError(RPC_INVALID_PARAMETER,
                           strprintf("Token '%s' is not configured token '%s' or a section inside it",
@@ -1149,9 +1221,30 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
     }
 
+    // Responses are always encrypted for the requesting address, so it must
+    // have revealed its public key on chain (the same condition it needs to
+    // receive messages at all).
+    CPubKey clientPubKey;
+    std::string pubkeyError;
+    if (!CheckAddressHasPublicKey(address, clientPubKey, pubkeyError)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
+                          strprintf("Address has no revealed public key, and responses are always encrypted: %s",
+                                   pubkeyError));
+    }
+
+    // Proof of control: form, existence, signature, access re-check, consume
+    // (in that order; see CheckDepinChallengeAuth).
+    const std::string challenge = request.params[2].get_str();
+    const std::string signature = request.params[3].get_str();
+    std::string authError;
+    if (!CheckDepinChallengeAuth(DepinChallengeType::RECEIVE, token, address, challenge, signature,
+                                 pDepinMsgPool->GetActiveToken(), authError)) {
+        throw JSONRPCError(RPC_INVALID_REQUEST, strprintf("Challenge authentication failed: %s", authError));
+    }
+
     int64_t fromTimestamp = 0;
-    if (request.params.size() >= 3 && !request.params[2].isNull()) {
-        fromTimestamp = request.params[2].get_int64();
+    if (request.params.size() >= 5 && !request.params[4].isNull()) {
+        fromTimestamp = request.params[4].get_int64();
         if (fromTimestamp < 0) {
             throw JSONRPCError(RPC_INVALID_PARAMETER, "timestamp must be >= 0");
         }
@@ -1162,8 +1255,8 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
 
     // Parse after_hash parameter (cursor for pagination)
     std::string afterHash = "";
-    if (request.params.size() >= 4 && !request.params[3].isNull()) {
-        afterHash = request.params[3].get_str();
+    if (request.params.size() >= 6 && !request.params[5].isNull()) {
+        afterHash = request.params[5].get_str();
         // Validate hash format (64 hex chars)
         if (!afterHash.empty() && !IsHex(afterHash)) {
             throw JSONRPCError(RPC_INVALID_PARAMETER, "after_hash must be a valid hex string");
@@ -1175,8 +1268,8 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
 
     // Parse limit parameter
     int64_t limit = 0;  // 0 = no limit
-    if (request.params.size() >= 5 && !request.params[4].isNull()) {
-        limit = request.params[4].get_int64();
+    if (request.params.size() >= 7 && !request.params[6].isNull()) {
+        limit = request.params[6].get_int64();
         if (limit < 0) {
             throw JSONRPCError(RPC_INVALID_PARAMETER, "limit must be >= 0");
         }
@@ -1278,51 +1371,24 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
         result = resultArray;
     }
 
-    // Privacy Layer: Encrypt the whole JSON response if server has wallet and client has pubkey
-#ifdef ENABLE_WALLET
-    CWallet* const pwallet = GetWalletForJSONRPCRequest(request);
-    CPubKey clientPubKey;
-    std::string errorEncryption;
-    if (pwallet && CheckAddressHasPublicKey(address, clientPubKey, errorEncryption)) {
-        CPubKey serverPubKey;
-        CKey serverPrivKey;
-        std::string derivationPath;
-        std::string error;
-        if (DeriveDepinPoolKeys(pwallet, serverPrivKey, serverPubKey, derivationPath, error)) {
-            // Encrypt for client using server's private key and client's public key
-            std::map<std::string, CPubKey> recipients;
-            recipients[address] = clientPubKey;
-            
-            CECIESEncryptedMessage eciesMsg;
-            if (ECIESEncryptMessage(result.write(), recipients, eciesMsg, error)) {
-                CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
-                ss << eciesMsg;
-                UniValue encryptedRes(UniValue::VOBJ);
-                encryptedRes.push_back(Pair("encrypted", HexStr(ss.begin(), ss.end())));
-                return encryptedRes;
-            }
-        }
-    }
-#endif
-
-    return result;
+    // Transport layer: the whole result encrypted for the address's revealed
+    // public key, then signed with the pool key (encrypt-then-sign).
+    return FinishDepinResponse(result, "depinreceivemsg", token, address, challenge, &clientPubKey);
 }
 
-#ifdef ENABLE_DEPIN_GATEWAY
+#ifdef ENABLE_WALLET
 UniValue depingetmsg(const JSONRPCRequest& request)
 {
-    if (request.fHelp || request.params.size() < 1 || request.params.size() > 3)
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 2)
         throw std::runtime_error(
-                "depingetmsg \"token\" (\"ip[:port]\"|\"fromaddress\") (\"fromaddress\")\n"
-                "\nRetrieve and decrypt DePIN messages for your addresses\n"
+                "depingetmsg \"token\" ( \"fromaddress\" )\n"
+                "\nRetrieve and decrypt this node's pool messages for your wallet addresses\n"
+                "\nReads the local pool only (-depinmsg must be enabled on this node). To read\n"
+                "a remote pool, query its depinreceivemsg and decrypt client-side.\n"
                 "\nArguments:\n"
                 "1. \"token\"        (string, required) Token name. May be a section (sub-asset) such as\n"
                 "                    \"&TOKEN/GENERAL\"; only that section's subtree is returned\n"
-                "2. \"ip[:port]\" OR \"fromaddress\" (string, optional)\n"
-                "                    - IP address with optional port (e.g., \"192.168.1.31\" or \"192.168.1.31:19002\")\n"
-                "                    - OR Neurai address for local query with specific address\n"
-                "                    - Omit for local query with all addresses\n"
-                "3. \"fromaddress\"  (string, optional) Specific address to decrypt with (only if arg 2 is an IP)\n"
+                "2. \"fromaddress\"  (string, optional) Decrypt only with this wallet address\n"
                 "\nResult:\n"
                 "[\n"
                 "  {\n"
@@ -1338,210 +1404,27 @@ UniValue depingetmsg(const JSONRPCRequest& request)
                 "  ...\n"
                 "]\n"
                 "\nExamples:\n"
-                + HelpExampleCli("depingetmsg", "\"MYTOKEN\"") + " (local, all addresses)\n"
-                + HelpExampleCli("depingetmsg", "\"MYTOKEN\" \"NXyouraddress...\"") + " (local with specific address)\n"
-                + HelpExampleCli("depingetmsg", "\"MYTOKEN\" \"192.168.1.78\"") + " (remote, default port 19002)\n"
-                + HelpExampleCli("depingetmsg", "\"MYTOKEN\" \"192.168.1.78:19002\"") + " (remote with explicit port)\n"
-                + HelpExampleCli("depingetmsg", "\"MYTOKEN\" \"192.168.1.78\" \"NXyouraddress...\"") + " (remote, default port, specific address)\n"
-                + HelpExampleCli("depingetmsg", "\"MYTOKEN\" \"192.168.1.78:19002\" \"NXyouraddress...\"") + " (remote with port and address)\n"
-                + HelpExampleRpc("depingetmsg", "\"MYTOKEN\"")
+                + HelpExampleCli("depingetmsg", "\"&MYTOKEN\"") + " (all wallet addresses)\n"
+                + HelpExampleCli("depingetmsg", "\"&MYTOKEN\" \"NXyouraddress...\"") + " (specific address)\n"
+                + HelpExampleRpc("depingetmsg", "\"&MYTOKEN\"")
         );
 
     std::string token = request.params[0].get_str();
-    std::string ipAddress;
-    int port = DEFAULT_DEPIN_MSG_PORT;
-    bool isRemoteQuery = false;
-    std::string specificAddress;
 
-    // Check if this is a remote query
-    // isNull() as well as size(): the "destination_or_address|fromaddress" alias
-    // means a named call can never leave a hole here today, but that is a
-    // property of the argNames list rather than of this code, and an edit to
-    // that list would otherwise turn into a type error thrown from here.
+    // isNull() as well as size(): a named call that skips fromaddress leaves a
+    // JSON null here, not a missing slot.
+    std::string specificAddress;
     if (request.params.size() >= 2 && !request.params[1].isNull() &&
         !request.params[1].get_str().empty()) {
-        std::string param1 = request.params[1].get_str();
-
-        // Check if param1 is an IP address (remote) or a Neurai address (local with fromaddress)
-        // Neurai addresses start with 'N', IPs start with digits
-        if (param1[0] >= '0' && param1[0] <= '9') {
-            // This is a remote query (IP address)
-            isRemoteQuery = true;
-
-            // Check if IP contains port (format: IP:PORT)
-            size_t colonPos = param1.find(':');
-            if (colonPos != std::string::npos) {
-                // Split IP:PORT
-                ipAddress = param1.substr(0, colonPos);
-                std::string portStr = param1.substr(colonPos + 1);
-
-                try {
-                    port = std::stoi(portStr);
-                    if (port <= 0 || port > 65535) {
-                        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid port number");
-                    }
-                } catch (...) {
-                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid port in IP:PORT format");
-                }
-            } else {
-                // Just IP, use default port
-                ipAddress = param1;
-            }
-
-            // params[2] would be fromaddress if present
-            if (request.params.size() >= 3 && !request.params[2].isNull() &&
-                !request.params[2].get_str().empty()) {
-                specificAddress = request.params[2].get_str();
-            }
-        } else {
-            // This is a local query with fromaddress
-            specificAddress = param1;
-        }
+        specificAddress = request.params[1].get_str();
     }
 
-    // Validate address if specified
     if (!specificAddress.empty()) {
         CTxDestination dest = DecodeDestination(specificAddress);
         if (!IsValidDestination(dest)) {
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
                               strprintf("Invalid fromaddress: %s", specificAddress));
         }
-    }
-
-    // Query remote node if specified
-    if (isRemoteQuery) {
-        CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
-        if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
-            return NullUniValue;
-        }
-
-        LOCK2(cs_main, pwallet->cs_wallet);
-        EnsureWalletIsUnlocked(pwallet);
-
-        // Get local addresses that own a token of the branch: the requested
-        // token, any of its ancestors (they grant the subtree), or any section
-        // inside it (their holders can decrypt their own section's messages).
-        std::set<std::string> myAddresses;
-        auto assetInBranch = [&token](const std::string& name) {
-            return IsDepinSectionOrRoot(name, token) || IsDepinSectionOrRoot(token, name);
-        };
-
-        {
-            std::map<std::string, std::vector<COutput>> mapAssetCoins;
-            pwallet->AvailableAssets(mapAssetCoins);
-
-            std::set<std::string> branchAddresses;
-            for (const auto& assetEntry : mapAssetCoins) {
-                if (!assetInBranch(assetEntry.first)) {
-                    continue;
-                }
-                for (const auto& out : assetEntry.second) {
-                    CTxDestination dest;
-                    if (ExtractDestination(out.tx->tx->vout[out.i].scriptPubKey, dest)) {
-                        branchAddresses.insert(EncodeDestination(dest));
-                    }
-                }
-            }
-
-            if (!specificAddress.empty()) {
-                if (!branchAddresses.count(specificAddress)) {
-                    throw JSONRPCError(RPC_WALLET_ERROR,
-                                      strprintf("Address %s does not own %s or any related branch token",
-                                               specificAddress, token));
-                }
-                myAddresses.insert(specificAddress);
-            } else {
-                myAddresses = branchAddresses;
-                if (myAddresses.empty()) {
-                    throw JSONRPCError(RPC_WALLET_ERROR,
-                                      strprintf("Wallet does not own any %s tokens", token));
-                }
-            }
-        }
-
-        // Query remote node
-        std::vector<CDepinMessage> remoteMessages;
-        std::string error;
-        std::vector<std::string> addressList(myAddresses.begin(), myAddresses.end());
-
-        if (!QueryRemoteDepinMsgPool(pwallet, ipAddress, port, token, addressList, remoteMessages, error)) {
-            throw JSONRPCError(RPC_MISC_ERROR, error);
-        }
-
-        // Get remote server's message expiry configuration
-        int64_t remoteExpiryHours = DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS;
-        std::string configError;
-
-        if (CDepinMsgPoolClient::GetRemoteServerInfo(ipAddress, port, remoteExpiryHours, configError)) {
-            LogPrint(BCLog::NET, "Remote server expiry: %d hours\n", remoteExpiryHours);
-        } else {
-            LogPrint(BCLog::NET, "Warning: Could not get remote server config, using default expiry time: %s\n", configError.c_str());
-        }
-
-        int64_t expiryTime = remoteExpiryHours * 3600;  // Convert hours to seconds
-
-        // Decrypt received messages
-        UniValue result(UniValue::VARR);
-
-        // Process each remote message with robust error handling
-        for (size_t i = 0; i < remoteMessages.size(); i++) {
-            try {
-                const CDepinMessage& msg = remoteMessages[i];
-
-                // Validate message fields before processing
-                if (msg.token.empty() || msg.senderAddress.empty() || msg.encryptedPayload.empty()) {
-                    LogPrintf("Warning: Skipping invalid remote message (index %d): missing required fields\n", i);
-                    continue;
-                }
-
-                // Tab scope: the requested token bounds what this call shows,
-                // even if an older server returned the whole pool.
-                if (!IsDepinSectionOrRoot(msg.token, token)) {
-                    continue;
-                }
-
-                // Try to decrypt with each owned address
-                bool decrypted = false;
-                for (const std::string& myAddress : myAddresses) {
-                    std::string decryptedMessage;
-                    std::string decryptError;
-
-                    // ECIES shared message contains an AES key encrypted for each holder
-                    // DecryptMessageForAddress will find and decrypt the key for myAddress
-                    try {
-                        if (DecryptMessageForAddress(msg.encryptedPayload, myAddress, decryptedMessage, decryptError)) {
-                            UniValue msgObj(UniValue::VOBJ);
-                            msgObj.push_back(Pair("recipient", myAddress));
-                            msgObj.push_back(Pair("sender", msg.senderAddress));
-                            msgObj.push_back(Pair("token", msg.token));
-                            msgObj.push_back(Pair("message", decryptedMessage));
-                            std::string msgTypeStr = (msg.messageType == 0x01) ? "private" : "group";
-                            msgObj.push_back(Pair("message_type", msgTypeStr));
-                            msgObj.push_back(Pair("timestamp", msg.timestamp));
-                            msgObj.push_back(Pair("date", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", msg.timestamp)));
-                            msgObj.push_back(Pair("expires", DateTimeStrFormat("%Y-%m-%d %H:%M:%S",
-                                                                               msg.timestamp + expiryTime)));
-                            result.push_back(msgObj);
-                            decrypted = true;
-                            break;  // Only add once per message
-                        }
-                    } catch (const std::exception& e) {
-                        LogPrintf("Error: Exception while decrypting message from %s for address %s: %s\n",
-                                 msg.senderAddress.c_str(), myAddress.c_str(), e.what());
-                        // Continue trying other addresses
-                    }
-                }
-
-                if (!decrypted) {
-                    LogPrint(BCLog::NET, "Warning: Could not decrypt message from %s with any owned address\n", msg.senderAddress.c_str());
-                }
-            } catch (const std::exception& e) {
-                LogPrintf("Error: Exception while processing remote message (index %d): %s\n", i, e.what());
-                // Continue with next message
-            }
-        }
-
-        return result;
     }
 
     // Local query
@@ -1653,302 +1536,130 @@ UniValue depingetmsg(const JSONRPCRequest& request)
 
     return result;
 }
-#endif
+#endif // ENABLE_WALLET
 
 UniValue depinclearmsg(const JSONRPCRequest& request)
 {
-    if (request.fHelp || request.params.size() > 2)
+    if (request.fHelp || request.params.size() < 4 || request.params.size() > 5)
         throw std::runtime_error(
-                "depinclearmsg ( \"all\" | hours ) ( \"scope\" )\n"
-                "\nRemove messages from DePIN messaging pool\n"
+                "depinclearmsg \"scope\" \"address\" \"challenge\" \"signature\" ( \"all\" | hours )\n"
+                "\nRemove messages from the DePIN pool: an owner-level operation.\n"
+                "\nThe caller proves it owns the scope's token (or an ancestor's) with an\n"
+                "admin challenge from depinchallenge, issued for exactly `scope` (\"\" means\n"
+                "the pool root, and the challenge is requested for the root by name). A\n"
+                "challenge for one section never authorises a wider or a sibling purge.\n"
                 "\nArguments:\n"
-                "1. mode    (string or numeric, optional) Cleanup mode:\n"
-                "           - omitted: Remove only expired messages (default)\n"
-                "           - \"all\": Remove ALL messages from pool\n"
-                "           - <hours>: Remove messages older than specified hours (numeric)\n"
-                "2. scope   (string, optional) Section token. When given, only messages of that\n"
-                "           section's subtree are removed; parents and siblings are untouched.\n"
-                "           Omitted or \"\" keeps the historical pool-wide behavior.\n"
+                "1. \"scope\"      (string, required) Section token whose subtree is purged; \"\" for the whole pool\n"
+                "2. \"address\"    (string, required) Owner address the challenge was issued to\n"
+                "3. \"challenge\"  (string, required) Nonce from depinchallenge (type admin) for (scope, address)\n"
+                "4. \"signature\"  (string, required) Base64 signature of \"DEPIN-CLEAR|<scope>|<address>|<challenge>\"\n"
+                "5. mode         (string or numeric, optional) Cleanup mode:\n"
+                "                - omitted: Remove only expired messages (default)\n"
+                "                - \"all\": Remove ALL messages of the scope\n"
+                "                - <hours>: Remove messages older than specified hours (numeric)\n"
                 "\nResult:\n"
                 "{\n"
                 "  \"removed\": n,        (numeric) Number of messages removed\n"
                 "  \"remaining\": n       (numeric) Number of messages remaining\n"
                 "}\n"
                 "\nExamples:\n"
-                + HelpExampleCli("depinclearmsg", "")
-                + HelpExampleCli("depinclearmsg", "\"all\"")
-                + HelpExampleCli("depinclearmsg", "7")
-                + HelpExampleCli("depinclearmsg", "\"all\" \"&TOKEN/GENERAL\"")
-                + HelpExampleRpc("depinclearmsg", "")
-                + HelpExampleRpc("depinclearmsg", "\"all\"")
-                + HelpExampleRpc("depinclearmsg", "7")
+                + HelpExampleCli("depinclearmsg", "\"\" \"NXowner...\" \"<challenge>\" \"<signature>\"")
+                + HelpExampleCli("depinclearmsg", "\"&TOKEN/GENERAL\" \"NXowner...\" \"<challenge>\" \"<signature>\" \"all\"")
+                + HelpExampleCli("depinclearmsg", "\"\" \"NXowner...\" \"<challenge>\" \"<signature>\" 7")
+                + HelpExampleRpc("depinclearmsg", "\"&TOKEN/GENERAL\", \"NXowner...\", \"<challenge>\", \"<signature>\", \"all\"")
         );
 
     if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
         throw JSONRPCError(RPC_MISC_ERROR, "DePIN messaging pool is not enabled");
     }
 
-    // Optional scope: bounds every mode below to one section's subtree.
-    std::string scopeToken;
-    if (request.params.size() >= 2 && !request.params[1].isNull() &&
-        !request.params[1].get_str().empty()) {
-        scopeToken = request.params[1].get_str();
-        if (!IsDepinSectionOrRoot(scopeToken, pDepinMsgPool->GetActiveToken())) {
-            throw JSONRPCError(RPC_INVALID_PARAMETER,
-                              strprintf("Scope '%s' is not configured token '%s' or a section inside it",
-                                       scopeToken, pDepinMsgPool->GetActiveToken()));
-        }
+    const std::string poolRoot = pDepinMsgPool->GetActiveToken();
+
+    // Scope first, normalised before anything is authenticated: "" is the
+    // pool root, and the challenge was issued for the root by its name.
+    std::string scopeToken = request.params[0].isNull() ? std::string() : request.params[0].get_str();
+    if (scopeToken.empty()) {
+        scopeToken = poolRoot;
+    } else if (!IsDepinSectionOrRoot(scopeToken, poolRoot)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER,
+                          strprintf("Scope '%s' is not configured token '%s' or a section inside it",
+                                   scopeToken, poolRoot));
     }
+    // The root's subtree is the whole pool; keep the pool-wide primitives.
+    const bool wholePool = (scopeToken == poolRoot);
 
-    size_t sizeBefore = pDepinMsgPool->Size();
-    int64_t currentTime = GetTime();
+    const std::string address = request.params[1].get_str();
+    const std::string challenge = request.params[2].get_str();
+    const std::string signature = request.params[3].get_str();
+    const UniValue modeParam = request.params.size() >= 5 ? request.params[4] : NullUniValue;
 
-    // Determine cleanup mode. Only an ABSENT or null mode means the default:
-    // an empty string stays an error, exactly as before sections (the gateway
-    // pre-auth maps its ""/null mode to null before calling here).
-    if (request.params.size() == 0 || request.params[0].isNull()) {
-        // Default: Remove only expired messages
-        pDepinMsgPool->RemoveExpiredMessages(currentTime, scopeToken);
-    } else {
-        int64_t hoursThreshold = 0;
-        if (request.params[0].isStr() && request.params[0].get_str() == "all") {
-            // Mode: Remove ALL messages (of the scope, when one was given)
-            if (scopeToken.empty()) {
-                pDepinMsgPool->Clear();
-            } else {
-                pDepinMsgPool->ClearScope(scopeToken);
-            }
-        } else if (ParseFlexibleInt64(request.params[0], hoursThreshold)) {
-            // Mode: Remove messages older than X hours. Accepts the number sent
-            // over JSON-RPC and the string neurai-cli produces; anything that is
-            // not a strict integer falls through to the error below rather than
-            // being coerced.
+    // The mode is validated BEFORE the challenge is consumed: a typo must not
+    // burn a nonce. Only an absent or null mode means the default; an empty
+    // string stays an error.
+    enum { MODE_EXPIRED, MODE_ALL, MODE_HOURS } mode = MODE_EXPIRED;
+    int64_t hoursThreshold = 0;
+    if (!modeParam.isNull()) {
+        if (modeParam.isStr() && modeParam.get_str() == "all") {
+            mode = MODE_ALL;
+        } else if (ParseFlexibleInt64(modeParam, hoursThreshold)) {
+            // Accepts the number sent over JSON-RPC and the string neurai-cli
+            // produces; anything that is not a strict integer is an error
+            // rather than being coerced.
             if (hoursThreshold < 0) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Hours threshold must be positive");
             }
-            // The multiplication below overflows for absurd inputs, which is
-            // reachable now that the CLI can get here at all. A threshold past
-            // the pool's own expiry already removes everything, so capping is
-            // not a loss of function.
+            // The multiplication below overflows for absurd inputs. A
+            // threshold past the pool's own expiry already removes everything,
+            // so capping is not a loss of function.
             const int64_t maxHours = std::numeric_limits<int64_t>::max() / 3600;
             if (hoursThreshold > maxHours) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER,
                                    strprintf("Hours threshold must not exceed %d", maxHours));
             }
-
-            int64_t ageThreshold = hoursThreshold * 3600; // Convert hours to seconds
-            pDepinMsgPool->RemoveMessagesOlderThan(currentTime, ageThreshold, scopeToken);
+            mode = MODE_HOURS;
         } else {
             throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter. Use \"all\" or a numeric value for hours");
         }
     }
 
-    size_t sizeAfter = pDepinMsgPool->Size();
+    CPubKey clientPubKey;
+    std::string pubkeyError;
+    if (!CheckAddressHasPublicKey(address, clientPubKey, pubkeyError)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
+                          strprintf("Address has no revealed public key, and responses are always encrypted: %s",
+                                   pubkeyError));
+    }
+
+    // Owner-level proof for exactly this scope, consumed here.
+    std::string authError;
+    if (!CheckDepinChallengeAuth(DepinChallengeType::ADMIN, scopeToken, address, challenge, signature,
+                                 poolRoot, authError)) {
+        throw JSONRPCError(RPC_INVALID_REQUEST, strprintf("Challenge authentication failed: %s", authError));
+    }
+
+    const size_t sizeBefore = pDepinMsgPool->Size();
+    const int64_t currentTime = GetTime();
+    const std::string purgeScope = wholePool ? std::string() : scopeToken;
+
+    if (mode == MODE_EXPIRED) {
+        pDepinMsgPool->RemoveExpiredMessages(currentTime, purgeScope);
+    } else if (mode == MODE_ALL) {
+        if (wholePool) {
+            pDepinMsgPool->Clear();
+        } else {
+            pDepinMsgPool->ClearScope(scopeToken);
+        }
+    } else {
+        pDepinMsgPool->RemoveMessagesOlderThan(currentTime, hoursThreshold * 3600, purgeScope);
+    }
+
+    const size_t sizeAfter = pDepinMsgPool->Size();
 
     UniValue result(UniValue::VOBJ);
     result.push_back(Pair("removed", (int)(sizeBefore - sizeAfter)));
     result.push_back(Pair("remaining", (int)sizeAfter));
 
-    return result;
-}
-#endif // ENABLE_WALLET
-
-UniValue depingetpoolcontent(const JSONRPCRequest& request)
-{
-    if (request.fHelp || request.params.size() > 7)
-        throw std::runtime_error(
-            "depingetpoolcontent ( verbose sender_address recipient_address start_time end_time limit offset )\n"
-            "\nInspect the contents of the DePIN message pool.\n"
-            "\nArguments:\n"
-            "1. verbose           (boolean, \"all\", or \"raw\", optional, default=false) Show detailed message structure. Use \"all\" for all messages, \"raw\" to show encrypted hex data\n"
-            "2. sender_address    (string, optional) Filter by sender address\n"
-            "3. recipient_address (string, optional) Filter by recipient address\n"
-            "4. start_time        (numeric, optional) Filter messages after timestamp\n"
-            "5. end_time          (numeric, optional) Filter messages before timestamp\n"
-            "6. limit             (numeric, optional, default=100) Maximum messages to return\n"
-            "7. offset            (numeric, optional, default=0) Skip first N messages\n"
-            "\nResult (verbose=false):\n"
-            "[\n"
-            "  {\n"
-            "    \"hash\": \"hex\",\n"
-            "    \"sender\": \"address\",\n"
-            "    \"message_type\": \"private|group\",\n"
-            "    \"timestamp\": n,\n"
-            "    \"date\": \"YYYY-MM-DD HH:MM:SS\",\n"
-            "    \"expires\": \"YYYY-MM-DD HH:MM:SS\",\n"
-            "    \"recipients\": n,\n"
-            "    \"size\": n\n"
-            "  },\n"
-            "  ...\n"
-            "]\n"
-            "\nResult (verbose=true):\n"
-            "[\n"
-            "  {\n"
-            "    \"hash\": \"hex\",\n"
-            "    \"sender\": \"address\",\n"
-            "    \"message_type\": \"private|group\",\n"
-            "    \"timestamp\": n,\n"
-            "    \"date\": \"YYYY-MM-DD HH:MM:SS\",\n"
-            "    \"expires\": \"YYYY-MM-DD HH:MM:SS\",\n"
-            "    \"recipients\": [\n"
-            "      {\n"
-            "        \"address\": \"address\",\n"
-            "        \"encrypted_size\": n\n"
-            "      },\n"
-            "      ...\n"
-            "    ],\n"
-            "    \"signature_size\": n,\n"
-            "    \"total_encrypted_size\": n,\n"
-            "    \"total_size\": n\n"
-            "  },\n"
-            "  ...\n"
-            "]\n"
-            "\nExamples:\n"
-            + HelpExampleCli("depingetpoolcontent", "")
-            + HelpExampleCli("depingetpoolcontent", "true")
-            + HelpExampleCli("depingetpoolcontent", "all")
-            + HelpExampleCli("depingetpoolcontent", "raw")
-            + HelpExampleCli("depingetpoolcontent", "false \"NXXaddress...\"")
-            + HelpExampleRpc("depingetpoolcontent", "true")
-        );
-
-    // Check if DePIN pool is enabled
-    if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
-        throw JSONRPCError(RPC_MISC_ERROR, "DePIN message pool is not enabled");
-    }
-
-    // Parse parameters
-    bool fVerbose = false;
-    bool fShowAll = false;
-    bool fShowRaw = false;
-    std::string senderFilter = "";
-    std::string recipientFilter = "";
-    int64_t startTime = 0;
-    int64_t endTime = std::numeric_limits<int64_t>::max();
-    int limit = 100;
-    int offset = 0;
-
-    if (request.params.size() > 0 && !request.params[0].isNull()) {
-        if (request.params[0].isBool()) {
-            fVerbose = request.params[0].get_bool();
-        } else if (request.params[0].isNum()) {
-            fVerbose = request.params[0].get_int() != 0;
-        } else if (request.params[0].isStr()) {
-            std::string val = request.params[0].get_str();
-            int64_t numeric = 0;
-            // Order matters: words first, then a strict integer, then the
-            // remaining word forms. "1" and "0" give the same answer by either
-            // of the last two routes; the order is fixed so it does not depend
-            // on how the next person reads this.
-            if (val == "all") {
-                fVerbose = true;
-                fShowAll = true;
-                limit = std::numeric_limits<int>::max();
-            } else if (val == "raw") {
-                fVerbose = true;
-                fShowRaw = true;
-            } else if (ParseFlexibleInt64(request.params[0], numeric)) {
-                // A numeric string must mean what the number means. Falling
-                // through to the word test below would make "120" false while
-                // the number 120 is true -- the same value meaning opposite
-                // things depending on whether it arrived via CLI or JSON-RPC.
-                fVerbose = numeric != 0;
-            } else {
-                fVerbose = (val == "true" || val == "1");
-            }
-        }
-    }
-    // Each optional parameter is checked for null, not only for presence.
-    // transformNamedArguments() fills the gaps between named parameters with
-    // JSON nulls (rpc/server.cpp), so `depingetpoolcontent limit=10` arrives as
-    // [verbose, null, null, null, null, 10]; get_str()/get_int64() on those
-    // nulls throws "JSON value is not a string as expected" before the RPC does
-    // anything. A JSON-RPC caller passing explicit nulls hit the same edge.
-    if (request.params.size() > 1 && !request.params[1].isNull()) senderFilter = request.params[1].get_str();
-    if (request.params.size() > 2 && !request.params[2].isNull()) recipientFilter = request.params[2].get_str();
-    if (request.params.size() > 3 && !request.params[3].isNull()) startTime = request.params[3].get_int64();
-    if (request.params.size() > 4 && !request.params[4].isNull()) endTime = request.params[4].get_int64();
-    if (request.params.size() > 5 && !request.params[5].isNull() && !fShowAll) limit = request.params[5].get_int();
-    if (request.params.size() > 6 && !request.params[6].isNull() && !fShowAll) offset = request.params[6].get_int();
-
-    // Validate limits (unless showing all)
-    if (!fShowAll) {
-        if (limit < 1) limit = 1;
-        if (limit > 1000) limit = 1000;
-    }
-    if (offset < 0) offset = 0;
-
-    // Get all messages from pool
-    std::vector<CDepinMessage> messages = pDepinMsgPool->GetAllMessages();
-
-    // Apply filters and build result
-    UniValue result(UniValue::VARR);
-    int skipped = 0;
-    int added = 0;
-
-    for (const auto& msg : messages) {
-        // Filter by sender
-        if (!senderFilter.empty() && msg.senderAddress != senderFilter)
-            continue;
-
-        // Note: Recipient filtering not available with ECIES shared encryption
-        // All holders can potentially decrypt, we can't determine recipients without decryption
-        if (!recipientFilter.empty()) {
-            // Skip this filter since we use shared ECIES encryption
-            LogPrint(BCLog::RPC, "Warning: Recipient filtering not supported with ECIES shared encryption\n");
-        }
-
-        // Filter by time range
-        if (msg.timestamp < startTime || msg.timestamp > endTime)
-            continue;
-
-        // Apply offset
-        if (skipped < offset) {
-            skipped++;
-            continue;
-        }
-
-        // Apply limit
-        if (added >= limit)
-            break;
-
-        // Build message object
-        UniValue msgObj(UniValue::VOBJ);
-        msgObj.push_back(Pair("hash", msg.GetHash().GetHex()));
-        msgObj.push_back(Pair("sender", msg.senderAddress));
-        std::string msgTypeStr = (msg.messageType == 0x01) ? "private" : "group";
-        msgObj.push_back(Pair("message_type", msgTypeStr));
-        msgObj.push_back(Pair("timestamp", msg.timestamp));
-        msgObj.push_back(Pair("date", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", msg.timestamp)));
-        msgObj.push_back(Pair("expires", DateTimeStrFormat("%Y-%m-%d %H:%M:%S",
-                                                    msg.timestamp + pDepinMsgPool->GetMessageExpiryTime())));
-
-        if (fVerbose) {
-            // Verbose mode: show ECIES shared encryption details
-            msgObj.push_back(Pair("encryption_type", "ECIES_shared"));
-            msgObj.push_back(Pair("encrypted_payload_size", (int)msg.encryptedPayload.size()));
-            msgObj.push_back(Pair("signature_size", (int)msg.signature.size()));
-
-            // If raw mode, show the encrypted payload and signature in hex
-            if (fShowRaw) {
-                msgObj.push_back(Pair("encrypted_payload_hex", HexStr(msg.encryptedPayload)));
-                msgObj.push_back(Pair("signature_hex", HexStr(msg.signature)));
-            }
-
-            size_t totalSize = msg.encryptedPayload.size() + msg.signature.size();
-            msgObj.push_back(Pair("total_size", (int)totalSize));
-        } else {
-            // Simple mode: just size
-            msgObj.push_back(Pair("encryption_type", "ECIES_shared"));
-            size_t totalSize = msg.encryptedPayload.size() + msg.signature.size();
-            msgObj.push_back(Pair("size", (int)totalSize));
-        }
-
-        result.push_back(msgObj);
-        added++;
-    }
-
-    return result;
+    return FinishDepinResponse(result, "depinclearmsg", scopeToken, address, challenge, &clientPubKey);
 }
 
 UniValue depinpoolstats(const JSONRPCRequest& request)
@@ -2065,7 +1776,7 @@ UniValue depinpoolstats(const JSONRPCRequest& request)
         result.push_back(Pair("expiring_in_24h", 0));
     }
 
-    return result;
+    return FinishDepinResponse(result, "depinpoolstats", pDepinMsgPool ? pDepinMsgPool->GetActiveToken() : std::string(), "", "", nullptr);
 }
 
 UniValue depinmcpstatus(const JSONRPCRequest& request)
@@ -2102,7 +1813,7 @@ UniValue depinmcpstatus(const JSONRPCRequest& request)
     if (!g_depinMCPWorker) {
         result.push_back(Pair("enabled", false));
         result.push_back(Pair("running", false));
-        return result;
+        return FinishDepinResponse(result, "depinmcpstatus", pDepinMsgPool ? pDepinMsgPool->GetActiveToken() : std::string(), "", "", nullptr);
     }
 
     result.push_back(Pair("enabled", true));
@@ -2113,9 +1824,6 @@ UniValue depinmcpstatus(const JSONRPCRequest& request)
     result.push_back(Pair("depin_token", g_depinMCPWorker->GetDepinToken()));
     result.push_back(Pair("node_address", g_depinMCPWorker->GetNodeAddress()));
     result.push_back(Pair("poll_interval", g_depinMCPWorker->GetPollInterval()));
-    result.push_back(Pair("pool_host", g_depinMCPWorker->GetPoolHost()));
-    result.push_back(Pair("pool_port", g_depinMCPWorker->GetPoolPort()));
-    result.push_back(Pair("using_remote_pool", g_depinMCPWorker->IsUsingRemotePool()));
     result.push_back(Pair("commands_processed", (uint64_t)g_depinMCPWorker->GetCommandsProcessed()));
     result.push_back(Pair("total_errors", (uint64_t)g_depinMCPWorker->GetTotalErrors()));
     result.push_back(Pair("rate_limited", (uint64_t)g_depinMCPWorker->GetRateLimited()));
@@ -2129,7 +1837,7 @@ UniValue depinmcpstatus(const JSONRPCRequest& request)
         result.push_back(Pair("last_poll_time_str", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", g_depinMCPWorker->GetLastPollTime())));
     }
 
-    return result;
+    return FinishDepinResponse(result, "depinmcpstatus", pDepinMsgPool ? pDepinMsgPool->GetActiveToken() : std::string(), "", "", nullptr);
 }
 
 UniValue depingetancestorrecipients(const JSONRPCRequest& request)
@@ -2244,24 +1952,29 @@ UniValue depingetancestorrecipients(const JSONRPCRequest& request)
     result.push_back(Pair("skipped_restricted", (uint64_t)recipients.skippedRestricted));
     result.push_back(Pair("skipped_restricted_complete", recipients.skippedRestrictedComplete));
 
-    return result;
+    return FinishDepinResponse(result, "depingetancestorrecipients", request.params[0].get_str(), "", "", nullptr);
 }
 
 UniValue depinlistsections(const JSONRPCRequest& request)
 {
-    if (request.fHelp || request.params.size() > 1)
+    if (request.fHelp || (request.params.size() != 0 && request.params.size() != 4))
         throw std::runtime_error(
-                "depinlistsections ( \"address\" )\n"
+                "depinlistsections ( \"address\" \"scope\" \"challenge\" \"signature\" )\n"
                 "\nList the sections (sub-assets) of the pool's active token, for UI tabs.\n"
                 "The list is served from a per-tip snapshot; section names are public on\n"
-                "chain, so no address is needed to see them. Message counters, however,\n"
-                "are only exposed for sections the given address has access to -- counts\n"
-                "of an unreadable section would leak metadata. For the same reason the\n"
-                "address mode is only served over node RPC: the DePIN port is\n"
-                "unauthenticated and answers the bare form (names only) there.\n"
+                "chain, so with no arguments the names are listed for anyone. Access and\n"
+                "message counters are personal: the address mode takes all four arguments,\n"
+                "proves control of the address with a challenge (depinchallenge, type\n"
+                "receive, issued for `scope`), is limited to the subtree of `scope`, and is\n"
+                "answered encrypted for the address. Nothing in between (one to three\n"
+                "arguments) is accepted.\n"
                 "\nArguments:\n"
-                "1. \"address\"   (string, optional) Report this address's access per section\n"
-                "\nResult:\n"
+                "1. \"address\"    (string, optional) Report this address's access per section\n"
+                "2. \"scope\"      (string, required with address) Pool root or a section: the challenge's token and the\n"
+                "                  subtree reported\n"
+                "3. \"challenge\"  (string, required with address) Nonce from depinchallenge for (scope, address)\n"
+                "4. \"signature\"  (string, required with address) Base64 signature of \"DEPIN-GET|<scope>|<address>|<challenge>\"\n"
+                "\nResult: { \"sections\": [...], \"poolsig\": \"base64\" } (encrypted for the address in address mode)\n"
                 "[\n"
                 "  {\n"
                 "    \"name\": \"&TOKEN/GENERAL\",   (string) Full section token\n"
@@ -2275,7 +1988,7 @@ UniValue depinlistsections(const JSONRPCRequest& request)
                 "]\n"
                 "\nExamples:\n"
                 + HelpExampleCli("depinlistsections", "")
-                + HelpExampleCli("depinlistsections", "\"NXyouraddress...\"")
+                + HelpExampleCli("depinlistsections", "\"NXyouraddress...\" \"&TOKEN/GENERAL\" \"<challenge>\" \"<signature>\"")
                 + HelpExampleRpc("depinlistsections", "")
         );
 
@@ -2284,12 +1997,32 @@ UniValue depinlistsections(const JSONRPCRequest& request)
     }
 
     std::string address;
-    if (request.params.size() >= 1 && !request.params[0].isNull() &&
-        !request.params[0].get_str().empty()) {
+    std::string scope;
+    std::string challenge;
+    std::string signature;
+    CPubKey clientPubKey;
+    if (request.params.size() == 4) {
         address = request.params[0].get_str();
+        scope = request.params[1].get_str();
+        challenge = request.params[2].get_str();
+        signature = request.params[3].get_str();
+        if (address.empty() || scope.empty()) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "address and scope are required in address mode");
+        }
         CTxDestination dest = DecodeDestination(address);
         if (!IsValidDestination(dest)) {
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
+        }
+        if (!IsDepinSectionOrRoot(scope, pDepinMsgPool->GetActiveToken())) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER,
+                              strprintf("Scope '%s' is not configured token '%s' or a section inside it",
+                                       scope, pDepinMsgPool->GetActiveToken()));
+        }
+        std::string pubkeyError;
+        if (!CheckAddressHasPublicKey(address, clientPubKey, pubkeyError)) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
+                              strprintf("Address has no revealed public key, and responses are always encrypted: %s",
+                                       pubkeyError));
         }
         // Distinguish "cannot answer" from "no access" up front: after this,
         // a false from HasDepinSectionAccess means no access, not a missing
@@ -2304,6 +2037,13 @@ UniValue depinlistsections(const JSONRPCRequest& request)
         if (!prestricteddb) {
             throw JSONRPCError(RPC_MISC_ERROR, "Restricted asset database not available");
         }
+
+        // Proof of control over `address` for `scope`, consumed here.
+        std::string authError;
+        if (!CheckDepinChallengeAuth(DepinChallengeType::RECEIVE, scope, address, challenge, signature,
+                                     pDepinMsgPool->GetActiveToken(), authError)) {
+            throw JSONRPCError(RPC_INVALID_REQUEST, strprintf("Challenge authentication failed: %s", authError));
+        }
     }
 
     std::vector<std::string> sections;
@@ -2316,6 +2056,11 @@ UniValue depinlistsections(const JSONRPCRequest& request)
 
     UniValue result(UniValue::VARR);
     for (const std::string& section : sections) {
+        // Address mode reports the challenge's subtree only: a holder of one
+        // section proves nothing about its siblings.
+        if (!scope.empty() && !IsDepinSectionOrRoot(section, scope)) {
+            continue;
+        }
         const std::string label = GetDepinSectionLabel(section, activeToken);
 
         int depth = 0;
@@ -2340,87 +2085,15 @@ UniValue depinlistsections(const JSONRPCRequest& request)
         result.push_back(obj);
     }
 
-    return result;
+    UniValue wrapped(UniValue::VOBJ);
+    wrapped.push_back(Pair("sections", result));
+    if (!address.empty()) {
+        return FinishDepinResponse(wrapped, "depinlistsections", scope, address, challenge, &clientPubKey);
+    }
+    return FinishDepinResponse(wrapped, "depinlistsections", pDepinMsgPool->GetActiveToken(), "", "", nullptr);
 }
 
 #ifdef ENABLE_WALLET
-bool DeriveDepinPoolKeys(CWallet* pwallet, CKey& privKey, CPubKey& pubkey, std::string& derivationPath, std::string& error)
-{
-    const uint32_t BIP32_HARDENED_KEY_LIMIT = 0x80000000;
-
-    if (!pwallet) {
-        error = "Wallet is not available";
-        return false;
-    }
-
-    LOCK2(cs_main, pwallet->cs_wallet);
-
-    if (pwallet->IsLocked()) {
-        error = "Wallet is locked";
-        return false;
-    }
-
-    const CHDChain& hdChain = pwallet->GetHDChain();
-    if (!hdChain.IsBip44()) {
-        error = "Wallet does not use BIP44";
-        return false;
-    }
-
-    CExtKey masterKey;
-    CExtKey purposeKey;      // m/44'
-    CExtKey coinTypeKey;     // m/44'/0'
-    CExtKey accountKey;      // m/44'/0'/200'
-    CExtKey changeKey;       // m/44'/0'/200'/change
-    CExtKey addressKey;      // m/44'/0'/200'/change/0
-
-    if (hdChain.IsBip44()) {
-        uint256 hash;
-        std::vector<unsigned char> vchWords;
-        std::vector<unsigned char> vchPassphrase;
-        std::vector<unsigned char> vchSeed;
-        
-        pwallet->GetBip39Data(hash, vchWords, vchPassphrase, vchSeed);
-        
-        if (vchSeed.empty()) {
-            error = "HD seed not available";
-            return false;
-        }
-        
-        masterKey.SetSeed(vchSeed.data(), vchSeed.size());
-    } else {
-        CKey seed;
-        if (!pwallet->GetKey(hdChain.seed_id, seed)) {
-            error = "HD seed not found";
-            return false;
-        }
-        masterKey.SetSeed(seed.begin(), seed.size());
-    }
-
-    bool isTestnet = (GetParams().NetworkIDString() == CBaseChainParams::TESTNET);
-    uint32_t changeIndex = isTestnet ? 1 : 0;
-    derivationPath = strprintf("m/44'/0'/200'/%d/0", changeIndex);
-
-    try {
-        masterKey.Derive(purposeKey, 44 | BIP32_HARDENED_KEY_LIMIT);
-        purposeKey.Derive(coinTypeKey, GetParams().ExtCoinType() | BIP32_HARDENED_KEY_LIMIT);
-        coinTypeKey.Derive(accountKey, 200 | BIP32_HARDENED_KEY_LIMIT);
-        accountKey.Derive(changeKey, changeIndex);
-        changeKey.Derive(addressKey, 0);
-    } catch (const std::exception& e) {
-        error = strprintf("Failed to derive key: %s", e.what());
-        return false;
-    }
-
-    privKey = addressKey.key;
-    pubkey = privKey.GetPubKey();
-    if (!pubkey.IsValid()) {
-        error = "Derived public key is invalid";
-        return false;
-    }
-
-    return true;
-}
-
 UniValue depinpoolpkey(const JSONRPCRequest& request)
 {
     // Define BIP32 hardened key limit constant
@@ -2490,26 +2163,21 @@ static const CRPCCommand commands[] =
             { "messages",       "clearmessages",              &clearmessages,              {}},
             // DePIN Messaging Commands
             { "depin messaging",          "depingetmsginfo",            &depingetmsginfo,            {}},
-            { "depin messaging",          "depingetpoolcontent",        &depingetpoolcontent,        {"verbose", "sender_address", "recipient_address", "start_time", "end_time", "limit", "offset"}},
+            { "depin messaging",          "depinchallenge",             &depinchallenge,             {"token", "address", "type"}},
             { "depin messaging",          "depinpoolstats",             &depinpoolstats,             {}},
-            { "depin messaging",          "depinsubmitmsg",             &depinsubmitmsg,             {"hexmessage"}},
-            { "depin messaging",          "depinreceivemsg",            &depinreceivemsg,            {"token", "address", "timestamp", "after_hash", "limit"}},
+            { "depin messaging",          "depinsubmitmsg",             &depinsubmitmsg,             {"message"}},
+            { "depin messaging",          "depinreceivemsg",            &depinreceivemsg,            {"token", "address", "challenge", "signature", "timestamp", "after_hash", "limit"}},
             { "depin messaging",          "depinmcpstatus",             &depinmcpstatus,             {}},
             { "depin messaging",          "depingetancestorrecipients", &depingetancestorrecipients, {"token", "max_results", "stop_at"}},
-            { "depin messaging",          "depinlistsections",          &depinlistsections,          {"address"}},
+            { "depin messaging",          "depinlistsections",          &depinlistsections,          {"address", "scope", "challenge", "signature"}},
+            { "depin messaging",          "depinclearmsg",              &depinclearmsg,              {"scope", "address", "challenge", "signature", "mode"}},
 #ifdef ENABLE_WALLET
             { "depin messaging",          "depinpoolpkey",              &depinpoolpkey,              {}},
-#ifdef ENABLE_DEPIN_GATEWAY
-            { "depin messaging",          "depinsendmsg",               &depinsendmsg,               {"token", "ip", "message", "fromaddress", "port"}},
-            // The second parameter is an IP or an address, and the third only
-            // applies when the second is an IP. The "a|b" alias
-            // (transformNamedArguments, rpc/server.cpp) lets the local form be
-            // written as `fromaddress=N...`; with a plain list that name binds
-            // to the third slot, the second is filled with a JSON null, and
-            // this RPC's unguarded params[1].get_str() throws.
-            { "depin messaging",          "depingetmsg",                &depingetmsg,                {"token", "destination_or_address|fromaddress", "fromaddress"}},
-#endif
-            { "depin messaging",          "depinclearmsg",              &depinclearmsg,              {"mode", "scope"}},
+            { "depin messaging",          "depinsignchallenge",         &depinsignchallenge,         {"address", "token", "challenge", "type"}},
+            { "depin messaging",          "depindecrypt",               &depindecrypt,               {"address", "encrypted"}},
+            // Local pool + this node's wallet; never reachable through a proxy.
+            { "depin messaging",          "depinsendmsg",               &depinsendmsg,               {"token", "message", "fromaddress"}},
+            { "depin messaging",          "depingetmsg",                &depingetmsg,                {"token", "fromaddress"}},
 #endif
     };
 

@@ -18,13 +18,13 @@
 // CDepinRecipient holds a CPubKey by value, so the full definition is needed
 // here; a forward declaration would not do.
 #include "pubkey.h"
+#include "depinchallenge.h"
 
 #ifdef ENABLE_WALLET
 class CWallet;
 #endif
 
 // Configuration defaults
-static const unsigned int DEFAULT_DEPIN_MSG_PORT = 19002;
 static const unsigned int DEFAULT_MAX_DEPIN_RECIPIENTS = 20;
 static const unsigned int DEFAULT_DEPIN_MESSAGE_SIZE = 1024;  // 1KB
 static const unsigned int DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS = 168;  // 7 days
@@ -127,7 +127,6 @@ private:
     std::multimap<int64_t, uint256> mapByTime;  // Timestamp -> Hash (for expiry)
 
     bool fEnabled;
-    unsigned int nPort;
     unsigned int nMaxRecipients;
     unsigned int nMaxMessageSize;       // Maximum message size in bytes
     unsigned int nMessageExpiryHours;   // Message expiry time in hours
@@ -147,14 +146,13 @@ public:
     CDepinMsgPool();
 
     // Configuration
-    bool Initialize(const std::string& token, unsigned int port, unsigned int maxRecipients,
+    bool Initialize(const std::string& token, unsigned int maxRecipients,
                    unsigned int maxMessageSize, unsigned int messageExpiryHours, unsigned int maxPoolSizeMB);
     bool IsEnabled() const { return fEnabled; }
     std::string GetActiveToken() const { return activeToken; }
     // Encryption used by the pool for message payloads.
     // Kept as a dedicated getter so future algorithms can be switched centrally.
     std::string GetEncryptionCipher() const { return "AES-256-GCM"; }
-    unsigned int GetPort() const { return nPort; }
     unsigned int GetMaxRecipients() const { return nMaxRecipients; }
     unsigned int GetMaxMessageSize() const { return nMaxMessageSize; }
     unsigned int GetMessageExpiryHours() const { return nMessageExpiryHours; }
@@ -423,22 +421,17 @@ bool DecryptMessageForAddress(const std::vector<unsigned char>& encryptedData,
                                std::string& decryptedMessage,
                                std::string& error);
 
-// Remote chat mempool helpers
-#ifdef ENABLE_DEPIN_GATEWAY
-bool QueryRemoteDepinMsgPool(CWallet* pwallet,
-                            const std::string& ipAddress, int port,
-                            const std::string& token,
-                            const std::vector<std::string>& myAddresses,
-                            std::vector<CDepinMessage>& messages,
-                            std::string& error);
-
+#ifdef ENABLE_WALLET
+// Signs a DePIN challenge preimage (DepinChallengePreimage) with the wallet
+// key of `address`. The wallet-side half of the challenge/response flow; the
+// node verifies with VerifyDepinChallengeSignature over the same preimage.
 bool SignDepinChallenge(CWallet* pwallet,
                         const std::string& address,
                         const std::string& token,
                         const std::string& challenge,
                         std::string& signature,
                         std::string& error,
-                        bool forSend = false);
+                        DepinChallengeType type = DepinChallengeType::RECEIVE);
 #endif
 
 #endif // NEURAI_DEPINMSGPOOL_H

@@ -96,8 +96,6 @@ private:
     int contextSize;                // conversation history entries per sender (0 = disabled)
     int fragmentSize;               // plaintext chars per response fragment
     int maxFragments;               // max fragments per response
-    std::string poolHost;           // DePIN pool host (localhost = local pool)
-    int poolPort;                   // DePIN pool port
 
     // Processed-message dedup (FIFO eviction)
     std::set<uint256> processedMessages;
@@ -187,7 +185,6 @@ public:
                    const std::string& address, const std::string& token,
                    int interval, const std::string& prefix,
                    int timeout, int rateLimit,
-                   const std::string& poolHost = "localhost", int poolPort = 19002,
                    int maxTokens = DEFAULT_DEPIN_MCP_MAX_TOKENS,
                    double temperature = DEFAULT_DEPIN_MCP_TEMPERATURE,
                    int concurrency = DEFAULT_DEPIN_MCP_CONCURRENCY,
@@ -212,9 +209,6 @@ public:
     std::string GetNodeAddress() const { return nodeAddress; }
     int GetPollInterval() const { return pollInterval; }
     int GetConcurrency() const { return concurrency; }
-    std::string GetPoolHost() const { return poolHost; }
-    int GetPoolPort() const { return poolPort; }
-    bool IsUsingRemotePool() const { return poolHost != "localhost" && poolHost != "127.0.0.1"; }
     size_t GetProcessedCacheSize();
     size_t GetContextSessions();
     std::string GetModelName() const;

@@ -214,7 +214,8 @@ NEURAI_CORE_H = \
   txdb.h \
   txmempool.h \
   depinmsgpool.h \
-  depinmsgpoolnet.h \
+  depinchallenge.h \
+  depinpoolkey.h \
   depinecies.h \
   depinmcpclient.h \
   depinmcpworker.h \
@@ -232,6 +233,7 @@ NEURAI_CORE_H = \
   wallet/feebumper.h \
   wallet/fees.h \
   wallet/init.h \
+  wallet/depinpoolkeyload.h \
   wallet/rpcwallet.h \
   wallet/wallet.h \
   wallet/walletdb.h \
@@ -302,7 +304,8 @@ libneurai_server_a_SOURCES = \
   txdb.cpp \
   txmempool.cpp \
   depinmsgpool.cpp \
-  depinmsgpoolnet.cpp \
+  depinchallenge.cpp \
+  depinpoolkey.cpp \
   depinecies.cpp \
   depinmcpclient.cpp \
   depinmcpworker.cpp \
@@ -332,6 +335,7 @@ libneurai_wallet_a_SOURCES = \
   wallet/feebumper.cpp \
   wallet/fees.cpp \
   wallet/init.cpp \
+  wallet/depinpoolkeyload.cpp \
   wallet/rpcdump.cpp \
   wallet/rpcwallet.cpp \
   wallet/wallet.cpp \

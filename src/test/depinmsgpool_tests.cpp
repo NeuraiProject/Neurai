@@ -412,7 +412,7 @@ struct ScopedInitializedPool {
         : previous(std::move(pDepinMsgPool))
     {
         pDepinMsgPool.reset(new CDepinMsgPool());
-        BOOST_REQUIRE(pDepinMsgPool->Initialize(token, DEFAULT_DEPIN_MSG_PORT,
+        BOOST_REQUIRE(pDepinMsgPool->Initialize(token,
                                                 DEFAULT_MAX_DEPIN_RECIPIENTS,
                                                 DEFAULT_DEPIN_MESSAGE_SIZE,
                                                 DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS,

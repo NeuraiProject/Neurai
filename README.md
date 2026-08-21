@@ -30,25 +30,29 @@ Is a private and temporary messaging system for Neurai that enables encrypted co
 │               Neurai Node with DePIN Messaging              │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│  ┌──────────────┐        ┌──────────────┐                   │
-│  │ RPC Server   │────────│ DePIN MsgPool│                   │
-│  │ (neurai-cli) │        │   Manager    │                   │
-│  └──────────────┘        └──────┬───────┘                   │
-│                                 │                           │
-│                         ┌───────┴─────────┐                 │
-│                         │                 │                 │
-│                    ┌────▼────┐      ┌─────▼──────┐          │
-│                    │ Message │      │ Network    │          │
-│                    │ Storage │      │ Listener   │          │
-│                    │ (7 days)│      │(Port 19002)│          │
-│                    └────┬────┘      └─────┬──────┘          │
-│                         │                 │                 │
-│                    ┌────▼─────────────────▼─────┐           │
-│                    │   Asset Index (-assetindex)│           │
-│                    │   Token Holder Lookup      │           │
-│                    └────────────────────────────┘           │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+│  ┌──────────────┐        ┌──────────────┐    ┌───────────┐  │
+│  │ RPC Server   │────────│ DePIN MsgPool│────│ Pool key  │  │
+│  │ (JSON-RPC)   │        │   Manager    │    │ (wallet)  │  │
+│  └──────▲───────┘        └──────┬───────┘    └───────────┘  │
+│         │                       │                           │
+│         │                ┌──────▼──────┐                    │
+│         │                │  Challenge  │                    │
+│         │                │    store    │                    │
+│         │                └──────┬──────┘                    │
+│         │                       │                           │
+│         │                ┌──────▼──────┐                    │
+│         │                │   Message   │                    │
+│         │                │   Storage   │                    │
+│         │                │   (7 days)  │                    │
+│         │                └──────┬──────┘                    │
+│         │                       │                           │
+│         │           ┌───────────▼────────────────┐          │
+│         │           │   Asset Index (-assetindex)│          │
+│         │           │   Pubkey Index             │          │
+│         │           └────────────────────────────┘          │
+└─────────┼───────────────────────────────────────────────────┘
+          │
+   neurai-rpc-proxy (whitelist) ◄──── holder wallets (hold their own keys)
 ```
 
 More about this  [Here](doc/README.md)

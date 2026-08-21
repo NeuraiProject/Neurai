@@ -49,7 +49,11 @@
 #include "assets/assetdb.h"
 #include "assets/snapshotrequestdb.h"
 #include "depinmsgpool.h"
-#include "depinmsgpoolnet.h"
+#include "depinchallenge.h"
+#include "depinpoolkey.h"
+#ifdef ENABLE_WALLET
+#include "wallet/depinpoolkeyload.h"
+#endif
 #include "depinmcpworker.h"
 #ifdef ENABLE_WALLET
 #include "wallet/init.h"
@@ -220,16 +224,6 @@ void PrepareShutdown()
 
     if (fDumpMempoolLater && gArgs.GetArg("-persistmempool", DEFAULT_PERSIST_MEMPOOL)) {
         DumpMempool();
-    }
-
-    // Stop DePIN message server before saving/destroying shared resources:
-    // client handlers use pDepinMsgPool, pblocktree, passetsdb and wallets.
-    // Stop() joins the accept loop and every in-flight handler.
-    if (pDepinMsgPoolServer) {
-        LogPrintf("Stopping DePIN message server...\n");
-        pDepinMsgPoolServer->Stop();
-        pDepinMsgPoolServer.reset();
-        LogPrintf("DePIN message server stopped\n");
     }
 
     // Stop DePIN MCP worker if running
@@ -525,9 +519,8 @@ std::string HelpMessage(HelpMessageMode mode)
     strUsage += HelpMessageGroup(_("DePIN options:"));
     strUsage += HelpMessageOpt("-depinmsg", _("Enable DePIN messaging system (default: 0)"));
     strUsage += HelpMessageOpt("-depinmsgtoken=<token>", _("DEPIN token name to monitor for messaging, must start with '&' (required when -depinmsg=1; DEPIN assets are testnet/regtest only)"));
-    strUsage += HelpMessageOpt("-depinmsgport=<port>", strprintf(_("DePIN messaging network port (default: %u)"), DEFAULT_DEPIN_MSG_PORT));
-    strUsage += HelpMessageOpt("-depinmsgbind=<addr>", _("Bind the DePIN messaging server to the given address (default: 0.0.0.0, all interfaces; use 127.0.0.1 for local-only)"));
-    strUsage += HelpMessageOpt("-depinmaxconnections=<n>", strprintf(_("Maximum concurrent connections to the DePIN messaging server (default: %u)"), DEFAULT_DEPIN_MAX_CONNECTIONS));
+    strUsage += HelpMessageOpt("-depinpoolkeysig=<sig>", _("Base64 signature by the token owner over \"DEPIN-POOLKEY|<token>|<pubkey>\" vouching for this node's pool key (required when -depinmsg=1; see depinpoolpkey)"));
+    strUsage += HelpMessageOpt("-depinwallet=<file>", _("Wallet the DePIN pool key is derived from (required only when more than one wallet is loaded). Must be an unencrypted legacy BIP44 wallet"));
     strUsage += HelpMessageOpt("-depinmsgmaxusers=<n>", strprintf(_("Maximum number of DePIN message recipients (default: %u)"), DEFAULT_MAX_DEPIN_RECIPIENTS));
     strUsage += HelpMessageOpt("-depinpoolpersist", strprintf(_("Whether to save the DePIN message pool on shutdown and load on restart (default: %u)"), DEFAULT_DEPINPOOL_PERSIST));
     strUsage += HelpMessageOpt("-depinmsgsize=<n>", strprintf(_("Maximum DePIN message size in bytes (default: %u, max: %u)"), DEFAULT_DEPIN_MESSAGE_SIZE, MAX_DEPIN_MESSAGE_SIZE));
@@ -553,8 +546,6 @@ std::string HelpMessage(HelpMessageMode mode)
     strUsage += HelpMessageOpt("-depinmcptemperature=<n>", _("Sampling temperature passed to the AI model (default: 0.7)"));
     strUsage += HelpMessageOpt("-depinmcpfragsize=<n>", strprintf(_("Plaintext characters per response fragment (default: %u)"), DEFAULT_DEPIN_MCP_FRAG_SIZE));
     strUsage += HelpMessageOpt("-depinmcpmaxfragments=<n>", strprintf(_("Maximum number of fragments per response (default: %u)"), DEFAULT_DEPIN_MCP_MAX_FRAGMENTS));
-    strUsage += HelpMessageOpt("-depinmcppoolhost=<host>", _("DePIN message pool host to read from (default: localhost = local pool)"));
-    strUsage += HelpMessageOpt("-depinmcppoolport=<port>", strprintf(_("DePIN message pool port to read from (default: %u)"), DEFAULT_DEPIN_MSG_PORT));
 
     strUsage += HelpMessageGroup(_("Connection options:"));
     strUsage += HelpMessageOpt("-addnode=<ip>", _("Add a node to connect to and attempt to keep the connection open (see the `addnode` RPC command help for more info)"));
@@ -2038,18 +2029,37 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
     // ********************************************************* Initialize Chat Mempool
     if (gArgs.GetBoolArg("-depinmsg", false)) {
         std::string token = gArgs.GetArg("-depinmsgtoken", "");
-        unsigned int port = gArgs.GetArg("-depinmsgport", DEFAULT_DEPIN_MSG_PORT);
         unsigned int maxRecipients = gArgs.GetArg("-depinmsgmaxusers", DEFAULT_MAX_DEPIN_RECIPIENTS);
         unsigned int maxMessageSize = gArgs.GetArg("-depinmsgsize", DEFAULT_DEPIN_MESSAGE_SIZE);
         unsigned int messageExpiryHours = gArgs.GetArg("-depinmsgexpire", DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS);
         unsigned int maxPoolSizeMB = gArgs.GetArg("-depinpoolsize", DEFAULT_DEPIN_POOL_SIZE_MB);
 
+        // The pool key comes from the node's dedicated legacy wallet and the
+        // token owner must have vouched for it: without both there is no
+        // service, so fail here rather than serve unsigned or in the clear.
+#ifndef ENABLE_WALLET
+        return InitError(_("DePIN service requires a wallet-enabled build"));
+#else
+        {
+            std::string poolKeyError;
+            CWallet* serviceWallet = SelectDepinServiceWallet(gArgs.GetArg("-depinwallet", ""), poolKeyError);
+            if (!serviceWallet) {
+                return InitError(strprintf(_("DePIN service: %s"), poolKeyError));
+            }
+            if (!LoadDepinPoolKey(serviceWallet, token, gArgs.GetArg("-depinpoolkeysig", ""), poolKeyError)) {
+                return InitError(strprintf(_("DePIN service: %s"), poolKeyError));
+            }
+            LogPrintf("DePIN pool key loaded from wallet '%s', vouched for by owner %s\n",
+                      GetDepinPoolKeyWalletName(), GetDepinPoolKeyOwner());
+        }
+#endif
+
         pDepinMsgPool = std::make_unique<CDepinMsgPool>();
-        if (!pDepinMsgPool->Initialize(token, port, maxRecipients, maxMessageSize, messageExpiryHours, maxPoolSizeMB)) {
+        if (!pDepinMsgPool->Initialize(token, maxRecipients, maxMessageSize, messageExpiryHours, maxPoolSizeMB)) {
             return InitError(_("Failed to initialize DePIN messaging. Check that the token exists and -assetindex is enabled."));
         }
 
-        LogPrintf("DePIN messaging initialized for token: %s on port %d\n", token, port);
+        LogPrintf("DePIN messaging initialized for token: %s (served over the node RPC port)\n", token);
 
         // Sections change the send limit from silent truncation to a hard
         // error: warn NOW if the root alone already exceeds it, instead of
@@ -2076,14 +2086,6 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
             }
         }
 
-        // Iniciar servidor de DePIN messaging
-        pDepinMsgPoolServer = std::make_unique<CDepinMsgPoolServer>();
-        if (!pDepinMsgPoolServer->Start(port)) {
-            return InitError(_("Failed to start DePIN messaging server on specified port"));
-        }
-
-        LogPrintf("DePIN messaging server started on port %d\n", port);
-
         // Schedule automatic cleanup of expired messages
         // Default: check every 5 minutes (300 seconds)
         int64_t cleanupIntervalSeconds = gArgs.GetArg("-depinmsgcleanupinterval", 300);
@@ -2097,6 +2099,9 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
                              sizeBefore - sizeAfter, sizeAfter);
                 }
             }
+            // Abandoned challenges (issued, never answered) would otherwise
+            // sit in the store until the next issuance by the same address.
+            g_depinChallenges.CleanupExpired(GetTime());
         }, cleanupIntervalSeconds * 1000);  // Convert seconds to milliseconds
 
         LogPrintf("DePIN automatic cleanup scheduled every %d seconds\n", cleanupIntervalSeconds);
@@ -2120,28 +2125,16 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
             ParseDouble(gArgs.GetArg("-depinmcptemperature", "0.7"), &mcpTemperature);
             int mcpFragSize = gArgs.GetArg("-depinmcpfragsize", DEFAULT_DEPIN_MCP_FRAG_SIZE);
             int mcpMaxFragments = gArgs.GetArg("-depinmcpmaxfragments", DEFAULT_DEPIN_MCP_MAX_FRAGMENTS);
-            std::string poolHost = gArgs.GetArg("-depinmcppoolhost", "localhost");
-            int poolPort = gArgs.GetArg("-depinmcppoolport", DEFAULT_DEPIN_MSG_PORT);
 
             if (mcpAddress.empty()) {
                 return InitError(_("DePIN MCP enabled but no address specified. Use -depinmcpaddress=ADDRESS"));
             }
 
-            // A remote pool host only works in builds compiled with ENABLE_DEPIN_GATEWAY.
-            // Fail fast and clearly instead of logging a recurring error every poll cycle.
-#ifndef ENABLE_DEPIN_GATEWAY
-            if (poolHost != "localhost" && poolHost != "127.0.0.1") {
-                return InitError(strprintf(_("DePIN MCP remote pool host '%s' requires a build with "
-                                             "ENABLE_DEPIN_GATEWAY. Use a local pool (-depinmcppoolhost=localhost) "
-                                             "or rebuild with the gateway enabled."), poolHost));
-            }
-#endif
-
             // Create and initialize MCP worker
             g_depinMCPWorker = std::make_unique<CDepinMCPWorker>();
             if (!g_depinMCPWorker->Initialize(mcpUrl, mcpEndpoint, mcpApiKey, mcpKey,
                                              mcpAddress, token, mcpInterval, mcpPrefix,
-                                             mcpTimeout, mcpRateLimit, poolHost, poolPort,
+                                             mcpTimeout, mcpRateLimit,
                                              mcpMaxTokens, mcpTemperature, mcpConcurrency,
                                              mcpContext, mcpGlobalRateLimit,
                                              mcpFragSize, mcpMaxFragments)) {

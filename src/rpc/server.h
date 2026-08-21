@@ -47,9 +47,8 @@ public:
     bool fHelp;
     std::string URI;
     std::string authUser;
-    mutable bool fSkipWalletCheck;  // Set by DePIN server to skip wallet validation
 
-    JSONRPCRequest() : id(NullUniValue), params(NullUniValue), fHelp(false), fSkipWalletCheck(false) {}
+    JSONRPCRequest() : id(NullUniValue), params(NullUniValue), fHelp(false) {}
     void parse(const UniValue& valRequest);
 };
 

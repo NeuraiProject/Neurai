@@ -20,6 +20,7 @@
 // needs no asset-activation height for these reads.
 
 #include "depinmsgpool.h"
+#include "depinpoolkey.h"
 
 #include "assets/assetdb.h"
 #include "assets/assets.h"
@@ -69,6 +70,7 @@ struct DepinAncestorSetup : public TestingSetup {
     CAssetsDB* prevAssetsDb;
     CLRUCache<std::string, CDatabasedAssetData>* prevAssetsCache;
     CRestrictedDB* prevRestrictedDb;
+    CKey poolKey;
 
     DepinAncestorSetup() : TestingSetup(CBaseChainParams::REGTEST)
     {
@@ -87,11 +89,16 @@ struct DepinAncestorSetup : public TestingSetup {
         passetsCache = new CLRUCache<std::string, CDatabasedAssetData>(MAX_CACHE_ASSETS_SIZE);
         prestricteddb = new CRestrictedDB(1 << 20, true, true);
 
+        // Every DePIN RPC response is signed with the pool key.
+        poolKey.MakeNewKey(true);
+        SetDepinPoolKey(poolKey, "", "", "test");
+
         gDepinAncestorRecipientsStats.Reset();
     }
 
     ~DepinAncestorSetup()
     {
+        ClearDepinPoolKey();
         delete prestricteddb;
         delete passetsCache;
         delete passetsdb;
@@ -203,7 +210,8 @@ UniValue CallAncestorRecipientsRPC(const UniValue& params)
     request.fHelp = false;
 
     BOOST_REQUIRE(tableRPC["depingetancestorrecipients"]);
-    return (*tableRPC["depingetancestorrecipients"]->actor)(request);
+    // The RPC answers a signed plain body; these tests are about its content.
+    return DepinPlainBody((*tableRPC["depingetancestorrecipients"]->actor)(request));
 }
 
 } // namespace

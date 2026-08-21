@@ -3,7 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "depinmsgpool.h"
-#include "depinmsgpoolnet.h"
+#include "depinchallenge.h"
 #include "depinecies.h"
 #include "validation.h"
 #include "assets/assets.h"
@@ -48,7 +48,7 @@ std::string CDepinMessage::ToString() const {
 // CDepinMsgPool implementation
 
 CDepinMsgPool::CDepinMsgPool()
-    : fEnabled(false), nPort(DEFAULT_DEPIN_MSG_PORT),
+    : fEnabled(false),
       nMaxRecipients(DEFAULT_MAX_DEPIN_RECIPIENTS),
       nMaxMessageSize(DEFAULT_DEPIN_MESSAGE_SIZE),
       nMessageExpiryHours(DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS),
@@ -75,7 +75,7 @@ bool IsValidDepinMessagingToken(const std::string& token, std::string& error)
     return true;
 }
 
-bool CDepinMsgPool::Initialize(const std::string& token, unsigned int port, unsigned int maxRecipients,
+bool CDepinMsgPool::Initialize(const std::string& token, unsigned int maxRecipients,
                                unsigned int maxMessageSize, unsigned int messageExpiryHours, unsigned int maxPoolSizeMB) {
     LOCK(cs_depinmsgpool);
 
@@ -120,7 +120,6 @@ bool CDepinMsgPool::Initialize(const std::string& token, unsigned int port, unsi
     // Token existence is not validated to allow server configuration before token creation
     // or during reindex when asset index may not be fully populated
     activeToken = token;
-    nPort = port;
 
     // Apply limits
     nMaxRecipients = std::min(maxRecipients, MAX_DEPIN_RECIPIENTS);
@@ -130,8 +129,8 @@ bool CDepinMsgPool::Initialize(const std::string& token, unsigned int port, unsi
 
     fEnabled = true;
 
-    LogPrintf("DePIN messaging initialized: token=%s, port=%d, maxRecipients=%d, maxMessageSize=%d, expiryHours=%d, maxPoolSizeMB=%d\n",
-              activeToken, nPort, nMaxRecipients, nMaxMessageSize, nMessageExpiryHours, nMaxPoolSizeMB);
+    LogPrintf("DePIN messaging initialized: token=%s, maxRecipients=%d, maxMessageSize=%d, expiryHours=%d, maxPoolSizeMB=%d\n",
+              activeToken, nMaxRecipients, nMaxMessageSize, nMessageExpiryHours, nMaxPoolSizeMB);
 
     return true;
 }
@@ -1300,81 +1299,14 @@ bool DecryptMessageForAddress(const std::vector<unsigned char>& encryptedData,
 #endif
 }
 
-#ifdef ENABLE_DEPIN_GATEWAY
-bool QueryRemoteDepinMsgPool(CWallet* pwallet,
-                            const std::string& ipAddress, int port,
-                            const std::string& token,
-                            const std::vector<std::string>& myAddresses,
-                            std::vector<CDepinMessage>& messages,
-                            std::string& error) {
-    if (!pwallet) {
-        error = "Wallet not available";
-        return false;
-    }
-
-    if (myAddresses.empty()) {
-        error = "No addresses provided for authentication";
-        return false;
-    }
-
-    LogPrint(BCLog::NET, "QueryRemoteDepinMsgPool: Connecting to %s:%d for token %s\n",
-             ipAddress, port, token);
-
-    // GETMESSAGES only serves the address that completed the challenge, so a
-    // wallet holding the token at several addresses must authenticate once per
-    // address instead of listing them all in a single request.
-    // Accumulate locally and only hand the result over once every address has
-    // succeeded: this call is all-or-nothing, and a caller that ignores the
-    // return value must not end up reading a half-filled list.
-    std::vector<CDepinMessage> mergedMessages;
-    std::set<uint256> seenHashes;
-    for (const std::string& addr : myAddresses) {
-        std::string challenge;
-        int expiresIn = 0;
-        if (!CDepinMsgPoolClient::RequestChallenge(ipAddress, port, token, addr,
-                                                   challenge, expiresIn, error, false)) {
-            LogPrint(BCLog::NET, "QueryRemoteDepinMsgPool: Challenge failed for %s: %s\n", addr, error);
-            return false;
-        }
-
-        std::string signature;
-        if (!SignDepinChallenge(pwallet, addr, token, challenge, signature, error)) {
-            LogPrint(BCLog::NET, "QueryRemoteDepinMsgPool: Failed to sign challenge for %s: %s\n", addr, error);
-            return false;
-        }
-
-        std::vector<CDepinMessage> addrMessages;
-        if (!CDepinMsgPoolClient::QueryMessages(ipAddress, port, token,
-                                                {addr}, addr, signature, challenge,
-                                                addrMessages, error)) {
-            LogPrint(BCLog::NET, "QueryRemoteDepinMsgPool: Query failed for %s: %s\n", addr, error);
-            return false;
-        }
-
-        // A group message can list several of this wallet's addresses as
-        // recipients, so the same message may come back once per address.
-        for (const CDepinMessage& msg : addrMessages) {
-            if (seenHashes.insert(msg.GetHash()).second) {
-                mergedMessages.push_back(msg);
-            }
-        }
-    }
-
-    messages.swap(mergedMessages);
-
-    LogPrint(BCLog::NET, "QueryRemoteDepinMsgPool: Successfully retrieved %d messages for %d addresses\n",
-            messages.size(), myAddresses.size());
-
-    return true;
-}
-
+#ifdef ENABLE_WALLET
 bool SignDepinChallenge(CWallet* pwallet,
                         const std::string& address,
                         const std::string& token,
                         const std::string& challenge,
                         std::string& signature,
                         std::string& error,
-                        bool forSend) {
+                        DepinChallengeType type) {
     if (!pwallet) {
         error = "Wallet not available";
         return false;
@@ -1398,25 +1330,9 @@ bool SignDepinChallenge(CWallet* pwallet,
         return false;
     }
 
-    if (!key.IsValid()) {
-        error = "Invalid private key";
-        return false;
-    }
-
-    CHashWriter ss(SER_GETHASH, 0);
-    const char* prefix = forSend ? "DEPIN-SEND" : "DEPIN-GET";
-
-    ss << strMessageMagic;
-    ss << strprintf("%s|%s|%s|%s", prefix, token, address, challenge);
-
-    std::vector<unsigned char> vchSig;
-    if (!key.SignCompact(ss.GetHash(), vchSig)) {
-        error = "Failed to sign challenge";
-        return false;
-    }
-
-    signature = EncodeBase64(vchSig.data(), vchSig.size());
-    return true;
+    // One preimage helper for signer and verifier: the two cannot drift apart.
+    return SignDepinChallengePreimage(key, DepinChallengePreimage(type, token, address, challenge),
+                                      signature, error);
 }
 #endif
 

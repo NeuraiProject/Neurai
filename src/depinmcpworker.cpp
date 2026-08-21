@@ -36,7 +36,6 @@ CDepinMCPWorker::CDepinMCPWorker()
       contextSize(DEFAULT_DEPIN_MCP_CONTEXT),
       fragmentSize(DEFAULT_DEPIN_MCP_FRAG_SIZE),
       maxFragments(DEFAULT_DEPIN_MCP_MAX_FRAGMENTS),
-      poolPort(19002),
       processedDirty(false),
       totalCommandsProcessed(0),
       totalErrors(0),
@@ -55,7 +54,6 @@ bool CDepinMCPWorker::Initialize(const std::string& url, const std::string& endp
                                  const std::string& address, const std::string& token,
                                  int interval, const std::string& prefix,
                                  int timeout, int rateLimit,
-                                 const std::string& pHost, int pPort,
                                  int maxTokens, double temperature,
                                  int conc, int ctxSize,
                                  int globalRateLimit,
@@ -106,14 +104,6 @@ bool CDepinMCPWorker::Initialize(const std::string& url, const std::string& endp
     fragmentSize = fragSize > 0 ? fragSize : DEFAULT_DEPIN_MCP_FRAG_SIZE;
     maxFragments = maxFrags > 0 ? maxFrags : DEFAULT_DEPIN_MCP_MAX_FRAGMENTS;
     concurrency = conc > 0 ? conc : 1;
-    poolHost = pHost;
-    poolPort = pPort;
-
-    if (poolHost == "localhost" || poolHost == "127.0.0.1") {
-        LogPrintf("MCPWorker: Using LOCAL DePIN message pool\n");
-    } else {
-        LogPrintf("MCPWorker: Using REMOTE DePIN message pool at %s:%d\n", poolHost, poolPort);
-    }
 
     // Create MCP client
     mcpClient = std::make_unique<CDepinMCPClient>(url, endpoint, apiKey, timeout,
@@ -202,46 +192,16 @@ void CDepinMCPWorker::WorkerLoop()
 {
     LogPrintf("MCPWorker: Poller loop started (interval=%d seconds)\n", pollInterval);
 
-    bool useRemotePool = (poolHost != "localhost" && poolHost != "127.0.0.1");
-
     while (!shouldStop.load()) {
         try {
             lastPollTime.store(GetTime());
 
-            LogPrintf("MCPWorker: Polling for new messages (token=%s, key=%s, source=%s)...\n",
-                     depinToken, commandKey, useRemotePool ? poolHost : "local");
+            LogPrintf("MCPWorker: Polling for new messages (token=%s, key=%s)...\n",
+                     depinToken, commandKey);
 
             std::vector<CDepinMessage> messages;
 
-#ifdef ENABLE_DEPIN_GATEWAY
-            if (useRemotePool) {
-                // Query remote DePIN message pool
-                if (vpwallets.empty() || !vpwallets[0]) {
-                    LogPrintf("MCPWorker: No wallet available for remote pool query\n");
-                    std::this_thread::sleep_for(std::chrono::seconds(pollInterval));
-                    continue;
-                }
-
-                std::vector<std::string> addressList;
-                addressList.push_back(nodeAddress);
-
-                std::string error;
-                if (!QueryRemoteDepinMsgPool(vpwallets[0], poolHost, poolPort, depinToken,
-                                            addressList, messages, error)) {
-                    LogPrintf("MCPWorker: Failed to query remote pool: %s\n", error);
-                    std::this_thread::sleep_for(std::chrono::seconds(pollInterval));
-                    continue;
-                }
-            } else {
-#else
-            if (useRemotePool) {
-                // Should be unreachable: init.cpp refuses to start with a remote pool host
-                // when the gateway is not compiled in. Guard anyway.
-                LogPrintf("MCPWorker: Remote pool query is disabled in this build (requires ENABLE_DEPIN_GATEWAY)\n");
-                std::this_thread::sleep_for(std::chrono::seconds(pollInterval));
-                continue;
-            } else {
-#endif
+            {
                 // Use local pool
                 if (!pDepinMsgPool) {
                     LogPrintf("MCPWorker: DePIN message pool not initialized\n");

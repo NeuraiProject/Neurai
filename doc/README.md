@@ -12,14 +12,19 @@ retrieval and decryption contract.
 
 Is a private and temporary messaging system for Neurai that enables encrypted communication between holders of a specific token. This system:
 
-- **Does not write to blockchain**:no fees, no permanence.
+- **Does not write to blockchain**: no fees, no permanence.
 - **Encrypted messages**: readable only by public keys selected by the sender.
-- **Direct communication**: between nodes via TCP or relay Nodes with same configuration.
+- **One port**: everything is served by the node's standard JSON-RPC
+  interface, typically behind an RPC proxy such as `neurai-rpc-proxy`. There
+  is no separate listener.
 - **Temporal message**: with max 7-day expiration, custom time or all read msg check.
-- **Token ownership verification**: for sending and authenticated gateway reads.
-- **Integrated TCP server**: for remote queries.
-- **Dedicated RPC gateway**: port 19002 has a restricted DePIN RPC allowlist
-  and a challenge/response protocol for authenticated operations.
+- **Token ownership verification**: for sending, and challenge/signature
+  authentication for every read or purge bound to an address.
+- **Signed, encrypted replies**: every DePIN RPC response is signed with the
+  node's pool key (`poolsig`); replies bound to an address are encrypted for
+  that address's revealed public key.
+- **Dedicated service wallet**: the pool key is derived from a legacy BIP44
+  wallet configured on the node; without it the service does not start.
 
 
 ## Key Features
@@ -55,7 +60,9 @@ Is a private and temporary messaging system for Neurai that enables encrypted co
 
 - Sending is authorized by an active holding in the target section's ancestor
   chain.
-- Gateway reads require a challenge signed by the authenticated address.
+- Reads (`depinreceivemsg`, `depinlistsections` with an address) require a
+  single-use challenge from `depinchallenge`, signed by the address; purges
+  (`depinclearmsg`) require an owner-level challenge.
 - Decryption remains cryptographic: `recipientKeys` in the message is the
   final visibility boundary.
 
@@ -79,22 +86,21 @@ access — the root grants the branch, a section-level revocation cannot take
 that away.
 
 **How it works**: the `token` parameter of `depinsendmsg`, `depingetmsg`,
-`depinreceivemsg` and the gateway commands accepts a section name. Sending to
-a section encrypts for the active holders of the section **and of every
+`depinchallenge` and `depinreceivemsg` accepts a section name. Sending to a
+section encrypts for the active holders of the section **and of every
 ancestor up to the pool root**; reading with a section token returns only that
 section's subtree (its "tab"). `depinlistsections` lists the sections for UI
-tabs — over the unauthenticated DePIN port it serves **names only**; the
-address mode (per-address access and message counters) requires node RPC.
-`depinclearmsg` accepts an optional scope so a section owner can purge their
-subtree (never parents or siblings). Old clients that only ever use the root
-token are unaffected — the root's subtree is the whole pool.
+tabs — names only without arguments; the address mode (per-address access and
+message counters) takes a challenge issued for a `scope` and reports that
+scope's subtree. `depinclearmsg` takes a scope so a section owner can purge
+their subtree (never parents or siblings); its `admin` challenge is bound to
+exactly that scope. The root's subtree is the whole pool.
 
-**Remote sends** query the serving pool's `INFO` first and scope the recipient
-set to that pool's root and `maxRecipients`. This is deliberate: the pool's
-port exposes raw payloads, so every extra `recipientKeys` entry is an extra
-reader — encrypting up to the absolute root would include holders of ancestors
-the pool does not even serve. If `INFO` cannot be queried, the send fails
-rather than guess the scope.
+**Recipient scope**: a client publishing through a service node resolves
+recipients with the pool's root as `stop_at` (`depingetmsginfo` publishes it).
+This is deliberate: every extra `recipientKeys` entry is an extra reader, and
+encrypting up to the absolute root would include holders of ancestors the
+pool does not even serve.
 
 **Recipient limit**: a send **fails** (never silently truncates) when the
 union of eligible holders across the ancestor chain exceeds
@@ -113,9 +119,8 @@ does, because it aggregates the holders of all its ancestors.
 - `recipientKeys` is a snapshot chosen by the sender: sections compute the
   legitimate recipient set, but cannot prove a sender did not add an external
   public key. The pool caps the recipient *count* per message as hardening.
-- The token filter in `depinreceivemsg` is a convenience scope, **not access
-  control** — that RPC requires no proof of ownership (unlike gateway
-  `AUTH`+`GETMESSAGES`). What an address can actually read is fixed
+- The token filter in `depinreceivemsg` is a scope. The challenge proves
+  control of the address; what an address can actually read is fixed
   cryptographically by `recipientKeys` + ECIES.
 - A pool configured on a deep section (`-depinmsgtoken=&TEST/GENERAL`) serves
   only that subtree: holders of `&TEST` are outside it for that node.
@@ -132,104 +137,91 @@ does, because it aggregates the holders of all its ancestors.
 │               Neurai Node with DePIN Messaging              │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│  ┌──────────────┐        ┌──────────────┐                   │
-│  │ RPC Server   │────────│ DePIN MsgPool│                   │
-│  │ (neurai-cli) │        │   Manager    │                   │
-│  └──────────────┘        └──────┬───────┘                   │
-│                                 │                           │
-│                         ┌───────┴─────────┐                 │
-│                         │                 │                 │
-│                    ┌────▼────┐      ┌─────▼──────┐          │
-│                    │ Message │      │ Network    │          │
-│                    │ Storage │      │ Listener   │          │
-│                    │ (7 days)│      │(Port 19002)│          │
-│                    └────┬────┘      └─────┬──────┘          │
-│                         │                 │                 │
-│                    ┌────▼─────────────────▼─────┐           │
-│                    │   Asset Index (-assetindex)│           │
-│                    │   Token Holder Lookup      │           │
-│                    └────────────────────────────┘           │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+│  ┌──────────────┐        ┌──────────────┐    ┌───────────┐  │
+│  │ RPC Server   │────────│ DePIN MsgPool│────│ Pool key  │  │
+│  │ (JSON-RPC)   │        │   Manager    │    │ (wallet)  │  │
+│  └──────▲───────┘        └──────┬───────┘    └───────────┘  │
+│         │                       │                           │
+│         │                ┌──────▼──────┐                    │
+│         │                │  Challenge  │                    │
+│         │                │    store    │                    │
+│         │                └──────┬──────┘                    │
+│         │                       │                           │
+│         │                ┌──────▼──────┐                    │
+│         │                │   Message   │                    │
+│         │                │   Storage   │                    │
+│         │                │   (7 days)  │                    │
+│         │                └──────┬──────┘                    │
+│         │                       │                           │
+│         │           ┌───────────▼────────────────┐          │
+│         │           │   Asset Index (-assetindex)│          │
+│         │           │   Pubkey Index             │          │
+│         │           └────────────────────────────┘          │
+└─────────┼───────────────────────────────────────────────────┘
+          │
+   neurai-rpc-proxy (whitelist) ◄──── holder wallets (hold their own keys)
 ```
 
 
-### Dedicated RPC Gateway on Port 19002
+### Authenticated RPC flow (protocol 2)
 
-The listener embeds a JSON-RPC 2.0 micro-endpoint with a restricted DePIN
-allowlist. It is not the general node RPC interface. The allowlist includes
-the DePIN send/retrieve/status operations and is intentionally narrower than
-node RPC; consult the RPC help of the running node for its exact version.
-- Legacy plaintext commands:
-  - `PING`: reachability test
-  - `INFO`: token/queue summary
-  - `AUTH`: request a signed challenge (30s expiry)
-  - `GETMESSAGES`: requires `AUTH` challenge + signature
+Every DePIN operation is a regular JSON-RPC method on the node's RPC port.
+A service node is published through an RPC proxy that whitelists the DePIN
+methods; holders never get node credentials. Instead, a holder proves control
+of an address with a challenge:
 
-Example calls using `nc` (or any TCP client):
-
-```bash
-# Send a message via the remote node. `fromaddress` is required.
-printf '{"jsonrpc":"2.0","id":1,"method":"depinsendmsg","params":["&MYTOKEN","203.0.113.5","Hello team!","NXfromAddress..."]}'   | nc 203.0.113.10 19002
-
-# Retrieve and decrypt messages using the node wallet
-printf '{"jsonrpc":"2.0","id":2,"method":"depingetmsg","params":["&MYTOKEN"]}'   | nc 203.0.113.10 19002
-```
-
-Server replies follow JSON-RPC as well:
-
-```json
-{"jsonrpc":"2.0","result":{"result":"success","hash":"..."},"error":null,"id":1}
-```
-
-Methods outside the DePIN allowlist are rejected, so exposing port 19002 does
-not give attackers access to the general wallet RPC surface. `depinlistsections`
-is available there only in its names-only form: address-specific access and
-message counters require node RPC.
-
-### Challenge / Response flow (plaintext protocol)
-
-1. Client requests a challenge for one of its token-holding addresses:
+1. **Anchor the pool key** (once, out of band). `depingetmsginfo` answers
+   `{"body": "<hex>", "poolsig": "<base64>"}`. Verify `poolsig` over the
+   `body` string with the pool key you have anchored; if you have none yet,
+   decode `body` as **untrusted** data: it carries `depinpoolpkey`,
+   `depinpoolkeyaddress`, `depinpoolkeyowner` and `depinpoolkeysig` — the
+   token owner's `signmessage` over `DEPIN-POOLKEY|<token>|<pubkey>`. Validate
+   that signature **locally** against an owner address you obtained from your
+   own node or configuration, never from the proxy you are about to trust; or
+   pin the pubkey on first use. Only then is the pool key trusted.
+2. **Request a challenge**:
    ```bash
-   printf 'AUTH|&MYTOKEN|NXholder...' | nc node.example.com 19002
-   # → CHALLENGE|abcd1234...|30
+   depinchallenge "&MYTOKEN/SEC" "NXholder..."          # type receive (default)
+   depinchallenge "&MYTOKEN" "NXowner..." "admin"       # for depinclearmsg
    ```
-2. Client signs the message `DEPIN-GET|<token>|<address>|<challenge>` (standard message-signature with `strMessageMagic`). The challenge is bound to the requested token or section.
-3. Client sends the signed fetch request (challenge valid for 30s). The address
-   field must contain **exactly the authenticated address** — the challenge only
-   proves control of that one:
+   The reply is encrypted for the address's revealed public key and signed
+   with the pool key: `{"encrypted": "<hex>", "poolsig": "<base64>"}`.
+   Decrypting it yields `{"challenge": "<64 hex>", "expires_in": 30,
+   "type": "receive"}`. A challenge is bound to the token, the address and
+   the type, is consumed by its first valid use and expires after 30 s. Only
+   a holder (or, for `admin`, an owner) of the token or an ancestor gets one.
+3. **Sign the preimage** with the address's key, `signmessage`-compatible:
+   `DEPIN-GET|<token>|<address>|<challenge>` for `receive`,
+   `DEPIN-CLEAR|<token>|<address>|<challenge>` for `admin`. A node that holds
+   the key can use `depinsignchallenge "address" "token" "challenge" ("type")`.
+4. **Call the RPC** with the challenge and signature:
    ```bash
-   printf 'GETMESSAGES|&MYTOKEN|NXholder...|NXholder...|<base64sig>|abcd1234...' | nc node.example.com 19002
+   depinreceivemsg "&MYTOKEN/SEC" "NXholder..." "<challenge>" "<signature>" (timestamp "after_hash" limit)
+   depinlistsections "NXholder..." "&MYTOKEN/SEC" "<challenge>" "<signature>"
+   depinclearmsg "&MYTOKEN/SEC" "NXowner..." "<challenge>" "<signature>" ("all" | hours)
    ```
-4. Server verifies active, inherited access for the requested token + signature before returning encrypted payload. If the client fails to answer within 30 seconds, the challenge expires and the connection is closed.
+   A failed signature, a nonce issued for other bindings, or an address that
+   lost access between issuance and use is refused — and the refusal never
+   consumes the nonce, so nobody can burn someone else's challenge.
+5. **Verify and decrypt the reply.** Every reply carries `poolsig`, the pool
+   key's compact signature over
+   `DEPIN-RESP|<method>|<token>|<address>|<challenge>|<sha256 hex of the body>`
+   where the body is the `encrypted` hex string (replies bound to an address)
+   or the `body` hex string (plain replies such as `depingetmsginfo`, which
+   carry their JSON hex-encoded), hashed exactly as received. It is
+   `verifymessage`-compatible against `depinpoolkeyaddress`. Verify first,
+   then decrypt `encrypted` with the address's key or hex-decode `body`.
 
-> **One address per request.** Listing several addresses (`NXa,NXb`) is rejected
-> with `ERROR|Only the authenticated address may be queried`: otherwise any
-> authenticated holder could pull the encrypted payloads addressed to another
-> holder. A wallet holding the token at several addresses repeats the
-> AUTH → sign → GETMESSAGES cycle once per address and merges the results,
-> discarding duplicates by message hash (a group message can be addressed to
-> more than one of its addresses). `neurai-cli depingetmsg` does this
-> automatically.
+To publish a message through a service node, prepare it client-side: resolve
+recipients (`depingetancestorrecipients` with the pool root as `stop_at`),
+encrypt and sign the `CDepinMessage`, wrap the serialized hex in an ECIES
+envelope for `depinpoolpkey`, and call
+`depinsubmitmsg {"sender": "NXfrom...", "encrypted": "<hex>"}`. The bare hex
+form no longer exists. The reply is encrypted for the sender.
 
-### Remote message sending handshake
-
-To keep the send endpoint lightweight, port 19002 now uses the same challenge/response flow for `depinsendmsg` RPC calls:
-
-1. Request a SEND challenge:
-   ```bash
-   printf 'AUTH|&MYTOKEN|NXfromAddress...|SEND\n' | nc node.example.com 19002
-   # → CHALLENGE|ef01ab..|30
-   ```
-2. Sign `DEPIN-SEND|&MYTOKEN|NXfromAddress...|ef01ab..` (compact/base64 signature, identical to `signmessage`).
-3. Call `depinsendmsg` and append `fromaddress`, `challenge`, and `signature` as the last parameters:
-   ```bash
-   printf '{"jsonrpc":"2.0","id":10,"method":"depinsendmsg","params":["&MYTOKEN","192.168.1.50","Hello team","NXfromAddress...","ef01ab..","<base64sig>"]}\n' \
-     | nc node.example.com 19002
-   ```
-4. The server validates the challenge/signature within 30 seconds and only then performs the expensive holder-lookup/encryption. If the signature fails or the nonce expires, restart at step 1.
-
-> Tip: when you run `neurai-cli depinsendmsg` from another machine (with the same wallet but without `depinmsg` enabled), the CLI now handles steps 1-4 automatically. Just pass the remote node as `ip[:port]` and include your `fromaddress`; the tool will request the challenge, sign it with the local private key, and forward the request through the gateway.
+`depingetpoolcontent` was removed: it exposed metadata of the whole pool and
+had no identity to bind a challenge to. `depinpoolstats` keeps the aggregate
+counters.
 
 ## System Requirements
 
@@ -284,29 +276,30 @@ thoroughly tested, so DePIN messaging cannot be enabled on mainnet for now.
 ### Message Sending Flow
 
 ```
-1. Client calls depinsendmsg "TOKEN_OR_SECTION" "HOST[:PORT]" "MESSAGE" "FROM_ADDRESS"
+1. Client reads depingetmsginfo: pool root, recipient limit, depinpoolpkey
                                     ↓
-2. For a remote pool, client queries INFO before taking wallet locks
+2. Client verifies that FROM_ADDRESS holds the selected section or an ancestor
                                     ↓
-3. Client verifies that FROM_ADDRESS holds the selected section or an ancestor
+3. Resolve active holders with public keys, stopping at the pool root
+   (depingetancestorrecipients "TOKEN" limit "POOL_ROOT")
                                     ↓
-4. Resolve active holders with public keys, stopping at the serving pool root
+4. Refuse the send if the complete recipient set exceeds the pool's limit
                                     ↓
-5. Refuse the send if the complete recipient set exceeds that pool's limit
+5. Encrypt the content once; ECIES-wrap the content key for each recipient
                                     ↓
-6. Encrypt the content once; ECIES-wrap the content key for each recipient
+6. Sign the serialized message with FROM_ADDRESS
                                     ↓
-7. Sign the serialized message with FROM_ADDRESS and submit it
+7. Wrap the serialized hex in an ECIES envelope for depinpoolpkey and call
+   depinsubmitmsg {"sender": FROM_ADDRESS, "encrypted": "<hex>"}
                                     ↓
-8. Receiving pool verifies scope, sender access, signature and size limits
+8. Pool opens the envelope, verifies scope, sender access, signature and size
                                     ↓
 9. Store in its temporary pool; messages expire according to pool policy
 ```
 
-For remote sends, `INFO` supplies both the pool root and its recipient limit.
-The client fails closed if it cannot obtain this information. This avoids
-encrypting a raw payload for holders of an ancestor that the remote pool does
-not serve.
+On a node that holds the sender's key and runs the pool itself,
+`depinsendmsg "TOKEN_OR_SECTION" "MESSAGE" "FROM_ADDRESS"` performs steps 2-9
+locally. It never contacts another node.
 
 ### Data Structure
 
@@ -356,8 +349,15 @@ depinmsg=1
 # Required DEPIN token for chat (must start with &, testnet/regtest only)
 depinmsgtoken=&MYTOKEN
 
-# Server port (optional, default: 19002)
-depinmsgport=19002
+# REQUIRED: the token owner's signmessage over "DEPIN-POOLKEY|&MYTOKEN|<pubkey>",
+# where <pubkey> is what `depinpoolpkey` reports on this node's service wallet.
+# The node refuses to start the service without it.
+depinpoolkeysig=<base64>
+
+# Only when more than one wallet is loaded: which one is the service wallet.
+# It must be an unencrypted legacy (non-PQ) BIP44 wallet; keep it dedicated and
+# empty of funds -- its key is hot for as long as the node serves.
+# depinwallet=depin.dat
 
 # Maximum recipients (optional, default: 20, hard maximum: 50; must be >= 1)
 depinmsgmaxusers=20
@@ -421,24 +421,25 @@ neurai-cli depingetmsginfo
 
 ### Available Commands
 
-#### 1. Send Message
+#### 1. Send Message (local wallet + local pool)
 
 ```bash
-neurai-cli depinsendmsg "TOKEN_OR_SECTION" "DEST_IP[:PORT]" "MESSAGE" "FROM_ADDRESS" (PORT)
+neurai-cli depinsendmsg "TOKEN_OR_SECTION" "MESSAGE" "FROM_ADDRESS"
 ```
 
 **Parameters**:
 - `TOKEN_OR_SECTION`: A pool root or section, for example `&MYTOKEN/GENERAL`.
-- `DEST_IP[:PORT]`: Remote DePIN gateway. An explicit final `PORT` is accepted
-  for compatibility, but `host:port` is clearer.
 - `MESSAGE`: Text to send (maximum 1KB)
 - `FROM_ADDRESS`: Address in the local wallet used for signing. It is required
   and must actively hold the target token or one of its ancestors.
 
+This RPC needs the wallet holding `FROM_ADDRESS` and the pool on the same
+node. To publish through a remote service node, prepare the message
+client-side and call its `depinsubmitmsg` (see [`depinreceivemsg.md`](depinreceivemsg.md)).
+
 **Example**:
 ```bash
-# The client performs INFO and the send challenge automatically.
-neurai-cli depinsendmsg "&MYTOKEN/GENERAL" "192.168.1.100:19005" "Hello team!" "NXspecificAddress..."
+neurai-cli depinsendmsg "&MYTOKEN/GENERAL" "Hello team!" "NXspecificAddress..."
 ```
 
 **Output**:
@@ -457,35 +458,36 @@ neurai-cli depinsendmsg "&MYTOKEN/GENERAL" "192.168.1.100:19005" "Hello team!" "
 
 #### 2. Read Messages
 
-**Local Reading**:
+**Local wallet + local pool** (decrypts with the wallet's keys):
 ```bash
-neurai-cli depingetmsg "TOKEN"
+neurai-cli depingetmsg "TOKEN_OR_SECTION" ("FROM_ADDRESS")
 ```
 
-**Remote Reading** (query another node):
-```bash
-neurai-cli depingetmsg "TOKEN_OR_SECTION" "REMOTE_IP[:PORT]" ("FROM_ADDRESS")
-```
-
-**Parameters**:
 - `TOKEN_OR_SECTION`: A root or section scope. A section includes its descendants.
-- `REMOTE_IP[:PORT]`: Optional remote gateway; omitting it reads locally.
 - `FROM_ADDRESS`: Optional specific local wallet address to use. When omitted,
-  the wallet queries all of its relevant branch addresses and de-duplicates by
+  the wallet tries all of its relevant branch addresses and de-duplicates by
   message hash.
 
-**Local Example**:
+**Any pool, any client** (the holder keeps its keys): `depinchallenge`, sign,
+`depinreceivemsg`, verify `poolsig`, decrypt. The full contract is in
+[`depinreceivemsg.md`](depinreceivemsg.md). From a node that holds the key:
+
 ```bash
-neurai-cli depingetmsg "&MYTOKEN"
+# 1. challenge (reply encrypted for the address) and open it with the wallet key
+neurai-cli depinchallenge "&MYTOKEN/GENERAL" "NXyouraddress..."
+neurai-cli depindecrypt "NXyouraddress..." "<encrypted>"        # -> {"challenge": ..., ...}
+# 2. sign the nonce with the wallet key
+neurai-cli depinsignchallenge "NXyouraddress..." "&MYTOKEN/GENERAL" "<challenge>"
+# 3. read (reply encrypted for the address and signed by the pool key), then open it
+neurai-cli depinreceivemsg "&MYTOKEN/GENERAL" "NXyouraddress..." "<challenge>" "<signature>"
+neurai-cli depindecrypt "NXyouraddress..." "<encrypted>"
 ```
 
-**Remote Example**:
-```bash
-# Query the GENERAL subtree at a remote gateway
-neurai-cli depingetmsg "&MYTOKEN/GENERAL" "192.168.1.78:19003" "NXyouraddress..."
-```
+`contrib/depin/regtest_walkthrough.sh` runs this whole flow (bootstrap, owner
+signature, refused starts, challenge, read, sections, purge) against a fresh
+regtest node and checks every step.
 
-**Output**:
+**`depingetmsg` output**:
 ```json
 [
   {
@@ -512,29 +514,38 @@ neurai-cli depingetmsg "&MYTOKEN/GENERAL" "192.168.1.78:19003" "NXyouraddress...
 neurai-cli depingetmsginfo
 ```
 
-**Output**:
+**Output** (a signed plain body; `body` is the hex of the JSON below):
+```json
+{ "body": "7b22656e61626c6564223a747275652c...", "poolsig": "IMn3..." }
+```
 ```json
 {
   "enabled": true,
   "token": "&MYTOKEN",
-  "port": 19002,
   "maxrecipients": 20,
   "messages": 42,
   "memoryusage": 52428,
-  "oldestmessage": "2024-11-02 10:15:30",
-  "newestmessage": "2024-11-09 15:20:00"
+  "newestmessage": "2024-11-09 15:20:00",
+  "protocol": 2,
+  "depinpoolpkey": "02ab...",
+  "depinpoolkeyaddress": "NXpool...",
+  "depinpoolkeyowner": "NXowner...",
+  "depinpoolkeysig": "H1a2...",
+  "depinwallet": "wallet.dat"
 }
 ```
 
 #### 4. Clear Expired Messages
 
 ```bash
-neurai-cli depinclearmsg ("all"|HOURS) ("SCOPE")
+neurai-cli depinclearmsg "SCOPE" "OWNER_ADDRESS" "CHALLENGE" "SIGNATURE" ("all"|HOURS)
 ```
 
-`SCOPE` is optional and may be a served section. It clears that section and
-its descendants only; it never clears a parent or sibling. Automatic cleanup
-also removes expired messages.
+`SCOPE` is a served section, or `""` for the whole pool. It clears that
+section and its descendants only; it never clears a parent or sibling. The
+challenge must be an `admin` challenge issued for exactly `SCOPE` (for `""`,
+request it for the pool root by name) to an owner of that token or of an
+ancestor. Automatic cleanup also removes expired messages without any call.
 
 #### 5. List sections for a client UI
 
@@ -572,9 +583,11 @@ contract and security rules.
 neurai-cli depingetmsginfo
 ```
 
-For remote sending, do not manually guess this configuration: `depinsendmsg`
-queries the remote gateway's `INFO` and uses its served root and recipient
-limit automatically.
+A client publishing through this node reads `token` (the pool root, its
+`stop_at` for recipient resolution), `maxrecipients` and `depinpoolpkey`
+(the key to wrap `depinsubmitmsg` envelopes for) from here, and anchors
+`depinpoolpkey` through `depinpoolkeysig` as described in
+[`depinreceivemsg.md`](depinreceivemsg.md).
 
 <!-- Legacy holder-list example retained below only as a blockchain index example. -->
 

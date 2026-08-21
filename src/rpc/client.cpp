@@ -69,19 +69,14 @@ static const CRPCConvertParam vRPCConvertParams[] =
     // before the RPC body ever runs. Only reachable through neurai-cli, so a
     // unit test that builds the UniValue itself cannot see it.
     //
-    // The first parameter of depingetpoolcontent and of depinclearmsg is
-    // deliberately absent: both accept a word ("all", "raw") as well as a
-    // number, and ParseNonRFCJSONValue() throws on anything that is not valid
-    // JSON, so listing them here would break the word form. Those two are
-    // normalised inside the RPC instead (ParseFlexibleInt64, rpc/messages.cpp).
+    // depinclearmsg's mode (index 4) is deliberately absent: it accepts a word
+    // ("all") as well as a number, and ParseNonRFCJSONValue() throws on
+    // anything that is not valid JSON, so listing it here would break the word
+    // form. It is normalised inside the RPC instead (ParseFlexibleInt64,
+    // rpc/messages.cpp).
     { "depingetancestorrecipients", 1, "max_results" },
-    { "depingetpoolcontent", 3, "start_time" },
-    { "depingetpoolcontent", 4, "end_time" },
-    { "depingetpoolcontent", 5, "limit" },
-    { "depingetpoolcontent", 6, "offset" },
-    { "depinreceivemsg", 2, "timestamp" },
-    { "depinreceivemsg", 4, "limit" },
-    { "depinsendmsg", 4, "port" },
+    { "depinreceivemsg", 4, "timestamp" },
+    { "depinreceivemsg", 6, "limit" },
     { "setmocktime", 0, "timestamp" },
     { "generate", 0, "nblocks" },
     { "generate", 1, "maxtries" },

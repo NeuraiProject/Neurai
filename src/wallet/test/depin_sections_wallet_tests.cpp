@@ -26,12 +26,15 @@
 #include "consensus/validation.h"
 #include "depinecies.h"
 #include "depinmsgpool.h"
-#include "depinmsgpoolnet.h"
+#include "depinpoolkey.h"
 #include "miner.h"
 #include "pubkeyindex.h"
 #include "streams.h"
+#include "utilstrencodings.h"
+#include "version.h"
 #include "net.h" // g_connman
 #include "rpc/server.h"
+#include "script/standard.h"
 #include "test/test_neurai.h"
 #include "utiltime.h"
 #include "validation.h"
@@ -53,6 +56,7 @@ struct DepinSectionsWalletSetup : public TestingSetup {
     std::unique_ptr<CWallet> wallet;
     bool prevAssetIndex;
     bool prevPubKeyIndex;
+    CKey poolKey;
 
     DepinSectionsWalletSetup() : TestingSetup(CBaseChainParams::TESTNET)
     {
@@ -90,10 +94,15 @@ struct DepinSectionsWalletSetup : public TestingSetup {
         wallet->ScanForWalletTransactions(chainActive.Genesis(), nullptr, true);
 
         vpwallets.insert(vpwallets.begin(), wallet.get());
+
+        // Every DePIN response is signed with the pool key.
+        poolKey.MakeNewKey(true);
+        SetDepinPoolKey(poolKey, "", "", "test");
     }
 
     ~DepinSectionsWalletSetup()
     {
+        ClearDepinPoolKey();
         vpwallets.erase(std::remove(vpwallets.begin(), vpwallets.end(), wallet.get()), vpwallets.end());
         wallet.reset();
         ::bitdb.Flush(true);
@@ -192,7 +201,7 @@ struct ScopedInitializedPool {
         : previous(std::move(pDepinMsgPool))
     {
         pDepinMsgPool.reset(new CDepinMsgPool());
-        BOOST_REQUIRE(pDepinMsgPool->Initialize(token, DEFAULT_DEPIN_MSG_PORT,
+        BOOST_REQUIRE(pDepinMsgPool->Initialize(token,
                                                 maxRecipients,
                                                 DEFAULT_DEPIN_MESSAGE_SIZE,
                                                 DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS,
@@ -289,9 +298,21 @@ BOOST_AUTO_TEST_CASE(scoped_purge_and_listsections_rpc)
     BOOST_REQUIRE(AreAssetsDeployed());
     ScopedInitializedPool pool(PARENT_ASSET);
 
-    const std::string parentAddress = IssueAssetAndConfirm(PARENT_ASSET, CAmount(1000 * COIN));
-    const std::string childAddress = IssueAssetAndConfirm(CHILD_ASSET, CAmount(100 * COIN));
+    CPubKey parentPubKey, childPubKey;
+    const std::string parentAddress = IssueAssetAndConfirm(PARENT_ASSET, CAmount(1000 * COIN), &parentPubKey);
+    const std::string childAddress = IssueAssetAndConfirm(CHILD_ASSET, CAmount(100 * COIN), &childPubKey);
     FlushChainState();
+
+    // The authenticated RPCs encrypt for the caller's revealed key.
+    for (const auto& entry : {std::make_pair(parentAddress, parentPubKey),
+                              std::make_pair(childAddress, childPubKey)}) {
+        CTxDestination dest = DecodeDestination(entry.first);
+        CDestinationIndexData addressData;
+        BOOST_REQUIRE(GetDestinationIndexData(dest, addressData));
+        std::vector<std::pair<CPubKeyIndexKey, CPubKeyIndexValue> > entries;
+        entries.emplace_back(CPubKeyIndexKey(addressData), CPubKeyIndexValue(entry.second, 1, uint256()));
+        BOOST_REQUIRE(pblocktree->WritePubKeyIndex(entries));
+    }
 
     // One message at the root (parent address may publish anywhere), two in
     // the child section.
@@ -306,50 +327,163 @@ BOOST_AUTO_TEST_CASE(scoped_purge_and_listsections_rpc)
 
     BOOST_REQUIRE_EQUAL(pDepinMsgPool->GetMessageCount(), 3U);
 
-    // listsections for the CHILD address: sees both tabs, has access only to
-    // the child one, and the message counter appears only there.
-    UniValue listParams(UniValue::VARR);
-    listParams.push_back(childAddress);
-    UniValue listing = CallDepinRPC("depinlistsections", listParams);
-    BOOST_REQUIRE_EQUAL(listing.size(), 2U);
+    // The client flow with the wallet's own RPCs: depinchallenge -> decrypt
+    // with the wallet key -> depinsignchallenge -> the authenticated call.
+    // A refused call surfaces its JSON-RPC error instead of Boost's "unknown type".
+    auto call = [&](const std::string& method, const UniValue& params) {
+        try {
+            return CallDepinRPC(method, params);
+        } catch (const UniValue& e) {
+            BOOST_FAIL(method + " failed: " + e.write());
+            return UniValue();
+        }
+    };
+    auto walletKey = [&](const std::string& address) {
+        CTxDestination dest = DecodeDestination(address);
+        const CKeyID* keyID = boost::get<CKeyID>(&dest);
+        BOOST_REQUIRE(keyID != nullptr);
+        CKey key;
+        BOOST_REQUIRE(wallet->GetKey(*keyID, key));
+        return key;
+    };
+    // Replies are opened with depindecrypt, the wallet RPC a neurai-cli client
+    // uses for the same purpose.
+    auto open = [&](const UniValue& response, const std::string& address) {
+        BOOST_REQUIRE_MESSAGE(response.exists("encrypted"), response.write());
+        BOOST_REQUIRE(response.exists("poolsig"));
+        UniValue params(UniValue::VARR);
+        params.push_back(address);
+        params.push_back(response["encrypted"].get_str());
+        return call("depindecrypt", params);
+    };
+    auto challenge = [&](const std::string& token, const std::string& address, const std::string& type) {
+        UniValue params(UniValue::VARR);
+        params.push_back(token);
+        params.push_back(address);
+        params.push_back(type);
+        return open(call("depinchallenge", params), address)["challenge"].get_str();
+    };
+    auto sign = [&](const std::string& address, const std::string& token, const std::string& nonce, const std::string& type) {
+        UniValue params(UniValue::VARR);
+        params.push_back(address);
+        params.push_back(token);
+        params.push_back(nonce);
+        params.push_back(type);
+        return call("depinsignchallenge", params)["signature"].get_str();
+    };
 
-    BOOST_CHECK_EQUAL(listing[0]["name"].get_str(), PARENT_ASSET);
-    BOOST_CHECK_EQUAL(listing[0]["access"].get_bool(), false);
-    BOOST_CHECK(listing[0]["messages"].isNull());  // no counter without access
+    // listsections for the CHILD address, scoped to its own section: access
+    // and the counter for that tab; the root is outside what it can prove.
+    {
+        const std::string nonce = challenge(CHILD_ASSET, childAddress, "receive");
+        UniValue listParams(UniValue::VARR);
+        listParams.push_back(childAddress);
+        listParams.push_back(CHILD_ASSET);
+        listParams.push_back(nonce);
+        listParams.push_back(sign(childAddress, CHILD_ASSET, nonce, "receive"));
+        const UniValue sections = open(call("depinlistsections", listParams), childAddress)["sections"];
+        BOOST_REQUIRE_EQUAL(sections.size(), 1U);
+        BOOST_CHECK_EQUAL(sections[0]["name"].get_str(), CHILD_ASSET);
+        BOOST_CHECK_EQUAL(sections[0]["label"].get_str(), "HIJO");
+        BOOST_CHECK_EQUAL(sections[0]["access"].get_bool(), true);
+        BOOST_CHECK_EQUAL(sections[0]["messages"].get_int(), 2);
+    }
+    // The child address gets no challenge for the root: no access there.
+    {
+        UniValue params(UniValue::VARR);
+        params.push_back(PARENT_ASSET);
+        params.push_back(childAddress);
+        BOOST_CHECK_THROW(CallDepinRPC("depinchallenge", params), UniValue);
+    }
+    // The parent address, with a root challenge, sees both tabs.
+    {
+        const std::string nonce = challenge(PARENT_ASSET, parentAddress, "receive");
+        UniValue listParams(UniValue::VARR);
+        listParams.push_back(parentAddress);
+        listParams.push_back(PARENT_ASSET);
+        listParams.push_back(nonce);
+        listParams.push_back(sign(parentAddress, PARENT_ASSET, nonce, "receive"));
+        const UniValue sections = open(call("depinlistsections", listParams), parentAddress)["sections"];
+        BOOST_REQUIRE_EQUAL(sections.size(), 2U);
+        BOOST_CHECK_EQUAL(sections[0]["name"].get_str(), PARENT_ASSET);
+        BOOST_CHECK_EQUAL(sections[0]["access"].get_bool(), true);
+        BOOST_CHECK_EQUAL(sections[0]["messages"].get_int(), 3);
+        BOOST_CHECK_EQUAL(sections[1]["name"].get_str(), CHILD_ASSET);
+        BOOST_CHECK_EQUAL(sections[1]["access"].get_bool(), true);
+        BOOST_CHECK_EQUAL(sections[1]["messages"].get_int(), 2);
+    }
 
-    BOOST_CHECK_EQUAL(listing[1]["name"].get_str(), CHILD_ASSET);
-    BOOST_CHECK_EQUAL(listing[1]["label"].get_str(), "HIJO");
-    BOOST_CHECK_EQUAL(listing[1]["access"].get_bool(), true);
-    BOOST_CHECK_EQUAL(listing[1]["messages"].get_int(), 2);
+    // The owner token &PADRE! went to whichever wallet address the issuance
+    // picked for it, not to the asset's destination: find that address, it
+    // is the one allowed to purge (an ancestor owner qualifies for CHILD).
+    std::string ownerAddress;
+    {
+        LOCK2(cs_main, wallet->cs_wallet);
+        std::map<std::string, std::vector<COutput>> mapAssetCoins;
+        wallet->AvailableAssets(mapAssetCoins);
+        const auto it = mapAssetCoins.find(PARENT_ASSET + OWNER_TAG);
+        BOOST_REQUIRE(it != mapAssetCoins.end() && !it->second.empty());
+        CTxDestination dest;
+        BOOST_REQUIRE(ExtractDestination(it->second[0].tx->tx->vout[it->second[0].i].scriptPubKey, dest));
+        ownerAddress = EncodeDestination(dest);
+    }
+    {
+        CTxDestination dest = DecodeDestination(ownerAddress);
+        CDestinationIndexData addressData;
+        BOOST_REQUIRE(GetDestinationIndexData(dest, addressData));
+        std::vector<std::pair<CPubKeyIndexKey, CPubKeyIndexValue> > entries;
+        entries.emplace_back(CPubKeyIndexKey(addressData), CPubKeyIndexValue(walletKey(ownerAddress).GetPubKey(), 1, uint256()));
+        BOOST_REQUIRE(pblocktree->WritePubKeyIndex(entries));
+    }
+    // A plain holder of the root is not an owner: no admin challenge for it.
+    {
+        UniValue params(UniValue::VARR);
+        params.push_back(CHILD_ASSET);
+        params.push_back(parentAddress);
+        params.push_back("admin");
+        BOOST_CHECK_THROW(CallDepinRPC("depinchallenge", params), UniValue);
+    }
 
-    // Scoped purge: clearing the CHILD subtree removes its two messages and
-    // leaves the root's untouched -- never parents, never siblings.
-    UniValue clearParams(UniValue::VARR);
-    clearParams.push_back("all");
-    clearParams.push_back(CHILD_ASSET);
-    UniValue cleared = CallDepinRPC("depinclearmsg", clearParams);
-    BOOST_CHECK_EQUAL(cleared["removed"].get_int(), 2);
-    BOOST_CHECK_EQUAL(cleared["remaining"].get_int(), 1);
+    // Scoped purge by the owner of the root (an ancestor owner qualifies):
+    // clearing the CHILD subtree removes its two messages and leaves the
+    // root's untouched -- never parents, never siblings.
+    {
+        const std::string nonce = challenge(CHILD_ASSET, ownerAddress, "admin");
+        UniValue clearParams(UniValue::VARR);
+        clearParams.push_back(CHILD_ASSET);
+        clearParams.push_back(ownerAddress);
+        clearParams.push_back(nonce);
+        clearParams.push_back(sign(ownerAddress, CHILD_ASSET, nonce, "admin"));
+        clearParams.push_back("all");
+        const UniValue cleared = open(call("depinclearmsg", clearParams), ownerAddress);
+        BOOST_CHECK_EQUAL(cleared["removed"].get_int(), 2);
+        BOOST_CHECK_EQUAL(cleared["remaining"].get_int(), 1);
+    }
 
     std::vector<CDepinMessage> remaining = pDepinMsgPool->GetAllMessages();
     BOOST_REQUIRE_EQUAL(remaining.size(), 1U);
     BOOST_CHECK_EQUAL(remaining[0].token, PARENT_ASSET);
 
-    // A scope outside the subtree is refused.
-    UniValue badParams(UniValue::VARR);
-    badParams.push_back("all");
-    badParams.push_back("&OTRO");
-    BOOST_CHECK_THROW(CallDepinRPC("depinclearmsg", badParams), UniValue);
+    // A scope outside the subtree is refused before any authentication.
+    {
+        UniValue badParams(UniValue::VARR);
+        badParams.push_back("&OTRO");
+        badParams.push_back(ownerAddress);
+        badParams.push_back(std::string(64, 'a'));
+        badParams.push_back("sig");
+        badParams.push_back("all");
+        BOOST_CHECK_THROW(CallDepinRPC("depinclearmsg", badParams), UniValue);
+    }
 }
 
-#if defined(ENABLE_DEPIN_GATEWAY) && !defined(WIN32)
-// The reviewer's remote-send scenario, end to end and in-process: a pool
-// serves &PADRE/HIJO with maxRecipients = 2 (< the global 50); the message
-// goes to &PADRE/HIJO/NIETO; the wallet ALSO holds &PADRE, whose holder is
-// outside that pool and must NOT appear in recipientKeys -- the pool's port
-// exposes raw payloads, so an extra entry is an extra reader. The scope comes
-// from the remote INFO (token as stopAt, maxRecipients as the limit).
-BOOST_AUTO_TEST_CASE(remote_send_scopes_recipients_to_the_serving_pool)
+// The reviewer's scope scenario, end to end and in-process: a pool serves
+// &PADRE/HIJO with maxRecipients = 2 (< the global 50); the message goes to
+// &PADRE/HIJO/NIETO; the wallet ALSO holds &PADRE, whose holder is outside
+// that pool and must NOT appear in recipientKeys -- the pool hands its
+// payloads to anyone who authenticates, so an extra entry is an extra reader.
+// The scope comes from the serving pool itself (root as stopAt, its
+// maxRecipients as the limit).
+BOOST_AUTO_TEST_CASE(send_scopes_recipients_to_the_serving_pool)
 {
     BOOST_REQUIRE(AreAssetsDeployed());
     const std::string GRANDCHILD_ASSET = "&PADRE/HIJO/NIETO";
@@ -373,25 +507,16 @@ BOOST_AUTO_TEST_CASE(remote_send_scopes_recipients_to_the_serving_pool)
         BOOST_REQUIRE(pblocktree->WritePubKeyIndex(entries));
     }
 
-    // The serving pool: root &PADRE/HIJO, remote limit 2 (< 50).
+    // The serving pool: root &PADRE/HIJO, limit 2 (< 50).
     ScopedInitializedPool pool(CHILD_ASSET, /*maxRecipients=*/2);
-    CDepinMsgPoolServer server;
-    int serverPort = -1;
-    for (int p = 34651; p < 34681; ++p) {
-        if (server.Start(p)) { serverPort = p; break; }
-    }
-    BOOST_REQUIRE(serverPort > 0);
 
-    // Remote send through the real RPC: INFO -> scope -> resolve -> encrypt ->
-    // sign -> submit over the port -> remote depinsubmitmsg -> AddMessage.
+    // Through the real RPC: resolve -> encrypt -> sign -> AddMessage.
     UniValue params(UniValue::VARR);
     params.push_back(GRANDCHILD_ASSET);
-    params.push_back(strprintf("127.0.0.1:%d", serverPort));
     params.push_back("hola seccion");
     params.push_back(childAddress);
 
     const UniValue result = CallDepinRPC("depinsendmsg", params);
-    server.Stop();
 
     BOOST_CHECK_EQUAL(result["result"].get_str(), "success");
     BOOST_CHECK_EQUAL(result["token"].get_str(), GRANDCHILD_ASSET);
@@ -401,7 +526,6 @@ BOOST_AUTO_TEST_CASE(remote_send_scopes_recipients_to_the_serving_pool)
     BOOST_CHECK_EQUAL(result["ancestors"][1].get_str(), CHILD_ASSET);
     BOOST_CHECK_EQUAL(result["recipients"].get_int(), 2);
 
-    // The message reached the serving pool through the port.
     BOOST_REQUIRE_EQUAL(pDepinMsgPool->GetMessageCount(), 1U);
     std::vector<CDepinMessage> messages = pDepinMsgPool->GetAllMessages();
     BOOST_REQUIRE_EQUAL(messages.size(), 1U);
@@ -417,24 +541,15 @@ BOOST_AUTO_TEST_CASE(remote_send_scopes_recipients_to_the_serving_pool)
     BOOST_CHECK(ecies.recipientKeys.count(uint160(grandchildPubKey.GetID())) > 0);
     BOOST_CHECK(ecies.recipientKeys.count(uint160(parentPubKey.GetID())) == 0);
 
-    // And a token the pool does not serve is refused up front by the INFO
-    // scope check -- before anything is encrypted or submitted.
-    CDepinMsgPoolServer server2;
-    int server2Port = -1;
-    for (int p = 34651; p < 34681; ++p) {
-        if (server2.Start(p)) { server2Port = p; break; }
-    }
-    BOOST_REQUIRE(server2Port > 0);
+    // And a token the pool does not serve is refused up front -- before
+    // anything is encrypted or added.
     UniValue outsideParams(UniValue::VARR);
     outsideParams.push_back(PARENT_ASSET);  // ancestor of the pool root, not served
-    outsideParams.push_back(strprintf("127.0.0.1:%d", server2Port));
     outsideParams.push_back("no deberia salir");
     outsideParams.push_back(parentAddress);
     BOOST_CHECK_THROW(CallDepinRPC("depinsendmsg", outsideParams), UniValue);
-    server2.Stop();
     BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessageCount(), 1U);
 }
-#endif // ENABLE_DEPIN_GATEWAY && !WIN32
 
 // SignDepinMessage (the wallet signing path) and VerifyDepinMessageSignature
 // agree on a single preimage: the message identifier (GetHash), which covers

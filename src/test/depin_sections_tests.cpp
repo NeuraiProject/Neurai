@@ -35,11 +35,13 @@
 #include "base58.h"
 #include "chainparams.h"
 #include "depinecies.h"
+#include "depinpoolkey.h"
 #include "hash.h"
 #include "key.h"
 #include "pubkey.h"
 #include "pubkeyindex.h"
 #include "rpc/client.h"
+#include "rpc/protocol.h"
 #include "rpc/server.h"
 #include "script/standard.h"
 #include "streams.h"
@@ -77,6 +79,7 @@ struct DepinSectionsSetup : public TestingSetup {
     CAssetsDB* prevAssetsDb;
     CLRUCache<std::string, CDatabasedAssetData>* prevAssetsCache;
     CRestrictedDB* prevRestrictedDb;
+    CKey poolKey;
 
     DepinSectionsSetup() : TestingSetup(CBaseChainParams::REGTEST)
     {
@@ -93,11 +96,17 @@ struct DepinSectionsSetup : public TestingSetup {
         passetsCache = new CLRUCache<std::string, CDatabasedAssetData>(MAX_CACHE_ASSETS_SIZE);
         prestricteddb = new CRestrictedDB(1 << 20, true, true);
 
+        // Every DePIN response is signed with the pool key and depinsubmitmsg
+        // only accepts envelopes for it.
+        poolKey.MakeNewKey(true);
+        SetDepinPoolKey(poolKey, "", "", "test");
+
         gDepinAncestorRecipientsStats.Reset();
     }
 
     ~DepinSectionsSetup()
     {
+        ClearDepinPoolKey();
         delete prestricteddb;
         delete passetsCache;
         delete passetsdb;
@@ -179,7 +188,7 @@ struct ScopedInitializedPool {
         : previous(std::move(pDepinMsgPool))
     {
         pDepinMsgPool.reset(new CDepinMsgPool());
-        BOOST_REQUIRE(pDepinMsgPool->Initialize(token, DEFAULT_DEPIN_MSG_PORT, maxRecipients,
+        BOOST_REQUIRE(pDepinMsgPool->Initialize(token, maxRecipients,
                                                 DEFAULT_DEPIN_MESSAGE_SIZE,
                                                 DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS,
                                                 DEFAULT_DEPIN_POOL_SIZE_MB));
@@ -262,6 +271,47 @@ UniValue CallDepinRPC(const std::string& method, const UniValue& params)
 
     BOOST_REQUIRE(tableRPC[method]);
     return (*tableRPC[method]->actor)(request);
+}
+
+// What a client sends to depinsubmitmsg: the serialized message inside an
+// ECIES envelope for the pool key.
+UniValue WrapForPool(const std::string& sender, const CDepinMessage& msg)
+{
+    CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
+    ss << msg;
+    const std::string hexMessage = HexStr(ss.begin(), ss.end());
+
+    CKey poolKey;
+    CPubKey poolPub;
+    BOOST_REQUIRE(GetDepinPoolKey(poolKey, poolPub));
+    std::map<std::string, CPubKey> keys;
+    keys[EncodeDestination(poolPub.GetID())] = poolPub;
+
+    CECIESEncryptedMessage ecies;
+    std::string error;
+    BOOST_REQUIRE_MESSAGE(ECIESEncryptMessage(hexMessage, keys, ecies, error), error);
+    CDataStream envelope(SER_NETWORK, PROTOCOL_VERSION);
+    envelope << ecies;
+
+    UniValue wrapped(UniValue::VOBJ);
+    wrapped.push_back(Pair("sender", sender));
+    wrapped.push_back(Pair("encrypted", HexStr(envelope.begin(), envelope.end())));
+    return wrapped;
+}
+
+// Opens an encrypted DePIN response with the holder's key.
+UniValue OpenResponse(const UniValue& response, const Holder& holder)
+{
+    BOOST_REQUIRE_MESSAGE(response.exists("encrypted"), response.write());
+    BOOST_REQUIRE(response.exists("poolsig"));
+    CECIESEncryptedMessage ecies;
+    CDataStream ss(ParseHex(response["encrypted"].get_str()), SER_NETWORK, PROTOCOL_VERSION);
+    ss >> ecies;
+    std::string plaintext, error;
+    BOOST_REQUIRE_MESSAGE(ECIESDecryptMessage(ecies, holder.key, holder.address, plaintext, error), error);
+    UniValue inner;
+    BOOST_REQUIRE(inner.read(plaintext));
+    return inner;
 }
 
 } // namespace
@@ -652,15 +702,16 @@ BOOST_AUTO_TEST_CASE(addmessage_caps_recipient_count)
     BOOST_CHECK_MESSAGE(error.find("recipients") != std::string::npos, error);
 }
 
-// (15) depinsubmitmsg accepts a section message end to end (subtree gate plus
-// inherited-access pre-check, real signature) and still rejects foreign
-// tokens before anything else.
+// (15) depinsubmitmsg accepts a section message end to end (envelope for the
+// pool key, subtree gate, inherited-access pre-check, real signature), replies
+// encrypted for the sender, and still rejects foreign tokens and the bare
+// (unwrapped) form before anything else.
 BOOST_AUTO_TEST_CASE(depinsubmitmsg_accepts_section)
 {
     ScopedInitializedPool pool(ROOT);
 
     // The sender needs a REVEALED pubkey (signature verification reads the
-    // index) and an active section balance.
+    // index, and the reply is encrypted for it) and an active section balance.
     const Holder sender = NewHolder(true);
     const Holder audience = NewHolder(false);
     SetBalance(SECTION_A, sender.address, 10);
@@ -668,26 +719,61 @@ BOOST_AUTO_TEST_CASE(depinsubmitmsg_accepts_section)
     CDepinMessage msg = MakeEciesMessage(SECTION_A, sender, {audience}, "via rpc");
     SignMessageWithKey(msg, sender.key);
 
+    UniValue params(UniValue::VARR);
+    params.push_back(WrapForPool(sender.address, msg));
+
+    const UniValue response = CallDepinRPC("depinsubmitmsg", params);
+    const UniValue result = OpenResponse(response, sender);
+    BOOST_CHECK_EQUAL(result["result"].get_str(), "success");
+    BOOST_CHECK_EQUAL(result["hash"].get_str(), msg.GetHash().ToString());
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessageCount(), 1U);
+
+    // The bare hex form no longer exists.
     CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
     ss << msg;
+    UniValue bareParams(UniValue::VARR);
+    bareParams.push_back(HexStr(ss.begin(), ss.end()));
+    BOOST_CHECK_THROW(CallDepinRPC("depinsubmitmsg", bareParams), UniValue);
 
-    UniValue params(UniValue::VARR);
-    params.push_back(HexStr(ss.begin(), ss.end()));
-
-    const UniValue result = CallDepinRPC("depinsubmitmsg", params);
-    BOOST_CHECK_EQUAL(result["result"].get_str(), "success");
-    BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessageCount(), 1U);
+    // An envelope whose sender is not the signer is refused.
+    UniValue mismatched(UniValue::VARR);
+    mismatched.push_back(WrapForPool(audience.address, msg));
+    BOOST_CHECK_THROW(CallDepinRPC("depinsubmitmsg", mismatched), UniValue);
 
     // A foreign token is rejected up front with the subtree error.
     CDepinMessage foreign = MakeEciesMessage("&TESTING", sender, {audience}, "wrong");
     SignMessageWithKey(foreign, sender.key);
-    CDataStream ssForeign(SER_NETWORK, PROTOCOL_VERSION);
-    ssForeign << foreign;
     UniValue foreignParams(UniValue::VARR);
-    foreignParams.push_back(HexStr(ssForeign.begin(), ssForeign.end()));
-
+    foreignParams.push_back(WrapForPool(sender.address, foreign));
     BOOST_CHECK_THROW(CallDepinRPC("depinsubmitmsg", foreignParams), UniValue);
     BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessageCount(), 1U);
+}
+
+// (15b) A sender without a revealed public key is refused with
+// RPC_INVALID_ADDRESS_OR_KEY before anything is stored: the reply would have
+// nothing to be encrypted for, and no plaintext fallback exists. Valid
+// message, valid signature, valid envelope -- only the key is missing.
+BOOST_AUTO_TEST_CASE(depinsubmitmsg_requires_revealed_sender_key)
+{
+    ScopedInitializedPool pool(ROOT);
+
+    const Holder sender = NewHolder(false);
+    const Holder audience = NewHolder(false);
+    SetBalance(SECTION_A, sender.address, 10);
+
+    CDepinMessage msg = MakeEciesMessage(SECTION_A, sender, {audience}, "sin clave");
+    SignMessageWithKey(msg, sender.key);
+    UniValue params(UniValue::VARR);
+    params.push_back(WrapForPool(sender.address, msg));
+
+    int code = 0;
+    try {
+        CallDepinRPC("depinsubmitmsg", params);
+    } catch (const UniValue& e) {
+        code = find_value(e, "code").get_int();
+    }
+    BOOST_CHECK_EQUAL(code, RPC_INVALID_ADDRESS_OR_KEY);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessageCount(), 0U);
 }
 
 // ---------------------------------------------------------------------------
@@ -735,7 +821,7 @@ BOOST_AUTO_TEST_CASE(sections_cached_per_tip_and_authorization_uncached)
 BOOST_AUTO_TEST_CASE(pool_initialize_rejects_zero_max_recipients)
 {
     CDepinMsgPool pool;
-    BOOST_CHECK(!pool.Initialize(ROOT, DEFAULT_DEPIN_MSG_PORT, /*maxRecipients=*/0,
+    BOOST_CHECK(!pool.Initialize(ROOT, /*maxRecipients=*/0,
                                  DEFAULT_DEPIN_MESSAGE_SIZE,
                                  DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS,
                                  DEFAULT_DEPIN_POOL_SIZE_MB));
@@ -743,7 +829,7 @@ BOOST_AUTO_TEST_CASE(pool_initialize_rejects_zero_max_recipients)
 
     // The boundary value is fine.
     CDepinMsgPool poolOne;
-    BOOST_CHECK(poolOne.Initialize(ROOT, DEFAULT_DEPIN_MSG_PORT, /*maxRecipients=*/1,
+    BOOST_CHECK(poolOne.Initialize(ROOT, /*maxRecipients=*/1,
                                    DEFAULT_DEPIN_MESSAGE_SIZE,
                                    DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS,
                                    DEFAULT_DEPIN_POOL_SIZE_MB));

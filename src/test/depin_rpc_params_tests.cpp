@@ -13,13 +13,11 @@
 // found by a functional walkthrough, not by the suite; these tests exist so the
 // next one is found here.
 //
-// Two of the parameters cannot live in the conversion table at all
-// (depingetpoolcontent's `verbose` and depinclearmsg's `mode` accept a word as
-// well as a number, and ParseNonRFCJSONValue throws on non-JSON), so they are
-// normalised inside the RPC. For those the tests assert SEMANTICS, not
-// acceptance: "120" was already accepted before this change -- it just meant
-// false, while the number 120 meant true. A test that only checked "does not
-// throw" would have passed before and after, measuring nothing.
+// One parameter cannot live in the conversion table at all (depinclearmsg's
+// `mode` accepts a word as well as a number, and ParseNonRFCJSONValue throws on
+// non-JSON), so it is normalised inside the RPC. For it the tests assert
+// SEMANTICS, not acceptance: "7" must do what the number 7 does. A test that
+// only checked "does not throw" would measure nothing.
 
 // amount.h first: assets/assetdb.h declares CAmount parameters without
 // including it, so it only compiles when the includer got there first.
@@ -31,7 +29,15 @@
 #include "assets/restricteddb.h"
 #include "base58.h"
 #include "chainparams.h"
+#include "depinchallenge.h"
+#include "depinecies.h"
 #include "depinmsgpool.h"
+#include "depinpoolkey.h"
+#include "pubkeyindex.h"
+#include "streams.h"
+#include "txdb.h"
+#include "utilstrencodings.h"
+#include "version.h"
 #include "key.h"
 #include "rpc/client.h"
 #include "rpc/protocol.h"
@@ -62,13 +68,8 @@ struct ConvertCase {
 
 const ConvertCase CONVERT_CASES[] = {
     {"depingetancestorrecipients", 1, "max_results"},
-    {"depingetpoolcontent", 3, "start_time"},
-    {"depingetpoolcontent", 4, "end_time"},
-    {"depingetpoolcontent", 5, "limit"},
-    {"depingetpoolcontent", 6, "offset"},
-    {"depinreceivemsg", 2, "timestamp"},
-    {"depinreceivemsg", 4, "limit"},
-    {"depinsendmsg", 4, "port"},
+    {"depinreceivemsg", 4, "timestamp"},
+    {"depinreceivemsg", 6, "limit"},
 };
 
 // Declared parameter names per RPC. Checked one by one, not just counted: a
@@ -122,6 +123,8 @@ UniValue CallNamed(const std::string& method, const std::vector<std::string>& na
     return (*tableRPC[method]->actor)(request);
 }
 
+UniValue OpenResponse(const UniValue& response, const CKey& key, const std::string& address);
+
 struct DepinRpcParamsSetup : public TestingSetup {
     bool prevAssetIndex;
     bool prevPubKeyIndex;
@@ -132,6 +135,9 @@ struct DepinRpcParamsSetup : public TestingSetup {
 
     CKey senderKey;
     std::string senderAddress;
+    CKey ownerKey;
+    std::string ownerAddress;
+    CKey poolKey;
 
     // REGTEST because DEPIN names only validate on testnet/regtest, and
     // Initialize() rejects anything that is not a DEPIN token.
@@ -155,18 +161,76 @@ struct DepinRpcParamsSetup : public TestingSetup {
         senderAddress = EncodeDestination(senderKey.GetPubKey().GetID());
         // AddMessage() checks token ownership against the asset index.
         BOOST_REQUIRE(passetsdb->WriteAssetAddressQuantity(POOL_TOKEN, senderAddress, 1));
+        // depinreceivemsg encrypts its reply for the address's revealed pubkey.
+        RevealPubKey(senderAddress, senderKey.GetPubKey());
+        // depinclearmsg is owner-level: an owner address with a revealed key.
+        ownerKey.MakeNewKey(true);
+        ownerAddress = EncodeDestination(ownerKey.GetPubKey().GetID());
+        BOOST_REQUIRE(passetsdb->WriteAssetAddressQuantity(POOL_TOKEN + OWNER_TAG, ownerAddress, 1));
+        RevealPubKey(ownerAddress, ownerKey.GetPubKey());
+        // Every DePIN response is signed with the pool key.
+        poolKey.MakeNewKey(true);
+        SetDepinPoolKey(poolKey, "", "", "test");
+        g_depinChallenges.Clear();
 
         prevPool = std::move(pDepinMsgPool);
         pDepinMsgPool.reset(new CDepinMsgPool());
-        BOOST_REQUIRE(pDepinMsgPool->Initialize(POOL_TOKEN, DEFAULT_DEPIN_MSG_PORT,
+        BOOST_REQUIRE(pDepinMsgPool->Initialize(POOL_TOKEN,
                                                 DEFAULT_MAX_DEPIN_RECIPIENTS,
                                                 DEFAULT_DEPIN_MESSAGE_SIZE,
                                                 DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS,
                                                 DEFAULT_DEPIN_POOL_SIZE_MB));
     }
 
+    static void RevealPubKey(const std::string& address, const CPubKey& pubkey)
+    {
+        CDestinationIndexData addressData;
+        BOOST_REQUIRE(GetDestinationIndexData(DecodeDestination(address), addressData));
+        std::vector<std::pair<CPubKeyIndexKey, CPubKeyIndexValue> > entries;
+        entries.emplace_back(CPubKeyIndexKey(addressData), CPubKeyIndexValue(pubkey, 1, uint256()));
+        BOOST_REQUIRE(pblocktree->WritePubKeyIndex(entries));
+    }
+
+    // Owner-level proof for `scope` ("" = root), fresh each call:
+    // [scope, owner, nonce, signature, (mode)].
+    UniValue AdminParams(const std::string& scope, const UniValue& mode = NullUniValue)
+    {
+        const std::string token = scope.empty() ? POOL_TOKEN : scope;
+        std::string nonce, sig, error;
+        CPubKey pubkey;
+        BOOST_REQUIRE_MESSAGE(IssueDepinChallengeForAddress(token, ownerAddress, DepinChallengeType::ADMIN,
+                                                            POOL_TOKEN, nonce, pubkey, error), error);
+        BOOST_REQUIRE(SignDepinChallengePreimage(ownerKey,
+            DepinChallengePreimage(DepinChallengeType::ADMIN, token, ownerAddress, nonce), sig, error));
+        UniValue params(UniValue::VARR);
+        params.push_back(scope);
+        params.push_back(ownerAddress);
+        params.push_back(nonce);
+        params.push_back(sig);
+        if (!mode.isNull()) params.push_back(mode);
+        return params;
+    }
+
+    UniValue Clear(const std::string& scope, const UniValue& mode = NullUniValue)
+    {
+        return OpenResponse(CallRpc("depinclearmsg", AdminParams(scope, mode)), ownerKey, ownerAddress);
+    }
+
+    // Holder proof for depinreceivemsg on the pool root.
+    void ReceiveAuth(std::string& nonce, std::string& sig)
+    {
+        std::string error;
+        CPubKey pubkey;
+        BOOST_REQUIRE_MESSAGE(IssueDepinChallengeForAddress(POOL_TOKEN, senderAddress, DepinChallengeType::RECEIVE,
+                                                            POOL_TOKEN, nonce, pubkey, error), error);
+        BOOST_REQUIRE(SignDepinChallengePreimage(senderKey,
+            DepinChallengePreimage(DepinChallengeType::RECEIVE, POOL_TOKEN, senderAddress, nonce), sig, error));
+    }
+
     ~DepinRpcParamsSetup()
     {
+        g_depinChallenges.Clear();
+        ClearDepinPoolKey();
         pDepinMsgPool = std::move(prevPool);
 
         delete prestricteddb;
@@ -198,20 +262,18 @@ struct DepinRpcParamsSetup : public TestingSetup {
     }
 };
 
-// Verbose mode reports encrypted_payload_size; plain mode reports size instead.
-// That is the observable difference the semantics tests hang on.
-bool IsVerboseEntry(const UniValue& entry)
+// Opens an encrypted DePIN response with the recipient's key.
+UniValue OpenResponse(const UniValue& response, const CKey& key, const std::string& address)
 {
-    return !find_value(entry, "encrypted_payload_size").isNull();
-}
-
-bool AllVerbose(const UniValue& result)
-{
-    BOOST_REQUIRE(result.isArray() && result.size() > 0);
-    for (size_t i = 0; i < result.size(); ++i) {
-        if (!IsVerboseEntry(result[i])) return false;
-    }
-    return true;
+    BOOST_REQUIRE_MESSAGE(response.exists("encrypted"), response.write());
+    CECIESEncryptedMessage ecies;
+    CDataStream ss(ParseHex(response["encrypted"].get_str()), SER_NETWORK, PROTOCOL_VERSION);
+    ss >> ecies;
+    std::string plaintext, error;
+    BOOST_REQUIRE_MESSAGE(ECIESDecryptMessage(ecies, key, address, plaintext, error), error);
+    UniValue inner;
+    BOOST_REQUIRE(inner.read(plaintext));
+    return inner;
 }
 
 } // namespace
@@ -242,61 +304,6 @@ BOOST_AUTO_TEST_CASE(cli_conversion_table_covers_every_numeric_parameter)
     }
 }
 
-// (2a) depingetpoolcontent: a numeric string must mean what the number means.
-//
-// This is the case that a naive test gets wrong. Before this change "120" was
-// already accepted without error -- it fell through to
-// `fVerbose = (val == "true" || val == "1")` and meant FALSE, while the number
-// 120 meant true. So the assertion has to be on the effect, not on the call
-// returning.
-BOOST_AUTO_TEST_CASE(poolcontent_numeric_string_has_numeric_semantics)
-{
-    AddMessage(/*ageSeconds=*/60, 0xAA);
-
-    // Control: the two forms that already agreed before the change.
-    BOOST_CHECK(!AllVerbose(CallRpc("depingetpoolcontent", StrParams({"0"}))));
-    BOOST_CHECK(AllVerbose(CallRpc("depingetpoolcontent", StrParams({"1"}))));
-
-    // The divergence: any numeric string other than 0 and 1.
-    BOOST_CHECK_MESSAGE(AllVerbose(CallRpc("depingetpoolcontent", StrParams({"120"}))),
-                        "\"120\" must behave like the number 120, i.e. verbose");
-    BOOST_CHECK_MESSAGE(AllVerbose(CallRpc("depingetpoolcontent", StrParams({"-1"}))),
-                        "\"-1\" must behave like the number -1, i.e. verbose");
-    BOOST_CHECK(AllVerbose(CallRpc("depingetpoolcontent", StrParams({"2"}))));
-
-    // And the number itself is unchanged.
-    UniValue numeric(UniValue::VARR);
-    numeric.push_back((int64_t)120);
-    BOOST_CHECK(AllVerbose(CallRpc("depingetpoolcontent", numeric)));
-
-    UniValue zero(UniValue::VARR);
-    zero.push_back((int64_t)0);
-    BOOST_CHECK(!AllVerbose(CallRpc("depingetpoolcontent", zero)));
-}
-
-// (2b) The words keep their meaning and keep priority over the numeric reading.
-BOOST_AUTO_TEST_CASE(poolcontent_words_are_unchanged)
-{
-    AddMessage(/*ageSeconds=*/60, 0xBB);
-
-    BOOST_CHECK(AllVerbose(CallRpc("depingetpoolcontent", StrParams({"true"}))));
-    BOOST_CHECK(!AllVerbose(CallRpc("depingetpoolcontent", StrParams({"false"}))));
-
-    // "all" and "raw" imply verbose; "raw" additionally exposes the hex.
-    const UniValue all = CallRpc("depingetpoolcontent", StrParams({"all"}));
-    BOOST_CHECK(AllVerbose(all));
-
-    const UniValue raw = CallRpc("depingetpoolcontent", StrParams({"raw"}));
-    BOOST_REQUIRE(raw.isArray() && raw.size() == 1);
-    BOOST_CHECK_MESSAGE(!find_value(raw[0], "encrypted_payload_hex").isNull(),
-                        "\"raw\" must still expose the payload hex");
-
-    // A word that is neither a keyword nor a number stays false, as today.
-    BOOST_CHECK(!AllVerbose(CallRpc("depingetpoolcontent", StrParams({"7x"}))));
-    BOOST_CHECK(!AllVerbose(CallRpc("depingetpoolcontent", StrParams({"1.5"}))));
-    BOOST_CHECK(!AllVerbose(CallRpc("depingetpoolcontent", StrParams({" 7"}))));
-}
-
 // (2c) depinclearmsg: both forms must reach the pool and do different things.
 // Measured by how many messages survive, not by the call returning.
 BOOST_AUTO_TEST_CASE(clearmsg_accepts_word_and_numeric_string)
@@ -309,36 +316,34 @@ BOOST_AUTO_TEST_CASE(clearmsg_accepts_word_and_numeric_string)
     BOOST_REQUIRE_EQUAL(pDepinMsgPool->Size(), 2U);
 
     // "7" as a string must behave like the number 7: drop the old one only.
-    const UniValue sevenAsString = CallRpc("depinclearmsg", StrParams({"7"}));
+    const UniValue sevenAsString = Clear("", UniValue("7"));
     BOOST_CHECK_EQUAL(find_value(sevenAsString, "removed").get_int(), 1);
     BOOST_CHECK_EQUAL(find_value(sevenAsString, "remaining").get_int(), 1);
     BOOST_CHECK_EQUAL(pDepinMsgPool->Size(), 1U);
 
     // The numeric form is unaffected: nothing left older than 7 hours.
-    UniValue seven(UniValue::VARR);
-    seven.push_back((int64_t)7);
-    BOOST_CHECK_EQUAL(find_value(CallRpc("depinclearmsg", seven), "removed").get_int(), 0);
+    BOOST_CHECK_EQUAL(find_value(Clear("", UniValue((int64_t)7)), "removed").get_int(), 0);
 
     // "all" still empties the pool.
     AddMessage(/*ageSeconds=*/2 * kHour, 0x03);
     BOOST_REQUIRE_EQUAL(pDepinMsgPool->Size(), 2U);
-    const UniValue cleared = CallRpc("depinclearmsg", StrParams({"all"}));
+    const UniValue cleared = Clear("", UniValue("all"));
     BOOST_CHECK_EQUAL(find_value(cleared, "remaining").get_int(), 0);
     BOOST_CHECK_EQUAL(pDepinMsgPool->Size(), 0U);
 }
 
-// (3) The word form must survive the conversion layer untouched. This is the
-// test that fails if someone "simplifies" the fix by putting index 0 of these
-// two RPCs into vRPCConvertParams: ParseNonRFCJSONValue("all") throws.
+// RPC into vRPCConvertParams: ParseNonRFCJSONValue("all") throws.
 BOOST_AUTO_TEST_CASE(polymorphic_parameters_are_not_in_the_conversion_table)
 {
-    BOOST_CHECK_NO_THROW(RPCConvertValues("depinclearmsg", {"all"}));
-    BOOST_CHECK_NO_THROW(RPCConvertValues("depingetpoolcontent", {"all"}));
-    BOOST_CHECK_NO_THROW(RPCConvertValues("depingetpoolcontent", {"raw"}));
+    // scope, address, challenge, signature, then the polymorphic mode.
+    auto withMode = [](const std::string& mode) {
+        return std::vector<std::string>{"", "NXaddress", std::string(64, 'a'), "c2ln", mode};
+    };
+    BOOST_CHECK_NO_THROW(RPCConvertValues("depinclearmsg", withMode("all")));
 
-    // They arrive as strings, which is exactly why the RPCs normalise them.
-    BOOST_CHECK(RPCConvertValues("depinclearmsg", {"all"})[0].isStr());
-    BOOST_CHECK(RPCConvertValues("depinclearmsg", {"7"})[0].isStr());
+    // They arrive as strings, which is exactly why the RPC normalises them.
+    BOOST_CHECK(RPCConvertValues("depinclearmsg", withMode("all"))[4].isStr());
+    BOOST_CHECK(RPCConvertValues("depinclearmsg", withMode("7"))[4].isStr());
 }
 
 // (4) Making the CLI work must not soften validation.
@@ -351,7 +356,7 @@ BOOST_AUTO_TEST_CASE(clearmsg_rejects_partial_numbers)
                                    std::string("0x10"), std::string("seven")}) {
         BOOST_CHECK_MESSAGE(([&]() {
                                 try {
-                                    CallRpc("depinclearmsg", StrParams({bad}));
+                                    CallRpc("depinclearmsg", AdminParams("", UniValue(bad)));
                                     return false;
                                 } catch (const UniValue&) {
                                     return true;
@@ -364,24 +369,26 @@ BOOST_AUTO_TEST_CASE(clearmsg_rejects_partial_numbers)
     BOOST_CHECK_EQUAL(pDepinMsgPool->Size(), 1U);
 
     // A negative threshold is still refused.
-    BOOST_CHECK_THROW(CallRpc("depinclearmsg", StrParams({"-1"})), UniValue);
+    BOOST_CHECK_THROW(CallRpc("depinclearmsg", AdminParams("", UniValue("-1"))), UniValue);
 }
 
 // (5) and (6): the declared names match the implementation, one by one.
 BOOST_AUTO_TEST_CASE(argnames_match_the_implementation)
 {
     std::vector<ArgNamesCase> cases = {
-        {"depingetpoolcontent", {"verbose", "sender_address", "recipient_address",
-                                 "start_time", "end_time", "limit", "offset"}},
-        {"depinreceivemsg", {"token", "address", "timestamp", "after_hash", "limit"}},
-        {"depinclearmsg", {"mode", "scope"}},
+        {"depinchallenge", {"token", "address", "type"}},
+        {"depinreceivemsg", {"token", "address", "challenge", "signature", "timestamp", "after_hash", "limit"}},
+        {"depinclearmsg", {"scope", "address", "challenge", "signature", "mode"}},
         {"depingetancestorrecipients", {"token", "max_results", "stop_at"}},
-        {"depinlistsections", {"address"}},
+        {"depinlistsections", {"address", "scope", "challenge", "signature"}},
+        {"depinsubmitmsg", {"message"}},
     };
-#ifdef ENABLE_DEPIN_GATEWAY
-    // Only registered in a gateway build.
-    cases.push_back({"depinsendmsg", {"token", "ip", "message", "fromaddress", "port"}});
-    cases.push_back({"depingetmsg", {"token", "destination_or_address|fromaddress", "fromaddress"}});
+#ifdef ENABLE_WALLET
+    // Wallet RPCs over the local pool; only registered in a wallet build.
+    cases.push_back({"depinsendmsg", {"token", "message", "fromaddress"}});
+    cases.push_back({"depingetmsg", {"token", "fromaddress"}});
+    cases.push_back({"depinsignchallenge", {"address", "token", "challenge", "type"}});
+    cases.push_back({"depindecrypt", {"address", "encrypted"}});
 #endif
 
     for (const ArgNamesCase& c : cases) {
@@ -399,53 +406,63 @@ BOOST_AUTO_TEST_CASE(named_invocation_converts_and_positions_arguments)
     AddMessage(/*ageSeconds=*/60, 0xCC);
 
     // Numeric parameters arrive converted and in the right slots.
-    const UniValue named = RPCConvertNamedValues("depingetpoolcontent", {"limit=10", "offset=0"});
+    const UniValue named = RPCConvertNamedValues("depinreceivemsg", {"limit=10", "timestamp=0"});
     BOOST_REQUIRE(named.isObject());
     BOOST_CHECK(find_value(named, "limit").isNum());
     BOOST_CHECK_EQUAL(find_value(named, "limit").get_int(), 10);
-    BOOST_CHECK(find_value(named, "offset").isNum());
+    BOOST_CHECK(find_value(named, "timestamp").isNum());
 
     // Skipping the middle parameters fills them with JSON nulls, which is the
-    // shape that used to make the RPC throw a type error before it did any
-    // work. `verbose` stays a STRING on purpose: it is polymorphic and
-    // therefore absent from the conversion table, so the RPC normalises it.
-    const UniValue positional = NamedToPositional("depingetpoolcontent",
-                                                  {"verbose=true", "limit=10"});
-    BOOST_REQUIRE_EQUAL(positional.size(), 6U);  // verbose .. limit, holes filled
-    BOOST_CHECK_MESSAGE(positional[0].isStr(),
-                        "verbose must not be converted: it also accepts \"all\" and \"raw\"");
-    BOOST_CHECK_MESSAGE(positional[1].isNull(), "gaps are filled with JSON nulls");
-    BOOST_CHECK(positional[5].isNum());
-    BOOST_CHECK_EQUAL(positional[5].get_int(), 10);
+    // shape that used to make an RPC throw a type error before it did any
+    // work.
+    std::string nonce, sig;
+    ReceiveAuth(nonce, sig);
+    const UniValue positional = NamedToPositional("depinreceivemsg",
+                                                  {"token=" + POOL_TOKEN,
+                                                   "address=" + senderAddress,
+                                                   "challenge=" + nonce,
+                                                   "signature=" + sig,
+                                                   "limit=10"});
+    BOOST_REQUIRE_EQUAL(positional.size(), 7U);  // token .. limit, holes filled
+    BOOST_CHECK(positional[0].isStr());
+    BOOST_CHECK_MESSAGE(positional[4].isNull(), "gaps are filled with JSON nulls");
+    BOOST_CHECK(positional[5].isNull());
+    BOOST_CHECK(positional[6].isNum());
+    BOOST_CHECK_EQUAL(positional[6].get_int(), 10);
 
-    // And the call goes through, nulls and all.
-    UniValue namedResult;
-    BOOST_REQUIRE_NO_THROW(namedResult = CallNamed("depingetpoolcontent", {"verbose=true", "limit=10"}));
-    BOOST_CHECK_MESSAGE(AllVerbose(namedResult), "verbose=true must reach the RPC as verbose");
+    // And the call goes through, nulls and all. limit > 0 selects the
+    // paginated shape, which is how we know the value reached the RPC.
+    UniValue namedResponse;
+    BOOST_REQUIRE_NO_THROW(namedResponse = CallNamed("depinreceivemsg",
+                                                     {"token=" + POOL_TOKEN,
+                                                      "address=" + senderAddress,
+                                                      "challenge=" + nonce,
+                                                      "signature=" + sig,
+                                                      "limit=10"}));
+    const UniValue namedResult = OpenResponse(namedResponse, senderKey, senderAddress);
+    BOOST_CHECK_MESSAGE(namedResult.isObject() && find_value(namedResult, "messages").isArray(),
+                        "limit=10 must reach the RPC as limit");
 
     // An unknown name is still rejected.
-    BOOST_CHECK_THROW(NamedToPositional("depingetpoolcontent", {"noexiste=1"}), UniValue);
+    BOOST_CHECK_THROW(NamedToPositional("depinreceivemsg", {"noexiste=1"}), UniValue);
 
     // Explicit nulls from a JSON-RPC caller behave the same way as the gaps.
+    ReceiveAuth(nonce, sig);
     UniValue withNulls(UniValue::VARR);
-    withNulls.push_back("true");
-    withNulls.push_back(UniValue());
-    withNulls.push_back(UniValue());
+    withNulls.push_back(POOL_TOKEN);
+    withNulls.push_back(senderAddress);
+    withNulls.push_back(nonce);
+    withNulls.push_back(sig);
     withNulls.push_back(UniValue());
     withNulls.push_back(UniValue());
     withNulls.push_back((int64_t)10);
-    BOOST_CHECK_NO_THROW(CallRpc("depingetpoolcontent", withNulls));
+    BOOST_CHECK_NO_THROW(CallRpc("depinreceivemsg", withNulls));
 }
 
-#ifdef ENABLE_DEPIN_GATEWAY
-// (7b) The depingetmsg alias, the first "a|b" in this codebase.
-//
-// Asserts the LENGTH of the positional vector, not just that nothing throws:
-// without the alias the local form yields [token, null, address] -- three
-// entries with a hole -- and depingetmsg dies on an unguarded
-// params[1].get_str(). An implementation that did not throw would still be
-// wrong, so the shape is what has to be pinned.
-BOOST_AUTO_TEST_CASE(getmsg_alias_binds_fromaddress_to_the_second_slot)
+#ifdef ENABLE_WALLET
+// (7b) depingetmsg by name: fromaddress binds to the second slot and unknown
+// names are still rejected.
+BOOST_AUTO_TEST_CASE(getmsg_named_fromaddress_binds_to_the_second_slot)
 {
     const UniValue local = NamedToPositional("depingetmsg",
                                              {"token=" + POOL_TOKEN,
@@ -454,18 +471,6 @@ BOOST_AUTO_TEST_CASE(getmsg_alias_binds_fromaddress_to_the_second_slot)
     BOOST_CHECK_EQUAL(local[0].get_str(), POOL_TOKEN);
     BOOST_CHECK_EQUAL(local[1].get_str(), senderAddress);
 
-    // The three-parameter form is unaffected: the alias consumed `fromaddress`
-    // at slot 1 only because slot 1 had no other candidate.
-    const UniValue remote = NamedToPositional("depingetmsg",
-                                              {"token=" + POOL_TOKEN,
-                                               "destination_or_address=1.2.3.4",
-                                               "fromaddress=" + senderAddress});
-    BOOST_REQUIRE_EQUAL(remote.size(), 3U);
-    BOOST_CHECK_EQUAL(remote[1].get_str(), "1.2.3.4");
-    BOOST_CHECK_EQUAL(remote[2].get_str(), senderAddress);
-
-    // The alias widens the accepted names; it must not soften the rejection of
-    // unknown ones.
     BOOST_CHECK_THROW(NamedToPositional("depingetmsg", {"token=" + POOL_TOKEN, "noexiste=1"}),
                       UniValue);
 }
@@ -493,7 +498,7 @@ BOOST_AUTO_TEST_CASE(conversion_table_agrees_with_command_table)
                                 "differently");
 
         const CRPCCommand* cmd = tableRPC[c.method];
-        if (!cmd) continue;  // gateway-only RPC, not registered in this build
+        if (!cmd) continue;  // wallet-only RPC, not registered in this build
 
         BOOST_REQUIRE_MESSAGE(cmd->argNames.size() > (size_t)c.index,
                               std::string(c.method) + " declares fewer argNames than index " +

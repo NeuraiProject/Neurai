@@ -164,6 +164,7 @@ TESTS = $(am__EXEEXT_4) $(am__EXEEXT_7)
 @ENABLE_TESTS_TRUE@@ENABLE_WALLET_TRUE@  wallet/test/wallet_test_fixture.h \
 @ENABLE_TESTS_TRUE@@ENABLE_WALLET_TRUE@  wallet/test/accounting_tests.cpp \
 @ENABLE_TESTS_TRUE@@ENABLE_WALLET_TRUE@  wallet/test/depin_sections_wallet_tests.cpp \
+@ENABLE_TESTS_TRUE@@ENABLE_WALLET_TRUE@  wallet/test/depinpoolkey_wallet_tests.cpp \
 @ENABLE_TESTS_TRUE@@ENABLE_WALLET_TRUE@  wallet/test/depin_selfrevoke_wallet_tests.cpp \
 @ENABLE_TESTS_TRUE@@ENABLE_WALLET_TRUE@  wallet/test/depin_subasset_wallet_tests.cpp \
 @ENABLE_TESTS_TRUE@@ENABLE_WALLET_TRUE@  wallet/test/wallet_tests.cpp \
@@ -665,7 +666,8 @@ am_libneurai_server_a_OBJECTS = libneurai_server_a-addrdb.$(OBJEXT) \
 	libneurai_server_a-txdb.$(OBJEXT) \
 	libneurai_server_a-txmempool.$(OBJEXT) \
 	libneurai_server_a-depinmsgpool.$(OBJEXT) \
-	libneurai_server_a-depinmsgpoolnet.$(OBJEXT) \
+	libneurai_server_a-depinchallenge.$(OBJEXT) \
+	libneurai_server_a-depinpoolkey.$(OBJEXT) \
 	libneurai_server_a-depinecies.$(OBJEXT) \
 	libneurai_server_a-depinmcpclient.$(OBJEXT) \
 	libneurai_server_a-depinmcpworker.$(OBJEXT) \
@@ -716,14 +718,14 @@ am__libneurai_util_a_SOURCES_DIST = support/lockedpool.cpp \
 	support/allocators/zeroafterfree.h support/cleanse.h \
 	support/events.h support/lockedpool.h sync.h threadsafety.h \
 	threadinterrupt.h timedata.h torcontrol.h txdb.h txmempool.h \
-	depinmsgpool.h depinmsgpoolnet.h depinecies.h depinmcpclient.h \
-	depinmcpworker.h ui_interface.h undo.h util.h utilmoneystr.h \
-	utiltime.h validation.h validationinterface.h versionbits.h \
-	wallet/coincontrol.h wallet/crypter.h wallet/db.h \
-	wallet/feebumper.h wallet/fees.h wallet/init.h \
-	wallet/rpcwallet.h wallet/wallet.h wallet/walletdb.h \
-	wallet/bip39.h wallet/bip39_english.h warnings.h \
-	zmq/zmqabstractnotifier.h zmq/zmqconfig.h \
+	depinmsgpool.h depinchallenge.h depinpoolkey.h depinecies.h \
+	depinmcpclient.h depinmcpworker.h ui_interface.h undo.h util.h \
+	utilmoneystr.h utiltime.h validation.h validationinterface.h \
+	versionbits.h wallet/coincontrol.h wallet/crypter.h \
+	wallet/db.h wallet/feebumper.h wallet/fees.h wallet/init.h \
+	wallet/depinpoolkeyload.h wallet/rpcwallet.h wallet/wallet.h \
+	wallet/walletdb.h wallet/bip39.h wallet/bip39_english.h \
+	warnings.h zmq/zmqabstractnotifier.h zmq/zmqconfig.h \
 	zmq/zmqnotificationinterface.h zmq/zmqpublishnotifier.h \
 	compat/glibc_compat.cpp
 am__objects_8 = algo/libneurai_util_a-groestl.$(OBJEXT) \
@@ -803,6 +805,7 @@ am_libneurai_wallet_a_OBJECTS =  \
 	wallet/libneurai_wallet_a-feebumper.$(OBJEXT) \
 	wallet/libneurai_wallet_a-fees.$(OBJEXT) \
 	wallet/libneurai_wallet_a-init.$(OBJEXT) \
+	wallet/libneurai_wallet_a-depinpoolkeyload.$(OBJEXT) \
 	wallet/libneurai_wallet_a-rpcdump.$(OBJEXT) \
 	wallet/libneurai_wallet_a-rpcwallet.$(OBJEXT) \
 	wallet/libneurai_wallet_a-wallet.$(OBJEXT) \
@@ -1260,14 +1263,14 @@ am__libneuraiconsensus_la_SOURCES_DIST = crypto/aes.cpp crypto/aes.h \
 	support/allocators/zeroafterfree.h support/events.h \
 	support/lockedpool.h sync.h threadsafety.h threadinterrupt.h \
 	timedata.h torcontrol.h txdb.h txmempool.h depinmsgpool.h \
-	depinmsgpoolnet.h depinecies.h depinmcpclient.h \
+	depinchallenge.h depinpoolkey.h depinecies.h depinmcpclient.h \
 	depinmcpworker.h ui_interface.h undo.h util.h utilmoneystr.h \
 	utiltime.h validation.h validationinterface.h versionbits.h \
 	wallet/coincontrol.h wallet/crypter.h wallet/db.h \
 	wallet/feebumper.h wallet/fees.h wallet/init.h \
-	wallet/rpcwallet.h wallet/wallet.h wallet/walletdb.h \
-	wallet/bip39.h wallet/bip39_english.h warnings.h \
-	zmq/zmqabstractnotifier.h zmq/zmqconfig.h \
+	wallet/depinpoolkeyload.h wallet/rpcwallet.h wallet/wallet.h \
+	wallet/walletdb.h wallet/bip39.h wallet/bip39_english.h \
+	warnings.h zmq/zmqabstractnotifier.h zmq/zmqconfig.h \
 	zmq/zmqnotificationinterface.h zmq/zmqpublishnotifier.h \
 	compat/glibc_compat.cpp
 @USE_ASM_TRUE@am__objects_22 =  \
@@ -1542,7 +1545,9 @@ qt_test_test_neurai_qt_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CXX \
 	$(qt_test_test_neurai_qt_LDFLAGS) $(LDFLAGS) -o $@
 am__test_test_neurai_SOURCES_DIST = test/assets/asset_tests.cpp \
 	test/assets/serialization_tests.cpp \
-	test/assets/asset_tx_tests.cpp test/assets/cache_tests.cpp \
+	test/assets/asset_tx_tests.cpp \
+	test/assets/asset_marker_nip040_tests.cpp \
+	test/assets/cache_tests.cpp \
 	test/assets/asset_reissue_tests.cpp \
 	test/assets/messaging_tests.cpp \
 	test/assets/null_asset_data_tests.cpp \
@@ -1564,7 +1569,8 @@ am__test_test_neurai_SOURCES_DIST = test/assets/asset_tests.cpp \
 	test/depin_rpc_params_tests.cpp \
 	test/depin_selfrevoke_tests.cpp test/depin_subasset_tests.cpp \
 	test/depinecies_tests.cpp test/depinmcpworker_tests.cpp \
-	test/depinmsgpool_tests.cpp test/depinserver_tests.cpp \
+	test/depinmsgpool_tests.cpp test/depinchallenge_tests.cpp \
+	test/depinpoolkey_tests.cpp test/depin_auth_rpc_tests.cpp \
 	test/cuckoocache_tests.cpp test/DoS_tests.cpp \
 	test/getarg_tests.cpp test/hash_tests.cpp \
 	test/keccak256_tests.cpp test/blake2b_tests.cpp \
@@ -1612,6 +1618,7 @@ am__test_test_neurai_SOURCES_DIST = test/assets/asset_tests.cpp \
 	wallet/test/wallet_test_fixture.h \
 	wallet/test/accounting_tests.cpp \
 	wallet/test/depin_sections_wallet_tests.cpp \
+	wallet/test/depinpoolkey_wallet_tests.cpp \
 	wallet/test/depin_selfrevoke_wallet_tests.cpp \
 	wallet/test/depin_subasset_wallet_tests.cpp \
 	wallet/test/wallet_tests.cpp \
@@ -1626,6 +1633,7 @@ am__test_test_neurai_SOURCES_DIST = test/assets/asset_tests.cpp \
 @ENABLE_TESTS_TRUE@@ENABLE_WALLET_TRUE@am__objects_40 = wallet/test/test_test_neurai-wallet_test_fixture.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@@ENABLE_WALLET_TRUE@	wallet/test/test_test_neurai-accounting_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@@ENABLE_WALLET_TRUE@	wallet/test/test_test_neurai-depin_sections_wallet_tests.$(OBJEXT) \
+@ENABLE_TESTS_TRUE@@ENABLE_WALLET_TRUE@	wallet/test/test_test_neurai-depinpoolkey_wallet_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@@ENABLE_WALLET_TRUE@	wallet/test/test_test_neurai-depin_selfrevoke_wallet_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@@ENABLE_WALLET_TRUE@	wallet/test/test_test_neurai-depin_subasset_wallet_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@@ENABLE_WALLET_TRUE@	wallet/test/test_test_neurai-wallet_tests.$(OBJEXT) \
@@ -1634,6 +1642,7 @@ am__test_test_neurai_SOURCES_DIST = test/assets/asset_tests.cpp \
 @ENABLE_TESTS_TRUE@am__objects_41 = test/assets/test_neurai-asset_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/assets/test_neurai-serialization_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/assets/test_neurai-asset_tx_tests.$(OBJEXT) \
+@ENABLE_TESTS_TRUE@	test/assets/test_neurai-asset_marker_nip040_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/assets/test_neurai-cache_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/assets/test_neurai-asset_reissue_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/assets/test_neurai-messaging_tests.$(OBJEXT) \
@@ -1670,7 +1679,9 @@ am__test_test_neurai_SOURCES_DIST = test/assets/asset_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/test_neurai-depinecies_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/test_neurai-depinmcpworker_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/test_neurai-depinmsgpool_tests.$(OBJEXT) \
-@ENABLE_TESTS_TRUE@	test/test_neurai-depinserver_tests.$(OBJEXT) \
+@ENABLE_TESTS_TRUE@	test/test_neurai-depinchallenge_tests.$(OBJEXT) \
+@ENABLE_TESTS_TRUE@	test/test_neurai-depinpoolkey_tests.$(OBJEXT) \
+@ENABLE_TESTS_TRUE@	test/test_neurai-depin_auth_rpc_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/test_neurai-cuckoocache_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/test_neurai-DoS_tests.$(OBJEXT) \
 @ENABLE_TESTS_TRUE@	test/test_neurai-getarg_tests.$(OBJEXT) \
@@ -1851,11 +1862,12 @@ am__depfiles_remade = ./$(DEPDIR)/libneurai_common_a-arith_uint256.Po \
 	./$(DEPDIR)/libneurai_server_a-checkpoints.Po \
 	./$(DEPDIR)/libneurai_server_a-coins_server.Po \
 	./$(DEPDIR)/libneurai_server_a-dbwrapper.Po \
+	./$(DEPDIR)/libneurai_server_a-depinchallenge.Po \
 	./$(DEPDIR)/libneurai_server_a-depinecies.Po \
 	./$(DEPDIR)/libneurai_server_a-depinmcpclient.Po \
 	./$(DEPDIR)/libneurai_server_a-depinmcpworker.Po \
 	./$(DEPDIR)/libneurai_server_a-depinmsgpool.Po \
-	./$(DEPDIR)/libneurai_server_a-depinmsgpoolnet.Po \
+	./$(DEPDIR)/libneurai_server_a-depinpoolkey.Po \
 	./$(DEPDIR)/libneurai_server_a-httprpc.Po \
 	./$(DEPDIR)/libneurai_server_a-httpserver.Po \
 	./$(DEPDIR)/libneurai_server_a-init.Po \
@@ -2405,14 +2417,16 @@ am__depfiles_remade = ./$(DEPDIR)/libneurai_common_a-arith_uint256.Po \
 	test/$(DEPDIR)/test_neurai-dbwrapper_tests.Po \
 	test/$(DEPDIR)/test_neurai-depin_ancestor_recipients_tests.Po \
 	test/$(DEPDIR)/test_neurai-depin_assetindex_consensus_tests.Po \
+	test/$(DEPDIR)/test_neurai-depin_auth_rpc_tests.Po \
 	test/$(DEPDIR)/test_neurai-depin_rpc_params_tests.Po \
 	test/$(DEPDIR)/test_neurai-depin_sections_tests.Po \
 	test/$(DEPDIR)/test_neurai-depin_selfrevoke_tests.Po \
 	test/$(DEPDIR)/test_neurai-depin_subasset_tests.Po \
+	test/$(DEPDIR)/test_neurai-depinchallenge_tests.Po \
 	test/$(DEPDIR)/test_neurai-depinecies_tests.Po \
 	test/$(DEPDIR)/test_neurai-depinmcpworker_tests.Po \
 	test/$(DEPDIR)/test_neurai-depinmsgpool_tests.Po \
-	test/$(DEPDIR)/test_neurai-depinserver_tests.Po \
+	test/$(DEPDIR)/test_neurai-depinpoolkey_tests.Po \
 	test/$(DEPDIR)/test_neurai-ed25519_tests.Po \
 	test/$(DEPDIR)/test_neurai-getarg_tests.Po \
 	test/$(DEPDIR)/test_neurai-hash_tests.Po \
@@ -2486,6 +2500,7 @@ am__depfiles_remade = ./$(DEPDIR)/libneurai_common_a-arith_uint256.Po \
 	test/$(DEPDIR)/test_neurai-xna_asset_gating_tests.Po \
 	test/$(DEPDIR)/test_neurai_fuzzy-test_neurai_fuzzy.Po \
 	test/$(DEPDIR)/test_neurai_hash-test_neurai_hash.Po \
+	test/assets/$(DEPDIR)/test_neurai-asset_marker_nip040_tests.Po \
 	test/assets/$(DEPDIR)/test_neurai-asset_reissue_tests.Po \
 	test/assets/$(DEPDIR)/test_neurai-asset_tests.Po \
 	test/assets/$(DEPDIR)/test_neurai-asset_tx_tests.Po \
@@ -2500,6 +2515,7 @@ am__depfiles_remade = ./$(DEPDIR)/libneurai_common_a-arith_uint256.Po \
 	wallet/$(DEPDIR)/libneurai_wallet_a-bip39.Po \
 	wallet/$(DEPDIR)/libneurai_wallet_a-crypter.Po \
 	wallet/$(DEPDIR)/libneurai_wallet_a-db.Po \
+	wallet/$(DEPDIR)/libneurai_wallet_a-depinpoolkeyload.Po \
 	wallet/$(DEPDIR)/libneurai_wallet_a-feebumper.Po \
 	wallet/$(DEPDIR)/libneurai_wallet_a-fees.Po \
 	wallet/$(DEPDIR)/libneurai_wallet_a-init.Po \
@@ -2513,6 +2529,7 @@ am__depfiles_remade = ./$(DEPDIR)/libneurai_common_a-arith_uint256.Po \
 	wallet/test/$(DEPDIR)/test_test_neurai-depin_sections_wallet_tests.Po \
 	wallet/test/$(DEPDIR)/test_test_neurai-depin_selfrevoke_wallet_tests.Po \
 	wallet/test/$(DEPDIR)/test_test_neurai-depin_subasset_wallet_tests.Po \
+	wallet/test/$(DEPDIR)/test_test_neurai-depinpoolkey_wallet_tests.Po \
 	wallet/test/$(DEPDIR)/test_test_neurai-pqwallet_guard_tests.Po \
 	wallet/test/$(DEPDIR)/test_test_neurai-wallet_test_fixture.Po \
 	wallet/test/$(DEPDIR)/test_test_neurai-wallet_tests.Po \
@@ -3277,7 +3294,8 @@ NEURAI_CORE_H = \
   txdb.h \
   txmempool.h \
   depinmsgpool.h \
-  depinmsgpoolnet.h \
+  depinchallenge.h \
+  depinpoolkey.h \
   depinecies.h \
   depinmcpclient.h \
   depinmcpworker.h \
@@ -3295,6 +3313,7 @@ NEURAI_CORE_H = \
   wallet/feebumper.h \
   wallet/fees.h \
   wallet/init.h \
+  wallet/depinpoolkeyload.h \
   wallet/rpcwallet.h \
   wallet/wallet.h \
   wallet/walletdb.h \
@@ -3359,7 +3378,8 @@ libneurai_server_a_SOURCES = \
   txdb.cpp \
   txmempool.cpp \
   depinmsgpool.cpp \
-  depinmsgpoolnet.cpp \
+  depinchallenge.cpp \
+  depinpoolkey.cpp \
   depinecies.cpp \
   depinmcpclient.cpp \
   depinmcpworker.cpp \
@@ -3387,6 +3407,7 @@ libneurai_wallet_a_SOURCES = \
   wallet/feebumper.cpp \
   wallet/fees.cpp \
   wallet/init.cpp \
+  wallet/depinpoolkeyload.cpp \
   wallet/rpcdump.cpp \
   wallet/rpcwallet.cpp \
   wallet/wallet.cpp \
@@ -3742,6 +3763,7 @@ EXTRA_DIST = $(CTAES_DIST)
 @ENABLE_TESTS_TRUE@NEURAI_TESTS = test/assets/asset_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/assets/serialization_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/assets/asset_tx_tests.cpp \
+@ENABLE_TESTS_TRUE@	test/assets/asset_marker_nip040_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/assets/cache_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/assets/asset_reissue_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/assets/messaging_tests.cpp \
@@ -3773,7 +3795,9 @@ EXTRA_DIST = $(CTAES_DIST)
 @ENABLE_TESTS_TRUE@	test/depinecies_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/depinmcpworker_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/depinmsgpool_tests.cpp \
-@ENABLE_TESTS_TRUE@	test/depinserver_tests.cpp \
+@ENABLE_TESTS_TRUE@	test/depinchallenge_tests.cpp \
+@ENABLE_TESTS_TRUE@	test/depinpoolkey_tests.cpp \
+@ENABLE_TESTS_TRUE@	test/depin_auth_rpc_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/cuckoocache_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/DoS_tests.cpp test/getarg_tests.cpp \
 @ENABLE_TESTS_TRUE@	test/hash_tests.cpp \
@@ -5309,6 +5333,8 @@ wallet/libneurai_wallet_a-fees.$(OBJEXT): wallet/$(am__dirstamp) \
 	wallet/$(DEPDIR)/$(am__dirstamp)
 wallet/libneurai_wallet_a-init.$(OBJEXT): wallet/$(am__dirstamp) \
 	wallet/$(DEPDIR)/$(am__dirstamp)
+wallet/libneurai_wallet_a-depinpoolkeyload.$(OBJEXT):  \
+	wallet/$(am__dirstamp) wallet/$(DEPDIR)/$(am__dirstamp)
 wallet/libneurai_wallet_a-rpcdump.$(OBJEXT): wallet/$(am__dirstamp) \
 	wallet/$(DEPDIR)/$(am__dirstamp)
 wallet/libneurai_wallet_a-rpcwallet.$(OBJEXT): wallet/$(am__dirstamp) \
@@ -5931,6 +5957,9 @@ test/assets/test_neurai-serialization_tests.$(OBJEXT):  \
 test/assets/test_neurai-asset_tx_tests.$(OBJEXT):  \
 	test/assets/$(am__dirstamp) \
 	test/assets/$(DEPDIR)/$(am__dirstamp)
+test/assets/test_neurai-asset_marker_nip040_tests.$(OBJEXT):  \
+	test/assets/$(am__dirstamp) \
+	test/assets/$(DEPDIR)/$(am__dirstamp)
 test/assets/test_neurai-cache_tests.$(OBJEXT):  \
 	test/assets/$(am__dirstamp) \
 	test/assets/$(DEPDIR)/$(am__dirstamp)
@@ -6011,7 +6040,11 @@ test/test_neurai-depinmcpworker_tests.$(OBJEXT): test/$(am__dirstamp) \
 	test/$(DEPDIR)/$(am__dirstamp)
 test/test_neurai-depinmsgpool_tests.$(OBJEXT): test/$(am__dirstamp) \
 	test/$(DEPDIR)/$(am__dirstamp)
-test/test_neurai-depinserver_tests.$(OBJEXT): test/$(am__dirstamp) \
+test/test_neurai-depinchallenge_tests.$(OBJEXT): test/$(am__dirstamp) \
+	test/$(DEPDIR)/$(am__dirstamp)
+test/test_neurai-depinpoolkey_tests.$(OBJEXT): test/$(am__dirstamp) \
+	test/$(DEPDIR)/$(am__dirstamp)
+test/test_neurai-depin_auth_rpc_tests.$(OBJEXT): test/$(am__dirstamp) \
 	test/$(DEPDIR)/$(am__dirstamp)
 test/test_neurai-cuckoocache_tests.$(OBJEXT): test/$(am__dirstamp) \
 	test/$(DEPDIR)/$(am__dirstamp)
@@ -6182,6 +6215,9 @@ wallet/test/test_test_neurai-accounting_tests.$(OBJEXT):  \
 wallet/test/test_test_neurai-depin_sections_wallet_tests.$(OBJEXT):  \
 	wallet/test/$(am__dirstamp) \
 	wallet/test/$(DEPDIR)/$(am__dirstamp)
+wallet/test/test_test_neurai-depinpoolkey_wallet_tests.$(OBJEXT):  \
+	wallet/test/$(am__dirstamp) \
+	wallet/test/$(DEPDIR)/$(am__dirstamp)
 wallet/test/test_test_neurai-depin_selfrevoke_wallet_tests.$(OBJEXT):  \
 	wallet/test/$(am__dirstamp) \
 	wallet/test/$(DEPDIR)/$(am__dirstamp)
@@ -6288,11 +6324,12 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libneurai_server_a-checkpoints.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libneurai_server_a-coins_server.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libneurai_server_a-dbwrapper.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libneurai_server_a-depinchallenge.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libneurai_server_a-depinecies.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libneurai_server_a-depinmcpclient.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libneurai_server_a-depinmcpworker.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libneurai_server_a-depinmsgpool.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libneurai_server_a-depinmsgpoolnet.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libneurai_server_a-depinpoolkey.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libneurai_server_a-httprpc.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libneurai_server_a-httpserver.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libneurai_server_a-init.Po@am__quote@ # am--include-marker
@@ -6842,14 +6879,16 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-dbwrapper_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-depin_ancestor_recipients_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-depin_assetindex_consensus_tests.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-depin_auth_rpc_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-depin_rpc_params_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-depin_sections_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-depin_selfrevoke_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-depin_subasset_tests.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-depinchallenge_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-depinecies_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-depinmcpworker_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-depinmsgpool_tests.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-depinserver_tests.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-depinpoolkey_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-ed25519_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-getarg_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-hash_tests.Po@am__quote@ # am--include-marker
@@ -6923,6 +6962,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai-xna_asset_gating_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai_fuzzy-test_neurai_fuzzy.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test_neurai_hash-test_neurai_hash.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@test/assets/$(DEPDIR)/test_neurai-asset_marker_nip040_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/assets/$(DEPDIR)/test_neurai-asset_reissue_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/assets/$(DEPDIR)/test_neurai-asset_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@test/assets/$(DEPDIR)/test_neurai-asset_tx_tests.Po@am__quote@ # am--include-marker
@@ -6937,6 +6977,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@wallet/$(DEPDIR)/libneurai_wallet_a-bip39.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@wallet/$(DEPDIR)/libneurai_wallet_a-crypter.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@wallet/$(DEPDIR)/libneurai_wallet_a-db.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@wallet/$(DEPDIR)/libneurai_wallet_a-depinpoolkeyload.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@wallet/$(DEPDIR)/libneurai_wallet_a-feebumper.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@wallet/$(DEPDIR)/libneurai_wallet_a-fees.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@wallet/$(DEPDIR)/libneurai_wallet_a-init.Po@am__quote@ # am--include-marker
@@ -6950,6 +6991,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@wallet/test/$(DEPDIR)/test_test_neurai-depin_sections_wallet_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@wallet/test/$(DEPDIR)/test_test_neurai-depin_selfrevoke_wallet_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@wallet/test/$(DEPDIR)/test_test_neurai-depin_subasset_wallet_tests.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@wallet/test/$(DEPDIR)/test_test_neurai-depinpoolkey_wallet_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@wallet/test/$(DEPDIR)/test_test_neurai-pqwallet_guard_tests.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@wallet/test/$(DEPDIR)/test_test_neurai-wallet_test_fixture.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@wallet/test/$(DEPDIR)/test_test_neurai-wallet_tests.Po@am__quote@ # am--include-marker
@@ -11274,19 +11316,33 @@ libneurai_server_a-depinmsgpool.obj: depinmsgpool.cpp
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_server_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_server_a_CXXFLAGS) $(CXXFLAGS) -c -o libneurai_server_a-depinmsgpool.obj `if test -f 'depinmsgpool.cpp'; then $(CYGPATH_W) 'depinmsgpool.cpp'; else $(CYGPATH_W) '$(srcdir)/depinmsgpool.cpp'; fi`
 
-libneurai_server_a-depinmsgpoolnet.o: depinmsgpoolnet.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_server_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_server_a_CXXFLAGS) $(CXXFLAGS) -MT libneurai_server_a-depinmsgpoolnet.o -MD -MP -MF $(DEPDIR)/libneurai_server_a-depinmsgpoolnet.Tpo -c -o libneurai_server_a-depinmsgpoolnet.o `test -f 'depinmsgpoolnet.cpp' || echo '$(srcdir)/'`depinmsgpoolnet.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libneurai_server_a-depinmsgpoolnet.Tpo $(DEPDIR)/libneurai_server_a-depinmsgpoolnet.Po
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='depinmsgpoolnet.cpp' object='libneurai_server_a-depinmsgpoolnet.o' libtool=no @AMDEPBACKSLASH@
+libneurai_server_a-depinchallenge.o: depinchallenge.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_server_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_server_a_CXXFLAGS) $(CXXFLAGS) -MT libneurai_server_a-depinchallenge.o -MD -MP -MF $(DEPDIR)/libneurai_server_a-depinchallenge.Tpo -c -o libneurai_server_a-depinchallenge.o `test -f 'depinchallenge.cpp' || echo '$(srcdir)/'`depinchallenge.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libneurai_server_a-depinchallenge.Tpo $(DEPDIR)/libneurai_server_a-depinchallenge.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='depinchallenge.cpp' object='libneurai_server_a-depinchallenge.o' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_server_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_server_a_CXXFLAGS) $(CXXFLAGS) -c -o libneurai_server_a-depinmsgpoolnet.o `test -f 'depinmsgpoolnet.cpp' || echo '$(srcdir)/'`depinmsgpoolnet.cpp
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_server_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_server_a_CXXFLAGS) $(CXXFLAGS) -c -o libneurai_server_a-depinchallenge.o `test -f 'depinchallenge.cpp' || echo '$(srcdir)/'`depinchallenge.cpp
 
-libneurai_server_a-depinmsgpoolnet.obj: depinmsgpoolnet.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_server_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_server_a_CXXFLAGS) $(CXXFLAGS) -MT libneurai_server_a-depinmsgpoolnet.obj -MD -MP -MF $(DEPDIR)/libneurai_server_a-depinmsgpoolnet.Tpo -c -o libneurai_server_a-depinmsgpoolnet.obj `if test -f 'depinmsgpoolnet.cpp'; then $(CYGPATH_W) 'depinmsgpoolnet.cpp'; else $(CYGPATH_W) '$(srcdir)/depinmsgpoolnet.cpp'; fi`
-@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libneurai_server_a-depinmsgpoolnet.Tpo $(DEPDIR)/libneurai_server_a-depinmsgpoolnet.Po
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='depinmsgpoolnet.cpp' object='libneurai_server_a-depinmsgpoolnet.obj' libtool=no @AMDEPBACKSLASH@
+libneurai_server_a-depinchallenge.obj: depinchallenge.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_server_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_server_a_CXXFLAGS) $(CXXFLAGS) -MT libneurai_server_a-depinchallenge.obj -MD -MP -MF $(DEPDIR)/libneurai_server_a-depinchallenge.Tpo -c -o libneurai_server_a-depinchallenge.obj `if test -f 'depinchallenge.cpp'; then $(CYGPATH_W) 'depinchallenge.cpp'; else $(CYGPATH_W) '$(srcdir)/depinchallenge.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libneurai_server_a-depinchallenge.Tpo $(DEPDIR)/libneurai_server_a-depinchallenge.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='depinchallenge.cpp' object='libneurai_server_a-depinchallenge.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_server_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_server_a_CXXFLAGS) $(CXXFLAGS) -c -o libneurai_server_a-depinmsgpoolnet.obj `if test -f 'depinmsgpoolnet.cpp'; then $(CYGPATH_W) 'depinmsgpoolnet.cpp'; else $(CYGPATH_W) '$(srcdir)/depinmsgpoolnet.cpp'; fi`
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_server_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_server_a_CXXFLAGS) $(CXXFLAGS) -c -o libneurai_server_a-depinchallenge.obj `if test -f 'depinchallenge.cpp'; then $(CYGPATH_W) 'depinchallenge.cpp'; else $(CYGPATH_W) '$(srcdir)/depinchallenge.cpp'; fi`
+
+libneurai_server_a-depinpoolkey.o: depinpoolkey.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_server_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_server_a_CXXFLAGS) $(CXXFLAGS) -MT libneurai_server_a-depinpoolkey.o -MD -MP -MF $(DEPDIR)/libneurai_server_a-depinpoolkey.Tpo -c -o libneurai_server_a-depinpoolkey.o `test -f 'depinpoolkey.cpp' || echo '$(srcdir)/'`depinpoolkey.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libneurai_server_a-depinpoolkey.Tpo $(DEPDIR)/libneurai_server_a-depinpoolkey.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='depinpoolkey.cpp' object='libneurai_server_a-depinpoolkey.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_server_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_server_a_CXXFLAGS) $(CXXFLAGS) -c -o libneurai_server_a-depinpoolkey.o `test -f 'depinpoolkey.cpp' || echo '$(srcdir)/'`depinpoolkey.cpp
+
+libneurai_server_a-depinpoolkey.obj: depinpoolkey.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_server_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_server_a_CXXFLAGS) $(CXXFLAGS) -MT libneurai_server_a-depinpoolkey.obj -MD -MP -MF $(DEPDIR)/libneurai_server_a-depinpoolkey.Tpo -c -o libneurai_server_a-depinpoolkey.obj `if test -f 'depinpoolkey.cpp'; then $(CYGPATH_W) 'depinpoolkey.cpp'; else $(CYGPATH_W) '$(srcdir)/depinpoolkey.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libneurai_server_a-depinpoolkey.Tpo $(DEPDIR)/libneurai_server_a-depinpoolkey.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='depinpoolkey.cpp' object='libneurai_server_a-depinpoolkey.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_server_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_server_a_CXXFLAGS) $(CXXFLAGS) -c -o libneurai_server_a-depinpoolkey.obj `if test -f 'depinpoolkey.cpp'; then $(CYGPATH_W) 'depinpoolkey.cpp'; else $(CYGPATH_W) '$(srcdir)/depinpoolkey.cpp'; fi`
 
 libneurai_server_a-depinecies.o: depinecies.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_server_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_server_a_CXXFLAGS) $(CXXFLAGS) -MT libneurai_server_a-depinecies.o -MD -MP -MF $(DEPDIR)/libneurai_server_a-depinecies.Tpo -c -o libneurai_server_a-depinecies.o `test -f 'depinecies.cpp' || echo '$(srcdir)/'`depinecies.cpp
@@ -11763,6 +11819,20 @@ wallet/libneurai_wallet_a-init.obj: wallet/init.cpp
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='wallet/init.cpp' object='wallet/libneurai_wallet_a-init.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_wallet_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_wallet_a_CXXFLAGS) $(CXXFLAGS) -c -o wallet/libneurai_wallet_a-init.obj `if test -f 'wallet/init.cpp'; then $(CYGPATH_W) 'wallet/init.cpp'; else $(CYGPATH_W) '$(srcdir)/wallet/init.cpp'; fi`
+
+wallet/libneurai_wallet_a-depinpoolkeyload.o: wallet/depinpoolkeyload.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_wallet_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_wallet_a_CXXFLAGS) $(CXXFLAGS) -MT wallet/libneurai_wallet_a-depinpoolkeyload.o -MD -MP -MF wallet/$(DEPDIR)/libneurai_wallet_a-depinpoolkeyload.Tpo -c -o wallet/libneurai_wallet_a-depinpoolkeyload.o `test -f 'wallet/depinpoolkeyload.cpp' || echo '$(srcdir)/'`wallet/depinpoolkeyload.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) wallet/$(DEPDIR)/libneurai_wallet_a-depinpoolkeyload.Tpo wallet/$(DEPDIR)/libneurai_wallet_a-depinpoolkeyload.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='wallet/depinpoolkeyload.cpp' object='wallet/libneurai_wallet_a-depinpoolkeyload.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_wallet_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_wallet_a_CXXFLAGS) $(CXXFLAGS) -c -o wallet/libneurai_wallet_a-depinpoolkeyload.o `test -f 'wallet/depinpoolkeyload.cpp' || echo '$(srcdir)/'`wallet/depinpoolkeyload.cpp
+
+wallet/libneurai_wallet_a-depinpoolkeyload.obj: wallet/depinpoolkeyload.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_wallet_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_wallet_a_CXXFLAGS) $(CXXFLAGS) -MT wallet/libneurai_wallet_a-depinpoolkeyload.obj -MD -MP -MF wallet/$(DEPDIR)/libneurai_wallet_a-depinpoolkeyload.Tpo -c -o wallet/libneurai_wallet_a-depinpoolkeyload.obj `if test -f 'wallet/depinpoolkeyload.cpp'; then $(CYGPATH_W) 'wallet/depinpoolkeyload.cpp'; else $(CYGPATH_W) '$(srcdir)/wallet/depinpoolkeyload.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) wallet/$(DEPDIR)/libneurai_wallet_a-depinpoolkeyload.Tpo wallet/$(DEPDIR)/libneurai_wallet_a-depinpoolkeyload.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='wallet/depinpoolkeyload.cpp' object='wallet/libneurai_wallet_a-depinpoolkeyload.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_wallet_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_wallet_a_CXXFLAGS) $(CXXFLAGS) -c -o wallet/libneurai_wallet_a-depinpoolkeyload.obj `if test -f 'wallet/depinpoolkeyload.cpp'; then $(CYGPATH_W) 'wallet/depinpoolkeyload.cpp'; else $(CYGPATH_W) '$(srcdir)/wallet/depinpoolkeyload.cpp'; fi`
 
 wallet/libneurai_wallet_a-rpcdump.o: wallet/rpcdump.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_wallet_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_wallet_a_CXXFLAGS) $(CXXFLAGS) -MT wallet/libneurai_wallet_a-rpcdump.o -MD -MP -MF wallet/$(DEPDIR)/libneurai_wallet_a-rpcdump.Tpo -c -o wallet/libneurai_wallet_a-rpcdump.o `test -f 'wallet/rpcdump.cpp' || echo '$(srcdir)/'`wallet/rpcdump.cpp
@@ -14494,6 +14564,20 @@ test/assets/test_neurai-asset_tx_tests.obj: test/assets/asset_tx_tests.cpp
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/assets/test_neurai-asset_tx_tests.obj `if test -f 'test/assets/asset_tx_tests.cpp'; then $(CYGPATH_W) 'test/assets/asset_tx_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/assets/asset_tx_tests.cpp'; fi`
 
+test/assets/test_neurai-asset_marker_nip040_tests.o: test/assets/asset_marker_nip040_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/assets/test_neurai-asset_marker_nip040_tests.o -MD -MP -MF test/assets/$(DEPDIR)/test_neurai-asset_marker_nip040_tests.Tpo -c -o test/assets/test_neurai-asset_marker_nip040_tests.o `test -f 'test/assets/asset_marker_nip040_tests.cpp' || echo '$(srcdir)/'`test/assets/asset_marker_nip040_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/assets/$(DEPDIR)/test_neurai-asset_marker_nip040_tests.Tpo test/assets/$(DEPDIR)/test_neurai-asset_marker_nip040_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/assets/asset_marker_nip040_tests.cpp' object='test/assets/test_neurai-asset_marker_nip040_tests.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/assets/test_neurai-asset_marker_nip040_tests.o `test -f 'test/assets/asset_marker_nip040_tests.cpp' || echo '$(srcdir)/'`test/assets/asset_marker_nip040_tests.cpp
+
+test/assets/test_neurai-asset_marker_nip040_tests.obj: test/assets/asset_marker_nip040_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/assets/test_neurai-asset_marker_nip040_tests.obj -MD -MP -MF test/assets/$(DEPDIR)/test_neurai-asset_marker_nip040_tests.Tpo -c -o test/assets/test_neurai-asset_marker_nip040_tests.obj `if test -f 'test/assets/asset_marker_nip040_tests.cpp'; then $(CYGPATH_W) 'test/assets/asset_marker_nip040_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/assets/asset_marker_nip040_tests.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/assets/$(DEPDIR)/test_neurai-asset_marker_nip040_tests.Tpo test/assets/$(DEPDIR)/test_neurai-asset_marker_nip040_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/assets/asset_marker_nip040_tests.cpp' object='test/assets/test_neurai-asset_marker_nip040_tests.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/assets/test_neurai-asset_marker_nip040_tests.obj `if test -f 'test/assets/asset_marker_nip040_tests.cpp'; then $(CYGPATH_W) 'test/assets/asset_marker_nip040_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/assets/asset_marker_nip040_tests.cpp'; fi`
+
 test/assets/test_neurai-cache_tests.o: test/assets/cache_tests.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/assets/test_neurai-cache_tests.o -MD -MP -MF test/assets/$(DEPDIR)/test_neurai-cache_tests.Tpo -c -o test/assets/test_neurai-cache_tests.o `test -f 'test/assets/cache_tests.cpp' || echo '$(srcdir)/'`test/assets/cache_tests.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/assets/$(DEPDIR)/test_neurai-cache_tests.Tpo test/assets/$(DEPDIR)/test_neurai-cache_tests.Po
@@ -14998,19 +15082,47 @@ test/test_neurai-depinmsgpool_tests.obj: test/depinmsgpool_tests.cpp
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-depinmsgpool_tests.obj `if test -f 'test/depinmsgpool_tests.cpp'; then $(CYGPATH_W) 'test/depinmsgpool_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/depinmsgpool_tests.cpp'; fi`
 
-test/test_neurai-depinserver_tests.o: test/depinserver_tests.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-depinserver_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-depinserver_tests.Tpo -c -o test/test_neurai-depinserver_tests.o `test -f 'test/depinserver_tests.cpp' || echo '$(srcdir)/'`test/depinserver_tests.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-depinserver_tests.Tpo test/$(DEPDIR)/test_neurai-depinserver_tests.Po
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/depinserver_tests.cpp' object='test/test_neurai-depinserver_tests.o' libtool=no @AMDEPBACKSLASH@
+test/test_neurai-depinchallenge_tests.o: test/depinchallenge_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-depinchallenge_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-depinchallenge_tests.Tpo -c -o test/test_neurai-depinchallenge_tests.o `test -f 'test/depinchallenge_tests.cpp' || echo '$(srcdir)/'`test/depinchallenge_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-depinchallenge_tests.Tpo test/$(DEPDIR)/test_neurai-depinchallenge_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/depinchallenge_tests.cpp' object='test/test_neurai-depinchallenge_tests.o' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-depinserver_tests.o `test -f 'test/depinserver_tests.cpp' || echo '$(srcdir)/'`test/depinserver_tests.cpp
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-depinchallenge_tests.o `test -f 'test/depinchallenge_tests.cpp' || echo '$(srcdir)/'`test/depinchallenge_tests.cpp
 
-test/test_neurai-depinserver_tests.obj: test/depinserver_tests.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-depinserver_tests.obj -MD -MP -MF test/$(DEPDIR)/test_neurai-depinserver_tests.Tpo -c -o test/test_neurai-depinserver_tests.obj `if test -f 'test/depinserver_tests.cpp'; then $(CYGPATH_W) 'test/depinserver_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/depinserver_tests.cpp'; fi`
-@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-depinserver_tests.Tpo test/$(DEPDIR)/test_neurai-depinserver_tests.Po
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/depinserver_tests.cpp' object='test/test_neurai-depinserver_tests.obj' libtool=no @AMDEPBACKSLASH@
+test/test_neurai-depinchallenge_tests.obj: test/depinchallenge_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-depinchallenge_tests.obj -MD -MP -MF test/$(DEPDIR)/test_neurai-depinchallenge_tests.Tpo -c -o test/test_neurai-depinchallenge_tests.obj `if test -f 'test/depinchallenge_tests.cpp'; then $(CYGPATH_W) 'test/depinchallenge_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/depinchallenge_tests.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-depinchallenge_tests.Tpo test/$(DEPDIR)/test_neurai-depinchallenge_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/depinchallenge_tests.cpp' object='test/test_neurai-depinchallenge_tests.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-depinserver_tests.obj `if test -f 'test/depinserver_tests.cpp'; then $(CYGPATH_W) 'test/depinserver_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/depinserver_tests.cpp'; fi`
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-depinchallenge_tests.obj `if test -f 'test/depinchallenge_tests.cpp'; then $(CYGPATH_W) 'test/depinchallenge_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/depinchallenge_tests.cpp'; fi`
+
+test/test_neurai-depinpoolkey_tests.o: test/depinpoolkey_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-depinpoolkey_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-depinpoolkey_tests.Tpo -c -o test/test_neurai-depinpoolkey_tests.o `test -f 'test/depinpoolkey_tests.cpp' || echo '$(srcdir)/'`test/depinpoolkey_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-depinpoolkey_tests.Tpo test/$(DEPDIR)/test_neurai-depinpoolkey_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/depinpoolkey_tests.cpp' object='test/test_neurai-depinpoolkey_tests.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-depinpoolkey_tests.o `test -f 'test/depinpoolkey_tests.cpp' || echo '$(srcdir)/'`test/depinpoolkey_tests.cpp
+
+test/test_neurai-depinpoolkey_tests.obj: test/depinpoolkey_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-depinpoolkey_tests.obj -MD -MP -MF test/$(DEPDIR)/test_neurai-depinpoolkey_tests.Tpo -c -o test/test_neurai-depinpoolkey_tests.obj `if test -f 'test/depinpoolkey_tests.cpp'; then $(CYGPATH_W) 'test/depinpoolkey_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/depinpoolkey_tests.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-depinpoolkey_tests.Tpo test/$(DEPDIR)/test_neurai-depinpoolkey_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/depinpoolkey_tests.cpp' object='test/test_neurai-depinpoolkey_tests.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-depinpoolkey_tests.obj `if test -f 'test/depinpoolkey_tests.cpp'; then $(CYGPATH_W) 'test/depinpoolkey_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/depinpoolkey_tests.cpp'; fi`
+
+test/test_neurai-depin_auth_rpc_tests.o: test/depin_auth_rpc_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-depin_auth_rpc_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-depin_auth_rpc_tests.Tpo -c -o test/test_neurai-depin_auth_rpc_tests.o `test -f 'test/depin_auth_rpc_tests.cpp' || echo '$(srcdir)/'`test/depin_auth_rpc_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-depin_auth_rpc_tests.Tpo test/$(DEPDIR)/test_neurai-depin_auth_rpc_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/depin_auth_rpc_tests.cpp' object='test/test_neurai-depin_auth_rpc_tests.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-depin_auth_rpc_tests.o `test -f 'test/depin_auth_rpc_tests.cpp' || echo '$(srcdir)/'`test/depin_auth_rpc_tests.cpp
+
+test/test_neurai-depin_auth_rpc_tests.obj: test/depin_auth_rpc_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-depin_auth_rpc_tests.obj -MD -MP -MF test/$(DEPDIR)/test_neurai-depin_auth_rpc_tests.Tpo -c -o test/test_neurai-depin_auth_rpc_tests.obj `if test -f 'test/depin_auth_rpc_tests.cpp'; then $(CYGPATH_W) 'test/depin_auth_rpc_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/depin_auth_rpc_tests.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) test/$(DEPDIR)/test_neurai-depin_auth_rpc_tests.Tpo test/$(DEPDIR)/test_neurai-depin_auth_rpc_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='test/depin_auth_rpc_tests.cpp' object='test/test_neurai-depin_auth_rpc_tests.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o test/test_neurai-depin_auth_rpc_tests.obj `if test -f 'test/depin_auth_rpc_tests.cpp'; then $(CYGPATH_W) 'test/depin_auth_rpc_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/test/depin_auth_rpc_tests.cpp'; fi`
 
 test/test_neurai-cuckoocache_tests.o: test/cuckoocache_tests.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT test/test_neurai-cuckoocache_tests.o -MD -MP -MF test/$(DEPDIR)/test_neurai-cuckoocache_tests.Tpo -c -o test/test_neurai-cuckoocache_tests.o `test -f 'test/cuckoocache_tests.cpp' || echo '$(srcdir)/'`test/cuckoocache_tests.cpp
@@ -16174,6 +16286,20 @@ wallet/test/test_test_neurai-depin_sections_wallet_tests.obj: wallet/test/depin_
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o wallet/test/test_test_neurai-depin_sections_wallet_tests.obj `if test -f 'wallet/test/depin_sections_wallet_tests.cpp'; then $(CYGPATH_W) 'wallet/test/depin_sections_wallet_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/wallet/test/depin_sections_wallet_tests.cpp'; fi`
 
+wallet/test/test_test_neurai-depinpoolkey_wallet_tests.o: wallet/test/depinpoolkey_wallet_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT wallet/test/test_test_neurai-depinpoolkey_wallet_tests.o -MD -MP -MF wallet/test/$(DEPDIR)/test_test_neurai-depinpoolkey_wallet_tests.Tpo -c -o wallet/test/test_test_neurai-depinpoolkey_wallet_tests.o `test -f 'wallet/test/depinpoolkey_wallet_tests.cpp' || echo '$(srcdir)/'`wallet/test/depinpoolkey_wallet_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) wallet/test/$(DEPDIR)/test_test_neurai-depinpoolkey_wallet_tests.Tpo wallet/test/$(DEPDIR)/test_test_neurai-depinpoolkey_wallet_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='wallet/test/depinpoolkey_wallet_tests.cpp' object='wallet/test/test_test_neurai-depinpoolkey_wallet_tests.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o wallet/test/test_test_neurai-depinpoolkey_wallet_tests.o `test -f 'wallet/test/depinpoolkey_wallet_tests.cpp' || echo '$(srcdir)/'`wallet/test/depinpoolkey_wallet_tests.cpp
+
+wallet/test/test_test_neurai-depinpoolkey_wallet_tests.obj: wallet/test/depinpoolkey_wallet_tests.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT wallet/test/test_test_neurai-depinpoolkey_wallet_tests.obj -MD -MP -MF wallet/test/$(DEPDIR)/test_test_neurai-depinpoolkey_wallet_tests.Tpo -c -o wallet/test/test_test_neurai-depinpoolkey_wallet_tests.obj `if test -f 'wallet/test/depinpoolkey_wallet_tests.cpp'; then $(CYGPATH_W) 'wallet/test/depinpoolkey_wallet_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/wallet/test/depinpoolkey_wallet_tests.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) wallet/test/$(DEPDIR)/test_test_neurai-depinpoolkey_wallet_tests.Tpo wallet/test/$(DEPDIR)/test_test_neurai-depinpoolkey_wallet_tests.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='wallet/test/depinpoolkey_wallet_tests.cpp' object='wallet/test/test_test_neurai-depinpoolkey_wallet_tests.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -c -o wallet/test/test_test_neurai-depinpoolkey_wallet_tests.obj `if test -f 'wallet/test/depinpoolkey_wallet_tests.cpp'; then $(CYGPATH_W) 'wallet/test/depinpoolkey_wallet_tests.cpp'; else $(CYGPATH_W) '$(srcdir)/wallet/test/depinpoolkey_wallet_tests.cpp'; fi`
+
 wallet/test/test_test_neurai-depin_selfrevoke_wallet_tests.o: wallet/test/depin_selfrevoke_wallet_tests.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(test_test_neurai_CPPFLAGS) $(CPPFLAGS) $(test_test_neurai_CXXFLAGS) $(CXXFLAGS) -MT wallet/test/test_test_neurai-depin_selfrevoke_wallet_tests.o -MD -MP -MF wallet/test/$(DEPDIR)/test_test_neurai-depin_selfrevoke_wallet_tests.Tpo -c -o wallet/test/test_test_neurai-depin_selfrevoke_wallet_tests.o `test -f 'wallet/test/depin_selfrevoke_wallet_tests.cpp' || echo '$(srcdir)/'`wallet/test/depin_selfrevoke_wallet_tests.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) wallet/test/$(DEPDIR)/test_test_neurai-depin_selfrevoke_wallet_tests.Tpo wallet/test/$(DEPDIR)/test_test_neurai-depin_selfrevoke_wallet_tests.Po
@@ -16854,11 +16980,12 @@ distclean: distclean-recursive
 	-rm -f ./$(DEPDIR)/libneurai_server_a-checkpoints.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-coins_server.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-dbwrapper.Po
+	-rm -f ./$(DEPDIR)/libneurai_server_a-depinchallenge.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-depinecies.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-depinmcpclient.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-depinmcpworker.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-depinmsgpool.Po
-	-rm -f ./$(DEPDIR)/libneurai_server_a-depinmsgpoolnet.Po
+	-rm -f ./$(DEPDIR)/libneurai_server_a-depinpoolkey.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-httprpc.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-httpserver.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-init.Po
@@ -17408,14 +17535,16 @@ distclean: distclean-recursive
 	-rm -f test/$(DEPDIR)/test_neurai-dbwrapper_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-depin_ancestor_recipients_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-depin_assetindex_consensus_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-depin_auth_rpc_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-depin_rpc_params_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-depin_sections_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-depin_selfrevoke_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-depin_subasset_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-depinchallenge_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-depinecies_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-depinmcpworker_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-depinmsgpool_tests.Po
-	-rm -f test/$(DEPDIR)/test_neurai-depinserver_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-depinpoolkey_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-ed25519_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-getarg_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-hash_tests.Po
@@ -17489,6 +17618,7 @@ distclean: distclean-recursive
 	-rm -f test/$(DEPDIR)/test_neurai-xna_asset_gating_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai_fuzzy-test_neurai_fuzzy.Po
 	-rm -f test/$(DEPDIR)/test_neurai_hash-test_neurai_hash.Po
+	-rm -f test/assets/$(DEPDIR)/test_neurai-asset_marker_nip040_tests.Po
 	-rm -f test/assets/$(DEPDIR)/test_neurai-asset_reissue_tests.Po
 	-rm -f test/assets/$(DEPDIR)/test_neurai-asset_tests.Po
 	-rm -f test/assets/$(DEPDIR)/test_neurai-asset_tx_tests.Po
@@ -17503,6 +17633,7 @@ distclean: distclean-recursive
 	-rm -f wallet/$(DEPDIR)/libneurai_wallet_a-bip39.Po
 	-rm -f wallet/$(DEPDIR)/libneurai_wallet_a-crypter.Po
 	-rm -f wallet/$(DEPDIR)/libneurai_wallet_a-db.Po
+	-rm -f wallet/$(DEPDIR)/libneurai_wallet_a-depinpoolkeyload.Po
 	-rm -f wallet/$(DEPDIR)/libneurai_wallet_a-feebumper.Po
 	-rm -f wallet/$(DEPDIR)/libneurai_wallet_a-fees.Po
 	-rm -f wallet/$(DEPDIR)/libneurai_wallet_a-init.Po
@@ -17516,6 +17647,7 @@ distclean: distclean-recursive
 	-rm -f wallet/test/$(DEPDIR)/test_test_neurai-depin_sections_wallet_tests.Po
 	-rm -f wallet/test/$(DEPDIR)/test_test_neurai-depin_selfrevoke_wallet_tests.Po
 	-rm -f wallet/test/$(DEPDIR)/test_test_neurai-depin_subasset_wallet_tests.Po
+	-rm -f wallet/test/$(DEPDIR)/test_test_neurai-depinpoolkey_wallet_tests.Po
 	-rm -f wallet/test/$(DEPDIR)/test_test_neurai-pqwallet_guard_tests.Po
 	-rm -f wallet/test/$(DEPDIR)/test_test_neurai-wallet_test_fixture.Po
 	-rm -f wallet/test/$(DEPDIR)/test_test_neurai-wallet_tests.Po
@@ -17596,11 +17728,12 @@ maintainer-clean: maintainer-clean-recursive
 	-rm -f ./$(DEPDIR)/libneurai_server_a-checkpoints.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-coins_server.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-dbwrapper.Po
+	-rm -f ./$(DEPDIR)/libneurai_server_a-depinchallenge.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-depinecies.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-depinmcpclient.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-depinmcpworker.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-depinmsgpool.Po
-	-rm -f ./$(DEPDIR)/libneurai_server_a-depinmsgpoolnet.Po
+	-rm -f ./$(DEPDIR)/libneurai_server_a-depinpoolkey.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-httprpc.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-httpserver.Po
 	-rm -f ./$(DEPDIR)/libneurai_server_a-init.Po
@@ -18150,14 +18283,16 @@ maintainer-clean: maintainer-clean-recursive
 	-rm -f test/$(DEPDIR)/test_neurai-dbwrapper_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-depin_ancestor_recipients_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-depin_assetindex_consensus_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-depin_auth_rpc_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-depin_rpc_params_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-depin_sections_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-depin_selfrevoke_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-depin_subasset_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-depinchallenge_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-depinecies_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-depinmcpworker_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-depinmsgpool_tests.Po
-	-rm -f test/$(DEPDIR)/test_neurai-depinserver_tests.Po
+	-rm -f test/$(DEPDIR)/test_neurai-depinpoolkey_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-ed25519_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-getarg_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai-hash_tests.Po
@@ -18231,6 +18366,7 @@ maintainer-clean: maintainer-clean-recursive
 	-rm -f test/$(DEPDIR)/test_neurai-xna_asset_gating_tests.Po
 	-rm -f test/$(DEPDIR)/test_neurai_fuzzy-test_neurai_fuzzy.Po
 	-rm -f test/$(DEPDIR)/test_neurai_hash-test_neurai_hash.Po
+	-rm -f test/assets/$(DEPDIR)/test_neurai-asset_marker_nip040_tests.Po
 	-rm -f test/assets/$(DEPDIR)/test_neurai-asset_reissue_tests.Po
 	-rm -f test/assets/$(DEPDIR)/test_neurai-asset_tests.Po
 	-rm -f test/assets/$(DEPDIR)/test_neurai-asset_tx_tests.Po
@@ -18245,6 +18381,7 @@ maintainer-clean: maintainer-clean-recursive
 	-rm -f wallet/$(DEPDIR)/libneurai_wallet_a-bip39.Po
 	-rm -f wallet/$(DEPDIR)/libneurai_wallet_a-crypter.Po
 	-rm -f wallet/$(DEPDIR)/libneurai_wallet_a-db.Po
+	-rm -f wallet/$(DEPDIR)/libneurai_wallet_a-depinpoolkeyload.Po
 	-rm -f wallet/$(DEPDIR)/libneurai_wallet_a-feebumper.Po
 	-rm -f wallet/$(DEPDIR)/libneurai_wallet_a-fees.Po
 	-rm -f wallet/$(DEPDIR)/libneurai_wallet_a-init.Po
@@ -18258,6 +18395,7 @@ maintainer-clean: maintainer-clean-recursive
 	-rm -f wallet/test/$(DEPDIR)/test_test_neurai-depin_sections_wallet_tests.Po
 	-rm -f wallet/test/$(DEPDIR)/test_test_neurai-depin_selfrevoke_wallet_tests.Po
 	-rm -f wallet/test/$(DEPDIR)/test_test_neurai-depin_subasset_wallet_tests.Po
+	-rm -f wallet/test/$(DEPDIR)/test_test_neurai-depinpoolkey_wallet_tests.Po
 	-rm -f wallet/test/$(DEPDIR)/test_test_neurai-pqwallet_guard_tests.Po
 	-rm -f wallet/test/$(DEPDIR)/test_test_neurai-wallet_test_fixture.Po
 	-rm -f wallet/test/$(DEPDIR)/test_test_neurai-wallet_tests.Po

@@ -1,13 +1,21 @@
-# DePIN client integration guide
+# DePIN client integration guide (protocol 2)
 
 This document describes the RPC surface that an external, non-custodial
-DePIN client or library needs in order to read and decrypt messages. It is
-written for clients that hold the user's private key themselves; the node
-returns encrypted messages and does not decrypt their content for the client.
+DePIN client or library needs in order to authenticate, read and decrypt
+messages, and to publish them. It is written for clients that hold the
+user's private key themselves; the node never sees it. Everything here is
+served by the node's standard JSON-RPC interface, normally through an RPC
+proxy such as `neurai-rpc-proxy` that whitelists the DePIN methods. There is
+no separate DePIN port.
+
+This is protocol 2, a breaking change: there is no unauthenticated read, no
+unsigned reply, no unencrypted reply bound to an address, and no bare-hex
+submit. `depingetmsginfo.protocol` is `2`
+on nodes that implement it.
 
 DePIN messaging is experimental and off-chain. Token names, token holdings,
 section names, and the hierarchy are public blockchain data. Message content
-is protected by encryption, not the existence or membership of a channel.
+is protected by encryption, not by the existence or membership of a channel.
 
 ## Concepts
 
@@ -29,23 +37,141 @@ neither owner-frozen nor self-revoked for that `(asset, address)` pair. Access
 is inherited: a holder of `&NEWS` has access to every descendant; a holder of
 only `&NEWS/GENERAL` has access only to that branch.
 
+An address takes part only if it has **revealed its public key** on chain
+(spent from it at least once): the node encrypts for that key and verifies
+signatures against it.
+
+## The pool key and `poolsig`
+
+Each service node derives one secp256k1 *pool key* from a dedicated wallet.
+It does two things: it opens the envelope around submitted messages, and it
+signs every DePIN reply.
+
+`depingetmsginfo` publishes the identity of the service. Like every reply
+that is not bound to an address, it is a signed plain body:
+
+```json
+{ "body": "7b22656e61626c6564223a747275652c...", "poolsig": "IMn3..." }
+```
+
+`body` is the hex encoding of the UTF-8 JSON; decoded it reads
+
+```json
+{
+  "enabled": true,
+  "token": "&NEWS",
+  "maxrecipients": 20,
+  "protocol": 2,
+  "depinpoolpkey": "02ab...",
+  "depinpoolkeyaddress": "N...",
+  "depinpoolkeyowner": "N...",
+  "depinpoolkeysig": "H1a2...",
+  "depinwallet": "wallet.dat"
+}
+```
+
+`depinpoolkeysig` is the token owner's standard message signature
+(`signmessage`) over `DEPIN-POOLKEY|<token>|<pubkeyhex>`, made with the
+address that holds the owner token (`&NEWS!`). The node verified it at
+startup; that protects the node from publishing a broken signature, it does
+not protect you.
+
+**Anchor the pool key out of band.** Everything `depingetmsginfo` returns
+arrives through the proxy you are about to talk to, and a hostile proxy can
+replace all of it. A client therefore:
+
+1. verifies `depinpoolkeysig` **locally** (compact-signature recovery, the
+   same computation as `verifymessage`) — never by asking the proxy to verify
+   it;
+2. takes the owner address from a source that is not the proxy: its own node
+   (`listaddressesbyasset "&NEWS!"`), an anchor shipped with the application
+   or published by the token's project, or, as a last resort, pins
+   `depinpoolpkey` on first use and alerts if it ever changes.
+
+Once the pool key is anchored, every reply can be checked. `poolsig` is the
+pool key's compact signature (base64) over the canonical preimage
+
+```
+DEPIN-RESP|<method>|<token>|<address>|<challenge>|<sha256hex(body)>
+```
+
+where `body` is the string value of the reply's `encrypted` field (replies
+bound to an address) or of its `body` field (plain replies), **exactly as
+received**: hash the ASCII hex string, never a re-serialisation of the JSON.
+`address` and `challenge` are the request's (empty when the method has none,
+e.g. `depingetmsginfo`). The scheme is `signmessage`-compatible, so a client
+with a node can check it with
+`verifymessage <depinpoolkeyaddress> <poolsig> "<preimage>"`. Verify before
+decrypting or decoding: the signature is over the transported string
+(encrypt-then-sign). Replies without a valid `poolsig` must be treated as a
+protocol error, not as a degraded mode.
+
+## Authentication: `depinchallenge`
+
+```
+depinchallenge "token" "address" ( "type" )
+```
+
+1. `token` — pool root or a section inside it. The challenge is bound to it.
+2. `address` — the holder's P2PKH address, public key revealed.
+3. `type` — `receive` (default) for reads; `admin` for `depinclearmsg`.
+
+A `receive` challenge is issued only to an active holder of `token` or of one
+of its ancestors; an `admin` challenge only to a holder of the owner token of
+`token` or of an ancestor. Anyone else gets an error and nothing is stored.
+
+The reply is encrypted for `address` and signed:
+
+```json
+{ "encrypted": "<hex>", "poolsig": "<base64>" }
+```
+
+Decrypt `encrypted` (see "Opening an encrypted reply") to obtain
+
+```json
+{ "challenge": "<64 hex>", "expires_in": 30, "type": "receive" }
+```
+
+Then sign, with the address's key and the standard message-signing scheme
+(`signmessage`; compact signature, base64):
+
+```
+DEPIN-GET|<token>|<address>|<challenge>      type receive
+DEPIN-CLEAR|<token>|<address>|<challenge>    type admin
+```
+
+and pass the challenge and the signature to the RPC within 30 seconds. A
+challenge is single-use: the first valid call consumes it. A call that fails
+— wrong signature, a nonce issued for other bindings, an address that lost
+access in between — does **not** consume it, so nobody can burn your
+challenge by guessing. The node keeps at most 4 live challenges per address
+(a fifth evicts the oldest) and 10 000 in total.
+
+On a node that holds the address's key, `depinsignchallenge "address" "token"
+"challenge" ("type")` produces the signature and `depindecrypt "address"
+"encrypted"` opens an encrypted reply; both are local wallet RPCs for
+`neurai-cli` scripting and are never whitelisted by proxies.
+
 ## `depinreceivemsg`
 
 ```
-depinreceivemsg "token" "address" (timestamp) ("after_hash") (limit)
+depinreceivemsg "token" "address" "challenge" "signature" ( timestamp "after_hash" limit )
 ```
 
-Arguments:
-
 1. `token` — pool root or a section served by the node.
-2. `address` — the client address used as the recipient selector and, when
-   available, as the response-encryption target.
-3. `timestamp` — optional Unix timestamp. When non-zero, messages whose
+2. `address` — the holder address: recipient selector and encryption target.
+3. `challenge` — a `receive` challenge issued for exactly `token` and `address`.
+4. `signature` — base64 signature of `DEPIN-GET|<token>|<address>|<challenge>`.
+5. `timestamp` — optional Unix timestamp. When non-zero, messages whose
    timestamp is at least `timestamp - 1` are returned.
-4. `after_hash` — optional cursor. Use `""` to start at the oldest available
+6. `after_hash` — optional cursor. Use `""` to start at the oldest available
    message.
-5. `limit` — optional page size. `0` or omitted returns the unpaginated,
-   backwards-compatible array. Values above 1000 are rejected.
+7. `limit` — optional page size. `0` or omitted returns the unpaginated
+   array. Values above 1000 are rejected.
+
+Named invocation works; skipped optional parameters arrive as JSON `null` and
+are treated as absent. The old `token address ...` form is rejected by arity
+or type before the pool is touched.
 
 Example JSON-RPC request:
 
@@ -54,11 +180,14 @@ Example JSON-RPC request:
   "jsonrpc": "2.0",
   "id": 1,
   "method": "depinreceivemsg",
-  "params": ["&NEWS/GENERAL", "N...", 0, "", 25]
+  "params": ["&NEWS/GENERAL", "N...", "<challenge>", "<signature>", 0, "", 25]
 }
 ```
 
-With `limit > 0`, the result is:
+The reply is always `{ "encrypted": "<hex>", "poolsig": "<base64>" }`. Its
+`poolsig` preimage uses `method = depinreceivemsg`, the request's `token`,
+`address` and `challenge`, and the `encrypted` hex as body. Decrypted, with
+`limit > 0`:
 
 ```json
 {
@@ -77,45 +206,26 @@ With `limit > 0`, the result is:
 }
 ```
 
-Without pagination, the result is the `messages` array directly. Messages are
-ordered from oldest to newest. Save the last returned `hash` and use it as
-`after_hash` for the next page. Supplying a hash that is not in the address's
-visible result is an error.
+Without pagination, the decrypted result is the `messages` array directly.
+Messages are ordered from oldest to newest. Save the last returned `hash` and
+use it as `after_hash` for the next page. Supplying a hash that is not in the
+address's visible result is an error.
 
-### Scope is not authentication
+The challenge proves control of the address; what the address can actually
+read is still fixed cryptographically by the recipient list embedded in each
+message. A sender also sees its own messages.
 
-`depinreceivemsg` validates the address syntax but does **not** ask the caller
-to prove ownership of that address. Its `token` argument is a convenient UI
-scope, not an authorization mechanism. The actual visibility rule is the
-cryptographic recipient list embedded in each message; an address can decrypt
-only a payload encrypted for its revealed public key. A sender also sees its
-own messages.
+## Opening an encrypted reply
 
-Clients exposed to an untrusted transport should use the gateway
-challenge/response protocol for authenticated reads, or otherwise treat this
-RPC as an untrusted retrieval endpoint and enforce cryptographic validation
-locally.
+Deserialize the `encrypted` hex as `CECIESEncryptedMessage` and decrypt it
+with the private key for the requested address (the recipient entry is keyed
+by that address's hash160). The plaintext is exactly the JSON described for
+each method. Encryption of replies never depends on anything the client sent
+beyond the address: an address without a revealed public key is refused, it
+does not get a plaintext reply.
 
-## Response privacy layer
-
-When the node has a wallet available and the requested address has a revealed
-public key, the whole RPC result may be wrapped as:
-
-```json
-{ "encrypted": "hex_ecies_blob" }
-```
-
-Deserialize the blob as `CECIESEncryptedMessage` and decrypt it with the
-private key for the requested address. The plaintext is exactly the array or
-paginated object described above. A library must handle both wrapped and plain
-responses.
-
-This wrapper encrypts to the client address; it is not, by itself, an
-authenticated server-identity protocol. Use a trusted node RPC connection or
-authenticate the transport/server separately when that property is required.
-
-This transport/privacy wrapper is independent from the message payload
-encryption below.
+This transport wrapper is independent from the message payload encryption
+below.
 
 ## Decrypting `encrypted_payload_hex`
 
@@ -152,69 +262,96 @@ Before displaying a decrypted message, a library should:
    where `serialize()`/`vector()` are Bitcoin-style serializations
    (compact-size length prefix followed by the bytes) and `messageType` is
    `0x01` for private or `0x02` for group. This is the only signature format
-   the node accepts for normally signed messages, including everything
-   submitted through `depinsubmitmsg`: signatures over the legacy preimage
-   (the same fields without `messageType`) are rejected. The signature is
-   DER-encoded secp256k1 by the key behind the sender's revealed public key.
-
-   Exception: messages accepted through the pre-authenticated gateway path of
-   `depinsendmsg` are authorized by the gateway challenge/response instead of
-   a message signature. The node stores a 65-byte all-zero sentinel in
-   `signature_hex` and skips signature verification for them, so they cannot
-   be verified cryptographically. Whether to display them is a client policy
-   decision tied to how much it trusts the serving gateway session — see
-   "Scope is not authentication" above.
+   the node accepts: every message in a pool was verified against the
+   sender's revealed public key when it was submitted, and a client verifies
+   it again. The signature is DER-encoded secp256k1.
 2. Verify that the returned `token` belongs to the requested scope. For a
    root request, any descendant is valid; for `&NEWS/GENERAL`, only
    `&NEWS/GENERAL` and its descendants are valid. Do not require literal token
    equality for a subtree request.
 3. Reject malformed, duplicated, or unexpectedly large encrypted payloads
    according to the library's own resource limits.
-4. Authenticate the RPC transport or expected server separately when that
-   property is required; the optional response wrapper alone does not provide
-   server authentication.
+4. Verify `poolsig` on every reply against the anchored pool key, before
+   decrypting. A library must refuse to use a pool key that is neither
+   anchored nor pinned.
 
-## Recipient discovery for send-capable clients
-
-Clients that encrypt messages themselves can resolve candidate recipients with:
+## Publishing: `depinsubmitmsg`
 
 ```
-depingetancestorrecipients "token" (max_results) ("stop_at")
+depinsubmitmsg {"sender": "N...", "encrypted": "<hex>"}
 ```
 
-It returns the active, deduplicated union of holders of the requested token
-and its ancestors, with their revealed public keys. `stop_at` is inclusive and
-lets a caller stop at a configured pool root; omitted means the absolute root.
-The result is exact by asset name: querying `&TOKEN` never matches
-`&TOKEN/CHILD` or `&TOKENE`.
+The client prepares the complete `CDepinMessage` itself:
 
-This is an informational query, not a sending decision. It may return
-`truncated: true`; a truncated list must never be used as a complete group
-recipient list. Check the `*_complete` flags before interpreting skipped
-counts as totals. The command requires both `-assetindex` and `-pubkeyindex`.
+1. Read `depingetmsginfo` for the pool root, its recipient limit and
+   `depinpoolpkey`.
+2. Resolve recipients with `depingetancestorrecipients "<token>" <limit>
+   "<pool root>"`: the active, deduplicated union of holders of the token and
+   of its ancestors *up to the pool root*, with their revealed public keys.
+   Stopping at the pool root matters: holders of ancestors the pool does not
+   serve would otherwise become extra readers. If the result is `truncated`,
+   do not send; the node refuses oversized recipient sets too.
+3. Encrypt the content once and ECIES-wrap the content key for every
+   recipient public key; fill `token`, `senderAddress`, `timestamp`,
+   `messageType`; sign the message hash with the sender's key.
+4. Serialize the message, hex-encode it, and wrap that hex in an ECIES
+   envelope for `depinpoolpkey` (recipient keyed by `depinpoolkeyaddress`).
+5. Call `depinsubmitmsg` with the sender address and the envelope hex. The
+   node opens the envelope, checks that `sender` is the signer, verifies the
+   signature against the sender's revealed key, checks the sender's inherited
+   access to the token, and stores the message.
 
-For ordinary remote sending, prefer `depinsendmsg`: it queries the remote
-pool's `INFO` first, uses that pool's root as `stop_at`, and applies the
-remote pool's recipient limit before encrypting. This prevents encrypting for
-holders of ancestors that the remote pool does not serve.
+The reply is encrypted for the sender and signed. There is no bare-hex form.
+
+## `depinlistsections`
+
+```
+depinlistsections                                       names only
+depinlistsections "address" "scope" "challenge" "signature"
+```
+
+Without arguments the reply is a signed plain body that decodes to
+`{"sections": [...]}` with the `name`, `label` and `depth` of every section:
+names are public chain data.
+With the four arguments — and only with all four — it adds `access` and,
+where there is access, the `messages` counter, limited to the subtree of
+`scope`; the challenge is a `receive` challenge issued for `scope`, and the
+reply is encrypted for the address. A holder of a single section therefore
+sees its own tab, not its siblings; a holder of the root sees everything.
+
+## `depinclearmsg` (owners)
+
+```
+depinclearmsg "scope" "address" "challenge" "signature" ( "all" | hours )
+```
+
+Purges `scope`'s subtree (`""` = the pool root = the whole pool). The
+challenge must be an `admin` challenge issued for exactly `scope` — for the
+root, request it for the root by name — to an address holding the owner token
+of `scope` or of an ancestor. Equality, not subtree: a challenge for
+`&NEWS/GENERAL` purges neither the pool nor `&NEWS/OTHER`, and a challenge
+for `&NEWS` does not purge `&NEWS/GENERAL` by name. The mode is validated
+before the challenge is consumed, so a typo does not cost a challenge.
 
 ## Related RPCs
 
-- `depingetmsg` — wallet-backed local or remote retrieval and decryption.
-- `depinsendmsg` — wallet-backed remote send and signing.
-- `depinlistsections` — section names for UI tabs. Its optional address mode
-  adds access and message counters, but is intentionally available only over
-  node RPC; the unauthenticated DePIN port returns names only.
-- `depingetmsginfo` — pool configuration and status.
+- `depingetancestorrecipients` — recipient discovery (see "Publishing").
+- `depinpoolstats`, `depinmcpstatus` — aggregate counters, signed plain
+  bodies.
+- `depingetmsg`, `depinsendmsg`, `depinsignchallenge`, `depindecrypt`,
+  `depinpoolpkey` — local wallet RPCs of a node that holds the keys; never
+  reachable through a proxy.
 
 ## Compatibility and limits
 
-- Legacy clients that request only the pool root keep their previous scope:
-  the root includes the complete served subtree.
+- Protocol 2 replaces protocol 1 entirely on testnet: clients that call
+  `depinreceivemsg token address`, submit bare hex, or expect plaintext
+  replies stop working. Check `depingetmsginfo.protocol`.
 - A pool configured at `&NEWS/GENERAL` serves only that subtree. Holders of
   `&NEWS` are not automatically recipients for that different pool.
-- The sending pool has a configured recipient maximum (hard-capped at 50).
-  Sending fails rather than silently dropping recipients when the eligible
-  set exceeds it.
+- The pool has a configured recipient maximum (hard-capped at 50). Submission
+  fails rather than silently dropping recipients when the set exceeds it.
 - A holder without a revealed public key cannot be included in ECIES group
-  encryption. This is expected and is reported by sender-side RPCs.
+  encryption and cannot authenticate; both are expected and reported.
+- Only P2PKH (secp256k1) addresses can authenticate; the pool key, the
+  envelope and `poolsig` are secp256k1 as well.
