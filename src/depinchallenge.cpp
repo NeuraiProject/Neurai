@@ -88,9 +88,7 @@ bool CheckDepinChallengeRequestAuth(DepinChallengeType type, const std::string& 
                                        DepinChallengeRequestPreimage(type, token, address, timestampMs), error)) {
         return false;
     }
-    // Only a valid signature reaches the store: a forged request leaves no
-    // trace and costs its target nothing.
-    return g_depinRequestGuard.Remember(signatureBase64, nowMs, 2 * DEPIN_REQUEST_WINDOW_MS, error);
+    return true;
 }
 
 // ---------------------------------------------------------------------------

@@ -387,6 +387,7 @@ BOOST_AUTO_TEST_CASE(challenge_requests_are_signed_and_not_replayable)
     SetMockTime(1700000000);
     const Holder holder = NewHolder(true, SECTION_A, 10);
     const Holder stranger = NewHolder(true, SECTION_A, 10);
+    const Holder nonHolder = NewHolder(true);
 
     // The holder's one live nonce, which nobody else must be able to evict.
     const std::string mine = Challenge(SECTION_A, holder, DepinChallengeType::RECEIVE);
@@ -400,6 +401,15 @@ BOOST_AUTO_TEST_CASE(challenge_requests_are_signed_and_not_replayable)
     BOOST_CHECK(g_depinChallenges.Peek(mine, error));
     BOOST_CHECK_EQUAL(g_depinChallenges.CountForAddress(holder.address), 1U);
     BOOST_CHECK_EQUAL(g_depinRequestGuard.Size(), 1U); // only the holder's own request was recorded
+
+    // Even a cryptographically valid request from its own address must not
+    // consume global replay capacity if that address has no access to the
+    // requested section. Otherwise an attacker could fill the 10,000-entry
+    // guard with freshly generated keys and block every real holder.
+    for (int i = 0; i < 10; ++i) {
+        BOOST_CHECK(Throws("depinchallenge", ChallengeParams(SECTION_A, nonHolder, DepinChallengeType::RECEIVE)));
+    }
+    BOOST_CHECK_EQUAL(g_depinRequestGuard.Size(), 1U);
 
     // Unsigned / malformed shapes.
     BOOST_CHECK(Throws("depinchallenge", Params({SECTION_A, holder.address})));

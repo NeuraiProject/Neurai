@@ -865,21 +865,30 @@ UniValue depinchallenge(const JSONRPCRequest& request)
         }
     }
 
-    // 1. The requester proves it IS the address, without touching anything
-    //    that belongs to that address: window, signature, replay.
+    // 1. The requester proves it IS the address, without touching state:
+    //    window and signature.
     std::string error;
     if (!CheckDepinChallengeRequestAuth(type, token, address, timestamp, requestSignature,
                                         DepinRequestClockMillis(), error)) {
         throw JSONRPCError(RPC_INVALID_REQUEST, strprintf("Request authentication failed: %s", error));
     }
 
-    // 2. Validate, 3. count, 4. issue: a request that could never get a nonce
-    //    (foreign token, no revealed key, no access) does not spend the quota.
+    // 2. Validate the revealed key and access before recording the request:
+    //    otherwise arbitrary valid signatures from non-holders could fill the
+    //    global replay guard and deny service to real holders.
     CPubKey pubkey;
     if (!CheckDepinChallengeRequest(token, address, type, pDepinMsgPool->GetActiveToken(), pubkey, error)) {
         throw JSONRPCError(RPC_INVALID_REQUEST, error);
     }
 
+    // 3. Atomically reject a replay only after it is a request a holder could
+    //    actually use. A duplicate cannot reach the quota or evict a nonce.
+    if (!g_depinRequestGuard.Remember(requestSignature, DepinRequestClockMillis(),
+                                      2 * DEPIN_REQUEST_WINDOW_MS, error)) {
+        throw JSONRPCError(RPC_INVALID_REQUEST, strprintf("Request authentication failed: %s", error));
+    }
+
+    // 4. Count, 5. issue.
     if (!g_depinRateLimiter.Allow("challenge|" + address, GetTime())) {
         throw JSONRPCError(RPC_MISC_ERROR,
                            strprintf("Rate limited: more than %u challenges for this address in the last minute",

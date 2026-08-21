@@ -227,11 +227,12 @@ private:
 extern CDepinReplayGuard g_depinRequestGuard;
 
 /**
- * Authenticates a challenge request: `timestampMs` within
- * DEPIN_REQUEST_WINDOW_MS of `nowMs`, `signatureBase64` valid for `address`
- * over DepinChallengeRequestPreimage, and not seen before. Pure except for
- * the replay record, which is only written for a VALID signature: a forged
- * request spends nothing of the address it names.
+ * Verifies a challenge request without modifying state: `timestampMs` must be
+ * within DEPIN_REQUEST_WINDOW_MS of `nowMs`, and `signatureBase64` must be
+ * valid for `address` over DepinChallengeRequestPreimage. The caller must
+ * validate the address's revealed key and token access before recording the
+ * signature in g_depinRequestGuard; otherwise arbitrary valid signatures
+ * from non-holders could fill the global replay guard.
  */
 bool CheckDepinChallengeRequestAuth(DepinChallengeType type, const std::string& token,
                                     const std::string& address, int64_t timestampMs,

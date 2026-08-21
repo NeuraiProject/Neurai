@@ -286,7 +286,9 @@ BOOST_AUTO_TEST_CASE(preimage_shared_between_sign_and_verify)
     BOOST_CHECK_EQUAL(DepinChallengeTypeName(DepinChallengeType::ADMIN), "admin");
 }
 
-// The signed challenge request: window, signature, single acceptance.
+// The signed challenge request: window, signature, then single acceptance in
+// the replay guard. Verification itself is intentionally pure so callers can
+// reject non-holders before they consume global replay capacity.
 BOOST_AUTO_TEST_CASE(challenge_request_auth_window_signature_replay)
 {
     g_depinRequestGuard.Clear();
@@ -306,8 +308,10 @@ BOOST_AUTO_TEST_CASE(challenge_request_auth_window_signature_replay)
 
     const std::string sig = signReq(h, DepinChallengeType::RECEIVE, now);
     BOOST_CHECK(CheckDepinChallengeRequestAuth(DepinChallengeType::RECEIVE, SECTION, h.address, now, sig, now, error));
+    BOOST_CHECK(g_depinRequestGuard.Remember(sig, now, 2 * W, error));
     // Replay, even later inside the window.
-    BOOST_CHECK(!CheckDepinChallengeRequestAuth(DepinChallengeType::RECEIVE, SECTION, h.address, now, sig, now + 10000, error));
+    BOOST_CHECK(CheckDepinChallengeRequestAuth(DepinChallengeType::RECEIVE, SECTION, h.address, now, sig, now + 10000, error));
+    BOOST_CHECK(!g_depinRequestGuard.Remember(sig, now + 10000, 2 * W, error));
     BOOST_CHECK_EQUAL(error, "Request already used");
     // Other signer, other type, other token, other timestamp than signed.
     BOOST_CHECK(!CheckDepinChallengeRequestAuth(DepinChallengeType::RECEIVE, SECTION, h.address, now + 1, signReq(other, DepinChallengeType::RECEIVE, now + 1), now, error));
@@ -321,8 +325,10 @@ BOOST_AUTO_TEST_CASE(challenge_request_auth_window_signature_replay)
                                                 signReq(h, DepinChallengeType::RECEIVE, now - W - 1), now, error));
     BOOST_CHECK(!CheckDepinChallengeRequestAuth(DepinChallengeType::RECEIVE, SECTION, h.address, now + W + 1,
                                                 signReq(h, DepinChallengeType::RECEIVE, now + W + 1), now, error));
+    const std::string boundarySig = signReq(h, DepinChallengeType::RECEIVE, now - W);
     BOOST_CHECK(CheckDepinChallengeRequestAuth(DepinChallengeType::RECEIVE, SECTION, h.address, now - W,
-                                               signReq(h, DepinChallengeType::RECEIVE, now - W), now, error));
+                                               boundarySig, now, error));
+    BOOST_CHECK(g_depinRequestGuard.Remember(boundarySig, now, 2 * W, error));
     // The record outlives the window, then is pruned.
     g_depinRequestGuard.Prune(now + 2 * W - 1);
     BOOST_CHECK_EQUAL(g_depinRequestGuard.Size(), 2U);
