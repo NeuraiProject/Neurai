@@ -81,6 +81,7 @@ struct DepinAuthRpcSetup : public TestingSetup {
         g_depinChallenges.Clear();
         g_depinRateLimiter.Clear();
         g_depinRateLimiter.SetLimit(DEFAULT_DEPIN_RATE_LIMIT);
+        g_depinRequestGuard.Clear();
 
         for (const std::string& name : {ROOT, SECTION_A, SECTION_B}) {
             CNewAsset asset(name, 1000 * COIN, DEPIN_ASSET_UNITS, 0, 0, "");
@@ -101,6 +102,7 @@ struct DepinAuthRpcSetup : public TestingSetup {
         g_depinChallenges.Clear();
         g_depinRateLimiter.Clear();
         g_depinRateLimiter.SetLimit(DEFAULT_DEPIN_RATE_LIMIT);
+        g_depinRequestGuard.Clear();
         ClearDepinPoolKey();
         delete prestricteddb;
         delete passetsCache;
@@ -197,9 +199,24 @@ struct DepinAuthRpcSetup : public TestingSetup {
         return inner;
     }
 
+    // A signed challenge request: [token, address, timestamp, signature, type].
+    // `signer` defaults to the holder; `skewSeconds` shifts the signed
+    // timestamp. Under mock time the clock stands still, so a counter keeps
+    // consecutive requests distinct (as real milliseconds would).
+    static UniValue ChallengeParams(const std::string& token, const Holder& holder, DepinChallengeType type,
+                                    const Holder* signer = nullptr, int64_t skewSeconds = 0)
+    {
+        static int64_t sequence = 0;
+        const int64_t timestamp = DepinRequestClockMillis() + (++sequence % 1000) + skewSeconds * 1000;
+        std::string sig, error;
+        BOOST_REQUIRE_MESSAGE(SignDepinChallengePreimage((signer ? *signer : holder).key,
+            DepinChallengeRequestPreimage(type, token, holder.address, timestamp), sig, error), error);
+        return Params({token, holder.address, timestamp, sig, DepinChallengeTypeName(type)});
+    }
+
     std::string Challenge(const std::string& token, const Holder& holder, DepinChallengeType type)
     {
-        const UniValue response = Call("depinchallenge", Params({token, holder.address, DepinChallengeTypeName(type)}));
+        const UniValue response = Call("depinchallenge", ChallengeParams(token, holder, type));
         const UniValue inner = Open(response, holder);
         BOOST_CHECK_EQUAL(inner["type"].get_str(), DepinChallengeTypeName(type));
         BOOST_CHECK_EQUAL(inner["expires_in"].get_int(), (int)DEPIN_CHALLENGE_TIMEOUT);
@@ -323,7 +340,7 @@ BOOST_AUTO_TEST_CASE(challenge_issuance_is_rate_limited_per_address)
     const Holder other = NewHolder(true, SECTION_A, 10);
 
     for (int i = 0; i < 3; ++i) Challenge(SECTION_A, holder, DepinChallengeType::RECEIVE);
-    BOOST_CHECK(Throws("depinchallenge", Params({SECTION_A, holder.address})));
+    BOOST_CHECK(Throws("depinchallenge", ChallengeParams(SECTION_A, holder, DepinChallengeType::RECEIVE)));
     BOOST_CHECK_EQUAL(g_depinChallenges.CountForAddress(holder.address), 3U);
     Challenge(SECTION_A, other, DepinChallengeType::RECEIVE);
 
@@ -333,6 +350,82 @@ BOOST_AUTO_TEST_CASE(challenge_issuance_is_rate_limited_per_address)
     // Unlimited when configured so.
     g_depinRateLimiter.SetLimit(0);
     for (int i = 0; i < 10; ++i) Challenge(SECTION_A, holder, DepinChallengeType::RECEIVE);
+}
+
+// Only a request that passes the access checks counts against its address:
+// anyone can name a holder in depinchallenge, so requests that are refused
+// (a token it does not hold, an admin challenge it is not owner for) must not
+// spend the holder's quota, or a third party could exhaust it for free.
+BOOST_AUTO_TEST_CASE(refused_challenge_requests_do_not_consume_quota)
+{
+    g_depinRateLimiter.SetLimit(2);
+    SetMockTime(1700000000);
+    const Holder holder = NewHolder(true, SECTION_A, 10);
+
+    for (int i = 0; i < 5; ++i) {
+        BOOST_CHECK(Throws("depinchallenge", ChallengeParams(ROOT, holder, DepinChallengeType::RECEIVE)));                 // no access to the root
+        BOOST_CHECK(Throws("depinchallenge", ChallengeParams(SECTION_A, holder, DepinChallengeType::ADMIN)));   // not an owner
+        BOOST_CHECK(Throws("depinchallenge", ChallengeParams("&OTHER", holder, DepinChallengeType::RECEIVE)));             // foreign token
+    }
+    BOOST_CHECK_EQUAL(g_depinChallenges.CountForAddress(holder.address), 0U);
+
+    // The quota is intact: the limit's worth of valid requests still succeeds,
+    // and only then does the limiter bite.
+    Challenge(SECTION_A, holder, DepinChallengeType::RECEIVE);
+    Challenge(SECTION_A, holder, DepinChallengeType::RECEIVE);
+    BOOST_CHECK(Throws("depinchallenge", ChallengeParams(SECTION_A, holder, DepinChallengeType::RECEIVE)));
+    BOOST_CHECK_EQUAL(g_depinChallenges.CountForAddress(holder.address), 2U);
+}
+
+// The request for a challenge is itself authenticated: signed by the address
+// over a timestamp, accepted once and only near the node's clock. A request
+// forged in someone else's name costs that address nothing -- no quota, no
+// evicted nonce -- and the unsigned shape no longer exists.
+BOOST_AUTO_TEST_CASE(challenge_requests_are_signed_and_not_replayable)
+{
+    g_depinRateLimiter.SetLimit(3);
+    SetMockTime(1700000000);
+    const Holder holder = NewHolder(true, SECTION_A, 10);
+    const Holder stranger = NewHolder(true, SECTION_A, 10);
+
+    // The holder's one live nonce, which nobody else must be able to evict.
+    const std::string mine = Challenge(SECTION_A, holder, DepinChallengeType::RECEIVE);
+
+    // Forged: signed by the stranger, naming the holder. Refused at the
+    // signature, before access, quota or the store.
+    for (int i = 0; i < 10; ++i) {
+        BOOST_CHECK(Throws("depinchallenge", ChallengeParams(SECTION_A, holder, DepinChallengeType::RECEIVE, &stranger)));
+    }
+    std::string error;
+    BOOST_CHECK(g_depinChallenges.Peek(mine, error));
+    BOOST_CHECK_EQUAL(g_depinChallenges.CountForAddress(holder.address), 1U);
+    BOOST_CHECK_EQUAL(g_depinRequestGuard.Size(), 1U); // only the holder's own request was recorded
+
+    // Unsigned / malformed shapes.
+    BOOST_CHECK(Throws("depinchallenge", Params({SECTION_A, holder.address})));
+    BOOST_CHECK(Throws("depinchallenge", Params({SECTION_A, holder.address, DepinRequestClockMillis(), ""})));
+    BOOST_CHECK(Throws("depinchallenge", Params({SECTION_A, holder.address, DepinRequestClockMillis(), "garbage"})));
+    // Outside the window, either way.
+    const int64_t windowSeconds = DEPIN_REQUEST_WINDOW_MS / 1000;
+    BOOST_CHECK(Throws("depinchallenge", ChallengeParams(SECTION_A, holder, DepinChallengeType::RECEIVE, nullptr, -(windowSeconds + 1))));
+    BOOST_CHECK(Throws("depinchallenge", ChallengeParams(SECTION_A, holder, DepinChallengeType::RECEIVE, nullptr, windowSeconds + 1)));
+    // A signature for one type does not request the other.
+    const UniValue adminReq = ChallengeParams(SECTION_A, holder, DepinChallengeType::ADMIN);
+    BOOST_CHECK(Throws("depinchallenge", Params({adminReq[0], adminReq[1], adminReq[2], adminReq[3], "receive"})));
+    BOOST_CHECK_EQUAL(g_depinChallenges.CountForAddress(holder.address), 1U);
+
+    // Replay: the same signed request is accepted once.
+    const UniValue once = ChallengeParams(SECTION_A, holder, DepinChallengeType::RECEIVE);
+    Open(Call("depinchallenge", once), holder);
+    BOOST_CHECK(Throws("depinchallenge", once));
+    // ...even later inside the window; and after the window it is stale anyway.
+    SetMockTime(GetTime() + windowSeconds - 1);
+    BOOST_CHECK(Throws("depinchallenge", once));
+    BOOST_CHECK_EQUAL(g_depinChallenges.CountForAddress(holder.address), 2U);
+
+    // The quota counted exactly the holder's own two accepted requests.
+    Challenge(SECTION_A, holder, DepinChallengeType::RECEIVE);
+    BOOST_CHECK(Throws("depinchallenge", ChallengeParams(SECTION_A, holder, DepinChallengeType::RECEIVE)));
 }
 
 // (8) There is no unauthenticated form. The old shapes fail by arity or type
@@ -375,7 +468,7 @@ BOOST_AUTO_TEST_CASE(listsections_names_free_address_mode_authenticated)
     BOOST_CHECK(Throws("depinlistsections", Params({sectionHolder.address, SECTION_A, std::string(64, 'a')})));
 
     // A section holder never gets a root challenge...
-    BOOST_CHECK(Throws("depinchallenge", Params({ROOT, sectionHolder.address})));
+    BOOST_CHECK(Throws("depinchallenge", ChallengeParams(ROOT, sectionHolder, DepinChallengeType::RECEIVE)));
     // ...and with a section challenge sees that subtree only.
     {
         const std::string nonce = Challenge(SECTION_A, sectionHolder, DepinChallengeType::RECEIVE);
@@ -423,7 +516,7 @@ BOOST_AUTO_TEST_CASE(clearmsg_admin_requires_owner_signature)
 
     // A holder is not an owner: no admin challenge, and a receive challenge
     // does not pass as one.
-    BOOST_CHECK(Throws("depinchallenge", Params({SECTION_A, holder.address, "admin"})));
+    BOOST_CHECK(Throws("depinchallenge", ChallengeParams(SECTION_A, holder, DepinChallengeType::ADMIN)));
     const std::string receiveNonce = Challenge(SECTION_A, holder, DepinChallengeType::RECEIVE);
     BOOST_CHECK(Throws("depinclearmsg", Params({SECTION_A, holder.address, receiveNonce,
                                                 Sign(holder, DepinChallengeType::ADMIN, SECTION_A, receiveNonce), "all"})));
@@ -458,7 +551,7 @@ BOOST_AUTO_TEST_CASE(challenge_reply_always_encrypted)
     const Holder holder = NewHolder(true, SECTION_A, 10);
     const Holder unrevealed = NewHolder(false, SECTION_A, 10);
 
-    const UniValue response = Call("depinchallenge", Params({SECTION_A, holder.address}));
+    const UniValue response = Call("depinchallenge", ChallengeParams(SECTION_A, holder, DepinChallengeType::RECEIVE));
     BOOST_CHECK(response.exists("encrypted"));
     BOOST_CHECK(response.exists("poolsig"));
     BOOST_CHECK(!response.exists("challenge"));
@@ -466,9 +559,9 @@ BOOST_AUTO_TEST_CASE(challenge_reply_always_encrypted)
     const UniValue inner = Open(response, holder);
     BOOST_CHECK_EQUAL(inner["challenge"].get_str().size(), 64U);
     BOOST_CHECK_EQUAL(inner["type"].get_str(), "receive");
-    BOOST_CHECK(Throws("depinchallenge", Params({SECTION_A, holder.address, "send"})));
+    BOOST_CHECK(Throws("depinchallenge", Params({SECTION_A, holder.address, DepinRequestClockMillis(), "sig", "send"})));
 
-    BOOST_CHECK(Throws("depinchallenge", Params({SECTION_A, unrevealed.address})));
+    BOOST_CHECK(Throws("depinchallenge", ChallengeParams(SECTION_A, unrevealed, DepinChallengeType::RECEIVE)));
     BOOST_CHECK(Throws("depinreceivemsg", Params({SECTION_A, unrevealed.address, std::string(64, 'a'), "sig"})));
     BOOST_CHECK_EQUAL(g_depinChallenges.CountForAddress(unrevealed.address), 0U);
 }

@@ -179,10 +179,15 @@ of an address with a challenge:
    a changed key as an alert. Message content is never readable by the node
    or the proxy regardless; the pin is what makes withheld or altered replies
    detectable.
-2. **Request a challenge**:
+2. **Request a challenge.** The request is signed by the address over the
+   current time in milliseconds, `signmessage`-compatible:
+   `DEPIN-REQ|<type>|<token>|<address>|<timestamp>` (a node holding the key:
+   `depinsignrequest "address" "token" ("type")`). The node accepts it within
+   60 s of its clock and never twice, so nobody can spend a holder's quota or
+   evict its live challenges by naming its address.
    ```bash
-   depinchallenge "&MYTOKEN/SEC" "NXholder..."          # type receive (default)
-   depinchallenge "&MYTOKEN" "NXowner..." "admin"       # for depinclearmsg
+   depinchallenge "&MYTOKEN/SEC" "NXholder..." 1730000000000 "<signature>"          # type receive (default)
+   depinchallenge "&MYTOKEN" "NXowner..." 1730000000000 "<signature>" "admin"       # for depinclearmsg
    ```
    The reply is encrypted for the address's revealed public key and signed
    with the pool key: `{"encrypted": "<hex>", "poolsig": "<base64>"}`.
@@ -476,8 +481,9 @@ neurai-cli depingetmsg "TOKEN_OR_SECTION" ("FROM_ADDRESS")
 [`depinreceivemsg.md`](depinreceivemsg.md). From a node that holds the key:
 
 ```bash
-# 1. challenge (reply encrypted for the address) and open it with the wallet key
-neurai-cli depinchallenge "&MYTOKEN/GENERAL" "NXyouraddress..."
+# 1. sign the request, ask for the challenge (reply encrypted for the address), open it
+neurai-cli depinsignrequest "NXyouraddress..." "&MYTOKEN/GENERAL"   # -> {"timestamp": ..., "signature": ...}
+neurai-cli depinchallenge "&MYTOKEN/GENERAL" "NXyouraddress..." <timestamp> "<signature>"
 neurai-cli depindecrypt "NXyouraddress..." "<encrypted>"        # -> {"challenge": ..., ...}
 # 2. sign the nonce with the wallet key
 neurai-cli depinsignchallenge "NXyouraddress..." "&MYTOKEN/GENERAL" "<challenge>"
@@ -487,8 +493,9 @@ neurai-cli depindecrypt "NXyouraddress..." "<encrypted>"
 ```
 
 `contrib/depin/regtest_walkthrough.sh` runs this whole flow (bootstrap,
-refused start without wallet, challenge, read, chained read, rate limit,
-sections, purge) against a fresh regtest node and checks every step.
+refused start without wallet, signed challenge request, read, chained read,
+forged/replayed requests, rate limit, sections, purge) against a fresh
+regtest node and checks every step.
 
 **`depingetmsg` output**:
 ```json

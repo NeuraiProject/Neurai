@@ -286,6 +286,51 @@ BOOST_AUTO_TEST_CASE(preimage_shared_between_sign_and_verify)
     BOOST_CHECK_EQUAL(DepinChallengeTypeName(DepinChallengeType::ADMIN), "admin");
 }
 
+// The signed challenge request: window, signature, single acceptance.
+BOOST_AUTO_TEST_CASE(challenge_request_auth_window_signature_replay)
+{
+    g_depinRequestGuard.Clear();
+    const Holder h = NewHolder();
+    const Holder other = NewHolder();
+    const int64_t now = DepinRequestClockMillis();
+    const int64_t W = DEPIN_REQUEST_WINDOW_MS;
+    std::string error;
+
+    auto signReq = [&](const Holder& who, DepinChallengeType type, int64_t ts) {
+        std::string sig;
+        BOOST_REQUIRE(SignDepinChallengePreimage(who.key, DepinChallengeRequestPreimage(type, SECTION, h.address, ts), sig, error));
+        return sig;
+    };
+    BOOST_CHECK_EQUAL(DepinChallengeRequestPreimage(DepinChallengeType::ADMIN, SECTION, h.address, 42),
+                      "DEPIN-REQ|admin|" + SECTION + "|" + h.address + "|42");
+
+    const std::string sig = signReq(h, DepinChallengeType::RECEIVE, now);
+    BOOST_CHECK(CheckDepinChallengeRequestAuth(DepinChallengeType::RECEIVE, SECTION, h.address, now, sig, now, error));
+    // Replay, even later inside the window.
+    BOOST_CHECK(!CheckDepinChallengeRequestAuth(DepinChallengeType::RECEIVE, SECTION, h.address, now, sig, now + 10000, error));
+    BOOST_CHECK_EQUAL(error, "Request already used");
+    // Other signer, other type, other token, other timestamp than signed.
+    BOOST_CHECK(!CheckDepinChallengeRequestAuth(DepinChallengeType::RECEIVE, SECTION, h.address, now + 1, signReq(other, DepinChallengeType::RECEIVE, now + 1), now, error));
+    BOOST_CHECK(!CheckDepinChallengeRequestAuth(DepinChallengeType::ADMIN, SECTION, h.address, now + 1, signReq(h, DepinChallengeType::RECEIVE, now + 1), now, error));
+    BOOST_CHECK(!CheckDepinChallengeRequestAuth(DepinChallengeType::RECEIVE, TOKEN, h.address, now + 1, signReq(h, DepinChallengeType::RECEIVE, now + 1), now, error));
+    BOOST_CHECK(!CheckDepinChallengeRequestAuth(DepinChallengeType::RECEIVE, SECTION, h.address, now + 2, signReq(h, DepinChallengeType::RECEIVE, now + 1), now, error));
+    // Only the one valid request was recorded: forgeries leave no trace.
+    BOOST_CHECK_EQUAL(g_depinRequestGuard.Size(), 1U);
+    // Window, both sides.
+    BOOST_CHECK(!CheckDepinChallengeRequestAuth(DepinChallengeType::RECEIVE, SECTION, h.address, now - W - 1,
+                                                signReq(h, DepinChallengeType::RECEIVE, now - W - 1), now, error));
+    BOOST_CHECK(!CheckDepinChallengeRequestAuth(DepinChallengeType::RECEIVE, SECTION, h.address, now + W + 1,
+                                                signReq(h, DepinChallengeType::RECEIVE, now + W + 1), now, error));
+    BOOST_CHECK(CheckDepinChallengeRequestAuth(DepinChallengeType::RECEIVE, SECTION, h.address, now - W,
+                                               signReq(h, DepinChallengeType::RECEIVE, now - W), now, error));
+    // The record outlives the window, then is pruned.
+    g_depinRequestGuard.Prune(now + 2 * W - 1);
+    BOOST_CHECK_EQUAL(g_depinRequestGuard.Size(), 2U);
+    g_depinRequestGuard.Prune(now + 2 * W);
+    BOOST_CHECK_EQUAL(g_depinRequestGuard.Size(), 0U);
+    g_depinRequestGuard.Clear();
+}
+
 // The per-key sliding window behind -depinratelimit.
 BOOST_AUTO_TEST_CASE(rate_limiter_per_key_per_window)
 {
@@ -305,6 +350,36 @@ BOOST_AUTO_TEST_CASE(rate_limiter_per_key_per_window)
 
     rl.SetLimit(0);
     for (int i = 0; i < 50; ++i) BOOST_CHECK(rl.Allow("a", now));
+}
+
+// The limiter never tracks more than DEPIN_RATE_LIMITER_MAX_KEYS keys: once
+// full of live keys a new one is refused (not stored), a known key is still
+// judged by its own window, and capacity returns as keys leave the window.
+BOOST_AUTO_TEST_CASE(rate_limiter_caps_distinct_keys)
+{
+    CDepinRateLimiter rl;
+    rl.SetLimit(2);
+    const int64_t now = 1700000000;
+    for (size_t i = 0; i < DEPIN_RATE_LIMITER_MAX_KEYS; ++i) {
+        BOOST_REQUIRE(rl.Allow("k" + std::to_string(i), now));
+    }
+    BOOST_CHECK_EQUAL(rl.Size(), DEPIN_RATE_LIMITER_MAX_KEYS);
+
+    // Full and nothing expired: a new key is refused and the map does not grow.
+    BOOST_CHECK(!rl.Allow("new", now + 1));
+    BOOST_CHECK(!rl.Allow("new", now + 1));
+    BOOST_CHECK_EQUAL(rl.Size(), DEPIN_RATE_LIMITER_MAX_KEYS);
+
+    // A key already tracked still has its own window: one more hit allowed,
+    // then its limit applies.
+    BOOST_CHECK(rl.Allow("k0", now + 1));
+    BOOST_CHECK(!rl.Allow("k0", now + 2));
+    BOOST_CHECK_EQUAL(rl.Size(), DEPIN_RATE_LIMITER_MAX_KEYS);
+
+    // Once the window has passed, the sweep frees everything and the new key
+    // gets in.
+    BOOST_CHECK(rl.Allow("new", now + DEPIN_RATE_WINDOW + 1));
+    BOOST_CHECK_EQUAL(rl.Size(), 1U);
 }
 
 // (4) Only holders get a nonce: access, revealed key and the pool's subtree

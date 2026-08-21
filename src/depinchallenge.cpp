@@ -20,6 +20,78 @@
 
 CDepinChallengeManager g_depinChallenges;
 CDepinRateLimiter g_depinRateLimiter;
+CDepinReplayGuard g_depinRequestGuard;
+
+// ---------------------------------------------------------------------------
+// CDepinReplayGuard
+// ---------------------------------------------------------------------------
+
+bool CDepinReplayGuard::Remember(const std::string& key, int64_t nowMs, int64_t ttlMs, std::string& error)
+{
+    LOCK(cs_replay);
+    const auto it = mapSeen.find(key);
+    if (it != mapSeen.end() && it->second > nowMs) {
+        error = "Request already used";
+        return false;
+    }
+    if (it != mapSeen.end()) mapSeen.erase(it);
+    if (mapSeen.size() >= maxEntries) {
+        // Full: drop what can no longer be replayed (its window has closed)
+        // and, if still full, refuse rather than grow.
+        for (auto jt = mapSeen.begin(); jt != mapSeen.end();) {
+            if (jt->second <= nowMs) jt = mapSeen.erase(jt); else ++jt;
+        }
+        if (mapSeen.size() >= maxEntries) {
+            error = "Too many pending requests";
+            return false;
+        }
+    }
+    mapSeen[key] = nowMs + ttlMs;
+    return true;
+}
+
+void CDepinReplayGuard::Prune(int64_t nowMs)
+{
+    LOCK(cs_replay);
+    for (auto it = mapSeen.begin(); it != mapSeen.end();) {
+        if (it->second <= nowMs) it = mapSeen.erase(it); else ++it;
+    }
+}
+
+void CDepinReplayGuard::Clear()
+{
+    LOCK(cs_replay);
+    mapSeen.clear();
+}
+
+size_t CDepinReplayGuard::Size() const
+{
+    LOCK(cs_replay);
+    return mapSeen.size();
+}
+
+bool CheckDepinChallengeRequestAuth(DepinChallengeType type, const std::string& token,
+                                    const std::string& address, int64_t timestampMs,
+                                    const std::string& signatureBase64, int64_t nowMs,
+                                    std::string& error)
+{
+    if (timestampMs < nowMs - DEPIN_REQUEST_WINDOW_MS || timestampMs > nowMs + DEPIN_REQUEST_WINDOW_MS) {
+        error = strprintf("Request timestamp outside the accepted window (+/- %d s of node time %d ms)",
+                          DEPIN_REQUEST_WINDOW_MS / 1000, nowMs);
+        return false;
+    }
+    if (signatureBase64.empty()) {
+        error = "Request signature is required";
+        return false;
+    }
+    if (!VerifyDepinChallengeSignature(address, signatureBase64,
+                                       DepinChallengeRequestPreimage(type, token, address, timestampMs), error)) {
+        return false;
+    }
+    // Only a valid signature reaches the store: a forged request leaves no
+    // trace and costs its target nothing.
+    return g_depinRequestGuard.Remember(signatureBase64, nowMs, 2 * DEPIN_REQUEST_WINDOW_MS, error);
+}
 
 // ---------------------------------------------------------------------------
 // CDepinRateLimiter
@@ -41,14 +113,17 @@ bool CDepinRateLimiter::Allow(const std::string& key, int64_t now)
 {
     LOCK(cs_rate);
     if (limit == 0) return true;
-    // Keep the map bounded against callers that invent keys: a full sweep
-    // once it grows, before adding another one.
-    if (mapHits.size() >= 10000 && !mapHits.count(key)) {
+    // Keep the map bounded: once it is full and the key is new, sweep what
+    // has left the window, and if it is STILL full refuse the key rather than
+    // store it. A known key is never refused on capacity grounds: it is
+    // judged by its own window below.
+    if (mapHits.size() >= DEPIN_RATE_LIMITER_MAX_KEYS && !mapHits.count(key)) {
         for (auto it = mapHits.begin(); it != mapHits.end();) {
             std::deque<int64_t>& hits = it->second;
             while (!hits.empty() && hits.front() <= now - DEPIN_RATE_WINDOW) hits.pop_front();
             if (hits.empty()) it = mapHits.erase(it); else ++it;
         }
+        if (mapHits.size() >= DEPIN_RATE_LIMITER_MAX_KEYS) return false;
     }
     std::deque<int64_t>& hits = mapHits[key];
     while (!hits.empty() && hits.front() <= now - DEPIN_RATE_WINDOW) hits.pop_front();
@@ -105,6 +180,18 @@ std::string DepinChallengePreimage(DepinChallengeType type, const std::string& t
 {
     const char* prefix = (type == DepinChallengeType::ADMIN) ? "DEPIN-CLEAR" : "DEPIN-GET";
     return strprintf("%s|%s|%s|%s", prefix, token, address, nonce);
+}
+
+std::string DepinChallengeRequestPreimage(DepinChallengeType type, const std::string& token,
+                                          const std::string& address, int64_t timestampMs)
+{
+    return strprintf("DEPIN-REQ|%s|%s|%s|%d", DepinChallengeTypeName(type), token, address, timestampMs);
+}
+
+int64_t DepinRequestClockMillis()
+{
+    const int64_t mock = GetMockTime();
+    return mock ? mock * 1000 : GetTimeMillis();
 }
 
 uint256 DepinChallengeSigningHash(const std::string& preimage)
@@ -337,9 +424,9 @@ bool IsP2PKH(const std::string& address, std::string& error)
 
 } // namespace
 
-bool IssueDepinChallengeForAddress(const std::string& token, const std::string& address,
-                                   DepinChallengeType type, const std::string& poolRoot,
-                                   std::string& nonce, CPubKey& pubkeyOut, std::string& error)
+bool CheckDepinChallengeRequest(const std::string& token, const std::string& address,
+                                DepinChallengeType type, const std::string& poolRoot,
+                                CPubKey& pubkeyOut, std::string& error)
 {
     if (!IsDepinSectionOrRoot(token, poolRoot)) {
         error = strprintf("Token '%s' is not configured token '%s' or a section inside it", token, poolRoot);
@@ -355,7 +442,14 @@ bool IssueDepinChallengeForAddress(const std::string& token, const std::string& 
     }
     // Access BEFORE issuing: anyone can ask, only holders get a nonce, so the
     // store cannot be filled by addresses that could never use one.
-    if (!AddressHasDepinAccess(type, address, token, poolRoot, error)) {
+    return AddressHasDepinAccess(type, address, token, poolRoot, error);
+}
+
+bool IssueDepinChallengeForAddress(const std::string& token, const std::string& address,
+                                   DepinChallengeType type, const std::string& poolRoot,
+                                   std::string& nonce, CPubKey& pubkeyOut, std::string& error)
+{
+    if (!CheckDepinChallengeRequest(token, address, type, poolRoot, pubkeyOut, error)) {
         return false;
     }
     nonce = g_depinChallenges.Issue(token, address, type, error);

@@ -754,8 +754,8 @@ BOOST_AUTO_TEST_CASE(depinsubmitmsg_accepts_section)
     BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessageCount(), 1U);
 }
 
-// (15c) Submissions are limited per sender and minute; the limit applies
-// before the signature is even checked, and other senders are unaffected.
+// (15c) Submissions are limited per sender and minute; other senders are
+// unaffected.
 BOOST_AUTO_TEST_CASE(depinsubmitmsg_is_rate_limited_per_sender)
 {
     ScopedInitializedPool pool(ROOT);
@@ -780,6 +780,55 @@ BOOST_AUTO_TEST_CASE(depinsubmitmsg_is_rate_limited_per_sender)
     BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessageCount(), 2U);
     submit(other, "otro");
     BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessageCount(), 3U);
+}
+
+// (15d) The quota belongs to whoever can actually sign for the address.
+// Anyone can build an envelope for the pool key that names a victim as
+// sender, so a submission that fails verification -- wrong signature, or a
+// signer without access -- must not count against the address it names.
+BOOST_AUTO_TEST_CASE(depinsubmitmsg_invalid_signature_does_not_consume_sender_quota)
+{
+    ScopedInitializedPool pool(ROOT);
+    g_depinRateLimiter.SetLimit(2);
+
+    const Holder victim = NewHolder(true);
+    const Holder attacker = NewHolder(true);
+    const Holder audience = NewHolder(false);
+    SetBalance(SECTION_A, victim.address, 10);
+
+    auto submit = [&](const Holder& from, const CKey& signWith, const std::string& text) {
+        CDepinMessage msg = MakeEciesMessage(SECTION_A, from, {audience}, text);
+        SignMessageWithKey(msg, signWith);
+        UniValue params(UniValue::VARR);
+        params.push_back(WrapForPool(from.address, msg));
+        return CallDepinRPC("depinsubmitmsg", params);
+    };
+    auto errorCode = [&](const Holder& from, const CKey& signWith, const std::string& text) {
+        try {
+            submit(from, signWith, text);
+        } catch (const UniValue& e) {
+            return find_value(e, "code").get_int();
+        }
+        return 0;
+    };
+
+    // Forged in the victim's name, signed by the attacker: refused on the
+    // signature, never on the rate limit.
+    for (int i = 0; i < 5; ++i) {
+        BOOST_CHECK_EQUAL(errorCode(victim, attacker.key, "forged"), RPC_VERIFY_ERROR);
+    }
+    // Properly signed by an address with no access: refused on access.
+    for (int i = 0; i < 5; ++i) {
+        BOOST_CHECK_EQUAL(errorCode(attacker, attacker.key, "stranger"), RPC_VERIFY_ERROR);
+    }
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessageCount(), 0U);
+
+    // The victim's quota is intact: the limit's worth of real messages is
+    // accepted, and only then does the limiter bite.
+    submit(victim, victim.key, "uno");
+    submit(victim, victim.key, "dos");
+    BOOST_CHECK_EQUAL(errorCode(victim, victim.key, "tres"), RPC_MISC_ERROR);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessageCount(), 2U);
 }
 
 // (15b) A sender without a revealed public key is refused with

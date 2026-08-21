@@ -75,6 +75,7 @@ static const CRPCConvertParam vRPCConvertParams[] =
     // form. It is normalised inside the RPC instead (ParseFlexibleInt64,
     // rpc/messages.cpp).
     { "depingetancestorrecipients", 1, "max_results" },
+    { "depinchallenge", 2, "timestamp" },
     { "depinreceivemsg", 4, "timestamp" },
     { "depinreceivemsg", 6, "limit" },
     { "setmocktime", 0, "timestamp" },

@@ -2106,6 +2106,7 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
             // sit in the store until the next issuance by the same address.
             g_depinChallenges.CleanupExpired(GetTime());
             g_depinRateLimiter.Prune(GetTime());
+            g_depinRequestGuard.Prune(DepinRequestClockMillis());
         }, cleanupIntervalSeconds * 1000);  // Convert seconds to milliseconds
 
         LogPrintf("DePIN automatic cleanup scheduled every %d seconds\n", cleanupIntervalSeconds);

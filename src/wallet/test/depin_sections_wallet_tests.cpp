@@ -356,12 +356,23 @@ BOOST_AUTO_TEST_CASE(scoped_purge_and_listsections_rpc)
         params.push_back(response["encrypted"].get_str());
         return call("depindecrypt", params);
     };
-    auto challenge = [&](const std::string& token, const std::string& address, const std::string& type) {
+    // depinsignrequest signs the request for a challenge with the wallet key.
+    auto requestParams = [&](const std::string& token, const std::string& address, const std::string& type) {
+        UniValue req(UniValue::VARR);
+        req.push_back(address);
+        req.push_back(token);
+        req.push_back(type);
+        const UniValue signedReq = call("depinsignrequest", req);
         UniValue params(UniValue::VARR);
         params.push_back(token);
         params.push_back(address);
+        params.push_back(signedReq["timestamp"]);
+        params.push_back(signedReq["signature"]);
         params.push_back(type);
-        return open(call("depinchallenge", params), address)["challenge"].get_str();
+        return params;
+    };
+    auto challenge = [&](const std::string& token, const std::string& address, const std::string& type) {
+        return open(call("depinchallenge", requestParams(token, address, type)), address)["challenge"].get_str();
     };
     auto sign = [&](const std::string& address, const std::string& token, const std::string& nonce, const std::string& type) {
         UniValue params(UniValue::VARR);
@@ -390,10 +401,7 @@ BOOST_AUTO_TEST_CASE(scoped_purge_and_listsections_rpc)
     }
     // The child address gets no challenge for the root: no access there.
     {
-        UniValue params(UniValue::VARR);
-        params.push_back(PARENT_ASSET);
-        params.push_back(childAddress);
-        BOOST_CHECK_THROW(CallDepinRPC("depinchallenge", params), UniValue);
+        BOOST_CHECK_THROW(CallDepinRPC("depinchallenge", requestParams(PARENT_ASSET, childAddress, "receive")), UniValue);
     }
     // The parent address, with a root challenge, sees both tabs.
     {
@@ -437,11 +445,7 @@ BOOST_AUTO_TEST_CASE(scoped_purge_and_listsections_rpc)
     }
     // A plain holder of the root is not an owner: no admin challenge for it.
     {
-        UniValue params(UniValue::VARR);
-        params.push_back(CHILD_ASSET);
-        params.push_back(parentAddress);
-        params.push_back("admin");
-        BOOST_CHECK_THROW(CallDepinRPC("depinchallenge", params), UniValue);
+        BOOST_CHECK_THROW(CallDepinRPC("depinchallenge", requestParams(CHILD_ASSET, parentAddress, "admin")), UniValue);
     }
 
     // Scoped purge by the owner of the root (an ancestor owner qualifies):

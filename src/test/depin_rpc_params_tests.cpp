@@ -68,6 +68,7 @@ struct ConvertCase {
 
 const ConvertCase CONVERT_CASES[] = {
     {"depingetancestorrecipients", 1, "max_results"},
+    {"depinchallenge", 2, "timestamp"},
     {"depinreceivemsg", 4, "timestamp"},
     {"depinreceivemsg", 6, "limit"},
 };
@@ -376,7 +377,7 @@ BOOST_AUTO_TEST_CASE(clearmsg_rejects_partial_numbers)
 BOOST_AUTO_TEST_CASE(argnames_match_the_implementation)
 {
     std::vector<ArgNamesCase> cases = {
-        {"depinchallenge", {"token", "address", "type"}},
+        {"depinchallenge", {"token", "address", "timestamp", "signature", "type"}},
         {"depinreceivemsg", {"token", "address", "challenge", "signature", "timestamp", "after_hash", "limit"}},
         {"depinclearmsg", {"scope", "address", "challenge", "signature", "mode"}},
         {"depingetancestorrecipients", {"token", "max_results", "stop_at"}},
@@ -388,6 +389,7 @@ BOOST_AUTO_TEST_CASE(argnames_match_the_implementation)
     cases.push_back({"depinsendmsg", {"token", "message", "fromaddress"}});
     cases.push_back({"depingetmsg", {"token", "fromaddress"}});
     cases.push_back({"depinsignchallenge", {"address", "token", "challenge", "type"}});
+    cases.push_back({"depinsignrequest", {"address", "token", "type"}});
     cases.push_back({"depindecrypt", {"address", "encrypted"}});
 #endif
 

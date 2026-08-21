@@ -39,6 +39,14 @@ start_node() { ./src/neuraid -datadir="$D" -regtest -daemon "$@" >/dev/null 2>&1
 wait_rpc() { for i in $(seq 1 60); do $CLI getblockcount >/dev/null 2>&1 && return 0; sleep 1; done; return 1; }
 stop_node() { $CLI stop >/dev/null 2>&1; for i in $(seq 1 60); do pgrep -f "neuraid -datadir=$D" >/dev/null || return 0; sleep 1; done; pkill -f "neuraid -datadir=$D"; sleep 2; }
 last_log_error() { grep -E "Error:|DePIN service" "$D/regtest/debug.log" | tail -n 1; }
+# chal TOKEN ADDR [TYPE]: sign the request with the wallet key (depinsignrequest),
+# then ask for the challenge. Prints the encrypted reply.
+chal() {
+  local t=$1 a=$2 ty=${3:-receive} req ts sig
+  req=$($CLI depinsignrequest "$a" "$t" "$ty") || return 1
+  ts=$(echo "$req" | jqr "['timestamp']"); sig=$(echo "$req" | jqr "['signature']")
+  $CLI depinchallenge "$t" "$a" "$ts" "$sig" "$ty"
+}
 
 echo "== 1. bootstrap: owner (root), holder (section only), stranger -- all with revealed keys"
 start_node; wait_rpc || { echo "node did not start"; tail -n 20 "$D/regtest/debug.log"; exit 1; }
@@ -98,13 +106,13 @@ check "$($CLI depinsendmsg "&TEST/SEC" "para la seccion" "$ADDR" | jqr "['result
 check "$($CLI depingetmsginfo | jqb "['messages']")" "2" "two messages in pool"
 
 echo "== 5. holder: challenge -> sign -> depinreceivemsg on its section, poolsig via verifymessage"
-CH=$($CLI depinchallenge "&TEST/SEC" "$HOLDER")
+CH=$(chal "&TEST/SEC" "$HOLDER")
 ENC=$(echo "$CH" | jqr "['encrypted']"); PS=$(echo "$CH" | jqr "['poolsig']")
 H=$(printf %s "$ENC" | sha256sum | cut -d' ' -f1)
 check "$($CLI verifymessage "$POOLADDR" "$PS" "DEPIN-RESP|depinchallenge|&TEST/SEC|$HOLDER||$H")" "true" "poolsig of depinchallenge"
 NONCE=$($CLI depindecrypt "$HOLDER" "$ENC" | jqr "['challenge']")
 check "${#NONCE}" "64" "nonce decrypted with depindecrypt"
-$CLI depinchallenge "&TEST" "$HOLDER" >/dev/null 2>&1 && bad "section holder got a root challenge" || ok "section holder gets no root challenge"
+chal "&TEST" "$HOLDER" >/dev/null 2>&1 && bad "section holder got a root challenge" || ok "section holder gets no root challenge"
 SIGN=$($CLI depinsignchallenge "$HOLDER" "&TEST/SEC" "$NONCE" | jqr "['signature']")
 R=$($CLI depinreceivemsg "&TEST/SEC" "$HOLDER" "$NONCE" "$SIGN")
 RENC=$(echo "$R" | jqr "['encrypted']"); RPS=$(echo "$R" | jqr "['poolsig']")
@@ -120,11 +128,14 @@ SIGNEXT=$($CLI depinsignchallenge "$HOLDER" "&TEST/SEC" "$NEXT" | jqr "['signatu
 R2=$($CLI depinreceivemsg "&TEST/SEC" "$HOLDER" "$NEXT" "$SIGNEXT")
 check "$($CLI depindecrypt "$HOLDER" "$(echo "$R2" | jqr "['encrypted']")" | jqr "['next_expires_in']")" "300" "chained read works and chains again"
 $CLI depinreceivemsg "&TEST/SEC" "$HOLDER" "$NONCE" "$SIGN" >/dev/null 2>&1 && bad "nonce reused" || ok "nonce is single-use"
+REQ=$($CLI depinsignrequest "$STRANGER" "&TEST/SEC"); FTS=$(echo "$REQ" | jqr "['timestamp']"); FSIG=$(echo "$REQ" | jqr "['signature']")
+$CLI depinchallenge "&TEST/SEC" "$HOLDER" "$FTS" "$FSIG" >/dev/null 2>&1 && bad "forged challenge request accepted" || ok "challenge request signed by someone else is refused"
+$CLI depinchallenge "&TEST/SEC" "$HOLDER" >/dev/null 2>&1 && bad "unsigned challenge request accepted" || ok "unsigned challenge request refused"
 $CLI depinreceivemsg "&TEST/SEC" "$HOLDER" >/dev/null 2>&1 && bad "legacy form accepted" || ok "legacy depinreceivemsg token address refused"
 $CLI depinreceivemsg "&TEST/SEC" "$HOLDER" 1730000000 >/dev/null 2>&1 && bad "legacy form with timestamp accepted" || ok "legacy form with timestamp refused"
-$CLI depinchallenge "&TEST/SEC" "$STRANGER" >/dev/null 2>&1 && bad "stranger got a challenge" || ok "stranger gets no challenge"
+chal "&TEST/SEC" "$STRANGER" >/dev/null 2>&1 && bad "stranger got a challenge" || ok "stranger gets no challenge"
 # A wrong signer does not burn the holder's nonce.
-NONCE2=$($CLI depindecrypt "$HOLDER" "$($CLI depinchallenge "&TEST/SEC" "$HOLDER" | jqr "['encrypted']")" | jqr "['challenge']")
+NONCE2=$($CLI depindecrypt "$HOLDER" "$(chal "&TEST/SEC" "$HOLDER" | jqr "['encrypted']")" | jqr "['challenge']")
 BADSIG=$($CLI depinsignchallenge "$STRANGER" "&TEST/SEC" "$NONCE2" | jqr "['signature']")
 $CLI depinreceivemsg "&TEST/SEC" "$HOLDER" "$NONCE2" "$BADSIG" >/dev/null 2>&1 && bad "wrong signer accepted" || ok "wrong signer refused"
 SIGN2=$($CLI depinsignchallenge "$HOLDER" "&TEST/SEC" "$NONCE2" | jqr "['signature']")
@@ -133,12 +144,12 @@ $CLI depinreceivemsg "&TEST/SEC" "$HOLDER" "$NONCE2" "$SIGN2" >/dev/null 2>&1 &&
 echo "== 6. depinlistsections: names free, address mode authenticated and scoped"
 check "$($CLI depinlistsections | jqb "['sections'][0]['name']")" "&TEST" "names-only form (plain body)"
 $CLI depinlistsections "$HOLDER" >/dev/null 2>&1 && bad "one-argument form accepted" || ok "one-argument form refused"
-NONCE3=$($CLI depindecrypt "$HOLDER" "$($CLI depinchallenge "&TEST/SEC" "$HOLDER" | jqr "['encrypted']")" | jqr "['challenge']")
+NONCE3=$($CLI depindecrypt "$HOLDER" "$(chal "&TEST/SEC" "$HOLDER" | jqr "['encrypted']")" | jqr "['challenge']")
 SIGN3=$($CLI depinsignchallenge "$HOLDER" "&TEST/SEC" "$NONCE3" | jqr "['signature']")
 L=$($CLI depindecrypt "$HOLDER" "$($CLI depinlistsections "$HOLDER" "&TEST/SEC" "$NONCE3" "$SIGN3" | jqr "['encrypted']")")
 check "$(echo "$L" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['sections']))")" "1" "holder sees only its section"
 check "$(echo "$L" | jqr "['sections'][0]['messages']")" "1" "section counter"
-NONCE4=$($CLI depindecrypt "$ADDR" "$($CLI depinchallenge "&TEST" "$ADDR" | jqr "['encrypted']")" | jqr "['challenge']")
+NONCE4=$($CLI depindecrypt "$ADDR" "$(chal "&TEST" "$ADDR" | jqr "['encrypted']")" | jqr "['challenge']")
 SIGN4=$($CLI depinsignchallenge "$ADDR" "&TEST" "$NONCE4" | jqr "['signature']")
 L2=$($CLI depindecrypt "$ADDR" "$($CLI depinlistsections "$ADDR" "&TEST" "$NONCE4" "$SIGN4" | jqr "['encrypted']")")
 check "$(echo "$L2" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['sections']))")" "2" "root holder sees both sections"
@@ -147,25 +158,25 @@ echo "== 7. depinclearmsg: owner-level, scope bound by equality"
 $CLI depinclearmsg "all" >/dev/null 2>&1 && bad "legacy clearmsg accepted" || ok "legacy depinclearmsg all refused"
 # The section's issuance handed its owner token (&TEST/SEC!) to the holder, so
 # it may administer its section -- but not the root, and a stranger nothing.
-$CLI depinchallenge "&TEST/SEC" "$HOLDER" "admin" >/dev/null 2>&1 && ok "section owner gets an admin challenge for its section" || bad "section owner denied an admin challenge"
-$CLI depinchallenge "&TEST" "$HOLDER" "admin" >/dev/null 2>&1 && bad "section owner got a ROOT admin challenge" || ok "section owner gets no root admin challenge"
-$CLI depinchallenge "&TEST/SEC" "$STRANGER" "admin" >/dev/null 2>&1 && bad "stranger got an admin challenge" || ok "stranger gets no admin challenge"
-ANONCE=$($CLI depindecrypt "$OWNER" "$($CLI depinchallenge "&TEST/SEC" "$OWNER" "admin" | jqr "['encrypted']")" | jqr "['challenge']")
+chal "&TEST/SEC" "$HOLDER" admin >/dev/null 2>&1 && ok "section owner gets an admin challenge for its section" || bad "section owner denied an admin challenge"
+chal "&TEST" "$HOLDER" admin >/dev/null 2>&1 && bad "section owner got a ROOT admin challenge" || ok "section owner gets no root admin challenge"
+chal "&TEST/SEC" "$STRANGER" admin >/dev/null 2>&1 && bad "stranger got an admin challenge" || ok "stranger gets no admin challenge"
+ANONCE=$($CLI depindecrypt "$OWNER" "$(chal "&TEST/SEC" "$OWNER" admin | jqr "['encrypted']")" | jqr "['challenge']")
 ASIG_ROOT=$($CLI depinsignchallenge "$OWNER" "&TEST" "$ANONCE" "admin" | jqr "['signature']")
 $CLI depinclearmsg "" "$OWNER" "$ANONCE" "$ASIG_ROOT" "all" >/dev/null 2>&1 && bad "section challenge purged the pool" || ok "section challenge does not purge the pool"
 ASIG=$($CLI depinsignchallenge "$OWNER" "&TEST/SEC" "$ANONCE" "admin" | jqr "['signature']")
 C=$($CLI depindecrypt "$OWNER" "$($CLI depinclearmsg "&TEST/SEC" "$OWNER" "$ANONCE" "$ASIG" "all" | jqr "['encrypted']")")
 check "$(echo "$C" | jqr "['removed']")" "1" "owner purged the section only"
 check "$(echo "$C" | jqr "['remaining']")" "1" "root message remains"
-RNONCE=$($CLI depindecrypt "$OWNER" "$($CLI depinchallenge "&TEST" "$OWNER" "admin" | jqr "['encrypted']")" | jqr "['challenge']")
+RNONCE=$($CLI depindecrypt "$OWNER" "$(chal "&TEST" "$OWNER" admin | jqr "['encrypted']")" | jqr "['challenge']")
 RSIG=$($CLI depinsignchallenge "$OWNER" "&TEST" "$RNONCE" "admin" | jqr "['signature']")
 C2=$($CLI depindecrypt "$OWNER" "$($CLI depinclearmsg "" "$OWNER" "$RNONCE" "$RSIG" "all" | jqr "['encrypted']")")
 check "$(echo "$C2" | jqr "['removed']")" "1" "owner purged the pool with scope \"\" (root challenge)"
 
 echo "== 8. rate limit: -depinratelimit=5 challenges per address and minute (last: it exhausts the holder's quota)"
-for i in 1 2 3 4 5; do $CLI depinchallenge "&TEST/SEC" "$HOLDER" >/dev/null 2>&1; done
-$CLI depinchallenge "&TEST/SEC" "$HOLDER" >/dev/null 2>&1 && bad "6th challenge in a minute accepted" || ok "6th challenge in a minute refused"
-$CLI depinchallenge "&TEST" "$ADDR" >/dev/null 2>&1 && ok "another address is unaffected" || bad "another address was limited"
+for i in 1 2 3 4 5; do chal "&TEST/SEC" "$HOLDER" >/dev/null 2>&1; done
+chal "&TEST/SEC" "$HOLDER" >/dev/null 2>&1 && bad "6th challenge in a minute accepted" || ok "6th challenge in a minute refused"
+chal "&TEST" "$ADDR" >/dev/null 2>&1 && ok "another address is unaffected" || bad "another address was limited"
 
 stop_node
 echo "== RESULT: $PASS ok, $FAIL failed"

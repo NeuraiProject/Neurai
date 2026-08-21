@@ -102,12 +102,32 @@ protocol error, not as a degraded mode.
 ## Authentication: `depinchallenge`
 
 ```
-depinchallenge "token" "address" ( "type" )
+depinchallenge "token" "address" timestamp "signature" ( "type" )
 ```
 
 1. `token` — pool root or a section inside it. The challenge is bound to it.
 2. `address` — the holder's P2PKH address, public key revealed.
-3. `type` — `receive` (default) for reads; `admin` for `depinclearmsg`.
+3. `timestamp` — Unix time in **milliseconds** at which the request was signed.
+4. `signature` — the address's signature over the request (below).
+5. `type` — `receive` (default) for reads; `admin` for `depinclearmsg`.
+
+**The request is signed.** Before asking, sign with the address's key, in the
+standard message-signing scheme (`signmessage`; compact signature, base64):
+
+```
+DEPIN-REQ|<type>|<token>|<address>|<timestamp>
+```
+
+e.g. `DEPIN-REQ|receive|&MYTOKEN/SEC|NXholder...|1730000000000`. The node
+accepts the request only if `timestamp` is within 60 s of its own clock and
+the signature has never been presented before (signatures are deterministic,
+so two requests in the same millisecond would be the same request — use the
+real clock). A request that fails this is refused before anything else is
+looked at: nothing is stored, no quota is touched. That is the point: without
+it, anyone could name a holder's address and spend its issuance quota or
+evict its live challenges, since the reply being encrypted only stops the use
+of the nonce, not the damage of asking for it. A proxy or network observer
+that captures a signed request cannot reuse it either.
 
 A `receive` challenge is issued only to an active holder of `token` or of one
 of its ancestors; an `admin` challenge only to a holder of the owner token of
@@ -139,7 +159,13 @@ challenge is single-use: the first valid call consumes it. A call that fails
 access in between — does **not** consume it, so nobody can burn your
 challenge by guessing. The node keeps at most 4 live challenges per address
 (a fifth evicts the oldest) and 10 000 in total, and issues at most
-`-depinratelimit` (default 20) per address and minute.
+`-depinratelimit` (default 20) per address and minute. Only the address's own
+requests — correctly signed, fresh, and passing the access checks — count
+towards either: a request that is refused never touches the quota or the
+live challenges of the address it names, and nobody but the key holder can
+make an accepted one. The limiter itself tracks at most 10 000 addresses;
+when it is full of live entries a new address is refused until some leave
+the window.
 
 **Chained challenges.** Every authenticated reply (`depinreceivemsg`,
 `depinlistsections` in address mode) carries, inside its encrypted body,
@@ -150,10 +176,12 @@ from `depinchallenge`. A client that keeps reading within that window calls
 every request is still individually signed, every nonce is still single-use,
 and nothing a proxy sees lets it act on the holder's behalf.
 
-On a node that holds the address's key, `depinsignchallenge "address" "token"
-"challenge" ("type")` produces the signature and `depindecrypt "address"
-"encrypted"` opens an encrypted reply; both are local wallet RPCs for
-`neurai-cli` scripting and are never whitelisted by proxies.
+On a node that holds the address's key, `depinsignrequest "address" "token"
+("type")` signs a request (returns `timestamp`, `signature`, `preimage`),
+`depinsignchallenge "address" "token" "challenge" ("type")` signs a nonce and
+`depindecrypt "address" "encrypted"` opens an encrypted reply; all three are
+local wallet RPCs for `neurai-cli` scripting and are never whitelisted by
+proxies.
 
 ## `depinreceivemsg`
 
@@ -309,6 +337,9 @@ The client prepares the complete `CDepinMessage` itself:
 The reply is encrypted for the sender and signed. There is no bare-hex form.
 Submissions are limited per sender and minute (`-depinratelimit`, default
 20); over the limit the node answers an error without touching the message.
+The count is taken only after the signature and the sender's access have
+been verified, so an envelope forged in someone else's name is refused on
+the signature and does not spend that sender's quota.
 
 ## `depinlistsections`
 
@@ -346,7 +377,7 @@ before the challenge is consumed, so a typo does not cost a challenge.
 - `depingetancestorrecipients` — recipient discovery (see "Publishing").
 - `depinpoolstats`, `depinmcpstatus` — aggregate counters, signed plain
   bodies.
-- `depingetmsg`, `depinsendmsg`, `depinsignchallenge`, `depindecrypt`,
+- `depingetmsg`, `depinsendmsg`, `depinsignrequest`, `depinsignchallenge`, `depindecrypt`,
   `depinpoolpkey` — local wallet RPCs of a node that holds the keys; never
   reachable through a proxy.
 
