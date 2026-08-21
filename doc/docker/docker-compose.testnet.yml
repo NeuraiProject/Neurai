@@ -23,7 +23,7 @@
 
 services:
   neuraid:
-    image: neuraiproject/neurai-node-testnet:${VERSION:-v1.0.6}
+    image: neuraiproject/neurai-node-testnet:${VERSION:-v2.0.0}
     container_name: neurai-testnet-node
     restart: unless-stopped
 

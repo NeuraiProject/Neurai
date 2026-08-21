@@ -4,9 +4,9 @@ FROM debian:12
 
 LABEL maintainer="Asimov"
 
-LABEL version="1.0.6"
+LABEL version="2.0.0"
 
-LABEL description="Neurai 1.0.6 | Docker for linux x64 bin + neurai-qt (C++20, Qt6)"
+LABEL description="Neurai 2.0.0 | Docker for linux x64 bin + neurai-qt (C++20, Qt6)"
 
 ARG DEBIAN_FRONTEND=noninteractive
 
