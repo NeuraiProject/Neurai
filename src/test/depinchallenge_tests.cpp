@@ -286,6 +286,27 @@ BOOST_AUTO_TEST_CASE(preimage_shared_between_sign_and_verify)
     BOOST_CHECK_EQUAL(DepinChallengeTypeName(DepinChallengeType::ADMIN), "admin");
 }
 
+// The per-key sliding window behind -depinratelimit.
+BOOST_AUTO_TEST_CASE(rate_limiter_per_key_per_window)
+{
+    CDepinRateLimiter rl;
+    rl.SetLimit(2);
+    const int64_t now = 1700000000;
+    BOOST_CHECK(rl.Allow("a", now));
+    BOOST_CHECK(rl.Allow("a", now + 1));
+    BOOST_CHECK(!rl.Allow("a", now + 2));
+    BOOST_CHECK(rl.Allow("b", now + 2));          // other keys are independent
+    BOOST_CHECK(!rl.Allow("a", now + DEPIN_RATE_WINDOW - 1));
+    BOOST_CHECK(rl.Allow("a", now + DEPIN_RATE_WINDOW)); // the first hit left the window
+    BOOST_CHECK(!rl.Allow("a", now + DEPIN_RATE_WINDOW));
+    BOOST_CHECK_EQUAL(rl.Size(), 2U);
+    rl.Prune(now + 2 * DEPIN_RATE_WINDOW + 1);
+    BOOST_CHECK_EQUAL(rl.Size(), 0U);
+
+    rl.SetLimit(0);
+    for (int i = 0; i < 50; ++i) BOOST_CHECK(rl.Allow("a", now));
+}
+
 // (4) Only holders get a nonce: access, revealed key and the pool's subtree
 // are all checked BEFORE anything is stored.
 BOOST_FIXTURE_TEST_CASE(challenge_not_issued_without_access, DepinChallengeAccessSetup)

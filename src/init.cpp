@@ -519,8 +519,8 @@ std::string HelpMessage(HelpMessageMode mode)
     strUsage += HelpMessageGroup(_("DePIN options:"));
     strUsage += HelpMessageOpt("-depinmsg", _("Enable DePIN messaging system (default: 0)"));
     strUsage += HelpMessageOpt("-depinmsgtoken=<token>", _("DEPIN token name to monitor for messaging, must start with '&' (required when -depinmsg=1; DEPIN assets are testnet/regtest only)"));
-    strUsage += HelpMessageOpt("-depinpoolkeysig=<sig>", _("Base64 signature by the token owner over \"DEPIN-POOLKEY|<token>|<pubkey>\" vouching for this node's pool key (required when -depinmsg=1; see depinpoolpkey)"));
     strUsage += HelpMessageOpt("-depinwallet=<file>", _("Wallet the DePIN pool key is derived from (required only when more than one wallet is loaded). Must be an unencrypted legacy BIP44 wallet"));
+    strUsage += HelpMessageOpt("-depinratelimit=<n>", strprintf(_("Maximum DePIN challenges issued and messages accepted per address and minute, 0 = unlimited (default: %u)"), DEFAULT_DEPIN_RATE_LIMIT));
     strUsage += HelpMessageOpt("-depinmsgmaxusers=<n>", strprintf(_("Maximum number of DePIN message recipients (default: %u)"), DEFAULT_MAX_DEPIN_RECIPIENTS));
     strUsage += HelpMessageOpt("-depinpoolpersist", strprintf(_("Whether to save the DePIN message pool on shutdown and load on restart (default: %u)"), DEFAULT_DEPINPOOL_PERSIST));
     strUsage += HelpMessageOpt("-depinmsgsize=<n>", strprintf(_("Maximum DePIN message size in bytes (default: %u, max: %u)"), DEFAULT_DEPIN_MESSAGE_SIZE, MAX_DEPIN_MESSAGE_SIZE));
@@ -2034,9 +2034,9 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
         unsigned int messageExpiryHours = gArgs.GetArg("-depinmsgexpire", DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS);
         unsigned int maxPoolSizeMB = gArgs.GetArg("-depinpoolsize", DEFAULT_DEPIN_POOL_SIZE_MB);
 
-        // The pool key comes from the node's dedicated legacy wallet and the
-        // token owner must have vouched for it: without both there is no
-        // service, so fail here rather than serve unsigned or in the clear.
+        // The pool key comes from the node's dedicated legacy wallet: without
+        // it there is no service, so fail here rather than serve unsigned or
+        // in the clear.
 #ifndef ENABLE_WALLET
         return InitError(_("DePIN service requires a wallet-enabled build"));
 #else
@@ -2046,13 +2046,16 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
             if (!serviceWallet) {
                 return InitError(strprintf(_("DePIN service: %s"), poolKeyError));
             }
-            if (!LoadDepinPoolKey(serviceWallet, token, gArgs.GetArg("-depinpoolkeysig", ""), poolKeyError)) {
+            if (!LoadDepinPoolKey(serviceWallet, poolKeyError)) {
                 return InitError(strprintf(_("DePIN service: %s"), poolKeyError));
             }
-            LogPrintf("DePIN pool key loaded from wallet '%s', vouched for by owner %s\n",
-                      GetDepinPoolKeyWalletName(), GetDepinPoolKeyOwner());
+            LogPrintf("DePIN pool key loaded from wallet '%s'\n", GetDepinPoolKeyWalletName());
         }
 #endif
+
+        // Per-address abuse control. Per-IP limits belong to the RPC proxy:
+        // behind it every caller shares the proxy's address.
+        g_depinRateLimiter.SetLimit(gArgs.GetArg("-depinratelimit", DEFAULT_DEPIN_RATE_LIMIT));
 
         pDepinMsgPool = std::make_unique<CDepinMsgPool>();
         if (!pDepinMsgPool->Initialize(token, maxRecipients, maxMessageSize, messageExpiryHours, maxPoolSizeMB)) {
@@ -2102,6 +2105,7 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
             // Abandoned challenges (issued, never answered) would otherwise
             // sit in the store until the next issuance by the same address.
             g_depinChallenges.CleanupExpired(GetTime());
+            g_depinRateLimiter.Prune(GetTime());
         }, cleanupIntervalSeconds * 1000);  // Convert seconds to milliseconds
 
         LogPrintf("DePIN automatic cleanup scheduled every %d seconds\n", cleanupIntervalSeconds);

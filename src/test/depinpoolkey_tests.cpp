@@ -3,8 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 //
 // The DePIN pool key holder and the response transport layer
-// (depinpoolkey.{h,cpp}): the owner's vouching signature, and "poolsig" over
-// encrypted and plain responses.
+// (depinpoolkey.{h,cpp}): "poolsig" over encrypted and plain responses.
 
 #include "depinpoolkey.h"
 
@@ -87,13 +86,6 @@ struct DepinPoolKeySetup : public TestingSetup {
     }
 };
 
-std::string OwnerSign(const Holder& owner, const std::string& token, const CPubKey& poolPub)
-{
-    std::string sig, error;
-    BOOST_REQUIRE_MESSAGE(SignDepinChallengePreimage(owner.key, DepinPoolKeyOwnerPreimage(token, poolPub), sig, error), error);
-    return sig;
-}
-
 std::string Decrypt(const UniValue& response, const Holder& client)
 {
     BOOST_REQUIRE_MESSAGE(response.exists("encrypted"), response.write());
@@ -118,51 +110,16 @@ BOOST_AUTO_TEST_CASE(pool_key_holder_roundtrip)
 
     CKey poolKey;
     poolKey.MakeNewKey(true);
-    SetDepinPoolKey(poolKey, "NXowner", "c2ln", "service.dat");
+    SetDepinPoolKey(poolKey, "service.dat");
     BOOST_CHECK(HaveDepinPoolKey());
     BOOST_REQUIRE(GetDepinPoolKey(got, pub));
     BOOST_CHECK(got == poolKey);
     BOOST_CHECK(pub == poolKey.GetPubKey());
-    BOOST_CHECK_EQUAL(GetDepinPoolKeyOwner(), "NXowner");
-    BOOST_CHECK_EQUAL(GetDepinPoolKeySig(), "c2ln");
     BOOST_CHECK_EQUAL(GetDepinPoolKeyWalletName(), "service.dat");
 
     ClearDepinPoolKey();
     BOOST_CHECK(!HaveDepinPoolKey());
-    BOOST_CHECK_EQUAL(GetDepinPoolKeyOwner(), "");
-}
-
-// (13) The owner's signature is verified by recovering the signer and asking
-// the asset index whether it holds the owner token.
-BOOST_AUTO_TEST_CASE(owner_signature_verified_against_owner)
-{
-    const Holder owner = NewHolder();
-    const Holder holder = NewHolder(); // holds the token, not the owner token
-    BOOST_REQUIRE(passetsdb->WriteAssetAddressQuantity(TOKEN + OWNER_TAG, owner.address, 1));
-    BOOST_REQUIRE(passetsdb->WriteAssetAddressQuantity(TOKEN, holder.address, 10));
-
-    CKey poolKey;
-    poolKey.MakeNewKey(true);
-    const CPubKey poolPub = poolKey.GetPubKey();
-    CKey otherKey;
-    otherKey.MakeNewKey(true);
-
-    BOOST_CHECK_EQUAL(DepinPoolKeyOwnerPreimage(TOKEN, poolPub),
-                      "DEPIN-POOLKEY|" + TOKEN + "|" + HexStr(poolPub.begin(), poolPub.end()));
-
-    std::string ownerOut, error;
-    BOOST_CHECK_MESSAGE(VerifyDepinPoolKeyOwnerSignature(TOKEN, poolPub, OwnerSign(owner, TOKEN, poolPub), ownerOut, error), error);
-    BOOST_CHECK_EQUAL(ownerOut, owner.address);
-
-    // A plain holder is not an owner.
-    BOOST_CHECK(!VerifyDepinPoolKeyOwnerSignature(TOKEN, poolPub, OwnerSign(holder, TOKEN, poolPub), ownerOut, error));
-    // The owner vouching for ANOTHER pubkey does not cover this one.
-    BOOST_CHECK(!VerifyDepinPoolKeyOwnerSignature(TOKEN, poolPub, OwnerSign(owner, TOKEN, otherKey.GetPubKey()), ownerOut, error));
-    // ...nor a signature for another token.
-    BOOST_CHECK(!VerifyDepinPoolKeyOwnerSignature(TOKEN, poolPub, OwnerSign(owner, "&OTHER", poolPub), ownerOut, error));
-    // Garbage.
-    BOOST_CHECK(!VerifyDepinPoolKeyOwnerSignature(TOKEN, poolPub, "not-base64!", ownerOut, error));
-    BOOST_CHECK(!VerifyDepinPoolKeyOwnerSignature(TOKEN, poolPub, "", ownerOut, error));
+    BOOST_CHECK_EQUAL(GetDepinPoolKeyWalletName(), "");
 }
 
 // (25) poolsig covers method, token, address, nonce and the exact body; the
@@ -182,7 +139,7 @@ BOOST_AUTO_TEST_CASE(poolsig_covers_ciphertext_and_nonce)
     // No key loaded: a DePIN response is never produced unsigned.
     BOOST_CHECK_THROW(FinishDepinResponse(obj, "depinreceivemsg", TOKEN, client.address, nonce, &client.pubkey), UniValue);
 
-    SetDepinPoolKey(poolKey, "NXowner", "sig", "service.dat");
+    SetDepinPoolKey(poolKey, "service.dat");
 
     // Encrypted: the plaintext never appears, the signature is over the blob.
     const UniValue enc = FinishDepinResponse(obj, "depinreceivemsg", TOKEN, client.address, nonce, &client.pubkey);

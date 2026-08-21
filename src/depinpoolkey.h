@@ -23,9 +23,9 @@
  *    the pool's public key can tell a genuine response from one fabricated by
  *    whatever sits between it and the node (typically an RPC proxy).
  *
- * The token owner vouches for the key by signing DepinPoolKeyOwnerPreimage()
- * with the address that holds the owner token; the node verifies that
- * signature at startup and republishes it through depingetmsginfo.
+ * Clients learn the public key from depingetmsginfo and pin it on first use
+ * (TOFU): from then on every reply must verify against the pinned key, and a
+ * change is something to alert on, not to accept silently.
  *
  * This module has no wallet dependency so the RPC layer links the same way
  * with and without wallet support. Without a wallet nothing ever loads a key
@@ -35,26 +35,11 @@
 /** Bumped whenever the DePIN RPC contract changes incompatibly. */
 static const int DEPIN_RPC_PROTOCOL_VERSION = 2;
 
-/** "DEPIN-POOLKEY|token|pubkeyhex": what the token owner signs (signmessage-compatible). */
-std::string DepinPoolKeyOwnerPreimage(const std::string& token, const CPubKey& poolPubKey);
-
-/**
- * Verifies the owner's base64 compact signature over DepinPoolKeyOwnerPreimage
- * and that the recovered address holds the owner token of `token`. On
- * success `ownerAddressOut` is the vouching address.
- */
-bool VerifyDepinPoolKeyOwnerSignature(const std::string& token, const CPubKey& poolPubKey,
-                                      const std::string& ownerSignatureBase64,
-                                      std::string& ownerAddressOut, std::string& error);
-
 /** Installs the pool key for the process. `walletName` is informational (depingetmsginfo). */
-void SetDepinPoolKey(const CKey& key, const std::string& ownerAddress,
-                     const std::string& ownerSignatureBase64, const std::string& walletName);
+void SetDepinPoolKey(const CKey& key, const std::string& walletName);
 void ClearDepinPoolKey();
 bool HaveDepinPoolKey();
 bool GetDepinPoolKey(CKey& key, CPubKey& pubkey);
-std::string GetDepinPoolKeyOwner();
-std::string GetDepinPoolKeySig();
 std::string GetDepinPoolKeyWalletName();
 
 /**

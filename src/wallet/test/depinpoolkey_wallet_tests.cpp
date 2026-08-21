@@ -4,7 +4,7 @@
 //
 // Loading the DePIN pool key from the service wallet
 // (wallet/depinpoolkeyload.{h,cpp}): which wallet, which kind of wallet, and
-// the owner's vouching signature -- every refusal names its condition.
+// every refusal names its condition.
 
 #include "wallet/depinpoolkeyload.h"
 
@@ -15,7 +15,6 @@
 #include "assets/assets.h"
 #include "assets/restricteddb.h"
 #include "base58.h"
-#include "depinchallenge.h"
 #include "depinpoolkey.h"
 #include "key.h"
 #include "test/test_neurai.h"
@@ -98,83 +97,49 @@ struct DepinPoolKeyWalletSetup : public TestingSetup {
     }
 };
 
-struct Holder {
-    CKey key;
-    std::string address;
-};
-
-Holder NewHolder()
-{
-    Holder h;
-    h.key.MakeNewKey(true);
-    h.address = EncodeDestination(h.key.GetPubKey().GetID());
-    return h;
-}
-
-std::string OwnerSign(const Holder& owner, const CPubKey& poolPub)
-{
-    std::string sig, error;
-    BOOST_REQUIRE_MESSAGE(SignDepinChallengePreimage(owner.key, DepinPoolKeyOwnerPreimage(TOKEN, poolPub), sig, error), error);
-    return sig;
-}
-
 } // namespace
 
 BOOST_FIXTURE_TEST_SUITE(depinpoolkey_wallet_tests, DepinPoolKeyWalletSetup)
 
-// (12) Only a legacy, unencrypted BIP44 wallet vouched for by the owner loads.
+// (12) Only a legacy, unencrypted BIP44 wallet loads, and the key is a pure
+// function of its seed.
 BOOST_AUTO_TEST_CASE(pool_key_requires_legacy_wallet)
 {
-    const Holder owner = NewHolder();
-    const Holder stranger = NewHolder();
-    BOOST_REQUIRE(passetsdb->WriteAssetAddressQuantity(TOKEN + OWNER_TAG, owner.address, 1));
-
     std::string error;
 
     // No wallet at all (-disablewallet).
-    BOOST_CHECK(!LoadDepinPoolKey(nullptr, TOKEN, "x", error));
+    BOOST_CHECK(!LoadDepinPoolKey(nullptr, error));
     BOOST_CHECK_NE(error.find("requires a wallet"), std::string::npos);
 
     // Not BIP44.
     std::unique_ptr<CWallet> legacyNoBip44 = MakeWallet("nobip44.dat", /*bip44=*/false, /*pq=*/false);
-    BOOST_CHECK(!LoadDepinPoolKey(legacyNoBip44.get(), TOKEN, "x", error));
+    BOOST_CHECK(!LoadDepinPoolKey(legacyNoBip44.get(), error));
     BOOST_CHECK_MESSAGE(error.find("BIP44") != std::string::npos, error);
+    BOOST_CHECK(!HaveDepinPoolKey());
 
     // Post-quantum.
     std::unique_ptr<CWallet> pqWallet = MakeWallet("pq.dat", true, true);
-    BOOST_CHECK(!LoadDepinPoolKey(pqWallet.get(), TOKEN, "x", error));
+    BOOST_CHECK(!LoadDepinPoolKey(pqWallet.get(), error));
     BOOST_CHECK_MESSAGE(error.find("non-PQ") != std::string::npos, error);
-
-    // The right kind of wallet, but nobody vouched for its key.
-    std::unique_ptr<CWallet> service = MakeWallet("service.dat", true, false);
-    BOOST_CHECK(!LoadDepinPoolKey(service.get(), TOKEN, "", error));
-    BOOST_CHECK_MESSAGE(error.find("-depinpoolkeysig is required") != std::string::npos, error);
     BOOST_CHECK(!HaveDepinPoolKey());
 
-    // What the owner must sign is the key depinpoolpkey reports.
+    // The right kind of wallet: the loaded key is what depinpoolpkey reports.
+    std::unique_ptr<CWallet> service = MakeWallet("service.dat", true, false);
     CKey derived;
     CPubKey derivedPub;
     std::string path;
     BOOST_REQUIRE_MESSAGE(DeriveDepinPoolKeys(service.get(), derived, derivedPub, path, error), error);
     BOOST_CHECK_EQUAL(path, "m/44'/0'/200'/0/0"); // regtest is not testnet: change = 0
 
-    // A stranger's signature is refused; the owner's is accepted.
-    BOOST_CHECK(!LoadDepinPoolKey(service.get(), TOKEN, OwnerSign(stranger, derivedPub), error));
-    BOOST_CHECK_MESSAGE(error.find("does not hold the owner token") != std::string::npos, error);
-    BOOST_CHECK(!HaveDepinPoolKey());
-
-    const std::string ownerSig = OwnerSign(owner, derivedPub);
-    BOOST_REQUIRE_MESSAGE(LoadDepinPoolKey(service.get(), TOKEN, ownerSig, error), error);
+    BOOST_REQUIRE_MESSAGE(LoadDepinPoolKey(service.get(), error), error);
     CKey loaded;
     CPubKey loadedPub;
     BOOST_REQUIRE(GetDepinPoolKey(loaded, loadedPub));
     BOOST_CHECK(loaded == derived);
     BOOST_CHECK(loadedPub == derivedPub);
-    BOOST_CHECK_EQUAL(GetDepinPoolKeyOwner(), owner.address);
-    BOOST_CHECK_EQUAL(GetDepinPoolKeySig(), ownerSig);
     BOOST_CHECK_EQUAL(GetDepinPoolKeyWalletName(), "service.dat");
 
-    // The derivation is a pure function of the seed: another wallet, another key.
+    // Another wallet, another key.
     std::unique_ptr<CWallet> other = MakeWallet("other.dat", true, false);
     CKey otherKey;
     CPubKey otherPub;

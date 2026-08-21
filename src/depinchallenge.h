@@ -41,8 +41,18 @@ enum class DepinChallengeType {
     ADMIN     // owner-level operations such as depinclearmsg (preimage "DEPIN-CLEAR")
 };
 
-/** Lifetime of an issued challenge, in seconds. */
+/** Lifetime of a challenge issued by depinchallenge, in seconds. */
 static const int64_t DEPIN_CHALLENGE_TIMEOUT = 30;
+/**
+ * Lifetime of a challenge chained into an authenticated reply
+ * ("next_challenge"): a client that keeps reading within this window never
+ * calls depinchallenge again, which is the session-like behaviour wanted
+ * without a session -- every request still carries its own signature.
+ */
+static const int64_t DEPIN_CHAINED_CHALLENGE_TIMEOUT = 300;
+/** Default for -depinratelimit: per address and minute, 0 = unlimited. */
+static const unsigned int DEFAULT_DEPIN_RATE_LIMIT = 20;
+static const int64_t DEPIN_RATE_WINDOW = 60;
 /** Live challenges kept per address; issuing one more evicts the oldest. */
 static const size_t DEPIN_CHALLENGE_MAX_PER_ADDRESS = 4;
 /** Live challenges kept in total; beyond this, issuance fails. */
@@ -93,7 +103,8 @@ public:
      * store and its limits. Returns the 64-hex nonce, or "" with `error` set.
      */
     std::string Issue(const std::string& token, const std::string& address,
-                      DepinChallengeType type, std::string& error);
+                      DepinChallengeType type, std::string& error,
+                      int64_t lifetime = DEPIN_CHALLENGE_TIMEOUT);
 
     /**
      * Read-only existence check: the nonce is known and has not expired. A
@@ -127,6 +138,33 @@ private:
 };
 
 extern CDepinChallengeManager g_depinChallenges;
+
+/**
+ * Sliding-window counter per key (an authenticated address, prefixed by the
+ * operation): at most `limit` events per DEPIN_RATE_WINDOW seconds. The node
+ * cannot rate-limit by IP -- behind an RPC proxy every caller shares one --
+ * so this is the abuse control it can apply itself: challenge issuance and
+ * message submission per address.
+ */
+class CDepinRateLimiter
+{
+public:
+    void SetLimit(unsigned int perWindow); // 0 = unlimited
+    unsigned int GetLimit() const;
+    /** Records the event and returns true, or returns false without recording. */
+    bool Allow(const std::string& key, int64_t now);
+    /** Drops events outside the window and keys left empty. */
+    void Prune(int64_t now);
+    void Clear();
+    size_t Size() const;
+
+private:
+    mutable CCriticalSection cs_rate;
+    unsigned int limit = DEFAULT_DEPIN_RATE_LIMIT;
+    std::map<std::string, std::deque<int64_t>> mapHits;
+};
+
+extern CDepinRateLimiter g_depinRateLimiter;
 
 /**
  * Issues a challenge for a holder, with the access checks that make issuance

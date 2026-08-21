@@ -103,8 +103,7 @@ CWallet* SelectDepinServiceWallet(const std::string& requestedName, std::string&
     return nullptr;
 }
 
-bool LoadDepinPoolKey(CWallet* pwallet, const std::string& token,
-                      const std::string& ownerSignatureBase64, std::string& error)
+bool LoadDepinPoolKey(CWallet* pwallet, std::string& error)
 {
     if (!pwallet) {
         error = "DePIN service requires a wallet";
@@ -126,13 +125,6 @@ bool LoadDepinPoolKey(CWallet* pwallet, const std::string& token,
         error = strprintf("DePIN service wallet must not be encrypted (wallet '%s' is)", pwallet->GetName());
         return false;
     }
-    if (ownerSignatureBase64.empty()) {
-        error = "-depinpoolkeysig is required: the owner of the token must sign the pool key "
-                "(run depinpoolpkey on the service wallet, sign \"DEPIN-POOLKEY|<token>|<pubkey>\" "
-                "with signmessage from the owner address, then restart with -depinpoolkeysig=<signature>)";
-        return false;
-    }
-
     CKey key;
     CPubKey pubkey;
     std::string derivationPath;
@@ -140,11 +132,6 @@ bool LoadDepinPoolKey(CWallet* pwallet, const std::string& token,
         return false;
     }
 
-    std::string owner;
-    if (!VerifyDepinPoolKeyOwnerSignature(token, pubkey, ownerSignatureBase64, owner, error)) {
-        return false;
-    }
-
-    SetDepinPoolKey(key, owner, ownerSignatureBase64, pwallet->GetName());
+    SetDepinPoolKey(key, pwallet->GetName());
     return true;
 }

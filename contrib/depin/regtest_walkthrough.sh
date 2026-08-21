@@ -74,28 +74,21 @@ $CLI generatetoaddress 1 "$ADDR" >/dev/null
 echo "  owner=$OWNER holder=$HOLDER stranger=$STRANGER roothholder=$ADDR"
 POOLPUB=$($CLI depinpoolpkey | jqr "['pubkey']")
 POOLADDR=$($CLI depinpoolpkey | jqr "['address']")
-SIG=$($CLI signmessage "$OWNER" "DEPIN-POOLKEY|&TEST|$POOLPUB")
-STRANGERSIG=$($CLI signmessage "$STRANGER" "DEPIN-POOLKEY|&TEST|$POOLPUB")
 echo "  poolpub=$POOLPUB pooladdr=$POOLADDR"
 stop_node
 
 echo "== 2. InitError paths"
-start_node -depinmsg=1 -depinmsgtoken="&TEST"; sleep 3
-if pgrep -f "neuraid -datadir=$D" >/dev/null; then bad "started without -depinpoolkeysig"; stop_node; else ok "refused without -depinpoolkeysig: $(last_log_error)"; fi
-start_node -depinmsg=1 -depinmsgtoken="&TEST" -depinpoolkeysig="$STRANGERSIG"; sleep 3
-if pgrep -f "neuraid -datadir=$D" >/dev/null; then bad "started with a non-owner signature"; stop_node; else ok "refused non-owner signature: $(last_log_error)"; fi
-start_node -depinmsg=1 -depinmsgtoken="&TEST" -depinpoolkeysig="$SIG" -disablewallet; sleep 3
+start_node -depinmsg=1 -depinmsgtoken="&TEST" -disablewallet; sleep 3
 if pgrep -f "neuraid -datadir=$D" >/dev/null; then bad "started with -disablewallet"; stop_node; else ok "refused with -disablewallet: $(last_log_error)"; fi
 
 echo "== 3. service up"
-start_node -depinmsg=1 -depinmsgtoken="&TEST" -depinpoolkeysig="$SIG"; wait_rpc || { echo "service node did not start"; tail -n 5 "$D/regtest/debug.log"; exit 1; }
+start_node -depinmsg=1 -depinmsgtoken="&TEST" -depinratelimit=5; wait_rpc || { echo "service node did not start"; tail -n 5 "$D/regtest/debug.log"; exit 1; }
 INFO=$($CLI depingetmsginfo)
 IB=$(echo "$INFO" | jqr "['body']"); IH=$(printf %s "$IB" | sha256sum | cut -d' ' -f1)
 check "$($CLI verifymessage "$POOLADDR" "$(echo "$INFO" | jqr "['poolsig']")" "DEPIN-RESP|depingetmsginfo|&TEST|||$IH")" "true" "poolsig of the plain depingetmsginfo body"
 check "$(echo "$INFO" | jqb "['protocol']")" "2" "protocol"
 check "$(echo "$INFO" | jqb "['depinpoolpkey']")" "$POOLPUB" "depinpoolpkey published"
-check "$(echo "$INFO" | jqb "['depinpoolkeyowner']")" "$OWNER" "owner published"
-check "$($CLI verifymessage "$OWNER" "$(echo "$INFO" | jqb "['depinpoolkeysig']")" "DEPIN-POOLKEY|&TEST|$POOLPUB")" "true" "published owner signature verifies with verifymessage"
+check "$(echo "$INFO" | jqb "['depinwallet']")" "wallet.dat" "service wallet published"
 echo "$IB" | python3 -c "import sys; print(bytes.fromhex(sys.stdin.read().strip()).decode())" | grep -q '"port"' && bad "port still published" || ok "no port field"
 ss -ltnp 2>/dev/null | grep -q ":19002 " && bad "19002 listening" || ok "nothing listens on 19002"
 
@@ -118,8 +111,14 @@ RENC=$(echo "$R" | jqr "['encrypted']"); RPS=$(echo "$R" | jqr "['poolsig']")
 RH=$(printf %s "$RENC" | sha256sum | cut -d' ' -f1)
 check "$($CLI verifymessage "$POOLADDR" "$RPS" "DEPIN-RESP|depinreceivemsg|&TEST/SEC|$HOLDER|$NONCE|$RH")" "true" "poolsig of depinreceivemsg (includes nonce)"
 MSGS=$($CLI depindecrypt "$HOLDER" "$RENC")
-check "$(echo "$MSGS" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))")" "1" "holder sees exactly its section's message"
-check "$(echo "$MSGS" | jqr "[0]['token']")" "&TEST/SEC" "message token"
+check "$(echo "$MSGS" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['messages']))")" "1" "holder sees exactly its section's message"
+check "$(echo "$MSGS" | jqr "['messages'][0]['token']")" "&TEST/SEC" "message token"
+# Nonce chaining: the reply carries the next challenge, so no depinchallenge is needed.
+NEXT=$(echo "$MSGS" | jqr "['next_challenge']")
+check "${#NEXT}" "64" "reply carries next_challenge"
+SIGNEXT=$($CLI depinsignchallenge "$HOLDER" "&TEST/SEC" "$NEXT" | jqr "['signature']")
+R2=$($CLI depinreceivemsg "&TEST/SEC" "$HOLDER" "$NEXT" "$SIGNEXT")
+check "$($CLI depindecrypt "$HOLDER" "$(echo "$R2" | jqr "['encrypted']")" | jqr "['next_expires_in']")" "300" "chained read works and chains again"
 $CLI depinreceivemsg "&TEST/SEC" "$HOLDER" "$NONCE" "$SIGN" >/dev/null 2>&1 && bad "nonce reused" || ok "nonce is single-use"
 $CLI depinreceivemsg "&TEST/SEC" "$HOLDER" >/dev/null 2>&1 && bad "legacy form accepted" || ok "legacy depinreceivemsg token address refused"
 $CLI depinreceivemsg "&TEST/SEC" "$HOLDER" 1730000000 >/dev/null 2>&1 && bad "legacy form with timestamp accepted" || ok "legacy form with timestamp refused"
@@ -162,6 +161,11 @@ RNONCE=$($CLI depindecrypt "$OWNER" "$($CLI depinchallenge "&TEST" "$OWNER" "adm
 RSIG=$($CLI depinsignchallenge "$OWNER" "&TEST" "$RNONCE" "admin" | jqr "['signature']")
 C2=$($CLI depindecrypt "$OWNER" "$($CLI depinclearmsg "" "$OWNER" "$RNONCE" "$RSIG" "all" | jqr "['encrypted']")")
 check "$(echo "$C2" | jqr "['removed']")" "1" "owner purged the pool with scope \"\" (root challenge)"
+
+echo "== 8. rate limit: -depinratelimit=5 challenges per address and minute (last: it exhausts the holder's quota)"
+for i in 1 2 3 4 5; do $CLI depinchallenge "&TEST/SEC" "$HOLDER" >/dev/null 2>&1; done
+$CLI depinchallenge "&TEST/SEC" "$HOLDER" >/dev/null 2>&1 && bad "6th challenge in a minute accepted" || ok "6th challenge in a minute refused"
+$CLI depinchallenge "&TEST" "$ADDR" >/dev/null 2>&1 && ok "another address is unaffected" || bad "another address was limited"
 
 stop_node
 echo "== RESULT: $PASS ok, $FAIL failed"

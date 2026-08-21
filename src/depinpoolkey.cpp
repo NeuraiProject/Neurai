@@ -8,7 +8,6 @@
 #include "crypto/sha256.h"
 #include "depinchallenge.h" // message-magic signing/verification helpers
 #include "depinecies.h"
-#include "depinmsgpool.h"   // HasDepinSectionOwnerAccess
 #include "rpc/protocol.h"
 #include "streams.h"
 #include "sync.h"
@@ -24,8 +23,6 @@ CCriticalSection cs_depinPoolKey;
 bool g_havePoolKey = false;
 CKey g_poolKey;
 CPubKey g_poolPubKey;
-std::string g_poolKeyOwner;
-std::string g_poolKeySig;
 std::string g_poolKeyWallet;
 
 std::string Sha256Hex(const std::string& data)
@@ -37,53 +34,11 @@ std::string Sha256Hex(const std::string& data)
 
 } // namespace
 
-std::string DepinPoolKeyOwnerPreimage(const std::string& token, const CPubKey& poolPubKey)
-{
-    return strprintf("DEPIN-POOLKEY|%s|%s", token, HexStr(poolPubKey.begin(), poolPubKey.end()));
-}
-
-bool VerifyDepinPoolKeyOwnerSignature(const std::string& token, const CPubKey& poolPubKey,
-                                      const std::string& ownerSignatureBase64,
-                                      std::string& ownerAddressOut, std::string& error)
-{
-    if (!poolPubKey.IsFullyValid()) {
-        error = "Invalid pool public key";
-        return false;
-    }
-    bool fInvalid = false;
-    const std::vector<unsigned char> vchSig = DecodeBase64(ownerSignatureBase64.c_str(), &fInvalid);
-    if (fInvalid || vchSig.empty()) {
-        error = "Malformed owner signature (expected base64 compact signature)";
-        return false;
-    }
-
-    // Recover the signer instead of asking who the owner is: the signature
-    // itself names the address, and the asset index says whether it qualifies.
-    CPubKey recovered;
-    if (!recovered.RecoverCompact(DepinChallengeSigningHash(DepinPoolKeyOwnerPreimage(token, poolPubKey)), vchSig)) {
-        error = "Owner signature does not recover a public key";
-        return false;
-    }
-    const std::string owner = EncodeDestination(recovered.GetID());
-
-    std::string accessError;
-    if (!HasDepinSectionOwnerAccess(owner, token, token, accessError)) {
-        error = strprintf("Pool key signature was made by %s, which does not hold the owner token of %s: %s",
-                          owner, token, accessError);
-        return false;
-    }
-    ownerAddressOut = owner;
-    return true;
-}
-
-void SetDepinPoolKey(const CKey& key, const std::string& ownerAddress,
-                     const std::string& ownerSignatureBase64, const std::string& walletName)
+void SetDepinPoolKey(const CKey& key, const std::string& walletName)
 {
     LOCK(cs_depinPoolKey);
     g_poolKey = key;
     g_poolPubKey = key.GetPubKey();
-    g_poolKeyOwner = ownerAddress;
-    g_poolKeySig = ownerSignatureBase64;
     g_poolKeyWallet = walletName;
     g_havePoolKey = key.IsValid();
 }
@@ -94,8 +49,6 @@ void ClearDepinPoolKey()
     g_havePoolKey = false;
     g_poolKey = CKey();
     g_poolPubKey = CPubKey();
-    g_poolKeyOwner.clear();
-    g_poolKeySig.clear();
     g_poolKeyWallet.clear();
 }
 
@@ -112,18 +65,6 @@ bool GetDepinPoolKey(CKey& key, CPubKey& pubkey)
     key = g_poolKey;
     pubkey = g_poolPubKey;
     return true;
-}
-
-std::string GetDepinPoolKeyOwner()
-{
-    LOCK(cs_depinPoolKey);
-    return g_poolKeyOwner;
-}
-
-std::string GetDepinPoolKeySig()
-{
-    LOCK(cs_depinPoolKey);
-    return g_poolKeySig;
 }
 
 std::string GetDepinPoolKeyWalletName()

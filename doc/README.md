@@ -170,15 +170,15 @@ A service node is published through an RPC proxy that whitelists the DePIN
 methods; holders never get node credentials. Instead, a holder proves control
 of an address with a challenge:
 
-1. **Anchor the pool key** (once, out of band). `depingetmsginfo` answers
-   `{"body": "<hex>", "poolsig": "<base64>"}`. Verify `poolsig` over the
-   `body` string with the pool key you have anchored; if you have none yet,
-   decode `body` as **untrusted** data: it carries `depinpoolpkey`,
-   `depinpoolkeyaddress`, `depinpoolkeyowner` and `depinpoolkeysig` — the
-   token owner's `signmessage` over `DEPIN-POOLKEY|<token>|<pubkey>`. Validate
-   that signature **locally** against an owner address you obtained from your
-   own node or configuration, never from the proxy you are about to trust; or
-   pin the pubkey on first use. Only then is the pool key trusted.
+1. **Pin the pool key** (first contact). `depingetmsginfo` answers
+   `{"body": "<hex>", "poolsig": "<base64>"}`; decoded, `body` carries
+   `depinpoolpkey` and `depinpoolkeyaddress`. On first contact store that key
+   with the service's identity (trust on first use; a pin shipped with the
+   application avoids even that); from then on verify `poolsig` over the
+   `body` or `encrypted` string of every reply with the pinned key, and treat
+   a changed key as an alert. Message content is never readable by the node
+   or the proxy regardless; the pin is what makes withheld or altered replies
+   detectable.
 2. **Request a challenge**:
    ```bash
    depinchallenge "&MYTOKEN/SEC" "NXholder..."          # type receive (default)
@@ -202,7 +202,10 @@ of an address with a challenge:
    ```
    A failed signature, a nonce issued for other bindings, or an address that
    lost access between issuance and use is refused — and the refusal never
-   consumes the nonce, so nobody can burn someone else's challenge.
+   consumes the nonce, so nobody can burn someone else's challenge. Every
+   authenticated reply carries `next_challenge` (valid 300 s) inside its
+   encrypted body: sign it for the next call and `depinchallenge` is needed
+   only once per conversation.
 5. **Verify and decrypt the reply.** Every reply carries `poolsig`, the pool
    key's compact signature over
    `DEPIN-RESP|<method>|<token>|<address>|<challenge>|<sha256 hex of the body>`
@@ -349,10 +352,10 @@ depinmsg=1
 # Required DEPIN token for chat (must start with &, testnet/regtest only)
 depinmsgtoken=&MYTOKEN
 
-# REQUIRED: the token owner's signmessage over "DEPIN-POOLKEY|&MYTOKEN|<pubkey>",
-# where <pubkey> is what `depinpoolpkey` reports on this node's service wallet.
-# The node refuses to start the service without it.
-depinpoolkeysig=<base64>
+# Abuse control the node can apply by itself: challenges issued and messages
+# accepted per address and minute (0 = unlimited). Per-IP limits belong to the
+# RPC proxy in front of the node.
+depinratelimit=20
 
 # Only when more than one wallet is loaded: which one is the service wallet.
 # It must be an unencrypted legacy (non-PQ) BIP44 wallet; keep it dedicated and
@@ -483,9 +486,9 @@ neurai-cli depinreceivemsg "&MYTOKEN/GENERAL" "NXyouraddress..." "<challenge>" "
 neurai-cli depindecrypt "NXyouraddress..." "<encrypted>"
 ```
 
-`contrib/depin/regtest_walkthrough.sh` runs this whole flow (bootstrap, owner
-signature, refused starts, challenge, read, sections, purge) against a fresh
-regtest node and checks every step.
+`contrib/depin/regtest_walkthrough.sh` runs this whole flow (bootstrap,
+refused start without wallet, challenge, read, chained read, rate limit,
+sections, purge) against a fresh regtest node and checks every step.
 
 **`depingetmsg` output**:
 ```json
@@ -529,8 +532,6 @@ neurai-cli depingetmsginfo
   "protocol": 2,
   "depinpoolpkey": "02ab...",
   "depinpoolkeyaddress": "NXpool...",
-  "depinpoolkeyowner": "NXowner...",
-  "depinpoolkeysig": "H1a2...",
   "depinwallet": "wallet.dat"
 }
 ```
@@ -585,9 +586,8 @@ neurai-cli depingetmsginfo
 
 A client publishing through this node reads `token` (the pool root, its
 `stop_at` for recipient resolution), `maxrecipients` and `depinpoolpkey`
-(the key to wrap `depinsubmitmsg` envelopes for) from here, and anchors
-`depinpoolpkey` through `depinpoolkeysig` as described in
-[`depinreceivemsg.md`](depinreceivemsg.md).
+(the key to wrap `depinsubmitmsg` envelopes for) from here, and pins
+`depinpoolpkey` as described in [`depinreceivemsg.md`](depinreceivemsg.md).
 
 <!-- Legacy holder-list example retained below only as a blockchain index example. -->
 

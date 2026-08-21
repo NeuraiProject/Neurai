@@ -554,10 +554,10 @@ UniValue depingetmsginfo(const JSONRPCRequest& request)
                 "  \"oldestmessage\": \"time\",      (string) Timestamp of oldest message\n"
                 "  \"newestmessage\": \"time\"       (string) Timestamp of newest message\n"
                 "  \"protocol\": 2,                  (numeric) DePIN RPC protocol version\n"
-                "  \"depinpoolpkey\": \"hex\",        (string) Pool public key (encrypt depinsubmitmsg envelopes for it; verifies poolsig)\n"
+                "  \"depinpoolpkey\": \"hex\",        (string) Pool public key: pin it on first use; encrypt depinsubmitmsg envelopes for it; verifies poolsig\n"
                 "  \"depinpoolkeyaddress\": \"addr\", (string) P2PKH address of the pool key (verifymessage-compatible)\n"
-                "  \"depinpoolkeyowner\": \"addr\",   (string) Token owner address that signed the pool key\n"
-                "  \"depinpoolkeysig\": \"base64\",   (string) Owner signature over \"DEPIN-POOLKEY|<token>|<pubkey>\"\n"
+
+
                 "  \"depinwallet\": \"file\",        (string) Wallet the pool key is derived from\n"
                 "  \"poolsig\": \"base64\"           (string) Pool-key signature over this response (see depinreceivemsg help)\n"
                 "}\n"
@@ -590,18 +590,15 @@ UniValue depingetmsginfo(const JSONRPCRequest& request)
     if (newest > 0)
         obj.push_back(Pair("newestmessage", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", newest)));
 
-    // The service identity: pool public key, the owner signature that vouches
-    // for it, and which wallet it came from. Clients anchor depinpoolpkey out
-    // of band (their own node, configuration, or first-use pinning) and verify
-    // depinpoolkeysig locally; nothing served here is trusted on its own.
+    // The service identity: the pool public key and which wallet it came
+    // from. Clients pin depinpoolpkey on first use; nothing served here is
+    // trusted on its own.
     obj.push_back(Pair("protocol", DEPIN_RPC_PROTOCOL_VERSION));
     CKey poolKey;
     CPubKey poolPubKey;
     if (GetDepinPoolKey(poolKey, poolPubKey)) {
         obj.push_back(Pair("depinpoolpkey", HexStr(poolPubKey.begin(), poolPubKey.end())));
         obj.push_back(Pair("depinpoolkeyaddress", EncodeDestination(poolPubKey.GetID())));
-        obj.push_back(Pair("depinpoolkeyowner", GetDepinPoolKeyOwner()));
-        obj.push_back(Pair("depinpoolkeysig", GetDepinPoolKeySig()));
         obj.push_back(Pair("depinwallet", GetDepinPoolKeyWalletName()));
     }
 
@@ -823,7 +820,9 @@ UniValue depinchallenge(const JSONRPCRequest& request)
                 "with signmessage (or depinsignchallenge on a node holding the key) and pass\n"
                 "the nonce and the signature to the RPC. A nonce is bound to token, address\n"
                 "and type, is consumed by its first valid use, and expires otherwise. Only a\n"
-                "holder gets one: the access checks run before anything is issued.\n"
+                "holder gets one: the access checks run before anything is issued. Issuance is\n"
+                "limited per address and minute (-depinratelimit). Authenticated replies carry a\n"
+                "next_challenge, so a client that keeps reading needs this call only once.\n"
                 "\nArguments:\n"
                 "1. \"token\"    (string, required) Pool root or a section inside it\n"
                 "2. \"address\"  (string, required) Holder address (P2PKH with its public key revealed on chain)\n"
@@ -852,6 +851,12 @@ UniValue depinchallenge(const JSONRPCRequest& request)
         if (!ParseDepinChallengeType(request.params[2].get_str(), type)) {
             throw JSONRPCError(RPC_INVALID_PARAMETER, "type must be \"receive\" or \"admin\"");
         }
+    }
+
+    if (!g_depinRateLimiter.Allow("challenge|" + address, GetTime())) {
+        throw JSONRPCError(RPC_MISC_ERROR,
+                           strprintf("Rate limited: more than %u challenges for this address in the last minute",
+                                     g_depinRateLimiter.GetLimit()));
     }
 
     std::string nonce;
@@ -1102,6 +1107,12 @@ UniValue depinsubmitmsg(const JSONRPCRequest& request)
                                    wrappedSender, chatMsg.senderAddress));
     }
 
+    if (!g_depinRateLimiter.Allow("submit|" + chatMsg.senderAddress, GetTime())) {
+        throw JSONRPCError(RPC_MISC_ERROR,
+                           strprintf("Rate limited: more than %u messages from this address in the last minute",
+                                     g_depinRateLimiter.GetLimit()));
+    }
+
     // The reply is encrypted for the sender, so the sender must have revealed
     // its public key (the signature check below needs it anyway). Refused
     // here, before anything is verified or stored: there is no plaintext
@@ -1169,8 +1180,9 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
                 "5. timestamp    (numeric, optional) Unix time. Return only messages with timestamp >= (timestamp-1 if timestamp>0)\n"
                 "6. \"after_hash\" (string, optional) Hash of last received message for pagination. Empty \"\" starts from beginning\n"
                 "7. limit        (numeric, optional) Maximum messages to return. 0 or omitted = no limit (return all)\n"
-                "\nResult (without pagination - backward compatible):\n"
-                "[\n"
+                "\nResult (decrypted content of \"encrypted\"):\n"
+                "{\n"
+                "  \"messages\": [                   (array) Messages, oldest first\n"
                 "  {\n"
                 "    \"hash\": \"...\",                 (string) Message hash\n"
                 "    \"token\": \"...\",                (string) Token\n"
@@ -1181,17 +1193,14 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
                 "    \"signature_hex\": \"...\"         (string) Message signature (hex)\n"
                 "  },\n"
                 "  ...\n"
-                "]\n"
-                "\nResult (with pagination - when limit > 0):\n"
-                "{\n"
-                "  \"messages\": [...],               (array) Array of message objects (same structure as above)\n"
-                "  \"has_more\": true|false           (boolean) Whether more messages are available\n"
+                "  ],\n"
+                "  \"has_more\": true|false,         (boolean) More messages available (only meaningful with limit)\n"
+                "  \"next_challenge\": \"hex\",       (string) Next nonce for this token and address, valid " + std::to_string(DEPIN_CHAINED_CHALLENGE_TIMEOUT) + " s:\n"
+                "                                   sign it for the next call instead of calling depinchallenge\n"
+                "  \"next_expires_in\": n            (numeric) Seconds the next challenge lives\n"
                 "}\n"
-                "\nNote: Both message types are filtered by recipientKeys membership; the sender always sees their own messages.\n"
-                "\nResult (privacy layer active):\n"
-                "{\n"
-                "  \"encrypted\": \"hex_blob\"        (string) Full JSON response encrypted with ECIES\n"
-                "}\n"
+                "\nThe reply itself is {\"encrypted\": hex, \"poolsig\": base64}: the object above is\n"
+                "what \"encrypted\" decrypts to with the address's key.\n"
                 "\nExamples:\n"
                 + HelpExampleCli("depinreceivemsg", "\"&TOKEN\" \"NXaddress\" \"<challenge>\" \"<signature>\"")
                 + HelpExampleCli("depinreceivemsg", "\"&TOKEN\" \"NXaddress\" \"<challenge>\" \"<signature>\" 0 \"\" 5")
@@ -1335,40 +1344,49 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
             strprintf("after_hash '%s' not found in available messages", afterHash));
     }
 
-    // Build response object
-    UniValue result;
-
-    // If limit was used, wrap in object with metadata
+    // Build the response: always an object, so the chained challenge has a
+    // place to ride. has_more is only meaningful with a limit.
+    UniValue result(UniValue::VOBJ);
+    result.push_back(Pair("messages", resultArray));
+    bool hasMore = false;
     if (limit > 0) {
-        result = UniValue(UniValue::VOBJ);
-        result.push_back(Pair("messages", resultArray));
-
-        // Calculate if there are more messages available
-        bool hasMore = false;
-        if (resultArray.size() == (size_t)limit) {
-            // We filled the limit, check if there's at least one more
-            size_t processed = 0;
-            bool countingAfterAnchor = afterHash.empty();
-            for (const CDepinMessage& msg : messages) {
-                if (msg.timestamp < fromTimestamp) continue;
-                if (!countingAfterAnchor) {
-                    if (msg.GetHash() == afterHashObj) {
-                        countingAfterAnchor = true;
+            // Calculate if there are more messages available
+            bool hasMore = false;
+            if (resultArray.size() == (size_t)limit) {
+                // We filled the limit, check if there's at least one more
+                size_t processed = 0;
+                bool countingAfterAnchor = afterHash.empty();
+                for (const CDepinMessage& msg : messages) {
+                    if (msg.timestamp < fromTimestamp) continue;
+                    if (!countingAfterAnchor) {
+                        if (msg.GetHash() == afterHashObj) {
+                            countingAfterAnchor = true;
+                        }
+                        continue;
                     }
-                    continue;
-                }
-                processed++;
-                if (processed > (size_t)limit) {
-                    hasMore = true;
-                    break;
+                    processed++;
+                    if (processed > (size_t)limit) {
+                        hasMore = true;
+                        break;
+                    }
                 }
             }
-        }
+    }
+    result.push_back(Pair("has_more", hasMore));
 
-        result.push_back(Pair("has_more", hasMore));
-    } else {
-        // No limit specified, return array directly (backward compatible)
-        result = resultArray;
+    // Nonce chaining: the next challenge for exactly these bindings travels
+    // inside the encrypted reply, with a longer life, so a client that keeps
+    // reading never calls depinchallenge again -- and still signs every
+    // request. Access was re-validated by CheckDepinChallengeAuth above.
+    {
+        std::string nextNonce;
+        std::string chainError;
+        nextNonce = g_depinChallenges.Issue(token, address, DepinChallengeType::RECEIVE, chainError,
+                                            DEPIN_CHAINED_CHALLENGE_TIMEOUT);
+        if (!nextNonce.empty()) {
+            result.push_back(Pair("next_challenge", nextNonce));
+            result.push_back(Pair("next_expires_in", (int)DEPIN_CHAINED_CHALLENGE_TIMEOUT));
+        }
     }
 
     // Transport layer: the whole result encrypted for the address's revealed
@@ -2088,6 +2106,16 @@ UniValue depinlistsections(const JSONRPCRequest& request)
     UniValue wrapped(UniValue::VOBJ);
     wrapped.push_back(Pair("sections", result));
     if (!address.empty()) {
+        // Nonce chaining, as in depinreceivemsg: the next challenge for
+        // (scope, address) rides inside the encrypted reply.
+        std::string nextNonce;
+        std::string chainError;
+        nextNonce = g_depinChallenges.Issue(scope, address, DepinChallengeType::RECEIVE, chainError,
+                                            DEPIN_CHAINED_CHALLENGE_TIMEOUT);
+        if (!nextNonce.empty()) {
+            wrapped.push_back(Pair("next_challenge", nextNonce));
+            wrapped.push_back(Pair("next_expires_in", (int)DEPIN_CHAINED_CHALLENGE_TIMEOUT));
+        }
         return FinishDepinResponse(wrapped, "depinlistsections", scope, address, challenge, &clientPubKey);
     }
     return FinishDepinResponse(wrapped, "depinlistsections", pDepinMsgPool->GetActiveToken(), "", "", nullptr);

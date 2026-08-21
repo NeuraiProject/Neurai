@@ -34,6 +34,7 @@
 #include "assets/restricteddb.h"
 #include "base58.h"
 #include "chainparams.h"
+#include "depinchallenge.h"
 #include "depinecies.h"
 #include "depinpoolkey.h"
 #include "hash.h"
@@ -99,13 +100,17 @@ struct DepinSectionsSetup : public TestingSetup {
         // Every DePIN response is signed with the pool key and depinsubmitmsg
         // only accepts envelopes for it.
         poolKey.MakeNewKey(true);
-        SetDepinPoolKey(poolKey, "", "", "test");
+        SetDepinPoolKey(poolKey, "test");
+        g_depinRateLimiter.Clear();
+        g_depinRateLimiter.SetLimit(DEFAULT_DEPIN_RATE_LIMIT);
 
         gDepinAncestorRecipientsStats.Reset();
     }
 
     ~DepinSectionsSetup()
     {
+        g_depinRateLimiter.Clear();
+        g_depinRateLimiter.SetLimit(DEFAULT_DEPIN_RATE_LIMIT);
         ClearDepinPoolKey();
         delete prestricteddb;
         delete passetsCache;
@@ -747,6 +752,34 @@ BOOST_AUTO_TEST_CASE(depinsubmitmsg_accepts_section)
     foreignParams.push_back(WrapForPool(sender.address, foreign));
     BOOST_CHECK_THROW(CallDepinRPC("depinsubmitmsg", foreignParams), UniValue);
     BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessageCount(), 1U);
+}
+
+// (15c) Submissions are limited per sender and minute; the limit applies
+// before the signature is even checked, and other senders are unaffected.
+BOOST_AUTO_TEST_CASE(depinsubmitmsg_is_rate_limited_per_sender)
+{
+    ScopedInitializedPool pool(ROOT);
+    g_depinRateLimiter.SetLimit(2);
+
+    const Holder sender = NewHolder(true);
+    const Holder other = NewHolder(true);
+    const Holder audience = NewHolder(false);
+    SetBalance(SECTION_A, sender.address, 10);
+    SetBalance(SECTION_A, other.address, 10);
+
+    auto submit = [&](const Holder& from, const std::string& text) {
+        CDepinMessage msg = MakeEciesMessage(SECTION_A, from, {audience}, text);
+        SignMessageWithKey(msg, from.key);
+        UniValue params(UniValue::VARR);
+        params.push_back(WrapForPool(from.address, msg));
+        return CallDepinRPC("depinsubmitmsg", params);
+    };
+    submit(sender, "uno");
+    submit(sender, "dos");
+    BOOST_CHECK_THROW(submit(sender, "tres"), UniValue);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessageCount(), 2U);
+    submit(other, "otro");
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessageCount(), 3U);
 }
 
 // (15b) A sender without a revealed public key is refused with

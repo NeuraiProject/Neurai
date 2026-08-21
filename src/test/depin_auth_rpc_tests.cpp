@@ -77,8 +77,10 @@ struct DepinAuthRpcSetup : public TestingSetup {
         prestricteddb = new CRestrictedDB(1 << 20, true, true);
 
         poolKey.MakeNewKey(true);
-        SetDepinPoolKey(poolKey, "", "", "test");
+        SetDepinPoolKey(poolKey, "test");
         g_depinChallenges.Clear();
+        g_depinRateLimiter.Clear();
+        g_depinRateLimiter.SetLimit(DEFAULT_DEPIN_RATE_LIMIT);
 
         for (const std::string& name : {ROOT, SECTION_A, SECTION_B}) {
             CNewAsset asset(name, 1000 * COIN, DEPIN_ASSET_UNITS, 0, 0, "");
@@ -94,8 +96,11 @@ struct DepinAuthRpcSetup : public TestingSetup {
 
     ~DepinAuthRpcSetup()
     {
+        SetMockTime(0);
         pDepinMsgPool = std::move(prevPool);
         g_depinChallenges.Clear();
+        g_depinRateLimiter.Clear();
+        g_depinRateLimiter.SetLimit(DEFAULT_DEPIN_RATE_LIMIT);
         ClearDepinPoolKey();
         delete prestricteddb;
         delete passetsCache;
@@ -237,7 +242,10 @@ BOOST_AUTO_TEST_CASE(receivemsg_with_valid_auth)
 
     const UniValue response = Call("depinreceivemsg", Params({SECTION_A, holder.address, nonce, sig}));
     BOOST_CHECK(PoolSigVerifies(response, "depinreceivemsg", SECTION_A, holder.address, nonce));
-    const UniValue messages = Open(response, holder);
+    const UniValue opened = Open(response, holder);
+    BOOST_REQUIRE(opened.isObject());
+    BOOST_CHECK_EQUAL(opened["has_more"].get_bool(), false);
+    const UniValue messages = opened["messages"];
     BOOST_REQUIRE(messages.isArray());
     BOOST_REQUIRE_EQUAL(messages.size(), 1U);
     BOOST_CHECK_EQUAL(messages[0]["sender"].get_str(), sender.address);
@@ -254,7 +262,77 @@ BOOST_AUTO_TEST_CASE(receivemsg_with_valid_auth)
     BOOST_CHECK(Throws("depinreceivemsg", Params({SECTION_A, holder.address, nonce2, "garbage"})));
     const UniValue again = Call("depinreceivemsg", Params({SECTION_A, holder.address, nonce2,
                                                            Sign(holder, DepinChallengeType::RECEIVE, SECTION_A, nonce2)}));
-    BOOST_CHECK_EQUAL(Open(again, holder).size(), 1U);
+    BOOST_CHECK_EQUAL(Open(again, holder)["messages"].size(), 1U);
+}
+
+// Nonce chaining: every authenticated reply carries the next challenge for
+// the same bindings, with a longer life, so a client that keeps reading calls
+// depinchallenge once and still signs every request. A chained nonce is a
+// normal nonce: single-use, bound, and useless for other bindings.
+BOOST_AUTO_TEST_CASE(replies_chain_the_next_challenge)
+{
+    const Holder holder = NewHolder(true, SECTION_A, 10);
+    const Holder sender = NewHolder(true, SECTION_A, 10);
+    AddMessage(SECTION_A, sender, {holder}, "uno");
+
+    const std::string first = Challenge(SECTION_A, holder, DepinChallengeType::RECEIVE);
+    const UniValue r1 = Open(Call("depinreceivemsg", Params({SECTION_A, holder.address, first,
+                                                             Sign(holder, DepinChallengeType::RECEIVE, SECTION_A, first)})), holder);
+    BOOST_REQUIRE(r1.exists("next_challenge"));
+    const std::string next = r1["next_challenge"].get_str();
+    BOOST_CHECK_EQUAL(next.size(), 64U);
+    BOOST_CHECK_EQUAL(r1["next_expires_in"].get_int(), (int)DEPIN_CHAINED_CHALLENGE_TIMEOUT);
+
+    // Not for another token; not after the window; usable within it.
+    BOOST_CHECK(Throws("depinreceivemsg", Params({ROOT, holder.address, next, Sign(holder, DepinChallengeType::RECEIVE, ROOT, next)})));
+    SetMockTime(GetTime() + DEPIN_CHAINED_CHALLENGE_TIMEOUT - 1);
+    const UniValue r2 = Open(Call("depinreceivemsg", Params({SECTION_A, holder.address, next,
+                                                             Sign(holder, DepinChallengeType::RECEIVE, SECTION_A, next)})), holder);
+    BOOST_CHECK_EQUAL(r2["messages"].size(), 1U);
+    BOOST_REQUIRE(r2.exists("next_challenge"));
+    const std::string next2 = r2["next_challenge"].get_str();
+    BOOST_CHECK_NE(next2, next);
+    // Consumed by its use.
+    BOOST_CHECK(Throws("depinreceivemsg", Params({SECTION_A, holder.address, next, Sign(holder, DepinChallengeType::RECEIVE, SECTION_A, next)})));
+
+    // depinlistsections chains too, and its nonce serves depinreceivemsg as
+    // well: same bindings (scope, address, receive).
+    const UniValue l = Open(Call("depinlistsections", Params({holder.address, SECTION_A, next2,
+                                                              Sign(holder, DepinChallengeType::RECEIVE, SECTION_A, next2)})), holder);
+    BOOST_REQUIRE(l.exists("next_challenge"));
+    const std::string next3 = l["next_challenge"].get_str();
+    BOOST_CHECK_EQUAL(Open(Call("depinreceivemsg", Params({SECTION_A, holder.address, next3,
+                                                          Sign(holder, DepinChallengeType::RECEIVE, SECTION_A, next3)})), holder)["messages"].size(), 1U);
+
+    // A chained nonce that is never used expires like any other.
+    const std::string stale = Challenge(SECTION_A, holder, DepinChallengeType::RECEIVE);
+    const UniValue r4 = Open(Call("depinreceivemsg", Params({SECTION_A, holder.address, stale,
+                                                             Sign(holder, DepinChallengeType::RECEIVE, SECTION_A, stale)})), holder);
+    SetMockTime(GetTime() + DEPIN_CHAINED_CHALLENGE_TIMEOUT + 1);
+    const std::string expired = r4["next_challenge"].get_str();
+    BOOST_CHECK(Throws("depinreceivemsg", Params({SECTION_A, holder.address, expired, Sign(holder, DepinChallengeType::RECEIVE, SECTION_A, expired)})));
+}
+
+// Issuance is limited per address and minute; another address is unaffected
+// and the window slides.
+BOOST_AUTO_TEST_CASE(challenge_issuance_is_rate_limited_per_address)
+{
+    g_depinRateLimiter.SetLimit(3);
+    SetMockTime(1700000000);
+    const Holder holder = NewHolder(true, SECTION_A, 10);
+    const Holder other = NewHolder(true, SECTION_A, 10);
+
+    for (int i = 0; i < 3; ++i) Challenge(SECTION_A, holder, DepinChallengeType::RECEIVE);
+    BOOST_CHECK(Throws("depinchallenge", Params({SECTION_A, holder.address})));
+    BOOST_CHECK_EQUAL(g_depinChallenges.CountForAddress(holder.address), 3U);
+    Challenge(SECTION_A, other, DepinChallengeType::RECEIVE);
+
+    SetMockTime(GetTime() + DEPIN_RATE_WINDOW);
+    Challenge(SECTION_A, holder, DepinChallengeType::RECEIVE);
+
+    // Unlimited when configured so.
+    g_depinRateLimiter.SetLimit(0);
+    for (int i = 0; i < 10; ++i) Challenge(SECTION_A, holder, DepinChallengeType::RECEIVE);
 }
 
 // (8) There is no unauthenticated form. The old shapes fail by arity or type
@@ -468,6 +546,7 @@ BOOST_AUTO_TEST_CASE(named_params_with_null_holes)
     const UniValue paged = Open(Call("depinreceivemsg", positional), holder);
     BOOST_REQUIRE(paged.isObject());
     BOOST_CHECK_EQUAL(paged["messages"].size(), 1U);
+    BOOST_CHECK(paged.exists("has_more"));
 
     const std::string nonce2 = Challenge(SECTION_A, holder, DepinChallengeType::RECEIVE);
     const UniValue listing = namedToPositional("depinlistsections",

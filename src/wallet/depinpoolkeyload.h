@@ -32,11 +32,9 @@ CWallet* SelectDepinServiceWallet(const std::string& requestedName, std::string&
 
 /**
  * Startup check + load: the wallet must be HD BIP44, legacy (not PQ) and not
- * encrypted; the derived key must be vouched for by an owner of `token`
- * through `ownerSignatureBase64` (-depinpoolkeysig). On success the key is
- * installed with SetDepinPoolKey(). Every failure names the exact condition.
+ * encrypted. On success the derived key is installed with SetDepinPoolKey().
+ * Every failure names the exact condition.
  */
-bool LoadDepinPoolKey(CWallet* pwallet, const std::string& token,
-                      const std::string& ownerSignatureBase64, std::string& error);
+bool LoadDepinPoolKey(CWallet* pwallet, std::string& error);
 
 #endif // NEURAI_WALLET_DEPINPOOLKEYLOAD_H

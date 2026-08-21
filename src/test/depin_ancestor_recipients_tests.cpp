@@ -91,7 +91,7 @@ struct DepinAncestorSetup : public TestingSetup {
 
         // Every DePIN RPC response is signed with the pool key.
         poolKey.MakeNewKey(true);
-        SetDepinPoolKey(poolKey, "", "", "test");
+        SetDepinPoolKey(poolKey, "test");
 
         gDepinAncestorRecipientsStats.Reset();
     }

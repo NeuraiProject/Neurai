@@ -47,8 +47,9 @@ Each service node derives one secp256k1 *pool key* from a dedicated wallet.
 It does two things: it opens the envelope around submitted messages, and it
 signs every DePIN reply.
 
-`depingetmsginfo` publishes the identity of the service. Like every reply
-that is not bound to an address, it is a signed plain body:
+`depingetmsginfo` publishes the identity of the service: the pool public
+key. Like every reply that is not bound to an address, it is a signed plain
+body:
 
 ```json
 { "body": "7b22656e61626c6564223a747275652c...", "poolsig": "IMn3..." }
@@ -64,31 +65,23 @@ that is not bound to an address, it is a signed plain body:
   "protocol": 2,
   "depinpoolpkey": "02ab...",
   "depinpoolkeyaddress": "N...",
-  "depinpoolkeyowner": "N...",
-  "depinpoolkeysig": "H1a2...",
   "depinwallet": "wallet.dat"
 }
 ```
 
-`depinpoolkeysig` is the token owner's standard message signature
-(`signmessage`) over `DEPIN-POOLKEY|<token>|<pubkeyhex>`, made with the
-address that holds the owner token (`&NEWS!`). The node verified it at
-startup; that protects the node from publishing a broken signature, it does
-not protect you.
+**Pin the pool key.** Everything `depingetmsginfo` returns arrives through
+the proxy you are about to talk to, and a hostile proxy could replace it on
+first contact. A client pins `depinpoolpkey` the first time it talks to a
+service (trust on first use), stores it with the service's identity, and
+treats a later change as an alert, never as something to accept silently. A
+pin shipped with the application or published by the token's project removes
+even the first-contact exposure. What a wrong pin could cost is bounded:
+message content is encrypted per recipient and never readable by the node or
+by anything in between; the risks are metadata of the submit envelope and
+replies being withheld or trimmed, which is exactly what `poolsig` against a
+correct pin prevents.
 
-**Anchor the pool key out of band.** Everything `depingetmsginfo` returns
-arrives through the proxy you are about to talk to, and a hostile proxy can
-replace all of it. A client therefore:
-
-1. verifies `depinpoolkeysig` **locally** (compact-signature recovery, the
-   same computation as `verifymessage`) — never by asking the proxy to verify
-   it;
-2. takes the owner address from a source that is not the proxy: its own node
-   (`listaddressesbyasset "&NEWS!"`), an anchor shipped with the application
-   or published by the token's project, or, as a last resort, pins
-   `depinpoolpkey` on first use and alerts if it ever changes.
-
-Once the pool key is anchored, every reply can be checked. `poolsig` is the
+Once the pool key is pinned, every reply can be checked. `poolsig` is the
 pool key's compact signature (base64) over the canonical preimage
 
 ```
@@ -145,7 +138,17 @@ challenge is single-use: the first valid call consumes it. A call that fails
 — wrong signature, a nonce issued for other bindings, an address that lost
 access in between — does **not** consume it, so nobody can burn your
 challenge by guessing. The node keeps at most 4 live challenges per address
-(a fifth evicts the oldest) and 10 000 in total.
+(a fifth evicts the oldest) and 10 000 in total, and issues at most
+`-depinratelimit` (default 20) per address and minute.
+
+**Chained challenges.** Every authenticated reply (`depinreceivemsg`,
+`depinlistsections` in address mode) carries, inside its encrypted body,
+`next_challenge`: a fresh nonce for the same token and address, valid for
+`next_expires_in` seconds (300). Sign it for the next call exactly like one
+from `depinchallenge`. A client that keeps reading within that window calls
+`depinchallenge` once and never again — the effect of a session without one:
+every request is still individually signed, every nonce is still single-use,
+and nothing a proxy sees lets it act on the holder's behalf.
 
 On a node that holds the address's key, `depinsignchallenge "address" "token"
 "challenge" ("type")` produces the signature and `depindecrypt "address"
@@ -186,8 +189,8 @@ Example JSON-RPC request:
 
 The reply is always `{ "encrypted": "<hex>", "poolsig": "<base64>" }`. Its
 `poolsig` preimage uses `method = depinreceivemsg`, the request's `token`,
-`address` and `challenge`, and the `encrypted` hex as body. Decrypted, with
-`limit > 0`:
+`address` and `challenge`, and the `encrypted` hex as body. Decrypted, it is
+always an object:
 
 ```json
 {
@@ -202,14 +205,16 @@ The reply is always `{ "encrypted": "<hex>", "poolsig": "<base64>" }`. Its
       "signature_hex": "..."
     }
   ],
-  "has_more": false
+  "has_more": false,
+  "next_challenge": "<64 hex>",
+  "next_expires_in": 300
 }
 ```
 
-Without pagination, the decrypted result is the `messages` array directly.
-Messages are ordered from oldest to newest. Save the last returned `hash` and
-use it as `after_hash` for the next page. Supplying a hash that is not in the
-address's visible result is an error.
+`has_more` is only meaningful with `limit > 0`. Messages are ordered from
+oldest to newest. Save the last returned `hash` and use it as `after_hash`
+for the next page; sign `next_challenge` for that call. Supplying a hash that
+is not in the address's visible result is an error.
 
 The challenge proves control of the address; what the address can actually
 read is still fixed cryptographically by the recipient list embedded in each
@@ -302,6 +307,8 @@ The client prepares the complete `CDepinMessage` itself:
    access to the token, and stores the message.
 
 The reply is encrypted for the sender and signed. There is no bare-hex form.
+Submissions are limited per sender and minute (`-depinratelimit`, default
+20); over the limit the node answers an error without touching the message.
 
 ## `depinlistsections`
 
@@ -316,8 +323,9 @@ names are public chain data.
 With the four arguments — and only with all four — it adds `access` and,
 where there is access, the `messages` counter, limited to the subtree of
 `scope`; the challenge is a `receive` challenge issued for `scope`, and the
-reply is encrypted for the address. A holder of a single section therefore
-sees its own tab, not its siblings; a holder of the root sees everything.
+reply is encrypted for the address and carries `next_challenge` like
+`depinreceivemsg`. A holder of a single section therefore sees its own tab,
+not its siblings; a holder of the root sees everything.
 
 ## `depinclearmsg` (owners)
 
@@ -353,5 +361,10 @@ before the challenge is consumed, so a typo does not cost a challenge.
   fails rather than silently dropping recipients when the set exceeds it.
 - A holder without a revealed public key cannot be included in ECIES group
   encryption and cannot authenticate; both are expected and reported.
+- Abuse control is split between the node (per address and minute: challenges
+  issued and messages accepted) and the RPC proxy in front of it (per origin
+  IP and minute, with a temporary block on excess, answered as HTTP 429 with
+  `Retry-After`). A client that receives 429 should back off for the indicated
+  time rather than retry.
 - Only P2PKH (secp256k1) addresses can authenticate; the pool key, the
   envelope and `poolsig` are secp256k1 as well.

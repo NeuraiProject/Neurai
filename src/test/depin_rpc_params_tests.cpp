@@ -170,7 +170,7 @@ struct DepinRpcParamsSetup : public TestingSetup {
         RevealPubKey(ownerAddress, ownerKey.GetPubKey());
         // Every DePIN response is signed with the pool key.
         poolKey.MakeNewKey(true);
-        SetDepinPoolKey(poolKey, "", "", "test");
+        SetDepinPoolKey(poolKey, "test");
         g_depinChallenges.Clear();
 
         prevPool = std::move(pDepinMsgPool);

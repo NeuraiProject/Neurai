@@ -97,7 +97,7 @@ struct DepinSectionsWalletSetup : public TestingSetup {
 
         // Every DePIN response is signed with the pool key.
         poolKey.MakeNewKey(true);
-        SetDepinPoolKey(poolKey, "", "", "test");
+        SetDepinPoolKey(poolKey, "test");
     }
 
     ~DepinSectionsWalletSetup()

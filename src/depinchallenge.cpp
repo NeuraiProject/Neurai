@@ -19,6 +19,65 @@
 #include <cctype>
 
 CDepinChallengeManager g_depinChallenges;
+CDepinRateLimiter g_depinRateLimiter;
+
+// ---------------------------------------------------------------------------
+// CDepinRateLimiter
+// ---------------------------------------------------------------------------
+
+void CDepinRateLimiter::SetLimit(unsigned int perWindow)
+{
+    LOCK(cs_rate);
+    limit = perWindow;
+}
+
+unsigned int CDepinRateLimiter::GetLimit() const
+{
+    LOCK(cs_rate);
+    return limit;
+}
+
+bool CDepinRateLimiter::Allow(const std::string& key, int64_t now)
+{
+    LOCK(cs_rate);
+    if (limit == 0) return true;
+    // Keep the map bounded against callers that invent keys: a full sweep
+    // once it grows, before adding another one.
+    if (mapHits.size() >= 10000 && !mapHits.count(key)) {
+        for (auto it = mapHits.begin(); it != mapHits.end();) {
+            std::deque<int64_t>& hits = it->second;
+            while (!hits.empty() && hits.front() <= now - DEPIN_RATE_WINDOW) hits.pop_front();
+            if (hits.empty()) it = mapHits.erase(it); else ++it;
+        }
+    }
+    std::deque<int64_t>& hits = mapHits[key];
+    while (!hits.empty() && hits.front() <= now - DEPIN_RATE_WINDOW) hits.pop_front();
+    if (hits.size() >= limit) return false;
+    hits.push_back(now);
+    return true;
+}
+
+void CDepinRateLimiter::Prune(int64_t now)
+{
+    LOCK(cs_rate);
+    for (auto it = mapHits.begin(); it != mapHits.end();) {
+        std::deque<int64_t>& hits = it->second;
+        while (!hits.empty() && hits.front() <= now - DEPIN_RATE_WINDOW) hits.pop_front();
+        if (hits.empty()) it = mapHits.erase(it); else ++it;
+    }
+}
+
+void CDepinRateLimiter::Clear()
+{
+    LOCK(cs_rate);
+    mapHits.clear();
+}
+
+size_t CDepinRateLimiter::Size() const
+{
+    LOCK(cs_rate);
+    return mapHits.size();
+}
 
 std::string DepinChallengeTypeName(DepinChallengeType type)
 {
@@ -110,7 +169,8 @@ bool VerifyDepinChallengeSignature(const std::string& address, const std::string
 // ---------------------------------------------------------------------------
 
 std::string CDepinChallengeManager::Issue(const std::string& token, const std::string& address,
-                                          DepinChallengeType type, std::string& error)
+                                          DepinChallengeType type, std::string& error,
+                                          int64_t lifetime)
 {
     if (token.empty() || address.empty()) {
         error = "Token and address are required";
@@ -144,7 +204,7 @@ std::string CDepinChallengeManager::Issue(const std::string& token, const std::s
     challenge.token = token;
     challenge.address = address;
     challenge.type = type;
-    challenge.expiry = now + DEPIN_CHALLENGE_TIMEOUT;
+    challenge.expiry = now + lifetime;
 
     mapChallenges[nonce] = challenge;
     mapNoncesByAddress[address].push_back(nonce);
