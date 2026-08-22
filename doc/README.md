@@ -4,8 +4,10 @@ Neurai — DePIN Messaging (Experimental)
 ## WARNING
 This is an experimental, off-chain messaging system for holders of a DePIN
 asset. It is currently intended for testnet and regtest. See
-[`depinreceivemsg.md`](depinreceivemsg.md) for the stable client-facing
-retrieval and decryption contract.
+[`depin-messaging-protocol.md`](depin-messaging-protocol.md) for the full
+protocol specification (wire formats, cryptography, authentication, test
+vectors) aimed at client and library implementers, and
+[`depinreceivemsg.md`](depinreceivemsg.md) for the RPC-by-RPC client guide.
 
 
 ## DePIN Messaging

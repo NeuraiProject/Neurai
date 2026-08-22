@@ -13,6 +13,11 @@ unsigned reply, no unencrypted reply bound to an address, and no bare-hex
 submit. `depingetmsginfo.protocol` is `2`
 on nodes that implement it.
 
+The byte-exact formats behind this guide — serialization, ECIES, hashes,
+signatures, the authentication preimages — and test vectors are specified in
+[`depin-messaging-protocol.md`](depin-messaging-protocol.md); this document
+covers the RPC surface and its semantics.
+
 DePIN messaging is experimental and off-chain. Token names, token holdings,
 section names, and the hierarchy are public blockchain data. Message content
 is protected by encryption, not by the existence or membership of a channel.
