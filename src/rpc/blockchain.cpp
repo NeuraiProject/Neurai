@@ -7,6 +7,7 @@
 #include "rpc/blockchain.h"
 
 #include "amount.h"
+#include "assets/assets.h"
 #include "base58.h"
 #include "chain.h"
 #include "chainparams.h"
@@ -1424,6 +1425,7 @@ UniValue getblockchaininfo(const JSONRPCRequest& request)
             "{\n"
             "  \"chain\": \"xxxx\",        (string) current network name as defined in BIP70 (main, test, regtest)\n"
             "  \"blocks\": xxxxxx,         (numeric) the current number of blocks processed in the server\n"
+            "  \"asset_marker\": \"xxxx\",  (string) marker required for new asset outputs in the next block (\"rvn\" or \"xna\")\n"
             "  \"headers\": xxxxxx,        (numeric) the current number of headers we have validated\n"
             "  \"bestblockhash\": \"...\", (string) the hash of the currently best block\n"
             "  \"difficulty\": xxxxxx,     (numeric) the current difficulty\n"
@@ -1469,9 +1471,13 @@ UniValue getblockchaininfo(const JSONRPCRequest& request)
 
     LOCK(cs_main);
 
+    const Consensus::Params& consensusParams = GetParams().GetConsensus();
     UniValue obj(UniValue::VOBJ);
     obj.push_back(Pair("chain", GetParams().NetworkIDString()));
     obj.push_back(Pair("blocks",                (int)chainActive.Height()));
+    // Asset transactions enter the mempool for the next block, so expose the
+    // marker required at that candidate height rather than that of the tip.
+    obj.push_back(Pair("asset_marker", IsAssetMarkerNip040Active(chainActive.Height() + 1, consensusParams) ? "xna" : "rvn"));
     obj.push_back(Pair("headers",               pindexBestHeader ? pindexBestHeader->nHeight : -1));
     obj.push_back(Pair("bestblockhash",         chainActive.Tip()->GetBlockHash().GetHex()));
     obj.push_back(Pair("difficulty",            (double)GetDifficulty()));
@@ -1503,7 +1509,6 @@ UniValue getblockchaininfo(const JSONRPCRequest& request)
         }
     }
 
-    const Consensus::Params& consensusParams = GetParams().GetConsensus();
     //CBlockIndex* tip = chainActive.Tip();
 
     UniValue softforks(UniValue::VARR);

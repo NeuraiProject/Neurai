@@ -95,6 +95,7 @@ class Nip040MarkerMigrationTest(NeuraiTestFramework):
     def run_test(self):
         n0, n1 = self.nodes[0], self.nodes[1]
         self.activate_assets()  # height 432
+        assert_equal("rvn", n0.getblockchaininfo()["asset_marker"])
 
         self.log.info("Pre-fork: wallet and RPC emit legacy rvn markers")
         txid = n0.issue("MIGRATE", 1000)[0]
@@ -131,6 +132,9 @@ class Nip040MarkerMigrationTest(NeuraiTestFramework):
         connect_nodes_bi(self.nodes, 0, 1)
         sync_blocks(self.nodes)
         assert_equal(n0.getblockcount(), FORK_HEIGHT - 1)
+        # The next candidate is the fork block, therefore new transactions
+        # already have to use the xna marker.
+        assert_equal("xna", n0.getblockchaininfo()["asset_marker"])
         # connecting H-1 moved the mempool target height to H: the legacy tx
         # can never be mined again and must be gone
         assert legacy_txid not in n0.getrawmempool()
@@ -139,6 +143,7 @@ class Nip040MarkerMigrationTest(NeuraiTestFramework):
         self.log.info("Cross the frontier: wallet switches to xna, legacy inputs migrate on spend")
         n0.generate(1)  # height H
         self.sync_all()
+        assert_equal("xna", n0.getblockchaininfo()["asset_marker"])
         migrate_txid = n0.transfer("MIGRATE", 50, n1.getnewaddress())[0]
         migrate_hex = n0.getrawtransaction(migrate_txid)
         assert self.marker_in_outputs(n0, migrate_hex, XNAT)
@@ -168,6 +173,7 @@ class Nip040MarkerMigrationTest(NeuraiTestFramework):
         fork_block = n0.getblockhash(FORK_HEIGHT - 1)
         n0.invalidateblock(fork_block)  # tip back to H-2, target height H-1: legacy era
         assert_equal(n0.getblockcount(), FORK_HEIGHT - 2)
+        assert_equal("rvn", n0.getblockchaininfo()["asset_marker"])
         assert xna_txid not in n0.getrawmempool()
         # confirmed xna txs from the disconnected blocks must not resurrect
         # into the mempool either — resubmission runs the marker rule
