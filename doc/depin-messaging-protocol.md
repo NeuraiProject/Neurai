@@ -111,6 +111,7 @@ Query RPCs (all public, cacheable, no authentication):
 |---|---|
 | `checkdepinvalidity "asset" "address"` | `has_asset`, `amount`, `valid` (1 = active), `blocked` |
 | `listdepinholders "asset"` | every holder with `valid` |
+| `listdepinaddresses "asset" (count) (start)` | holders with a revealed pubkey: `address, pubkey, valid` |
 | `getpubkey "address"` | `pubkey`, `revealed`, `height`, `txid` |
 | `depingetancestorrecipients "token" (max) ("stop_at")` | active holders with revealed keys over the ancestor chain (§8.3) |
 
