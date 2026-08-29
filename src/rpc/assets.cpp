@@ -1269,6 +1269,8 @@ UniValue listdepinaddresses(const JSONRPCRequest &request)
                 "  {\n"
                 "    \"address\": \"address\",     (string) The Neurai address\n"
                 "    \"pubkey\": \"pubkey_hex\"    (string) The public key in hex format\n"
+                "    \"valid\": 1|0                (numeric) 1 = active/valid, 0 = blocked/revoked "
+                "(only meaningful for DEPIN assets; always 1 for regular assets)\n"
                 "  },\n"
                 "  ...\n"
                 "]\n"
@@ -1320,9 +1322,13 @@ UniValue listdepinaddresses(const JSONRPCRequest &request)
 
         // Check if this address has a revealed pubkey
         if (pblocktree->ReadPubKeyIndex(addressData, pubkeyValue)) {
+            // Blocked (owner freeze OR self-revoke); no-op for non-DEPIN assets
+            bool isBlocked = passets->CheckForDEPINRestriction(asset_name, address);
+
             UniValue entry(UniValue::VOBJ);
             entry.pushKV("address", address);
             entry.pushKV("pubkey", HexStr(pubkeyValue.pubkey.begin(), pubkeyValue.pubkey.end()));
+            entry.pushKV("valid", isBlocked ? 0 : 1);  // 1 = active, 0 = blocked
 
             result.push_back(entry);
         }
