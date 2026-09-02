@@ -337,6 +337,37 @@ CDatabasedAssetData::CDatabasedAssetData()
     this->SetNull();
 }
 
+bool IsDepinTransferStateActive(int nHeight, const Consensus::Params& params)
+{
+    // INT_MAX is the "not scheduled" sentinel: explicitly inactive so a
+    // candidate height of INT_MAX can never flip it on by accident.
+    if (params.nDepinTransferStateHeight == std::numeric_limits<int>::max())
+        return false;
+    return nHeight >= params.nDepinTransferStateHeight;
+}
+
+//! State the transition table restores when the operation that applied
+//! `applied` is undone: undo OPEN -> CLOSED, undo CLOSE -> OPEN, undo SEAL -> CLOSED.
+static DepinTransferState DepinUndoState(DepinTransferState applied)
+{
+    return applied == DepinTransferState::CLOSED ? DepinTransferState::OPEN : DepinTransferState::CLOSED;
+}
+
+//! Persist one DEPIN transfer state, keeping the LRU and the database in the
+//! same step. CLOSED is the default and is stored as absence.
+static bool WriteDepinTransferStateToDatabase(const std::string& assetName, DepinTransferState state)
+{
+    if (state == DepinTransferState::CLOSED) {
+        if (passetsDepinTransferStateCache)
+            passetsDepinTransferStateCache->Erase(assetName);
+        return prestricteddb->EraseDepinTransferState(assetName);
+    }
+
+    if (passetsDepinTransferStateCache)
+        passetsDepinTransferStateCache->Put(assetName, static_cast<int8_t>(state));
+    return prestricteddb->WriteDepinTransferState(assetName, static_cast<int8_t>(state));
+}
+
 bool IsAssetMarkerNip040Active(int nHeight, const Consensus::Params& params)
 {
     // INT_MAX is the "fork not scheduled" sentinel, explicitly inactive even
@@ -1915,6 +1946,50 @@ bool CAssetsCache::RemoveGlobalRestricted(const std::string& assetName, const Re
     return true;
 }
 
+//! Changes Memory Only, this only called when adding a block to the chain.
+//! Overwrites by name: the set is keyed by assetName only, so the last write
+//! for an asset wins (see CAssetCacheDepinState).
+bool CAssetsCache::AddDepinTransferState(const std::string& assetName, const DepinTransferState state)
+{
+    CAssetCacheDepinState newState(assetName, state);
+
+    // We are applying a state change, so a pending undo for this asset is superseded
+    if (setNewDepinStateToRemove.count(newState)) {
+        setNewDepinStateToRemove.erase(newState);
+    }
+
+    // If the set of state changes to add already contains this asset, overwrite it
+    if (setNewDepinStateToAdd.count(newState)) {
+        setNewDepinStateToAdd.erase(newState);
+    }
+
+    setNewDepinStateToAdd.insert(newState);
+
+    return true;
+}
+
+//! Changes Memory Only, this is only called when undoing a block from the chain.
+//! `state` is the state the disconnected operation had applied; the state to
+//! restore follows from the transition table (DepinUndoState).
+bool CAssetsCache::RemoveDepinTransferState(const std::string& assetName, const DepinTransferState state)
+{
+    CAssetCacheDepinState undoState(assetName, state);
+
+    // We are undoing a state change, so a pending addition for this asset is superseded
+    if (setNewDepinStateToAdd.count(undoState)) {
+        setNewDepinStateToAdd.erase(undoState);
+    }
+
+    // If the set of state changes to undo already contains this asset, overwrite it
+    if (setNewDepinStateToRemove.count(undoState)) {
+        setNewDepinStateToRemove.erase(undoState);
+    }
+
+    setNewDepinStateToRemove.insert(undoState);
+
+    return true;
+}
+
 //! Changes Memory Only
 bool CAssetsCache::AddRestrictedVerifier(const std::string& assetName, const std::string& verifier)
 {
@@ -2413,6 +2488,32 @@ bool CAssetsCache::DumpCacheToDatabase()
             }
         }
 
+        // Apply the new DEPIN transfer states. The LRU is updated in the same
+        // step as the database so no LRU entry can ever contradict it.
+        for (auto newDepinState : setNewDepinStateToAdd) {
+            if (!WriteDepinTransferStateToDatabase(newDepinState.assetName, newDepinState.state)) {
+                dirty = true;
+                message = "_Failed writing DEPIN transfer state to database";
+            }
+
+            if (dirty) {
+                return error("%s : %s", __func__, message);
+            }
+        }
+
+        // Undo DEPIN transfer state changes: write the state the transition
+        // table restores (undo OPEN -> CLOSED, undo CLOSE -> OPEN, undo SEAL -> CLOSED)
+        for (auto undoDepinState : setNewDepinStateToRemove) {
+            if (!WriteDepinTransferStateToDatabase(undoDepinState.assetName, DepinUndoState(undoDepinState.state))) {
+                dirty = true;
+                message = "_Failed undoing a DEPIN transfer state change in database";
+            }
+
+            if (dirty) {
+                return error("%s : %s", __func__, message);
+            }
+        }
+
         // Add new DEPIN self-restriction commands
         for (const auto& selfRestriction : setNewSelfRestrictionToAdd) {
             if (selfRestriction.isSelfRevoke) {
@@ -2673,6 +2774,30 @@ bool CAssetsCache::Flush()
             passets->setNewRestrictedGlobalToRemove.insert(item);
         }
 
+        for(auto &item : setNewDepinStateToAdd) {
+            if (passets->setNewDepinStateToRemove.count(item)) {
+                passets->setNewDepinStateToRemove.erase(item);
+            }
+
+            if (passets->setNewDepinStateToAdd.count(item)) {
+                passets->setNewDepinStateToAdd.erase(item);
+            }
+
+            passets->setNewDepinStateToAdd.insert(item);
+        }
+
+        for(auto &item : setNewDepinStateToRemove) {
+            if (passets->setNewDepinStateToAdd.count(item)) {
+                passets->setNewDepinStateToAdd.erase(item);
+            }
+
+            if (passets->setNewDepinStateToRemove.count(item)) {
+                passets->setNewDepinStateToRemove.erase(item);
+            }
+
+            passets->setNewDepinStateToRemove.insert(item);
+        }
+
         for (auto &item : setNewRestrictedVerifierToAdd) {
             if (passets->setNewRestrictedVerifierToRemove.count(item)) {
                 passets->setNewRestrictedVerifierToRemove.erase(item);
@@ -2807,6 +2932,8 @@ size_t CAssetsCache::GetCacheSizeV2() const
     size += memusage::DynamicUsage(setNewAssetsToRemove);
     size += memusage::DynamicUsage(setNewReissueToAdd);
     size += memusage::DynamicUsage(setNewReissueToRemove);
+    size += memusage::DynamicUsage(setNewDepinStateToAdd);
+    size += memusage::DynamicUsage(setNewDepinStateToRemove);
 
     return size;
 }
@@ -3339,6 +3466,109 @@ bool TxSpendsDEPINOwnerTokenFromAddress(const CTransaction& tx, const CCoinsView
     }
 
     return false;
+}
+
+namespace {
+
+// Cheap pre-filter: the regex-backed IsAssetNameADEPIN only runs on names
+// that can be DEPIN at all.
+inline bool MaybeDepinName(const std::string& name)
+{
+    return !name.empty() && name.front() == DEPIN_CHAR;
+}
+
+// "&X!" -> "&X" when `name` is the owner token of a DEPIN asset; empty otherwise.
+std::string DepinBaseOfOwnerToken(const std::string& name)
+{
+    if (!MaybeDepinName(name) || !IsAssetNameAnOwner(name))
+        return "";
+    const std::string base = name.substr(0, name.size() - 1);
+    return IsAssetNameADEPIN(base) ? base : "";
+}
+
+} // namespace
+
+void BuildDepinTxContext(const CTransaction& tx, const CCoinsViewCache& inputs, CAssetsCache* assetCache,
+                         std::map<std::string, DepinTxContext>& mapDepin)
+{
+    // --- Outputs: transfers of &X, transfers of &X!, per-address null data of &X
+    for (const auto& txout : tx.vout) {
+        if (txout.scriptPubKey.IsNullAssetTxDataScript()) {
+            CNullAssetTxData nullData;
+            std::string nullAddress;
+            if (AssetNullDataFromScript(txout.scriptPubKey, nullData, nullAddress) &&
+                MaybeDepinName(nullData.asset_name) && IsAssetNameADEPIN(nullData.asset_name)) {
+                mapDepin[nullData.asset_name].hasNullData = true;
+            }
+            continue;
+        }
+
+        int nType = 0;
+        bool fIsOwner = false;
+        if (!txout.scriptPubKey.IsAssetScript(nType, fIsOwner))
+            continue;
+        if (nType != TX_TRANSFER_ASSET)
+            continue;
+
+        CAssetTransfer transfer;
+        std::string address;
+        if (!TransferAssetFromScript(txout.scriptPubKey, transfer, address))
+            continue;
+        if (!MaybeDepinName(transfer.strName))
+            continue;
+
+        const std::string ownerBase = DepinBaseOfOwnerToken(transfer.strName);
+        if (!ownerBase.empty()) {
+            mapDepin[ownerBase].transfersOwnerToken = true;
+        } else if (IsAssetNameADEPIN(transfer.strName)) {
+            mapDepin[transfer.strName].transfersAsset = true;
+        }
+    }
+
+    // --- Inputs: &X and &X! in either shape (issuance output or transfer output)
+    for (const auto& txin : tx.vin) {
+        const Coin& coin = inputs.AccessCoin(txin.prevout);
+        if (coin.IsSpent())
+            continue;
+
+        int nType = 0;
+        bool fIsOwner = false;
+        if (!coin.out.scriptPubKey.IsAssetScript(nType, fIsOwner))
+            continue;
+
+        CAssetOutputEntry entry;
+        if (!GetAssetData(coin.out.scriptPubKey, entry))
+            continue;
+        if (!MaybeDepinName(entry.assetName))
+            continue;
+
+        const std::string ownerBase = DepinBaseOfOwnerToken(entry.assetName);
+        if (!ownerBase.empty()) {
+            mapDepin[ownerBase].spendsOwnerToken = true;
+        } else if (IsAssetNameADEPIN(entry.assetName)) {
+            mapDepin[entry.assetName].spendsAsset = true;
+        }
+    }
+
+    // --- State snapshot at the connected tip, one read per asset
+    if (assetCache) {
+        for (auto& item : mapDepin) {
+            item.second.state = assetCache->GetDepinTransferState(item.first, true);
+        }
+    }
+}
+
+void GetDepinStateOperations(const CTransaction& tx, std::set<std::string>& setAssets)
+{
+    for (const auto& txout : tx.vout) {
+        if (!txout.scriptPubKey.IsNullGlobalRestrictionAssetTxDataScript())
+            continue;
+        CNullAssetTxData data;
+        if (!GlobalAssetNullDataFromScript(txout.scriptPubKey, data))
+            continue;
+        if (MaybeDepinName(data.asset_name) && IsAssetNameADEPIN(data.asset_name))
+            setAssets.insert(data.asset_name);
+    }
 }
 
 // Regression instrumentation, not API: counts evaluations so the tests can
@@ -4169,6 +4399,13 @@ bool CreateTransferAssetTransaction(CWallet* pwallet, const CCoinControl& coinCo
 
         std::string ownerAddress;
         if (!GetWalletOwnerTokenAddress(pwallet, ownerTokenName, ownerAddress)) {
+            // Holder transfer: while the asset is OPEN consensus accepts a
+            // transfer of &X without the owner escort, so a wallet that does
+            // not hold &X! can still move the asset. In any other state the
+            // escort is mandatory and only the owner can move it.
+            if (passets->GetDepinTransferState(transfer.first.strName, true) == DepinTransferState::OPEN) {
+                continue;
+            }
             error = std::make_pair(RPC_INVALID_REQUEST, strprintf("Wallet doesn't have owner token for DEPIN asset: %s", transfer.first.strName));
             return false;
         }
@@ -4310,7 +4547,15 @@ bool CreateTransferAssetTransaction(CWallet* pwallet, const CCoinControl& coinCo
         std::string strError = "";
         for (auto dataObject : *nullGlobalRestrictionData) {
 
-            if (!VerifyGlobalRestrictedChange(*passets, dataObject, strError)) {
+            if (IsAssetNameADEPIN(dataObject.asset_name)) {
+                // DEPIN transfer state operation: validated for the block the
+                // transaction would confirm at (tip + 1), the height the
+                // mempool will judge it against
+                if (!VerifyDepinTransferStateChange(*passets, dataObject, chainActive.Height() + 1, strError)) {
+                    error = std::make_pair(RPC_INVALID_REQUEST, strError);
+                    return false;
+                }
+            } else if (!VerifyGlobalRestrictedChange(*passets, dataObject, strError)) {
                 error = std::make_pair(RPC_INVALID_REQUEST, strError);
                 return false;
             }
@@ -4872,6 +5117,67 @@ bool CAssetsCache::CheckForDEPINSelfRestriction(const std::string &assetName, co
     return false;
 }
 
+DepinTransferState CAssetsCache::GetDepinTransferState(const std::string& assetName, bool fSkipTempCache)
+{
+    /** Same snapshot semantics as CheckForGlobalRestriction: with
+     * fSkipTempCache the dirty sets of the cache being built (the block being
+     * connected) are ignored, so a state change and a holder transfer in the
+     * same block are judged against the connected tip regardless of their
+     * order inside the block. The sets of passets, the LRU and the database
+     * are always consulted.
+     **/
+    CAssetCacheDepinState key(assetName, DepinTransferState::CLOSED);
+
+    // Undo entries restore the state the transition table maps to
+    auto setIterator = setNewDepinStateToRemove.find(key);
+    if (!fSkipTempCache && setIterator != setNewDepinStateToRemove.end()) {
+        return DepinUndoState(setIterator->state);
+    }
+
+    setIterator = passets->setNewDepinStateToRemove.find(key);
+    if (setIterator != passets->setNewDepinStateToRemove.end()) {
+        return DepinUndoState(setIterator->state);
+    }
+
+    setIterator = setNewDepinStateToAdd.find(key);
+    if (!fSkipTempCache && setIterator != setNewDepinStateToAdd.end()) {
+        return setIterator->state;
+    }
+
+    setIterator = passets->setNewDepinStateToAdd.find(key);
+    if (setIterator != passets->setNewDepinStateToAdd.end()) {
+        return setIterator->state;
+    }
+
+    // Check the LRU cache, then the database. Absent means CLOSED.
+    if (passetsDepinTransferStateCache) {
+        if (passetsDepinTransferStateCache->Exists(assetName)) {
+            return static_cast<DepinTransferState>(passetsDepinTransferStateCache->Get(assetName));
+        }
+    }
+
+    if (prestricteddb) {
+        int8_t state = 0;
+        if (prestricteddb->ReadDepinTransferState(assetName, state)) {
+            if (passetsDepinTransferStateCache)
+                passetsDepinTransferStateCache->Put(assetName, state);
+            return static_cast<DepinTransferState>(state);
+        }
+    }
+
+    return DepinTransferState::CLOSED;
+}
+
+std::string DepinTransferStateToString(DepinTransferState state)
+{
+    switch (state) {
+        case DepinTransferState::OPEN: return "open";
+        case DepinTransferState::SEALED: return "sealed";
+        case DepinTransferState::CLOSED:
+        default: return "closed";
+    }
+}
+
 void ExtractVerifierStringQualifiers(const std::string& verifier, std::set<std::string>& qualifiers)
 {
     std::string s(verifier);
@@ -5234,7 +5540,58 @@ bool ContextualCheckNullAssetTxOut(const CTxOut& txout, const CTransaction* tx, 
     return true;
 }
 
-bool ContextualCheckGlobalAssetTxOut(const CTxOut& txout, CAssetsCache* assetCache, std::string& strError)
+bool VerifyDepinTransferStateFlag(const int& flag, std::string& strError)
+{
+    if (flag != (int)DepinTransferState::CLOSED && flag != (int)DepinTransferState::OPEN && flag != (int)DepinTransferState::SEALED) {
+        strError = "bad-txns-depin-state-flag-must-be-0-1-or-2";
+        return false;
+    }
+
+    return true;
+}
+
+bool VerifyDepinTransferStateChange(CAssetsCache& cache, const CNullAssetTxData& data, int nCandidateHeight, std::string& strError)
+{
+    if (!VerifyDepinTransferStateFlag(data.flag, strError))
+        return false;
+
+    if (!IsDepinTransferStateActive(nCandidateHeight, GetParams().GetConsensus())) {
+        strError = "bad-txns-depin-state-before-activation";
+        return false;
+    }
+
+    // Judged against the connected tip (fSkipTempCache), never against the
+    // block being built: see GetDepinTransferState
+    const DepinTransferState current = cache.GetDepinTransferState(data.asset_name, true);
+    const DepinTransferState requested = static_cast<DepinTransferState>(data.flag);
+
+    if (current == DepinTransferState::SEALED) {
+        strError = "bad-txns-depin-state-sealed";
+        return false;
+    }
+
+    if (requested == DepinTransferState::OPEN) {
+        if (current == DepinTransferState::OPEN) {
+            strError = "bad-txns-depin-state-already-open";
+            return false;
+        }
+    } else if (requested == DepinTransferState::CLOSED) {
+        if (current == DepinTransferState::CLOSED) {
+            strError = "bad-txns-depin-state-already-closed";
+            return false;
+        }
+    } else if (requested == DepinTransferState::SEALED) {
+        // SEAL is only reachable from CLOSED: an OPEN asset must be closed first
+        if (current != DepinTransferState::CLOSED) {
+            strError = "bad-txns-depin-state-seal-requires-closed";
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool ContextualCheckGlobalAssetTxOut(const CTxOut& txout, CAssetsCache* assetCache, int nCandidateHeight, std::string& strError)
 {
     // Get the data from the script
     CNullAssetTxData data;
@@ -5245,8 +5602,12 @@ bool ContextualCheckGlobalAssetTxOut(const CTxOut& txout, CAssetsCache* assetCac
 
     // Validate the tx data against the cache, and database
     if (assetCache) {
-        if (!VerifyGlobalRestrictedChange(*assetCache, data, strError))
+        if (IsAssetNameADEPIN(data.asset_name)) {
+            if (!VerifyDepinTransferStateChange(*assetCache, data, nCandidateHeight, strError))
+                return false;
+        } else if (!VerifyGlobalRestrictedChange(*assetCache, data, strError)) {
             return false;
+        }
     }
     return true;
 }

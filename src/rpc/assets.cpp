@@ -154,6 +154,91 @@ UniValue UpdateDEPINAddressRestriction(const JSONRPCRequest &request, const int8
     result.push_back(txid);
     return result;
 }
+
+/**
+ * Build and send the DEPIN transfer state operation `flag` (0 = CLOSE,
+ * 1 = OPEN, 2 = SEAL) for request.params[0]: one transfer of the owner token
+ * &X! to the change address (the proof of ownership) plus the global null
+ * data output carrying the flag. Mirrors UpdateGlobalRestrictedAsset.
+ */
+UniValue UpdateDepinTransferState(const JSONRPCRequest &request, const int8_t &flag)
+{
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+
+    ObserveSafeMode();
+    LOCK2(cs_main, pwallet->cs_wallet);
+
+    EnsureWalletIsUnlocked(pwallet);
+
+    std::string assetName = request.params[0].get_str();
+    AssetType assetType;
+    std::string assetError;
+    if (!IsAssetNameValid(assetName, assetType, assetError) || assetType != AssetType::DEPIN) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid DEPIN asset name: ") + assetName + std::string("\nError: ") + assetError);
+    }
+
+    // The next block is the one this transaction would confirm at
+    const int nCandidateHeight = chainActive.Height() + 1;
+    if (!IsDepinTransferStateActive(nCandidateHeight, GetParams().GetConsensus())) {
+        throw JSONRPCError(RPC_INVALID_REQUEST, "DEPIN transfer state operations are not active on this network yet");
+    }
+
+    if (mempool.mapDepinStateChanges.count(assetName)) {
+        throw JSONRPCError(RPC_TRANSACTION_REJECTED, "A transfer state operation for this DEPIN asset is already in the mempool");
+    }
+
+    // Readable error for an invalid transition before building anything
+    std::string strError;
+    CNullAssetTxData stateData(assetName, flag);
+    if (!VerifyDepinTransferStateChange(*passets, stateData, nCandidateHeight, strError)) {
+        throw JSONRPCError(RPC_INVALID_REQUEST, strError);
+    }
+
+    std::string change_address = "";
+    if (request.params.size() > 1) {
+        change_address = request.params[1].get_str();
+        if (!change_address.empty()) {
+            CTxDestination change_dest = DecodeDestination(change_address);
+            if (!IsValidDestination(change_dest)) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Neurai change address: ") + change_address);
+            }
+        }
+    }
+
+    CReserveKey reservekey(pwallet);
+    CWalletTx transaction;
+    CAmount nRequiredFee;
+    CCoinControl ctrl;
+
+    if (change_address.empty()) {
+        CTxDestination change_dest;
+        std::string strFailReason;
+        if (!pwallet->CreateNewChangeAddress(reservekey, change_dest, strFailReason))
+            throw JSONRPCError(RPC_WALLET_ERROR, strFailReason);
+        change_address = EncodeDestination(change_dest);
+    }
+
+    std::pair<int, std::string> error;
+    std::vector<std::pair<CAssetTransfer, std::string>> vTransfers;
+    vTransfers.emplace_back(std::make_pair(CAssetTransfer(assetName + OWNER_TAG, OWNER_ASSET_AMOUNT), change_address));
+
+    std::vector<CNullAssetTxData> vecGlobalAssetData;
+    vecGlobalAssetData.push_back(stateData);
+
+    if (!CreateTransferAssetTransaction(pwallet, ctrl, vTransfers, "", error, transaction, reservekey, nRequiredFee, nullptr, &vecGlobalAssetData))
+        throw JSONRPCError(error.first, error.second);
+
+    std::string txid;
+    if (!SendAssetTransaction(pwallet, transaction, reservekey, error, txid))
+        throw JSONRPCError(error.first, error.second);
+
+    UniValue result(UniValue::VARR);
+    result.push_back(txid);
+    return result;
+}
 }
 
 std::string AssetActivationWarning()
@@ -935,6 +1020,7 @@ UniValue getassetdata(const JSONRPCRequest& request)
                 "  ipfs_hash: (hash), (only if has_ipfs = 1 and that data is a ipfs hash)\n"
                 "  txid_hash: (hash), (only if has_ipfs = 1 and that data is a txid hash)\n"
                 "  verifier_string: (string)\n"
+                "  transfer_state: (string) \"closed\" | \"open\" | \"sealed\" (only for DEPIN assets, names starting with &)\n"
                 "}\n"
 
                 "\nExamples:\n"
@@ -971,6 +1057,10 @@ UniValue getassetdata(const JSONRPCRequest& request)
         CNullAssetTxVerifierString verifier;
         if (currentActiveAssetCache->GetAssetVerifierStringIfExists(asset.strName, verifier)) {
             result.push_back(Pair("verifier_string", verifier.verifier_string));
+        }
+
+        if (IsAssetNameADEPIN(asset.strName)) {
+            result.push_back(Pair("transfer_state", DepinTransferStateToString(currentActiveAssetCache->GetDepinTransferState(asset.strName))));
         }
 
         return result;
@@ -3411,6 +3501,84 @@ UniValue freezedepin(const JSONRPCRequest& request)
     return UpdateDEPINAddressRestriction(request, 1);
 }
 
+UniValue opendepin(const JSONRPCRequest& request)
+{
+    if (request.fHelp || !AreAssetsDeployed() || request.params.size() < 1 || request.params.size() > 2)
+        throw std::runtime_error(
+            "opendepin \"asset_name\" (\"change_address\")\n"
+            + AssetActivationWarning() +
+            "\nOpen transfers of a DEPIN asset (owner only): while open, holders can move\n"
+            "the asset like a regular asset without the owner token. Transfers from addresses\n"
+            "frozen by the owner or self-revoked stay rejected. Valid from the closed state;\n"
+            "takes effect from the block after the one that confirms it.\n"
+
+            "\nArguments:\n"
+            "1. \"asset_name\"       (string, required) The DEPIN asset name (must start with &)\n"
+            "2. \"change_address\"   (string, optional) The change address for the owner token\n"
+
+            "\nResult:\n"
+            "\"txid\"                (string) The transaction id\n"
+
+            "\nExamples:\n"
+            + HelpExampleCli("opendepin", "\"&FRANCE\"")
+            + HelpExampleRpc("opendepin", "\"&FRANCE\"")
+        );
+
+    return UpdateDepinTransferState(request, (int8_t)DepinTransferState::OPEN);
+}
+
+UniValue closedepin(const JSONRPCRequest& request)
+{
+    if (request.fHelp || !AreAssetsDeployed() || request.params.size() < 1 || request.params.size() > 2)
+        throw std::runtime_error(
+            "closedepin \"asset_name\" (\"change_address\")\n"
+            + AssetActivationWarning() +
+            "\nClose transfers of a DEPIN asset (owner only): the asset becomes soulbound\n"
+            "again and only the owner can move it. Valid from the open state; takes effect\n"
+            "from the block after the one that confirms it. Pending holder transfers are\n"
+            "dropped from the mempool when the close confirms.\n"
+
+            "\nArguments:\n"
+            "1. \"asset_name\"       (string, required) The DEPIN asset name (must start with &)\n"
+            "2. \"change_address\"   (string, optional) The change address for the owner token\n"
+
+            "\nResult:\n"
+            "\"txid\"                (string) The transaction id\n"
+
+            "\nExamples:\n"
+            + HelpExampleCli("closedepin", "\"&FRANCE\"")
+            + HelpExampleRpc("closedepin", "\"&FRANCE\"")
+        );
+
+    return UpdateDepinTransferState(request, (int8_t)DepinTransferState::CLOSED);
+}
+
+UniValue sealdepin(const JSONRPCRequest& request)
+{
+    if (request.fHelp || !AreAssetsDeployed() || request.params.size() < 1 || request.params.size() > 2)
+        throw std::runtime_error(
+            "sealdepin \"asset_name\" (\"change_address\")\n"
+            + AssetActivationWarning() +
+            "\nSeal a DEPIN asset (owner only). WARNING: THIS IS IRREVERSIBLE.\n"
+            "A sealed asset is soulbound like a closed one, but no transfer state operation\n"
+            "(open, close or seal) is ever accepted for it again. Only valid from the closed\n"
+            "state: an open asset must be closed first.\n"
+
+            "\nArguments:\n"
+            "1. \"asset_name\"       (string, required) The DEPIN asset name (must start with &)\n"
+            "2. \"change_address\"   (string, optional) The change address for the owner token\n"
+
+            "\nResult:\n"
+            "\"txid\"                (string) The transaction id\n"
+
+            "\nExamples:\n"
+            + HelpExampleCli("sealdepin", "\"&FRANCE\"")
+            + HelpExampleRpc("sealdepin", "\"&FRANCE\"")
+        );
+
+    return UpdateDepinTransferState(request, (int8_t)DepinTransferState::SEALED);
+}
+
 UniValue unfreezedepin(const JSONRPCRequest& request)
 {
     if (request.fHelp || !AreAssetsDeployed() || request.params.size() < 2 || request.params.size() > 3)
@@ -3626,6 +3794,9 @@ static const CRPCCommand commands[] =
     { "depin asset",    "freezedepin",                &freezedepin,                {"asset_name", "address", "change_address"}},
     { "depin asset",    "unfreezedepin",              &unfreezedepin,              {"asset_name", "address", "change_address"}},
     { "depin asset",    "selfrevokedepin",            &selfrevokedepin,            {"asset_name"}},
+    { "depin asset",    "opendepin",                  &opendepin,                  {"asset_name", "change_address"}},
+    { "depin asset",    "closedepin",                 &closedepin,                 {"asset_name", "change_address"}},
+    { "depin asset",    "sealdepin",                  &sealdepin,                  {"asset_name", "change_address"}},
 #endif
 };
 

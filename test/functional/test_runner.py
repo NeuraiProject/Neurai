@@ -118,6 +118,7 @@ BASE_SCRIPTS= [
     'rpc_spentindex.py',
     'feature_rawassettransactions.py',
     'feature_nip040_marker_migration.py',
+    'feature_depin_transfer_state.py',
     'wallet_importmulti.py',
     'wallet_labels.py',
     'wallet_import_with_label.py',

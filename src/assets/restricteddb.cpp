@@ -16,6 +16,7 @@ static const char QULAIFIER_ADDRESS_FLAG = 'Q';
 static const char RESTRICTED_ADDRESS_FLAG = 'R';
 static const char GLOBAL_RESTRICTION_FLAG = 'G';
 static const char SELF_RESTRICTED_FLAG = 'S';  // DEPIN self-revocation
+static const char DEPIN_TRANSFER_STATE_FLAG = 'P';  // DEPIN transfer state (own prefix, never collides with 'G')
 
 
 
@@ -109,6 +110,22 @@ bool CRestrictedDB::ReadGlobalRestriction(const std::string& assetName)
 bool CRestrictedDB::EraseGlobalRestriction(const std::string& assetName)
 {
     return Erase(std::make_pair(GLOBAL_RESTRICTION_FLAG, assetName));
+}
+
+// DEPIN transfer state
+bool CRestrictedDB::WriteDepinTransferState(const std::string& assetName, int8_t state)
+{
+    return Write(std::make_pair(DEPIN_TRANSFER_STATE_FLAG, assetName), state);
+}
+
+bool CRestrictedDB::ReadDepinTransferState(const std::string& assetName, int8_t& state)
+{
+    return Read(std::make_pair(DEPIN_TRANSFER_STATE_FLAG, assetName), state);
+}
+
+bool CRestrictedDB::EraseDepinTransferState(const std::string& assetName)
+{
+    return Erase(std::make_pair(DEPIN_TRANSFER_STATE_FLAG, assetName));
 }
 
 bool CRestrictedDB::WriteFlag(const std::string &name, bool fValue)
@@ -231,6 +248,32 @@ bool CRestrictedDB::GetGlobalRestrictions(std::vector<std::string>& restrictions
         std::pair<char, std::string> key;
         if (pcursor->GetKey(key) && key.first == GLOBAL_RESTRICTION_FLAG) {
             restrictions.emplace_back(key.second);
+            pcursor->Next();
+        } else {
+            break;
+        }
+    }
+
+    return true;
+}
+
+bool CRestrictedDB::GetDepinTransferStates(std::vector<std::pair<std::string, int8_t> >& states)
+{
+    FlushStateToDisk();
+
+    std::unique_ptr<CDBIterator> pcursor(NewIterator());
+
+    pcursor->Seek(std::make_pair(DEPIN_TRANSFER_STATE_FLAG, std::string()));
+
+    // Load every DEPIN asset with a non-default (non-CLOSED) transfer state
+    while (pcursor->Valid()) {
+        boost::this_thread::interruption_point();
+        std::pair<char, std::string> key;
+        if (pcursor->GetKey(key) && key.first == DEPIN_TRANSFER_STATE_FLAG) {
+            int8_t state = 0;
+            if (pcursor->GetValue(state)) {
+                states.emplace_back(key.second, state);
+            }
             pcursor->Next();
         } else {
             break;

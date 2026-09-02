@@ -361,8 +361,14 @@ bool CheckTransaction(const CTransaction& tx, CValidationState &state, bool fChe
                 if (!GlobalAssetNullDataFromScript(txout.scriptPubKey, data))
                     return state.DoS(100, false, REJECT_INVALID, "bad-txns-null-global-asset-data-serialization");
 
-                if (!VerifyNullAssetDataFlag(data.flag, strError))
+                // DEPIN names carry a transfer state operation (0 = CLOSE,
+                // 1 = OPEN, 2 = SEAL); every other name is a global freeze flag
+                if (IsAssetNameADEPIN(data.asset_name)) {
+                    if (!VerifyDepinTransferStateFlag(data.flag, strError))
+                        return state.DoS(100, false, REJECT_INVALID, strError);
+                } else if (!VerifyNullAssetDataFlag(data.flag, strError)) {
                     return state.DoS(100, false, REJECT_INVALID, strError);
+                }
 
                 if (setNullGlobalAssetChanges.count(data.asset_name)) {
                     return state.DoS(100, false, REJECT_INVALID, "bad-txns-null-data-only-one-global-change-per-asset-name");
@@ -493,6 +499,17 @@ bool CheckTransaction(const CTransaction& tx, CValidationState &state, bool fChe
     for (auto name: setNullGlobalAssetChanges) {
         if (name.size() == 0)
             return state.DoS(100, false, REJECT_INVALID,"bad-txns-tx-contains-global-asset-null-tx-with-null-asset-name");
+
+        if (IsAssetNameADEPIN(name)) {
+            // A DEPIN transfer state operation on &X proves ownership by
+            // transferring (spending and re-emitting) the owner token &X!
+            // in the same transaction. "X!" would be the owner of an
+            // unrelated root asset and does not count.
+            if (!setAssetTransferNames.count(name + OWNER_TAG)) {
+                return state.DoS(100, false, REJECT_INVALID, "bad-txns-tx-contains-depin-state-null-tx-without-owner-transfer");
+            }
+            continue;
+        }
 
         std::string rootName = name.substr(1,  name.size()); // $TOKEN into TOKEN
         if (!setAssetTransferNames.count(rootName + OWNER_TAG)) {
@@ -831,6 +848,13 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
 
     std::map<std::string, std::string> mapAddresses;
 
+    // DEPIN pre-pass: one context per DEPIN asset (escort, transfers, null
+    // data, transfer state at the tip) built before the input and output
+    // loops so that no DEPIN rule depends on vin / vout order. Empty, and
+    // free, for transactions that touch no '&' asset.
+    std::map<std::string, DepinTxContext> mapDepin;
+    BuildDepinTxContext(tx, inputs, assetCache, mapDepin);
+
     for (unsigned int i = 0; i < tx.vin.size(); ++i) {
         const COutPoint &prevout = tx.vin[i].prevout;
         const Coin& coin = inputs.AccessCoin(prevout);
@@ -862,6 +886,22 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
             if (IsAssetNameAnRestricted(data.assetName)) {
                 if (assetCache->CheckForAddressRestriction(data.assetName, EncodeDestination(data.destination), true)) {
                     return state.DoS(100, false, REJECT_INVALID, "bad-txns-restricted-asset-transfer-from-frozen-address", false, "", tx.GetHash());
+                }
+            }
+
+            // DEPIN holder transfer (asset OPEN, no owner escort): the input
+            // must not come from an address the owner froze or that revoked
+            // itself. The owner, escorting &X!, may move the asset from
+            // anywhere -- that is the recovery path. Owner tokens "&X!" are
+            // never keys of mapDepin, so they fall through here.
+            if (!mapDepin.empty()) {
+                auto depinIt = mapDepin.find(data.assetName);
+                if (depinIt != mapDepin.end() &&
+                    depinIt->second.state == DepinTransferState::OPEN &&
+                    !depinIt->second.Escorted() &&
+                    assetCache &&
+                    assetCache->CheckForDEPINRestriction(data.assetName, EncodeDestination(data.destination), true)) {
+                    return state.DoS(100, false, REJECT_INVALID, "bad-txns-depin-transfer-from-restricted-address", false, "", tx.GetHash());
                 }
             }
         }
@@ -920,7 +960,7 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
                     if (!ContextualCheckNullAssetTxOut(txout, &tx, inputs, assetCache, strError, myNullAssetData))
                         return state.DoS(100, false, REJECT_INVALID, strError, false, "", tx.GetHash());
                 } else if (txout.scriptPubKey.IsNullGlobalRestrictionAssetTxDataScript()) {
-                    if (!ContextualCheckGlobalAssetTxOut(txout, assetCache, strError))
+                    if (!ContextualCheckGlobalAssetTxOut(txout, assetCache, nCandidateHeight, strError))
                         return state.DoS(100, false, REJECT_INVALID, strError, false, "", tx.GetHash());
                 } else if (txout.scriptPubKey.IsNullAssetVerifierTxDataScript()) {
                     if (!ContextualCheckVerifierAssetTxOut(txout, assetCache, strError))
@@ -940,56 +980,36 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
             if (!ContextualCheckTransferAsset(assetCache, transfer, address, strError))
                 return state.DoS(100, false, REJECT_INVALID, strError, false, "", tx.GetHash());
 
-            // DEPIN assets: Verify that only the owner can transfer (soulbound)
+            // DEPIN assets: the soulbound rule, decided per asset on the
+            // context built before the loops:
+            //
+            //   escorted (&X! spent and re-emitted)  -> valid, the owner acts.
+            //      A null data next to it is an owner freeze / unfreeze and is
+            //      validated by ContextualCheckNullAssetTxOut.
+            //   null data for &X without escort       -> must be the self-revocation
+            //      form (IsDepinSelfRevocationTransaction), whatever the state.
+            //      A holder in OPEN that moves tokens elsewhere and attaches a
+            //      self-revocation is rejected here.
+            //   state OPEN                            -> valid, a holder transfer.
+            //   otherwise (CLOSED / SEALED)           -> only the owner can move it.
             AssetType transferAssetType;
             if (IsAssetNameValid(transfer.strName, transferAssetType) && transferAssetType == AssetType::DEPIN) {
-                std::string ownerTokenName = transfer.strName + OWNER_TAG;
-                bool spendsOwnerToken = false;
+                auto ctxIt = mapDepin.find(transfer.strName);
+                const DepinTxContext ctx = ctxIt != mapDepin.end() ? ctxIt->second : DepinTxContext();
 
-                for (const auto& txin : tx.vin) {
-                    const Coin& coin = inputs.AccessCoin(txin.prevout);
-                    if (coin.IsSpent())
-                        continue;
-
-                    int inputType = 0;
-                    bool fInputIsOwner = false;
-                    if (!coin.out.scriptPubKey.IsAssetScript(inputType, fInputIsOwner))
-                        continue;
-
-                    if (inputType == TX_NEW_ASSET && fInputIsOwner) {
-                        std::string inputOwnerName;
-                        std::string inputOwnerAddress;
-                        if (OwnerAssetFromScript(coin.out.scriptPubKey, inputOwnerName, inputOwnerAddress) && inputOwnerName == ownerTokenName) {
-                            spendsOwnerToken = true;
-                            break;
-                        }
-                    }
-
-                    CAssetTransfer inputTransfer;
-                    std::string inputAddress;
-                    if (TransferAssetFromScript(coin.out.scriptPubKey, inputTransfer, inputAddress)) {
-                        if (inputTransfer.strName == ownerTokenName) {
-                            spendsOwnerToken = true;
-                            break;
-                        }
-                    }
-                }
-
-                const bool transfersOwnerToken = TxContainsAssetTransfer(tx, ownerTokenName);
-                if (!spendsOwnerToken || !transfersOwnerToken) {
-                    // Single exception to the soulbound rule: a self-revocation.
-                    // The holder relocates the asset to its own address --
-                    // every input and every output of the asset at the same
-                    // address, plus exactly one self-revocation null data for
-                    // that (asset, address) -- so the token never changes
-                    // hands. Spending the asset's own UTXO is the proof of key
-                    // control and tenure; no index is consulted.
-                    //
-                    // Only the ownerless form qualifies. A transaction that
-                    // spends or transfers the owner token is the owner acting,
-                    // and keeps today's rule unchanged.
-                    bool fIsSelfRevocation = false;
-                    if (!spendsOwnerToken && !transfersOwnerToken) {
+                if (!ctx.Escorted()) {
+                    if (ctx.hasNullData) {
+                        // Single exception to the soulbound rule: a self-revocation.
+                        // The holder relocates the asset to its own address --
+                        // every input and every output of the asset at the same
+                        // address, plus exactly one self-revocation null data for
+                        // that (asset, address) -- so the token never changes
+                        // hands. Spending the asset's own UTXO is the proof of key
+                        // control and tenure; no index is consulted.
+                        //
+                        // Only the ownerless form qualifies. A transaction that
+                        // spends or transfers the owner token is the owner acting,
+                        // and is rejected by the predicate itself.
                         auto memo = mapDepinSelfRevocationVerdict.find(transfer.strName);
                         if (memo == mapDepinSelfRevocationVerdict.end()) {
                             std::string selfRevokeError;
@@ -997,9 +1017,12 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
                                 transfer.strName,
                                 IsDepinSelfRevocationTransaction(tx, inputs, transfer.strName, selfRevokeError)).first;
                         }
-                        fIsSelfRevocation = memo->second;
-                    }
-                    if (!fIsSelfRevocation) {
+                        if (!memo->second) {
+                            return state.DoS(100, false, REJECT_INVALID,
+                                           "bad-txns-depin-transfer-not-by-owner: DEPIN assets can only be transferred by the owner",
+                                           false, "", tx.GetHash());
+                        }
+                    } else if (ctx.state != DepinTransferState::OPEN) {
                         return state.DoS(100, false, REJECT_INVALID,
                                        "bad-txns-depin-transfer-not-by-owner: DEPIN assets can only be transferred by the owner",
                                        false, "", tx.GetHash());

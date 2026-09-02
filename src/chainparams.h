@@ -83,6 +83,7 @@ public:
     const ChainTxData& TxData() const { return chainTxData; }
     void UpdateVersionBitsParameters(Consensus::DeploymentPos d, int64_t nStartTime, int64_t nTimeout);
     void UpdateAssetMarkerNip040Height(int nHeight);
+    void UpdateDepinTransferStateHeight(int nHeight);
     void TurnOffSegwit();
     void TurnOffCSV();
     void TurnOffBIP34();
@@ -248,6 +249,14 @@ void UpdateVersionBitsParameters(Consensus::DeploymentPos d, int64_t nStartTime,
  * frontier with -nip040height and unit tests call this directly.
  */
 void UpdateAssetMarkerNip040Height(int nHeight);
+
+/**
+ * DEPIN transfer state (regtest/tests only): override the activation height of
+ * the OPEN / CLOSE / SEAL operations. Regtest defaults to height 1; the
+ * functional test moves the frontier with -depinstateheight and unit tests
+ * call this directly.
+ */
+void UpdateDepinTransferStateHeight(int nHeight);
 
 void TurnOffSegwit();
 

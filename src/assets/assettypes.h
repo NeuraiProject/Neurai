@@ -527,6 +527,40 @@ struct CAssetCacheRestrictedGlobal
     }
 };
 
+/** DEPIN transfer state of an asset "&NAME". Absent from the database means
+ *  CLOSED (soulbound, the default). The on-chain flag of the global null data
+ *  output (OP_XNA_ASSET OP_RESERVED OP_RESERVED <CNullAssetTxData>) carries
+ *  the state being applied: 0 = CLOSE, 1 = OPEN, 2 = SEAL. */
+enum class DepinTransferState : int8_t
+{
+    CLOSED = 0,
+    OPEN = 1,
+    SEALED = 2
+};
+
+/** Cache entry for a DEPIN transfer state change. `state` is the state the
+ *  operation applies (its on-chain flag). The comparator orders by assetName
+ *  only: within one cache set each asset has at most one entry and the last
+ *  write wins, which together with the "one state operation per asset per
+ *  block" consensus rule keeps undo deterministic without storing the
+ *  previous state (undo OPEN -> CLOSED, undo CLOSE -> OPEN, undo SEAL -> CLOSED). */
+struct CAssetCacheDepinState
+{
+    std::string assetName;
+    DepinTransferState state;
+
+    CAssetCacheDepinState(const std::string& assetName, const DepinTransferState& state)
+    {
+        this->assetName = assetName;
+        this->state = state;
+    }
+
+    bool operator<(const CAssetCacheDepinState& rhs) const
+    {
+        return assetName < rhs.assetName;
+    }
+};
+
 struct CAssetCacheRestrictedVerifiers
 {
     std::string assetName;

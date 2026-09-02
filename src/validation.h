@@ -583,6 +583,10 @@ extern CLRUCache<std::string, int8_t> *passetsRestrictionCache; // hash(address,
 /** Global variable that points to the global asset restriction LRU Cache (protected by cs_main) */
 extern CLRUCache<std::string, int8_t> *passetsGlobalRestrictionCache;
 
+/** Global variable that points to the DEPIN transfer state LRU Cache (protected by cs_main).
+ *  asset_name -> DepinTransferState as int8_t; absent means CLOSED. */
+extern CLRUCache<std::string, int8_t> *passetsDepinTransferStateCache;
+
 /** Global variable that point to the active Snapshot Request database (protected by cs_main) */
 extern CSnapshotRequestDB *pSnapshotRequestDb;
 

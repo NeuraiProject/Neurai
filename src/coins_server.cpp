@@ -291,7 +291,12 @@ void AddCoins(CCoinsViewCache& cache, const CTransaction &tx, int nHeight, uint2
                         CNullAssetTxData data;
                         GlobalAssetNullDataFromScript(script, data);
 
-                        assetsCache->AddGlobalRestricted(data.asset_name, data.flag ? RestrictedType::GLOBAL_FREEZE : RestrictedType::GLOBAL_UNFREEZE);
+                        if (IsAssetNameADEPIN(data.asset_name)) {
+                            // DEPIN transfer state operation: the flag is the state applied
+                            assetsCache->AddDepinTransferState(data.asset_name, static_cast<DepinTransferState>(data.flag));
+                        } else {
+                            assetsCache->AddGlobalRestricted(data.asset_name, data.flag ? RestrictedType::GLOBAL_FREEZE : RestrictedType::GLOBAL_UNFREEZE);
+                        }
                     }
                 }
             }

@@ -50,6 +50,11 @@ public:
     bool ReadSelfRestriction(const std::string& address, const std::string& assetName);
     bool EraseSelfRestriction(const std::string& address, const std::string& assetName);
 
+    // Database of DEPIN transfer states (OPEN = 1, SEALED = 2; absent = CLOSED)
+    bool WriteDepinTransferState(const std::string& assetName, int8_t state);
+    bool ReadDepinTransferState(const std::string& assetName, int8_t& state);
+    bool EraseDepinTransferState(const std::string& assetName);
+
     // Write / Read Database flags
     bool WriteFlag(const std::string &name, bool fValue);
     bool ReadFlag(const std::string &name, bool &fValue);
@@ -58,6 +63,7 @@ public:
     bool GetAddressQualifiers(std::string& address, std::vector<std::string>& qualifiers);
     bool GetAddressRestrictions(std::string& address, std::vector<std::string>& restrictions);
     bool GetGlobalRestrictions(std::vector<std::string>& restrictions);
+    bool GetDepinTransferStates(std::vector<std::pair<std::string, int8_t> >& states);
 
     /**
      * Both ways a DEPIN asset can be blocked for one address, in a single call:

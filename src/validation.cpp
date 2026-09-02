@@ -312,6 +312,7 @@ CLRUCache<std::string, CNullAssetTxVerifierString> *passetsVerifierCache = nullp
 CLRUCache<std::string, int8_t> *passetsQualifierCache = nullptr;
 CLRUCache<std::string, int8_t> *passetsRestrictionCache = nullptr;
 CLRUCache<std::string, int8_t> *passetsGlobalRestrictionCache = nullptr;
+CLRUCache<std::string, int8_t> *passetsDepinTransferStateCache = nullptr;
 CRestrictedDB *prestricteddb = nullptr;
 
 enum FlushStateMode {
@@ -534,6 +535,10 @@ void UpdateMempoolForReorg(DisconnectedBlockTransactions &disconnectpool, bool f
 
     // We also need to remove any now-immature transactions
     mempool.removeForReorg(pcoinsTip, chainActive.Tip()->nHeight + 1, STANDARD_LOCKTIME_VERIFY_FLAGS);
+    // DEPIN: a disconnected OPEN turns pending holder transfers unminable and
+    // a disconnected state operation can turn a pending one into an invalid
+    // transition; re-judge both against the new tip
+    mempool.removeForDepinStateTip(passets, chainActive.Tip()->nHeight + 1);
     // Re-limit mempool size, in case we added any transactions
     LimitMempoolSize(mempool, gArgs.GetArg("-maxmempool", DEFAULT_MAX_MEMPOOL_SIZE) * 1000000, gArgs.GetArg("-mempoolexpiry", DEFAULT_MEMPOOL_EXPIRY) * 60 * 60);
 }
@@ -744,10 +749,19 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
             }
         }
 
+        // DEPIN: what this transaction does with each DEPIN asset, computed
+        // on the mempool view (so inputs that come from mempool ancestors are
+        // seen), and the assets whose transfer state it changes. Consumed
+        // below under pool.cs, before and after insertion.
+        std::map<std::string, DepinTxContext> mapDepinCtx;
+        std::set<std::string> setDepinStateOps;
         if (AreAssetsDeployed()) {
             if (!Consensus::CheckTxAssets(tx, state, view, GetCurrentAssetCache(), nSpendHeight, true, vReissueAssets))
                 return error("%s: Consensus::CheckTxAssets: %s, %s", __func__, tx.GetHash().ToString(),
                              FormatStateMessage(state));
+
+            BuildDepinTxContext(tx, view, GetCurrentAssetCache(), mapDepinCtx);
+            GetDepinStateOperations(tx, setDepinStateOps);
         }
         /** XNA END */
 
@@ -1056,6 +1070,51 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
             }
         }
 
+        // DEPIN: at most one pending transfer state operation per asset in
+        // the mempool. Checked here, under pool.cs, after allConflicting is
+        // known and before anything is inserted: a replacement of the
+        // pending operation is allowed, anything else is rejected without
+        // mutating the pool (so a rejected second operation never sits in
+        // the mempool, and test_accept never inserts).
+        for (const auto& depinAsset : setDepinStateOps) {
+            auto pendingIt = pool.mapDepinStateChanges.find(depinAsset);
+            if (pendingIt == pool.mapDepinStateChanges.end())
+                continue;
+            for (const uint256& pendingHash : pendingIt->second) {
+                bool fReplaced = false;
+                for (const CTxMemPool::txiter conflictIt : allConflicting) {
+                    if (conflictIt->GetTx().GetHash() == pendingHash) {
+                        fReplaced = true;
+                        break;
+                    }
+                }
+                if (fReplaced)
+                    continue;
+
+                // A pending operation that spends an output of THIS
+                // transaction is its own descendant, met out of order while
+                // a reorg resurrects the disconnected parent. It is not a
+                // competitor: its transition was built on the state the
+                // parent produces, so removeForDepinStateTip drops it right
+                // after the resurrection. Rejecting the parent here would
+                // instead orphan both.
+                bool fDescendant = false;
+                CTxMemPool::txiter pendingTxIt = pool.mapTx.find(pendingHash);
+                if (pendingTxIt != pool.mapTx.end()) {
+                    for (const CTxIn& pendingIn : pendingTxIt->GetTx().vin) {
+                        if (pendingIn.prevout.hash == hash) {
+                            fDescendant = true;
+                            break;
+                        }
+                    }
+                }
+                if (fDescendant)
+                    continue;
+
+                return state.DoS(0, false, REJECT_INVALID, "bad-txns-depin-state-change-already-in-mempool");
+            }
+        }
+
         if (test_accept) {
             // Tx was accepted, but not added
             return true;
@@ -1087,6 +1146,22 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
 
         // Store transaction in memory
         pool.addUnchecked(hash, entry, setAncestors, validForFeeEstimation);
+
+        // DEPIN bookkeeping, right after insertion so that any later removal
+        // (LimitMempoolSize included) goes through removeUnchecked and cleans
+        // it up: pending state operations, and holder transfers -- transfers
+        // of &X without the owner escort, the only ones a CLOSE / SEAL
+        // invalidates.
+        for (const auto& depinAsset : setDepinStateOps) {
+            pool.mapDepinStateChanges[depinAsset].insert(hash);
+            pool.mapHashDepinStateChanges[hash].insert(depinAsset);
+        }
+        for (const auto& depinItem : mapDepinCtx) {
+            if (depinItem.second.transfersAsset && !depinItem.second.Escorted()) {
+                pool.mapDepinHolderTransfers[depinItem.first].insert(hash);
+                pool.mapHashDepinHolderTransfers[hash].insert(depinItem.first);
+            }
+        }
 
         // Add memory address index
         if (fAddressIndex) {
@@ -1134,7 +1209,8 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
                     }
                 } else if (out.scriptPubKey.IsNullGlobalRestrictionAssetTxDataScript()) {
                     CNullAssetTxData globalNullData;
-                    if (GlobalAssetNullDataFromScript(out.scriptPubKey, globalNullData)) {
+                    // DEPIN state operations are tracked in mapDepinStateChanges above
+                    if (GlobalAssetNullDataFromScript(out.scriptPubKey, globalNullData) && !IsAssetNameADEPIN(globalNullData.asset_name)) {
                         if (globalNullData.flag == 1) {
                             if (pool.mapGlobalFreezingAssetTransactions.count(globalNullData.asset_name)) {
                                 return state.DoS(0, false, REJECT_INVALID, "bad-txns-global-freeze-already-in-mempool");
@@ -2426,7 +2502,12 @@ static DisconnectResult DisconnectBlock(const CBlock& block, const CBlockIndex* 
                                 return DISCONNECT_FAILED;
                             }
 
-                            if (!assetsCache->RemoveGlobalRestricted(data.asset_name, data.flag ? RestrictedType::GLOBAL_FREEZE : RestrictedType::GLOBAL_UNFREEZE)) {
+                            if (IsAssetNameADEPIN(data.asset_name)) {
+                                if (!assetsCache->RemoveDepinTransferState(data.asset_name, static_cast<DepinTransferState>(data.flag))) {
+                                    error("%s : Failed to undo DEPIN transfer state change from cache. Asset Name: %s, Flag Removing %d", __func__, data.asset_name, data.flag);
+                                    return DISCONNECT_FAILED;
+                                }
+                            } else if (!assetsCache->RemoveGlobalRestricted(data.asset_name, data.flag ? RestrictedType::GLOBAL_FREEZE : RestrictedType::GLOBAL_UNFREEZE)) {
                                 error("%s : Failed to remove global restriction from cache. Asset Name: %s, Flag Removing %d", __func__, data.asset_name, data.flag);
                                 return DISCONNECT_FAILED;
                             }
@@ -2795,6 +2876,8 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
 
     std::set<CMessage> setMessages;
     std::vector<std::pair<std::string, CNullAssetTxData>> myNullAssetData;
+    // DEPIN assets whose transfer state already changed in this block
+    std::set<std::string> setDepinStateChangedInBlock;
     for (unsigned int i = 0; i < block.vtx.size(); i++)
     {
         const CTransaction &tx = *(block.vtx[i]);
@@ -2830,6 +2913,23 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
                     state.SetFailedTransaction(tx.GetHash());
                     return error("%s: Consensus::CheckTxAssets: %s, %s", __func__, tx.GetHash().ToString(),
                                  FormatStateMessage(state));
+                }
+
+                // At most one DEPIN transfer state operation per asset per
+                // block. Every operation is validated against the connected
+                // tip (snapshot semantics), so from CLOSED an OPEN and a SEAL
+                // in the same block would both pass on their own; this rule
+                // makes the block invalid as a whole, before UpdateCoins and
+                // before the assets cache is touched, and it also runs with
+                // fJustCheck so TestBlockValidity and mining see it.
+                std::set<std::string> setDepinStateOps;
+                GetDepinStateOperations(tx, setDepinStateOps);
+                for (const auto& depinAsset : setDepinStateOps) {
+                    if (!setDepinStateChangedInBlock.insert(depinAsset).second) {
+                        state.SetFailedTransaction(tx.GetHash());
+                        return state.DoS(100, error("%s: more than one DEPIN transfer state operation for %s in block", __func__, depinAsset),
+                                         REJECT_INVALID, "bad-txns-depin-state-multiple-changes-per-block");
+                    }
                 }
             }
 
@@ -3614,7 +3714,7 @@ bool static ConnectTip(CValidationState& state, const CChainParams& chainparams,
         int64_t nTimeAssetsStart = GetTimeMicros();
         /** XNA START */
         // Get the newly created assets, from the connectblock assetCache so we can remove the correct assets from the mempool
-        assetDataFromBlock = {assetCache.setNewAssetsToAdd, assetCache.setNewRestrictedVerifierToAdd, assetCache.setNewRestrictedAddressToAdd, assetCache.setNewRestrictedGlobalToAdd, assetCache.setNewQualifierAddressToAdd};
+        assetDataFromBlock = {assetCache.setNewAssetsToAdd, assetCache.setNewRestrictedVerifierToAdd, assetCache.setNewRestrictedAddressToAdd, assetCache.setNewRestrictedGlobalToAdd, assetCache.setNewQualifierAddressToAdd, assetCache.setNewDepinStateToAdd};
 
         // Remove all tx hashes, that were marked as reissued script from the mapReissuedTx.
         // Without this check, you wouldn't be able to reissue for those assets again, as this maps block it

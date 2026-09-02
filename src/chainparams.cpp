@@ -60,6 +60,11 @@ void CChainParams::UpdateAssetMarkerNip040Height(int nHeight)
     consensus.nAssetMarkerNip040Height = nHeight;
 }
 
+void CChainParams::UpdateDepinTransferStateHeight(int nHeight)
+{
+    consensus.nDepinTransferStateHeight = nHeight;
+}
+
 void CChainParams::TurnOffSegwit() {
 	consensus.nSegwitEnabled = false;
 }
@@ -140,6 +145,7 @@ public:
         consensus.nASSETRBFBlockEnabled = false; // NIP-025: asset-AuthScript RBF ban not yet active on mainnet
         consensus.nXNAAssetStrictEnabled = false; // NIP revision 010: keep origin/main OP_XNA_ASSET rule on mainnet until the unified fork
         consensus.nAssetMarkerNip040Height = std::numeric_limits<int>::max(); // NIP-040: H_main is set in the second release, after testnet validation
+        consensus.nDepinTransferStateHeight = std::numeric_limits<int>::max(); // DEPIN transfer state: not scheduled on mainnet (DEPIN assets are testnet/regtest only until the unified fork)
         consensus.nAssetRip5ActivationByHeightEnabled = false; // NIP revision 004: mainnet uses VersionBits (origin/main), not the height-10 shortcut
         // NIP-028: block-time reduction not active on mainnet
         consensus.nBlockTimeReductionHeight   = std::numeric_limits<int>::max();
@@ -370,6 +376,7 @@ public:
         consensus.nASSETRBFBlockEnabled = true; // NIP-025: asset-AuthScript RBF ban active on testnet
         consensus.nXNAAssetStrictEnabled = true; // NIP revision 010: strict OP_XNA_ASSET rule is de-facto consensus on testnet
         consensus.nAssetMarkerNip040Height = 303000; // NIP-040: rvn->xna migration fork on the live testnet chain — legacy history below H stays valid and rvn UTXOs migrate on spend. Every testnet node must run this binary before H. Goes back to 1 when testnet resets from genesis.
+        consensus.nDepinTransferStateHeight = 300000; // DEPIN transfer state (OPEN/CLOSE/SEAL) on the live testnet chain. Below the tip at the time of the release, which is safe: no state operation exists in testnet history, so history validates identically on reindex. Every testnet node must run this binary. Goes back to 1 when testnet resets from genesis.
         consensus.nAssetRip5ActivationByHeightEnabled = true; // NIP revision 004: testnet activates assets/RIP5 by height (1)
         // NIP-028: block-time reduction (60s -> 30s) and coupled subsidy halving
         // activate at testnet height 22,700. Halving interval doubled so the
@@ -602,6 +609,7 @@ public:
         consensus.nASSETRBFBlockEnabled = true; // NIP-025: asset-AuthScript RBF ban active on regtest
         consensus.nXNAAssetStrictEnabled = true; // NIP revision 010: strict OP_XNA_ASSET rule active on regtest
         consensus.nAssetMarkerNip040Height = 1; // NIP-040: active from block 1 so functional tests run xna-native; frontier tests move it via -nip040height / UpdateAssetMarkerNip040Height
+        consensus.nDepinTransferStateHeight = 1; // DEPIN transfer state active from block 1; frontier tests move it via -depinstateheight / UpdateDepinTransferStateHeight
         consensus.nAssetRip5ActivationByHeightEnabled = true; // regtest activates assets/RIP5 by height (1), parity with testnet
         // NIP-028: not active on regtest by default; tests can override via
         // CChainParams::UpdateBlockTimeReduction... if a future opt-in is added.
@@ -813,6 +821,11 @@ void UpdateVersionBitsParameters(Consensus::DeploymentPos d, int64_t nStartTime,
 void UpdateAssetMarkerNip040Height(int nHeight)
 {
     globalChainParams->UpdateAssetMarkerNip040Height(nHeight);
+}
+
+void UpdateDepinTransferStateHeight(int nHeight)
+{
+    globalChainParams->UpdateDepinTransferStateHeight(nHeight);
 }
 
 void TurnOffSegwit(){

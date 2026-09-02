@@ -332,6 +332,9 @@ void PrepareShutdown()
         delete passetsGlobalRestrictionCache;
         passetsGlobalRestrictionCache = nullptr;
 
+        delete passetsDepinTransferStateCache;
+        passetsDepinTransferStateCache = nullptr;
+
         delete prestricteddb;
         prestricteddb = nullptr;
 
@@ -623,6 +626,7 @@ std::string HelpMessage(HelpMessageMode mode)
         strUsage += HelpMessageOpt("-limitdescendantsize=<n>", strprintf("Do not accept transactions if any ancestor would have more than <n> kilobytes of in-mempool descendants (default: %u).", DEFAULT_DESCENDANT_SIZE_LIMIT));
         strUsage += HelpMessageOpt("-vbparams=deployment:start:end", "Use given start/end times for specified version bits deployment (regtest-only)");
         strUsage += HelpMessageOpt("-nip040height=<n>", "Override the NIP-040 asset marker fork height (regtest-only)");
+        strUsage += HelpMessageOpt("-depinstateheight=<n>", "Override the DEPIN transfer state (open/close/seal) activation height (regtest-only)");
     }
     strUsage += HelpMessageOpt("-debug=<category>", strprintf(_("Output debugging information (default: %u, supplying <category> is optional)"), 0) + ". " +
         _("If <category> is not supplied or if <category> = 1, output all debugging information.") + " " + _("<category> can be:") + " " + ListLogCategories() + ".");
@@ -1341,6 +1345,19 @@ bool AppInitParameterInteraction()
         UpdateAssetMarkerNip040Height(static_cast<int>(nHeight));
         LogPrintf("Setting NIP-040 asset marker fork height to %ld\n", nHeight);
     }
+
+    if (gArgs.IsArgSet("-depinstateheight")) {
+        // DEPIN transfer state: allow overriding the activation height for testing
+        if (!chainparams.MineBlocksOnDemand()) {
+            return InitError("DEPIN transfer state height may only be overridden on regtest.");
+        }
+        int64_t nHeight;
+        if (!ParseInt64(gArgs.GetArg("-depinstateheight", ""), &nHeight) || nHeight < 0 || nHeight > std::numeric_limits<int>::max()) {
+            return InitError(strprintf("Invalid -depinstateheight (%s)", gArgs.GetArg("-depinstateheight", "")));
+        }
+        UpdateDepinTransferStateHeight(static_cast<int>(nHeight));
+        LogPrintf("Setting DEPIN transfer state activation height to %ld\n", nHeight);
+    }
     return true;
 }
 
@@ -1678,6 +1695,7 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
                     delete passetsQualifierCache;
                     delete passetsRestrictionCache;
                     delete passetsGlobalRestrictionCache;
+                    delete passetsDepinTransferStateCache;
 
                     //  Rewards
                     delete pSnapshotRequestDb;
@@ -1706,6 +1724,7 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
                     passetsQualifierCache = new CLRUCache<std::string, int8_t>(MAX_CACHE_ASSETS_SIZE);
                     passetsRestrictionCache = new CLRUCache<std::string, int8_t>(MAX_CACHE_ASSETS_SIZE);
                     passetsGlobalRestrictionCache = new CLRUCache<std::string, int8_t>(MAX_CACHE_ASSETS_SIZE);
+                    passetsDepinTransferStateCache = new CLRUCache<std::string, int8_t>(MAX_CACHE_ASSETS_SIZE);
 
                     // Rewards
                     pSnapshotRequestDb = new CSnapshotRequestDB(nBlockTreeDBCache, false, false);

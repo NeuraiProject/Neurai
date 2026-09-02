@@ -513,6 +513,16 @@ public:
     std::map<std::string, std::set<uint256>> mapGlobalUnFreezingAssetTransactions;
     std::map<uint256, std::set<std::string>> mapHashGlobalUnFreezingAssetTransactions;
 
+    // DEPIN transfer state: pending state operations (OPEN / CLOSE / SEAL),
+    // at most one per asset in the mempool
+    std::map<std::string, std::set<uint256>> mapDepinStateChanges;
+    std::map<uint256, std::set<std::string>> mapHashDepinStateChanges;
+
+    // DEPIN transfer state: holder transfers (transfers of &X without the
+    // owner escort), the only ones a connected CLOSE / SEAL invalidates
+    std::map<std::string, std::set<uint256>> mapDepinHolderTransfers;
+    std::map<uint256, std::set<std::string>> mapHashDepinHolderTransfers;
+
     typedef indexed_transaction_set::nth_index<0>::type::iterator txiter;
     std::vector<std::pair<uint256, txiter> > vTxHashes; //!< All tx witness hashes/entries in mapTx, in random order
 
@@ -611,6 +621,11 @@ public:
     // of the mempool's target height actually flips, so the full walk does
     // not run on every block.
     void removeForAssetMarkerTransition(bool fNip040Active);
+
+    /** DEPIN transfer state: after a reorg, drop holder transfers of assets
+     *  that are no longer OPEN at the tip and pending state operations whose
+     *  transition is no longer valid at nSpendHeight. */
+    void removeForDepinStateTip(CAssetsCache* assetCache, int nSpendHeight);
 
     void clear();
     void _clear(); //lock free
@@ -873,6 +888,7 @@ struct ConnectedBlockAssetData
     std::set<CAssetCacheRestrictedAddress> newAddressRestrictionsToAdd;
     std::set<CAssetCacheRestrictedGlobal> newGlobalRestrictionsToAdd;
     std::set<CAssetCacheQualifierAddress> newQualifiersToAdd;
+    std::set<CAssetCacheDepinState> newDepinStatesToAdd;
 };
 
 #endif // NEURAI_TXMEMPOOL_H

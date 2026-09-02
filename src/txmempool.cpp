@@ -699,6 +699,28 @@ void CTxMemPool::removeUnchecked(txiter it, MemPoolRemovalReason reason)
         mapHashGlobalUnFreezingAssetTransactions.erase(hash);
     }
 
+    if (mapHashDepinStateChanges.count(hash)) {
+        for (auto item : mapHashDepinStateChanges.at(hash)) {
+            if (mapDepinStateChanges.count(item)) {
+                mapDepinStateChanges.at(item).erase(hash);
+                if (mapDepinStateChanges.at(item).size() == 0)
+                    mapDepinStateChanges.erase(item);
+            }
+        }
+        mapHashDepinStateChanges.erase(hash);
+    }
+
+    if (mapHashDepinHolderTransfers.count(hash)) {
+        for (auto item : mapHashDepinHolderTransfers.at(hash)) {
+            if (mapDepinHolderTransfers.count(item)) {
+                mapDepinHolderTransfers.at(item).erase(hash);
+                if (mapDepinHolderTransfers.at(item).size() == 0)
+                    mapDepinHolderTransfers.erase(item);
+            }
+        }
+        mapHashDepinHolderTransfers.erase(hash);
+    }
+
     if (mapHashToAddressAddedTag.count(hash)) {
         for (auto item : mapHashToAddressAddedTag.at(hash)) {
             if (mapAddressAddedTag.count(item)) {
@@ -833,6 +855,53 @@ void CTxMemPool::removeForNewTip(std::function<bool(const CTxMemPoolEntry&)> sho
         if (shouldEvict(*it))
             txToRemove.insert(it);
     }
+    setEntries setAllRemoves;
+    for (txiter it : txToRemove) {
+        CalculateDescendants(it, setAllRemoves);
+    }
+    RemoveStaged(setAllRemoves, false, MemPoolRemovalReason::REORG);
+}
+
+void CTxMemPool::removeForDepinStateTip(CAssetsCache* assetCache, int nSpendHeight)
+{
+    LOCK(cs);
+    if (!assetCache || (mapDepinHolderTransfers.empty() && mapDepinStateChanges.empty()))
+        return;
+
+    setEntries txToRemove;
+
+    // Holder transfers are only minable while the asset is OPEN at the tip
+    for (const auto& item : mapDepinHolderTransfers) {
+        if (assetCache->GetDepinTransferState(item.first, true) == DepinTransferState::OPEN)
+            continue;
+        for (const uint256& hash : item.second) {
+            indexed_transaction_set::iterator i = mapTx.find(hash);
+            if (i != mapTx.end())
+                txToRemove.insert(i);
+        }
+    }
+
+    // Pending state operations must still be a valid transition from the tip
+    for (const auto& item : mapDepinStateChanges) {
+        for (const uint256& hash : item.second) {
+            indexed_transaction_set::iterator i = mapTx.find(hash);
+            if (i == mapTx.end())
+                continue;
+            bool fStillValid = true;
+            for (const CTxOut& txout : i->GetTx().vout) {
+                if (!txout.scriptPubKey.IsNullGlobalRestrictionAssetTxDataScript())
+                    continue;
+                std::string strError;
+                if (!ContextualCheckGlobalAssetTxOut(txout, assetCache, nSpendHeight, strError)) {
+                    fStillValid = false;
+                    break;
+                }
+            }
+            if (!fStillValid)
+                txToRemove.insert(i);
+        }
+    }
+
     setEntries setAllRemoves;
     for (txiter it : txToRemove) {
         CalculateDescendants(it, setAllRemoves);
@@ -1009,6 +1078,37 @@ void CTxMemPool::removeForBlock(const std::vector<CTransactionRef>& vtx, unsigne
         }
     }
 
+    // DEPIN transfer state changes connected by this block:
+    //  (a) CLOSED or SEALED evicts every pending holder transfer of the asset
+    //      (a holder transfer is only valid while the asset is OPEN);
+    //  (b) any new state evicts every pending state operation of the same
+    //      asset, since the transition it was built on may no longer hold.
+    for (auto it : connectedBlockData.newDepinStatesToAdd) {
+        if (it.state != DepinTransferState::OPEN) {
+            if (mapDepinHolderTransfers.count(it.assetName)) {
+                for (auto hash : mapDepinHolderTransfers.at(it.assetName)) {
+                    indexed_transaction_set::iterator i = mapTx.find(hash);
+                    if (i != mapTx.end() && !setAlreadyRemoving.count(hash)) {
+                        entries.push_back(&*i);
+                        trans.emplace_back(i->GetTx());
+                        setAlreadyRemoving.insert(hash);
+                    }
+                }
+            }
+        }
+
+        if (mapDepinStateChanges.count(it.assetName)) {
+            for (auto hash : mapDepinStateChanges.at(it.assetName)) {
+                indexed_transaction_set::iterator i = mapTx.find(hash);
+                if (i != mapTx.end() && !setAlreadyRemoving.count(hash)) {
+                    entries.push_back(&*i);
+                    trans.emplace_back(i->GetTx());
+                    setAlreadyRemoving.insert(hash);
+                }
+            }
+        }
+    }
+
     for (auto it : connectedBlockData.newAddressRestrictionsToAdd) {
         if (it.type == RestrictedType::FREEZE_ADDRESS) {
             auto pair = std::make_pair(it.address, it.assetName);
@@ -1114,6 +1214,11 @@ void CTxMemPool::_clear()
 
     mapGlobalUnFreezingAssetTransactions.clear();
     mapHashGlobalUnFreezingAssetTransactions.clear();
+
+    mapDepinStateChanges.clear();
+    mapHashDepinStateChanges.clear();
+    mapDepinHolderTransfers.clear();
+    mapHashDepinHolderTransfers.clear();
 }
 
 void CTxMemPool::clear()

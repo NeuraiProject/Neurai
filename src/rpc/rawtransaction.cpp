@@ -388,6 +388,9 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
             "    unfreeze_addresses       0\n"
             "    freeze_asset             0\n"
             "    unfreeze_asset           0\n"
+            "    open_depin               0\n"
+            "    close_depin              0\n"
+            "    seal_depin               0\n"
 
             "\nAssets For Authorization:\n"
             "  These operations require a specific asset input for authorization:\n"
@@ -400,6 +403,10 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
             "      unfreeze_addresses\n"
             "      freeze_asset\n"
             "      unfreeze_asset\n"
+            "    DEPIN Owner Token (&NAME!):\n"
+            "      open_depin\n"
+            "      close_depin\n"
+            "      seal_depin\n"
             "    Root Qualifier Token:\n"
             "      issue_qualifier (when issuing subqualifier)\n"
             "    Qualifier Token:\n"
@@ -585,6 +592,14 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
             "           \"unfreeze_asset\":\n"
             "             {\n"
             "               \"asset_name\":\"asset_name\",        (string, required) a restricted asset name (starts with '$')\n"
+            "             }\n"
+            "         }\n"
+            "           or\n"
+            "         {                                 (object) A json object describing a DEPIN transfer state operation.\n"
+            "                                             The address in the key will be used as the owner token change address.\n"
+            "           \"open_depin\" | \"close_depin\" | \"seal_depin\":\n"
+            "             {\n"
+            "               \"asset_name\":\"asset_name\",        (string, required) a DEPIN asset name (starts with '&')\n"
             "             }\n"
             "         }\n"
             "           or\n"
@@ -1510,6 +1525,37 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
                         CTxOut out_freeze(0, freeze_string_script);
                         rawTx.vout.push_back(out_freeze);
                     }
+                } else if (assetKey_ == "open_depin" || assetKey_ == "close_depin" || assetKey_ == "seal_depin") {
+                    // DEPIN transfer state operation: 0 = CLOSE, 1 = OPEN, 2 = SEAL
+                    int8_t state_op = assetKey_ == "open_depin" ? (int8_t)DepinTransferState::OPEN
+                                    : assetKey_ == "seal_depin" ? (int8_t)DepinTransferState::SEALED
+                                                                : (int8_t)DepinTransferState::CLOSED;
+
+                    if (asset_[0].type() != UniValue::VOBJ)
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid parameter, the format must follow { \"[open|close|seal]_depin\": {\"key\": value}, ...}"));
+                    auto assetData = asset_.getValues()[0].get_obj();
+
+                    const UniValue& asset_name = find_value(assetData, "asset_name");
+                    if (!asset_name.isStr())
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, missing data for key: asset_name");
+                    std::string strAssetName = asset_name.get_str();
+                    if (!IsAssetNameADEPIN(strAssetName))
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, a valid DEPIN asset name must be provided, e.g. &MY_ASSET");
+
+                    // owner token change (proof of ownership)
+                    CScript change_script = GetScriptForDestination(destination);
+                    CAssetTransfer transfer_change(strAssetName + OWNER_TAG, OWNER_ASSET_AMOUNT);
+                    transfer_change.ConstructTransaction(change_script, assetMarker);
+                    CTxOut out_change(0, change_script);
+                    rawTx.vout.push_back(out_change);
+
+                    // state operation
+                    CScript state_script;
+                    CNullAssetTxData stateData(strAssetName, state_op);
+                    stateData.ConstructGlobalRestrictionTransaction(state_script);
+                    CTxOut out_state(0, state_script);
+                    rawTx.vout.push_back(out_state);
+
                 } else if (assetKey_ == "freeze_asset" || assetKey_ == "unfreeze_asset") {
                     int8_t freeze_op = assetKey_ == "freeze_asset" ? 1 : 0;
 

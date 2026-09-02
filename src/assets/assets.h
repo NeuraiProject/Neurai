@@ -58,6 +58,12 @@ struct Params;
 /** NIP-040: true once the candidate height is at or past the marker fork. */
 bool IsAssetMarkerNip040Active(int nHeight, const Consensus::Params& params);
 
+/** DEPIN transfer state: true once the candidate height is at or past
+ *  nDepinTransferStateHeight, i.e. OPEN / CLOSE / SEAL operations on DEPIN
+ *  assets are valid. std::numeric_limits<int>::max() is the "not scheduled"
+ *  sentinel and is explicitly inactive, even for a candidate height of INT_MAX. */
+bool IsDepinTransferStateActive(int nHeight, const Consensus::Params& params);
+
 /** origin/main 9568f3b: true once the candidate height is at or past
  *  nAssetTransferOverflowCheckActivation (>=), i.e. CheckTxAssets must enforce the
  *  [0, MAX_MONEY] range and checked per-asset sums on transfer amounts.
@@ -204,6 +210,10 @@ public :
     std::set<CAssetCacheRestrictedGlobal> setNewRestrictedGlobalToAdd;
     std::set<CAssetCacheRestrictedGlobal> setNewRestrictedGlobalToRemove;
 
+    //! DEPIN Transfer State Caches (one entry per asset, last write wins)
+    std::set<CAssetCacheDepinState> setNewDepinStateToAdd;
+    std::set<CAssetCacheDepinState> setNewDepinStateToRemove;
+
     //! Restricted Assets Verifier Caches
     std::set<CAssetCacheRestrictedVerifiers> setNewRestrictedVerifierToAdd;
     std::set<CAssetCacheRestrictedVerifiers> setNewRestrictedVerifierToRemove;
@@ -256,6 +266,10 @@ public :
         this->setNewRestrictedGlobalToAdd = cache.setNewRestrictedGlobalToAdd;
         this->setNewRestrictedGlobalToRemove = cache.setNewRestrictedGlobalToRemove;
 
+        //! DEPIN Transfer State Caches
+        this->setNewDepinStateToAdd = cache.setNewDepinStateToAdd;
+        this->setNewDepinStateToRemove = cache.setNewDepinStateToRemove;
+
         //! Restricted Verifier Caches
         this->setNewRestrictedVerifierToAdd = cache.setNewRestrictedVerifierToAdd;
         this->setNewRestrictedVerifierToRemove = cache.setNewRestrictedVerifierToRemove;
@@ -306,6 +320,10 @@ public :
         this->setNewRestrictedGlobalToAdd = cache.setNewRestrictedGlobalToAdd;
         this->setNewRestrictedGlobalToRemove = cache.setNewRestrictedGlobalToRemove;
 
+        //! DEPIN Transfer State Caches
+        this->setNewDepinStateToAdd = cache.setNewDepinStateToAdd;
+        this->setNewDepinStateToRemove = cache.setNewDepinStateToRemove;
+
         //! Restricted Verifier Caches
         this->setNewRestrictedVerifierToAdd = cache.setNewRestrictedVerifierToAdd;
         this->setNewRestrictedVerifierToRemove = cache.setNewRestrictedVerifierToRemove;
@@ -330,6 +348,7 @@ public :
     bool RemoveQualifierAddress(const std::string& assetName, const std::string& address, const QualifierType type);
     bool RemoveRestrictedAddress(const std::string& assetName, const std::string& address, const RestrictedType type);
     bool RemoveGlobalRestricted(const std::string& assetName, const RestrictedType type);
+    bool RemoveDepinTransferState(const std::string& assetName, const DepinTransferState state);
     bool RemoveSelfRestriction(const std::string& assetName, const std::string& address, bool isSelfRevoke);
     bool RemoveRestrictedVerifier(const std::string& assetName, const std::string& verifier, const bool fUndoingReissue = false);
 
@@ -341,6 +360,7 @@ public :
     bool AddQualifierAddress(const std::string& assetName, const std::string& address, const QualifierType type);
     bool AddRestrictedAddress(const std::string& assetName, const std::string& address, const RestrictedType type);
     bool AddGlobalRestricted(const std::string& assetName, const RestrictedType type);
+    bool AddDepinTransferState(const std::string& assetName, const DepinTransferState state);
     bool AddSelfRestriction(const std::string& assetName, const std::string& address, bool isSelfRevoke);
     bool AddRestrictedVerifier(const std::string& assetName, const std::string& verifier);
 
@@ -373,6 +393,16 @@ public :
     //! Return true if the DEPIN asset is blocked (owner freeze OR self-revoke)
     bool CheckForDEPINRestriction(const std::string &assetName, const std::string& address, bool fSkipTempCache = false);
     bool CheckForDEPINSelfRestriction(const std::string &assetName, const std::string& address, bool fSkipTempCache = false);
+
+    /**
+     * Current transfer state of a DEPIN asset: dirty sets -> passets sets ->
+     * LRU -> database; absent everywhere means CLOSED. With fSkipTempCache the
+     * dirty sets of THIS cache (the block being connected) are ignored while
+     * the sets of passets (the connected tip), the LRU and the database are
+     * still read -- the same snapshot semantics as CheckForGlobalRestriction,
+     * so a state change takes effect from the next block on.
+     */
+    DepinTransferState GetDepinTransferState(const std::string& assetName, bool fSkipTempCache = false);
 
     //! Calculate the size of the CAssets (in bytes)
     size_t DynamicMemoryUsage() const;
@@ -417,6 +447,9 @@ public :
         setNewRestrictedGlobalToAdd.clear();
         setNewRestrictedGlobalToRemove.clear();
 
+        setNewDepinStateToAdd.clear();
+        setNewDepinStateToRemove.clear();
+
         setNewRestrictedVerifierToAdd.clear();
         setNewRestrictedVerifierToRemove.clear();
 
@@ -432,10 +465,12 @@ public :
        return strprintf(
                "vNewAssetsToRemove size : %d, vNewAssetsToAdd size : %d, vNewTransfer size : %d, vSpentAssets : %d\n"
                "setNewQualifierAddressToAdd size : %d, setNewQualifierAddressToRemove size : %d, setNewRestrictedAddressToAdd size : %d\n"
-               "setNewRestrictedAddressToRemove size : %d, setNewRestrictedGlobalToAdd size : %d, setNewRestrictedGlobalToRemove : %d",
+               "setNewRestrictedAddressToRemove size : %d, setNewRestrictedGlobalToAdd size : %d, setNewRestrictedGlobalToRemove : %d\n"
+               "setNewDepinStateToAdd size : %d, setNewDepinStateToRemove size : %d",
                setNewAssetsToRemove.size(), setNewAssetsToAdd.size(), setNewTransferAssetsToAdd.size(),
                vSpentAssets.size(), setNewQualifierAddressToAdd.size(), setNewQualifierAddressToRemove.size(), setNewRestrictedAddressToAdd.size(),
-               setNewRestrictedAddressToRemove.size(), setNewRestrictedGlobalToAdd.size(), setNewRestrictedGlobalToRemove.size());
+               setNewRestrictedAddressToRemove.size(), setNewRestrictedGlobalToAdd.size(), setNewRestrictedGlobalToRemove.size(),
+               setNewDepinStateToAdd.size(), setNewDepinStateToRemove.size());
    }
 };
 
@@ -638,6 +673,41 @@ bool TxSpendsDEPINOwnerTokenFromAddress(const CTransaction& tx, const CCoinsView
  * not read in full. Owner-token involvement (either direction) also denies it:
  * that form is the owner's, not the holder's.
  */
+/**
+ * Per-asset view of what one transaction does with a DEPIN asset "&X", built
+ * once before the input and output loops of CheckTxAssets so that no rule
+ * depends on the order in which vin and vout are visited. Shared with the
+ * mempool, which derives its "holder transfer" bookkeeping from it.
+ */
+struct DepinTxContext {
+    bool transfersAsset = false;      // at least one TX_TRANSFER_ASSET output of &X
+    bool spendsAsset = false;         // at least one input carries &X
+    bool spendsOwnerToken = false;    // at least one input carries &X!
+    bool transfersOwnerToken = false; // at least one TX_TRANSFER_ASSET output of &X!
+    bool hasNullData = false;         // a per-address null data output for &X (freeze / unfreeze / self-revoke)
+    DepinTransferState state = DepinTransferState::CLOSED; // snapshot at the connected tip
+
+    //! The owner acts: &X! is spent AND re-emitted in this transaction.
+    bool Escorted() const { return spendsOwnerToken && transfersOwnerToken; }
+};
+
+/**
+ * Fill `mapDepin` with one DepinTxContext per DEPIN asset the transaction
+ * touches (inputs, transfer outputs, owner token, per-address null data).
+ * `state` is read from `assetCache` with the tip snapshot (fSkipTempCache);
+ * a null cache leaves every state at CLOSED. Linear in vin + vout, and the
+ * regex-backed name check only runs on names that start with '&'.
+ */
+void BuildDepinTxContext(const CTransaction& tx, const CCoinsViewCache& inputs, CAssetsCache* assetCache,
+                         std::map<std::string, DepinTxContext>& mapDepin);
+
+/** Names of the DEPIN assets for which `tx` carries a transfer state operation
+ *  (global null data output with a '&' name). */
+void GetDepinStateOperations(const CTransaction& tx, std::set<std::string>& setAssets);
+
+/** "closed" | "open" | "sealed" for RPC output. */
+std::string DepinTransferStateToString(DepinTransferState state);
+
 bool IsDepinSelfRevocationTransaction(const CTransaction& tx, const CCoinsViewCache& inputs,
                                       const std::string& assetName, std::string& strError);
 
@@ -714,6 +784,16 @@ bool VerifyRestrictedAddressChange(CAssetsCache& cache, const CNullAssetTxData& 
 bool VerifyDEPINOwnerChange(CAssetsCache& cache, const CNullAssetTxData& data, const std::string& address, std::string& strError);
 bool VerifySelfRestrictionChange(CAssetsCache& cache, const CNullAssetTxData& data, const std::string& address, std::string& strError);
 bool VerifyGlobalRestrictedChange(CAssetsCache& cache, const CNullAssetTxData& data, std::string& strError);
+/** Structural: the flag of a DEPIN transfer state operation must be 0 (CLOSE), 1 (OPEN) or 2 (SEAL). */
+bool VerifyDepinTransferStateFlag(const int& flag, std::string& strError);
+/**
+ * Contextual: activation at nCandidateHeight, current state of the asset at
+ * the connected tip and the transition table
+ *   CLOSED -> OPEN, OPEN -> CLOSED, CLOSED -> SEALED
+ * Everything else (null transitions, OPEN -> SEALED, anything from SEALED)
+ * is rejected.
+ */
+bool VerifyDepinTransferStateChange(CAssetsCache& cache, const CNullAssetTxData& data, int nCandidateHeight, std::string& strError);
 
 //// Non Contextual Check functions
 bool CheckVerifierAssetTxOut(const CTxOut& txout, std::string& strError);
@@ -727,7 +807,10 @@ bool CheckReissueAsset(const CReissueAsset& asset, std::string& strError);
  * could omit them would accept the transaction without having checked.
  */
 bool ContextualCheckNullAssetTxOut(const CTxOut& txout, const CTransaction* tx, const CCoinsViewCache& inputs, CAssetsCache* assetCache, std::string& strError, std::vector<std::pair<std::string, CNullAssetTxData>>* myNullAssetData = nullptr);
-bool ContextualCheckGlobalAssetTxOut(const CTxOut& txout, CAssetsCache* assetCache, std::string& strError);
+/** nCandidateHeight is the height the transaction would confirm at (tip + 1
+ *  from the mempool, pindex->nHeight from ConnectBlock); DEPIN transfer state
+ *  operations are activated by height. */
+bool ContextualCheckGlobalAssetTxOut(const CTxOut& txout, CAssetsCache* assetCache, int nCandidateHeight, std::string& strError);
 bool ContextualCheckVerifierAssetTxOut(const CTxOut& txout, CAssetsCache* assetCache, std::string& strError);
 bool ContextualCheckVerifierString(CAssetsCache* cache, const std::string& verifier, const std::string& check_address, std::string& strError, ErrorReport* errorReport = nullptr);
 bool ContextualCheckNewAsset(CAssetsCache* assetCache, const CNewAsset& asset, std::string& strError, bool fCheckMempool = false);

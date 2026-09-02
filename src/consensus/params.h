@@ -178,6 +178,12 @@ struct Params {
      *  forever. std::numeric_limits<int>::max() on chains that have not
      *  scheduled the fork (mainnet until the second release). See NIP/040. */
     int nAssetMarkerNip040Height;
+    /** DEPIN transfer state: height at which the OPEN / CLOSE / SEAL
+     *  operations on DEPIN assets ("&NAME") become valid. Below this height
+     *  every DEPIN state operation is rejected and DEPIN assets stay
+     *  soulbound (CLOSED). std::numeric_limits<int>::max() on chains that
+     *  have not scheduled the fork (mainnet). See NIP/plan-nodo-depin-estado-transferencia.md. */
+    int nDepinTransferStateHeight;
     /** Enable the height-based shortcut in AreAssetsDeployed()/IsRip5Active()
      *  (assets/RIP5 active once the tip reaches nAssetActivationHeight /
      *  nMessagingActivationBlock). This is meant for fresh test networks. On
