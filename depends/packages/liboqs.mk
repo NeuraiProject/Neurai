@@ -1,8 +1,8 @@
 package=liboqs
-$(package)_version=0.15.0
+$(package)_version=0.16.0
 $(package)_download_path=https://github.com/open-quantum-safe/liboqs/archive/refs/tags
 $(package)_file_name=$($(package)_version).tar.gz
-$(package)_sha256_hash=3983f7cd1247f37fb76a040e6fd684894d44a84cecdcfbdb90559b3216684b5c
+$(package)_sha256_hash=162d5b510518ee5f285f82fa1f16402a885176e818bf1b1a4c3c91c9a2f01eae
 $(package)_dependencies=
 
 define $(package)_set_vars

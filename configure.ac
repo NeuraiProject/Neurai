@@ -1266,11 +1266,11 @@ AC_SUBST(MINIUPNPC_LIBS)
 dnl Check for liboqs (post-quantum cryptography, required)
 AC_CHECK_HEADER([oqs/oqs.h],
   [],
-  [AC_MSG_ERROR([liboqs header oqs/oqs.h not found. Install liboqs 0.15.0 or build via depends/.])]
+  [AC_MSG_ERROR([liboqs header oqs/oqs.h not found. Install liboqs 0.16.0 or build via depends/.])]
 )
 AC_CHECK_LIB([oqs], [OQS_SIG_new],
   [OQS_LIBS="-loqs -lm -ldl -lpthread"],
-  [AC_MSG_ERROR([liboqs not found. Install liboqs 0.15.0 or build via depends/.])]
+  [AC_MSG_ERROR([liboqs not found. Install liboqs 0.16.0 or build via depends/.])]
 )
 AC_SUBST(OQS_LIBS)
 

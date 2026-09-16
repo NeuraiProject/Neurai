@@ -5,6 +5,9 @@
 
 """Exercise mixed legacy/PQ XNA and asset flows via wallet RPC."""
 
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
 from test_framework.test_framework import NeuraiTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error
 
@@ -36,16 +39,41 @@ class PQAssetTest(NeuraiTestFramework):
     def assert_script_type(self, node, address, expected):
         info = node.validateaddress(address)
         assert_equal(info["isvalid"], True)
-        assert_equal(info["script"], expected)
+        assert_equal(node.decodescript(info["scriptPubKey"])["type"], expected)
 
     def assert_hd_path(self, node, address, expected):
-        info = node.validateaddress(address)
-        assert_equal(info["hdkeypath"], expected)
+        # validateaddress does not expose the key metadata behind AuthScript.
+        # dumpwallet records the actual PQ-HD path alongside its address.
+        with TemporaryDirectory(dir=node.datadir) as dumpdir:
+            dumpfile = Path(dumpdir) / "wallet.dump"
+            node.dumpwallet(str(dumpfile))
+            for line in dumpfile.read_text().splitlines():
+                _, marker, metadata = line.partition(" # ")
+                if marker:
+                    fields = dict(field.split("=", 1) for field in metadata.split() if "=" in field)
+                    if fields.get("addr") == address:
+                        assert_equal(fields.get("hdkeypath"), expected)
+                        return
+        raise AssertionError("Address missing from wallet dump: {}".format(address))
 
     def assert_relayed(self, txid):
         self.sync_all()
         for node in self.nodes:
             assert txid in node.getrawmempool()
+
+    def assert_asset_change(self, node, txid, address, transferred):
+        # Coin selection can leave other asset UTXOs untouched. Change is
+        # determined by the selected inputs, not the wallet's entire balance.
+        tx = node.decoderawtransaction(node.gettransaction(txid)["hex"])
+        input_amount = 0
+        for txin in tx["vin"]:
+            prevtx = node.decoderawtransaction(node.gettransaction(txin["txid"])["hex"])
+            asset = prevtx["vout"][txin["vout"]]["scriptPubKey"].get("asset", {})
+            if asset.get("name") == ASSET_NAME:
+                input_amount += asset["amount"]
+        assert input_amount >= transferred
+        balances = node.listassetbalancesbyaddress(address)
+        assert_equal(balances.get(ASSET_NAME, 0), input_amount - transferred)
 
     def activate_assets(self):
         self.log.info("Activating assets")
@@ -62,10 +90,10 @@ class PQAssetTest(NeuraiTestFramework):
         self.pq2_receive = n2.getnewaddress()
 
         self.assert_script_type(n0, self.legacy_receive, "pubkeyhash")
-        self.assert_script_type(n1, self.pq1_receive, "witness_v1_keyhash")
-        self.assert_script_type(n2, self.pq2_receive, "witness_v1_keyhash")
-        self.assert_hd_path(n1, self.pq1_receive, "m/100'/1'/0'/0/0")
-        self.assert_hd_path(n2, self.pq2_receive, "m/100'/1'/0'/0/0")
+        self.assert_script_type(n1, self.pq1_receive, "witness_v1_authscript")
+        self.assert_script_type(n2, self.pq2_receive, "witness_v1_authscript")
+        self.assert_hd_path(n1, self.pq1_receive, "m_pq/100'/1'/0'/0'/0'")
+        self.assert_hd_path(n2, self.pq2_receive, "m_pq/100'/1'/0'/0'/0'")
 
         pq_master_info = n1.getmasterkeyinfo()
         assert_equal(pq_master_info["account_derivation_path"], "m/100'/1'/0'")
@@ -93,8 +121,8 @@ class PQAssetTest(NeuraiTestFramework):
                 break
 
         assert change_address is not None
-        self.assert_script_type(n1, change_address, "witness_v1_keyhash")
-        self.assert_hd_path(n1, change_address, "m/100'/1'/0'/1/0")
+        self.assert_script_type(n1, change_address, "witness_v1_authscript")
+        self.assert_hd_path(n1, change_address, "m_pq/100'/1'/0'/1'/0'")
 
     def pq_issue_and_reissue(self):
         self.log.info("Issuing and reissuing an asset from a PQ wallet")
@@ -165,7 +193,7 @@ class PQAssetTest(NeuraiTestFramework):
         self.mine_and_sync(0, 1)
 
         assert_equal(n0.listassetbalancesbyaddress(self.legacy_asset_receive)[ASSET_NAME], TRANSFER_PQ_TO_LEGACY)
-        assert_equal(n1.listassetbalancesbyaddress(self.pq_asset_change_1)[ASSET_NAME], ISSUE_QTY + REISSUE_QTY_PQ - TRANSFER_PQ_TO_LEGACY)
+        self.assert_asset_change(n1, transfer_legacy_txid, self.pq_asset_change_1, TRANSFER_PQ_TO_LEGACY)
 
         pq_xna_change_2 = n1.getnewaddress()
         self.pq_asset_change_2 = n1.getnewaddress()
@@ -182,7 +210,7 @@ class PQAssetTest(NeuraiTestFramework):
         self.mine_and_sync(0, 1)
 
         assert_equal(n2.listassetbalancesbyaddress(self.pq_asset_receive)[ASSET_NAME], TRANSFER_PQ_TO_PQ)
-        assert_equal(n1.listassetbalancesbyaddress(self.pq_asset_change_2)[ASSET_NAME], ISSUE_QTY + REISSUE_QTY_PQ - TRANSFER_PQ_TO_LEGACY - TRANSFER_PQ_TO_PQ)
+        self.assert_asset_change(n1, transfer_pq_txid, self.pq_asset_change_2, TRANSFER_PQ_TO_PQ)
 
         self.legacy_owner_receive = n0.getnewaddress()
         owner_handoff_txid = n1.transfer(
@@ -214,7 +242,7 @@ class PQAssetTest(NeuraiTestFramework):
     def legacy_owner_reissue_and_legacy_transfer(self):
         self.log.info("Reissuing with owner in legacy and transferring legacy-held assets back to PQ")
 
-        n0, n2 = self.nodes[0], self.nodes[2]
+        n0, n1, n2 = self.nodes
 
         self.legacy_owner_change = n0.getnewaddress()
         self.pq_reissue_from_legacy_receive = n2.getnewaddress()
