@@ -7,16 +7,36 @@
 #include "key.h"
 
 #include "base58.h"
+#include "crypto/sha256.h"
 #include "script/script.h"
 #include "uint256.h"
 #include "util.h"
 #include "utilstrencodings.h"
 #include "test/test_neurai.h"
 
+#include <atomic>
+#include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <boost/test/unit_test.hpp>
+#include <oqs/oqs.h>
+
+namespace {
+std::atomic<unsigned int> pq_rng_calls{0};
+
+void ProbePQRng(uint8_t* out, size_t len)
+{
+    ++pq_rng_calls;
+    std::memset(out, 0xa5, len);
+}
+
+struct ScopedPQRngProbe {
+    ScopedPQRngProbe() { pq_rng_calls = 0; OQS_randombytes_custom_algorithm(ProbePQRng); }
+    ~ScopedPQRngProbe() { OQS_randombytes_switch_algorithm(OQS_RAND_alg_system); }
+};
+} // namespace
 
 static const std::string strSecret1 = "5HxWvvfubhXpYYpS3tJkw6fq9jE9j18THftkZjHHfmFiWtmAbrj";
 static const std::string strSecret2 = "5KC4ejrDjv152FGwP386VD1i2NYc5KkfSMyv1nGy1VGDxGHqVY3";
@@ -192,6 +212,95 @@ BOOST_FIXTURE_TEST_SUITE(key_tests, BasicTestingSetup)
         // regtest = "tnq". BasicTestingSetup defaults to MAIN.
         BOOST_CHECK(encoded.rfind("nq1", 0) == 0);
         BOOST_CHECK(DecodeDestination(encoded) == authScriptDest);
+    }
+
+    BOOST_AUTO_TEST_CASE(pq_seeded_keygen_compatibility_vectors)
+    {
+        // SHA256 of the complete raw keys captured using the previous RNG-based
+        // keygen (liboqs 0.15.0/0.16.0). Seeds are public test data, not wallet secrets.
+        struct Vector { const char* seed; const char* secret_hash; const char* public_hash; };
+        const Vector vectors[] = {
+            {"0000000000000000000000000000000000000000000000000000000000000000",
+             "0f9086044d77b6d610c7e92418d9f70a398c69febc7e99f8254aaea98dcfbe77",
+             "eb4e7302842153b0fa19e8620739ad258af4929c26dd89079a7ec7d4282208e1"},
+            {"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+             "04bf6b9f579166a627961dfc5c3bf9717df868db88863856356c4668c8b56b0b",
+             "9f107644c1084526af3bc8098680b05499a2325a644e388fb4f970e058d19d46"},
+            {"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+             "6433074c5ffc9e0f2b1d68bb3fda84e439da0a2d93f508a101e9b44835f0b22c",
+             "62c4f1b3164db7fa896a3343e900eb3e13c9f76de122020feba37ee063d49ef0"},
+        };
+        for (const auto& v : vectors) {
+            CKey key;
+            key.MakeNewKeyPQ(ParseHex(v.seed));
+            BOOST_REQUIRE(key.IsValid());
+            BOOST_REQUIRE_EQUAL(key.size(), ML_DSA_44_KEYDATA_SIZE);
+            unsigned char digest[CSHA256::OUTPUT_SIZE];
+            CSHA256().Write(key.begin(), ML_DSA_44_PRIVKEY_SIZE).Finalize(digest);
+            BOOST_CHECK_EQUAL(HexStr(digest, digest + sizeof(digest)), v.secret_hash);
+            const CPubKey pubkey = key.GetPubKey();
+            CSHA256().Write(pubkey.begin() + 1, ML_DSA_44_PUBKEY_SIZE).Finalize(digest);
+            BOOST_CHECK_EQUAL(HexStr(digest, digest + sizeof(digest)), v.public_hash);
+        }
+    }
+
+    BOOST_AUTO_TEST_CASE(pq_seeded_keygen_preserves_rng)
+    {
+        ScopedPQRngProbe probe;
+        CKey key;
+        key.MakeNewKeyPQ(std::vector<unsigned char>(32, 0));
+        BOOST_CHECK(key.IsValid());
+        BOOST_CHECK_EQUAL(pq_rng_calls.load(), 0U);
+        unsigned char bytes[16];
+        OQS_randombytes(bytes, sizeof(bytes));
+        BOOST_CHECK_EQUAL(pq_rng_calls.load(), 1U);
+        for (unsigned char byte : bytes) BOOST_CHECK_EQUAL(byte, 0xa5);
+    }
+
+    BOOST_AUTO_TEST_CASE(pq_seeded_keygen_rejects_invalid_seed)
+    {
+        CKey key;
+        key.MakeNewKeyPQ(std::vector<unsigned char>(32, 0));
+        const CKey original = key;
+        for (size_t size : {0U, 1U, 31U, 33U, 64U}) {
+            const std::vector<unsigned char> seed(size, 0);
+            BOOST_CHECK_THROW(key.MakeNewKeyPQ(seed), std::runtime_error);
+            BOOST_CHECK(key == original);
+            CKey empty;
+            BOOST_CHECK_THROW(empty.MakeNewKeyPQ(seed), std::runtime_error);
+            BOOST_CHECK(!empty.IsValid());
+        }
+    }
+
+    BOOST_AUTO_TEST_CASE(pq_seeded_keygen_concurrent_with_signing)
+    {
+        std::vector<CKey> expected(4);
+        for (size_t i = 0; i < expected.size(); ++i) {
+            expected[i].MakeNewKeyPQ(std::vector<unsigned char>(32, i));
+        }
+        std::atomic<bool> passed{true};
+        std::vector<std::thread> workers;
+        for (size_t i = 0; i < expected.size(); ++i) {
+            workers.emplace_back([&, i] {
+                try {
+                    const uint256 hash = uint256S("01");
+                    for (int repeat = 0; repeat < 16; ++repeat) {
+                        CKey key;
+                        key.MakeNewKeyPQ(std::vector<unsigned char>(32, i));
+                        if (!(key == expected[i])) passed = false;
+                        std::vector<unsigned char> signature;
+                        if (!key.Sign(hash, signature) || !key.GetPubKey().Verify(hash, signature)) passed = false;
+                        CKey random;
+                        random.MakeNewKeyPQ();
+                        if (!random.Sign(hash, signature) || !random.GetPubKey().Verify(hash, signature)) passed = false;
+                    }
+                } catch (...) {
+                    passed = false;
+                }
+            });
+        }
+        for (auto& worker : workers) worker.join();
+        BOOST_CHECK(passed.load());
     }
 
     BOOST_AUTO_TEST_CASE(pq_privkey_wallet_roundtrip)

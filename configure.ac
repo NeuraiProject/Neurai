@@ -1272,6 +1272,13 @@ AC_CHECK_LIB([oqs], [OQS_SIG_new],
   [OQS_LIBS="-loqs -lm -ldl -lpthread"],
   [AC_MSG_ERROR([liboqs not found. Install liboqs 0.16.0 or build via depends/.])]
 )
+dnl Seeded wallet key generation requires this internal mldsa-native entry point.
+dnl Check it at configure time instead of failing during the final node link.
+AC_CHECK_LIB([oqs], [PQCP_MLDSA_NATIVE_MLDSA44_C_keypair_internal],
+  [:],
+  [AC_MSG_ERROR([liboqs seeded ML-DSA-44 key generation is unavailable. Install liboqs 0.16.0 or build via depends/.])],
+  [-lm -ldl -lpthread]
+)
 AC_SUBST(OQS_LIBS)
 
 AC_SUBST(CRYPTO_LIBS)

@@ -16,6 +16,13 @@
 #include <secp256k1_recovery.h>
 #include <oqs/oqs.h>
 
+// liboqs 0.16.0 has no public seeded keypair API. Use mldsa-native's
+// portable FIPS 204 KeyGen_internal entry point; depends pins the version
+// and configure checks that this symbol is available. Compatibility vectors
+// in key_tests pin the existing seed -> private/public key mapping.
+extern "C" int PQCP_MLDSA_NATIVE_MLDSA44_C_keypair_internal(
+    uint8_t* pk, uint8_t* sk, const uint8_t* seed);
+
 static secp256k1_context* secp256k1_context_sign = nullptr;
 
 /** These functions are taken from the libsecp256k1 distribution and are very ugly. */
@@ -149,64 +156,22 @@ void CKey::MakeNewKeyPQ() {
     fCompressed = true;
 }
 
-// Thread-local seed state for deterministic PQ key generation.
-// Only valid during MakeNewKeyPQ(seed) — reset to nullptr afterwards.
-static thread_local const std::vector<unsigned char>* g_pq_det_seed = nullptr;
-static thread_local size_t g_pq_det_offset = 0;
-static thread_local bool g_pq_det_overread = false;
-
-// liboqs ML-DSA key generation consumes external randomness as a 32-byte seed
-// which it expands internally. To match the bip39 generator, expose the raw
-// BIP32-derived seed bytes directly instead of pre-expanding them here.
-static void pq_deterministic_randombytes(uint8_t* out, size_t len)
-{
-    assert(g_pq_det_seed != nullptr);
-    const size_t remaining = g_pq_det_seed->size() - g_pq_det_offset;
-    const size_t to_copy = std::min(len, remaining);
-    if (to_copy > 0) {
-        memcpy(out, g_pq_det_seed->data() + g_pq_det_offset, to_copy);
-        g_pq_det_offset += to_copy;
-    }
-    if (to_copy < len) {
-        g_pq_det_overread = true;
-        memset(out + to_copy, 0, len - to_copy);
-    }
-}
-
 void CKey::MakeNewKeyPQ(const std::vector<unsigned char>& seed) {
-    OQS_SIG* sig = OQS_SIG_new(OQS_SIG_alg_ml_dsa_44);
-    assert(sig != nullptr);
-
     if (seed.size() != 32) {
-        OQS_SIG_free(sig);
         throw std::runtime_error("CKey::MakeNewKeyPQ requires a 32-byte seed");
     }
 
-    // Install deterministic RNG that exposes the raw seed bytes expected by
-    // the ML-DSA keygen implementation. This matches the bip39 generator's
-    // ml_dsa44.keygen(seed) behavior.
-    g_pq_det_seed    = &seed;
-    g_pq_det_offset  = 0;
-    g_pq_det_overread = false;
-    OQS_randombytes_custom_algorithm(pq_deterministic_randombytes);
-
-    keydata.resize(sig->length_secret_key + sig->length_public_key);
-    uint8_t* pubkey_buf = keydata.data() + sig->length_secret_key;
-
-    OQS_STATUS rc = OQS_SIG_keypair(sig, pubkey_buf, keydata.data());
-    assert(rc == OQS_SUCCESS);
-
-    // Restore system randomness and clear seed pointer
-    OQS_randombytes_switch_algorithm(OQS_RAND_alg_system);
-    g_pq_det_seed = nullptr;
-    g_pq_det_offset = 0;
-
-    OQS_SIG_free(sig);
-    if (g_pq_det_overread) {
-        g_pq_det_overread = false;
-        throw std::runtime_error("CKey::MakeNewKeyPQ seed length mismatch with liboqs ML-DSA keygen");
+    // Pass the existing raw seed unchanged: hashing or tagging it here would
+    // change the private keys and addresses recovered by existing wallets.
+    // Generate in secure temporary storage so a failure preserves this key.
+    CPrivKey generated(ML_DSA_44_KEYDATA_SIZE);
+    const int rc = PQCP_MLDSA_NATIVE_MLDSA44_C_keypair_internal(
+        generated.data() + ML_DSA_44_PRIVKEY_SIZE, generated.data(), seed.data());
+    if (rc != 0) {
+        throw std::runtime_error("CKey::MakeNewKeyPQ seeded ML-DSA key generation failed");
     }
-    g_pq_det_overread = false;
+
+    keydata.swap(generated);
     fValid = true;
     fCompressed = true;
 }
