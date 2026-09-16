@@ -528,6 +528,7 @@ am__objects_5 = algo/libneurai_common_a-groestl.$(OBJEXT) \
 am_libneurai_common_a_OBJECTS =  \
 	libneurai_common_a-arith_uint256.$(OBJEXT) \
 	consensus/libneurai_common_a-merkle.$(OBJEXT) \
+	crypto/libneurai_common_a-pq_sanity.$(OBJEXT) \
 	libneurai_common_a-base58.$(OBJEXT) \
 	libneurai_common_a-bech32.$(OBJEXT) \
 	libneurai_common_a-chainparams.$(OBJEXT) \
@@ -2110,6 +2111,7 @@ am__depfiles_remade = ./$(DEPDIR)/libneurai_common_a-arith_uint256.Po \
 	consensus/$(DEPDIR)/libneurai_server_a-consensus.Po \
 	consensus/$(DEPDIR)/libneurai_server_a-tx_verify.Po \
 	consensus/$(DEPDIR)/libneuraiconsensus_la-merkle.Plo \
+	crypto/$(DEPDIR)/libneurai_common_a-pq_sanity.Po \
 	crypto/$(DEPDIR)/libneurai_crypto_a-aes.Po \
 	crypto/$(DEPDIR)/libneurai_crypto_a-blake2b.Po \
 	crypto/$(DEPDIR)/libneurai_crypto_a-blake3_wrap.Po \
@@ -3525,6 +3527,8 @@ libneurai_common_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 libneurai_common_a_SOURCES = \
   arith_uint256.cpp \
   consensus/merkle.cpp \
+  crypto/pq_sanity.cpp \
+  crypto/pq_sanity.h \
   base58.cpp \
   bech32.cpp \
   chainparams.cpp \
@@ -4977,6 +4981,8 @@ consensus/$(DEPDIR)/$(am__dirstamp):
 	@: > consensus/$(DEPDIR)/$(am__dirstamp)
 consensus/libneurai_common_a-merkle.$(OBJEXT):  \
 	consensus/$(am__dirstamp) consensus/$(DEPDIR)/$(am__dirstamp)
+crypto/libneurai_common_a-pq_sanity.$(OBJEXT): crypto/$(am__dirstamp) \
+	crypto/$(DEPDIR)/$(am__dirstamp)
 policy/$(am__dirstamp):
 	@$(MKDIR_P) policy
 	@: > policy/$(am__dirstamp)
@@ -6572,6 +6578,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@consensus/$(DEPDIR)/libneurai_server_a-consensus.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@consensus/$(DEPDIR)/libneurai_server_a-tx_verify.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@consensus/$(DEPDIR)/libneuraiconsensus_la-merkle.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@crypto/$(DEPDIR)/libneurai_common_a-pq_sanity.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@crypto/$(DEPDIR)/libneurai_crypto_a-aes.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@crypto/$(DEPDIR)/libneurai_crypto_a-blake2b.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@crypto/$(DEPDIR)/libneurai_crypto_a-blake3_wrap.Po@am__quote@ # am--include-marker
@@ -10083,6 +10090,20 @@ consensus/libneurai_common_a-merkle.obj: consensus/merkle.cpp
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='consensus/merkle.cpp' object='consensus/libneurai_common_a-merkle.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -c -o consensus/libneurai_common_a-merkle.obj `if test -f 'consensus/merkle.cpp'; then $(CYGPATH_W) 'consensus/merkle.cpp'; else $(CYGPATH_W) '$(srcdir)/consensus/merkle.cpp'; fi`
+
+crypto/libneurai_common_a-pq_sanity.o: crypto/pq_sanity.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -MT crypto/libneurai_common_a-pq_sanity.o -MD -MP -MF crypto/$(DEPDIR)/libneurai_common_a-pq_sanity.Tpo -c -o crypto/libneurai_common_a-pq_sanity.o `test -f 'crypto/pq_sanity.cpp' || echo '$(srcdir)/'`crypto/pq_sanity.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) crypto/$(DEPDIR)/libneurai_common_a-pq_sanity.Tpo crypto/$(DEPDIR)/libneurai_common_a-pq_sanity.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='crypto/pq_sanity.cpp' object='crypto/libneurai_common_a-pq_sanity.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -c -o crypto/libneurai_common_a-pq_sanity.o `test -f 'crypto/pq_sanity.cpp' || echo '$(srcdir)/'`crypto/pq_sanity.cpp
+
+crypto/libneurai_common_a-pq_sanity.obj: crypto/pq_sanity.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -MT crypto/libneurai_common_a-pq_sanity.obj -MD -MP -MF crypto/$(DEPDIR)/libneurai_common_a-pq_sanity.Tpo -c -o crypto/libneurai_common_a-pq_sanity.obj `if test -f 'crypto/pq_sanity.cpp'; then $(CYGPATH_W) 'crypto/pq_sanity.cpp'; else $(CYGPATH_W) '$(srcdir)/crypto/pq_sanity.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) crypto/$(DEPDIR)/libneurai_common_a-pq_sanity.Tpo crypto/$(DEPDIR)/libneurai_common_a-pq_sanity.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='crypto/pq_sanity.cpp' object='crypto/libneurai_common_a-pq_sanity.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -c -o crypto/libneurai_common_a-pq_sanity.obj `if test -f 'crypto/pq_sanity.cpp'; then $(CYGPATH_W) 'crypto/pq_sanity.cpp'; else $(CYGPATH_W) '$(srcdir)/crypto/pq_sanity.cpp'; fi`
 
 libneurai_common_a-base58.o: base58.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libneurai_common_a_CPPFLAGS) $(CPPFLAGS) $(libneurai_common_a_CXXFLAGS) $(CXXFLAGS) -MT libneurai_common_a-base58.o -MD -MP -MF $(DEPDIR)/libneurai_common_a-base58.Tpo -c -o libneurai_common_a-base58.o `test -f 'base58.cpp' || echo '$(srcdir)/'`base58.cpp
@@ -17228,6 +17249,7 @@ distclean: distclean-recursive
 	-rm -f consensus/$(DEPDIR)/libneurai_server_a-consensus.Po
 	-rm -f consensus/$(DEPDIR)/libneurai_server_a-tx_verify.Po
 	-rm -f consensus/$(DEPDIR)/libneuraiconsensus_la-merkle.Plo
+	-rm -f crypto/$(DEPDIR)/libneurai_common_a-pq_sanity.Po
 	-rm -f crypto/$(DEPDIR)/libneurai_crypto_a-aes.Po
 	-rm -f crypto/$(DEPDIR)/libneurai_crypto_a-blake2b.Po
 	-rm -f crypto/$(DEPDIR)/libneurai_crypto_a-blake3_wrap.Po
@@ -17976,6 +17998,7 @@ maintainer-clean: maintainer-clean-recursive
 	-rm -f consensus/$(DEPDIR)/libneurai_server_a-consensus.Po
 	-rm -f consensus/$(DEPDIR)/libneurai_server_a-tx_verify.Po
 	-rm -f consensus/$(DEPDIR)/libneuraiconsensus_la-merkle.Plo
+	-rm -f crypto/$(DEPDIR)/libneurai_common_a-pq_sanity.Po
 	-rm -f crypto/$(DEPDIR)/libneurai_crypto_a-aes.Po
 	-rm -f crypto/$(DEPDIR)/libneurai_crypto_a-blake2b.Po
 	-rm -f crypto/$(DEPDIR)/libneurai_crypto_a-blake3_wrap.Po

@@ -17,6 +17,7 @@
 #include "checkpoints.h"
 #include "compat/sanity.h"
 #include "consensus/validation.h"
+#include "crypto/pq_sanity.h"
 #include "fs.h"
 #include "httpserver.h"
 #include "httprpc.h"
@@ -886,6 +887,11 @@ bool InitSanityCheck(void)
 
     if (!Random_SanityCheck()) {
         InitError("OS cryptographic RNG sanity check failure. Aborting.");
+        return false;
+    }
+
+    if (!PQ_InitSanityCheck()) {
+        InitError("Post-quantum cryptography (ML-DSA-44) sanity check failure. Check liboqs. Aborting.");
         return false;
     }
 

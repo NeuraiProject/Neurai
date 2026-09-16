@@ -5,6 +5,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "compat/sanity.h"
+#include "crypto/pq_sanity.h"
 #include "key.h"
 #include "test/test_neurai.h"
 
@@ -19,6 +20,11 @@ BOOST_FIXTURE_TEST_SUITE(sanity_tests, BasicTestingSetup)
         BOOST_CHECK_MESSAGE(glibc_sanity_test() == true, "libc sanity test");
         BOOST_CHECK_MESSAGE(glibcxx_sanity_test() == true, "stdlib sanity test");
         BOOST_CHECK_MESSAGE(ECC_InitSanityCheck() == true, "openssl ECC test");
+    }
+
+    BOOST_AUTO_TEST_CASE(pq_sanity_test)
+    {
+        BOOST_CHECK_MESSAGE(PQ_InitSanityCheck(), "ML-DSA-44 startup sanity test");
     }
 
 BOOST_AUTO_TEST_SUITE_END()

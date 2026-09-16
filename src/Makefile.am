@@ -480,6 +480,8 @@ libneurai_common_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 libneurai_common_a_SOURCES = \
   arith_uint256.cpp \
   consensus/merkle.cpp \
+  crypto/pq_sanity.cpp \
+  crypto/pq_sanity.h \
   base58.cpp \
   bech32.cpp \
   chainparams.cpp \
