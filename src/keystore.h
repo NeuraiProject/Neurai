@@ -69,16 +69,24 @@ public:
     virtual bool RemoveWatchOnly(const CScript &dest) =0;
     virtual bool HaveWatchOnly(const CScript &dest) const =0;
     virtual bool HaveWatchOnly() const =0;
+    //! AuthScript spend data for generic witness v1 destinations (keyed by commitment only).
     virtual bool AddAuthScriptSpendData(const uint256& commitment, const AuthScriptSpendData& spendData) = 0;
     virtual bool GetAuthScriptSpendData(const uint256& commitment, AuthScriptSpendData& spendData) const = 0;
     virtual bool HaveAuthScriptSpendData(const uint256& commitment) const = 0;
+    //! Version-aware AuthScript spend data. The key is (witness version, commitment):
+    //! version 1 = generic AuthScript, 2 = strict PQ, 3 = strict ECDSA. The same
+    //! 32 bytes under different versions are different destinations.
+    virtual bool AddAuthScriptSpendData(uint8_t witnessVersion, const uint256& commitment, const AuthScriptSpendData& spendData) = 0;
+    virtual bool GetAuthScriptSpendData(uint8_t witnessVersion, const uint256& commitment, AuthScriptSpendData& spendData) const = 0;
+    virtual bool HaveAuthScriptSpendData(uint8_t witnessVersion, const uint256& commitment) const = 0;
 };
 
 typedef std::map<CKeyID, CKey> KeyMap;
 typedef std::map<CKeyID, CPubKey> WatchKeyMap;
 typedef std::map<CScriptID, CScript > ScriptMap;
 typedef std::set<CScript> WatchOnlySet;
-typedef std::map<uint256, AuthScriptSpendData> AuthScriptSpendDataMap;
+typedef std::pair<uint8_t, uint256> AuthScriptSpendDataKey; //!< (witness version, commitment)
+typedef std::map<AuthScriptSpendDataKey, AuthScriptSpendData> AuthScriptSpendDataMap;
 
 /** Basic key store, that keeps keys in an address->secret map */
 class CBasicKeyStore : public CKeyStore
@@ -140,6 +148,9 @@ public:
     bool AddAuthScriptSpendData(const uint256& commitment, const AuthScriptSpendData& spendData) override;
     bool GetAuthScriptSpendData(const uint256& commitment, AuthScriptSpendData& spendData) const override;
     bool HaveAuthScriptSpendData(const uint256& commitment) const override;
+    bool AddAuthScriptSpendData(uint8_t witnessVersion, const uint256& commitment, const AuthScriptSpendData& spendData) override;
+    bool GetAuthScriptSpendData(uint8_t witnessVersion, const uint256& commitment, AuthScriptSpendData& spendData) const override;
+    bool HaveAuthScriptSpendData(uint8_t witnessVersion, const uint256& commitment) const override;
 
     bool AddWords(const uint256& p_hash, const std::vector<unsigned char>& p_vchWords);
     bool AddPassphrase(const std::vector<unsigned char>& p_vchPassphrase);

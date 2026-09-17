@@ -269,6 +269,16 @@ enum class script_verify_flag_name : uint8_t {
     //
     SCRIPT_VERIFY_CHECKSIGADD,                              // bit 40
 
+    // Strict AuthScript families: witness v2 (post-quantum, ML-DSA-44) and
+    // witness v3 (classical, compressed secp256k1). Each version is a fixed
+    // template: exactly [authType, signature, pubkey, OP_TRUE], with the
+    // authType bound to the version (v2 -> 0x01, v3 -> 0x02), a versioned
+    // commitment (preimage lead byte 0x02 / 0x03) and its own sighash domain
+    // (SIGVERSION_AUTHSCRIPT_STRICT). Flag off -> v2/v3 stay upgradable
+    // (anyone-can-spend, discouraged by policy). Witness v1 is untouched.
+    //
+    SCRIPT_VERIFY_AUTHSCRIPT_STRICT,                        // bit 41
+
     // End marker — must always be last.
     SCRIPT_VERIFY_END_MARKER
 };
@@ -340,7 +350,40 @@ enum SigVersion
     SIGVERSION_BASE = 0,
     SIGVERSION_WITNESS_V0 = 1,
     SIGVERSION_AUTHSCRIPT = 2,
+    /** Strict AuthScript families (witness v2 PQ / v3 ECDSA). Same BIP143-style
+     *  serialization as SIGVERSION_AUTHSCRIPT, but the preimage additionally
+     *  commits to the witness version right before authType, so a v1 signature
+     *  can never be replayed as a strict one and vice versa. */
+    SIGVERSION_AUTHSCRIPT_STRICT = 3,
 };
+
+/** Strict AuthScript families: witness version <-> mandatory authType. */
+static const int STRICT_AUTHSCRIPT_WITNESS_V2_PQ = 2;
+static const int STRICT_AUTHSCRIPT_WITNESS_V3_ECDSA = 3;
+
+/** Returns the witness version bound to an authType under the strict families
+ *  (0x01 -> 2, 0x02 -> 3), or 0 if the authType has no strict version. */
+inline int StrictAuthScriptWitnessVersion(uint8_t authType)
+{
+    if (authType == 0x01) return STRICT_AUTHSCRIPT_WITNESS_V2_PQ;
+    if (authType == 0x02) return STRICT_AUTHSCRIPT_WITNESS_V3_ECDSA;
+    return 0;
+}
+
+/** Returns the authType bound to a strict witness version (2 -> 0x01, 3 -> 0x02),
+ *  or 0x00 if the version is not a strict family. */
+inline uint8_t StrictAuthScriptAuthType(int witnessVersion)
+{
+    if (witnessVersion == STRICT_AUTHSCRIPT_WITNESS_V2_PQ) return 0x01;
+    if (witnessVersion == STRICT_AUTHSCRIPT_WITNESS_V3_ECDSA) return 0x02;
+    return 0x00;
+}
+
+inline bool IsStrictAuthScriptWitnessVersion(int witnessVersion)
+{
+    return witnessVersion == STRICT_AUTHSCRIPT_WITNESS_V2_PQ ||
+           witnessVersion == STRICT_AUTHSCRIPT_WITNESS_V3_ECDSA;
+}
 
 uint256 SignatureHash(const CScript &scriptCode, const CTransaction &txTo, unsigned int nIn, int nHashType, const CAmount &amount, SigVersion sigversion, const PrecomputedTransactionData *cache = nullptr, uint8_t authType = 0x00);
 

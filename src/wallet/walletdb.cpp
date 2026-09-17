@@ -119,6 +119,14 @@ bool CWalletDB::WriteAuthScriptSpendData(const uint256& commitment, const AuthSc
     return WriteIC(std::make_pair(std::string("authscript"), commitment), spendData);
 }
 
+bool CWalletDB::WriteAuthScriptSpendData(uint8_t witnessVersion, const uint256& commitment, const AuthScriptSpendData& spendData)
+{
+    if (witnessVersion == 1) {
+        return WriteAuthScriptSpendData(commitment, spendData);
+    }
+    return WriteIC(std::make_pair(std::string("authscriptv"), std::make_pair(witnessVersion, commitment)), spendData);
+}
+
 bool CWalletDB::WriteBestBlock(const CBlockLocator& locator)
 {
     WriteIC(std::string("bestblock"), CBlockLocator()); // Write empty block locator so versions that require a merkle branch automatically rescan
@@ -149,6 +157,21 @@ bool CWalletDB::WritePool(int64_t nPool, const CKeyPool& keypool)
 bool CWalletDB::ErasePool(int64_t nPool)
 {
     return EraseIC(std::make_pair(std::string("pool"), nPool));
+}
+
+bool CWalletDB::ReadStrictPool(int64_t nPool, CKeyPool& keypool)
+{
+    return batch.Read(std::make_pair(std::string("strictpool"), nPool), keypool);
+}
+
+bool CWalletDB::WriteStrictPool(int64_t nPool, const CKeyPool& keypool)
+{
+    return WriteIC(std::make_pair(std::string("strictpool"), nPool), keypool);
+}
+
+bool CWalletDB::EraseStrictPool(int64_t nPool)
+{
+    return EraseIC(std::make_pair(std::string("strictpool"), nPool));
 }
 
 bool CWalletDB::WriteMinVersion(int nVersion)
@@ -348,6 +371,20 @@ bool ReadKeyValue(CWallet* pwallet, CDataStream& ssKey, CDataStream& ssValue,
                 return false;
             }
         }
+        else if (strType == "authscriptv")
+        {
+            uint8_t witnessVersion = 0;
+            uint256 commitment;
+            ssKey >> witnessVersion;
+            ssKey >> commitment;
+            AuthScriptSpendData spendData;
+            ssValue >> spendData;
+            if (!pwallet->LoadAuthScriptSpendData(witnessVersion, commitment, spendData))
+            {
+                strErr = "Error reading wallet database: LoadAuthScriptSpendData (versioned) failed";
+                return false;
+            }
+        }
         else if (strType == "key" || strType == "wkey")
         {
             CPubKey vchPubKey;
@@ -488,6 +525,15 @@ bool ReadKeyValue(CWallet* pwallet, CDataStream& ssKey, CDataStream& ssValue,
             ssValue >> keypool;
 
             pwallet->LoadKeyPool(nIndex, keypool);
+        }
+        else if (strType == "strictpool")
+        {
+            int64_t nIndex;
+            ssKey >> nIndex;
+            CKeyPool keypool;
+            ssValue >> keypool;
+
+            pwallet->LoadStrictEcdsaKeyPool(nIndex, keypool);
         }
         else if (strType == "version")
         {

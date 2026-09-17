@@ -57,6 +57,17 @@ bool HasAssetOpcodeInExpectedPosition(const CScript& scriptPubKey)
         return true;
     }
 
+    // Strict AuthScript asset spendable script: OP_2 / OP_3 <32-byte-commitment>
+    // + OP_XNA_ASSET ... Only once the strict families are active on this
+    // chain: before that these shapes stay rejected exactly as today.
+    if (scriptPubKey.size() > 34 &&
+        (scriptPubKey[0] == OP_2 || scriptPubKey[0] == OP_3) &&
+        scriptPubKey[1] == 0x20 &&
+        scriptPubKey[34] == OP_XNA_ASSET &&
+        AreStrictAuthScriptAssetsEnabled()) {
+        return true;
+    }
+
     return false;
 }
 

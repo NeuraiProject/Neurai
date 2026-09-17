@@ -433,8 +433,15 @@ nothing to authenticate the reply against. The cases MUST be kept apart:
   their service's pool key together with its pool root.
 
 The pool key is derived deterministically from the service wallet
-(`m/44'/<coin>'/200'/<change>/0`, change = 1 on testnet, 0 otherwise), so a
+(`m/44'/<coin>'/200'/<change>/0`, coin = 1900 on mainnet and 1 on testnet/regtest,
+change = 1 on testnet, 0 otherwise), so a
 correctly operated service keeps its key.
+
+The mainnet coin type 1900 is intentional for DePIN. The node's historical
+Legacy wallet derivation retains coin type 0 for compatibility with existing
+wallets; it must not be changed as part of this service-key update. These paths
+derive different keys from the same seed, so the historical Legacy setting
+must not be used to infer the DePIN pool key path.
 
 What a wrong pin can cost is bounded: content is never readable by the node,
 so the exposure is metadata and availability (withheld or trimmed replies),
@@ -673,7 +680,7 @@ SHOULD branch on `code` and show `message`.
 | Expiry | default 168 h (max 720 h) |
 | Timestamp skew accepted on submit | +60 s |
 | Page size | `limit ≤ 1000` |
-| Pool key derivation | `m/44'/<coin>'/200'/<change>/0` of the service wallet (change = 1 on testnet, 0 on regtest/mainnet) |
+| Pool key derivation | `m/44'/<coin>'/200'/<change>/0` of the service wallet (coin = 1900 on mainnet, 1 on testnet/regtest; change = 1 on testnet, 0 on regtest/mainnet) |
 
 ---
 
@@ -834,4 +841,3 @@ library MUST NOT decode, display or act on the result.
 | N6 | §13.6 `signature_hex`: XOR `0x01` into the last byte | DER signature does not verify → drop the message |
 | N7 | §13.6 `timestamp + 1` (or any field change) with the original `hash` and `signature_hex` | recomputed digest ≠ `hash` and signature fails → drop the message |
 | N8 | §13.5 `poolsig` verified with the §13.4 preimage (empty challenge) | binding mismatch → reject: the reply is tied to its challenge |
-

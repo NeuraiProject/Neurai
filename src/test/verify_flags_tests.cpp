@@ -64,15 +64,17 @@ BOOST_AUTO_TEST_CASE(none_is_zero)
 
 BOOST_AUTO_TEST_CASE(end_marker_matches_flag_count)
 {
-    // 41 flags (bits 0-40) means END_MARKER should be 41.
-    // Last added: SCRIPT_VERIFY_CHECKSIGADD at bit 40 (NIP-039).
-    // Previously: SCRIPT_VERIFY_ED25519 at bit 39 (NIP-035),
+    // 42 flags (bits 0-41) means END_MARKER should be 42.
+    // Last added: SCRIPT_VERIFY_AUTHSCRIPT_STRICT at bit 41 (strict AuthScript
+    // families, witness v2/v3).
+    // Previously: SCRIPT_VERIFY_CHECKSIGADD at bit 40 (NIP-039),
+    // SCRIPT_VERIFY_ED25519 at bit 39 (NIP-035),
     // SCRIPT_VERIFY_POSEIDON at bit 38 (NIP-036),
     // SCRIPT_VERIFY_MODERN_HASHES at bit 37 (NIP-034a),
     // SCRIPT_VERIFY_MERKLE_INCLUSION at bit 36 (NIP-031),
     // SCRIPT_VERIFY_KECCAK_BLAKE2B at bit 35 (NIP-030),
     // SCRIPT_VERIFY_CHAINCONTEXT at bit 34 (NIP-026).
-    BOOST_CHECK_EQUAL(MAX_SCRIPT_VERIFY_FLAGS_BITS, 41);
+    BOOST_CHECK_EQUAL(MAX_SCRIPT_VERIFY_FLAGS_BITS, 42);
 }
 
 // --- No internal truncation ---
@@ -81,7 +83,7 @@ BOOST_AUTO_TEST_CASE(no_truncation)
 {
     // Combine all known flags and verify no bits are lost.
     script_verify_flags all = script_verify_flags::from_int(MAX_SCRIPT_VERIFY_FLAGS);
-    BOOST_CHECK_EQUAL(all.as_int(), (uint64_t{1} << 41) - 1);
+    BOOST_CHECK_EQUAL(all.as_int(), (uint64_t{1} << 42) - 1);
 }
 
 BOOST_AUTO_TEST_CASE(chaincontext_is_bit_34)

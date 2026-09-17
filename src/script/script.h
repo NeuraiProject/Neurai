@@ -485,6 +485,16 @@ typedef prevector<28, unsigned char> CScriptBase;
  *  historic "rvn" marker inherited from Ravencoin; NEURAI_XNA is the "xna"
  *  marker required for new outputs once NIP-040 activates. The marker never
  *  participates in asset identity — that is always the serialized name. */
+/**
+ * Strict AuthScript (witness v2/v3) prefixes in asset scripts are only parsed
+ * as assets on chains where the strict families are active. While inactive,
+ * every asset parser behaves exactly as before those prefixes existed, so
+ * consensus, policy, indexes and wallet all keep rejecting/ignoring them.
+ * Set by SelectParams() from Consensus::Params::nStrictAuthScriptEnabled.
+ */
+void SetStrictAuthScriptAssetsEnabled(bool fEnabled);
+bool AreStrictAuthScriptAssetsEnabled();
+
 enum class AssetMarker : uint8_t {
     LEGACY_RVN,
     NEURAI_XNA,

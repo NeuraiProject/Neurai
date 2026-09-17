@@ -117,6 +117,21 @@ isminetype IsMine(const CKeyStore &keystore, const CScript& scriptPubKey, bool& 
             }
             break;
         }
+        case TX_WITNESS_V2_STRICT_PQ:
+        case TX_WITNESS_V3_STRICT_ECDSA: {
+            if (vSolutions[0].size() != 32) {
+                break;
+            }
+            const uint8_t version = (whichType == TX_WITNESS_V2_STRICT_PQ) ? STRICT_AUTHSCRIPT_WITNESS_V2_PQ : STRICT_AUTHSCRIPT_WITNESS_V3_ECDSA;
+            AuthScriptSpendData spendData;
+            if (!keystore.GetAuthScriptSpendData(version, uint256(vSolutions[0]), spendData)) {
+                break;
+            }
+            if (spendData.auth_type == StrictAuthScriptAuthType(version) && keystore.HaveKey(spendData.key_id)) {
+                return ISMINE_SPENDABLE;
+            }
+            break;
+        }
         case TX_SCRIPTHASH: {
             CScriptID scriptID = CScriptID(uint160(vSolutions[0]));
             CScript subscript;
@@ -195,6 +210,17 @@ isminetype IsMine(const CKeyStore &keystore, const CScript& scriptPubKey, bool& 
                 if (spendData.auth_type == 0x00)
                     return ISMINE_SPENDABLE;
                 if ((spendData.auth_type == 0x01 || spendData.auth_type == 0x02) &&
+                    keystore.HaveKey(spendData.key_id)) {
+                    return ISMINE_SPENDABLE;
+                }
+                break;
+            }
+
+            if (const WitnessStrictAuthScript* strict = boost::get<WitnessStrictAuthScript>(&assetDestination)) {
+                AuthScriptSpendData spendData;
+                if (!keystore.GetAuthScriptSpendData(strict->version, strict->commitment, spendData))
+                    break;
+                if (spendData.auth_type == StrictAuthScriptAuthType(strict->version) &&
                     keystore.HaveKey(spendData.key_id)) {
                     return ISMINE_SPENDABLE;
                 }

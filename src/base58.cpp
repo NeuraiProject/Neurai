@@ -273,6 +273,7 @@ public:
     bool operator()(const CKeyID& id) const { return addr->Set(id); }
     bool operator()(const CScriptID& id) const { return addr->Set(id); }
     bool operator()(const WitnessV1AuthScript& id) const { return false; } // Bech32m, not Base58
+    bool operator()(const WitnessStrictAuthScript& id) const { return false; } // Bech32m, not Base58
     bool operator()(const CNoDestination& no) const { return false; }
 };
 
@@ -379,6 +380,20 @@ bool CNeuraiSecret::SetString(const std::string& strSecret)
     return SetString(strSecret.c_str());
 }
 
+// Message signatures for strict destinations sign a hash bound to the
+// destination (witness version + commitment), so a signature made for the
+// legacy / generic v1 address of a key never verifies for its strict address
+// and vice versa. Legacy and v1 keep signing the plain message hash.
+static uint256 StrictMessageHash(const WitnessStrictAuthScript& dest, const uint256& hash)
+{
+    CHashWriter ss(SER_GETHASH, 0);
+    ss << std::string("Neurai Strict AuthScript Message");
+    ss << dest.version;
+    ss << dest.commitment;
+    ss << hash;
+    return ss.GetHash();
+}
+
 bool SignMessageHash(const CKey& key, const CTxDestination& dest, const uint256& hash, std::vector<unsigned char>& vchSig)
 {
     if (!key.IsValid()) {
@@ -388,6 +403,24 @@ bool SignMessageHash(const CKey& key, const CTxDestination& dest, const uint256&
     const CPubKey pubkey = key.GetPubKey();
     if (!pubkey.IsValid()) {
         return false;
+    }
+
+    // Strict families: the destination must be exactly the strict destination
+    // of this key (version 2 for PQ, version 3 for compressed secp256k1).
+    if (const WitnessStrictAuthScript* strictDest = boost::get<WitnessStrictAuthScript>(&dest)) {
+        WitnessStrictAuthScript expected;
+        if (!GetStrictAuthScriptDestinationForPubKey(pubkey, expected) || expected != *strictDest) {
+            return false;
+        }
+        const uint256 boundHash = StrictMessageHash(*strictDest, hash);
+        if (key.IsPQ()) {
+            std::vector<unsigned char> pqSignature;
+            if (!key.Sign(boundHash, pqSignature)) {
+                return false;
+            }
+            return SerializePQMessageSignature(pubkey, pqSignature, vchSig);
+        }
+        return key.SignCompact(boundHash, vchSig);
     }
 
     if (key.IsPQ()) {
@@ -416,6 +449,30 @@ bool SignMessageHash(const CKey& key, const CTxDestination& dest, const uint256&
 
 bool VerifyMessageHash(const CTxDestination& dest, const uint256& hash, const std::vector<unsigned char>& vchSig)
 {
+    if (const WitnessStrictAuthScript* strictDest = boost::get<WitnessStrictAuthScript>(&dest)) {
+        if (!strictDest->IsValid()) {
+            return false;
+        }
+        CPubKey pubkey;
+        const uint256 boundHash = StrictMessageHash(*strictDest, hash);
+        if (strictDest->IsPQ()) {
+            std::vector<unsigned char> pqSignature;
+            if (!DeserializePQMessageSignature(vchSig, pubkey, pqSignature)) {
+                return false;
+            }
+            WitnessStrictAuthScript expected;
+            return GetStrictAuthScriptDestinationForPubKey(pubkey, expected) &&
+                   expected == *strictDest &&
+                   pubkey.Verify(boundHash, pqSignature);
+        }
+        // Version 3: classical compact signature with key recovery.
+        if (!pubkey.RecoverCompact(boundHash, vchSig) || !pubkey.IsCompressed()) {
+            return false;
+        }
+        WitnessStrictAuthScript expected;
+        return GetStrictAuthScriptDestinationForPubKey(pubkey, expected) && expected == *strictDest;
+    }
+
     if (const WitnessV1AuthScript* authScriptDest = boost::get<WitnessV1AuthScript>(&dest)) {
         CPubKey pubkey;
         std::vector<unsigned char> pqSignature;
@@ -463,6 +520,17 @@ public:
         data.insert(data.end(), conv.begin(), conv.end());
         return bech32::Encode(GetParams().Bech32HRP(), data, bech32::Encoding::BECH32M);
     }
+    std::string operator()(const WitnessStrictAuthScript& id) const {
+        // Bech32m: witness version 2 (HRP "pq"/"tpq") or 3 (HRP "nq"/"tnq") + 32-byte commitment.
+        if (!id.IsValid()) return "";
+        std::vector<uint8_t> data = {id.version};
+        std::vector<uint8_t> hash_bytes(id.commitment.begin(), id.commitment.end());
+        std::vector<uint8_t> conv;
+        if (!bech32::ConvertBits<8, 5, true>(hash_bytes, conv)) return "";
+        data.insert(data.end(), conv.begin(), conv.end());
+        const std::string& hrp = id.IsPQ() ? GetParams().Bech32HRPStrictPQ() : GetParams().Bech32HRP();
+        return bech32::Encode(hrp, data, bech32::Encoding::BECH32M);
+    }
     std::string operator()(const CNoDestination& dest) const { return ""; }
 };
 
@@ -478,17 +546,36 @@ CTxDestination DecodeDestination(const std::string& str)
     // Try Bech32/Bech32m first
     bech32::DecodeResult dec = bech32::Decode(str);
     if (dec.encoding != bech32::Encoding::INVALID) {
-        if (dec.hrp == GetParams().Bech32HRP() &&
-            dec.encoding == bech32::Encoding::BECH32M &&
-            !dec.data.empty() && dec.data[0] == 1) {
-            // Witness v1: decode 5-bit payload back to bytes
-            std::vector<uint8_t> conv;
-            std::vector<uint8_t> payload(dec.data.begin() + 1, dec.data.end());
-            if (bech32::ConvertBits<5, 8, false>(payload, conv) && conv.size() == 32) {
-                return WitnessV1AuthScript(uint256(conv));
-            }
+        if (dec.encoding != bech32::Encoding::BECH32M || dec.data.empty()) {
+            return CNoDestination();
         }
-        return CNoDestination();
+        const uint8_t version = dec.data[0];
+        // Canonical HRP/version pairs only. Any other combination is rejected
+        // even with a valid checksum:
+        //   Bech32HRP()          ("nq"/"tnq") <-> version 1 (generic) or 3 (strict ECDSA)
+        //   Bech32HRPStrictPQ()  ("pq"/"tpq") <-> version 2 (strict PQ)
+        const bool canonical =
+            (dec.hrp == GetParams().Bech32HRP() && (version == 1 || version == STRICT_AUTHSCRIPT_WITNESS_V3_ECDSA)) ||
+            (dec.hrp == GetParams().Bech32HRPStrictPQ() && version == STRICT_AUTHSCRIPT_WITNESS_V2_PQ);
+        if (!canonical) {
+            return CNoDestination();
+        }
+        // Strict families are only addressable on chains where their spending
+        // rules are active. Before activation an output to OP_2/OP_3 <32> is
+        // anyone-can-spend, so refuse to decode (and therefore to pay to) such
+        // addresses instead of letting funds land in an unprotected output.
+        if (version != 1 && !GetParams().GetConsensus().nStrictAuthScriptEnabled) {
+            return CNoDestination();
+        }
+        std::vector<uint8_t> conv;
+        std::vector<uint8_t> payload(dec.data.begin() + 1, dec.data.end());
+        if (!bech32::ConvertBits<5, 8, false>(payload, conv) || conv.size() != 32) {
+            return CNoDestination();
+        }
+        if (version == 1) {
+            return WitnessV1AuthScript(uint256(conv));
+        }
+        return WitnessStrictAuthScript(version, uint256(conv));
     }
     // Fall back to Base58 (legacy addresses)
     return CNeuraiAddress(str).Get();
@@ -498,6 +585,7 @@ bool IsValidDestinationString(const std::string& str, const CChainParams& params
 {
     CTxDestination dest = DecodeDestination(str);
     if (boost::get<WitnessV1AuthScript>(&dest)) return true;
+    if (boost::get<WitnessStrictAuthScript>(&dest)) return true;
     return CNeuraiAddress(str).IsValid(params);
 }
 

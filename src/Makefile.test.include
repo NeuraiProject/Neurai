@@ -151,6 +151,7 @@ NEURAI_TESTS =\
   test/txvalidationcache_tests.cpp \
   test/verify_flags_tests.cpp \
   test/witness_standard_tests.cpp \
+  test/strict_authscript_tests.cpp \
   test/versionbits_tests.cpp \
   test/uint256_tests.cpp \
   test/univalue_tests.cpp \

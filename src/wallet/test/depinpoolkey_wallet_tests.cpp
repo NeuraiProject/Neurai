@@ -129,7 +129,7 @@ BOOST_AUTO_TEST_CASE(pool_key_requires_legacy_wallet)
     CPubKey derivedPub;
     std::string path;
     BOOST_REQUIRE_MESSAGE(DeriveDepinPoolKeys(service.get(), derived, derivedPub, path, error), error);
-    BOOST_CHECK_EQUAL(path, "m/44'/0'/200'/0/0"); // regtest is not testnet: change = 0
+    BOOST_CHECK_EQUAL(path, "m/44'/1'/200'/0/0"); // regtest: coin type 1, and not testnet so change = 0
 
     BOOST_REQUIRE_MESSAGE(LoadDepinPoolKey(service.get(), error), error);
     CKey loaded;

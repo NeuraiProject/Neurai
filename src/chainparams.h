@@ -77,6 +77,8 @@ public:
     const std::vector<CDNSSeedData>& DNSSeeds() const { return vSeeds; }
     const std::vector<unsigned char>& Base58Prefix(Base58Type type) const { return base58Prefixes[type]; }
     const std::string& Bech32HRP() const { return strBech32HRP; }
+    /** HRP of the strict PQ family (witness v2). Witness v1 and v3 share Bech32HRP(). */
+    const std::string& Bech32HRPStrictPQ() const { return strBech32HRPStrictPQ; }
     int ExtCoinType() const { return nExtCoinType; }
     const std::vector<SeedSpec6>& FixedSeeds() const { return vFixedSeeds; }
     const CCheckpointData& Checkpoints() const { return checkpointData; }
@@ -166,6 +168,7 @@ protected:
     std::vector<CDNSSeedData> vSeeds;
     std::vector<unsigned char> base58Prefixes[MAX_BASE58_TYPES];
     std::string strBech32HRP;
+    std::string strBech32HRPStrictPQ;
     int nExtCoinType;
     std::string strNetworkID;
     CBlock genesis;

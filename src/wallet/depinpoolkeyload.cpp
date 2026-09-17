@@ -58,11 +58,16 @@ bool DeriveDepinPoolKeys(CWallet* pwallet, CKey& privKey, CPubKey& pubkey,
 
     const bool isTestnet = (GetParams().NetworkIDString() == CBaseChainParams::TESTNET);
     const uint32_t changeIndex = isTestnet ? 1 : 0;
-    derivationPath = strprintf("m/44'/0'/200'/%d/0", changeIndex);
+    // Coin type: canonical Neurai SLIP-44 value (1900) on mainnet, 1 on
+    // testnet/regtest - the same convention as the PQ and strict ECDSA trees.
+    // Not GetParams().ExtCoinType(): that is the node's historical legacy
+    // BIP44 coin type (0 on mainnet), kept only for existing legacy wallets.
+    const uint32_t coinType = (GetParams().NetworkIDString() == CBaseChainParams::MAIN) ? 1900 : 1;
+    derivationPath = strprintf("m/44'/%d'/200'/%d/0", coinType, changeIndex);
 
     try {
         masterKey.Derive(purposeKey, 44 | BIP32_HARDENED_KEY_LIMIT);
-        purposeKey.Derive(coinTypeKey, GetParams().ExtCoinType() | BIP32_HARDENED_KEY_LIMIT);
+        purposeKey.Derive(coinTypeKey, coinType | BIP32_HARDENED_KEY_LIMIT);
         coinTypeKey.Derive(accountKey, 200 | BIP32_HARDENED_KEY_LIMIT);
         accountKey.Derive(changeKey, changeIndex);
         changeKey.Derive(addressKey, 0);

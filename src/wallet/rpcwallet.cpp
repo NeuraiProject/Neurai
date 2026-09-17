@@ -185,19 +185,21 @@ UniValue getnewaddress(const JSONRPCRequest& request)
         return NullUniValue;
     }
 
-    if (request.fHelp || request.params.size() > 1)
+    if (request.fHelp || request.params.size() > 2)
         throw std::runtime_error(
-            "getnewaddress ( \"account\" )\n"
+            "getnewaddress ( \"account\" \"address_type\" )\n"
             "\nReturns a new Neurai address for receiving payments.\n"
             "If 'account' is specified (DEPRECATED), it is added to the address book \n"
             "so payments received with the address will be credited to 'account'.\n"
             "\nArguments:\n"
             "1. \"account\"        (string, optional) DEPRECATED. The account name for the address to be linked to. If not provided, the default account \"\" is used. It can also be set to the empty string \"\" to represent the default account. The account does not need to exist, it will be created if there is no account by the given name.\n"
+            "2. \"address_type\"   (string, optional) The address family: \"legacy\" (Base58, secp256k1), \"pq\" (strict post-quantum, witness v2, pq1.../tpq1...) or \"ecdsa\" (strict ECDSA, witness v3, nq1r.../tnq1r...). If omitted, the wallet's default family is used (legacy for classic wallets, generic AuthScript v1 for PQ wallets).\n"
             "\nResult:\n"
             "\"address\"    (string) The new neurai address\n"
             "\nExamples:\n"
             + HelpExampleCli("getnewaddress", "")
-            + HelpExampleRpc("getnewaddress", "")
+            + HelpExampleCli("getnewaddress", "\"\" \"ecdsa\"")
+            + HelpExampleRpc("getnewaddress", "\"\", \"pq\"")
         );
 
     LOCK2(cs_main, pwallet->cs_wallet);
@@ -207,18 +209,30 @@ UniValue getnewaddress(const JSONRPCRequest& request)
     if (!request.params[0].isNull())
         strAccount = AccountFromValue(request.params[0]);
 
+    std::string addressType;
+    if (request.params.size() > 1 && !request.params[1].isNull())
+        addressType = request.params[1].get_str();
+
     if (!pwallet->IsLocked()) {
         pwallet->TopUpKeyPool();
     }
 
-    // Generate a new key that is added to wallet
-    CPubKey newKey;
-    if (!pwallet->GetKeyFromPool(newKey)) {
-        throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
-    }
-    CTxDestination dest = newKey.GetID();
-    if (newKey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(newKey, dest)) {
-        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive AuthScript destination for new PQ key");
+    CTxDestination dest;
+    if (!addressType.empty()) {
+        std::string error;
+        if (!pwallet->GetNewDestinationOfType(addressType, false, dest, error)) {
+            throw JSONRPCError(RPC_WALLET_ERROR, error);
+        }
+    } else {
+        // Generate a new key that is added to wallet
+        CPubKey newKey;
+        if (!pwallet->GetKeyFromPool(newKey)) {
+            throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
+        }
+        dest = newKey.GetID();
+        if (newKey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(newKey, dest)) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive AuthScript destination for new PQ key");
+        }
     }
 
     pwallet->SetAddressBook(dest, strAccount, "receive");
@@ -285,11 +299,13 @@ UniValue getrawchangeaddress(const JSONRPCRequest& request)
         return NullUniValue;
     }
 
-    if (request.fHelp || request.params.size() > 0)
+    if (request.fHelp || request.params.size() > 1)
         throw std::runtime_error(
-            "getrawchangeaddress\n"
+            "getrawchangeaddress ( \"address_type\" )\n"
             "\nReturns a new Neurai address, for receiving change.\n"
             "This is for use with raw transactions, NOT normal use.\n"
+            "\nArguments:\n"
+            "1. \"address_type\"   (string, optional) \"legacy\", \"pq\" (strict witness v2) or \"ecdsa\" (strict witness v3). Default: the wallet's default family.\n"
             "\nResult:\n"
             "\"address\"    (string) The address\n"
             "\nExamples:\n"
@@ -301,6 +317,15 @@ UniValue getrawchangeaddress(const JSONRPCRequest& request)
 
     if (!pwallet->IsLocked()) {
         pwallet->TopUpKeyPool();
+    }
+
+    if (request.params.size() > 0 && !request.params[0].isNull() && !request.params[0].get_str().empty()) {
+        CTxDestination typedDest;
+        std::string error;
+        if (!pwallet->GetNewDestinationOfType(request.params[0].get_str(), true, typedDest, error)) {
+            throw JSONRPCError(RPC_WALLET_ERROR, error);
+        }
+        return EncodeDestination(typedDest);
     }
 
     CReserveKey reservekey(pwallet);
@@ -782,6 +807,12 @@ UniValue signmessage(const JSONRPCRequest& request)
     } else if (const WitnessV1AuthScript* authScriptDest = boost::get<WitnessV1AuthScript>(&dest)) {
         AuthScriptSpendData spendData;
         if (!pwallet->GetAuthScriptSpendData(uint256(*authScriptDest), spendData)) {
+            throw JSONRPCError(RPC_TYPE_ERROR, "Address does not refer to wallet AuthScript data");
+        }
+        keyID = spendData.key_id;
+    } else if (const WitnessStrictAuthScript* strictDest = boost::get<WitnessStrictAuthScript>(&dest)) {
+        AuthScriptSpendData spendData;
+        if (!pwallet->GetAuthScriptSpendData(strictDest->version, strictDest->commitment, spendData)) {
             throw JSONRPCError(RPC_TYPE_ERROR, "Address does not refer to wallet AuthScript data");
         }
         keyID = spendData.key_id;
@@ -1349,6 +1380,8 @@ public:
     bool operator()(const CNoDestination &dest) const { return false; }
 
     bool operator()(const WitnessV1AuthScript &authscript) const { return false; }
+
+    bool operator()(const WitnessStrictAuthScript &strict) const { return false; }
 
     bool operator()(const CKeyID &keyID) {
         if (pwallet) {
@@ -2858,6 +2891,10 @@ UniValue getwalletinfo(const JSONRPCRequest& request)
     if (!seed_id.IsNull() && pwallet->CanSupportFeature(FEATURE_HD_SPLIT)) {
         obj.push_back(Pair("keypoolsize_hd_internal",   (int64_t)(pwallet->GetKeyPoolSize() - kpExternalSize)));
     }
+    if (GetParams().GetConsensus().nStrictAuthScriptEnabled && pwallet->IsBip44Enabled()) {
+        obj.push_back(Pair("keypoolsize_strict_ecdsa", (int64_t)pwallet->GetStrictEcdsaKeyPoolSize(false)));
+        obj.push_back(Pair("keypoolsize_strict_ecdsa_internal", (int64_t)pwallet->GetStrictEcdsaKeyPoolSize(true)));
+    }
     if (pwallet->IsCrypted()) {
         obj.push_back(Pair("unlocked_until", pwallet->nRelockTime));
     }
@@ -3699,8 +3736,8 @@ static const CRPCCommand commands[] =
     { "wallet",             "getbalance",               &getbalance,               {"account","minconf","include_watchonly"} },
     { "wallet",             "getmasterkeyinfo",         &getmasterkeyinfo,         {} },
     { "wallet",             "getmywords",               &getmywords,                        {} },
-    { "wallet",             "getnewaddress",            &getnewaddress,            {"account"} },
-    { "wallet",             "getrawchangeaddress",      &getrawchangeaddress,      {} },
+    { "wallet",             "getnewaddress",            &getnewaddress,            {"account","address_type"} },
+    { "wallet",             "getrawchangeaddress",      &getrawchangeaddress,      {"address_type"} },
     { "wallet",             "getreceivedbyaccount",     &getreceivedbyaccount,     {"account","minconf"} },
     { "wallet",             "getreceivedbyaddress",     &getreceivedbyaddress,     {"address","minconf"} },
     { "wallet",             "gettransaction",           &gettransaction,           {"txid","include_watchonly"} },

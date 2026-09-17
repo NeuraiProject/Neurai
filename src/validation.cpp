@@ -124,6 +124,23 @@ namespace {
 
 bool ExtractIndexedPubKeyFromInput(const CTxIn& input, const std::vector<unsigned char>& expectedHash, int addressType, CPubKey& pubkey)
 {
+    // Strict AuthScript families (witness v2/v3): stack = [auth_type, sig, pubkey, OP_TRUE]
+    if (addressType == DEST_INDEX_WITNESS_V2_STRICT_PQ || addressType == DEST_INDEX_WITNESS_V3_STRICT_ECDSA) {
+        const auto& stack = input.scriptWitness.stack;
+        if (stack.size() == 4 && stack[0].size() == 1) {
+            const uint8_t authType = stack[0][0];
+            const int version = (addressType == DEST_INDEX_WITNESS_V2_STRICT_PQ) ? STRICT_AUTHSCRIPT_WITNESS_V2_PQ : STRICT_AUTHSCRIPT_WITNESS_V3_ECDSA;
+            if (authType == StrictAuthScriptAuthType(version)) {
+                CPubKey candidate(stack[2]);
+                if (candidate.IsValid()) {
+                    pubkey = candidate;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     // For AuthScript witness v1: stack = [auth_type, sig, pubkey, ...args, witnessScript]
     if (addressType == DEST_INDEX_WITNESS_V1_AUTHSCRIPT) {
         const auto& stack = input.scriptWitness.stack;
@@ -2998,7 +3015,8 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
 
                     // Extract revealed public keys for pubkey index from scriptSig or witness.
                     if (fPubKeyIndex &&
-                        (addressData.type == DEST_INDEX_KEY || addressData.type == DEST_INDEX_WITNESS_V1_AUTHSCRIPT) &&
+                        (addressData.type == DEST_INDEX_KEY || addressData.type == DEST_INDEX_WITNESS_V1_AUTHSCRIPT ||
+                         addressData.type == DEST_INDEX_WITNESS_V2_STRICT_PQ || addressData.type == DEST_INDEX_WITNESS_V3_STRICT_ECDSA) &&
                         !addressData.payload.empty()) {
                         CPubKey pubkey;
                         if (ExtractIndexedPubKeyFromInput(input, addressData.payload, addressData.type, pubkey)) {

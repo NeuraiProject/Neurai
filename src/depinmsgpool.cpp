@@ -579,7 +579,8 @@ bool CheckAddressHasPublicKey(const std::string& address, CPubKey& pubkey, std::
     CTxDestination dest = DecodeDestination(address);
     CDestinationIndexData addressData;
     if (!IsValidDestination(dest) || !GetDestinationIndexData(dest, addressData) ||
-        (addressData.type != DEST_INDEX_KEY && addressData.type != DEST_INDEX_WITNESS_V1_AUTHSCRIPT)) {
+        (addressData.type != DEST_INDEX_KEY && addressData.type != DEST_INDEX_WITNESS_V1_AUTHSCRIPT &&
+         addressData.type != DEST_INDEX_WITNESS_V2_STRICT_PQ && addressData.type != DEST_INDEX_WITNESS_V3_STRICT_ECDSA)) {
         error = strprintf("Invalid address format: %s", address);
         return false;
     }

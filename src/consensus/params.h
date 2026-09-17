@@ -97,6 +97,11 @@ struct Params {
     /** Enable post-quantum (ML-DSA-44) witness v1 verification.
      *  true on testnet/regtest; false on mainnet until future activation. */
     bool nPQWitnessEnabled;
+    /** Enable the strict AuthScript families: witness v2 (PQ, fixed OP_TRUE
+     *  template) and witness v3 (compressed ECDSA, fixed OP_TRUE template).
+     *  Local candidate versions under test: true on regtest only; false on
+     *  testnet and mainnet until the public activation is decided. */
+    bool nStrictAuthScriptEnabled;
     /** Enable OP_CAT (BIP 347) - stack element concatenation.
      *  true on testnet/regtest; false on mainnet until future activation. */
     bool nCATEnabled;

@@ -508,6 +508,14 @@ bool static CheckPubKeyEncoding(const valtype &vchPubKey, script_verify_flags fl
     {
         return set_error(serror, SCRIPT_ERR_WITNESS_PUBKEYTYPE);
     }
+    // Strict AuthScript families: compressed secp256k1 or PQ only, as a
+    // consensus rule (not gated by SCRIPT_VERIFY_WITNESS_PUBKEYTYPE).
+    if (sigversion == SIGVERSION_AUTHSCRIPT_STRICT &&
+        !IsCompressedPubKey(vchPubKey) &&
+        !IsPostQuantumPubKey(vchPubKey))
+    {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PUBKEYTYPE);
+    }
     return true;
 }
 
@@ -2655,7 +2663,7 @@ uint256 SignatureHash(const CScript &scriptCode, const CTransaction &txTo, unsig
 {
     assert(nIn < txTo.vin.size());
 
-    if (sigversion == SIGVERSION_WITNESS_V0 || sigversion == SIGVERSION_AUTHSCRIPT)
+    if (sigversion == SIGVERSION_WITNESS_V0 || sigversion == SIGVERSION_AUTHSCRIPT || sigversion == SIGVERSION_AUTHSCRIPT_STRICT)
     {
         uint256 hashPrevouts;
         uint256 hashSequence;
@@ -2712,6 +2720,12 @@ uint256 SignatureHash(const CScript &scriptCode, const CTransaction &txTo, unsig
         // Locktime
         ss << txTo.nLockTime;
         if (sigversion == SIGVERSION_AUTHSCRIPT) {
+            ss << authType;
+        } else if (sigversion == SIGVERSION_AUTHSCRIPT_STRICT) {
+            // Strict families: commit to the witness version bound to this
+            // authType (v2 <-> 0x01, v3 <-> 0x02) and then to authType itself.
+            // The extra byte separates this domain from SIGVERSION_AUTHSCRIPT.
+            ss << (uint8_t)StrictAuthScriptWitnessVersion(authType);
             ss << authType;
         }
         // Sighash type
@@ -3584,6 +3598,73 @@ static bool VerifyAuthScriptCore(const CScriptWitness& witness, const std::vecto
     return set_success(serror);
 }
 
+// Strict AuthScript families (witness v2 = PQ, witness v3 = ECDSA).
+//
+// Fixed template enforced by consensus:
+//   witness stack == [authType, signature, pubkey, OP_TRUE]   (exactly 4 items)
+//   authType      == StrictAuthScriptAuthType(witversion)     (v2 -> 0x01, v3 -> 0x02)
+//   pubkey        := PQ (ML-DSA-44) for v2, compressed secp256k1 for v3
+//   witnessScript == exactly one byte OP_TRUE (0x51)
+//   program       == GetAuthScriptCommitment(authType, pubkey, OP_TRUE, witversion)
+// The signature is checked under SIGVERSION_AUTHSCRIPT_STRICT with the
+// witnessScript as scriptCode. OP_TRUE is never evaluated: the template is
+// the whole spending condition.
+static bool VerifyAuthScriptStrict(const CScriptWitness& witness, int witversion, const std::vector<unsigned char>& program, script_verify_flags flags, const BaseSignatureChecker& checker, ScriptError* serror)
+{
+    if (!IsStrictAuthScriptWitnessVersion(witversion) || program.size() != 32 ||
+        (flags & SCRIPT_VERIFY_AUTHSCRIPT_STRICT) == 0) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+    if (witness.stack.size() != 4) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+    if (witness.stack[0].size() != 1) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+    const uint8_t authType = witness.stack[0][0];
+    if (authType != StrictAuthScriptAuthType(witversion)) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+
+    const valtype& authSig = witness.stack[1];
+    const valtype& vchPubKey = witness.stack[2];
+    const valtype& witnessScriptBytes = witness.stack[3];
+
+    // witnessScript must be exactly OP_TRUE.
+    if (witnessScriptBytes.size() != 1 || witnessScriptBytes[0] != OP_TRUE) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+
+    CPubKey authPubKey(vchPubKey);
+    if (!authPubKey.IsValid()) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+    if (witversion == STRICT_AUTHSCRIPT_WITNESS_V2_PQ && !authPubKey.IsPQ()) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+    if (witversion == STRICT_AUTHSCRIPT_WITNESS_V3_ECDSA && (authPubKey.IsPQ() || !authPubKey.IsCompressed())) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PUBKEYTYPE);
+    }
+
+    const CScript witnessScript(witnessScriptBytes.begin(), witnessScriptBytes.end());
+    const uint256 expectedCommitment = GetAuthScriptCommitment(authType, &authPubKey, witnessScript, (uint8_t)witversion);
+    if (expectedCommitment.IsNull() || memcmp(expectedCommitment.begin(), program.data(), program.size()) != 0) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+
+    if (!CheckPubKeyEncoding(vchPubKey, flags, SIGVERSION_AUTHSCRIPT_STRICT, serror) ||
+        !CheckSignatureEncodingForPubKey(authSig, vchPubKey, flags, serror)) {
+        return false;
+    }
+    if (authSig.empty()) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+    if (!checker.CheckSig(authSig, vchPubKey, witnessScript, SIGVERSION_AUTHSCRIPT_STRICT, authType)) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+    return set_success(serror);
+}
+
 static bool VerifyWitnessProgram(const CScriptWitness &witness, int witversion, const std::vector<unsigned char> &program, script_verify_flags flags, const BaseSignatureChecker &checker, ScriptError *serror)
 {
     std::vector<std::vector<unsigned char> > stack;
@@ -3626,6 +3707,10 @@ static bool VerifyWitnessProgram(const CScriptWitness &witness, int witversion, 
     {
         return VerifyAuthScriptCore(witness, program, flags, checker, serror);
     }
+    else if (IsStrictAuthScriptWitnessVersion(witversion) && program.size() == 32 && (flags & SCRIPT_VERIFY_AUTHSCRIPT_STRICT))
+    {
+        return VerifyAuthScriptStrict(witness, witversion, program, flags, checker, serror);
+    }
     else if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM)
     {
         return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM);
@@ -3662,6 +3747,10 @@ static bool VerifyAssetWitnessProgram(const CScriptWitness& witness, int witvers
     if (witversion == 1 && program.size() == 32 && (flags & SCRIPT_VERIFY_AUTHSCRIPT)) {
         (void)assetData;
         return VerifyAuthScriptCore(witness, program, flags, checker, serror);
+    }
+    if (IsStrictAuthScriptWitnessVersion(witversion) && program.size() == 32 && (flags & SCRIPT_VERIFY_AUTHSCRIPT_STRICT)) {
+        (void)assetData;
+        return VerifyAuthScriptStrict(witness, witversion, program, flags, checker, serror);
     }
 
     if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM) {
@@ -3854,6 +3943,14 @@ size_t static WitnessSigOps(int witversion, const std::vector<unsigned char> &wi
             sigops += 1;
         }
         return sigops;
+    }
+
+    // Strict families always carry exactly one authentication signature
+    // (ML-DSA-44 for v2, ECDSA for v3) and no evaluated script. Charge one
+    // sigop per spend, matching the v1 accounting for the authentication
+    // signature, so strict spends never verify for free.
+    if (IsStrictAuthScriptWitnessVersion(witversion) && witprogram.size() == 32 && (flags & SCRIPT_VERIFY_AUTHSCRIPT_STRICT)) {
+        return 1;
     }
 
     // Future flags may be implemented here.

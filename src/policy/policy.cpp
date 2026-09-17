@@ -36,6 +36,27 @@ static size_t EstimateWitnessInputVBytes(int witnessversion, const std::vector<u
         return base_bytes + (witness_bytes / WITNESS_SCALE_FACTOR);
     }
 
+    // Strict AuthScript families: fixed witness [authType, sig, pubkey, OP_TRUE].
+    if (IsStrictAuthScriptWitnessVersion(witnessversion) && witnessprogram.size() == 32) {
+        const size_t base_bytes = 32 + 4 + 1 + 4;
+        size_t sig_bytes = 0;
+        size_t pubkey_bytes = 0;
+        if (witnessversion == STRICT_AUTHSCRIPT_WITNESS_V2_PQ) {
+            sig_bytes = ML_DSA_44_SIG_SIZE + 1;
+            pubkey_bytes = 1 + ML_DSA_44_PUBKEY_SIZE;
+        } else {
+            sig_bytes = 72 + 1;   // max DER signature + sighash byte
+            pubkey_bytes = 33;    // compressed secp256k1
+        }
+        const size_t witness_bytes =
+                1 /* stack item count */ +
+                GetSizeOfCompactSize(1) + 1 +                       // authType
+                GetSizeOfCompactSize(sig_bytes) + sig_bytes +       // signature
+                GetSizeOfCompactSize(pubkey_bytes) + pubkey_bytes + // pubkey
+                GetSizeOfCompactSize(1) + 1;                        // OP_TRUE
+        return base_bytes + (witness_bytes / WITNESS_SCALE_FACTOR);
+    }
+
     return (32 + 4 + 1 + (107 / WITNESS_SCALE_FACTOR) + 4);
 }
 
@@ -279,6 +300,20 @@ bool IsWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs,
         if (!prevScript.IsWitnessProgram(witnessversion, witnessprogram) &&
             !GetAssetScriptWitnessProgram(prevScript, witnessversion, witnessprogram))
             return false;
+
+        // Strict AuthScript families: the witness is a fixed 4-item template.
+        // Consensus enforces the exact shape; policy additionally bounds the
+        // item sizes so oversized junk never reaches script verification.
+        if (IsStrictAuthScriptWitnessVersion(witnessversion) && witnessprogram.size() == 32) {
+            const auto& stack = tx.vin[i].scriptWitness.stack;
+            if (stack.size() != 4)
+                return false;
+            const size_t maxSig = (witnessversion == STRICT_AUTHSCRIPT_WITNESS_V2_PQ) ? ML_DSA_44_SIG_SIZE + 1 : 73;
+            const size_t maxPubKey = (witnessversion == STRICT_AUTHSCRIPT_WITNESS_V2_PQ) ? 1 + ML_DSA_44_PUBKEY_SIZE : 33;
+            if (stack[0].size() != 1 || stack[1].size() > maxSig || stack[2].size() > maxPubKey || stack[3].size() != 1)
+                return false;
+            continue;
+        }
 
         // Check P2WSH standard limits
         if (witnessversion == 0 && witnessprogram.size() == 32) {

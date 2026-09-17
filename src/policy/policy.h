@@ -88,6 +88,7 @@ inline script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
                                                 const Consensus::Params& consensus)
 {
     if (consensus.nPQWitnessEnabled)        base |= SCRIPT_VERIFY_AUTHSCRIPT;
+    if (consensus.nStrictAuthScriptEnabled) base |= SCRIPT_VERIFY_AUTHSCRIPT_STRICT;
     if (consensus.nCATEnabled)              base |= SCRIPT_VERIFY_CAT;
     if (consensus.nCTVEnabled)              base |= SCRIPT_VERIFY_CHECKTEMPLATEVERIFY;
     if (consensus.nCSFSEnabled)             base |= SCRIPT_VERIFY_CHECKSIGFROMSTACK;

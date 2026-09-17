@@ -153,6 +153,13 @@ UniValue importprivkey(const JSONRPCRequest& request)
         pwallet->MarkDirty();
         pwallet->SetAddressBook(dest, strLabel, "receive");
 
+        // An exported key does not say which of its addresses it was used
+        // under: also recognise its strict AuthScript destination (witness v2
+        // for PQ, v3 for compressed secp256k1), even if the key is already here.
+        if (!pwallet->RegisterStrictAuthScriptForKey(pubkey)) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "Error registering strict AuthScript destination for imported key");
+        }
+
         // Don't throw error in case a key is already there
         if (pwallet->HaveKey(vchAddress)) {
             return NullUniValue;
@@ -555,6 +562,7 @@ UniValue importwallet(const JSONRPCRequest& request)
             fGood = false;
             continue;
         }
+        pwallet->RegisterStrictAuthScriptForKey(pubkey);
         if (pubkey.IsPQ()) {
             CTxDestination pqDest;
             if (!pwallet->GetDefaultAuthScriptDestination(pubkey, pqDest)) {
@@ -624,6 +632,12 @@ UniValue dumpprivkey(const JSONRPCRequest& request)
     } else if (const WitnessV1AuthScript* pAuthScript = boost::get<WitnessV1AuthScript>(&dest)) {
         AuthScriptSpendData spendData;
         if (!pwallet->GetAuthScriptSpendData(uint256(*pAuthScript), spendData)) {
+            throw JSONRPCError(RPC_TYPE_ERROR, "Address does not refer to wallet AuthScript data");
+        }
+        keyID = spendData.key_id;
+    } else if (const WitnessStrictAuthScript* pStrict = boost::get<WitnessStrictAuthScript>(&dest)) {
+        AuthScriptSpendData spendData;
+        if (!pwallet->GetAuthScriptSpendData(pStrict->version, pStrict->commitment, spendData)) {
             throw JSONRPCError(RPC_TYPE_ERROR, "Address does not refer to wallet AuthScript data");
         }
         keyID = spendData.key_id;
@@ -1117,6 +1131,7 @@ UniValue ProcessImport(CWallet * const pwallet, const UniValue& data, const int6
 
                     pwallet->mapKeyMetadata[vchAddress].nCreateTime = timestamp;
 
+                    pwallet->RegisterStrictAuthScriptForKey(pubkey);
                     if (!pwallet->AddKeyPubKey(key, pubkey)) {
                         throw JSONRPCError(RPC_WALLET_ERROR, "Error adding key to wallet");
                     }
@@ -1245,6 +1260,7 @@ UniValue ProcessImport(CWallet * const pwallet, const UniValue& data, const int6
 
                 pwallet->mapKeyMetadata[vchAddress].nCreateTime = timestamp;
 
+                pwallet->RegisterStrictAuthScriptForKey(pubKey);
                 if (!pwallet->AddKeyPubKey(key, pubKey)) {
                     throw JSONRPCError(RPC_WALLET_ERROR, "Error adding key to wallet");
                 }

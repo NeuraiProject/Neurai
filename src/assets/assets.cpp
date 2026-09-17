@@ -4719,6 +4719,10 @@ bool ParseAssetScript(CScript scriptPubKey, uint160 &hashBytes, std::string &ass
             hashBytes = Hash160(authScriptDest->begin(), authScriptDest->end());
             return true;
         }
+        if (const WitnessStrictAuthScript* strictDest = boost::get<WitnessStrictAuthScript>(&destination)) {
+            hashBytes = Hash160(strictDest->commitment.begin(), strictDest->commitment.end());
+            return true;
+        }
     }
     return false;
 }

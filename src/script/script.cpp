@@ -3,6 +3,8 @@
 // Copyright (c) 2017-2021 The Neurai developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
+#include <atomic>
+
 #include "streams.h"
 #include "version.h"
 #include "assets/assets.h"
@@ -280,6 +282,20 @@ bool CScript::IsAssetScript() const
 // IsAssetScript()'s two shapes (P2PKH+asset, AuthScript+asset) down to the
 // AuthScript case only. Any trailing OP_XNA_ASSET payload is validated by
 // IsAssetScript() itself, so no additional inspection is needed here.
+namespace {
+std::atomic<bool> g_fStrictAuthScriptAssetsEnabled{false};
+}
+
+void SetStrictAuthScriptAssetsEnabled(bool fEnabled)
+{
+    g_fStrictAuthScriptAssetsEnabled.store(fEnabled);
+}
+
+bool AreStrictAuthScriptAssetsEnabled()
+{
+    return g_fStrictAuthScriptAssetsEnabled.load();
+}
+
 bool CScript::IsAssetAuthScript() const
 {
     if (this->size() < 34) return false;
@@ -378,10 +394,12 @@ bool CScript::IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex, Ass
         return false;
     }
 
-    // AuthScript-prefixed asset script (OP_1 <32-byte commitment>, byte 34).
-    // New DePIN format with no mainnet history: keep the strict GetOp parser.
+    // AuthScript-prefixed asset script (OP_n <32-byte commitment>, byte 34),
+    // where OP_n is OP_1 (generic AuthScript v1) or OP_2 / OP_3 (strict
+    // AuthScript families). New DePIN format with no mainnet history: keep
+    // the strict GetOp parser.
     if (this->size() > 40 &&
-        (*this)[0] == OP_1 &&
+        ((*this)[0] == OP_1 || (((*this)[0] == OP_2 || (*this)[0] == OP_3) && AreStrictAuthScriptAssetsEnabled())) &&
         (*this)[1] == 0x20) {
 
         const int assetOpIndex = 34;
@@ -488,8 +506,10 @@ bool CScript::IsNullAssetTxDataScript() const
     // Legacy format: OP_XNA_ASSET 0x14 <20-byte-hash> <asset-data>
     if (this->size() > 23 && (*this)[0] == OP_XNA_ASSET && (*this)[1] == 0x14)
         return true;
-    // AuthScript format: OP_XNA_ASSET OP_1 0x20 <32-byte-commitment> <asset-data>
-    if (this->size() > 36 && (*this)[0] == OP_XNA_ASSET && (*this)[1] == OP_1 && (*this)[2] == 0x20)
+    // AuthScript format: OP_XNA_ASSET OP_n 0x20 <32-byte-commitment> <asset-data>
+    // (OP_1 generic v1, OP_2 / OP_3 strict families)
+    if (this->size() > 36 && (*this)[0] == OP_XNA_ASSET &&
+        ((*this)[1] == OP_1 || (((*this)[1] == OP_2 || (*this)[1] == OP_3) && AreStrictAuthScriptAssetsEnabled())) && (*this)[2] == 0x20)
         return true;
     return false;
 }

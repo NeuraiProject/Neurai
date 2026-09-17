@@ -136,6 +136,20 @@ public:
         UniValue obj(UniValue::VOBJ);
         obj.push_back(Pair("isscript", false));
         obj.push_back(Pair("isauthscript", true));
+        obj.push_back(Pair("witness_version", 1));
+        // Generic AuthScript v1: the commitment hides the authentication type
+        // (PQ, ECDSA or script-only), so no family is claimed here.
+        obj.push_back(Pair("family", "authscript"));
+        return obj;
+    }
+
+    UniValue operator()(const WitnessStrictAuthScript &id) const {
+        UniValue obj(UniValue::VOBJ);
+        obj.push_back(Pair("isscript", false));
+        obj.push_back(Pair("isauthscript", true));
+        obj.push_back(Pair("witness_version", (int)id.version));
+        obj.push_back(Pair("family", id.IsPQ() ? "pq" : "ecdsa"));
+        obj.push_back(Pair("commitment", id.commitment.GetHex()));
         return obj;
     }
 
@@ -412,7 +426,8 @@ UniValue verifymessage(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_TYPE_ERROR, "Invalid address");
     }
 
-    if (!boost::get<CKeyID>(&destination) && !boost::get<WitnessV1AuthScript>(&destination)) {
+    if (!boost::get<CKeyID>(&destination) && !boost::get<WitnessV1AuthScript>(&destination) &&
+        !boost::get<WitnessStrictAuthScript>(&destination)) {
         throw JSONRPCError(RPC_TYPE_ERROR, "Address does not refer to key");
     }
 
@@ -673,6 +688,10 @@ bool getAddressFromIndex(const CDestinationIndexData& addressData, std::string &
         address = EncodeDestination(CKeyID(uint160(addressData.payload)));
     } else if (addressData.type == DEST_INDEX_WITNESS_V1_AUTHSCRIPT && addressData.payload.size() == 32) {
         address = EncodeDestination(WitnessV1AuthScript(uint256(addressData.payload)));
+    } else if (addressData.type == DEST_INDEX_WITNESS_V2_STRICT_PQ && addressData.payload.size() == 32) {
+        address = EncodeDestination(WitnessStrictAuthScript(STRICT_AUTHSCRIPT_WITNESS_V2_PQ, uint256(addressData.payload)));
+    } else if (addressData.type == DEST_INDEX_WITNESS_V3_STRICT_ECDSA && addressData.payload.size() == 32) {
+        address = EncodeDestination(WitnessStrictAuthScript(STRICT_AUTHSCRIPT_WITNESS_V3_ECDSA, uint256(addressData.payload)));
     } else {
         return false;
     }

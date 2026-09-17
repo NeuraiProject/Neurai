@@ -124,6 +124,7 @@ public:
         consensus.nSegwitEnabled = true;
         consensus.nCSVEnabled = true;
         consensus.nPQWitnessEnabled = false; // PQ not yet active on mainnet
+        consensus.nStrictAuthScriptEnabled = false; // strict AuthScript families (witness v2/v3) not active on mainnet
         consensus.nCATEnabled = false;  // OP_CAT (BIP 347) not yet active on mainnet
         consensus.nCTVEnabled = false;  // OP_CTV (BIP 119) not yet active on mainnet
         consensus.nCSFSEnabled = false; // OP_CHECKSIGFROMSTACK not yet active on mainnet
@@ -242,6 +243,7 @@ public:
         base58Prefixes[EXT_SECRET_KEY]    = {0x04, 0x88, 0xAD, 0xE4};
         base58Prefixes[EXT_PQ_SECRET_KEY] = {0x04, 0x88, 0xAC, 0x24}; // xpqp... (mainnet)
         strBech32HRP = "nq";
+        strBech32HRPStrictPQ = "pq";
 
         // Neurai BIP44 cointype in mainnet is '0'
         nExtCoinType = 0;
@@ -355,6 +357,7 @@ public:
         consensus.nSegwitEnabled = true;
         consensus.nCSVEnabled = true;
         consensus.nPQWitnessEnabled = true; // PQ (ML-DSA-44) active on testnet
+        consensus.nStrictAuthScriptEnabled = false; // strict AuthScript families (witness v2/v3): local candidate, not active on testnet
         consensus.nCATEnabled = true;  // OP_CAT (BIP 347) active on testnet
         consensus.nCTVEnabled = true;  // OP_CTV (BIP 119) active on testnet
         consensus.nCSFSEnabled = true;  // OP_CHECKSIGFROMSTACK active on testnet
@@ -492,6 +495,7 @@ public:
         base58Prefixes[EXT_SECRET_KEY]    = {0x04, 0x35, 0x83, 0x94};
         base58Prefixes[EXT_PQ_SECRET_KEY] = {0x04, 0x35, 0x81, 0xD5}; // tpqp... (testnet)
         strBech32HRP = "tnq";
+        strBech32HRPStrictPQ = "tpq";
 
         // Neurai BIP44 cointype in testnet
         nExtCoinType = 1;
@@ -588,6 +592,7 @@ public:
         consensus.nSegwitEnabled = true;
         consensus.nCSVEnabled = true;
         consensus.nPQWitnessEnabled = true; // PQ (ML-DSA-44) active on regtest
+        consensus.nStrictAuthScriptEnabled = true; // strict AuthScript families (witness v2/v3) active on regtest for local testing
         consensus.nCATEnabled = true;  // OP_CAT (BIP 347) active on regtest
         consensus.nCTVEnabled = true;  // OP_CTV (BIP 119) active on regtest
         consensus.nCSFSEnabled = true;  // OP_CHECKSIGFROMSTACK active on regtest
@@ -732,6 +737,7 @@ public:
         base58Prefixes[EXT_SECRET_KEY]    = {0x04, 0x35, 0x83, 0x94};
         base58Prefixes[EXT_PQ_SECRET_KEY] = {0x04, 0x35, 0x81, 0xD5}; // tpqp... (regtest)
         strBech32HRP = "tnq";
+        strBech32HRPStrictPQ = "tpq";
 
         // Neurai BIP44 cointype in regtest
         nExtCoinType = 1;
@@ -811,6 +817,9 @@ void SelectParams(const std::string& network, bool fForceBlockNetwork)
         bNetwork.SetNetwork(network);
     }
     globalChainParams = CreateChainParams(network);
+    // Asset parsers only recognise strict AuthScript (witness v2/v3) prefixes
+    // on chains where the strict families are active.
+    SetStrictAuthScriptAssetsEnabled(globalChainParams->GetConsensus().nStrictAuthScriptEnabled);
 }
 
 void UpdateVersionBitsParameters(Consensus::DeploymentPos d, int64_t nStartTime, int64_t nTimeout)
