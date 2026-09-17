@@ -127,3 +127,6 @@ contrib/devtools/split-debug.sh
 cmake-build-debug
 
 CMakeLists.txt
+
+# Generated local review results
+/doc/review-results/

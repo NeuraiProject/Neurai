@@ -830,6 +830,17 @@ void CTxMemPool::removeForReorg(const CCoinsViewCache *pcoins, unsigned int nMem
                 }
             }
         }
+        // Reference inputs must remain confirmed and uncontested after a reorg.
+        // A disconnected reference transaction may have been re-admitted to the
+        // mempool, but that does not make its outputs eligible as references.
+        // These dependencies are not vin ancestors, so ordinary input/sequence
+        // checks above do not catch them. Remove descendants with the referencer.
+        for (const COutPoint& refout : tx.vrefin) {
+            if (!pcoins->HaveCoin(refout) || mapNextTx.count(refout)) {
+                txToRemove.insert(it);
+                break;
+            }
+        }
         if (!validLP) {
             mapTx.modify(it, update_lock_points(lp));
         }

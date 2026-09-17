@@ -79,10 +79,11 @@ CMutableTransaction MakeTx(const std::vector<CScript>& outputs, size_t nRefInput
 
 bool Run(const CTransaction& tx, const CScript& script, script_verify_flags flags,
          std::vector<valtype>& stack, ScriptError& err,
-         const CScript& spentSPK = CScript(), const std::vector<CTxOut>* refOutputs = nullptr)
+         const CScript& spentSPK = CScript(), const std::vector<CTxOut>* refOutputs = nullptr,
+         const std::vector<CTxOut>* allPrevouts = nullptr)
 {
     PrecomputedTransactionData txdata(tx);
-    TransactionSignatureChecker checker(&tx, 0, 0, txdata, spentSPK, nullptr, refOutputs);
+    TransactionSignatureChecker checker(&tx, 0, 0, txdata, spentSPK, allPrevouts, refOutputs);
     stack.clear();
     err = SCRIPT_ERR_OK;
     return EvalScript(stack, script, flags, checker, SIGVERSION_BASE, &err);
@@ -419,6 +420,62 @@ BOOST_AUTO_TEST_CASE(other_introspection_opcodes_are_family_agnostic)
     for (size_t i = 0; i < txhashes.size(); i++)
         for (size_t j = i + 1; j < txhashes.size(); j++)
             BOOST_CHECK(txhashes[i] != txhashes[j]);
+}
+
+// Phase 1 review: all three asset sources, all destination families and
+// message variants. No consensus validity of the asset transaction is implied.
+BOOST_AUTO_TEST_CASE(review_asset_sources_and_payload_variants)
+{
+    const valtype program = AscendingProgram();
+    const script_verify_flags flags = ACTIVE_FLAGS | SCRIPT_VERIFY_OUTPUTASSETFIELD |
+        SCRIPT_VERIFY_INPUTASSETFIELD | SCRIPT_VERIFY_64BIT_INTEGERS;
+    const std::string hash = std::string("\x12\x20", 2) + std::string(32, 'a');
+    for (int version : {0, 1, 2, 3}) {
+        for (bool ambient : {false, true}) {
+            CStrictAuthScriptContext context(ambient);
+            const CScript prefix = version == 0
+                ? CScript() << OP_DUP << OP_HASH160 << valtype(20, 0x42) << OP_EQUALVERIFY << OP_CHECKSIG
+                : Native(version, program);
+            for (int kind = 0; kind < 6; ++kind) {
+                CScript spk = prefix;
+                std::string name = "AUTHDEST";
+                if (kind == 0) CAssetTransfer(name, 5 * COIN).ConstructTransaction(spk, AssetMarker::NEURAI_XNA);
+                if (kind == 1) CAssetTransfer(name, 5 * COIN, hash, 1700000000).ConstructTransaction(spk, AssetMarker::NEURAI_XNA);
+                if (kind == 2) CNewAsset(name, 5 * COIN, 0, 1, 0, "").ConstructTransaction(spk, AssetMarker::NEURAI_XNA);
+                if (kind == 3) CNewAsset(name, 5 * COIN, 0, 1, 1, hash).ConstructTransaction(spk, AssetMarker::NEURAI_XNA);
+                if (kind == 4) {
+                    CNewAsset(name, 5 * COIN).ConstructOwnerTransaction(spk, AssetMarker::NEURAI_XNA);
+                    name += "!";
+                }
+                if (kind == 5) CReissueAsset(name, 5 * COIN, -1, 1, hash).ConstructTransaction(spk, AssetMarker::NEURAI_XNA);
+                const valtype expected(name.begin(), name.end());
+                const CTransaction tx(MakeTx({spk}, 1));
+                const std::vector<CTxOut> prevouts{CTxOut(1000, spk)};
+                std::vector<valtype> stack;
+                ScriptError err;
+                BOOST_TEST_CONTEXT("family=" << version << " kind=" << kind << " ambient=" << ambient) {
+                    BOOST_CHECK(Run(tx, CScript() << OP_0 << OP_1 << OP_OUTPUTASSETFIELD, flags, stack, err) && stack.back() == expected);
+                    BOOST_CHECK(Run(tx, CScript() << OP_0 << OP_1 << OP_INPUTASSETFIELD, flags, stack, err, spk, &prevouts, &prevouts) && stack.back() == expected);
+                    BOOST_CHECK(Run(tx, CScript() << OP_0 << OP_1 << OP_REFINPUTASSETFIELD, flags, stack, err, spk, &prevouts, &prevouts) && stack.back() == expected);
+                    if (version == 0) {
+                        CheckAllFail(spk, "Legacy asset is not an AuthScript destination");
+                    } else {
+                        CheckAllReturn(spk, Expected(version, program), "valid serialized asset message");
+                        // Leftovers are disallowed by NIP-041, independently of
+                        // the historical parsers' tolerance of padding.
+                        CScript::const_iterator pc = spk.begin() + 35;
+                        opcodetype opcode;
+                        valtype payload;
+                        BOOST_REQUIRE(spk.GetOp(pc, opcode, payload));
+                        payload.push_back(0x42);
+                        CScript padded = prefix;
+                        padded << OP_XNA_ASSET << payload << OP_DROP;
+                        CheckAllFail(padded, "message with leftover byte");
+                    }
+                }
+            }
+        }
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()
