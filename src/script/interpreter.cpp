@@ -880,6 +880,10 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             return set_error(serror, SCRIPT_ERR_TXFIELD);
 
                         unsigned char fieldSelector = vchSelector[0];
+                        // NIP-041: selector 0x04 only exists once activated;
+                        // before that it is an unknown selector, as always.
+                        if (fieldSelector == AUTHDEST_SELECTOR && !(flags & SCRIPT_VERIFY_AUTHDEST))
+                            return set_error(serror, SCRIPT_ERR_TXFIELD);
                         valtype vchField;
                         if (!checker.GetTxField(fieldSelector, vchField))
                             return set_error(serror, SCRIPT_ERR_TXFIELD);
@@ -1168,6 +1172,30 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                     }
                         break;
 
+                    case OP_OUTPUTAUTHDEST:
+                    {
+                        // NIP-041: push version||commitment (33 bytes) of a
+                        // selected output's AuthScript destination.
+                        // Unassigned byte pre-activation -> BAD_OPCODE (fail-closed).
+                        if (!(flags & SCRIPT_VERIFY_AUTHDEST))
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
+
+                        if (stack.size() < 1)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+                        const int nOut = CScriptNum(stacktop(-1), fRequireMinimal).getint();
+                        if (nOut < 0)
+                            return set_error(serror, SCRIPT_ERR_OUTPUTAUTHDEST);
+
+                        valtype vchResult;
+                        if (!checker.GetOutputAuthDest((unsigned int)nOut, vchResult))
+                            return set_error(serror, SCRIPT_ERR_OUTPUTAUTHDEST);
+
+                        popstack(stack);
+                        stack.push_back(vchResult);
+                    }
+                    break;
+
                     case OP_OUTPUTAUTHCOMMITMENT:
                     {
                         // NIP-023: push the 32-byte AuthScript v1 commitment
@@ -1341,8 +1369,10 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         if (nRef < 0)
                             return set_error(serror, SCRIPT_ERR_REFINPUTFIELD);
 
-                        // Selectors 0x01-0x03 valid (value, authcommitment, scriptPubKey)
-                        if (selector == 0x00 || selector >= 0x04)
+                        // Selectors 0x01-0x03 valid (value, authcommitment, scriptPubKey);
+                        // NIP-041 adds 0x04 (33-byte AuthScript destination) once activated.
+                        const bool fAuthDestSelector = (selector == AUTHDEST_SELECTOR) && (flags & SCRIPT_VERIFY_AUTHDEST);
+                        if (selector == 0x00 || (selector >= 0x04 && !fAuthDestSelector))
                             return set_error(serror, SCRIPT_ERR_REFINPUTFIELD);
 
                         valtype vchResult;
@@ -3077,6 +3107,8 @@ static const unsigned char TXHASH_INPUT_INDEX   = (1 << 7);  // 0x80
 //
 // 0x04-0xff reserved for future extensions.
 //
+static bool GetAuthScriptDestination(const CScript& scriptPubKey, std::vector<unsigned char>& result); // NIP-041
+
 static const unsigned char TXFIELD_SPENT_VALUE          = 0x01;
 static const unsigned char TXFIELD_SPENT_AUTHCOMMITMENT = 0x02;
 static const unsigned char TXFIELD_SPENT_FULLSCRIPT     = 0x03;
@@ -3213,6 +3245,13 @@ bool TransactionSignatureChecker::GetTxField(unsigned char selector,
         return true;
     }
 
+    case AUTHDEST_SELECTOR: {
+        // NIP-041: 33-byte AuthScript destination of the spent scriptPubKey.
+        if (!m_spentScriptPubKey)
+            return false;
+        return GetAuthScriptDestination(*m_spentScriptPubKey, result);
+    }
+
     case TXFIELD_SPENT_FULLSCRIPT: {
         // Full scriptPubKey of the spent UTXO (raw bytes).
         // NIP-018: size cap is enforced by the caller (OP_TXFIELD) using
@@ -3293,6 +3332,91 @@ bool TransactionSignatureChecker::GetOutputScript(unsigned int nOut,
     const CScript& spk = txTo->vout[nOut].scriptPubKey;
     result.assign(spk.begin(), spk.end());
     return true;
+}
+
+// NIP-041: AuthScript destination of a script as version||commitment (33 bytes).
+//
+// Deliberately stricter than the NIP-023 prefix peek: the operation claims to
+// identify WHERE funds go, so a script that merely starts like an AuthScript
+// output but carries extra instructions must not qualify. Accepted shapes:
+//   - the exact native program  OP_n 0x20 <32 bytes>            (n = 1, 2, 3)
+//   - that program followed by a well-formed asset wrapper
+//     OP_XNA_ASSET <payload> OP_DROP, with nothing after it and a payload that
+//     deserializes as one of the known asset messages.
+// Anything else (other versions or program lengths, trailing bytes, malformed
+// wrappers, P2PKH-prefixed assets) fails. This identifies the destination
+// only; asset name and amount still need OP_*ASSETFIELD checks.
+// Callers only reach this with SCRIPT_VERIFY_AUTHDEST, which shares its
+// activation height with the strict families, so v2/v3 prefixes are parsed.
+static bool IsWellFormedAssetPayload(const CScript& scriptPubKey)
+{
+    // Deserialize the asset message from the PAYLOAD BYTES ONLY. The historical
+    // *FromScript parsers build their stream from the data start to the end of
+    // the script, outer OP_DROP included, so a payload that is one byte short
+    // silently borrows 0x75 as data. Those parsers stay untouched (consensus
+    // history); this operation bounds the stream to the pushed vector and also
+    // refuses leftover bytes after the message.
+    // Layout (already checked structurally by the caller):
+    //   OP_n 0x20 <32 bytes> OP_XNA_ASSET <payload> OP_DROP
+    if (scriptPubKey.size() < 36 || scriptPubKey[34] != OP_XNA_ASSET)
+        return false;
+    CScript::const_iterator pc = scriptPubKey.begin() + 35;
+    opcodetype opcode;
+    std::vector<unsigned char> payload;
+    if (!scriptPubKey.GetOp(pc, opcode, payload))
+        return false;
+    if (payload.size() < 5) // 3-byte marker + type + at least one message byte
+        return false;
+
+    const std::vector<unsigned char> message(payload.begin() + 4, payload.end());
+    CDataStream ss(message, SER_NETWORK, PROTOCOL_VERSION);
+    try {
+        switch (payload[3]) {
+        case XNA_T: { CAssetTransfer transfer; ss >> transfer; break; }
+        case XNA_Q: { CNewAsset asset; ss >> asset; break; }
+        case XNA_O: { std::string ownerName; ss >> ownerName; break; }
+        case XNA_R: { CReissueAsset reissue; ss >> reissue; break; }
+        default:
+            return false;
+        }
+    } catch (const std::exception&) {
+        return false;
+    }
+    return ss.empty();
+}
+
+static bool GetAuthScriptDestination(const CScript& scriptPubKey, std::vector<unsigned char>& result)
+{
+    int version = 0;
+    std::vector<unsigned char> program;
+    if (scriptPubKey.IsWitnessProgram(version, program)) {
+        // IsWitnessProgram only matches when the push spans the whole script.
+    } else {
+        CStrictAuthScriptContext strictAuthScriptContext(true);
+        if (!GetAssetScriptWitnessProgram(scriptPubKey, version, program, nullptr, /*fStrictActive=*/true))
+            return false;
+        if (!IsWellFormedAssetPayload(scriptPubKey))
+            return false;
+    }
+    if (program.size() != 32)
+        return false;
+    if (version != 1 && !IsStrictAuthScriptWitnessVersion(version))
+        return false;
+    result.clear();
+    result.reserve(33);
+    result.push_back((unsigned char)version);
+    result.insert(result.end(), program.begin(), program.end());
+    return true;
+}
+
+bool TransactionSignatureChecker::GetOutputAuthDest(unsigned int nOut,
+                                                    std::vector<unsigned char>& result) const
+{
+    if (!txTo)
+        return false;
+    if (nOut >= txTo->vout.size())
+        return false;
+    return GetAuthScriptDestination(txTo->vout[nOut].scriptPubKey, result);
 }
 
 // NIP-023: Extract the 32-byte AuthScript v1 commitment from a selected output.
@@ -3466,6 +3590,9 @@ bool TransactionSignatureChecker::GetRefInputField(unsigned int nRef, unsigned c
             result.assign(data + 2, data + 34);
             return true;
         }
+        case AUTHDEST_SELECTOR: // NIP-041: 33-byte AuthScript destination
+            return GetAuthScriptDestination(refOut.scriptPubKey, result);
+
         case 0x03: { // Full scriptPubKey (raw bytes) — matches TXFIELD_SPENT_FULLSCRIPT
             // NIP-018: size cap is enforced by the caller (OP_REFINPUTFIELD)
             // using EffectiveMaxScriptElementSize(flags). Checker returns

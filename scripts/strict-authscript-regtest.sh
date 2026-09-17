@@ -191,12 +191,12 @@ mine 1; waitsync
 check "$(A getrawtransaction "$T_MIX" true | jget 'd["confirmations"]')" "1" "mixed input tx confirmed"
 
 echo "== message signing"
-SIG_PQ=$(A signmessage "$A_PQ" "hola pq")
-SIG_EC=$(A signmessage "$A_EC" "hola ecdsa")
-check "$(B verifymessage "$A_PQ" "$SIG_PQ" "hola pq")" "true" "verify PQ strict message on other node"
-check "$(B verifymessage "$A_EC" "$SIG_EC" "hola ecdsa")" "true" "verify ECDSA strict message on other node"
-check "$(B verifymessage "$A_EC" "$SIG_EC" "otro")" "false" "wrong message rejected"
-check "$(B verifymessage "$A_PQ" "$SIG_EC" "hola ecdsa")" "false" "signature bound to its family"
+SIG_PQ=$(A signmessage "$A_PQ" "hello pq")
+SIG_EC=$(A signmessage "$A_EC" "hello ecdsa")
+check "$(B verifymessage "$A_PQ" "$SIG_PQ" "hello pq")" "true" "verify PQ strict message on other node"
+check "$(B verifymessage "$A_EC" "$SIG_EC" "hello ecdsa")" "true" "verify ECDSA strict message on other node"
+check "$(B verifymessage "$A_EC" "$SIG_EC" "other")" "false" "wrong message rejected"
+check "$(B verifymessage "$A_PQ" "$SIG_EC" "hello ecdsa")" "false" "signature bound to its family"
 
 echo "== assets"
 T_ISSUE=$(B issue STRICTTEST 1000 "$B_EC" | jget 'd[0]') && ok "issue STRICTTEST to strict ECDSA address" || bad "issue STRICTTEST failed"
@@ -244,7 +244,7 @@ A getaddressdeltas "{\"addresses\":[\"$A_PQ\"]}" >/dev/null 2>&1 && ok "getaddre
 echo "== encrypted wallet: strict ECDSA keypool (node C, classic wallet, -keypool=5)"
 startC; waitrpc C
 check "$(C getwalletinfo | jget 'str(d["keypoolsize_strict_ecdsa"])+"/"+str(d["keypoolsize_strict_ecdsa_internal"])')" "5/5" "strict ECDSA keypool pre-generated on wallet creation"
-C encryptwallet "clave-de-prueba" >/dev/null 2>&1
+C encryptwallet "test-passphrase" >/dev/null 2>&1
 for i in $(seq 1 30); do pgrep -f "datadir=$BASE/C" >/dev/null || break; sleep 1; done
 startC; waitrpc C
 check "$(C getwalletinfo | jget 'str(d["unlocked_until"])')" "0" "node C wallet is encrypted and locked"
@@ -260,7 +260,7 @@ check "$(change_type C "$C_EC")" "witness_v3_strict_ecdsa" "locked wallet builds
 check "$(C getwalletinfo | jget 'str(d["keypoolsize_strict_ecdsa_internal"])')" "4" "fundrawtransaction keeps its change key (same as the legacy keypool), taken from the internal strict pool"
 for i in 1 2 3 4; do C getnewaddress "" ecdsa >/dev/null; done
 if C getnewaddress "" ecdsa >/dev/null 2>&1; then bad "locked wallet must fail once the strict pool is exhausted"; else ok "exhausted strict pool fails cleanly while locked"; fi
-C walletpassphrase "clave-de-prueba" 120 >/dev/null
+C walletpassphrase "test-passphrase" 120 >/dev/null
 C keypoolrefill >/dev/null
 check "$(C getwalletinfo | jget 'str(d["keypoolsize_strict_ecdsa"])+"/"+str(d["keypoolsize_strict_ecdsa_internal"])')" "5/5" "strict ECDSA keypool refilled after unlock"
 T_C=$(C sendtoaddress "$B_LEG" 3)

@@ -161,6 +161,7 @@ const char* GetOpName(opcodetype opcode)
     case OP_REFINPUTASSETFIELD     : return "OP_REFINPUTASSETFIELD";
     case OP_REFINPUTCOUNT          : return "OP_REFINPUTCOUNT";
     case OP_OUTPUTAUTHCOMMITMENT   : return "OP_OUTPUTAUTHCOMMITMENT";
+    case OP_OUTPUTAUTHDEST         : return "OP_OUTPUTAUTHDEST";
     case OP_INPUTVALUE             : return "OP_INPUTVALUE";
     case OP_CHAINCONTEXT           : return "OP_CHAINCONTEXT";
 

@@ -243,6 +243,16 @@ enum opcodetype
     // and pushes a boolean. Flag off → bad-opcode.
     OP_CHECKMERKLEINCLUSION = 0xc1,
 
+    // NIP-041: AuthScript destination introspection in a previously
+    // unassigned slot (0xc2). (nOut -- version||commitment) pushes the 33-byte
+    // destination of a selected output: witness version (01 generic v1, 02
+    // strict PQ, 03 strict ECDSA) followed by the 32-byte program. Companion
+    // selector 0x04 of OP_TXFIELD / OP_REFINPUTFIELD answers the same for the
+    // spent input and for a reference input. Flag off -> bad-opcode.
+    // Slot choice: inside MAX_OPCODE, outside the NIP-033 BLS reservation
+    // (0xd8..0xdc) and not claimed by any pending proposal (0xbd/0xbe are).
+    OP_OUTPUTAUTHDEST = 0xc2,
+
     // NIP-034a: modern hash opcodes in previously unassigned slots.
     // NIP-036 occupies slot 0xc9 (OP_POSEIDON, the SNARK-friendly
     // Poseidon hash over the BN254 scalar field).

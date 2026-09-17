@@ -92,6 +92,8 @@ inline script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
     // Height-activated: the caller states whether the strict AuthScript
     // families are active for the block (or next block) it is validating.
     if (fStrictAuthScriptActive)            base |= SCRIPT_VERIFY_AUTHSCRIPT_STRICT;
+    // NIP-041: destination introspection shares that activation height.
+    if (fStrictAuthScriptActive)            base |= SCRIPT_VERIFY_AUTHDEST;
     if (consensus.nCATEnabled)              base |= SCRIPT_VERIFY_CAT;
     if (consensus.nCTVEnabled)              base |= SCRIPT_VERIFY_CHECKTEMPLATEVERIFY;
     if (consensus.nCSFSEnabled)             base |= SCRIPT_VERIFY_CHECKSIGFROMSTACK;

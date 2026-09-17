@@ -279,6 +279,17 @@ enum class script_verify_flag_name : uint8_t {
     //
     SCRIPT_VERIFY_AUTHSCRIPT_STRICT,                        // bit 41
 
+    // NIP-041: AuthScript destination introspection. Enables OP_OUTPUTAUTHDEST
+    // (0xc2) and selector 0x04 of OP_TXFIELD / OP_REFINPUTFIELD, which return
+    // the 33-byte destination version||commitment of an output, of the spent
+    // input and of a reference input. Activated at the same height as the
+    // strict AuthScript families (no separate schedule); it governs all three
+    // queries, also when the destination queried is a generic witness v1 one.
+    // Flag off: 0xc2 is a bad opcode and selector 0x04 is an unknown selector,
+    // exactly as before. The NIP-023 32-byte operations are untouched.
+    //
+    SCRIPT_VERIFY_AUTHDEST,                                 // bit 42
+
     // End marker — must always be last.
     SCRIPT_VERIFY_END_MARKER
 };
@@ -356,6 +367,10 @@ enum SigVersion
      *  can never be replayed as a strict one and vice versa. */
     SIGVERSION_AUTHSCRIPT_STRICT = 3,
 };
+
+/** NIP-041: selector of OP_TXFIELD and OP_REFINPUTFIELD returning the 33-byte
+ *  AuthScript destination (witness version || 32-byte program). */
+static const unsigned char AUTHDEST_SELECTOR = 0x04;
 
 /** Strict AuthScript families: witness version <-> mandatory authType. */
 static const int STRICT_AUTHSCRIPT_WITNESS_V2_PQ = 2;
@@ -476,6 +491,13 @@ public:
     // NIP-023: Push the 32-byte AuthScript v1 commitment from the selected output's
     // scriptPubKey. Mirrors the extraction logic of TXFIELD_SPENT_AUTHCOMMITMENT.
     virtual bool GetOutputAuthCommitment(unsigned int nOut, std::vector<unsigned char>& result) const
+    {
+        return false;
+    }
+
+    // NIP-041: push the 33-byte AuthScript destination (version||commitment)
+    // of the selected output. Unlike NIP-023 it requires a well-formed script.
+    virtual bool GetOutputAuthDest(unsigned int nOut, std::vector<unsigned char>& result) const
     {
         return false;
     }
@@ -604,6 +626,7 @@ public:
     bool GetOutputScript(unsigned int nOut, std::vector<unsigned char>& result) const override;
 
     bool GetOutputAuthCommitment(unsigned int nOut, std::vector<unsigned char>& result) const override;
+    bool GetOutputAuthDest(unsigned int nOut, std::vector<unsigned char>& result) const override;
 
     bool GetOutputAssetField(unsigned int nOut, unsigned char selector, std::vector<unsigned char>& result) const override;
 

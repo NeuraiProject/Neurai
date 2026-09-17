@@ -130,6 +130,33 @@ These opcodes push raw transaction data onto the stack for arithmetic comparison
 | `OP_OUTPUTSCRIPT` | `<index> → <scriptPubKey>` | Pushes the raw scriptPubKey of an output |
 | `OP_INPUTCOUNT` | `→ <count>` | Pushes the number of inputs |
 | `OP_OUTPUTCOUNT` | `→ <count>` | Pushes the number of outputs |
+| `OP_OUTPUTAUTHDEST` | `<index> → <33 bytes>` | NIP-041: pushes the AuthScript destination of an output as `version || commitment` |
+
+#### AuthScript destination introspection (NIP-041)
+
+`OP_OUTPUTAUTHDEST` (`0xc2`) and selector `0x04` of `OP_TXFIELD` (spent input) and
+`OP_REFINPUTFIELD` (reference input) return the destination of a script as exactly
+33 bytes: the witness version (`01` generic AuthScript, `02` strict post-quantum,
+`03` strict ECDSA) followed by the 32-byte program in its original byte order.
+They activate at the same height as the strict AuthScript families.
+
+Unlike the NIP-023 operations (`OP_OUTPUTAUTHCOMMITMENT`, selector `0x02`), which
+return 32 bytes, only understand witness v1 and merely peek at the first 34 bytes,
+these operations require a well-formed script: either the exact native program
+`OP_n 0x20 <32 bytes>`, or that program followed by a valid asset wrapper
+(`OP_XNA_ASSET <payload> OP_DROP`, nothing after it, payload deserializable).
+Trailing instructions, malformed wrappers, other witness versions or program
+lengths make the operation fail. Because the version is part of the result, the
+same 32 bytes under another version never satisfy a covenant.
+
+This identifies the destination only. A covenant that cares about which asset is
+paid, and how much, must still check them with `OP_OUTPUTASSETFIELD`. The NIP-023
+operations keep their behaviour unchanged for existing contracts.
+
+```
+// "Output 0 must pay the strict post-quantum destination X"
+0 OP_OUTPUTAUTHDEST  <02 || X>  OP_EQUALVERIFY
+```
 
 ### Asset Introspection Opcodes
 
