@@ -606,6 +606,27 @@ The old context-free counters retain their defaults and NOP5 contributes zero
 when the activation flag is absent. Mempool accounting uses the network's
 consensus opt-in flags, matching the contextual block-validation path.
 
+### CHECKSIGADD and Ed25519 Signature Operation Accounting
+
+With their respective verification flags enabled, `OP_CHECKSIGADD` and
+`OP_CHECKSIG_ED25519` each add one static sigop, using the same scale as CSFS:
+four cost units in legacy/P2SH, one in witness. The flags are independent;
+a disabled opcode contributes no optional sigops and its execution continues
+to fail with BAD_OPCODE. Unexecuted branches count; bytes inside pushes do not.
+Bare spent output scripts are charged at redemption as well as creation,
+including outputs created before opcode activation. P2SH policy includes these
+operations in its per-input limit. Mempool and contextual block validation use
+the activated counters, as does the reported coinbase template cost.
+
+CHECKSIGADD's existing dynamic surcharge of eight against MAX_OPS_PER_SCRIPT
+is unchanged and separate from the global sigop budget. One global sigop per
+signature is consistent with CSFS and AuthScript authentication; it is not a
+claim that ECDSA, ML-DSA and Ed25519 have equal CPU costs.
+
+This tightens consensus on networks where these opcodes are already enabled
+(testnet and regtest). It does not set a new activation schedule or establish
+compatibility with every historical testnet block; deployment needs coordination.
+
 ### Signature Malleability
 
 CSFS follows the same `NULLFAIL` semantics as `OP_CHECKSIG`: under `SCRIPT_VERIFY_NULLFAIL`, a non-empty signature that fails verification causes the entire script to fail (rather than pushing false). This prevents signature grinding attacks.

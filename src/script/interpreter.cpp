@@ -4107,7 +4107,8 @@ size_t static WitnessSigOps(int witversion, const std::vector<unsigned char> &wi
         if (witprogram.size() == 32 && witness.stack.size() > 0)
         {
             CScript subscript(witness.stack.back().begin(), witness.stack.back().end());
-            return subscript.GetSigOpCount(true, (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) != 0);
+            return subscript.GetSigOpCount(true, (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) != 0,
+                (flags & SCRIPT_VERIFY_CHECKSIGADD) != 0, (flags & SCRIPT_VERIFY_ED25519) != 0);
         }
     }
 
@@ -4118,7 +4119,8 @@ size_t static WitnessSigOps(int witversion, const std::vector<unsigned char> &wi
         size_t sigops = 0;
         if (witness.stack.size() > 1) {
             CScript subscript(witness.stack.back().begin(), witness.stack.back().end());
-            sigops = subscript.GetSigOpCount(true, (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) != 0);
+            sigops = subscript.GetSigOpCount(true, (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) != 0,
+                (flags & SCRIPT_VERIFY_CHECKSIGADD) != 0, (flags & SCRIPT_VERIFY_ED25519) != 0);
         }
         if (witness.stack[0].size() == 1 && witness.stack[0][0] != 0x00) {
             sigops += 1;

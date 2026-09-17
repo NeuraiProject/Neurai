@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Submit handcrafted CSFS blocks at 80000/80001 sigops to fresh regtest nodes.
+"""Submit handcrafted signature-opcode blocks at 80000/80001 sigops to fresh regtest nodes.
 
-Static CSFS instructions sit in unexecuted branches: this tests accounting,
+Static signature instructions sit in unexecuted branches: this tests accounting,
 not crypto throughput. Coinbase and spend outputs contribute zero sigops.
 No mempool admission, block-template selection or PoW bypass for test blocks.
 """
@@ -26,12 +26,12 @@ def output(value, script):
     return struct.pack('<q', value) + h.compact(len(script)) + script
 
 
-def spend(funding, indices, scripts, last):
-    chosen = list(range(402)) + [last]
+def spend(funding, indices, scripts, last, base_count=402):
+    chosen = list(range(base_count)) + [last]
     inputs = h.compact(len(chosen))
     for i in chosen:
         inputs += h.outpoint(funding, indices[i]) + b'\x00' + b'\xff' * 4
-    outputs = b'\x01' + output(402 * 100_000_000, b'\x53\x20' + bytes(range(32)))
+    outputs = b'\x01' + output(base_count * 100_000_000, b'\x53\x20' + bytes(range(32)))
     witness = b''
     for i in chosen:
         witness += b'\x02\x01\x00' + h.compact(len(scripts[i])) + scripts[i]
@@ -73,9 +73,11 @@ def block(template, tx):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bindir', type=Path, default=Path('/root/Neurai/src'))
+    parser.add_argument('--opcode', choices=['csfs', 'checksigadd', 'ed25519'], default='csfs')
     args = parser.parse_args()
+    opcode = {'csfs': 0xb4, 'checksigadd': 0xde, 'ed25519': 0xdd}[args.opcode]
     directory = Path(tempfile.mkdtemp(prefix='csfs-block-limit-'))
-    report = {'results': [], 'binary_sha256': h.digest_file(args.bindir / 'neuraid'),
+    report = {'opcode': args.opcode, 'results': [], 'binary_sha256': h.digest_file(args.bindir / 'neuraid'),
               'source_sha256': {p.name: h.digest_file(p) for p in (Path(__file__),
                   Path(__file__).with_name('review-introspection-regtest.py'),
                   Path(__file__).with_name('generate_authscript_vectors.py'))}}
@@ -94,9 +96,10 @@ def main():
         miner = source.rpc('getnewaddress')
         source.rpc('generatetoaddress', 110, miner)
         scripts, programs, payments = [], [], {}
-        for i in range(404):
-            count = 199 if i < 402 else i - 400  # 402*199 + 2/3 = 80000/80001
-            script = b'\x00\x63' + h.push(struct.pack('<I', i)) + b'\xb4' * count + b'\x68\x51'
+        for i in range(406):
+            count = 199 if i < 402 else (i - 400 if i < 404 else i - 324)
+            # Last four scripts: 2/3 for blocks, 80/81 for mempool limits.
+            script = b'\x00\x63' + h.push(struct.pack('<I', i)) + bytes([opcode]) * count + b'\x68\x51'
             tag = sha256(b'NeuraiAuthScript')
             program = sha256(tag + tag + b'\x01\x00' + sha256(script))
             scripts.append(script)
@@ -107,6 +110,15 @@ def main():
         funded = source.rpc('getrawtransaction', funding, True)
         lookup = {o['scriptPubKey']['hex']: o['n'] for o in funded['vout']}
         indices = [lookup[p.hex()] for p in programs]
+        # Test admission only: never put these spends into the source mempool.
+        for last, cost in ((404, 16000), (405, 16001)):
+            _, wire = spend(funding, indices, scripts, last, base_count=80)
+            result = source.rpc('testmempoolaccept', [wire.hex()])[0]
+            if cost == 16000:
+                check('mempool/16000_allowed', result.get('allowed') == 1, result)
+            else:
+                check('mempool/16001_rejected', result.get('allowed') != 1 and
+                      'bad-txns-too-many-sigops' in str(result), result)
         template = source.rpc('getblocktemplate', {'rules': ['segwit']})
         check('source/empty_template', template['transactions'] == [], len(template['transactions']))
         candidates = {}

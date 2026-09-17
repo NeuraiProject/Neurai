@@ -228,7 +228,7 @@ bool IsStandardTx(const CTransaction& tx, std::string& reason, const bool witnes
  * expensive-to-check-upon-redemption script like:
  *   DUP CHECKSIG DROP ... repeated 100 times... OP_1
  */
-bool AreInputsStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs, bool countCSFS)
+bool AreInputsStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs, bool countCSFS, bool countCheckSigAdd, bool countEd25519)
 {
     if (tx.IsCoinBase())
         return true; // Coinbases don't use vin normally
@@ -253,7 +253,7 @@ bool AreInputsStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs,
             if (stack.empty())
                 return false;
             CScript subscript(stack.back().begin(), stack.back().end());
-            if (subscript.GetSigOpCount(true, countCSFS) > MAX_P2SH_SIGOPS) {
+            if (subscript.GetSigOpCount(true, countCSFS, countCheckSigAdd, countEd25519) > MAX_P2SH_SIGOPS) {
                 return false;
             }
         }

@@ -809,7 +809,8 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         /** XNA END */
 
         // Check for non-standard pay-to-script-hash in inputs
-        if (fRequireStandard && !AreInputsStandard(tx, view, chainparams.GetConsensus().nCSFSEnabled))
+        if (fRequireStandard && !AreInputsStandard(tx, view, chainparams.GetConsensus().nCSFSEnabled,
+                chainparams.GetConsensus().nCheckSigAddEnabled, chainparams.GetConsensus().nEd25519Enabled))
             return state.Invalid(false, REJECT_NONSTANDARD, "bad-txns-nonstandard-inputs");
 
         // Check for non-standard witness in P2WSH. The wider per-item cap
