@@ -71,7 +71,7 @@ class RPCError(RuntimeError):
 
 
 class Node:
-    def __init__(self, bindir, directory):
+    def __init__(self, bindir, directory, extra_args=()):
         self.directory = directory
         directory.mkdir()
         with socket.socket() as sock:
@@ -82,7 +82,7 @@ class Node:
             str(bindir / 'neuraid'), '-regtest', '-server', '-listen=0', '-connect=0',
             '-dnsseed=0', '-discover=0', '-txindex=1', '-keypool=3', '-fallbackfee=0.01',
             '-strictauthscriptheight=0', '-rpcuser=review', '-rpcpassword=disposable-regtest',
-            '-rpcport=' + str(self.port), '-datadir=' + str(directory)],
+            '-rpcport=' + str(self.port), '-datadir=' + str(directory), *extra_args],
             stdout=self.log, stderr=subprocess.STDOUT)
 
     def rpc(self, method, *params):
