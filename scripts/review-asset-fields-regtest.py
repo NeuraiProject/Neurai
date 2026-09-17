@@ -56,7 +56,8 @@ def main():
         directory.mkdir(parents=True, exist_ok=False)
     report = {'results': [], 'binary_sha256': digest_file(args.bindir / 'neuraid'),
               'source_sha256': {p.name: digest_file(p) for p in
-                  (Path(__file__), Path(__file__).with_name('review-introspection-regtest.py'))}}
+                  (Path(__file__), Path(__file__).with_name('review-introspection-regtest.py'),
+                   Path(__file__).with_name('generate_authscript_vectors.py'))}}
     node = None
 
     def check(label, ok, observed):
@@ -166,6 +167,94 @@ def main():
             returned = confirmed(f'v{version}/wallet_spend_back',
                                  node.rpc('transferfromaddress', name, addresses[target], 3, miner))
             check(f'v{version}/strict_output_consumed', node.rpc('gettxout', tx['txid'], 0) is None, returned['txid'])
+        def inspect_asset(label, tx, version, marker, name, amount, fields, missing):
+            prefix = scripts[version]
+            matches = [out for out in tx['vout']
+                       if out['scriptPubKey']['hex'].startswith(prefix.hex())
+                       and marker.hex() in out['scriptPubKey']['hex'][68:]]
+            if len(matches) != 1:
+                raise RuntimeError(label + ': expected one matching asset output')
+            asset = (tx['txid'], matches[0]['n'])
+            node.rpc('lockunspent', False, [{'txid': asset[0], 'vout': asset[1]}])
+            target = 3 if version == 2 else 2
+            payload = b'xnat' + compact(len(name)) + name.encode() + struct.pack('<q', amount * COIN)
+            output = scripts[target] + b'\xc0' + push(payload) + b'\x75'
+
+            def contract_spend(mode, expected, unavailable=None):
+                opcode = 0xd3 if mode == 'reference' else 0xcf
+                index = 0 if mode == 'reference' else 1
+                contract = b''
+                for selector, value in expected.items():
+                    contract += push(number(index)) + push(bytes([selector])) + bytes([opcode]) + push(value) + b'\x88'
+                if unavailable is not None:
+                    contract += push(number(index)) + push(bytes([unavailable])) + bytes([opcode]) + b'\x75'
+                contract += b'\x51'
+                tag = sha256(b'NeuraiAuthScript')
+                commitment = sha256(tag + tag + b'\x01\x00' + sha256(contract))
+                spk = b'\x51\x20' + commitment
+                fund_case = 'unsupported' if unavailable is not None else ('wrong_hash' if len(expected) == 1 else 'all_fields')
+                funding = confirmed(label + '/' + mode + '/fund_' + fund_case,
+                                    node.rpc('sendtoaddress', bech32m('tnq', 1, commitment), 1))
+                out_index = next(out['n'] for out in funding['vout'] if out['scriptPubKey']['hex'] == spk.hex())
+                inputs = [(funding['txid'], out_index)] + ([] if mode == 'reference' else [asset])
+                outputs = ([(0, output)] if mode != 'reference' else []) + [(COIN - 10_000_000, miner_script)]
+                raw = raw_transaction(inputs, outputs, [asset] if mode == 'reference' else [],
+                                      [[b'\x00', contract]] + ([] if mode == 'reference' else [[]]))
+                return node.rpc('signrawtransaction', raw)['hex']
+
+            for mode in ('reference', 'input'):
+                # Query unsupported fields and require the field opcode's error,
+                # not an unrelated policy or signature rejection.
+                raw = contract_spend(mode, {}, missing)
+                try:
+                    node.rpc('sendrawtransaction', raw)
+                    check(label + '/' + mode + '/missing_field', False, 'accepted')
+                except RPCError as error:
+                    reason = 'OP_REFINPUTASSETFIELD' if mode == 'reference' else 'OP_INPUTASSETFIELD'
+                    check(label + '/' + mode + '/missing_field', error.code == -26 and reason in str(error), str(error))
+                if 6 in fields:
+                    bad_hash = bytearray(fields[6])
+                    bad_hash[-1] ^= 1
+                    raw = contract_spend(mode, {6: bytes(bad_hash)})
+                    try:
+                        node.rpc('sendrawtransaction', raw)
+                        check(label + '/' + mode + '/wrong_hash', False, 'accepted')
+                    except RPCError as error:
+                        check(label + '/' + mode + '/wrong_hash', error.code == -26 and 'EQUALVERIFY' in str(error), str(error))
+                good = contract_spend(mode, fields)
+                spent = confirmed(label + '/' + mode + '/all_fields', node.rpc('sendrawtransaction', good))
+                contract_txids.append(spent['txid'])
+                check(label + '/' + mode + '/utxo_state',
+                      (node.rpc('gettxout', *asset) is not None) == (mode == 'reference'), asset)
+
+        # Literal, asymmetric metadata bytes; Base58 is used only to feed the RPC.
+        ipfs_bytes = b'\x12\x20' + bytes(range(32))
+        alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+        value, ipfs_text = int.from_bytes(ipfs_bytes, 'big'), ''
+        while value:
+            value, digit = divmod(value, 58)
+            ipfs_text = alphabet[digit] + ipfs_text
+        txid_bytes = bytes(range(32, 64))
+        for version in (2, 3):
+            name = 'METAV' + str(version)
+            issued = confirmed(f'meta/v{version}/issue',
+                               node.rpc('issue', name, 5, addresses[version], addresses[version], 2, True, True, ipfs_text))
+            base = {1: name.encode(), 2: number(5 * COIN), 3: b'\x02', 4: b'\x01',
+                    5: b'\x01', 6: ipfs_bytes, 7: b'\x00'}
+            # All fields 1..7 exist on this issuance: selector 8 is invalid.
+            inspect_asset(f'meta/v{version}/issuance', issued, version, b'xnaq', name, 5, base, 8)
+            inspect_asset(f'meta/v{version}/owner', issued, version, b'xnao', name + '!', 1,
+                          {1: (name + '!').encode(), 2: number(COIN), 7: b'\x09'}, 6)
+            reissued = confirmed(f'meta/v{version}/reissue_txid',
+                                 node.rpc('reissue', name, 2, addresses[version], miner, True, -1, txid_bytes.hex()))
+            inspect_asset(f'meta/v{version}/reissue_txid', reissued, version, b'xnar', name, 2,
+                          {1: name.encode(), 2: number(2 * COIN), 3: b'\xff', 4: b'\x01',
+                           6: txid_bytes, 7: b'\x08'}, 5)
+            plain = confirmed(f'meta/v{version}/reissue_plain',
+                              node.rpc('reissue', name, 1, addresses[version], miner, False, 4))
+            inspect_asset(f'meta/v{version}/reissue_plain', plain, version, b'xnar', name, 1,
+                          {1: name.encode(), 2: number(COIN), 3: b'\x04', 4: b'\x00', 7: b'\x08'}, 6)
+
         report['height'] = node.rpc('getblockcount')
         # Independent validators receive blocks only, never the mempool transactions.
         # This prevents the source node's script cache from hiding worker failures.
@@ -183,9 +272,9 @@ def main():
                 check(f'validator/par{parallelism}/same_tip',
                       validator.rpc('getbestblockhash') == node.rpc('getbestblockhash'),
                       validator.rpc('getblockcount'))
-                for index, txid in enumerate(contract_txids, 2):
+                for index, txid in enumerate(contract_txids):
                     confirmations = validator.rpc('getrawtransaction', txid, True).get('confirmations', 0)
-                    check(f'validator/par{parallelism}/contract_v{index}', confirmations > 0, txid)
+                    check(f'validator/par{parallelism}/contract_{index}', confirmations > 0, txid)
             finally:
                 validator.close()
     except Exception as error:
