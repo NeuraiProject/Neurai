@@ -478,4 +478,127 @@ BOOST_AUTO_TEST_CASE(review_asset_sources_and_payload_variants)
     }
 }
 
+
+// Expected bytes are literal protocol vectors, not produced by the field getters.
+BOOST_AUTO_TEST_CASE(review_all_asset_fields_across_families)
+{
+    const script_verify_flags base = ACTIVE_FLAGS | SCRIPT_VERIFY_OUTPUTASSETFIELD |
+        SCRIPT_VERIFY_INPUTASSETFIELD;
+    const opcodetype ops[] = {OP_OUTPUTASSETFIELD, OP_INPUTASSETFIELD, OP_REFINPUTASSETFIELD};
+    const ScriptError errors[] = {SCRIPT_ERR_OUTPUTASSETFIELD, SCRIPT_ERR_INPUTASSETFIELD,
+        SCRIPT_ERR_REFINPUTASSETFIELD};
+    const script_verify_flags gates[] = {SCRIPT_VERIFY_OUTPUTASSETFIELD,
+        SCRIPT_VERIFY_INPUTASSETFIELD, SCRIPT_VERIFY_REFINPUTS};
+    const valtype hashBytes = ParseHex("1220000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+    const std::string hash(hashBytes.begin(), hashBytes.end());
+    for (int version : {0, 1, 2, 3}) for (bool ambient : {false, true}) {
+        CStrictAuthScriptContext context(ambient);
+        const CScript prefix = version == 0
+            ? CScript() << OP_DUP << OP_HASH160 << valtype(20, 0x42) << OP_EQUALVERIFY << OP_CHECKSIG
+            : Native(version, AscendingProgram());
+        for (int kind = 0; kind < 7; ++kind) {
+            CScript spk = prefix;
+            std::string name = "AUTHDEST";
+            if (kind == 0) CAssetTransfer(name, 5 * COIN).ConstructTransaction(spk, AssetMarker::NEURAI_XNA);
+            if (kind == 1) CAssetTransfer(name, 5 * COIN, hash, 1700000000).ConstructTransaction(spk, AssetMarker::NEURAI_XNA);
+            if (kind == 2) CNewAsset(name, 5 * COIN, 3, 1, 0, "").ConstructTransaction(spk, AssetMarker::NEURAI_XNA);
+            if (kind == 3) CNewAsset(name, 5 * COIN, 3, 1, 1, hash).ConstructTransaction(spk, AssetMarker::NEURAI_XNA);
+            if (kind == 4) {
+                CNewAsset(name, 5 * COIN).ConstructOwnerTransaction(spk, AssetMarker::NEURAI_XNA);
+                name += "!";
+            }
+            if (kind == 5) CReissueAsset(name, 5 * COIN, -1, 1, hash).ConstructTransaction(spk, AssetMarker::NEURAI_XNA);
+            if (kind == 6) CReissueAsset(name, 5 * COIN, 8, 0, "").ConstructTransaction(spk, AssetMarker::NEURAI_XNA);
+            const CTransaction tx(MakeTx({spk}, 1));
+            const std::vector<CTxOut> prevouts{CTxOut(1000, spk)};
+            for (bool numeric : {false, true}) for (int source = 0; source < 3; ++source) {
+                script_verify_flags flags = base;
+                if (numeric) flags |= SCRIPT_VERIFY_64BIT_INTEGERS;
+                std::vector<valtype> stack;
+                ScriptError err;
+                BOOST_TEST_CONTEXT("family=" << version << " ambient=" << ambient << " kind=" << kind
+                    << " numeric=" << numeric << " source=" << source) {
+                    for (unsigned char selector = 0; selector <= 8; ++selector) {
+                        bool available = true;
+                        valtype expected;
+                        switch (selector) {
+                        case 1: expected.assign(name.begin(), name.end()); break;
+                        case 2:
+                            expected = ParseHex(kind == 4
+                                ? (numeric ? "00e1f505" : "00e1f50500000000")
+                                : (numeric ? "0065cd1d" : "0065cd1d00000000"));
+                            break;
+                        case 3:
+                            available = kind == 2 || kind == 3 || kind >= 5;
+                            expected = {static_cast<unsigned char>(kind == 5 ? 0xff : kind == 6 ? 8 : 3)};
+                            break;
+                        case 4: available = kind == 2 || kind == 3 || kind >= 5;
+                            expected = {static_cast<unsigned char>(kind == 6 ? 0 : 1)}; break;
+                        case 5: available = kind == 2 || kind == 3;
+                            expected = {static_cast<unsigned char>(kind == 3 ? 1 : 0)}; break;
+                        case 6: available = kind == 3 || kind == 5; expected = hashBytes; break;
+                        case 7: expected = {static_cast<unsigned char>(kind == 4 ? 9 : kind >= 5 ? 8 : 0)}; break;
+                        default: available = false;
+                        }
+                        const CScript query = CScript() << OP_0 << valtype{selector} << ops[source];
+                        BOOST_TEST_CONTEXT("selector=" << int(selector)) {
+                            const bool ok = Run(tx, query, flags, stack, err, spk, &prevouts, &prevouts);
+                            BOOST_CHECK_EQUAL(ok, available);
+                            if (available) {
+                                BOOST_REQUIRE_EQUAL(stack.size(), 1U);
+                                BOOST_CHECK(stack.back() == expected);
+                            } else BOOST_CHECK_EQUAL(err, errors[source]);
+                        }
+                    }
+                    const CScript query = CScript() << OP_0 << OP_1 << ops[source];
+                    BOOST_CHECK(!Run(tx, query, flags & ~gates[source], stack, err, spk, &prevouts, &prevouts));
+                    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
+                    const bool oldRules = Run(tx, query, flags & ~SCRIPT_VERIFY_AUTHSCRIPT_STRICT,
+                        stack, err, spk, &prevouts, &prevouts);
+                    BOOST_CHECK_EQUAL(oldRules, version < 2);
+                    if (!oldRules) BOOST_CHECK_EQUAL(err, errors[source]);
+                    for (int index : {-1, 1}) {
+                        BOOST_CHECK(!Run(tx, CScript() << index << OP_1 << ops[source], flags,
+                            stack, err, spk, &prevouts, &prevouts));
+                        BOOST_CHECK_EQUAL(err, errors[source]);
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+BOOST_AUTO_TEST_CASE(review_asset_type_vectors_across_families)
+{
+    const script_verify_flags flags = ACTIVE_FLAGS | SCRIPT_VERIFY_OUTPUTASSETFIELD |
+        SCRIPT_VERIFY_INPUTASSETFIELD;
+    struct TypeVector { const char* name; unsigned char type; };
+    // Pin the public type bytes independently of AssetType/IntFromAssetType.
+    const TypeVector vectors[] = {{"AUTHDEST", 0}, {"AUTHDEST/SUB", 1},
+        {"AUTHDEST#unique", 2}, {"AUTHDEST~channel", 3}, {"#AUTHDEST", 4},
+        {"#AUTHDEST/#SUB", 5}, {"$AUTHDEST", 6}, {"AUTHDEST!", 9}, {"&AUTHDEST", 12}};
+    for (int version : {0, 1, 2, 3}) for (const auto marker : {AssetMarker::LEGACY_RVN, AssetMarker::NEURAI_XNA}) {
+        const CScript prefix = version == 0
+            ? CScript() << OP_DUP << OP_HASH160 << valtype(20, 0x42) << OP_EQUALVERIFY << OP_CHECKSIG
+            : Native(version, AscendingProgram());
+        for (const auto& vector : vectors) {
+            CScript spk = prefix;
+            CAssetTransfer(vector.name, COIN).ConstructTransaction(spk, marker);
+            const CTransaction tx(MakeTx({spk}, 1));
+            const std::vector<CTxOut> prevouts{CTxOut(1000, spk)};
+            for (opcodetype op : {OP_OUTPUTASSETFIELD, OP_INPUTASSETFIELD, OP_REFINPUTASSETFIELD}) {
+                BOOST_TEST_CONTEXT("family=" << version << " name=" << vector.name << " opcode=" << int(op)) {
+                    std::vector<valtype> stack;
+                    ScriptError err;
+                    BOOST_REQUIRE(Run(tx, CScript() << OP_0 << OP_7 << op, flags,
+                        stack, err, spk, &prevouts, &prevouts));
+                    BOOST_REQUIRE_EQUAL(stack.size(), 1U);
+                    BOOST_CHECK(stack.back() == valtype{vector.type});
+                }
+            }
+        }
+    }
+}
+
 BOOST_AUTO_TEST_SUITE_END()
