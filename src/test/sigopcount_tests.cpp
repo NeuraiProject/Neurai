@@ -5,6 +5,9 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "consensus/tx_verify.h"
+#include "assets/assettypes.h"
+#include "policy/policy.h"
+#include "hash.h"
 #include "consensus/validation.h"
 #include "pubkey.h"
 #include "key.h"
@@ -239,5 +242,70 @@ BOOST_FIXTURE_TEST_SUITE(sigopcount_tests, BasicTestingSetup)
             assert(VerifyWithFlag(creationTx, spendingTx, flags) == SCRIPT_ERR_CHECKMULTISIGVERIFY);
         }
     }
+
+BOOST_AUTO_TEST_CASE(csfs_cost_paths_and_activation)
+{
+    const script_verify_flags inactive = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_AUTHSCRIPT;
+    const script_verify_flags active = inactive | SCRIPT_VERIFY_CHECKSIGFROMSTACK;
+    // Static counting includes inactive branches, but never bytes inside pushes.
+    const CScript script = CScript() << std::vector<unsigned char>{0xb4} << OP_DROP
+        << OP_0 << OP_IF << OP_CHECKSIGFROMSTACK << OP_ENDIF << OP_TRUE;
+    BOOST_CHECK_EQUAL(script.GetSigOpCount(true), 0U);
+    BOOST_CHECK_EQUAL(script.GetSigOpCount(true, true), 1U);
+    CCoinsView base;
+    CCoinsViewCache coins(&base);
+    CMutableTransaction creation, spending;
+    CScriptWitness empty;
+    BuildTxs(spending, coins, creation, script, CScript(), empty);
+    BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(creation), coins, inactive), 0);
+    BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(creation), coins, active), 4);
+    // A bare script is charged when spent even if created before activation.
+    BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(spending), coins, active), 4);
+    BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(spending), coins, inactive), 0);
+    // ScriptSig instructions are also part of the legacy static count.
+    spending.vin[0].scriptSig = CScript() << OP_CHECKSIGFROMSTACK;
+    BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(spending), coins, active), 8);
+    BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(spending), coins, inactive), 0);
+
+    const CScript p2sh = GetScriptForDestination(CScriptID(script));
+    BuildTxs(spending, coins, creation, p2sh, CScript() << Serialize(script), empty);
+    BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(spending), coins, active), 4);
+    BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(spending), coins, inactive), 0);
+
+    uint256 scriptHash;
+    CSHA256().Write(script.data(), script.size()).Finalize(scriptHash.begin());
+    const CScript v0 = CScript() << OP_0 << ToByteVector(scriptHash);
+    const CScript v1 = CScript() << OP_1 << ToByteVector(GetAuthScriptCommitment(0, nullptr, script));
+    for (bool authscript : {false, true}) for (bool wrapped : {false, true}) {
+        const CScript program = authscript ? v1 : v0;
+        CScriptWitness witness;
+        if (authscript) witness.stack.push_back({0});
+        witness.stack.push_back(Serialize(script));
+        const CScript output = wrapped ? GetScriptForDestination(CScriptID(program)) : program;
+        const CScript scriptSig = wrapped ? CScript() << Serialize(program) : CScript();
+        BuildTxs(spending, coins, creation, output, scriptSig, witness);
+        BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(spending), coins, active), 1);
+        BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(spending), coins, inactive), 0);
+    }
+    CScript asset = v1;
+    CAssetTransfer("CSFSCOUNT", COIN).ConstructTransaction(asset, AssetMarker::NEURAI_XNA);
+    CScriptWitness witness;
+    witness.stack = {{0}, Serialize(script)};
+    BuildTxs(spending, coins, creation, asset, CScript(), witness);
+    BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(spending), coins, active), 1);
+    BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(spending), coins, inactive), 0);
+
+    // The P2SH per-input policy boundary includes CSFS when activated.
+    for (int count : {15, 16}) {
+        CScript redeem;
+        for (int i = 0; i < count; ++i) redeem << OP_CHECKSIGFROMSTACK;
+        BuildTxs(spending, coins, creation, GetScriptForDestination(CScriptID(redeem)), CScript() << Serialize(redeem), empty);
+        const CTransaction tx(spending);
+        BOOST_CHECK(AreInputsStandard(tx, coins));
+        BOOST_CHECK_EQUAL(AreInputsStandard(tx, coins, true), count == 15);
+        BOOST_CHECK_EQUAL(GetTransactionSigOpCost(tx, coins, active), count * 4);
+        BOOST_CHECK_EQUAL(GetTransactionSigOpCost(tx, coins, inactive), 0);
+    }
+}
 
 BOOST_AUTO_TEST_SUITE_END()

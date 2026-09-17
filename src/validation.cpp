@@ -809,7 +809,7 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         /** XNA END */
 
         // Check for non-standard pay-to-script-hash in inputs
-        if (fRequireStandard && !AreInputsStandard(tx, view))
+        if (fRequireStandard && !AreInputsStandard(tx, view, chainparams.GetConsensus().nCSFSEnabled))
             return state.Invalid(false, REJECT_NONSTANDARD, "bad-txns-nonstandard-inputs");
 
         // Check for non-standard witness in P2WSH. The wider per-item cap
@@ -825,7 +825,8 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
                                || consensus.nEd25519Enabled || consensus.nCheckSigAddEnabled))
             return state.DoS(0, false, REJECT_NONSTANDARD, "bad-witness-nonstandard", true);
 
-        int64_t nSigOpsCost = GetTransactionSigOpCost(tx, view, STANDARD_SCRIPT_VERIFY_FLAGS);
+        int64_t nSigOpsCost = GetTransactionSigOpCost(tx, view,
+            ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, fStrictAuthScriptActive));
 
         // nModifiedFees includes any fee deltas from PrioritiseTransaction
         CAmount nModifiedFees = nFees;

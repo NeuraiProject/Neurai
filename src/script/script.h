@@ -790,13 +790,15 @@ public:
      * counted more accurately, assuming they are of the form
      *  ... OP_N CHECKMULTISIG ...
      */
-    unsigned int GetSigOpCount(bool fAccurate) const;
+    // countCSFS is enabled by SCRIPT_VERIFY_CHECKSIGFROMSTACK; defaults keep
+    // context-free/historical callers unchanged. Each CSFS counts once.
+    unsigned int GetSigOpCount(bool fAccurate, bool countCSFS = false) const;
 
     /**
      * Accurately count sigOps, including sigOps in
      * pay-to-script-hash transactions:
      */
-    unsigned int GetSigOpCount(const CScript& scriptSig) const;
+    unsigned int GetSigOpCount(const CScript& scriptSig, bool countCSFS = false) const;
 
     bool IsPayToPublicKeyHash() const;
 

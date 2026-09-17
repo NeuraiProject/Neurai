@@ -78,7 +78,7 @@ bool CheckTxAssets(const CTransaction& tx, CValidationState& state, const CCoins
  * @return number of sigops this transaction's outputs will produce when spent
  * @see CTransaction::FetchInputs
  */
-unsigned int GetLegacySigOpCount(const CTransaction& tx);
+unsigned int GetLegacySigOpCount(const CTransaction& tx, bool countCSFS = false);
 
 /**
  * Count ECDSA signature operations in pay-to-script-hash inputs.
@@ -87,7 +87,7 @@ unsigned int GetLegacySigOpCount(const CTransaction& tx);
  * @return maximum number of sigops required to validate this transaction's inputs
  * @see CTransaction::FetchInputs
  */
-unsigned int GetP2SHSigOpCount(const CTransaction& tx, const CCoinsViewCache& mapInputs);
+unsigned int GetP2SHSigOpCount(const CTransaction& tx, const CCoinsViewCache& mapInputs, bool countCSFS = false);
 
 /**
  * Compute total signature operation cost of a transaction.

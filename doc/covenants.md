@@ -589,6 +589,23 @@ Both CTV and TXHASH use precomputed sub-hashes (`PrecomputedTransactionData`) to
 
 All 64-bit arithmetic operations use compiler intrinsics (`__builtin_add_overflow`, `__builtin_mul_overflow`) or equivalent manual bounds checking. Division by zero and `INT64_MIN` edge cases are explicitly handled. No undefined behavior is possible.
 
+### CSFS Signature Operation Accounting
+
+With `SCRIPT_VERIFY_CHECKSIGFROMSTACK` active, each CSFS instruction counts as
+one signature operation for either ECDSA or PQ. Counting is static: instructions
+in unexecuted branches count too, while opcode bytes inside pushed data do not.
+The existing scale applies: four cost units for legacy/P2SH, one for witness.
+P2SH's per-input policy limit includes these instructions when activated.
+
+Legacy creation-time scans include active CSFS in scriptSigs and outputs. Bare
+spent output scripts are also charged for their top-level CSFS instructions,
+so outputs created before activation cannot verify CSFS without a spend-time
+charge. Revealed P2SH and witness scripts use their respective accounting paths.
+A bare CSFS output can therefore be charged at both creation and redemption.
+The old context-free counters retain their defaults and NOP5 contributes zero
+when the activation flag is absent. Mempool accounting uses the network's
+consensus opt-in flags, matching the contextual block-validation path.
+
 ### Signature Malleability
 
 CSFS follows the same `NULLFAIL` semantics as `OP_CHECKSIG`: under `SCRIPT_VERIFY_NULLFAIL`, a non-empty signature that fails verification causes the entire script to fail (rather than pushing false). This prevents signature grinding attacks.
