@@ -720,8 +720,8 @@ BOOST_AUTO_TEST_CASE(activation_context_is_scoped)
     }
 
     // The script flag follows the height passed by the caller.
-    BOOST_CHECK((ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, true) & SCRIPT_VERIFY_AUTHSCRIPT_STRICT) != 0);
-    BOOST_CHECK((ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, false) & SCRIPT_VERIFY_AUTHSCRIPT_STRICT) == 0);
+    BOOST_CHECK((ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, true, 0) & SCRIPT_VERIFY_AUTHSCRIPT_STRICT) != 0);
+    BOOST_CHECK((ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, false, 0) & SCRIPT_VERIFY_AUTHSCRIPT_STRICT) == 0);
 
     // Height semantics of the consensus parameter.
     Consensus::Params custom = consensus;

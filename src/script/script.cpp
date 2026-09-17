@@ -807,3 +807,7 @@ bool AmountFromReissueScript(const CScript& scriptPubKey, CAmount& nAmount)
     return true;
 }
 //!--------------------------------------------------------------------------------------------------------------------------!//
+
+namespace { std::atomic<int> g_signatureOpcodeCandidateHeight{0}; }
+void SetSignatureOpcodeCandidateHeight(int height) { g_signatureOpcodeCandidateHeight.store(height); }
+int GetSignatureOpcodeCandidateHeight() { return g_signatureOpcodeCandidateHeight.load(); }

@@ -130,4 +130,22 @@ BOOST_AUTO_TEST_CASE(helper_never_clears_baseline_bits)
     }
 }
 
+BOOST_AUTO_TEST_CASE(signature_opcodes_follow_explicit_height)
+{
+    Consensus::Params p = AllOptInsSetTo(false);
+    p.nCSFSEnabled = p.nEd25519Enabled = p.nCheckSigAddEnabled = true;
+    p.nSignatureOpcodesHeight = 120;
+    const script_verify_flags mask = SCRIPT_VERIFY_CHECKSIGFROMSTACK | SCRIPT_VERIFY_CHECKSIGADD | SCRIPT_VERIFY_ED25519;
+    const int oldHeight = GetSignatureOpcodeCandidateHeight();
+    for (int defaultHeight : {0, 200}) {
+        SetSignatureOpcodeCandidateHeight(defaultHeight);
+        BOOST_CHECK((ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, p, false, 119) & mask) == SCRIPT_VERIFY_NONE);
+        BOOST_CHECK((ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, p, false, 120) & mask) == mask);
+        BOOST_CHECK((ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, p, false, 121) & mask) == mask);
+        BOOST_CHECK((GetStandardScriptVerifyFlagsWithConsensusOptIns(p) & mask) ==
+            (defaultHeight >= 120 ? mask : SCRIPT_VERIFY_NONE));
+    }
+    SetSignatureOpcodeCandidateHeight(oldHeight);
+}
+
 BOOST_AUTO_TEST_SUITE_END()

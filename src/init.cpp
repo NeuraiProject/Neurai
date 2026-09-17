@@ -627,6 +627,7 @@ std::string HelpMessage(HelpMessageMode mode)
         strUsage += HelpMessageOpt("-limitdescendantsize=<n>", strprintf("Do not accept transactions if any ancestor would have more than <n> kilobytes of in-mempool descendants (default: %u).", DEFAULT_DESCENDANT_SIZE_LIMIT));
         strUsage += HelpMessageOpt("-vbparams=deployment:start:end", "Use given start/end times for specified version bits deployment (regtest-only)");
         strUsage += HelpMessageOpt("-nip040height=<n>", "Override the NIP-040 asset marker fork height (regtest-only)");
+        strUsage += HelpMessageOpt("-signatureopcodesheight=<n>", "Override CSFS/Ed25519/CHECKSIGADD activation height (regtest-only)");
         strUsage += HelpMessageOpt("-strictauthscriptheight=<n>", "Override the strict AuthScript (witness v2/v3) activation height (regtest-only)");
         strUsage += HelpMessageOpt("-depinstateheight=<n>", "Override the DEPIN transfer state (open/close/seal) activation height (regtest-only)");
     }
@@ -1351,6 +1352,15 @@ bool AppInitParameterInteraction()
         }
         UpdateAssetMarkerNip040Height(static_cast<int>(nHeight));
         LogPrintf("Setting NIP-040 asset marker fork height to %ld\n", nHeight);
+    }
+
+    if (gArgs.IsArgSet("-signatureopcodesheight")) {
+        if (!chainparams.MineBlocksOnDemand()) return InitError("Signature opcode height may only be overridden on regtest.");
+        int64_t height;
+        if (!ParseInt64(gArgs.GetArg("-signatureopcodesheight", ""), &height) || height < 0 || height > std::numeric_limits<int>::max())
+            return InitError("Invalid -signatureopcodesheight");
+        UpdateSignatureOpcodesHeight(static_cast<int>(height));
+        LogPrintf("Setting signature opcode activation height to %ld\n", height);
     }
 
     if (gArgs.IsArgSet("-strictauthscriptheight")) {

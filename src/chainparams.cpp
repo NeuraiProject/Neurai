@@ -132,7 +132,8 @@ public:
         consensus.nStrictAuthScriptHeight = std::numeric_limits<int>::max(); // strict AuthScript families (witness v2/v3): not scheduled on mainnet
         consensus.nCATEnabled = false;  // OP_CAT (BIP 347) not yet active on mainnet
         consensus.nCTVEnabled = false;  // OP_CTV (BIP 119) not yet active on mainnet
-        consensus.nCSFSEnabled = false; // OP_CHECKSIGFROMSTACK not yet active on mainnet
+        consensus.nSignatureOpcodesHeight = std::numeric_limits<int>::max(); // not scheduled on mainnet
+        consensus.nCSFSEnabled = true; // gated by nSignatureOpcodesHeight
         consensus.nTXHASHEnabled = false;  // OP_TXHASH not yet active on mainnet
         consensus.nTXFIELDEnabled = false; // OP_TXFIELD (NOP7) not yet active on mainnet
         consensus.nSPLITEnabled = false;   // OP_SPLIT (NOP8) not yet active on mainnet
@@ -162,8 +163,8 @@ public:
         consensus.nMerkleInclusionEnabled     = false;        // NIP-031: not active on mainnet
         consensus.nModernHashesEnabled        = false;        // NIP-034a: not active on mainnet
         consensus.nPoseidonEnabled            = false;        // NIP-036: not active on mainnet
-        consensus.nEd25519Enabled             = false;        // NIP-035: not active on mainnet
-        consensus.nCheckSigAddEnabled         = false;        // NIP-039: not active on mainnet
+        consensus.nEd25519Enabled             = true;        // NIP-035: gated by nSignatureOpcodesHeight
+        consensus.nCheckSigAddEnabled         = true;        // NIP-039: gated by nSignatureOpcodesHeight
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days
@@ -825,6 +826,7 @@ void SelectParams(const std::string& network, bool fForceBlockNetwork)
     // Process-wide default of the strict AuthScript activation context, used
     // by code with no block context (wallet, RPC). Validation refreshes it on
     // every tip change; until a chain is loaded it reflects the first block.
+    SetSignatureOpcodeCandidateHeight(0);
     SetStrictAuthScriptActiveDefault(globalChainParams->GetConsensus().IsStrictAuthScriptActive(0));
 }
 
@@ -867,4 +869,9 @@ void TurnOffBIP65() {
 
 void TurnOffBIP66() {
 	globalChainParams->TurnOffBIP66();
+}
+
+void UpdateSignatureOpcodesHeight(int nHeight)
+{
+    globalChainParams->UpdateSignatureOpcodesHeight(nHeight);
 }

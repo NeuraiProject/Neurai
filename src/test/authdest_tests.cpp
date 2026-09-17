@@ -284,8 +284,8 @@ BOOST_AUTO_TEST_CASE(inactive_behaviour_is_unchanged)
 BOOST_AUTO_TEST_CASE(activation_follows_the_strict_height)
 {
     const Consensus::Params& consensus = GetParams().GetConsensus();
-    const script_verify_flags below = ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, false);
-    const script_verify_flags above = ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, true);
+    const script_verify_flags below = ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, false, 0);
+    const script_verify_flags above = ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, true, 0);
     BOOST_CHECK((below & SCRIPT_VERIFY_AUTHDEST) == 0);
     BOOST_CHECK((below & SCRIPT_VERIFY_AUTHSCRIPT_STRICT) == 0);
     BOOST_CHECK((above & SCRIPT_VERIFY_AUTHDEST) != 0);
@@ -293,8 +293,8 @@ BOOST_AUTO_TEST_CASE(activation_follows_the_strict_height)
 
     Consensus::Params custom = consensus;
     custom.nStrictAuthScriptHeight = 120;
-    BOOST_CHECK((ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, custom, custom.IsStrictAuthScriptActive(119)) & SCRIPT_VERIFY_AUTHDEST) == 0);
-    BOOST_CHECK((ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, custom, custom.IsStrictAuthScriptActive(120)) & SCRIPT_VERIFY_AUTHDEST) != 0);
+    BOOST_CHECK((ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, custom, custom.IsStrictAuthScriptActive(119), 0) & SCRIPT_VERIFY_AUTHDEST) == 0);
+    BOOST_CHECK((ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, custom, custom.IsStrictAuthScriptActive(120), 0) & SCRIPT_VERIFY_AUTHDEST) != 0);
 }
 
 // NIP-023 operations keep their exact behaviour, active or not: 32 bytes, v1 only,

@@ -627,6 +627,28 @@ This tightens consensus on networks where these opcodes are already enabled
 (testnet and regtest). It does not set a new activation schedule or establish
 compatibility with every historical testnet block; deployment needs coordination.
 
+### Height activation of signature opcodes
+
+CSFS, CHECKSIGADD and Ed25519 share `nSignatureOpcodesHeight`. Their individual
+capability switches only take effect at or above that height. Mainnet leaves
+the height unscheduled (`INT_MAX`); testnet and regtest retain height zero.
+`-signatureopcodesheight=N` overrides the height only on regtest.
+
+Block validation supplies the block's height explicitly. Mempool admission,
+including its second consensus-flags check, uses the next block's height.
+The same rule gates sigop accounting and the related witness/P2SH policy.
+Signing/RPC defaults follow the next height of the loaded chain; before loading
+a chain they default to zero. The standalone offline transaction tool has no
+chain tip and therefore uses that zero default.
+
+On a reorganization or connection crossing this height, the existing script-rule
+mempool sweep revalidates affected entries. Entries whose stored sigop cost no
+longer matches are evicted with descendants, rather than leaving stale package
+sizes/costs. They can be retransmitted and admitted under the new rules. The
+second pass after reorg readmission covers temporarily missing parents. Reorgs
+that do not cross a script-rule activation height do not trigger this full sweep.
+This does not introduce a separate historical accounting schedule on testnet.
+
 ### Signature Malleability
 
 CSFS follows the same `NULLFAIL` semantics as `OP_CHECKSIG`: under `SCRIPT_VERIFY_NULLFAIL`, a non-empty signature that fails verification causes the entire script to fail (rather than pushing false). This prevents signature grinding attacks.

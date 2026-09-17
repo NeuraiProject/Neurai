@@ -516,6 +516,9 @@ typedef prevector<28, unsigned char> CScriptBase;
  *    the current tip".
  */
 void SetStrictAuthScriptActiveDefault(bool fActive);
+// Non-consensus signing/RPC defaults only. Block validation passes height explicitly.
+void SetSignatureOpcodeCandidateHeight(int height);
+int GetSignatureOpcodeCandidateHeight();
 bool IsStrictAuthScriptActiveInContext();
 
 class CStrictAuthScriptContext

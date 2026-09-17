@@ -517,10 +517,10 @@ static bool IsCurrentForFeeEstimation()
  * and instead just erase from the mempool as needed.
  */
 
-static void MempoolEvictStrictAuthScriptEntries(CTxMemPool& pool);
+static void MempoolEvictScriptRuleEntries(CTxMemPool& pool);
 // Set (under cs_main) when a tip change flipped the strict AuthScript activation
 // of the mempool's candidate height; consumed by UpdateMempoolForReorg.
-static bool g_fStrictAuthScriptTransitionPending = false;
+static bool g_fScriptRuleTransitionPending = false;
 
 void UpdateMempoolForReorg(DisconnectedBlockTransactions &disconnectpool, bool fAddToMempool)
 {
@@ -557,16 +557,16 @@ void UpdateMempoolForReorg(DisconnectedBlockTransactions &disconnectpool, bool f
 
     // We also need to remove any now-immature transactions
     mempool.removeForReorg(pcoinsTip, chainActive.Tip()->nHeight + 1, STANDARD_LOCKTIME_VERIFY_FLAGS);
-    // Strict AuthScript: the per-tip transition sweep in DisconnectTip cannot see
+    // Height-activated script rules: the per-tip transition sweep in DisconnectTip cannot see
     // a pending spend whose parent was confirmed in a block that is ALSO being
     // disconnected (the coin is then neither in the chain nor yet back in the
     // mempool). Now that disconnected transactions have been re-admitted, sweep
     // once more - but only if this reorg actually crossed the activation height.
     // An ordinary reorg entirely below (or above) it never pays for this; on a
     // chain with no scheduled activation that is every reorg.
-    if (g_fStrictAuthScriptTransitionPending) {
-        g_fStrictAuthScriptTransitionPending = false;
-        MempoolEvictStrictAuthScriptEntries(mempool);
+    if (g_fScriptRuleTransitionPending) {
+        g_fScriptRuleTransitionPending = false;
+        MempoolEvictScriptRuleEntries(mempool);
     }
     // DEPIN: a disconnected OPEN turns pending holder transfers unminable and
     // a disconnected state operation can turn a pending one into an invalid
@@ -627,6 +627,7 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
     // that is the strict AuthScript activation context for every asset parser
     // reached from here (initial acceptance and re-admission after a reorg).
     const bool fStrictAuthScriptActive = chainparams.GetConsensus().IsStrictAuthScriptActive(chainActive.Height() + 1);
+    const bool fSignatureOpcodesActive = chainparams.GetConsensus().IsSignatureOpcodesActive(chainActive.Height() + 1);
     CStrictAuthScriptContext strictAuthScriptContext(fStrictAuthScriptActive);
 
     /** XNA START */
@@ -809,8 +810,8 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         /** XNA END */
 
         // Check for non-standard pay-to-script-hash in inputs
-        if (fRequireStandard && !AreInputsStandard(tx, view, chainparams.GetConsensus().nCSFSEnabled,
-                chainparams.GetConsensus().nCheckSigAddEnabled, chainparams.GetConsensus().nEd25519Enabled))
+        if (fRequireStandard && !AreInputsStandard(tx, view, (fSignatureOpcodesActive && chainparams.GetConsensus().nCSFSEnabled),
+                (fSignatureOpcodesActive && chainparams.GetConsensus().nCheckSigAddEnabled), (fSignatureOpcodesActive && chainparams.GetConsensus().nEd25519Enabled)))
             return state.Invalid(false, REJECT_NONSTANDARD, "bad-txns-nonstandard-inputs");
 
         // Check for non-standard witness in P2WSH. The wider per-item cap
@@ -822,12 +823,12 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         const auto& consensus = chainparams.GetConsensus();
         if (tx.HasWitness() && fRequireStandard &&
             !IsWitnessStandard(tx, view,
-                               consensus.nCSFSEnabled || consensus.nMerkleInclusionEnabled
-                               || consensus.nEd25519Enabled || consensus.nCheckSigAddEnabled))
+                               consensus.nMerkleInclusionEnabled || (fSignatureOpcodesActive &&
+                               (consensus.nCSFSEnabled || consensus.nEd25519Enabled || consensus.nCheckSigAddEnabled))))
             return state.DoS(0, false, REJECT_NONSTANDARD, "bad-witness-nonstandard", true);
 
         int64_t nSigOpsCost = GetTransactionSigOpCost(tx, view,
-            ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, fStrictAuthScriptActive));
+            ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, fStrictAuthScriptActive, chainActive.Height() + 1));
 
         // nModifiedFees includes any fee deltas from PrioritiseTransaction
         CAmount nModifiedFees = nFees;
@@ -1037,7 +1038,7 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
             scriptVerifyFlags = script_verify_flags::from_int(
                 gArgs.GetArg("-promiscuousmempoolflags", scriptVerifyFlags.as_int()));
         }
-        scriptVerifyFlags = ApplyConsensusOptIns(scriptVerifyFlags, chainparams.GetConsensus(), fStrictAuthScriptActive);
+        scriptVerifyFlags = ApplyConsensusOptIns(scriptVerifyFlags, chainparams.GetConsensus(), fStrictAuthScriptActive, chainActive.Height() + 1);
 
         // Check against previous transactions
         // This is done last to help prevent CPU exhaustion denial-of-service attacks.
@@ -1105,6 +1106,10 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         if (fStrictAuthScriptActive) {
             currentBlockScriptVerifyFlags |= SCRIPT_VERIFY_AUTHSCRIPT_STRICT | SCRIPT_VERIFY_AUTHDEST;
         }
+        const script_verify_flags signatureFlags = SCRIPT_VERIFY_CHECKSIGFROMSTACK | SCRIPT_VERIFY_CHECKSIGADD | SCRIPT_VERIFY_ED25519;
+        currentBlockScriptVerifyFlags &= ~signatureFlags;
+        currentBlockScriptVerifyFlags |= ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, chainparams.GetConsensus(),
+            fStrictAuthScriptActive, chainActive.Height() + 1) & signatureFlags;
         if (!CheckInputsFromMempoolAndCache(tx, state, view, pool, currentBlockScriptVerifyFlags, true, txdata, pRefOutputs, chainCtx))
         {
             // If we're using promiscuousmempoolflags, we may hit this normally
@@ -1915,7 +1920,7 @@ static void MempoolRemoveForNewTip(CTxMemPool& pool,
     const bool fStrictAuthScriptActive = chainparams.GetConsensus().IsStrictAuthScriptActive(tipNew.nHeight + 1);
     CStrictAuthScriptContext strictAuthScriptContext(fStrictAuthScriptActive);
     const script_verify_flags flags =
-        ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, chainparams.GetConsensus(), fStrictAuthScriptActive);
+        ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, chainparams.GetConsensus(), fStrictAuthScriptActive, tipNew.nHeight + 1);
 
     pool.removeForNewTip([&](const CTxMemPoolEntry& entry) -> bool {
         const CTransaction& tx = entry.GetTx();
@@ -1997,24 +2002,25 @@ static bool SpendsStrictAuthScriptProgram(const CTxIn& txin, const CScript& spen
     return IsStrictAuthScriptProgram(CScript(last.begin(), last.end()));
 }
 
-static void MempoolCheckStrictAuthScriptTransition(CTxMemPool& pool,
+static void MempoolCheckScriptRuleTransition(CTxMemPool& pool,
                                                    int nOldCandidateHeight,
                                                    int nNewCandidateHeight,
                                                    const Consensus::Params& params)
 {
     AssertLockHeld(cs_main);
-    if (params.IsStrictAuthScriptActive(nOldCandidateHeight) == params.IsStrictAuthScriptActive(nNewCandidateHeight))
+    if (params.IsStrictAuthScriptActive(nOldCandidateHeight) == params.IsStrictAuthScriptActive(nNewCandidateHeight) &&
+        params.IsSignatureOpcodesActive(nOldCandidateHeight) == params.IsSignatureOpcodesActive(nNewCandidateHeight))
         return;
     // Only a disconnect can leave parents momentarily unavailable, and only a
     // disconnect is always followed by UpdateMempoolForReorg. When connecting,
     // every coin is present, so the sweep right here is complete.
     if (nNewCandidateHeight < nOldCandidateHeight) {
-        g_fStrictAuthScriptTransitionPending = true;
+        g_fScriptRuleTransitionPending = true;
     }
-    MempoolEvictStrictAuthScriptEntries(pool);
+    MempoolEvictScriptRuleEntries(pool);
 }
 
-static void MempoolEvictStrictAuthScriptEntries(CTxMemPool& pool)
+static void MempoolEvictScriptRuleEntries(CTxMemPool& pool)
 {
     AssertLockHeld(cs_main);
     LOCK(pool.cs);
@@ -2024,7 +2030,8 @@ static void MempoolEvictStrictAuthScriptEntries(CTxMemPool& pool)
     // v2/v3 programs is not enough: NIP-041 shares this activation height and
     // changes the validity of ANY script that executes OP_OUTPUTAUTHDEST or
     // selector 0x04 (a generic v1 contract, for instance). So every entry whose
-    // inputs are available is re-validated under the candidate flags; the
+    // inputs are available is re-validated under the candidate flags. This also
+    // handles signature-opcode activation and changes to cached sigop costs; the
     // structural checks below only add the cases input scripts cannot reveal.
     const CBlockIndex* pindexTip = chainActive.Tip();
     const int nCandidateHeight = pindexTip ? pindexTip->nHeight + 1 : 0;
@@ -2032,7 +2039,7 @@ static void MempoolEvictStrictAuthScriptEntries(CTxMemPool& pool)
     const bool fStrictAuthScriptActive = chainparams.GetConsensus().IsStrictAuthScriptActive(nCandidateHeight);
     CStrictAuthScriptContext strictAuthScriptContext(fStrictAuthScriptActive);
     const script_verify_flags flags =
-        ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, chainparams.GetConsensus(), fStrictAuthScriptActive);
+        ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, chainparams.GetConsensus(), fStrictAuthScriptActive, nCandidateHeight);
     const ChainContext candidateCtx{
         nCandidateHeight,
         pindexTip ? pindexTip->GetMedianTimePast() : 0,
@@ -2070,6 +2077,9 @@ static void MempoolEvictStrictAuthScriptEntries(CTxMemPool& pool)
         if (!view.HaveInputs(tx)) {
             return false;
         }
+        // Evict affected entries and descendants so stored sigop costs and
+        // ancestor/package sizes cannot survive an activation boundary stale.
+        if (GetTransactionSigOpCost(tx, view, flags) != entry.GetSigOpCost()) return true;
         std::shared_ptr<std::vector<CTxOut>> pRefOutputs;
         if (tx.nVersion == 3 && !tx.vrefin.empty()) {
             pRefOutputs = std::make_shared<std::vector<CTxOut>>();
@@ -2926,7 +2936,7 @@ static script_verify_flags GetBlockScriptFlags(const CBlockIndex* pindex, const 
 
     // Strict AuthScript families activate by height: the flag belongs to the
     // block being validated, not to the chain tip or the network.
-    return ApplyConsensusOptIns(flags, consensusparams, consensusparams.IsStrictAuthScriptActive(pindex->nHeight));
+    return ApplyConsensusOptIns(flags, consensusparams, consensusparams.IsStrictAuthScriptActive(pindex->nHeight), pindex->nHeight);
 }
 
 
@@ -3669,6 +3679,7 @@ void static UpdateTip(CBlockIndex *pindexNew, const CChainParams& chainParams) {
 
     // Default activation context for code without a block context (wallet,
     // RPC, address decoding): the block after the new tip.
+    SetSignatureOpcodeCandidateHeight(pindexNew ? pindexNew->nHeight + 1 : 0);
     SetStrictAuthScriptActiveDefault(chainParams.GetConsensus().IsStrictAuthScriptActive(pindexNew ? pindexNew->nHeight + 1 : 0));
 
     // New best block
@@ -3782,14 +3793,14 @@ bool static DisconnectTip(CValidationState& state, const CChainParams& chainpara
     MempoolCheckAssetMarkerTransition(mempool, pindexDelete->nHeight + 1,
                                       pindexDelete->nHeight,
                                       chainparams.GetConsensus());
-    MempoolCheckStrictAuthScriptTransition(mempool, pindexDelete->nHeight + 1,
+    MempoolCheckScriptRuleTransition(mempool, pindexDelete->nHeight + 1,
                                            pindexDelete->nHeight,
                                            chainparams.GetConsensus());
     // The pending flag exists for the re-admission pass of UpdateMempoolForReorg.
     // A disconnect with no disconnectpool (RewindBlockIndex at start-up) has no
     // such pass afterwards, so it must not leave the flag armed.
     if (!disconnectpool) {
-        g_fStrictAuthScriptTransitionPending = false;
+        g_fScriptRuleTransitionPending = false;
     }
     // NIP-026: flush the script-execution cache so that HEIGHT / MTP
     // observations baked into prior hits cannot be re-served at the new
@@ -3986,7 +3997,7 @@ bool static ConnectTip(CValidationState& state, const CChainParams& chainparams,
     MempoolCheckAssetMarkerTransition(mempool, pindexNew->nHeight,
                                       pindexNew->nHeight + 1,
                                       chainparams.GetConsensus());
-    MempoolCheckStrictAuthScriptTransition(mempool, pindexNew->nHeight,
+    MempoolCheckScriptRuleTransition(mempool, pindexNew->nHeight,
                                            pindexNew->nHeight + 1,
                                            chainparams.GetConsensus());
     // NIP-026: see DisconnectTip — flushing here closes the stale-cache
@@ -5623,6 +5634,7 @@ bool LoadChainTip(const CChainParams& chainparams)
     if (it == mapBlockIndex.end())
         return false;
     chainActive.SetTip(it->second);
+    SetSignatureOpcodeCandidateHeight(it->second->nHeight + 1);
     SetStrictAuthScriptActiveDefault(chainparams.GetConsensus().IsStrictAuthScriptActive(it->second->nHeight + 1));
 
     PruneBlockIndexCandidates();

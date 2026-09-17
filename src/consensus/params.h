@@ -114,6 +114,10 @@ struct Params {
     bool nCTVEnabled;
     /** Enable OP_CHECKSIGFROMSTACK - verify signature against arbitrary message.
      *  true on testnet/regtest; false on mainnet until future activation. */
+    // Common height gate for CSFS, Ed25519 and CHECKSIGADD. Individual
+    // capability switches remain available; validation always supplies height.
+    int nSignatureOpcodesHeight{0};
+    bool IsSignatureOpcodesActive(int height) const { return height >= nSignatureOpcodesHeight; }
     bool nCSFSEnabled;
     /** Enable OP_TXHASH - push hash of selected transaction fields to stack.
      *  true on testnet/regtest; false on mainnet until future activation. */

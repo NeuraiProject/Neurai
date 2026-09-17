@@ -86,7 +86,7 @@ static constexpr script_verify_flags STANDARD_NOT_MANDATORY_VERIFY_FLAGS = STAND
  */
 inline script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
                                                 const Consensus::Params& consensus,
-                                                bool fStrictAuthScriptActive)
+                                                bool fStrictAuthScriptActive, int nHeight)
 {
     if (consensus.nPQWitnessEnabled)        base |= SCRIPT_VERIFY_AUTHSCRIPT;
     // Height-activated: the caller states whether the strict AuthScript
@@ -96,7 +96,7 @@ inline script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
     if (fStrictAuthScriptActive)            base |= SCRIPT_VERIFY_AUTHDEST;
     if (consensus.nCATEnabled)              base |= SCRIPT_VERIFY_CAT;
     if (consensus.nCTVEnabled)              base |= SCRIPT_VERIFY_CHECKTEMPLATEVERIFY;
-    if (consensus.nCSFSEnabled)             base |= SCRIPT_VERIFY_CHECKSIGFROMSTACK;
+    if (consensus.nCSFSEnabled && consensus.IsSignatureOpcodesActive(nHeight))             base |= SCRIPT_VERIFY_CHECKSIGFROMSTACK;
     if (consensus.nTXHASHEnabled)           base |= SCRIPT_VERIFY_TXHASH;
     if (consensus.nTXFIELDEnabled)          base |= SCRIPT_VERIFY_TXFIELD;
     if (consensus.nSPLITEnabled)            base |= SCRIPT_VERIFY_SPLIT;
@@ -125,9 +125,9 @@ inline script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
     // NIP-036: OP_POSEIDON (SNARK-friendly Poseidon over BN254 Fr).
     if (consensus.nPoseidonEnabled)          base |= SCRIPT_VERIFY_POSEIDON;
     // NIP-035: OP_CHECKSIG_ED25519 (strict-profile Ed25519 verifier).
-    if (consensus.nEd25519Enabled)           base |= SCRIPT_VERIFY_ED25519;
+    if (consensus.nEd25519Enabled && consensus.IsSignatureOpcodesActive(nHeight))           base |= SCRIPT_VERIFY_ED25519;
     // NIP-039: OP_CHECKSIGADD (generic legacy/PQ signature accumulator).
-    if (consensus.nCheckSigAddEnabled)       base |= SCRIPT_VERIFY_CHECKSIGADD;
+    if (consensus.nCheckSigAddEnabled && consensus.IsSignatureOpcodesActive(nHeight))       base |= SCRIPT_VERIFY_CHECKSIGADD;
     return base;
 }
 
@@ -137,7 +137,7 @@ inline script_verify_flags GetStandardScriptVerifyFlagsWithConsensusOptIns(
 {
     // Non-consensus callers (signing, RPC, tools): activation context of the
     // block after the current tip.
-    return ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, IsStrictAuthScriptActiveInContext());
+    return ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, IsStrictAuthScriptActiveInContext(), GetSignatureOpcodeCandidateHeight());
 }
 
 /** Used as the flags parameter to sequence and nLocktime checks in non-consensus code. */
