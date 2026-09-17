@@ -2891,7 +2891,7 @@ UniValue getwalletinfo(const JSONRPCRequest& request)
     if (!seed_id.IsNull() && pwallet->CanSupportFeature(FEATURE_HD_SPLIT)) {
         obj.push_back(Pair("keypoolsize_hd_internal",   (int64_t)(pwallet->GetKeyPoolSize() - kpExternalSize)));
     }
-    if (GetParams().GetConsensus().nStrictAuthScriptEnabled && pwallet->IsBip44Enabled()) {
+    if (IsStrictAuthScriptActiveInContext() && pwallet->IsBip44Enabled()) {
         obj.push_back(Pair("keypoolsize_strict_ecdsa", (int64_t)pwallet->GetStrictEcdsaKeyPoolSize(false)));
         obj.push_back(Pair("keypoolsize_strict_ecdsa_internal", (int64_t)pwallet->GetStrictEcdsaKeyPoolSize(true)));
     }

@@ -475,6 +475,12 @@ bool ReadBlockFromDisk(CBlock& block, const CBlockIndex* pindex, const Consensus
 /** Functions for validating blocks and updating the block tree */
 
 /** Context-independent validity checks */
+/** Strict AuthScript (witness v2/v3) activation for a block whose parent is
+ *  hashPrevBlock: the height-based rule when the parent is known, otherwise the
+ *  current activation context. For context-free block checks (CheckBlock) that
+ *  still need to parse asset scripts with the right rule set. */
+bool IsStrictAuthScriptActiveForChildOf(const uint256& hashPrevBlock);
+
 bool CheckBlock(const CBlock& block, CValidationState& state, const Consensus::Params& consensusParams, bool fCheckPOW = true, bool fCheckMerkleRoot = true, bool fDBCheck = false);
 
 /** Consensus rule: once nKAWPOWHeaderHeightCheckActivation is reached, a KAWPOW

@@ -60,6 +60,11 @@ void CChainParams::UpdateAssetMarkerNip040Height(int nHeight)
     consensus.nAssetMarkerNip040Height = nHeight;
 }
 
+void CChainParams::UpdateStrictAuthScriptHeight(int nHeight)
+{
+    consensus.nStrictAuthScriptHeight = nHeight;
+}
+
 void CChainParams::UpdateDepinTransferStateHeight(int nHeight)
 {
     consensus.nDepinTransferStateHeight = nHeight;
@@ -124,7 +129,7 @@ public:
         consensus.nSegwitEnabled = true;
         consensus.nCSVEnabled = true;
         consensus.nPQWitnessEnabled = false; // PQ not yet active on mainnet
-        consensus.nStrictAuthScriptEnabled = false; // strict AuthScript families (witness v2/v3) not active on mainnet
+        consensus.nStrictAuthScriptHeight = std::numeric_limits<int>::max(); // strict AuthScript families (witness v2/v3): not scheduled on mainnet
         consensus.nCATEnabled = false;  // OP_CAT (BIP 347) not yet active on mainnet
         consensus.nCTVEnabled = false;  // OP_CTV (BIP 119) not yet active on mainnet
         consensus.nCSFSEnabled = false; // OP_CHECKSIGFROMSTACK not yet active on mainnet
@@ -357,7 +362,7 @@ public:
         consensus.nSegwitEnabled = true;
         consensus.nCSVEnabled = true;
         consensus.nPQWitnessEnabled = true; // PQ (ML-DSA-44) active on testnet
-        consensus.nStrictAuthScriptEnabled = false; // strict AuthScript families (witness v2/v3): local candidate, not active on testnet
+        consensus.nStrictAuthScriptHeight = std::numeric_limits<int>::max(); // strict AuthScript families (witness v2/v3): local candidate, not scheduled on testnet
         consensus.nCATEnabled = true;  // OP_CAT (BIP 347) active on testnet
         consensus.nCTVEnabled = true;  // OP_CTV (BIP 119) active on testnet
         consensus.nCSFSEnabled = true;  // OP_CHECKSIGFROMSTACK active on testnet
@@ -592,7 +597,7 @@ public:
         consensus.nSegwitEnabled = true;
         consensus.nCSVEnabled = true;
         consensus.nPQWitnessEnabled = true; // PQ (ML-DSA-44) active on regtest
-        consensus.nStrictAuthScriptEnabled = true; // strict AuthScript families (witness v2/v3) active on regtest for local testing
+        consensus.nStrictAuthScriptHeight = 0; // strict AuthScript families (witness v2/v3) active from genesis on regtest; activation tests move it via -strictauthscriptheight
         consensus.nCATEnabled = true;  // OP_CAT (BIP 347) active on regtest
         consensus.nCTVEnabled = true;  // OP_CTV (BIP 119) active on regtest
         consensus.nCSFSEnabled = true;  // OP_CHECKSIGFROMSTACK active on regtest
@@ -817,9 +822,10 @@ void SelectParams(const std::string& network, bool fForceBlockNetwork)
         bNetwork.SetNetwork(network);
     }
     globalChainParams = CreateChainParams(network);
-    // Asset parsers only recognise strict AuthScript (witness v2/v3) prefixes
-    // on chains where the strict families are active.
-    SetStrictAuthScriptAssetsEnabled(globalChainParams->GetConsensus().nStrictAuthScriptEnabled);
+    // Process-wide default of the strict AuthScript activation context, used
+    // by code with no block context (wallet, RPC). Validation refreshes it on
+    // every tip change; until a chain is loaded it reflects the first block.
+    SetStrictAuthScriptActiveDefault(globalChainParams->GetConsensus().IsStrictAuthScriptActive(0));
 }
 
 void UpdateVersionBitsParameters(Consensus::DeploymentPos d, int64_t nStartTime, int64_t nTimeout)
@@ -830,6 +836,12 @@ void UpdateVersionBitsParameters(Consensus::DeploymentPos d, int64_t nStartTime,
 void UpdateAssetMarkerNip040Height(int nHeight)
 {
     globalChainParams->UpdateAssetMarkerNip040Height(nHeight);
+}
+
+void UpdateStrictAuthScriptHeight(int nHeight)
+{
+    globalChainParams->UpdateStrictAuthScriptHeight(nHeight);
+    SetStrictAuthScriptActiveDefault(globalChainParams->GetConsensus().IsStrictAuthScriptActive(0));
 }
 
 void UpdateDepinTransferStateHeight(int nHeight)

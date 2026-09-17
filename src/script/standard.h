@@ -254,6 +254,11 @@ bool ExtractAssetDestination(const CScript& scriptPubKey, CTxDestination& addres
 /** Detect asset scripts that use a witness destination and extract the witness commitment and asset data suffix. */
 bool GetAssetScriptWitnessProgram(const CScript& scriptPubKey, int& witnessversion, std::vector<unsigned char>& witnessprogram, std::vector<unsigned char>* assetData = nullptr);
 
+/** Explicit-context variant for the script interpreter, which runs on worker
+ *  threads without an activation scope and derives fStrictActive from its
+ *  flags (SCRIPT_VERIFY_AUTHSCRIPT_STRICT). */
+bool GetAssetScriptWitnessProgram(const CScript& scriptPubKey, int& witnessversion, std::vector<unsigned char>& witnessprogram, std::vector<unsigned char>* assetData, bool fStrictActive);
+
 /** Derive the AuthScript descriptor bytes for a given auth type and pubkey payload. */
 bool GetAuthScriptDescriptor(uint8_t authType, const CPubKey* pubkey, std::vector<unsigned char>& authDescriptor);
 

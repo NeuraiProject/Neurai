@@ -269,7 +269,7 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, std::vector<std::v
             std::vector<unsigned char> hashBytes(scriptPubKey.begin() + 2, scriptPubKey.begin() + 22);
             vSolutionsRet.push_back(hashBytes);
             vSolutionsRet.push_back({0x00}); // version 0 = legacy
-        } else if ((scriptPubKey[1] == OP_1 || ((scriptPubKey[1] == OP_2 || scriptPubKey[1] == OP_3) && AreStrictAuthScriptAssetsEnabled())) && scriptPubKey.size() >= 36 && scriptPubKey[2] == 0x20) {
+        } else if ((scriptPubKey[1] == OP_1 || ((scriptPubKey[1] == OP_2 || scriptPubKey[1] == OP_3) && IsStrictAuthScriptActiveInContext())) && scriptPubKey.size() >= 36 && scriptPubKey[2] == 0x20) {
             // AuthScript (generic v1 or strict v2/v3): commitment at bytes [3..35)
             std::vector<unsigned char> hashBytes(scriptPubKey.begin() + 3, scriptPubKey.begin() + 35);
             vSolutionsRet.push_back(hashBytes);
@@ -429,9 +429,16 @@ bool ExtractAssetDestination(const CScript& scriptPubKey, CTxDestination& addres
 
 bool GetAssetScriptWitnessProgram(const CScript& scriptPubKey, int& witnessversion, std::vector<unsigned char>& witnessprogram, std::vector<unsigned char>* assetData)
 {
+    return GetAssetScriptWitnessProgram(scriptPubKey, witnessversion, witnessprogram, assetData, IsStrictAuthScriptActiveInContext());
+}
+
+bool GetAssetScriptWitnessProgram(const CScript& scriptPubKey, int& witnessversion, std::vector<unsigned char>& witnessprogram, std::vector<unsigned char>* assetData, bool fStrictActive)
+{
     int nType = 0;
     bool fIsOwner = false;
-    if (!scriptPubKey.IsAssetScript(nType, fIsOwner)) {
+    int nStartingIndex = 0;
+    AssetMarker marker;
+    if (!scriptPubKey.IsAssetScript(nType, fIsOwner, nStartingIndex, marker, fStrictActive)) {
         return false;
     }
 

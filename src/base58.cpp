@@ -564,7 +564,7 @@ CTxDestination DecodeDestination(const std::string& str)
         // rules are active. Before activation an output to OP_2/OP_3 <32> is
         // anyone-can-spend, so refuse to decode (and therefore to pay to) such
         // addresses instead of letting funds land in an unprotected output.
-        if (version != 1 && !GetParams().GetConsensus().nStrictAuthScriptEnabled) {
+        if (version != 1 && !IsStrictAuthScriptActiveInContext()) {
             return CNoDestination();
         }
         std::vector<uint8_t> conv;

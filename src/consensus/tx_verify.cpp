@@ -64,7 +64,7 @@ bool HasAssetOpcodeInExpectedPosition(const CScript& scriptPubKey)
         (scriptPubKey[0] == OP_2 || scriptPubKey[0] == OP_3) &&
         scriptPubKey[1] == 0x20 &&
         scriptPubKey[34] == OP_XNA_ASSET &&
-        AreStrictAuthScriptAssetsEnabled()) {
+        IsStrictAuthScriptActiveInContext()) {
         return true;
     }
 

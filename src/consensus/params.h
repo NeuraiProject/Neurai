@@ -97,11 +97,15 @@ struct Params {
     /** Enable post-quantum (ML-DSA-44) witness v1 verification.
      *  true on testnet/regtest; false on mainnet until future activation. */
     bool nPQWitnessEnabled;
-    /** Enable the strict AuthScript families: witness v2 (PQ, fixed OP_TRUE
-     *  template) and witness v3 (compressed ECDSA, fixed OP_TRUE template).
-     *  Local candidate versions under test: true on regtest only; false on
-     *  testnet and mainnet until the public activation is decided. */
-    bool nStrictAuthScriptEnabled;
+    /** Activation height of the strict AuthScript families: witness v2 (PQ,
+     *  fixed OP_TRUE template) and witness v3 (compressed ECDSA, fixed OP_TRUE
+     *  template). Blocks at or above this height enforce the strict spending
+     *  rules and recognise OP_2/OP_3-prefixed asset scripts; below it every
+     *  rule behaves exactly as before these versions existed.
+     *  0 on regtest (override with -strictauthscriptheight); INT_MAX (never)
+     *  on testnet and mainnet until their activation is decided. */
+    int nStrictAuthScriptHeight;
+    bool IsStrictAuthScriptActive(int nHeight) const { return nHeight >= nStrictAuthScriptHeight; }
     /** Enable OP_CAT (BIP 347) - stack element concatenation.
      *  true on testnet/regtest; false on mainnet until future activation. */
     bool nCATEnabled;

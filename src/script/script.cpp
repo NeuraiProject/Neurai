@@ -283,17 +283,34 @@ bool CScript::IsAssetScript() const
 // AuthScript case only. Any trailing OP_XNA_ASSET payload is validated by
 // IsAssetScript() itself, so no additional inspection is needed here.
 namespace {
-std::atomic<bool> g_fStrictAuthScriptAssetsEnabled{false};
+// Default for code with no block context; kept by validation equal to
+// "active for the block after the current tip".
+std::atomic<bool> g_fStrictAuthScriptActiveDefault{false};
+// Scoped per-thread context: -1 = no scope, 0 = inactive, 1 = active.
+thread_local int t_nStrictAuthScriptContext = -1;
 }
 
-void SetStrictAuthScriptAssetsEnabled(bool fEnabled)
+void SetStrictAuthScriptActiveDefault(bool fActive)
 {
-    g_fStrictAuthScriptAssetsEnabled.store(fEnabled);
+    g_fStrictAuthScriptActiveDefault.store(fActive);
 }
 
-bool AreStrictAuthScriptAssetsEnabled()
+bool IsStrictAuthScriptActiveInContext()
 {
-    return g_fStrictAuthScriptAssetsEnabled.load();
+    if (t_nStrictAuthScriptContext >= 0) {
+        return t_nStrictAuthScriptContext == 1;
+    }
+    return g_fStrictAuthScriptActiveDefault.load();
+}
+
+CStrictAuthScriptContext::CStrictAuthScriptContext(bool fActive) : m_previous(t_nStrictAuthScriptContext)
+{
+    t_nStrictAuthScriptContext = fActive ? 1 : 0;
+}
+
+CStrictAuthScriptContext::~CStrictAuthScriptContext()
+{
+    t_nStrictAuthScriptContext = m_previous;
 }
 
 bool CScript::IsAssetAuthScript() const
@@ -317,6 +334,11 @@ bool CScript::IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex) con
 }
 
 bool CScript::IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex, AssetMarker& marker) const
+{
+    return IsAssetScript(nType, fIsOwner, nStartingIndex, marker, IsStrictAuthScriptActiveInContext());
+}
+
+bool CScript::IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex, AssetMarker& marker, bool fStrictActive) const
 {
     fIsOwner = false;
     marker = AssetMarker::LEGACY_RVN;
@@ -399,7 +421,7 @@ bool CScript::IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex, Ass
     // AuthScript families). New DePIN format with no mainnet history: keep
     // the strict GetOp parser.
     if (this->size() > 40 &&
-        ((*this)[0] == OP_1 || (((*this)[0] == OP_2 || (*this)[0] == OP_3) && AreStrictAuthScriptAssetsEnabled())) &&
+        ((*this)[0] == OP_1 || (((*this)[0] == OP_2 || (*this)[0] == OP_3) && fStrictActive)) &&
         (*this)[1] == 0x20) {
 
         const int assetOpIndex = 34;
@@ -503,13 +525,18 @@ bool CScript::IsNullAsset() const
 
 bool CScript::IsNullAssetTxDataScript() const
 {
+    return IsNullAssetTxDataScript(IsStrictAuthScriptActiveInContext());
+}
+
+bool CScript::IsNullAssetTxDataScript(bool fStrictActive) const
+{
     // Legacy format: OP_XNA_ASSET 0x14 <20-byte-hash> <asset-data>
     if (this->size() > 23 && (*this)[0] == OP_XNA_ASSET && (*this)[1] == 0x14)
         return true;
     // AuthScript format: OP_XNA_ASSET OP_n 0x20 <32-byte-commitment> <asset-data>
     // (OP_1 generic v1, OP_2 / OP_3 strict families)
     if (this->size() > 36 && (*this)[0] == OP_XNA_ASSET &&
-        ((*this)[1] == OP_1 || (((*this)[1] == OP_2 || (*this)[1] == OP_3) && AreStrictAuthScriptAssetsEnabled())) && (*this)[2] == 0x20)
+        ((*this)[1] == OP_1 || (((*this)[1] == OP_2 || (*this)[1] == OP_3) && fStrictActive)) && (*this)[2] == 0x20)
         return true;
     return false;
 }

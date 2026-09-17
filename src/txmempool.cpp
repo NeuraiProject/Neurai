@@ -941,6 +941,22 @@ void CTxMemPool::removeForAssetMarkerTransition(bool fNip040Active)
     RemoveStaged(setAllRemoves, false, MemPoolRemovalReason::REORG);
 }
 
+void CTxMemPool::removeForStrictAuthScriptTransition(std::function<bool(const CTxMemPoolEntry&)> isAffected)
+{
+    LOCK(cs);
+    setEntries txToRemove;
+    for (indexed_transaction_set::const_iterator it = mapTx.begin(); it != mapTx.end(); it++) {
+        if (isAffected(*it)) {
+            txToRemove.insert(it);
+        }
+    }
+    setEntries setAllRemoves;
+    for (txiter it : txToRemove) {
+        CalculateDescendants(it, setAllRemoves);
+    }
+    RemoveStaged(setAllRemoves, false, MemPoolRemovalReason::REORG);
+}
+
 void CTxMemPool::removeConflicts(const CTransaction &tx)
 {
     // Remove transactions which depend on inputs of tx, recursively

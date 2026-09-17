@@ -556,6 +556,14 @@ bool static CheckMinimalPush(const valtype &data, opcodetype opcode)
 
 bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &script, script_verify_flags flags, const BaseSignatureChecker &checker, SigVersion sigversion, ScriptError *serror)
 {
+    // The interpreter takes the strict AuthScript activation exclusively from
+    // its flags. Asset introspection opcodes (OP_OUTPUTASSETFIELD,
+    // OP_INPUTASSETFIELD, OP_REFINPUTASSETFIELD) reach asset parsers through
+    // the signature checker; pin the context for the whole evaluation so they
+    // never fall back to the ambient default. Script checks run on worker
+    // threads that do not inherit the validating thread's scope.
+    CStrictAuthScriptContext strictAuthScriptContext((flags & SCRIPT_VERIFY_AUTHSCRIPT_STRICT) != 0);
+
     static const CScriptNum bnZero(0);
     static const CScriptNum bnOne(1);
     // static const CScriptNum bnFalse(0);
@@ -3770,6 +3778,9 @@ bool VerifyScript(const CScript &scriptSig, const CScript &scriptPubKey, const C
     }
     bool hadWitness = false;
 
+    // See EvalScript: activation comes from the flags for everything below.
+    CStrictAuthScriptContext strictAuthScriptContext((flags & SCRIPT_VERIFY_AUTHSCRIPT_STRICT) != 0);
+
     set_error(serror, SCRIPT_ERR_UNKNOWN_ERROR);
 
     if ((flags & SCRIPT_VERIFY_SIGPUSHONLY) != 0 && !scriptSig.IsPushOnly())
@@ -3780,7 +3791,10 @@ bool VerifyScript(const CScript &scriptSig, const CScript &scriptPubKey, const C
     int assetWitnessVersion = 0;
     std::vector<unsigned char> assetWitnessProgram;
     std::vector<unsigned char> assetData;
-    if (GetAssetScriptWitnessProgram(scriptPubKey, assetWitnessVersion, assetWitnessProgram, &assetData)) {
+    // Activation comes from the flags, never from the ambient context: script
+    // checks run on worker threads that do not inherit the block's scope.
+    const bool fStrictAssetsActive = (flags & SCRIPT_VERIFY_AUTHSCRIPT_STRICT) != 0;
+    if (GetAssetScriptWitnessProgram(scriptPubKey, assetWitnessVersion, assetWitnessProgram, &assetData, fStrictAssetsActive)) {
         if ((flags & SCRIPT_VERIFY_WITNESS) == 0) {
             return set_error(serror, SCRIPT_ERR_WITNESS_UNEXPECTED);
         }
@@ -3960,6 +3974,7 @@ size_t static WitnessSigOps(int witversion, const std::vector<unsigned char> &wi
 size_t CountWitnessSigOps(const CScript &scriptSig, const CScript &scriptPubKey, const CScriptWitness *witness, script_verify_flags flags)
 {
     static const CScriptWitness witnessEmpty;
+    CStrictAuthScriptContext strictAuthScriptContext((flags & SCRIPT_VERIFY_AUTHSCRIPT_STRICT) != 0);
 
     if ((flags & SCRIPT_VERIFY_WITNESS) == 0)
     {
@@ -3974,7 +3989,7 @@ size_t CountWitnessSigOps(const CScript &scriptSig, const CScript &scriptPubKey,
         return WitnessSigOps(witnessversion, witnessprogram, witness ? *witness : witnessEmpty, flags);
     }
 
-    if (GetAssetScriptWitnessProgram(scriptPubKey, witnessversion, witnessprogram)) {
+    if (GetAssetScriptWitnessProgram(scriptPubKey, witnessversion, witnessprogram, nullptr, (flags & SCRIPT_VERIFY_AUTHSCRIPT_STRICT) != 0)) {
         return WitnessSigOps(witnessversion, witnessprogram, witness ? *witness : witnessEmpty, flags);
     }
 

@@ -86,6 +86,7 @@ public:
     void UpdateVersionBitsParameters(Consensus::DeploymentPos d, int64_t nStartTime, int64_t nTimeout);
     void UpdateAssetMarkerNip040Height(int nHeight);
     void UpdateDepinTransferStateHeight(int nHeight);
+    void UpdateStrictAuthScriptHeight(int nHeight);
     void TurnOffSegwit();
     void TurnOffCSV();
     void TurnOffBIP34();
@@ -260,6 +261,9 @@ void UpdateAssetMarkerNip040Height(int nHeight);
  * call this directly.
  */
 void UpdateDepinTransferStateHeight(int nHeight);
+
+/** Regtest only: move the strict AuthScript (witness v2/v3) activation height. */
+void UpdateStrictAuthScriptHeight(int nHeight);
 
 void TurnOffSegwit();
 

@@ -486,14 +486,38 @@ typedef prevector<28, unsigned char> CScriptBase;
  *  marker required for new outputs once NIP-040 activates. The marker never
  *  participates in asset identity — that is always the serialized name. */
 /**
- * Strict AuthScript (witness v2/v3) prefixes in asset scripts are only parsed
- * as assets on chains where the strict families are active. While inactive,
- * every asset parser behaves exactly as before those prefixes existed, so
- * consensus, policy, indexes and wallet all keep rejecting/ignoring them.
- * Set by SelectParams() from Consensus::Params::nStrictAuthScriptEnabled.
+ * Strict AuthScript (witness v2/v3) activation context.
+ *
+ * Whether OP_2/OP_3-prefixed asset scripts are parsed as assets, and whether
+ * strict addresses are usable, depends on the block being processed: below the
+ * activation height everything must behave exactly as before those prefixes
+ * existed (historical blocks, reorgs across the boundary, mempool re-admission).
+ * There is deliberately no process-wide on/off switch deciding validation.
+ *
+ *  - Validation sets the context of the block (or next-block, for the mempool)
+ *    it is working on with a scoped CStrictAuthScriptContext. The scope is
+ *    thread-local and nests.
+ *  - Script verification runs on worker threads that do not inherit a scope,
+ *    so the interpreter never reads this context: it derives activation from
+ *    its flags (SCRIPT_VERIFY_AUTHSCRIPT_STRICT) and uses the explicit parser
+ *    overloads below.
+ *  - Code with no block context (wallet, RPC, address decoding) falls back to
+ *    the default, which validation keeps equal to "active for the block after
+ *    the current tip".
  */
-void SetStrictAuthScriptAssetsEnabled(bool fEnabled);
-bool AreStrictAuthScriptAssetsEnabled();
+void SetStrictAuthScriptActiveDefault(bool fActive);
+bool IsStrictAuthScriptActiveInContext();
+
+class CStrictAuthScriptContext
+{
+private:
+    int m_previous;
+public:
+    explicit CStrictAuthScriptContext(bool fActive);
+    ~CStrictAuthScriptContext();
+    CStrictAuthScriptContext(const CStrictAuthScriptContext&) = delete;
+    CStrictAuthScriptContext& operator=(const CStrictAuthScriptContext&) = delete;
+};
 
 enum class AssetMarker : uint8_t {
     LEGACY_RVN,
@@ -776,6 +800,10 @@ public:
      *  payload carries. The legacy "rvn" logic runs first, byte-for-byte
      *  unchanged; "xna" is only tried when it does not match. */
     bool IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex, AssetMarker& marker) const;
+    /** Explicit-context variant: fStrictActive says whether OP_2/OP_3 strict
+     *  AuthScript prefixes are recognised. The overloads without it read the
+     *  activation context (see CStrictAuthScriptContext). */
+    bool IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex, AssetMarker& marker, bool fStrictActive) const;
     bool IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex) const;
     bool IsAssetScript(int& nType, bool& fIsOwner) const;
     bool IsAssetScript() const;
@@ -791,6 +819,7 @@ public:
     bool IsAsset() const;
     bool IsNullAsset() const; // Checks all three of the NULL Asset Tx types
     bool IsNullAssetTxDataScript() const;
+    bool IsNullAssetTxDataScript(bool fStrictActive) const;
     bool IsNullAssetVerifierTxDataScript() const;
     bool IsNullGlobalRestrictionAssetTxDataScript() const;
     /** XNA END */

@@ -85,10 +85,13 @@ static constexpr script_verify_flags STANDARD_NOT_MANDATORY_VERIFY_FLAGS = STAND
  * GetStandardScriptVerifyFlagsWithConsensusOptIns by non-consensus paths.
  */
 inline script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
-                                                const Consensus::Params& consensus)
+                                                const Consensus::Params& consensus,
+                                                bool fStrictAuthScriptActive)
 {
     if (consensus.nPQWitnessEnabled)        base |= SCRIPT_VERIFY_AUTHSCRIPT;
-    if (consensus.nStrictAuthScriptEnabled) base |= SCRIPT_VERIFY_AUTHSCRIPT_STRICT;
+    // Height-activated: the caller states whether the strict AuthScript
+    // families are active for the block (or next block) it is validating.
+    if (fStrictAuthScriptActive)            base |= SCRIPT_VERIFY_AUTHSCRIPT_STRICT;
     if (consensus.nCATEnabled)              base |= SCRIPT_VERIFY_CAT;
     if (consensus.nCTVEnabled)              base |= SCRIPT_VERIFY_CHECKTEMPLATEVERIFY;
     if (consensus.nCSFSEnabled)             base |= SCRIPT_VERIFY_CHECKSIGFROMSTACK;
@@ -130,7 +133,9 @@ inline script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
 inline script_verify_flags GetStandardScriptVerifyFlagsWithConsensusOptIns(
     const Consensus::Params& consensus)
 {
-    return ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus);
+    // Non-consensus callers (signing, RPC, tools): activation context of the
+    // block after the current tip.
+    return ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, IsStrictAuthScriptActiveInContext());
 }
 
 /** Used as the flags parameter to sequence and nLocktime checks in non-consensus code. */

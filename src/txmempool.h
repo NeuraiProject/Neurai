@@ -621,6 +621,11 @@ public:
     // of the mempool's target height actually flips, so the full walk does
     // not run on every block.
     void removeForAssetMarkerTransition(bool fNip040Active);
+    /** Strict AuthScript (witness v2/v3) activation flipped for the mempool's
+     *  candidate height: evict every entry the predicate reports as affected
+     *  (it spends a strict output or creates a strict asset output), with its
+     *  descendants. Independent of the OP_CHAINCONTEXT machinery. */
+    void removeForStrictAuthScriptTransition(std::function<bool(const CTxMemPoolEntry&)> isAffected);
 
     /** DEPIN transfer state: after a reorg, drop holder transfers of assets
      *  that are no longer OPEN at the tip and pending state operations whose

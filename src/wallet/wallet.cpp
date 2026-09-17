@@ -1283,7 +1283,7 @@ bool CWallet::GetStrictAuthScriptDestination(const CPubKey& pubKey, CTxDestinati
 
 bool CWallet::RegisterStrictAuthScriptForKey(const CPubKey& pubKey)
 {
-    if (!GetParams().GetConsensus().nStrictAuthScriptEnabled) {
+    if (!IsStrictAuthScriptActiveInContext()) {
         return true;
     }
     WitnessStrictAuthScript strict;
@@ -1300,7 +1300,7 @@ bool CWallet::RegisterStrictAuthScriptForKey(const CPubKey& pubKey)
 void CWallet::BackfillStrictAuthScriptSpendData()
 {
     LOCK(cs_wallet);
-    if (!GetParams().GetConsensus().nStrictAuthScriptEnabled) {
+    if (!IsStrictAuthScriptActiveInContext()) {
         return;
     }
     for (const CKeyID& keyID : GetKeys()) {
@@ -1390,7 +1390,7 @@ bool CWallet::GetNewDestinationOfType(const std::string& addressType, bool inter
 {
     AssertLockHeld(cs_wallet);
 
-    if ((addressType == "pq" || addressType == "ecdsa") && !GetParams().GetConsensus().nStrictAuthScriptEnabled) {
+    if ((addressType == "pq" || addressType == "ecdsa") && !IsStrictAuthScriptActiveInContext()) {
         error = "Strict AuthScript address families (witness v2/v3) are not active on this chain";
         return false;
     }
@@ -4844,7 +4844,7 @@ bool CWallet::TopUpStrictEcdsaKeyPool(unsigned int kpSize)
 
     // Only on chains where the strict families are active, and only for
     // wallets that can derive the m/84' branch (BIP44 seed available).
-    if (!GetParams().GetConsensus().nStrictAuthScriptEnabled || !IsBip44Enabled() || g_vchSeed.size() < 32) {
+    if (!IsStrictAuthScriptActiveInContext() || !IsBip44Enabled() || g_vchSeed.size() < 32) {
         return true;
     }
     if (IsLocked()) {

@@ -571,7 +571,8 @@ BOOST_AUTO_TEST_CASE(review_strict_assets_rejected_before_activation)
     } restore;
     for (const auto& network : {CBaseChainParams::MAIN, CBaseChainParams::TESTNET}) {
         SelectParams(network);
-        BOOST_REQUIRE(!GetParams().GetConsensus().nStrictAuthScriptEnabled);
+        BOOST_REQUIRE(!GetParams().GetConsensus().IsStrictAuthScriptActive(0));
+        BOOST_REQUIRE(!IsStrictAuthScriptActiveInContext());
         for (int version : {2, 3}) {
             CScript spk = CScript() << CScript::EncodeOP_N(version)
                                    << std::vector<unsigned char>(32, 0x42);
@@ -663,6 +664,98 @@ BOOST_AUTO_TEST_CASE(dust_thresholds_are_pinned)
     BOOST_CHECK(!IsDust(CTxOut(pqDust, v2), feeRate));
     BOOST_CHECK(IsDust(CTxOut(ecdsaDust - 1, v3), feeRate));
     BOOST_CHECK(!IsDust(CTxOut(ecdsaDust, v3), feeRate));
+}
+
+// Activation is a per-block context, not a process-wide switch.
+BOOST_AUTO_TEST_CASE(activation_context_is_scoped)
+{
+    const Consensus::Params& consensus = GetParams().GetConsensus();
+    BOOST_CHECK(consensus.IsStrictAuthScriptActive(0)); // regtest default: from genesis
+    BOOST_CHECK(IsStrictAuthScriptActiveInContext());
+
+    CScript spk = CScript() << OP_2 << std::vector<unsigned char>(32, 0x42);
+    CAssetTransfer("STRICTTEST", COIN).ConstructTransaction(spk, AssetMarker::NEURAI_XNA);
+    CScript v1spk = CScript() << OP_1 << std::vector<unsigned char>(32, 0x42);
+    CAssetTransfer("STRICTTEST", COIN).ConstructTransaction(v1spk, AssetMarker::NEURAI_XNA);
+    CScript nullData = CScript() << OP_XNA_ASSET << OP_3 << std::vector<unsigned char>(32, 0x42) << std::vector<unsigned char>{1, 2, 3};
+
+    int nType = 0, nStart = 0; bool fOwner = false; AssetMarker marker;
+    // Explicit overloads ignore any ambient context.
+    BOOST_CHECK(spk.IsAssetScript(nType, fOwner, nStart, marker, true));
+    BOOST_CHECK(!spk.IsAssetScript(nType, fOwner, nStart, marker, false));
+    BOOST_CHECK(v1spk.IsAssetScript(nType, fOwner, nStart, marker, false)); // v1 never depends on it
+    BOOST_CHECK(nullData.IsNullAssetTxDataScript(true));
+    BOOST_CHECK(!nullData.IsNullAssetTxDataScript(false));
+
+    BOOST_CHECK(spk.IsAssetScript());
+    {
+        CStrictAuthScriptContext below(false); // e.g. a historical block under the activation height
+        BOOST_CHECK(!IsStrictAuthScriptActiveInContext());
+        BOOST_CHECK(!spk.IsAssetScript());
+        BOOST_CHECK(v1spk.IsAssetScript());
+        BOOST_CHECK(!nullData.IsNullAssetTxDataScript());
+        txnouttype type; std::vector<std::vector<unsigned char>> solutions;
+        BOOST_CHECK(!Solver(spk, type, solutions) || type != TX_TRANSFER_ASSET);
+        CMutableTransaction tx = MakeSpendTx();
+        tx.vout[0] = CTxOut(0, spk);
+        CValidationState state;
+        BOOST_CHECK(!CheckTransaction(CTransaction(tx), state));
+        {
+            CStrictAuthScriptContext above(true); // scopes nest and restore
+            BOOST_CHECK(spk.IsAssetScript());
+        }
+        BOOST_CHECK(!spk.IsAssetScript());
+        // Addresses of the strict families are not decodable below activation.
+        BOOST_CHECK(!IsValidDestination(DecodeDestination(EncodeDestination(StrictDest(MakeEcdsaKey())))));
+    }
+    BOOST_CHECK(spk.IsAssetScript());
+    BOOST_CHECK(IsValidDestination(DecodeDestination(EncodeDestination(StrictDest(MakeEcdsaKey())))));
+
+    // The interpreter takes activation from its flags, never from the context.
+    int witnessversion = 0; std::vector<unsigned char> program;
+    {
+        CStrictAuthScriptContext below(false);
+        BOOST_CHECK(GetAssetScriptWitnessProgram(spk, witnessversion, program, nullptr, true));
+        BOOST_CHECK(!GetAssetScriptWitnessProgram(spk, witnessversion, program, nullptr, false));
+    }
+
+    // The script flag follows the height passed by the caller.
+    BOOST_CHECK((ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, true) & SCRIPT_VERIFY_AUTHSCRIPT_STRICT) != 0);
+    BOOST_CHECK((ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, false) & SCRIPT_VERIFY_AUTHSCRIPT_STRICT) == 0);
+
+    // Height semantics of the consensus parameter.
+    Consensus::Params custom = consensus;
+    custom.nStrictAuthScriptHeight = 150;
+    BOOST_CHECK(!custom.IsStrictAuthScriptActive(149));
+    BOOST_CHECK(custom.IsStrictAuthScriptActive(150));
+}
+
+// A v1 covenant can inspect an output paid to a strict asset destination.
+// Identical script flags must give the same result when the caller's ambient
+// context differs (e.g. script workers validating a block beyond the tip).
+BOOST_AUTO_TEST_CASE(review_asset_introspection_uses_script_flags)
+{
+    CMutableTransaction tx = MakeSpendTx();
+    CScript asset = CScript() << OP_3 << std::vector<unsigned char>(32, 0x42);
+    CAssetTransfer("STRICTTEST", COIN).ConstructTransaction(asset, AssetMarker::NEURAI_XNA);
+    tx.vout[0] = CTxOut(0, asset);
+
+    const std::string name = "STRICTTEST";
+    CScript covenant;
+    covenant << OP_0 << std::vector<unsigned char>{0x01} << OP_OUTPUTASSETFIELD
+             << std::vector<unsigned char>(name.begin(), name.end()) << OP_EQUAL;
+    const CScript spent = CScript() << OP_1
+        << ToByteVector(GetAuthScriptCommitment(0x00, nullptr, covenant));
+    tx.vin[0].scriptWitness.stack = {{0x00},
+        std::vector<unsigned char>(covenant.begin(), covenant.end())};
+    const script_verify_flags flags = STRICT_FLAGS | SCRIPT_VERIFY_OUTPUTASSETFIELD;
+    for (bool ambient : {true, false}) {
+        CStrictAuthScriptContext context(ambient);
+        ScriptError error = SCRIPT_ERR_OK;
+        BOOST_CHECK_MESSAGE(VerifyInput(tx, spent, flags, &error),
+            "Active strict-asset introspection failed with ambient=" << ambient
+            << "; error=" << ScriptErrorString(error));
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()
