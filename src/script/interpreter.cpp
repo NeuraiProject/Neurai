@@ -3348,6 +3348,23 @@ bool TransactionSignatureChecker::GetOutputScript(unsigned int nOut,
 // only; asset name and amount still need OP_*ASSETFIELD checks.
 // Callers only reach this with SCRIPT_VERIFY_AUTHDEST, which shares its
 // activation height with the strict families, so v2/v3 prefixes are parsed.
+// NIP-041 only: unlike ReadWriteAssetHash, never discard bytes or silently
+// accept an absent required hash. Semantic asset checks remain elsewhere.
+static bool ReadAuthDestAssetHash(CDataStream& stream)
+{
+    unsigned char tag;
+    stream >> tag;
+    if (tag != static_cast<unsigned char>(IPFS_SHA2_256) &&
+        tag != static_cast<unsigned char>(TXID_NOTIFIER))
+        return false;
+    // ReadCompactSize also rejects non-canonical length encodings.
+    if (ReadCompactSize(stream) != 32)
+        return false;
+    char hash[32];
+    stream.read(hash, sizeof(hash)); // throws on truncation, caught by caller
+    return true;
+}
+
 static bool IsWellFormedAssetPayload(const CScript& scriptPubKey)
 {
     // Deserialize the asset message from the PAYLOAD BYTES ONLY. The historical
@@ -3371,11 +3388,34 @@ static bool IsWellFormedAssetPayload(const CScript& scriptPubKey)
     const std::vector<unsigned char> message(payload.begin() + 4, payload.end());
     CDataStream ss(message, SER_NETWORK, PROTOCOL_VERSION);
     try {
+        // Read the wire fields explicitly. The historical class deserializers
+        // normalize malformed hashes and therefore cannot enforce this grammar.
+        std::string name;
+        ss >> name;
+        int64_t amount;
+        unsigned char units, reissuable, hasHash;
         switch (payload[3]) {
-        case XNA_T: { CAssetTransfer transfer; ss >> transfer; break; }
-        case XNA_Q: { CNewAsset asset; ss >> asset; break; }
-        case XNA_O: { std::string ownerName; ss >> ownerName; break; }
-        case XNA_R: { CReissueAsset reissue; ss >> reissue; break; }
+        case XNA_T:
+            ss >> amount;
+            if (!ss.empty()) {
+                if (!ReadAuthDestAssetHash(ss)) return false;
+                if (!ss.empty()) {
+                    int64_t expiration;
+                    ss >> expiration;
+                }
+            }
+            break;
+        case XNA_Q:
+            ss >> amount >> units >> reissuable >> hasHash;
+            if (hasHash > 1) return false;
+            if (hasHash == 1 && !ReadAuthDestAssetHash(ss)) return false;
+            break;
+        case XNA_O:
+            break;
+        case XNA_R:
+            ss >> amount >> units >> reissuable;
+            if (!ss.empty() && !ReadAuthDestAssetHash(ss)) return false;
+            break;
         default:
             return false;
         }

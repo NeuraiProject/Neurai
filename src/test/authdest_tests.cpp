@@ -601,4 +601,135 @@ BOOST_AUTO_TEST_CASE(review_asset_type_vectors_across_families)
     }
 }
 
+BOOST_AUTO_TEST_CASE(review_parser_boundaries_preserve_historical_fields)
+{
+    const script_verify_flags flags = ACTIVE_FLAGS | SCRIPT_VERIFY_OUTPUTASSETFIELD |
+        SCRIPT_VERIFY_INPUTASSETFIELD | SCRIPT_VERIFY_64BIT_INTEGERS;
+    struct Vector { const char* label; valtype payload; bool destination; };
+    const valtype transfer = ParseHex("786e61740841555448444553540065cd1d00000000");
+    const valtype owner = ParseHex("786e616f09415554484445535421");
+    const valtype issue = ParseHex("786e61710841555448444553540065cd1d00000000020100");
+    valtype padded = transfer; padded.push_back(0x42);
+    valtype shortOwner = owner; shortOwner.pop_back();
+    valtype missingHash = issue; missingHash.back() = 1;
+    valtype longHash = missingHash;
+    longHash.push_back(0x12); longHash.push_back(33);
+    for (unsigned char i = 0; i < 33; ++i) longHash.push_back(i);
+    valtype goodHash = missingHash;
+    goodHash.push_back(0x12); goodHash.push_back(32);
+    for (unsigned char i = 0; i < 32; ++i) goodHash.push_back(i);
+    valtype shortHash = goodHash; shortHash[missingHash.size() + 1] = 31; shortHash.pop_back();
+    valtype unknownHash = goodHash; unknownHash[missingHash.size()] = 0x99;
+    const Vector vectors[] = {
+        {"transfer", transfer, true}, {"owner", owner, true}, {"issue_no_hash", issue, true},
+        {"padding", padded, false}, {"owner_borrows_drop", shortOwner, false},
+        // NIP-041 rejects malformed metadata; historical field getters stay unchanged.
+        {"issue_missing_required_hash", missingHash, false},
+        {"issue_hash_32_bytes", goodHash, true},
+        {"issue_hash_31_bytes", shortHash, false},
+        {"issue_hash_33_bytes", longHash, false},
+        {"issue_hash_unknown_tag", unknownHash, false},
+    };
+    for (int version : {1, 2, 3}) for (const auto& vector : vectors) {
+        BOOST_TEST_CONTEXT("version=" << version << " case=" << vector.label) {
+            CScript spk = Native(version, AscendingProgram());
+            spk << OP_XNA_ASSET << vector.payload << OP_DROP;
+            if (vector.destination) CheckAllReturn(spk, Expected(version, AscendingProgram()), vector.label);
+            else CheckAllFail(spk, vector.label);
+            const CTransaction tx(MakeTx({spk}, 1));
+            const std::vector<CTxOut> prevouts{CTxOut(1000, spk)};
+            for (int selector : {1, 6}) {
+                std::vector<valtype> stack;
+                ScriptError err;
+                bool firstOk = false;
+                valtype firstResult;
+                int source = 0;
+                for (opcodetype op : {OP_OUTPUTASSETFIELD, OP_INPUTASSETFIELD, OP_REFINPUTASSETFIELD}) {
+                    const bool ok = Run(tx, CScript() << OP_0 << valtype{static_cast<unsigned char>(selector)} << op,
+                                        flags, stack, err, spk, &prevouts, &prevouts);
+                    if (source++ == 0) {
+                        firstOk = ok;
+                        if (ok) { BOOST_REQUIRE_EQUAL(stack.size(), 1U); firstResult = stack.back(); }
+                        const std::string label(vector.label);
+                        valtype expectedName = label == "owner" ? ParseHex("415554484445535421") :
+                            label == "owner_borrows_drop" ? ParseHex("415554484445535475") : ParseHex("4155544844455354");
+                        const bool hasHash = label.find("issue_hash_") == 0;
+                        BOOST_CHECK_EQUAL(ok, selector == 1 || hasHash);
+                        if (ok) {
+                            valtype expectedHash;
+                            if (label != "issue_hash_unknown_tag") expectedHash = {0x12, 0x20};
+                            const int size = label == "issue_hash_31_bytes" ? 31 : 32;
+                            for (int i = 0; i < size; ++i) expectedHash.push_back(i);
+                            BOOST_CHECK(firstResult == (selector == 1 ? expectedName : expectedHash));
+                        }
+                        BOOST_TEST_MESSAGE(vector.label << " v" << version << " selector=" << selector
+                            << " historical_ok=" << ok << " value=" << HexStr(firstResult));
+                    } else {
+                        BOOST_CHECK_EQUAL(ok, firstOk);
+                        if (ok) { BOOST_REQUIRE_EQUAL(stack.size(), 1U); BOOST_CHECK(stack.back() == firstResult); }
+                    }
+                }
+            }
+        }
+    }
+}
+
+BOOST_AUTO_TEST_CASE(authdest_strict_metadata_wire_format)
+{
+    auto check = [](valtype payload, bool accepted, const char* label) {
+        for (bool legacyMarker : {false, true}) for (int version : {1, 2, 3}) {
+            BOOST_TEST_CONTEXT(label << " version=" << version << " rvn=" << legacyMarker) {
+                if (legacyMarker) { payload[0] = 'r'; payload[1] = 'v'; payload[2] = 'n'; }
+                CScript spk = Native(version, AscendingProgram());
+                spk << OP_XNA_ASSET << payload << OP_DROP;
+                if (accepted) CheckAllReturn(spk, Expected(version, AscendingProgram()), label);
+                else CheckAllFail(spk, label);
+            }
+        }
+    };
+    const valtype transfer = ParseHex("786e61740841555448444553540065cd1d00000000");
+    const valtype issue = ParseHex("786e61710841555448444553540065cd1d00000000020101");
+    const valtype reissue = ParseHex("786e61720841555448444553540065cd1d00000000ff01");
+    for (const valtype& base : {transfer, issue, reissue}) {
+        const bool required = base[3] == 'q';
+        check(base, !required, "absent hash");
+        for (unsigned char tag : {0x12, 0x54}) {
+            valtype hash = {tag, 32};
+            for (unsigned char i = 0; i < 32; ++i) hash.push_back(i);
+            valtype valid = base; valid.insert(valid.end(), hash.begin(), hash.end());
+            check(valid, true, "exact metadata");
+            for (size_t length = 1; length < hash.size(); ++length) {
+                valtype truncated = base;
+                truncated.insert(truncated.end(), hash.begin(), hash.begin() + length);
+                check(truncated, false, "truncated hash");
+            }
+            for (unsigned char length : {0, 1, 31, 33, 34}) {
+                valtype wrong = base;
+                wrong.push_back(tag); wrong.push_back(length);
+                for (unsigned char i = 0; i < length; ++i) wrong.push_back(i);
+                check(wrong, false, "wrong hash length");
+            }
+            valtype unknown = valid; unknown[base.size()] = 0x99;
+            check(unknown, false, "unknown metadata tag");
+            valtype noncanonical = base;
+            noncanonical.insert(noncanonical.end(), {tag, 0xfd, 0x20, 0x00});
+            noncanonical.insert(noncanonical.end(), hash.begin() + 2, hash.end());
+            check(noncanonical, false, "noncanonical CompactSize");
+            for (size_t length = 1; length <= 9; ++length) {
+                valtype tail = valid; tail.insert(tail.end(), length, 0x01);
+                check(tail, base[3] == 't' && length == 8, "expiration or trailing bytes");
+            }
+        }
+    }
+    valtype flagZero = issue; flagZero.back() = 0;
+    check(flagZero, true, "hash flag zero");
+    valtype flagTwo = issue; flagTwo.back() = 2;
+    check(flagTwo, false, "invalid hash presence flag");
+    flagZero.insert(flagZero.end(), {0x12, 32});
+    flagZero.insert(flagZero.end(), 32, 0x42);
+    check(flagZero, false, "hash despite zero flag");
+    valtype expiryWithoutHash = transfer; expiryWithoutHash.insert(expiryWithoutHash.end(), 8, 0x01);
+    check(expiryWithoutHash, false, "expiration without hash");
+}
+
 BOOST_AUTO_TEST_SUITE_END()

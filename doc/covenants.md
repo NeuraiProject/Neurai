@@ -149,6 +149,15 @@ Trailing instructions, malformed wrappers, other witness versions or program
 lengths make the operation fail. Because the version is part of the result, the
 same 32 bytes under another version never satisfy a covenant.
 
+NIP-041 parses the payload within the pushed bytes and rejects leftovers. Hashes
+use a dedicated strict reader: tag `0x12` (IPFS) or `0x54` (transaction metadata),
+canonical CompactSize length 32, and exactly 32 data bytes. An issuance hash flag
+must be 0 or 1; flag 1 requires the hash. Transfers and reissues may omit the hash;
+a transfer with a hash may additionally carry exactly eight expiration bytes.
+Unknown tags, truncated hashes, different lengths and trailing bytes fail.
+Historical asset field parsers retain their existing behavior; this validation
+is specific to the three NIP-041 destination queries.
+
 This identifies the destination only. A covenant that cares about which asset is
 paid, and how much, must still check them with `OP_OUTPUTASSETFIELD`. The NIP-023
 operations keep their behaviour unchanged for existing contracts.

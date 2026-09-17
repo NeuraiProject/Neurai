@@ -188,6 +188,12 @@ def main():
                     contract += push(number(index)) + push(bytes([selector])) + bytes([opcode]) + push(value) + b'\x88'
                 if unavailable is not None:
                     contract += push(number(index)) + push(bytes([unavailable])) + bytes([opcode]) + b'\x75'
+                # Exercise NIP-041 itself on the original issuance/reissue/owner
+                # payload, not just the historical asset field getters.
+                if mode == 'reference':
+                    contract += b'\x00\x54\xd2' + push(bytes([version]) + prefix[2:]) + b'\x88'
+                else:
+                    contract += b'\x00\xc2' + push(bytes([target]) + scripts[target][2:]) + b'\x88'
                 contract += b'\x51'
                 tag = sha256(b'NeuraiAuthScript')
                 commitment = sha256(tag + tag + b'\x01\x00' + sha256(contract))
