@@ -58,12 +58,14 @@ CTV (BIP 119) is the simplest and most restrictive covenant primitive. It verifi
 
 - Transaction version and locktime
 - Number and sequence of all inputs
+- Serialized scriptSigs, if any input has a non-empty scriptSig
 - Number, amounts, and scripts of all outputs
+- For transaction version 3, the reference input count and ordered outpoints (NIP-014)
 - The index of the input being evaluated
 
 **Properties:**
-- The template is fully deterministic — there is no flexibility in the spending transaction.
-- The hash does NOT commit to input prevouts, so the covenant works regardless of which UTXO funds it.
+- The template fixes the fields listed above, including complete output scripts and asset suffixes.
+- It does not commit to ordinary input prevouts or witness data. Reference outpoints in v3 are committed separately, so changing or reordering them changes the template.
 - Uses single-SHA256 with precomputed sub-hashes to prevent quadratic hashing.
 
 **Example: Batched Payout**
