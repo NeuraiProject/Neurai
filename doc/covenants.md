@@ -109,7 +109,16 @@ OP_TXHASH produces a double-SHA256 hash over a configurable combination of trans
 | 6 | Current input's sequence |
 | 7 | Current input index |
 
-This is strictly more flexible than CTV: by choosing which bits to set, a script can commit to some transaction properties while leaving others free.
+All nonzero one-byte masks are valid; `0x00` is rejected. Selected fields are
+concatenated in bit order. The prevout, sequence and output sub-hashes also use
+double-SHA256.
+
+Unselected fields remain free. No mask commits to scriptSigs, witness data or
+reference inputs, even `0xff`. In particular, NIP-014 references in a v3
+transaction are committed by CTV but not by TXHASH. Contracts that need to
+constrain references must check them separately or use an appropriate CTV
+commitment. Output scripts are serialized in full, including witness version,
+program and asset suffix.
 
 **Example: Output-Only Covenant**
 

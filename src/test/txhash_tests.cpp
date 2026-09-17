@@ -10,6 +10,7 @@
 #include "test/test_neurai.h"
 #include "streams.h"
 #include "version.h"
+#include "utilstrencodings.h"
 
 #include <vector>
 #include <stdint.h>
@@ -616,6 +617,95 @@ BOOST_AUTO_TEST_CASE(txhash_covenant_output_check)
     BOOST_CHECK_EQUAL(stack.size(), 1u);
     // Top of stack should be true (OP_EQUAL succeeded)
     BOOST_CHECK(CastToBool(stack.back()));
+}
+
+
+// Independent Python fingerprints cover the ordered results of ALL 255 masks,
+// rather than comparing only two paths that could share the same hashing bug.
+BOOST_AUTO_TEST_CASE(txhash_all_masks_family_vectors)
+{
+    struct Vector { const char* script; const char* fingerprint; };
+    const Vector vectors[] = {
+        {"76a914000102030405060708090a0b0c0d0e0f1011121388ac", "2ea01813056daa5fac482cbc29f7a95a00ed2ec1fa5dc825a0569be55e7a17a8"},
+        {"76a914000102030405060708090a0b0c0d0e0f1011121388acc015786e61740843545641535345540065cd1d0000000075", "31c98646f6bab441d3a04ed0cf9d36bdf914d698e73c0c713ca297a85dece712"},
+        {"5120000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "6bde33c1a598eb83a5e32d2c0fba30247b78e8aeb79f8960178f2e0647678578"},
+        {"5120000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fc015786e61740843545641535345540065cd1d0000000075", "d17a2ab61bd7d59770f4f044d53acd1b07cd002f6bd97207b51184c2bd87dac5"},
+        {"5220000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "35fce58bc56a0b128ab7db74d973fb67c7f5d88564a4789eacc13fe039b6afde"},
+        {"5220000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fc015786e61740843545641535345540065cd1d0000000075", "5bb44f0a1e0eed172ecf130271263a6b6bae7d60ab52fca047316d67f1d20617"},
+        {"5320000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "ada1492ce975e06aaa3e83186454608d2a096f4166100bbed27dc6e203682759"},
+        {"5320000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fc015786e61740843545641535345540065cd1d0000000075", "61cb1b03b3368ffbe5d0e31080edc7ae2b5cbe48ad42ed133a479e8e24c0394a"},
+    };
+    for (const auto& vector : vectors) {
+        CMutableTransaction original;
+        original.nVersion = 3;
+        original.nLockTime = 123;
+        original.vin.resize(2);
+        original.vin[0].prevout = COutPoint(uint256S("1f1e1d1c1b1a191817161514131211100f0e0d0c0b0a09080706050403020100"), 7);
+        original.vin[1].prevout = COutPoint(uint256S("3f3e3d3c3b3a393837363534333231302f2e2d2c2b2a29282726252423222120"), 9);
+        original.vin[0].nSequence = 0xfffffffe;
+        original.vin[1].nSequence = 0xfffffffd;
+        const auto script = ParseHex(vector.script);
+        original.vout.emplace_back(100000, CScript(script.begin(), script.end()));
+        original.vout.emplace_back(200000, CScript() << OP_TRUE);
+        original.vrefin.emplace_back(uint256S("aa"), 7);
+        original.vrefin.emplace_back(uint256S("bb"), 9);
+        const CTransaction baseline(original);
+        std::vector<std::vector<unsigned char>> expected(256);
+        for (bool cached : {false, true}) {
+            CSHA256 fingerprint;
+            const PrecomputedTransactionData data(baseline);
+            const TransactionSignatureChecker withCache(&baseline, 1, 0, data);
+            const TransactionSignatureChecker withoutCache(&baseline, 1, 0);
+            for (int mask = 1; mask <= 255; ++mask) {
+                BOOST_TEST_CONTEXT("fingerprint=" << vector.fingerprint << " mask=" << mask << " cached=" << cached) {
+                    std::vector<std::vector<unsigned char>> stack;
+                    ScriptError error;
+                    const CScript query = CScript() << std::vector<unsigned char>{static_cast<unsigned char>(mask)} << OP_TXHASH;
+                    BOOST_REQUIRE(EvalScript(stack, query, TXHASH_FLAGS, cached ? withCache : withoutCache, SIGVERSION_BASE, &error));
+                    BOOST_REQUIRE_EQUAL(stack.size(), 1U);
+                    BOOST_REQUIRE_EQUAL(stack.back().size(), 32U);
+                    fingerprint.Write(stack.back().data(), 32);
+                    if (!cached) expected[mask] = stack.back();
+                    else BOOST_CHECK(stack.back() == expected[mask]);
+                }
+            }
+            unsigned char digest[32];
+            fingerprint.Finalize(digest);
+            BOOST_CHECK(HexStr(digest, digest + 32) == vector.fingerprint);
+        }
+        const unsigned char affected[] = {1, 2, 4, 0x24, 8, 0x48, 16, 16, 0, 0, 0, 0, 0xe0, 16};
+        for (int mutation = 0; mutation < 14; ++mutation) {
+            CMutableTransaction changed = original;
+            unsigned int index = 1;
+            switch (mutation) {
+            case 0: changed.nVersion = 2; break;
+            case 1: ++changed.nLockTime; break;
+            case 2: ++changed.vin[0].prevout.n; break;
+            case 3: ++changed.vin[1].prevout.n; break;
+            case 4: ++changed.vin[0].nSequence; break;
+            case 5: ++changed.vin[1].nSequence; break;
+            case 6: changed.vout[0].scriptPubKey[changed.vout[0].scriptPubKey.size() - 2] ^= 1; break;
+            case 7: ++changed.vout[0].nValue; break;
+            case 8: std::swap(changed.vrefin[0], changed.vrefin[1]); break;
+            case 9: changed.vrefin.pop_back(); break;
+            case 10: changed.vin[1].scriptWitness.stack = {{1, 2, 3}}; break;
+            case 11: changed.vin[1].scriptSig << OP_TRUE; break;
+            case 12: index = 0; break;
+            case 13: std::swap(changed.vout[0], changed.vout[1]); break;
+            }
+            const CTransaction tx(changed);
+            const PrecomputedTransactionData data(tx);
+            const TransactionSignatureChecker withCache(&tx, index, 0, data);
+            const TransactionSignatureChecker withoutCache(&tx, index, 0);
+            for (int mask = 1; mask <= 255; ++mask) for (const auto* checker : {&withCache, &withoutCache}) {
+                BOOST_TEST_CONTEXT("fingerprint=" << vector.fingerprint << " mutation=" << mutation << " mask=" << mask) {
+                    std::vector<unsigned char> actual;
+                    BOOST_REQUIRE(checker->GetTxFieldHash(mask, actual));
+                    BOOST_CHECK_EQUAL(actual != expected[mask], (mask & affected[mutation]) != 0);
+                }
+            }
+        }
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()
