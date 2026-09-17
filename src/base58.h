@@ -167,6 +167,15 @@ typedef CNeuraiExtKeyBase<CExtKey, BIP32_EXTKEY_SIZE, CChainParams::EXT_SECRET_K
 typedef CNeuraiExtKeyBase<CExtPubKey, BIP32_EXTKEY_SIZE, CChainParams::EXT_PUBLIC_KEY> CNeuraiExtPubKey;
 typedef CNeuraiExtKeyBase<CExtKeyPQ, BIP32_PQ_EXTKEY_SIZE, CChainParams::EXT_PQ_SECRET_KEY> CNeuraiExtKeyPQ;
 
+/**
+ * Hash actually signed for a message under a strict AuthScript destination:
+ *   SHA256d( varstr("Neurai Strict AuthScript Message") || version (1 byte)
+ *            || commitment (32 bytes) || messageHash (32 bytes) )
+ * Binds the signature to the destination, so a signature made for the legacy
+ * or generic v1 address of the same key never verifies for the strict one.
+ */
+uint256 StrictAuthScriptMessageHash(const WitnessStrictAuthScript& dest, const uint256& hash);
+
 bool SignMessageHash(const CKey& key, const CTxDestination& dest, const uint256& hash, std::vector<unsigned char>& vchSig);
 bool VerifyMessageHash(const CTxDestination& dest, const uint256& hash, const std::vector<unsigned char>& vchSig);
 

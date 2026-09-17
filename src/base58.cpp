@@ -384,7 +384,7 @@ bool CNeuraiSecret::SetString(const std::string& strSecret)
 // destination (witness version + commitment), so a signature made for the
 // legacy / generic v1 address of a key never verifies for its strict address
 // and vice versa. Legacy and v1 keep signing the plain message hash.
-static uint256 StrictMessageHash(const WitnessStrictAuthScript& dest, const uint256& hash)
+uint256 StrictAuthScriptMessageHash(const WitnessStrictAuthScript& dest, const uint256& hash)
 {
     CHashWriter ss(SER_GETHASH, 0);
     ss << std::string("Neurai Strict AuthScript Message");
@@ -412,7 +412,7 @@ bool SignMessageHash(const CKey& key, const CTxDestination& dest, const uint256&
         if (!GetStrictAuthScriptDestinationForPubKey(pubkey, expected) || expected != *strictDest) {
             return false;
         }
-        const uint256 boundHash = StrictMessageHash(*strictDest, hash);
+        const uint256 boundHash = StrictAuthScriptMessageHash(*strictDest, hash);
         if (key.IsPQ()) {
             std::vector<unsigned char> pqSignature;
             if (!key.Sign(boundHash, pqSignature)) {
@@ -454,7 +454,7 @@ bool VerifyMessageHash(const CTxDestination& dest, const uint256& hash, const st
             return false;
         }
         CPubKey pubkey;
-        const uint256 boundHash = StrictMessageHash(*strictDest, hash);
+        const uint256 boundHash = StrictAuthScriptMessageHash(*strictDest, hash);
         if (strictDest->IsPQ()) {
             std::vector<unsigned char> pqSignature;
             if (!DeserializePQMessageSignature(vchSig, pubkey, pqSignature)) {

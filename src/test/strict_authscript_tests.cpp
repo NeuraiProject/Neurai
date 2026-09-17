@@ -15,6 +15,9 @@
 #include "coins.h"
 #include "consensus/tx_verify.h"
 #include "consensus/validation.h"
+#include "hash.h"
+#include "utilstrencodings.h"
+#include "validation.h"
 #include "key.h"
 #include "keystore.h"
 #include "policy/policy.h"
@@ -604,6 +607,62 @@ BOOST_AUTO_TEST_CASE(review_message_signature_bound_to_destination_version)
         BOOST_CHECK_MESSAGE(!VerifyMessageHash(oldDest, hash, strictSignature),
                             "Strict message signature accepted for old destination");
     }
+}
+
+// Fixed vectors for the strict message-signing domain (external wallets must
+// reproduce these bytes). Message "hola", commitment = 32 bytes 0x11.
+BOOST_AUTO_TEST_CASE(message_hash_vectors)
+{
+    CHashWriter ss(SER_GETHASH, 0);
+    ss << strMessageMagic;
+    ss << std::string("hola");
+    const uint256 messageHash = ss.GetHash();
+    BOOST_CHECK_EQUAL(HexStr(messageHash.begin(), messageHash.end()),
+                      "cba3aa2c37996fdda56ab6304ec49ea428f66ac82a09afa92caef64d01c1a22a");
+
+    const uint256 commitment(std::vector<unsigned char>(32, 0x11));
+    const uint256 v2 = StrictAuthScriptMessageHash(WitnessStrictAuthScript(2, commitment), messageHash);
+    const uint256 v3 = StrictAuthScriptMessageHash(WitnessStrictAuthScript(3, commitment), messageHash);
+    BOOST_CHECK_EQUAL(HexStr(v2.begin(), v2.end()), "6ceeea6252013d1abadf49adb164764ecf46ad2e11e92a7e31c374adfd851bd3");
+    BOOST_CHECK_EQUAL(HexStr(v3.begin(), v3.end()), "1833af5b07c57a8bac330e4fa0fc8bce8d29a440667ccea35dce1f5c6e076d6b");
+
+    // Asymmetric commitment 00 01 .. 1f: catches an accidental reversal of the
+    // commitment byte order, which a repeated-byte commitment cannot detect.
+    std::vector<unsigned char> ascending(32);
+    for (size_t i = 0; i < ascending.size(); i++) ascending[i] = (unsigned char)i;
+    const uint256 commitmentAsc(ascending);
+    const uint256 a2 = StrictAuthScriptMessageHash(WitnessStrictAuthScript(2, commitmentAsc), messageHash);
+    const uint256 a3 = StrictAuthScriptMessageHash(WitnessStrictAuthScript(3, commitmentAsc), messageHash);
+    BOOST_CHECK_EQUAL(HexStr(a2.begin(), a2.end()), "8979bb37993d0f86de41811dea81b40c55cccba5ab9a7e427817f541d7ad6158");
+    BOOST_CHECK_EQUAL(HexStr(a3.begin(), a3.end()), "bedd906b07d08da2b89db5c8bf74e83d1ed8f525cbbff93cbbd6ebc993376152");
+}
+
+// Dust thresholds: fixed input size, fee rate and threshold per family, with
+// values just below and exactly at the limit. Generic v1 is estimated as the
+// wallet default template (PQ key + OP_TRUE), by policy choice.
+BOOST_AUTO_TEST_CASE(dust_thresholds_are_pinned)
+{
+    const std::vector<unsigned char> program(32, 0x42);
+    const CFeeRate feeRate(3000); // 3000 sat/kB
+    // txout = 8 (value) + 1 (script len) + 34 (script) = 43 bytes
+    // PQ input    = 41 + (1 + 2 + 2424 + 1316 + 2) / 4 = 41 + 936 = 977 vbytes -> 1020 total
+    // ECDSA input = 41 + (1 + 2 + 74 + 34 + 2) / 4     = 41 + 28  = 69 vbytes  -> 112 total
+    const CAmount pqDust = 3060;
+    const CAmount ecdsaDust = 336;
+
+    const CScript v1 = CScript() << OP_1 << program;
+    const CScript v2 = CScript() << OP_2 << program;
+    const CScript v3 = CScript() << OP_3 << program;
+    BOOST_CHECK_EQUAL(GetDustThreshold(CTxOut(0, v1), feeRate), pqDust);
+    BOOST_CHECK_EQUAL(GetDustThreshold(CTxOut(0, v2), feeRate), pqDust);
+    BOOST_CHECK_EQUAL(GetDustThreshold(CTxOut(0, v3), feeRate), ecdsaDust);
+
+    BOOST_CHECK(IsDust(CTxOut(pqDust - 1, v1), feeRate));
+    BOOST_CHECK(!IsDust(CTxOut(pqDust, v1), feeRate));
+    BOOST_CHECK(IsDust(CTxOut(pqDust - 1, v2), feeRate));
+    BOOST_CHECK(!IsDust(CTxOut(pqDust, v2), feeRate));
+    BOOST_CHECK(IsDust(CTxOut(ecdsaDust - 1, v3), feeRate));
+    BOOST_CHECK(!IsDust(CTxOut(ecdsaDust, v3), feeRate));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

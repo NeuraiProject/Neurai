@@ -25,23 +25,22 @@ static size_t EstimateWitnessInputVBytes(int witnessversion, const std::vector<u
         return (32 + 4 + 1 + (107 / WITNESS_SCALE_FACTOR) + 4);
     }
 
-    // PQ witness v1 spends carry a much larger witness stack:
-    //   [ signature_with_hashtype, serialized_pq_pubkey ]
-    if (witnessversion == 1 && witnessprogram.size() == 20) {
-        const size_t base_bytes = 32 + 4 + 1 + 4;
-        const size_t witness_bytes =
-                GetSizeOfCompactSize(ML_DSA_44_SIG_SIZE + 1) + (ML_DSA_44_SIG_SIZE + 1) +
-                GetSizeOfCompactSize(1 + ML_DSA_44_PUBKEY_SIZE) + (1 + ML_DSA_44_PUBKEY_SIZE);
-
-        return base_bytes + (witness_bytes / WITNESS_SCALE_FACTOR);
-    }
-
-    // Strict AuthScript families: fixed witness [authType, sig, pubkey, OP_TRUE].
-    if (IsStrictAuthScriptWitnessVersion(witnessversion) && witnessprogram.size() == 32) {
+    // AuthScript: generic witness v1 and the strict families (v2 PQ, v3 ECDSA),
+    // all with a 32-byte program and a witness of the shape
+    //   [authType, signature, pubkey, ..., witnessScript].
+    //
+    // The strict families reveal their spend type through the version. Generic
+    // v1 does not: its 32 bytes hide whether the spend will be PQ, ECDSA or a
+    // contract. As a documented POLICY CHOICE (not an upper bound: a v1
+    // contract with several arguments or signatures can cost more) a v1 output
+    // is estimated as the wallet's default template, a PQ key with OP_TRUE.
+    // Before this, v1 outputs fell through to the 107-byte ECDSA estimate and
+    // PQ dust thresholds came out roughly nine times too low.
+    if ((witnessversion == 1 || IsStrictAuthScriptWitnessVersion(witnessversion)) && witnessprogram.size() == 32) {
         const size_t base_bytes = 32 + 4 + 1 + 4;
         size_t sig_bytes = 0;
         size_t pubkey_bytes = 0;
-        if (witnessversion == STRICT_AUTHSCRIPT_WITNESS_V2_PQ) {
+        if (witnessversion == 1 || witnessversion == STRICT_AUTHSCRIPT_WITNESS_V2_PQ) {
             sig_bytes = ML_DSA_44_SIG_SIZE + 1;
             pubkey_bytes = 1 + ML_DSA_44_PUBKEY_SIZE;
         } else {
