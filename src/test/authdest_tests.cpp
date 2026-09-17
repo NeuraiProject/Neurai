@@ -17,6 +17,7 @@
 #include "script/script.h"
 #include "script/script_error.h"
 #include "test/test_neurai.h"
+#include "tinyformat.h"
 #include "utilstrencodings.h"
 
 #include <boost/test/unit_test.hpp>
@@ -357,6 +358,67 @@ BOOST_AUTO_TEST_CASE(review_payload_must_not_consume_drop)
         spk << OP_XNA_ASSET << valtype{'x','n','a','o',8,'A','B','C','D','E','F','G'} << OP_DROP;
         CheckAllFail(spk, "truncated owner payload must not borrow OP_DROP");
     }
+}
+
+// Evidence for the opcode compatibility review: the introspection opcodes that are
+// expected NOT to care about the address family behave identically for generic v1,
+// strict v2 and strict v3 scripts. They either return raw bytes/values or never look
+// at a script's type, so a covenant written with them keeps working for any family.
+BOOST_AUTO_TEST_CASE(other_introspection_opcodes_are_family_agnostic)
+{
+    static constexpr script_verify_flags FLAGS = ACTIVE_FLAGS |
+        SCRIPT_VERIFY_OUTPUTVALUE | SCRIPT_VERIFY_OUTPUTSCRIPT | SCRIPT_VERIFY_OUTPUTASSETFIELD |
+        SCRIPT_VERIFY_INPUTASSETFIELD | SCRIPT_VERIFY_INPUTOUTPUTCOUNT | SCRIPT_VERIFY_TXLOCKTIME |
+        SCRIPT_VERIFY_TXHASH | SCRIPT_VERIFY_64BIT_INTEGERS;
+    const valtype program = AscendingProgram();
+    std::vector<valtype> stack;
+    ScriptError err;
+    std::vector<valtype> txhashes;
+
+    for (int version : {1, 2, 3}) {
+        for (bool withAsset : {false, true}) {
+            const CScript spk = withAsset ? WithAsset(Native(version, program)) : Native(version, program);
+            const CTransaction tx(MakeTx({spk}, 1));
+            const std::vector<CTxOut> refOutputs{CTxOut(1000, spk)};
+            const std::string what = strprintf("v%d%s", version, withAsset ? "+asset" : "");
+
+            // Raw scriptPubKey, byte for byte, for the three sources.
+            BOOST_CHECK_MESSAGE(Run(tx, CScript() << OP_0 << OP_OUTPUTSCRIPT, FLAGS, stack, err) &&
+                                stack.back() == valtype(spk.begin(), spk.end()), what << ": OP_OUTPUTSCRIPT");
+            BOOST_CHECK_MESSAGE(Run(tx, CScript() << valtype{0x03} << OP_TXFIELD, FLAGS, stack, err, spk) &&
+                                stack.back() == valtype(spk.begin(), spk.end()), what << ": OP_TXFIELD 0x03");
+            BOOST_CHECK_MESSAGE(Run(tx, CScript() << OP_0 << valtype{0x03} << OP_REFINPUTFIELD, FLAGS, stack, err, CScript(), &refOutputs) &&
+                                stack.back() == valtype(spk.begin(), spk.end()), what << ": OP_REFINPUTFIELD 0x03");
+
+            // Values and counters.
+            BOOST_CHECK_MESSAGE(Run(tx, CScript() << OP_0 << OP_OUTPUTVALUE << CScriptNum(1000) << OP_EQUAL, FLAGS, stack, err) &&
+                                stack.back() == valtype{1}, what << ": OP_OUTPUTVALUE");
+            BOOST_CHECK_MESSAGE(Run(tx, CScript() << OP_0 << valtype{0x01} << OP_REFINPUTFIELD << CScriptNum(1000) << OP_EQUAL, FLAGS, stack, err, CScript(), &refOutputs) &&
+                                stack.back() == valtype{1}, what << ": OP_REFINPUTFIELD 0x01");
+            BOOST_CHECK_MESSAGE(Run(tx, CScript() << OP_INPUTCOUNT << OP_1 << OP_EQUALVERIFY << OP_OUTPUTCOUNT << OP_1 << OP_EQUALVERIFY
+                                                  << OP_REFINPUTCOUNT << OP_1 << OP_EQUAL, FLAGS, stack, err, CScript(), &refOutputs) &&
+                                stack.back() == valtype{1}, what << ": input/output/refinput counts");
+            BOOST_CHECK_MESSAGE(Run(tx, CScript() << OP_TXLOCKTIME, FLAGS, stack, err), what << ": OP_TXLOCKTIME");
+
+            // OP_TXHASH over the outputs: succeeds for every family and commits to the exact script.
+            BOOST_CHECK_MESSAGE(Run(tx, CScript() << valtype{0x10} << OP_TXHASH, FLAGS, stack, err) && stack.back().size() == 32,
+                                what << ": OP_TXHASH (outputs)");
+            if (!stack.empty()) txhashes.push_back(stack.back());
+
+            // Asset name introspection reads the asset whatever prefix carries it.
+            if (withAsset) {
+                const valtype name{'A', 'U', 'T', 'H', 'D', 'E', 'S', 'T'};
+                BOOST_CHECK_MESSAGE(Run(tx, CScript() << OP_0 << valtype{0x01} << OP_OUTPUTASSETFIELD, FLAGS, stack, err) &&
+                                    stack.back() == name, what << ": OP_OUTPUTASSETFIELD name");
+                BOOST_CHECK_MESSAGE(Run(tx, CScript() << OP_0 << valtype{0x01} << OP_REFINPUTASSETFIELD, FLAGS, stack, err, CScript(), &refOutputs) &&
+                                    stack.back() == name, what << ": OP_REFINPUTASSETFIELD name");
+            }
+        }
+    }
+    // Six different scripts -> six different output hashes (the family is committed to).
+    for (size_t i = 0; i < txhashes.size(); i++)
+        for (size_t j = i + 1; j < txhashes.size(); j++)
+            BOOST_CHECK(txhashes[i] != txhashes[j]);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
