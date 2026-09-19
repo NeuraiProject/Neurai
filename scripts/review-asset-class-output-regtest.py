@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Covenants inspecting root, unique and message-channel issuance to v2/v3."""
+"""Covenants inspecting asset-class issuance to v2/v3."""
 import argparse
 import importlib.util
 import json
@@ -22,10 +22,11 @@ COIN = 100_000_000
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--pending-classes', action='store_true', help='root/sub and DePIN/sub-DePIN issuance')
     parser.add_argument('--bindir', type=Path, default=Path('/root/Neurai/src'))
     args = parser.parse_args()
     directory = Path(tempfile.mkdtemp(prefix='asset-class-output-'))
-    report = {'results': [], 'binary_sha256': m.digest_file(args.bindir / 'neuraid'),
+    report = {'results': [], 'pending_classes': args.pending_classes, 'binary_sha256': m.digest_file(args.bindir / 'neuraid'),
               'source_sha256': m.digest_file(Path(__file__))}
     nodes, validators = [], []
 
@@ -65,32 +66,45 @@ def main():
             prefix = bytes.fromhex(source.rpc('validateaddress', address)['scriptPubKey'])
             name = f'OUTPUTV{version}'
             owner = None
-            for kind in ('issue', 'unique', 'channel'):
+            parent_owners = {}
+            for kind in (('issue', 'sub', 'depin', 'subdepin') if args.pending_classes else ('issue', 'unique', 'channel')):
+                is_sub = kind in ('sub', 'subdepin')
+                is_depin = kind in ('depin', 'subdepin')
+                if args.pending_classes:
+                    owner = parent_owners.get('depin' if is_depin else 'issue') if is_sub else None
                 label = f'v{version}/{kind}'
-                quantity = 5 if kind == 'issue' else 1
+                quantity = 5 if kind in ('issue', 'sub', 'depin', 'subdepin') else 1
                 datahash = bytes(range(32)) if kind == 'issue' else bytes(range(32, 64))
-                name_bytes = (name + ('#ONE' if kind == 'unique' else '~ONE' if kind == 'channel' else '')).encode()
-                owner_name = (name + '!').encode()
+                asset_name = ('&' if is_depin else '') + name + ('/CHILD' if is_sub else '#ONE' if kind == 'unique' else '~ONE' if kind == 'channel' else '')
+                name_bytes = asset_name.encode()
+                owner_name = ((asset_name if args.pending_classes else name) + '!').encode()
                 def asset_script(payload):
                     return prefix + b'\xc0' + m.push(payload) + b'\x75'
-                owner_payload = (b'xnao' + m.compact(len(owner_name)) + owner_name if kind == 'issue' else
+                owner_payload = (b'xnao' + m.compact(len(owner_name)) + owner_name if kind in ('issue', 'sub', 'depin', 'subdepin') else
                                  b'xnat' + m.compact(len(owner_name)) + owner_name + struct.pack('<q', COIN))
                 owner_spk = asset_script(owner_payload)
                 fields = {1: name_bytes, 2: m.number(quantity * COIN)}
                 units, reissuable, asset_type = (2, 1, 0) if kind == 'issue' else (0, 0, 2 if kind == 'unique' else 3)
+                if args.pending_classes:
+                    units, reissuable, asset_type = (0 if is_depin else 2), 1, (12 if is_depin else 1 if is_sub else 0)
                 payload = b'xnaq' + m.compact(len(name_bytes)) + name_bytes + struct.pack('<q', quantity * COIN)
                 payload += bytes([units, reissuable, 1]) + b'\x12\x20' + datahash
                 fields.update({3: bytes([units]), 4: bytes([reissuable]), 5: b'\x01',
                                6: b'\x12\x20' + datahash, 7: bytes([asset_type])})
                 asset_spk = asset_script(payload)
-                burn = 1000 if kind == 'issue' else 10 if kind == 'unique' else 200
+                burn = 10 if is_depin else 1000 if kind == 'issue' else 10 if kind == 'unique' else 200
                 outputs = [(burn * COIN, burn_spk), (COIN, miner_spk), (0, owner_spk), (0, asset_spk)]
+                if is_sub:
+                    parent_name = (('&' if is_depin else '') + name + '!').encode()
+                    parent_spk = asset_script(b'xnat' + m.compact(len(parent_name)) + parent_name + struct.pack('<q', COIN))
+                    outputs.insert(2, (0, parent_spk))
+                owner_index, asset_index = len(outputs) - 2, len(outputs) - 1
                 contract = b''
                 for selector, value in fields.items():
-                    contract += b'\x53' + m.push(bytes([selector])) + b'\xce' + m.push(value) + b'\x88'
+                    contract += m.push(m.number(asset_index)) + m.push(bytes([selector])) + b'\xce' + m.push(value) + b'\x88'
                 for selector, value in {1: owner_name, 2: m.number(COIN), 7: b'\x09'}.items():
-                    contract += b'\x52' + m.push(bytes([selector])) + b'\xce' + m.push(value) + b'\x88'
-                for index in (2, 3):
+                    contract += m.push(m.number(owner_index)) + m.push(bytes([selector])) + b'\xce' + m.push(value) + b'\x88'
+                for index in (owner_index, asset_index):
                     contract += m.push(m.number(index)) + b'\xc2' + m.push(bytes([version]) + prefix[2:]) + b'\x88'
                 contract += b'\x51'
                 tag = m.sha256(b'NeuraiAuthScript')
@@ -121,7 +135,7 @@ def main():
 
                 bad_payload = payload[:-1] + bytes([payload[-1] ^ 1])
                 bad_outputs = list(outputs)
-                bad_outputs[3] = (0, asset_script(bad_payload))
+                bad_outputs[asset_index] = (0, asset_script(bad_payload))
                 bad = spend(bad_outputs)
                 accepted = source.rpc('testmempoolaccept', [bad[1].hex()])[0]
                 check(label + '/wrong_metadata/mempool', not accepted.get('allowed') and
@@ -141,9 +155,10 @@ def main():
                     result = node.rpc('submitblock', source.rpc('getblock', blockhash, False))
                     check(label + f'/par{par}/block', result is None and node.rpc('getbestblockhash') == blockhash, result)
                     check(label + f'/par{par}/state', node.rpc('gettxout', *prev) is None and
-                          node.rpc('gettxout', txid, 3)['scriptPubKey']['hex'] == asset_spk.hex(), txid)
-                owner = txid, 2
-                source.rpc('lockunspent', False, [{'txid': txid, 'vout': 2}])
+                          node.rpc('gettxout', txid, asset_index)['scriptPubKey']['hex'] == asset_spk.hex(), txid)
+                owner = txid, owner_index
+                parent_owners[kind] = owner
+                source.rpc('lockunspent', False, [{'txid': txid, 'vout': owner_index}])
         report['height'] = source.rpc('getblockcount')
     except Exception as error:
         report['error'] = str(error)

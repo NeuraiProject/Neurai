@@ -84,6 +84,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bindir', type=Path, default=Path('/root/Neurai/src'))
     parser.add_argument('--output', type=Path)
+    parser.add_argument('--asset-class', choices=['root', 'sub', 'depin', 'subdepin'], default='root')
     parser.add_argument('--auth', type=int, choices=[0, 1, 2], default=0)
     parser.add_argument('--wrapped', action='store_true')
     parser.add_argument('--signer', type=Path, default=Path('/tmp/authscript-review-signer'))
@@ -96,7 +97,7 @@ def main():
     directory = args.output or Path(tempfile.mkdtemp(prefix='authenticated-assets-review-'))
     if args.output:
         directory.mkdir(parents=True, exist_ok=False)
-    report = {'results': [], 'auth': AUTH, 'wrapped': WRAPPED, 'binary_sha256': digest_file(args.bindir / 'neuraid'),
+    report = {'results': [], 'asset_class': args.asset_class, 'auth': AUTH, 'wrapped': WRAPPED, 'binary_sha256': digest_file(args.bindir / 'neuraid'),
               'source_sha256': {p.name: digest_file(p) for p in
                   (Path(__file__), Path(__file__).with_name('review-introspection-regtest.py'),
                    Path(__file__).with_name('generate_authscript_vectors.py'))}}
@@ -129,6 +130,21 @@ def main():
             check(label, pending and tx.get('confirmations', 0) >= 1, txid)
             return tx
 
+        is_depin = args.asset_class in ('depin', 'subdepin')
+        asset_type = 12 if is_depin else 1 if args.asset_class == 'sub' else 0
+
+        def class_name(base):
+            if args.asset_class in ('sub', 'subdepin'):
+                parent = ('&' if is_depin else '') + base
+                confirmed(base + '/parent_issue', node.rpc('issue', parent, 1, miner))
+                return parent + '/CHILD'
+            return ('&' if is_depin else '') + base
+
+        def open_depin(name):
+            if is_depin:
+                confirmed(name + '/open', node.rpc('opendepin', name))
+                check(name + '/state_open', node.rpc('getassetdata', name)['transfer_state'] == 'open', name)
+
         def asset_output(tx, prefix):
             matches = [out for out in tx['vout'] if out['scriptPubKey']['hex'].startswith(prefix.hex())
                        and len(out['scriptPubKey']['hex']) > len(prefix.hex())]
@@ -154,8 +170,9 @@ def main():
 
         contract_txids = []
         for version in (2, 3):
-            name = 'FIELDV' + str(version)
+            name = class_name('FIELDV' + str(version))
             confirmed(f'v{version}/issue', node.rpc('issue', name, 5, miner))
+            open_depin(name)
             transferred = confirmed(f'v{version}/receive_asset', node.rpc('transfer', name, 5, addresses[version]))
             asset_input, asset_spk = asset_output(transferred, scripts[version])
             check(f'v{version}/real_prefix', asset_spk[:34] == scripts[version], asset_spk.hex())
@@ -171,7 +188,7 @@ def main():
             for index, opcode, asset_name, amount in ((1, 0xcf, name, 5),
                                                        (0, 0xce, name, 3),
                                                        (0, 0xd3, 'FIELDREF', 7)):
-                for selector, expected in ((1, asset_name.encode()), (2, number(amount * COIN)), (7, b'\x00')):
+                for selector, expected in ((1, asset_name.encode()), (2, number(amount * COIN)), (7, bytes([0 if asset_name == 'FIELDREF' else asset_type]))):
                     contract += push(number(index)) + push(bytes([selector])) + bytes([opcode]) + push(expected) + b'\x88'
             contract += b'\x00\xc2' + push(bytes([target]) + scripts[target][2:]) + b'\x87'
             tag = sha256(b'NeuraiAuthScript')
@@ -284,24 +301,27 @@ def main():
             ipfs_text = alphabet[digit] + ipfs_text
         txid_bytes = bytes(range(32, 64))
         for version in (2, 3):
-            name = 'METAV' + str(version)
+            name = class_name('METAV' + str(version))
+            units = 0 if is_depin else 2
+            final_units = 0 if is_depin else 4
             issued = confirmed(f'meta/v{version}/issue',
-                               node.rpc('issue', name, 5, addresses[version], addresses[version], 2, True, True, ipfs_text))
-            base = {1: name.encode(), 2: number(5 * COIN), 3: b'\x02', 4: b'\x01',
-                    5: b'\x01', 6: ipfs_bytes, 7: b'\x00'}
+                               node.rpc('issue', name, 5, addresses[version], addresses[version], units, True, True, ipfs_text))
+            base = {1: name.encode(), 2: number(5 * COIN), 3: bytes([units]), 4: b'\x01',
+                    5: b'\x01', 6: ipfs_bytes, 7: bytes([asset_type])}
             # All fields 1..7 exist on this issuance: selector 8 is invalid.
-            inspect_asset(f'meta/v{version}/issuance', issued, version, b'xnaq', name, 5, base, 8)
             inspect_asset(f'meta/v{version}/owner', issued, version, b'xnao', name + '!', 1,
                           {1: (name + '!').encode(), 2: number(COIN), 7: b'\x09'}, 6)
+            open_depin(name)
+            inspect_asset(f'meta/v{version}/issuance', issued, version, b'xnaq', name, 5, base, 8)
             reissued = confirmed(f'meta/v{version}/reissue_txid',
                                  node.rpc('reissue', name, 2, addresses[version], miner, True, -1, txid_bytes.hex()))
             inspect_asset(f'meta/v{version}/reissue_txid', reissued, version, b'xnar', name, 2,
                           {1: name.encode(), 2: number(2 * COIN), 3: b'\xff', 4: b'\x01',
                            6: txid_bytes, 7: b'\x08'}, 5)
             plain = confirmed(f'meta/v{version}/reissue_plain',
-                              node.rpc('reissue', name, 1, addresses[version], miner, False, 4))
+                              node.rpc('reissue', name, 1, addresses[version], miner, False, final_units))
             inspect_asset(f'meta/v{version}/reissue_plain', plain, version, b'xnar', name, 1,
-                          {1: name.encode(), 2: number(COIN), 3: b'\x04', 4: b'\x00', 7: b'\x08'}, 6)
+                          {1: name.encode(), 2: number(COIN), 3: bytes([final_units]), 4: b'\x00', 7: b'\x08'}, 6)
 
         report['height'] = node.rpc('getblockcount')
         # Independent validators receive blocks only, never the mempool transactions.
