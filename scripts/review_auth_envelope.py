@@ -40,7 +40,12 @@ class Envelope:
     def address(self, node, program):
         return node.rpc('decodescript', (b'\x51\x20' + program).hex())['p2sh'] if self.wrapped else bech32m('tnq', 1, program)
 
-    def transaction(self, utxo, script, arguments, output, amount=90_000_000, locktime=0, sequence=0xffffffff):
+    def sign(self, digest):
+        return bytes.fromhex(subprocess.check_output([str(self.signer), 'sign', self.family],
+            input=self.secret + '\n' + digest.hex() + '\n', text=True).strip())
+
+    def transaction(self, utxo, script, arguments, output, amount=90_000_000, locktime=0, sequence=0xffffffff,
+                    input_amount=100_000_000):
         prev = bytes.fromhex(utxo[0])[::-1] + struct.pack('<I', utxo[1])
         seq, lock, version = struct.pack('<I', sequence), struct.pack('<I', locktime), struct.pack('<I', 2)
         out = struct.pack('<Q', amount) + compact(len(output)) + output
@@ -48,10 +53,8 @@ class Envelope:
         if self.auth:
             double = lambda x: sha256(sha256(x))
             preimage = (version + double(prev) + double(seq) + prev + compact(len(script)) + script +
-                        struct.pack('<Q', 100_000_000) + seq + double(out) + lock + bytes([self.auth]) + struct.pack('<I', 1))
-            sig = bytes.fromhex(subprocess.check_output([str(self.signer), 'sign', self.family],
-                input=self.secret + '\n' + double(preimage).hex() + '\n', text=True).strip())
-            stack += [sig, self.pub]
+                        struct.pack('<Q', input_amount) + seq + double(out) + lock + bytes([self.auth]) + struct.pack('<I', 1))
+            stack += [self.sign(double(preimage)), self.pub]
         stack += list(arguments) + [script]
         redeem = b'\x51\x20' + self.program(script)
         scriptsig = bytes([len(redeem)]) + redeem if self.wrapped else b''

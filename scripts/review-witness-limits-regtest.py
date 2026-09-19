@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
-"""Compare standard mempool policy and block consensus at v0/v1 witness limits."""
+"""Compare standard mempool policy and block consensus at v0/v1 witness limits.
+With --auth/--wrapped the v1 half runs under external authentication and/or P2SH;
+v0 (P2WSH) cases are only exercised in the plain native run.
+"""
 import argparse
+from review_auth_envelope import Envelope, options
+
+ENVELOPE = Envelope()
 import importlib.util
 import json
 from pathlib import Path
@@ -43,10 +49,12 @@ def cases():
 
 
 def transaction(utxo, version, script, arguments, output):
+    if version == 1:
+        # One XNA fee covers the default relay rate even for the 256 KiB witness.
+        return ENVELOPE.transaction(utxo, script, arguments, output, amount=900_000_000, input_amount=1_000_000_000)
     inputs = b'\x01' + h.outpoint(*utxo) + b'\x00' + b'\xff' * 4
-    # One XNA fee covers the default relay rate even for the 256 KiB witness.
     outputs = b'\x01' + b.output(900_000_000, output)
-    stack = ([b'\x00'] if version == 1 else []) + arguments + [script]
+    stack = arguments + [script]
     witness = h.compact(len(stack)) + b''.join(h.compact(len(x)) + x for x in stack)
     prefix, lock = struct.pack('<I', 2), bytes(4)
     return prefix + inputs + outputs + lock, prefix + b'\x00\x01' + inputs + outputs + witness + lock
@@ -55,12 +63,17 @@ def transaction(utxo, version, script, arguments, output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bindir', type=Path, default=Path('/root/Neurai/src'))
+    options(parser)
     args = parser.parse_args()
+    global ENVELOPE
+    ENVELOPE = Envelope(args.auth, args.wrapped, args.signer)
     directory = Path(tempfile.mkdtemp(prefix='witness-limits-regtest-'))
     files = [Path(__file__), *[Path(__file__).with_name(f) for f in (
         'review-arithmetic-regtest.py', 'review-introspection-regtest.py',
         'review-csfs-block-limit-regtest.py', 'generate_authscript_vectors.py')]]
-    report = {'results': [], 'matrix': [], 'binary_sha256': h.digest_file(args.bindir / 'neuraid'),
+    report = {'results': [], 'matrix': [], 'auth': args.auth, 'wrapped': args.wrapped,
+              'envelope_sha256': h.digest_file(Path(__file__).with_name('review_auth_envelope.py')),
+              'binary_sha256': h.digest_file(args.bindir / 'neuraid'),
               'source_sha256': {p.name: h.digest_file(p) for p in files}}
     nodes, validators = [], []
 
@@ -78,11 +91,14 @@ def main():
         source.rpc('generatetoaddress', 110, miner)
         output = bytes.fromhex(source.rpc('validateaddress', miner)['scriptPubKey'])
         contracts, outputs = [], []
-        for version in (0, 1):
+        # v0 has no external authentication or envelope; it is covered by the plain run only.
+        versions = (1,) if (args.auth or args.wrapped) else (0, 1)
+        for version in versions:
             for name, script, arguments, error, policy in cases():
-                tag = a.sha256(b'NeuraiAuthScript')
-                program = a.sha256(script) if version == 0 else a.sha256(tag + tag + b'\x01\x00' + a.sha256(script))
-                spk = bytes([0 if version == 0 else 0x51, 32]) + program
+                if version == 0:
+                    spk = b'\x00\x20' + a.sha256(script)
+                else:
+                    spk = ENVELOPE.output(ENVELOPE.program(script))
                 outputs.append(b.output(1_000_000_000, spk))
                 contracts.append((f'v{version}/{name}', version, script, arguments, error, policy and version == 0, spk))
         raw = struct.pack('<I', 2) + b'\x00' + h.compact(len(outputs)) + b''.join(outputs) + bytes(4)
@@ -143,8 +159,10 @@ def main():
                 result = source.rpc('submitblock', raw_block.hex())
                 check(label + '/source_block', result is None and source.rpc('getbestblockhash') == blockhash, result)
             report['matrix'].append({'case': label, 'mempool_expected': accepted, 'consensus_expected': error is None,
-                                     'script_bytes': len(script), 'argument_bytes': sum(map(len, arguments)), 'block_weight': weight})
+                                     'script_bytes': len(script), 'argument_bytes': sum(map(len, arguments)),
+                                     'witness_bytes': len(tx[1]) - len(tx[0]), 'block_weight': weight})
         report['height'] = source.rpc('getblockcount')
+        report['contracts'] = len(contracts)
     except Exception as error:
         report['error'] = str(error)
         print('ERROR:', error, flush=True)

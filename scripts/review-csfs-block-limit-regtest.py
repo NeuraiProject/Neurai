@@ -4,8 +4,15 @@
 Static signature instructions sit in unexecuted branches: this tests accounting,
 not crypto throughput. Coinbase and spend outputs contribute zero sigops.
 No mempool admission, block-template selection or PoW bypass for test blocks.
+
+With --auth every authenticated v1 input adds one sigop of its own (WitnessSigOps),
+so the number of inputs is chosen to keep each total exactly at the boundary.
+--wrapped spends the same programs through P2SH.
 """
 import argparse
+from review_auth_envelope import Envelope, options
+
+ENVELOPE = Envelope()
 import importlib.util
 import json
 from pathlib import Path
@@ -17,6 +24,10 @@ h = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(h)
 from generate_authscript_vectors import bech32m, sha256
 
+COIN = 100_000_000
+BASE_COUNT = 199
+EXTRA_COUNTS = (2, 3, 80, 81, 199, 200)
+
 
 def hash256(data):
     return sha256(sha256(data))
@@ -26,15 +37,25 @@ def output(value, script):
     return struct.pack('<q', value) + h.compact(len(script)) + script
 
 
-def spend(funding, indices, scripts, last, base_count=402):
-    chosen = list(range(base_count)) + [last]
+def spend(funding, indices, scripts, natives, chosen, env):
+    """Spend the chosen funded scripts into one output; fee is one XNA."""
+    sequence = b'\xff' * 4
+    prevouts = b''.join(h.outpoint(funding, indices[i]) for i in chosen)
+    outputs = b'\x01' + output((len(chosen) - 1) * COIN, b'\x53\x20' + bytes(range(32)))
     inputs = h.compact(len(chosen))
-    for i in chosen:
-        inputs += h.outpoint(funding, indices[i]) + b'\x00' + b'\xff' * 4
-    outputs = b'\x01' + output(base_count * 100_000_000, b'\x53\x20' + bytes(range(32)))
     witness = b''
     for i in chosen:
-        witness += b'\x02\x01\x00' + h.compact(len(scripts[i])) + scripts[i]
+        sigscript = h.push(natives[i]) if env.wrapped else b''
+        inputs += h.outpoint(funding, indices[i]) + h.compact(len(sigscript)) + sigscript + sequence
+        stack = [bytes([env.auth])]
+        if env.auth:
+            preimage = (struct.pack('<I', 2) + hash256(prevouts) + hash256(sequence * len(chosen)) +
+                        h.outpoint(funding, indices[i]) + h.compact(len(scripts[i])) + scripts[i] +
+                        struct.pack('<Q', COIN) + sequence + hash256(outputs[1:]) + bytes(4) +
+                        bytes([env.auth]) + struct.pack('<I', 1))
+            stack += [env.sign(hash256(preimage)), env.pub]
+        stack.append(scripts[i])
+        witness += h.compact(len(stack)) + b''.join(h.compact(len(x)) + x for x in stack)
     version, locktime = struct.pack('<I', 2), bytes(4)
     stripped = version + inputs + outputs + locktime
     return stripped, version + b'\x00\x01' + inputs + outputs + witness + locktime
@@ -74,10 +95,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bindir', type=Path, default=Path('/root/Neurai/src'))
     parser.add_argument('--opcode', choices=['csfs', 'checksigadd', 'ed25519'], default='csfs')
+    options(parser)
     args = parser.parse_args()
+    global ENVELOPE
+    ENVELOPE = env = Envelope(args.auth, args.wrapped, args.signer)
     opcode = {'csfs': 0xb4, 'checksigadd': 0xde, 'ed25519': 0xdd}[args.opcode]
+    extra = 1 if env.auth else 0
     directory = Path(tempfile.mkdtemp(prefix='csfs-block-limit-'))
-    report = {'opcode': args.opcode, 'results': [], 'binary_sha256': h.digest_file(args.bindir / 'neuraid'),
+    report = {'opcode': args.opcode, 'results': [], 'auth': args.auth, 'wrapped': args.wrapped,
+              'envelope_sha256': h.digest_file(Path(__file__).with_name('review_auth_envelope.py')),
+              'accounting': {'sigops_per_authenticated_input': extra, 'selections': {}},
+              'binary_sha256': h.digest_file(args.bindir / 'neuraid'),
               'source_sha256': {p.name: h.digest_file(p) for p in (Path(__file__),
                   Path(__file__).with_name('review-introspection-regtest.py'),
                   Path(__file__).with_name('generate_authscript_vectors.py'))}}
@@ -89,30 +117,40 @@ def main():
         if not passed:
             raise RuntimeError(f'{case}: {observed}')
 
+    def selection(target):
+        # Plain: 402/80 base inputs of 199 plus a small last script. Authenticated:
+        # each input costs 200, so 399/79 base inputs plus a last script of 199/200.
+        last = ({80000: 2, 80001: 3, 16000: 80, 16001: 81} if not extra else
+                {80000: 199, 80001: 200, 16000: 199, 16001: 200})[target]
+        base = (target - (last + extra)) // (BASE_COUNT + extra)
+        if base * (BASE_COUNT + extra) + last + extra != target:
+            raise RuntimeError('boundary not representable: ' + str(target))
+        report['accounting']['selections'][str(target)] = {'base_inputs': base, 'last_count': last}
+        return list(range(base)) + [402 + EXTRA_COUNTS.index(last)]
+
     try:
         source = h.Node(args.bindir, directory / 'source', ['-bypassdownload=1'])
         nodes.append(source)
         source.ready()
         miner = source.rpc('getnewaddress')
         source.rpc('generatetoaddress', 110, miner)
-        scripts, programs, payments = [], [], {}
-        for i in range(406):
-            count = 199 if i < 402 else (i - 400 if i < 404 else i - 324)
-            # Last four scripts: 2/3 for blocks, 80/81 for mempool limits.
+        scripts, natives, spks, payments = [], [], [], {}
+        for i, count in enumerate([BASE_COUNT] * 402 + list(EXTRA_COUNTS)):
+            # Extra scripts: 2/3 and 80/81 for the plain boundaries, 199/200 for authenticated ones.
             script = b'\x00\x63' + h.push(struct.pack('<I', i)) + bytes([opcode]) * count + b'\x68\x51'
-            tag = sha256(b'NeuraiAuthScript')
-            program = sha256(tag + tag + b'\x01\x00' + sha256(script))
+            program = env.program(script)
             scripts.append(script)
-            programs.append(b'\x51\x20' + program)
-            payments[bech32m('tnq', 1, program)] = 1
+            natives.append(b'\x51\x20' + program)
+            spks.append(env.output(program))
+            payments[env.address(source, program)] = 1
         funding = source.rpc('sendmany', '', payments)
         source.rpc('generatetoaddress', 1, miner)
         funded = source.rpc('getrawtransaction', funding, True)
         lookup = {o['scriptPubKey']['hex']: o['n'] for o in funded['vout']}
-        indices = [lookup[p.hex()] for p in programs]
+        indices = [lookup[spk.hex()] for spk in spks]
         # Test admission only: never put these spends into the source mempool.
-        for last, cost in ((404, 16000), (405, 16001)):
-            _, wire = spend(funding, indices, scripts, last, base_count=80)
+        for cost in (16000, 16001):
+            _, wire = spend(funding, indices, scripts, natives, selection(cost), env)
             result = source.rpc('testmempoolaccept', [wire.hex()])[0]
             if cost == 16000:
                 check('mempool/16000_allowed', result.get('allowed') == 1, result)
@@ -122,12 +160,13 @@ def main():
         template = source.rpc('getblocktemplate', {'rules': ['segwit']})
         check('source/empty_template', template['transactions'] == [], len(template['transactions']))
         candidates = {}
-        for last, cost in ((402, 80000), (403, 80001)):
-            tx = spend(funding, indices, scripts, last)
+        for cost in (80000, 80001):
+            tx = spend(funding, indices, scripts, natives, selection(cost), env)
             raw, block_hash, weight = block(template, tx)
-            check(f'block{cost}/weight_below_limit', weight < 4_000_000, weight)
+            check(f'block{cost}/weight_below_limit', weight < template['weightlimit'], weight)
             (directory / f'block-{cost}.hex').write_text(raw.hex() + '\n')
             candidates[cost] = raw.hex(), block_hash, hash256(tx[0])[::-1].hex()
+            report['accounting']['selections'][str(cost)]['block_weight'] = weight
         check('blocks/distinct_hashes', candidates[80000][1] != candidates[80001][1],
               [candidates[c][1] for c in (80000, 80001)])
         tip = source.rpc('getbestblockhash')
