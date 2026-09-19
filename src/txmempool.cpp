@@ -1018,6 +1018,21 @@ void CTxMemPool::removeForBlock(const std::vector<CTransactionRef>& vtx, unsigne
 {
     LOCK(cs);
     std::set<uint256> setAlreadyRemoving;
+    std::set<uint256> confirmed;
+    for (const auto& tx : vtx)
+        confirmed.insert(tx->GetHash());
+    CCoinsViewMemPool mempoolView(pcoinsTip, *this);
+    CCoinsViewCache assetView(&mempoolView);
+    const auto assetsStillValid = [&](const CTransaction& tx) {
+        // Confirmed transactions lose their spent inputs from the chain view.
+        // Their children remain eligible and must not be removed recursively.
+        if (confirmed.count(tx.GetHash()))
+            return true;
+        CValidationState state;
+        std::vector<std::pair<std::string, uint256>> reissues;
+        return Consensus::CheckTxAssets(tx, state, assetView, passets,
+                                       nBlockHeight + 1, false, reissues);
+    };
 
     std::vector<const CTxMemPoolEntry*> entries;
     for (const auto& tx : vtx)
@@ -1048,8 +1063,7 @@ void CTxMemPool::removeForBlock(const std::vector<CTransactionRef>& vtx, unsigne
             for (auto hash : mapAssetVerifierChanged.at(it.assetName)) {
                 indexed_transaction_set::iterator i = mapTx.find(hash);
                 if (i != mapTx.end()) {
-                    CValidationState state;
-                    if (!setAlreadyRemoving.count(hash) && !CheckTransaction(i->GetTx(), state, passets)) {
+                    if (!setAlreadyRemoving.count(hash) && !assetsStillValid(i->GetTx())) {
                         entries.push_back(&*i);
                         trans.emplace_back(i->GetTx());
                         setAlreadyRemoving.insert(hash);
@@ -1064,8 +1078,7 @@ void CTxMemPool::removeForBlock(const std::vector<CTransactionRef>& vtx, unsigne
             for (auto hash : mapAddressesQualifiersChanged.at(it.address)) {
                 indexed_transaction_set::iterator i = mapTx.find(hash);
                 if (i != mapTx.end()) {
-                    CValidationState state;
-                    if (!setAlreadyRemoving.count(hash) && !CheckTransaction(i->GetTx(), state, passets)) {
+                    if (!setAlreadyRemoving.count(hash) && !assetsStillValid(i->GetTx())) {
                         entries.push_back(&*i);
                         trans.emplace_back(i->GetTx());
                         setAlreadyRemoving.insert(hash);
@@ -1077,12 +1090,11 @@ void CTxMemPool::removeForBlock(const std::vector<CTransactionRef>& vtx, unsigne
 
     for (auto it : connectedBlockData.newGlobalRestrictionsToAdd) {
         if (it.type == RestrictedType::GLOBAL_FREEZE) {
-            if (mapAssetMarkedGlobalFrozen.count(it.assetName)) {
-                for (auto hash : mapAssetMarkedGlobalFrozen.at(it.assetName)) {
+            if (mapAssetVerifierChanged.count(it.assetName)) {
+                for (auto hash : mapAssetVerifierChanged.at(it.assetName)) {
                     indexed_transaction_set::iterator i = mapTx.find(hash);
                     if (i != mapTx.end()) {
-                        CValidationState state;
-                        if (!setAlreadyRemoving.count(hash) && !CheckTransaction(i->GetTx(), state, passets)) {
+                        if (!setAlreadyRemoving.count(hash) && !assetsStillValid(i->GetTx())) {
                             entries.push_back(&*i);
                             trans.emplace_back(i->GetTx());
                             setAlreadyRemoving.insert(hash);
@@ -1154,14 +1166,13 @@ void CTxMemPool::removeForBlock(const std::vector<CTransactionRef>& vtx, unsigne
 
     for (auto it : connectedBlockData.newAddressRestrictionsToAdd) {
         if (it.type == RestrictedType::FREEZE_ADDRESS) {
-            auto pair = std::make_pair(it.address, it.assetName);
-            if (mapAddressesMarkedFrozen.count(pair)) {
-                for (auto hash : mapAddressesMarkedFrozen.at(pair)) {
+            // Output indexing also covers transfers spending unconfirmed
+            // parents, which the confirmed-input freeze index cannot see.
+            if (mapAssetVerifierChanged.count(it.assetName)) {
+                for (auto hash : mapAssetVerifierChanged.at(it.assetName)) {
                     indexed_transaction_set::iterator i = mapTx.find(hash);
                     if (i != mapTx.end()) {
-                        CValidationState state;
-                        std::vector<std::pair<std::string, uint256>> vReissueAssets;
-                        if (!setAlreadyRemoving.count(hash) && !Consensus::CheckTxAssets(i->GetTx(), state, pcoinsTip, passets, nBlockHeight + 1, false, vReissueAssets)) {
+                        if (!setAlreadyRemoving.count(hash) && !assetsStillValid(i->GetTx())) {
                             entries.push_back(&*i);
                             trans.emplace_back(i->GetTx());
                             setAlreadyRemoving.insert(hash);
@@ -1208,12 +1219,11 @@ void CTxMemPool::removeForBlock(const std::vector<CTransactionRef>& vtx, unsigne
     // Remove newly added asset issue transactions from the mempool if they haven't been removed already
     for (auto tx : trans)
     {
-        txiter it = mapTx.find(tx.GetHash());
-        if (it != mapTx.end()) {
-            setEntries stage;
-            stage.insert(it);
-            RemoveStaged(stage, true, MemPoolRemovalReason::BLOCK);
-        }
+        if (confirmed.count(tx.GetHash()))
+            continue;
+        // These transactions were invalidated, not mined. Their outputs do
+        // not enter the UTXO set, so descendants must be removed as well.
+        removeRecursive(tx, MemPoolRemovalReason::CONFLICT);
         removeConflicts(tx);
         ClearPrioritisation(tx.GetHash());
     }
