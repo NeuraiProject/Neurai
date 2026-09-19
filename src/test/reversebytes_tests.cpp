@@ -1494,3 +1494,128 @@ BOOST_AUTO_TEST_CASE(combined_stack_limits)
 }
 
 BOOST_AUTO_TEST_SUITE_END()
+
+BOOST_FIXTURE_TEST_SUITE(push_witness_limits_review_tests, BasicTestingSetup)
+
+BOOST_AUTO_TEST_CASE(push_encodings_and_truncation)
+{
+    for (size_t size = 1; size <= 75; ++size) {
+        const ReviewBytes data(size, 0x42);
+        CScript script;
+        script.push_back(size);
+        script.insert(script.end(), data.begin(), data.end());
+        script << data << OP_EQUAL;
+        ReviewWrappedScript(script, REVIEW_BYTES_FLAGS | SCRIPT_VERIFY_MINIMALDATA, SCRIPT_ERR_OK);
+    }
+    for (size_t size : {0, 1, 75, 76, 255, 256, 520}) {
+        for (auto opcode : {OP_PUSHDATA1, OP_PUSHDATA2, OP_PUSHDATA4}) {
+            CScript script;
+            script.push_back(opcode);
+            const size_t width = opcode == OP_PUSHDATA1 ? 1 : (opcode == OP_PUSHDATA2 ? 2 : 4);
+            if (width == 1 && size > 255) continue;
+            for (size_t i = 0; i < width; ++i) script.push_back((size >> (8 * i)) & 0xff);
+            script.insert(script.end(), size, 0x42);
+            script << OP_DROP << OP_TRUE;
+            const bool minimal = (opcode == OP_PUSHDATA1 && size >= 76 && size <= 255) ||
+                                 (opcode == OP_PUSHDATA2 && size >= 256);
+            ReviewWrappedScript(script, REVIEW_BYTES_FLAGS, SCRIPT_ERR_OK);
+            ReviewWrappedScript(script, REVIEW_BYTES_FLAGS | SCRIPT_VERIFY_MINIMALDATA,
+                                minimal ? SCRIPT_ERR_OK : SCRIPT_ERR_MINIMALDATA);
+        }
+    }
+    for (const auto& hex : {"01", "0242", "4c", "4c02ff", "4d", "4d01", "4d020042",
+                            "4e", "4e010000", "4e0200000042", "4effffffff"}) {
+        const auto raw = ParseHex(hex);
+        const CScript truncated(raw.begin(), raw.end());
+        ReviewWrappedScript(truncated, REVIEW_BYTES_FLAGS, SCRIPT_ERR_BAD_OPCODE);
+        CScript skipped = CScript() << OP_0 << OP_IF;
+        skipped += truncated;
+        // Leave truncated data at EOF, so ENDIF cannot accidentally complete a push.
+        ReviewWrappedScript(skipped, REVIEW_BYTES_FLAGS, SCRIPT_ERR_BAD_OPCODE);
+    }
+    for (size_t size : {520, 521, 3072, 3073}) {
+        for (bool wide : {false, true}) {
+            const auto flags = REVIEW_BYTES_FLAGS | (wide ? SCRIPT_VERIFY_CHECKSIGFROMSTACK : script_verify_flags{});
+            const auto error = size <= (wide ? 3072U : 520U) ? SCRIPT_ERR_OK : SCRIPT_ERR_PUSH_SIZE;
+            ReviewWrappedScript(CScript() << ReviewBytes(size, 0x42) << OP_DROP << OP_TRUE, flags, error);
+            ReviewWrappedScript(CScript() << OP_0 << OP_IF << ReviewBytes(size, 0x42) << OP_ENDIF << OP_TRUE,
+                                flags, error);
+        }
+    }
+}
+
+BOOST_AUTO_TEST_CASE(script_and_opcode_boundaries)
+{
+    for (size_t extra : {0, 1}) {
+        CScript script = CScript() << OP_0 << OP_IF;
+        for (int i = 0; i < 19; ++i) script << ReviewBytes(520, 0x42);
+        script << ReviewBytes(58 + extra, 0x42) << OP_ENDIF << OP_TRUE;
+        BOOST_CHECK_EQUAL(script.size(), 10000 + extra);
+        ReviewWrappedScript(script, REVIEW_BYTES_FLAGS, extra ? SCRIPT_ERR_SCRIPT_SIZE : SCRIPT_ERR_OK);
+    }
+    for (int count : {201, 202}) {
+        CScript script;
+        for (int i = 0; i < count; ++i) script << OP_NOP;
+        script << OP_TRUE;
+        ReviewWrappedScript(script, REVIEW_BYTES_FLAGS, count == 201 ? SCRIPT_ERR_OK : SCRIPT_ERR_OP_COUNT);
+        script = CScript() << OP_0 << OP_IF;
+        for (int i = 0; i < count - 2; ++i) script << OP_NOP;
+        script << OP_ENDIF << OP_TRUE;
+        ReviewWrappedScript(script, REVIEW_BYTES_FLAGS, count == 201 ? SCRIPT_ERR_OK : SCRIPT_ERR_OP_COUNT);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(complete_witness_argument_limits)
+{
+    const auto verify = [](const CScript& script, const std::vector<ReviewBytes>& args,
+                           script_verify_flags flags, ScriptError expected) {
+        for (int version : {0, 1}) {
+            BOOST_TEST_CONTEXT("version=" << version << " argc=" << args.size()) {
+                CScriptWitness witness;
+                ReviewBytes digest(32);
+                if (version == 0) {
+                    CSHA256().Write(script.data(), script.size()).Finalize(digest.data());
+                } else {
+                    const auto commitment = GetAuthScriptCommitment(0, nullptr, script);
+                    digest.assign(commitment.begin(), commitment.end());
+                    witness.stack.push_back(ReviewBytes{0});
+                }
+                witness.stack.insert(witness.stack.end(), args.begin(), args.end());
+                witness.stack.emplace_back(script.begin(), script.end());
+                const CScript spk = CScript() << (version == 0 ? OP_0 : OP_1) << digest;
+                ScriptError error;
+                const bool ok = VerifyScript(CScript(), spk, &witness, flags, BaseSignatureChecker(), &error);
+                BOOST_CHECK_EQUAL(ok, expected == SCRIPT_ERR_OK);
+                BOOST_CHECK_EQUAL(error, expected);
+            }
+        }
+    };
+    for (auto gate : {script_verify_flags{}, script_verify_flags{SCRIPT_VERIFY_CHECKSIGFROMSTACK},
+                     script_verify_flags{SCRIPT_VERIFY_MERKLE_INCLUSION}, script_verify_flags{SCRIPT_VERIFY_CHECKSIGADD}}) {
+        const auto flags = REVIEW_BYTES_FLAGS | gate;
+        const size_t cap = gate == script_verify_flags{} ? 520 : 3072;
+        verify(CScript() << OP_DROP << OP_TRUE, {ReviewBytes(cap, 1)}, flags, SCRIPT_ERR_OK);
+        verify(CScript() << OP_DROP << OP_TRUE, {ReviewBytes(cap + 1, 1)}, flags, SCRIPT_ERR_PUSH_SIZE);
+        if (cap == 3072) {
+            for (size_t excess : {0, 1}) {
+                std::vector<ReviewBytes> args(85, ReviewBytes(3072, 1));
+                args.emplace_back(1024 + excess, 1);
+                CScript script = CScript() << OP_NOP;
+                for (int i = 0; i < 43; ++i) script << OP_2DROP;
+                script << OP_TRUE;
+                verify(script, args, flags, excess ? SCRIPT_ERR_STACK_SIZE : SCRIPT_ERR_OK);
+            }
+        }
+    }
+    for (size_t count : {1000, 1001}) {
+        verify(CScript() << OP_NOP << OP_RETURN, std::vector<ReviewBytes>(count, ReviewBytes{1}),
+               REVIEW_BYTES_FLAGS, count == 1000 ? SCRIPT_ERR_OP_RETURN : SCRIPT_ERR_STACK_SIZE);
+    }
+    // The historical element-count check occurs after executing an opcode.
+    verify(CScript() << OP_DROP << OP_RETURN, std::vector<ReviewBytes>(1001, ReviewBytes{1}),
+           REVIEW_BYTES_FLAGS, SCRIPT_ERR_OP_RETURN);
+    verify(CScript() << OP_TRUE, {ReviewBytes{1}}, REVIEW_BYTES_FLAGS, SCRIPT_ERR_EVAL_FALSE);
+    verify(CScript() << OP_DROP << OP_TRUE, {ReviewBytes{1}}, REVIEW_BYTES_FLAGS, SCRIPT_ERR_OK);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
