@@ -3,6 +3,9 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "crypto/sha256.h"
+#include "chain.h"
+#include "consensus/consensus.h"
+#include "consensus/tx_verify.h"
 #include "script/standard.h"
 #include "utilstrencodings.h"
 #include "script/interpreter.h"
@@ -245,7 +248,8 @@ ReviewBytes ReviewPayload(size_t size)
 
 // Legacy bare script, P2WSH and NoAuth v1. No signature mock is involved.
 // v2/v3 are destinations/data here, never arbitrary-script execution contexts.
-void ReviewWrappedScript(const CScript& script, script_verify_flags flags, ScriptError expected)
+void ReviewWrappedScript(const CScript& script, script_verify_flags flags, ScriptError expected,
+                         const BaseSignatureChecker& checker = BaseSignatureChecker())
 {
     for (int wrapper = 0; wrapper < 3; ++wrapper) {
         BOOST_TEST_CONTEXT("wrapper=" << wrapper) {
@@ -262,7 +266,7 @@ void ReviewWrappedScript(const CScript& script, script_verify_flags flags, Scrip
                 witness.stack = {ReviewBytes{0x00}, ReviewBytes(script.begin(), script.end())};
             }
             ScriptError error = SCRIPT_ERR_UNKNOWN_ERROR;
-            bool ok = VerifyScript(CScript(), spk, &witness, flags, BaseSignatureChecker(), &error);
+            bool ok = VerifyScript(CScript(), spk, &witness, flags, checker, &error);
             BOOST_CHECK_EQUAL(ok, expected == SCRIPT_ERR_OK);
             BOOST_CHECK_EQUAL(error, expected);
         }
@@ -1191,6 +1195,154 @@ BOOST_AUTO_TEST_CASE(numeric_encoding_and_historical_rules)
     }
     ReviewWrappedScript(CScript() << max << max << OP_NUMEQUALVERIFY << OP_TRUE, wide, SCRIPT_ERR_OK);
     ReviewWrappedScript(CScript() << max << min << OP_NUMEQUALVERIFY << OP_TRUE, wide, SCRIPT_ERR_NUMEQUALVERIFY);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+BOOST_FIXTURE_TEST_SUITE(timelock_opcode_review_tests, BasicTestingSetup)
+
+BOOST_AUTO_TEST_CASE(real_transaction_locktime_and_sequence)
+{
+    struct Vector {
+        opcodetype opcode;
+        int64_t operand;
+        uint32_t locktime, sequence;
+        int32_t version;
+        ScriptError error;
+    };
+    const Vector vectors[] = {
+        {OP_CHECKLOCKTIMEVERIFY, 0, 0, 0, 2, SCRIPT_ERR_OK},
+        {OP_CHECKLOCKTIMEVERIFY, 100, 100, 0xfffffffe, 2, SCRIPT_ERR_OK},
+        {OP_CHECKLOCKTIMEVERIFY, 100, 101, 0xfffffffe, 2, SCRIPT_ERR_OK},
+        {OP_CHECKLOCKTIMEVERIFY, 100, 99, 0xfffffffe, 2, SCRIPT_ERR_UNSATISFIED_LOCKTIME},
+        {OP_CHECKLOCKTIMEVERIFY, 100, 100, 0xffffffff, 2, SCRIPT_ERR_UNSATISFIED_LOCKTIME},
+        {OP_CHECKLOCKTIMEVERIFY, 499999999, 500000000, 0, 2, SCRIPT_ERR_UNSATISFIED_LOCKTIME},
+        {OP_CHECKLOCKTIMEVERIFY, 500000000, 499999999, 0, 2, SCRIPT_ERR_UNSATISFIED_LOCKTIME},
+        {OP_CHECKLOCKTIMEVERIFY, 500000000, 500000000, 0, 1, SCRIPT_ERR_OK},
+        {OP_CHECKLOCKTIMEVERIFY, 0xffffffffLL, 0xffffffff, 0, 2, SCRIPT_ERR_OK},
+        {OP_CHECKLOCKTIMEVERIFY, 0x100000000LL, 0xffffffff, 0, 2, SCRIPT_ERR_UNSATISFIED_LOCKTIME},
+        {OP_CHECKLOCKTIMEVERIFY, -1, 100, 0, 2, SCRIPT_ERR_NEGATIVE_LOCKTIME},
+        {OP_CHECKSEQUENCEVERIFY, 0, 0, 0, 2, SCRIPT_ERR_OK},
+        {OP_CHECKSEQUENCEVERIFY, 10, 0, 10, 2, SCRIPT_ERR_OK},
+        {OP_CHECKSEQUENCEVERIFY, 10, 0, 11, 2, SCRIPT_ERR_OK},
+        {OP_CHECKSEQUENCEVERIFY, 10, 0, 9, 2, SCRIPT_ERR_UNSATISFIED_LOCKTIME},
+        {OP_CHECKSEQUENCEVERIFY, 0, 0, 10, 1, SCRIPT_ERR_UNSATISFIED_LOCKTIME},
+        {OP_CHECKSEQUENCEVERIFY, 0, 0, 0x80000000, 2, SCRIPT_ERR_UNSATISFIED_LOCKTIME},
+        {OP_CHECKSEQUENCEVERIFY, 0x80000000LL, 0, 0xffffffff, 1, SCRIPT_ERR_OK},
+        {OP_CHECKSEQUENCEVERIFY, 0xffffffffLL, 0, 0, 1, SCRIPT_ERR_OK},
+        {OP_CHECKSEQUENCEVERIFY, 0x400001, 0, 0x400001, 2, SCRIPT_ERR_OK},
+        {OP_CHECKSEQUENCEVERIFY, 0x400001, 0, 0x400002, 2, SCRIPT_ERR_OK},
+        {OP_CHECKSEQUENCEVERIFY, 0x400002, 0, 0x400001, 2, SCRIPT_ERR_UNSATISFIED_LOCKTIME},
+        {OP_CHECKSEQUENCEVERIFY, 1, 0, 0x400001, 2, SCRIPT_ERR_UNSATISFIED_LOCKTIME},
+        {OP_CHECKSEQUENCEVERIFY, 0x400001, 0, 1, 2, SCRIPT_ERR_UNSATISFIED_LOCKTIME},
+        {OP_CHECKSEQUENCEVERIFY, 0xffff, 0, 0xffff, 2, SCRIPT_ERR_OK},
+        {OP_CHECKSEQUENCEVERIFY, 0x10001, 0, 1, 2, SCRIPT_ERR_OK},
+        {OP_CHECKSEQUENCEVERIFY, 1, 0, 0x10001, 2, SCRIPT_ERR_OK},
+        {OP_CHECKSEQUENCEVERIFY, 0x100000001LL, 0, 1, 2, SCRIPT_ERR_OK},
+        {OP_CHECKSEQUENCEVERIFY, -1, 0, 0, 2, SCRIPT_ERR_NEGATIVE_LOCKTIME},
+    };
+    for (const auto& v : vectors) {
+        BOOST_TEST_CONTEXT("opcode=" << int(v.opcode) << " operand=" << v.operand
+                           << " locktime=" << v.locktime << " sequence=" << v.sequence) {
+            CMutableTransaction mtx;
+            mtx.nVersion = v.version;
+            mtx.nLockTime = v.locktime;
+            mtx.vin.resize(1);
+            mtx.vin[0].nSequence = v.sequence;
+            const CTransaction tx(mtx);
+            TransactionSignatureChecker checker(&tx, 0, 1000);
+            for (bool wide : {false, true}) {
+                const auto flags = REVIEW_BYTES_FLAGS | SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY |
+                    SCRIPT_VERIFY_CHECKSEQUENCEVERIFY | SCRIPT_VERIFY_MINIMALDATA |
+                    (wide ? SCRIPT_VERIFY_64BIT_INTEGERS : script_verify_flags{});
+                ReviewWrappedScript(CScript() << v.operand << v.opcode << OP_DROP << OP_TRUE,
+                                    flags, v.error, checker);
+            }
+        }
+    }
+}
+
+BOOST_AUTO_TEST_CASE(flags_encoding_and_unexecuted_branches)
+{
+    for (auto opcode : {OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY}) {
+        const auto active = REVIEW_BYTES_FLAGS | SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY |
+                            SCRIPT_VERIFY_CHECKSEQUENCEVERIFY;
+        // Disabled opcodes are NOPs; policy can discourage their executed use.
+        ReviewWrappedScript(CScript() << opcode << OP_TRUE, REVIEW_BYTES_FLAGS, SCRIPT_ERR_OK);
+        ReviewWrappedScript(CScript() << opcode << OP_TRUE,
+                            REVIEW_BYTES_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS,
+                            SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+        ReviewWrappedScript(CScript() << opcode << OP_TRUE, active, SCRIPT_ERR_INVALID_STACK_OPERATION);
+        for (auto flags : {active, REVIEW_BYTES_FLAGS | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS}) {
+            ReviewWrappedScript(CScript() << OP_0 << OP_IF << opcode << OP_ENDIF << OP_TRUE,
+                                flags, SCRIPT_ERR_OK);
+        }
+        for (bool wide : {false, true}) {
+            const auto flags = active | (wide ? SCRIPT_VERIFY_64BIT_INTEGERS : script_verify_flags{});
+            ReviewWrappedScript(CScript() << int64_t(1LL << 39) << opcode,
+                                flags, SCRIPT_ERR_UNKNOWN_ERROR); // Six bytes, even with 64-bit arithmetic.
+            ReviewWrappedScript(CScript() << ParseHex("0000") << opcode,
+                                flags | SCRIPT_VERIFY_MINIMALDATA, SCRIPT_ERR_UNKNOWN_ERROR);
+        }
+    }
+}
+
+BOOST_AUTO_TEST_CASE(finality_and_relative_age_boundaries)
+{
+    CMutableTransaction mtx;
+    mtx.nVersion = 2;
+    mtx.vin.resize(1);
+    mtx.vin[0].nSequence = 10;
+    mtx.nLockTime = 100;
+    BOOST_CHECK(!IsFinalTx(CTransaction(mtx), 100, 600000000));
+    BOOST_CHECK(IsFinalTx(CTransaction(mtx), 101, 600000000));
+    mtx.nLockTime = 500000000;
+    BOOST_CHECK(!IsFinalTx(CTransaction(mtx), 101, 500000000));
+    BOOST_CHECK(IsFinalTx(CTransaction(mtx), 101, 500000001));
+    mtx.vin[0].nSequence = 0xffffffff;
+    BOOST_CHECK(IsFinalTx(CTransaction(mtx), 1, 1));
+    mtx.nLockTime = 0;
+    mtx.vin[0].nSequence = 10;
+    BOOST_CHECK(IsFinalTx(CTransaction(mtx), 1, 1));
+
+    CBlockIndex history[12];
+    for (int i = 0; i < 12; ++i) {
+        history[i].nHeight = i;
+        history[i].nTime = 600000000 + i * 100;
+        if (i) history[i].pprev = &history[i - 1];
+        history[i].BuildSkip();
+    }
+    std::vector<int> heights{6};
+    auto locks = CalculateSequenceLocks(CTransaction(mtx), LOCKTIME_VERIFY_SEQUENCE, &heights, history[11]);
+    BOOST_CHECK_EQUAL(locks.first, 15); // Coin height 6 plus 10, minus one.
+    BOOST_CHECK_EQUAL(locks.second, -1);
+    CBlockIndex parent, candidate;
+    parent.nTime = 600002000;
+    candidate.pprev = &parent;
+    candidate.nHeight = 15;
+    BOOST_CHECK(!EvaluateSequenceLocks(candidate, locks));
+    candidate.nHeight = 16;
+    BOOST_CHECK(EvaluateSequenceLocks(candidate, locks));
+
+    mtx.vin[0].nSequence = 0x400002; // Two units of 512 seconds.
+    locks = CalculateSequenceLocks(CTransaction(mtx), LOCKTIME_VERIFY_SEQUENCE, &heights, history[11]);
+    BOOST_CHECK_EQUAL(locks.first, -1);
+    // MTP of heights 0..5 is timestamp at index 3: 600000300.
+    BOOST_CHECK_EQUAL(locks.second, 600001323);
+    parent.nTime = 600001323;
+    BOOST_CHECK(!EvaluateSequenceLocks(candidate, locks));
+    parent.nTime = 600001324;
+    BOOST_CHECK(EvaluateSequenceLocks(candidate, locks));
+
+    for (int mode = 0; mode < 3; ++mode) {
+        mtx.nVersion = mode == 0 ? 1 : 2;
+        mtx.vin[0].nSequence = mode == 1 ? 0x80000001 : 1;
+        heights[0] = 6;
+        locks = CalculateSequenceLocks(CTransaction(mtx), mode == 2 ? 0 : LOCKTIME_VERIFY_SEQUENCE,
+                                       &heights, history[11]);
+        BOOST_CHECK_EQUAL(locks.first, -1);
+        BOOST_CHECK_EQUAL(locks.second, -1);
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()
