@@ -28,6 +28,7 @@
 #include "script/sign.h"
 #include "script/standard.h"
 #include "test/test_neurai.h"
+#include "test/data/authscript_sighash_review_vectors.h"
 
 #include <boost/test/unit_test.hpp>
 
@@ -954,6 +955,69 @@ BOOST_AUTO_TEST_CASE(v1_multisig_key_family_matching)
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+
+BOOST_AUTO_TEST_CASE(witness_sighash_modes_and_reference_vectors)
+{
+    const auto hashBytes = [](int start) {
+        uint256 result;
+        for (int i = 0; i < 32; ++i) result.begin()[i] = start + i;
+        return result;
+    };
+    const auto codeBytes = ParseHex("51ab03ab01027551");
+    const CScript code(codeBytes.begin(), codeBytes.end());
+    for (const auto& v : AUTH_SIGHASH_REVIEW_VECTORS) {
+        BOOST_TEST_CONTEXT("version=" << v.version << " refs=" << v.refs << " input=" << v.input
+                           << " type=" << v.hashType << " domain=" << v.domain) {
+            CMutableTransaction tx;
+            tx.nVersion = v.version;
+            tx.nLockTime = 12345;
+            tx.vin.emplace_back(COutPoint(hashBytes(0), 7), CScript(), 0xfffffffd);
+            tx.vin.emplace_back(COutPoint(hashBytes(32), 11), CScript(), 0xfffffffc);
+            tx.vin[0].scriptWitness.stack = {{1}}; // Populate the precomputed witness cache.
+            tx.vout.emplace_back(111111, CScript() << OP_1 << ToByteVector(hashBytes(0)));
+            tx.vout.emplace_back(222222, CScript() << OP_2 << ToByteVector(hashBytes(32)));
+            if (v.refs) {
+                tx.vrefin.emplace_back(hashBytes(64), 3);
+                tx.vrefin.emplace_back(hashBytes(96), 9);
+            }
+            const SigVersion sigversion = v.domain == 0 ? SIGVERSION_WITNESS_V0 :
+                v.domain < 4 ? SIGVERSION_AUTHSCRIPT : SIGVERSION_AUTHSCRIPT_STRICT;
+            const uint8_t auth = v.domain < 4 ? (v.domain ? v.domain - 1 : 0) : v.domain - 3;
+            const CTransaction ctx(tx);
+            const PrecomputedTransactionData cache(ctx);
+            const auto hash = SignatureHash(code, ctx, v.input, v.hashType, 987654321, sigversion, nullptr, auth);
+            BOOST_CHECK_EQUAL(HexStr(hash.begin(), hash.end()), v.hash);
+            BOOST_CHECK(hash == SignatureHash(code, ctx, v.input, v.hashType, 987654321, sigversion, &cache, auth));
+            const auto changedHash = [&](const CMutableTransaction& changed) {
+                return SignatureHash(code, CTransaction(changed), v.input, v.hashType, 987654321, sigversion, nullptr, auth);
+            };
+            auto changed = tx;
+            changed.vin[1 - v.input].prevout.n++;
+            BOOST_CHECK_EQUAL(changedHash(changed) == hash, (v.hashType & SIGHASH_ANYONECANPAY) != 0);
+            changed = tx;
+            changed.vin[1 - v.input].nSequence--;
+            BOOST_CHECK_EQUAL(changedHash(changed) == hash,
+                (v.hashType & SIGHASH_ANYONECANPAY) != 0 || (v.hashType & 31) != SIGHASH_ALL);
+            changed = tx;
+            changed.vout[1 - v.input].nValue++;
+            BOOST_CHECK_EQUAL(changedHash(changed) == hash, (v.hashType & 31) != SIGHASH_ALL);
+            changed = tx;
+            changed.vout[v.input].nValue++;
+            BOOST_CHECK_EQUAL(changedHash(changed) == hash, (v.hashType & 31) == SIGHASH_NONE);
+            changed = tx;
+            changed.nLockTime++;
+            BOOST_CHECK(changedHash(changed) != hash);
+            BOOST_CHECK(SignatureHash(code, ctx, v.input, v.hashType, 987654322, sigversion, nullptr, auth) != hash);
+            if (v.version == 3) {
+                changed = tx;
+                if (v.refs) std::swap(changed.vrefin[0], changed.vrefin[1]);
+                else changed.vrefin.emplace_back(hashBytes(64), 3);
+                BOOST_CHECK(changedHash(changed) != hash); // Even NONE|ANYONECANPAY binds references.
             }
         }
     }

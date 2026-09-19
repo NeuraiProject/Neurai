@@ -43,6 +43,7 @@ NEURAI_TESTS =\
   test/assets/verifier_string_tests.cpp \
   test/arith_uint256_tests.cpp \
   test/scriptnum10.h \
+  test/data/authscript_sighash_review_vectors.h \
   test/addrman_tests.cpp \
   test/amount_tests.cpp \
   test/allocator_tests.cpp \
