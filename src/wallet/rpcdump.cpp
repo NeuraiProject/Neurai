@@ -21,6 +21,7 @@
 #include "rpcwallet.h"
 
 #include <fstream>
+#include <set>
 #include <stdint.h>
 
 #include <boost/algorithm/string.hpp>
@@ -1079,9 +1080,37 @@ UniValue ProcessImport(CWallet * const pwallet, const UniValue& data, const int6
                 throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid P2SH address / script");
             }
 
+            const CTxDestination redeem_dest = CScriptID(redeemScript);
+            const CScript redeemDestination = GetScriptForDestination(redeem_dest);
+            if (script != redeemDestination) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Redeem script does not match scriptPubKey");
+            }
+
+            // Reject invalid/repeated keys before registering any script. Keep
+            // the existing duplicate-key error, without partially importing
+            // the scripts (or earlier keys in the same request).
+            std::vector<CKey> importKeys;
+            std::set<CKeyID> importKeyIds;
+            for (size_t i = 0; i < keys.size(); ++i) {
+                CNeuraiSecret secret;
+                if (!secret.SetString(keys[i].get_str())) {
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid private key encoding");
+                }
+                CKey key = secret.GetKey();
+                if (!key.IsValid()) {
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Private key outside allowed range");
+                }
+                const CKeyID id = key.GetPubKey().GetID();
+                if (pwallet->HaveKey(id) || !importKeyIds.insert(id).second) {
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Already have this key");
+                }
+                importKeys.push_back(key);
+            }
+
             pwallet->MarkDirty();
 
-            if (!pwallet->AddWatchOnly(redeemScript, timestamp)) {
+            if (::IsMine(*pwallet, redeemScript) != ISMINE_SPENDABLE &&
+                !pwallet->AddWatchOnly(redeemScript, timestamp)) {
                 throw JSONRPCError(RPC_WALLET_ERROR, "Error adding address to wallet");
             }
 
@@ -1089,16 +1118,13 @@ UniValue ProcessImport(CWallet * const pwallet, const UniValue& data, const int6
                 throw JSONRPCError(RPC_WALLET_ERROR, "Error adding p2sh redeemScript to wallet");
             }
 
-            CTxDestination redeem_dest = CScriptID(redeemScript);
-            CScript redeemDestination = GetScriptForDestination(redeem_dest);
-
-            if (::IsMine(*pwallet, redeemDestination) == ISMINE_SPENDABLE) {
-                throw JSONRPCError(RPC_WALLET_ERROR, "The wallet already contains the private key for this address or script");
-            }
-
             pwallet->MarkDirty();
 
-            if (!pwallet->AddWatchOnly(redeemDestination, timestamp)) {
+            // Adding the redeemScript can make this output spendable with
+            // keys already present. Complete the import instead of rejecting
+            // it after the script has been persisted.
+            if (::IsMine(*pwallet, redeemDestination) != ISMINE_SPENDABLE &&
+                !pwallet->AddWatchOnly(redeemDestination, timestamp)) {
                 throw JSONRPCError(RPC_WALLET_ERROR, "Error adding address to wallet");
             }
 
@@ -1109,22 +1135,7 @@ UniValue ProcessImport(CWallet * const pwallet, const UniValue& data, const int6
 
             // Import private keys.
             if (keys.size()) {
-                for (size_t i = 0; i < keys.size(); i++) {
-                    const std::string& privkey = keys[i].get_str();
-
-                    CNeuraiSecret vchSecret;
-                    bool fGood = vchSecret.SetString(privkey);
-
-                    if (!fGood) {
-                        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid private key encoding");
-                    }
-
-                    CKey key = vchSecret.GetKey();
-
-                    if (!key.IsValid()) {
-                        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Private key outside allowed range");
-                    }
-
+                for (const CKey& key : importKeys) {
                     CPubKey pubkey = key.GetPubKey();
                     assert(key.VerifyPubKey(pubkey));
 
@@ -1135,10 +1146,6 @@ UniValue ProcessImport(CWallet * const pwallet, const UniValue& data, const int6
                     }
                     pwallet->MarkDirty();
                     pwallet->SetAddressBook(pubkey_dest, label, "receive");
-
-                    if (pwallet->HaveKey(vchAddress)) {
-                        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Already have this key");
-                    }
 
                     pwallet->mapKeyMetadata[vchAddress].nCreateTime = timestamp;
 

@@ -873,4 +873,51 @@ BOOST_AUTO_TEST_CASE(v1_authenticated_contracts_native_and_p2sh)
     }
 }
 
+BOOST_AUTO_TEST_CASE(v1_multisig_key_family_matching)
+{
+    const CKey ec1 = MakeEcdsaKey(), ec2 = MakeEcdsaKey();
+    const CKey pq1 = MakePQKey(), pq2 = MakePQKey();
+    const std::vector<std::pair<CKey, CKey>> pairs{{ec1, ec2}, {pq1, pq2}, {ec1, pq1}, {pq1, ec1}};
+    const auto flags = STRICT_FLAGS | SCRIPT_VERIFY_CHECKSIGFROMSTACK | SCRIPT_VERIFY_NULLDUMMY;
+    for (const auto& keys : pairs) {
+        CBasicKeyStore keystore;
+        keystore.AddKeyPubKey(keys.first, keys.first.GetPubKey());
+        keystore.AddKeyPubKey(keys.second, keys.second.GetPubKey());
+        for (auto opcode : {OP_CHECKMULTISIG, OP_CHECKMULTISIGVERIFY}) {
+            for (int required : {1, 2}) {
+                CScript script = CScript() << required << ToByteVector(keys.first.GetPubKey())
+                                           << ToByteVector(keys.second.GetPubKey()) << OP_2 << opcode;
+                if (opcode == OP_CHECKMULTISIGVERIFY) script << OP_TRUE;
+                const auto commitment = GetAuthScriptCommitment(0, nullptr, script);
+                const CScript spent = CScript() << OP_1 << ToByteVector(commitment);
+                for (int firstSigner = 0; firstSigner < (required == 1 ? 2 : 1); ++firstSigner) {
+                    BOOST_TEST_CONTEXT("firstPQ=" << keys.first.IsPQ() << " secondPQ=" << keys.second.IsPQ()
+                                       << " required=" << required << " signer=" << firstSigner << " opcode=" << int(opcode)) {
+                        auto tx = MakeSpendTx();
+                        const CTransaction unsignedTx(tx);
+                        TransactionSignatureCreator creator(&keystore, &unsignedTx, 0, kAmount, SIGHASH_ALL);
+                        std::vector<std::vector<unsigned char>> signatures;
+                        for (int i = firstSigner; i < firstSigner + required; ++i) {
+                            const auto& key = i == 0 ? keys.first : keys.second;
+                            std::vector<unsigned char> signature;
+                            BOOST_REQUIRE(creator.CreateSig(signature, key.GetPubKey().GetID(), script,
+                                                            SIGVERSION_AUTHSCRIPT, 0));
+                            BOOST_REQUIRE(TransactionSignatureChecker(&unsignedTx, 0, kAmount).CheckSig(
+                                signature, ToByteVector(key.GetPubKey()), script, SIGVERSION_AUTHSCRIPT, 0));
+                            signatures.push_back(signature);
+                        }
+                        tx.vin[0].scriptWitness.stack = {{0}, {}}; // NoAuth and NULLDUMMY.
+                        for (const auto& signature : signatures) tx.vin[0].scriptWitness.stack.push_back(signature);
+                        tx.vin[0].scriptWitness.stack.push_back(ToByteVector(script));
+                        ScriptError error = SCRIPT_ERR_UNKNOWN_ERROR;
+                        const bool verified = VerifyInput(tx, spent, flags, &error);
+                        BOOST_CHECK_MESSAGE(verified, ScriptErrorString(error));
+                        BOOST_CHECK_EQUAL(error, SCRIPT_ERR_OK);
+                    }
+                }
+            }
+        }
+    }
+}
+
 BOOST_AUTO_TEST_SUITE_END()

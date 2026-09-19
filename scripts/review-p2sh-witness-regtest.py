@@ -26,12 +26,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bindir', type=Path, default=Path('/root/Neurai/src'))
     parser.add_argument('--keys-first', action='store_true', help='Import keys before redeem scripts to exercise owned P2SH registration')
+    parser.add_argument('--importmulti', action='store_true', help='Register redeem scripts through importmulti')
     args = parser.parse_args()
     directory = Path(tempfile.mkdtemp(prefix='p2sh-witness-regtest-'))
     files = [Path(__file__), *[Path(__file__).with_name(f) for f in (
         'review-arithmetic-regtest.py', 'review-introspection-regtest.py',
         'review-csfs-block-limit-regtest.py', 'generate_authscript_vectors.py')]]
-    report = {'keys_before_scripts': args.keys_first, 'results': [], 'binary_sha256': h.digest_file(args.bindir / 'neuraid'),
+    report = {'import_rpc': 'importmulti' if args.importmulti else 'importaddress', 'keys_before_scripts': args.keys_first, 'results': [], 'binary_sha256': h.digest_file(args.bindir / 'neuraid'),
               'source_sha256': {p.name: h.digest_file(p) for p in files}}
     nodes, validators = [], []
 
@@ -66,7 +67,13 @@ def main():
                 source.rpc('importprivkey', secret, '', False)
         outputs = []
         for redeem in redeems:
-            source.rpc('importaddress', redeem.hex(), '', False, True)
+            if args.importmulti:
+                address = source.rpc('decodescript', redeem.hex())['p2sh']
+                result = source.rpc('importmulti', [{'scriptPubKey': {'address': address},
+                    'redeemscript': redeem.hex(), 'timestamp': 'now', 'label': 'review'}], {'rescan': False})
+                check(f'importmulti/v{len(outputs)}', result[0].get('success') is True, result)
+            else:
+                source.rpc('importaddress', redeem.hex(), '', False, True)
             digest = hashlib.new('ripemd160', a.sha256(redeem)).digest()
             outputs.append(b'\xa9\x14' + digest + b'\x87')
         if not args.keys_first:
