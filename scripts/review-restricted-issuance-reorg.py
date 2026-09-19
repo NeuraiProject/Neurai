@@ -16,10 +16,11 @@ def main():
     parser.add_argument('--bindir', type=Path, default=Path('/root/Neurai/src'))
     parser.add_argument('--target', choices=['pq', 'ecdsa', 'authscript', 'legacy'], default='ecdsa')
     parser.add_argument('--coin-only-child', action='store_true', help='Reproduce the original ordinary-coin descendant')
+    parser.add_argument('--disconnect-fee', action='store_true', help='Disconnect the original non-coinbase fee funding too')
     parser.add_argument('--competing', action='store_true')
     args = parser.parse_args()
     directory = Path(tempfile.mkdtemp(prefix='restricted-issuance-reorg-'))
-    report = {'results': [], 'target': args.target, 'competing': args.competing, 'coin_only_child': args.coin_only_child,
+    report = {'results': [], 'disconnect_fee': args.disconnect_fee, 'target': args.target, 'competing': args.competing, 'coin_only_child': args.coin_only_child,
               'binary_sha256': m.digest_file(args.bindir / 'neuraid'),
               'source_sha256': m.digest_file(Path(__file__))}
     nodes = []
@@ -57,16 +58,27 @@ def main():
         confirm('root', source.rpc('issue', 'REORGROOT', 5, holder, holder))
         confirm('holder_tag', source.rpc('addtagtoaddress', '#REORGTAG', holder, holder))
         confirm('target_tag', source.rpc('addtagtoaddress', '#REORGTAG', target, holder))
+        fee_coin = None
+        fee_block = None
+        if args.disconnect_fee:
+            fee_address = source.rpc('getnewaddress')
+            fee_tx = confirm('fee_funding', source.rpc('sendtoaddress', fee_address, 20))
+            fee_prefix = source.rpc('validateaddress', fee_address)['scriptPubKey']
+            fee_out = next(o for o in fee_tx['vout'] if o['scriptPubKey']['hex'] == fee_prefix)
+            fee_coin = {'txid': fee_tx['txid'], 'vout': fee_out['n'], 'amount': 20}
+            # Keep issuance funding from selecting the coin under test.
+            source.rpc('lockunspent', False, [{'txid': fee_coin['txid'], 'vout': fee_coin['vout']}])
+            fee_block = source.rpc('getbestblockhash')
         issued = confirm('restricted', source.rpc('issuerestrictedasset', '$REORGROOT', 5, '#REORGTAG', holder, holder))
         prefix = source.rpc('validateaddress', holder)['scriptPubKey']
         asset = next(o for o in issued['vout'] if o['scriptPubKey']['hex'].startswith(prefix) and
                      b'$REORGROOT'.hex() in o['scriptPubKey']['hex'])
-        tagblock = source.rpc('getbestblockhash')
-        tagheight = source.rpc('getblockcount')
+        tagblock = fee_block or source.rpc('getbestblockhash')
+        tagheight = source.rpc('getblockheader', tagblock)['height']
         # Rewinding this unrelated block must preserve a valid package, including
         # a restricted child whose asset input exists only in the mempool.
         unrelated = source.rpc('generatetoaddress', 1, miner)[0]
-        coin = next(o for o in source.rpc('listunspent', 100) if o['spendable'] and o['amount'] > 3)
+        coin = fee_coin or next(o for o in source.rpc('listunspent', 100) if o['spendable'] and o['amount'] > 3)
         raw = source.rpc('createrawtransaction', [{'txid': issued['txid'], 'vout': asset['n']},
                          {'txid': coin['txid'], 'vout': coin['vout']}],
                          [{miner: round(coin['amount'] - 1, 8)}, {target: {'transfer': {'$REORGROOT': 5}}}], 0)
@@ -107,7 +119,7 @@ def main():
                 result = rival.rpc('submitblock', source.rpc('getblock', source.rpc('getblockhash', height), False))
                 if result is not None:
                     raise RuntimeError(f'rival/{height}: {result}')
-            fork = rival.rpc('generatetoaddress', 3, legacy)
+            fork = rival.rpc('generatetoaddress', source.rpc('getblockcount') - rival.rpc('getblockcount') + 1, legacy)
             for block in fork:
                 result = source.rpc('submitblock', rival.rpc('getblock', block, False))
                 if result not in (None, 'inconclusive'):
@@ -116,6 +128,10 @@ def main():
         else:
             source.rpc('invalidateblock', tagblock)
             check('height_rewound', source.rpc('getblockcount') == tagheight - 1, source.rpc('getblockcount'))
+        if args.disconnect_fee:
+            check('fee_funding_disconnected', source.rpc('getrawtransaction', fee_coin['txid'], True).get('confirmations', 0) <= 0, fee_coin['txid'])
+            check('fee_coin_absent_from_chain', source.rpc('gettxout', fee_coin['txid'], fee_coin['vout'], False) is None, fee_coin)
+            check('fee_funding_readmitted', fee_coin['txid'] in source.rpc('getrawmempool'), source.rpc('getrawmempool'))
         check('tag_still_present', source.rpc('checkaddresstag', target, '#REORGTAG') is True, target)
         check('issuance_unconfirmed', source.rpc('getrawtransaction', issued['txid'], True).get('confirmations', 0) <= 0, issued['txid'])
         report['pending_after_reorg'] = source.rpc('getrawmempool')
