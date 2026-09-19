@@ -1346,3 +1346,151 @@ BOOST_AUTO_TEST_CASE(finality_and_relative_age_boundaries)
 }
 
 BOOST_AUTO_TEST_SUITE_END()
+
+BOOST_FIXTURE_TEST_SUITE(stack_control_opcode_review_tests, BasicTestingSetup)
+
+BOOST_AUTO_TEST_CASE(exact_stack_permutations)
+{
+    struct Vector { opcodetype opcode; std::vector<int> order; unsigned needed; };
+    const Vector vectors[] = {
+        {OP_2DROP, {0,1,2,3}, 2}, {OP_2DUP, {0,1,2,3,4,5,4,5}, 2},
+        {OP_3DUP, {0,1,2,3,4,5,3,4,5}, 3}, {OP_2OVER, {0,1,2,3,4,5,2,3}, 4},
+        {OP_2ROT, {2,3,4,5,0,1}, 6}, {OP_2SWAP, {0,1,4,5,2,3}, 4},
+        {OP_IFDUP, {0,1,2,3,4,5,5}, 1}, {OP_DROP, {0,1,2,3,4}, 1},
+        {OP_DUP, {0,1,2,3,4,5,5}, 1}, {OP_NIP, {0,1,2,3,5}, 2},
+        {OP_OVER, {0,1,2,3,4,5,4}, 2}, {OP_ROT, {0,1,2,4,5,3}, 3},
+        {OP_SWAP, {0,1,2,3,5,4}, 2}, {OP_TUCK, {0,1,2,3,5,4,5}, 2},
+    };
+    const auto flags = REVIEW_BYTES_FLAGS | SCRIPT_VERIFY_CHECKSIGFROMSTACK;
+    for (size_t size : {1, 32, 33, 520, 1312, 2420, 3072}) {
+        std::vector<ReviewBytes> original;
+        for (int i = 0; i < 6; ++i) original.emplace_back(size, static_cast<unsigned char>(i + 1));
+        for (auto sigversion : {SIGVERSION_BASE, SIGVERSION_WITNESS_V0, SIGVERSION_AUTHSCRIPT}) {
+            for (const auto& v : vectors) {
+                BOOST_TEST_CONTEXT("size=" << size << " opcode=" << int(v.opcode) << " context=" << int(sigversion)) {
+                    auto stack = original;
+                    ScriptError error;
+                    BOOST_CHECK(EvalScript(stack, CScript() << v.opcode, flags, BaseSignatureChecker(), sigversion, &error));
+                    BOOST_CHECK_EQUAL(error, SCRIPT_ERR_OK);
+                    std::vector<ReviewBytes> expected;
+                    for (int index : v.order) expected.push_back(original[index]);
+                    BOOST_CHECK(stack == expected);
+                    stack.assign(v.needed - 1, ReviewBytes{1});
+                    BOOST_CHECK(!EvalScript(stack, CScript() << v.opcode, flags, BaseSignatureChecker(), sigversion, &error));
+                    BOOST_CHECK_EQUAL(error, SCRIPT_ERR_INVALID_STACK_OPERATION);
+                }
+            }
+            for (auto opcode : {OP_PICK, OP_ROLL}) {
+                for (int index : {0, 2, 5}) {
+                    auto stack = original;
+                    stack.push_back(CScriptNum(index).getvch());
+                    auto expected = original;
+                    if (opcode == OP_ROLL) expected.erase(expected.end() - 1 - index);
+                    expected.push_back(original[5 - index]);
+                    ScriptError error;
+                    BOOST_CHECK(EvalScript(stack, CScript() << opcode, flags, BaseSignatureChecker(), sigversion, &error));
+                    BOOST_CHECK_EQUAL(error, SCRIPT_ERR_OK);
+                    BOOST_CHECK(stack == expected);
+                }
+                for (int index : {-1, 6}) {
+                    auto stack = original;
+                    stack.push_back(CScriptNum(index).getvch());
+                    ScriptError error;
+                    BOOST_CHECK(!EvalScript(stack, CScript() << opcode, flags, BaseSignatureChecker(), sigversion, &error));
+                    BOOST_CHECK_EQUAL(error, SCRIPT_ERR_INVALID_STACK_OPERATION);
+                }
+            }
+            auto stack = original;
+            ScriptError error;
+            BOOST_CHECK(EvalScript(stack, CScript() << OP_TOALTSTACK << OP_TOALTSTACK << OP_FROMALTSTACK << OP_FROMALTSTACK,
+                                   flags, BaseSignatureChecker(), sigversion, &error));
+            BOOST_CHECK(stack == original);
+            BOOST_CHECK(EvalScript(stack, CScript() << OP_DEPTH, flags, BaseSignatureChecker(), sigversion, &error));
+            BOOST_CHECK(stack.back() == CScriptNum(6).getvch());
+        }
+    }
+    for (auto opcode : {OP_TOALTSTACK, OP_FROMALTSTACK, OP_PICK, OP_ROLL}) {
+        ReviewWrappedScript(CScript() << opcode, flags,
+                            opcode == OP_FROMALTSTACK ? SCRIPT_ERR_INVALID_ALTSTACK_OPERATION : SCRIPT_ERR_INVALID_STACK_OPERATION);
+    }
+    for (const auto& zero : {ReviewBytes{}, ReviewBytes{0x80}, ReviewBytes{0,0}}) {
+        ReviewWrappedScript(CScript() << zero << OP_IFDUP << OP_DEPTH << OP_1 << OP_EQUALVERIFY << OP_DROP << OP_TRUE,
+                            flags, SCRIPT_ERR_OK);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(conditionals_and_reserved_opcodes)
+{
+    for (const auto& script : {CScript() << OP_IF, CScript() << OP_NOTIF, CScript() << OP_ELSE,
+                               CScript() << OP_ENDIF, CScript() << OP_TRUE << OP_IF << OP_TRUE}) {
+        ReviewWrappedScript(script, REVIEW_BYTES_FLAGS, SCRIPT_ERR_UNBALANCED_CONDITIONAL);
+    }
+    ReviewWrappedScript(CScript() << OP_TRUE << OP_IF << OP_0 << OP_IF << OP_RETURN << OP_ENDIF
+                        << OP_TRUE << OP_ELSE << OP_RETURN << OP_ENDIF, REVIEW_BYTES_FLAGS, SCRIPT_ERR_OK);
+    // Repeated ELSE toggles the same condition and is historically allowed.
+    ReviewWrappedScript(CScript() << OP_TRUE << OP_IF << OP_ELSE << OP_RETURN << OP_ELSE << OP_TRUE << OP_ENDIF,
+                        REVIEW_BYTES_FLAGS, SCRIPT_ERR_OK);
+    for (auto opcode : {OP_RESERVED, OP_VER, OP_RESERVED1, OP_RESERVED2, OP_VERIF, OP_VERNOTIF}) {
+        ReviewWrappedScript(CScript() << opcode << OP_TRUE, REVIEW_BYTES_FLAGS, SCRIPT_ERR_BAD_OPCODE);
+        ReviewWrappedScript(CScript() << OP_0 << OP_IF << opcode << OP_ENDIF << OP_TRUE, REVIEW_BYTES_FLAGS,
+                            opcode == OP_VERIF || opcode == OP_VERNOTIF ? SCRIPT_ERR_BAD_OPCODE : SCRIPT_ERR_OK);
+    }
+    ReviewWrappedScript(CScript() << OP_NOP << OP_TRUE << OP_VERIFY << OP_TRUE, REVIEW_BYTES_FLAGS, SCRIPT_ERR_OK);
+    ReviewWrappedScript(CScript() << OP_VERIFY, REVIEW_BYTES_FLAGS, SCRIPT_ERR_INVALID_STACK_OPERATION);
+    ReviewWrappedScript(CScript() << OP_0 << OP_VERIFY, REVIEW_BYTES_FLAGS, SCRIPT_ERR_VERIFY);
+    ReviewWrappedScript(CScript() << OP_RETURN, REVIEW_BYTES_FLAGS, SCRIPT_ERR_OP_RETURN);
+    ReviewWrappedScript(CScript() << OP_0 << OP_IF << OP_RETURN << OP_ENDIF << OP_TRUE, REVIEW_BYTES_FLAGS, SCRIPT_ERR_OK);
+    for (auto sigversion : {SIGVERSION_BASE, SIGVERSION_WITNESS_V0, SIGVERSION_AUTHSCRIPT}) {
+        for (auto opcode : {OP_IF, OP_NOTIF}) {
+            for (const auto& value : {ReviewBytes{}, ReviewBytes{1}, ReviewBytes{0}, ReviewBytes{2}, ReviewBytes{0x80}, ReviewBytes{1,0}}) {
+                for (bool minimal : {false, true}) {
+                    std::vector<ReviewBytes> stack{value};
+                    ScriptError error;
+                    const bool invalid = minimal && sigversion == SIGVERSION_WITNESS_V0 && value != ReviewBytes{} && value != ReviewBytes{1};
+                    const auto flags = REVIEW_BYTES_FLAGS | (minimal ? SCRIPT_VERIFY_MINIMALIF : script_verify_flags{});
+                    const bool ok = EvalScript(stack, CScript() << opcode << OP_TRUE << OP_ELSE << OP_TRUE << OP_ENDIF,
+                                               flags, BaseSignatureChecker(), sigversion, &error);
+                    BOOST_CHECK_EQUAL(ok, !invalid);
+                    BOOST_CHECK_EQUAL(error, invalid ? SCRIPT_ERR_MINIMALIF : SCRIPT_ERR_OK);
+                    if (ok) BOOST_CHECK(stack == std::vector<ReviewBytes>{ReviewBytes{1}});
+                }
+            }
+        }
+    }
+}
+
+BOOST_AUTO_TEST_CASE(combined_stack_limits)
+{
+    for (auto sigversion : {SIGVERSION_BASE, SIGVERSION_WITNESS_V0, SIGVERSION_AUTHSCRIPT}) {
+        for (size_t count : {1000, 1001}) {
+            std::vector<ReviewBytes> stack(count, ReviewBytes{1});
+            ScriptError error;
+            const bool ok = EvalScript(stack, CScript() << OP_TOALTSTACK, REVIEW_BYTES_FLAGS,
+                                       BaseSignatureChecker(), sigversion, &error);
+            BOOST_CHECK_EQUAL(ok, count == 1000);
+            BOOST_CHECK_EQUAL(error, count == 1000 ? SCRIPT_ERR_OK : SCRIPT_ERR_STACK_SIZE);
+        }
+        std::vector<ReviewBytes> stack(1000, ReviewBytes{1});
+        ScriptError error;
+        BOOST_CHECK(!EvalScript(stack, CScript() << OP_DUP, REVIEW_BYTES_FLAGS, BaseSignatureChecker(), sigversion, &error));
+        BOOST_CHECK_EQUAL(error, SCRIPT_ERR_STACK_SIZE);
+        for (auto gate : {SCRIPT_VERIFY_CHECKSIGFROMSTACK, SCRIPT_VERIFY_MERKLE_INCLUSION, SCRIPT_VERIFY_CHECKSIGADD}) {
+            for (size_t excess : {0, 1}) {
+                // 85 * 3072 + 1024 = 256 KiB. Moving data to altstack must not evade the cap.
+                stack.assign(85, ReviewBytes(3072, 1));
+                stack.emplace_back(1024 + excess, 2);
+                const bool ok = EvalScript(stack, CScript() << OP_TOALTSTACK, REVIEW_BYTES_FLAGS | gate,
+                                           BaseSignatureChecker(), sigversion, &error);
+                BOOST_CHECK_EQUAL(ok, excess == 0);
+                BOOST_CHECK_EQUAL(error, excess == 0 ? SCRIPT_ERR_OK : SCRIPT_ERR_STACK_SIZE);
+            }
+        }
+        // Altstack is local to one EvalScript call; it cannot leak into the next.
+        stack = {ReviewBytes{1}};
+        BOOST_CHECK(EvalScript(stack, CScript() << OP_TOALTSTACK, REVIEW_BYTES_FLAGS, BaseSignatureChecker(), sigversion, &error));
+        BOOST_CHECK(!EvalScript(stack, CScript() << OP_FROMALTSTACK, REVIEW_BYTES_FLAGS, BaseSignatureChecker(), sigversion, &error));
+        BOOST_CHECK_EQUAL(error, SCRIPT_ERR_INVALID_ALTSTACK_OPERATION);
+    }
+}
+
+BOOST_AUTO_TEST_SUITE_END()
