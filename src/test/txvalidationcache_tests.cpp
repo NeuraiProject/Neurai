@@ -5,6 +5,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "consensus/validation.h"
+#include "assets/assetdb.h"
 #include "chainparams.h"
 #include "key.h"
 #include "validation.h"
@@ -396,4 +397,49 @@ BOOST_AUTO_TEST_SUITE(tx_validationcache_tests)
         }
     }
 
+BOOST_AUTO_TEST_SUITE_END()
+
+// Exercise the real startup rewind route: unlike invalidateblock it passes no
+// disconnected-transaction pool to DisconnectTip.
+BOOST_FIXTURE_TEST_SUITE(authdest_rewind_review_tests, TestChain100Setup)
+
+BOOST_AUTO_TEST_CASE(rewind_without_readmission_crosses_strict_height)
+{
+    auto& consensus = const_cast<Consensus::Params&>(GetParams().GetConsensus());
+    struct RestoreHeight {
+        Consensus::Params& params;
+        int height;
+        ~RestoreHeight() { params.nStrictAuthScriptHeight = height; }
+    } restore{consensus, consensus.nStrictAuthScriptHeight};
+    // TestChain100Setup does not create the asset undo DB used by DisconnectBlock.
+    struct AssetUndoDB {
+        CAssetsDB* previous;
+        AssetUndoDB() : previous(passetsdb) { passetsdb = new CAssetsDB(1 << 20, true, true); }
+        ~AssetUndoDB() { delete passetsdb; passetsdb = previous; }
+    } assetUndoDB;
+    consensus.nStrictAuthScriptHeight = 120;
+    const CScript reward = CScript() << ToByteVector(coinbaseKey.GetPubKey()) << OP_CHECKSIG;
+    for (int i = 0; i < 21; ++i) CreateAndProcessBlock({}, reward);
+    BOOST_REQUIRE_EQUAL(chainActive.Height(), 121);
+    BOOST_REQUIRE(IsWitnessEnabled(chainActive[118], consensus));
+    BOOST_REQUIRE(IsStrictAuthScriptActiveForChildOf(chainActive.Tip()->GetBlockHash()));
+    const uint256 target = chainActive[118]->GetBlockHash();
+    // Emulate the on-disk status left by a node that had not validated witness.
+    // Only this disposable fixture's index is modified.
+    // All descendants belong to the same old-validation segment.
+    for (int height = 119; height <= 121; ++height)
+        chainActive[height]->nStatus &= ~BLOCK_OPT_WITNESS;
+    BOOST_REQUIRE(RewindBlockIndex(GetParams()));
+    BOOST_CHECK_EQUAL(chainActive.Height(), 118);
+    BOOST_CHECK(chainActive.Tip()->GetBlockHash() == target);
+    BOOST_CHECK(!IsStrictAuthScriptActiveForChildOf(target));
+    BOOST_CHECK_EQUAL(mempool.size(), 0U);
+    // A fresh candidate is constructed under the restored inactive context.
+    std::unique_ptr<CBlockTemplate> candidate = BlockAssembler(GetParams()).CreateNewBlock(reward);
+    BOOST_REQUIRE(candidate);
+    BOOST_CHECK(candidate->block.hashPrevBlock == target);
+    // A repeated rewind with no insufficiently-validated active blocks is inert.
+    BOOST_REQUIRE(RewindBlockIndex(GetParams()));
+    BOOST_CHECK_EQUAL(chainActive.Height(), 118);
+}
 BOOST_AUTO_TEST_SUITE_END()
