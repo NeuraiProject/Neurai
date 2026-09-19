@@ -4,6 +4,9 @@ Fixed expectations are the independently generated literals from phases 11-13.
 Destinations are synthetic: tests payment constraints, not signing their later spends.
 """
 import argparse
+from review_auth_envelope import Envelope, options
+
+ENVELOPE = Envelope()
 import importlib.util
 import json
 from pathlib import Path
@@ -23,13 +26,8 @@ b = load('hash_review_blocks', 'review-csfs-block-limit-regtest.py')
 from generate_authscript_vectors import bech32m, sha256
 
 
-def transaction(utxo, script, arguments, output):
-    inputs = b'\x01' + h.outpoint(*utxo) + b'\x00' + b'\xff' * 4
-    outputs = b'\x01' + b.output(99_000_000, output)
-    witness = [b'\x00', *arguments, script]
-    serialized = h.compact(len(witness)) + b''.join(h.compact(len(x)) + x for x in witness)
-    version, locktime = struct.pack('<I', 2), bytes(4)
-    return version + inputs + outputs + locktime, version + b'\x00\x01' + inputs + outputs + serialized + locktime
+def transaction(utxo, script, arguments, output, amount=90_000_000):
+    return ENVELOPE.transaction(utxo, script, arguments, output, amount=amount)
 
 
 def cases(vectors):
@@ -61,9 +59,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bindir', type=Path, default=Path('/root/Neurai/src'))
     parser.add_argument('--vectors', type=Path, default=Path(__file__).resolve().parents[1] / 'src/test/reversebytes_tests.cpp')
+    options(parser)
     args = parser.parse_args()
+    global ENVELOPE
+    ENVELOPE = Envelope(args.auth, args.wrapped, args.signer)
     directory = Path(tempfile.mkdtemp(prefix='hash-merkle-regtest-'))
-    report = {'results': [], 'binary_sha256': h.digest_file(args.bindir / 'neuraid'),
+    report = {'results': [], 'auth': args.auth, 'wrapped': args.wrapped, 'envelope_sha256': h.digest_file(Path(__file__).with_name('review_auth_envelope.py')), 'binary_sha256': h.digest_file(args.bindir / 'neuraid'),
               'vectors_sha256': h.digest_file(args.vectors),
               'source_sha256': {p.name: h.digest_file(p) for p in (Path(__file__),
                   Path(__file__).with_name('review-introspection-regtest.py'),
@@ -88,8 +89,8 @@ def main():
             for family, output in enumerate(destinations):
                 script = verification + b'\x00\xcd' + h.push(output) + b'\x87'
                 tag = sha256(b'NeuraiAuthScript')
-                program = sha256(tag + tag + b'\x01\x00' + sha256(script))
-                payments[bech32m('tnq', 1, program)] = 1
+                program = ENVELOPE.program(script)
+                payments[ENVELOPE.address(source, program)] = 1
                 contracts.append((f'{name}/family{family}', script, arguments, output, program, family))
         funding = source.rpc('sendmany', '', payments)
         source.rpc('generatetoaddress', 1, miner)
@@ -110,7 +111,7 @@ def main():
             check(f'par{par}/threads', f'Using {expected} threads for script verification' in log, expected)
             check(f'par{par}/funded_tip', node.rpc('getbestblockhash') == source.rpc('getbestblockhash'), 111)
         for label, script, arguments, output, program, family in contracts:
-            utxo = funding, indices[(b'\x51\x20' + program).hex()]
+            utxo = funding, indices[ENVELOPE.output(program).hex()]
             invalid_args = list(arguments)
             invalid_args[-1] = bytes([invalid_args[-1][0] ^ 1]) + invalid_args[-1][1:]
             bad = transaction(utxo, script, invalid_args, output)

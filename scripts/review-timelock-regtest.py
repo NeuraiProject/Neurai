@@ -3,6 +3,9 @@
 Synthetic destination programs test constrained payments, not their later spending.
 """
 import argparse
+from review_auth_envelope import Envelope, options
+
+ENVELOPE = Envelope()
 import importlib.util
 import json
 from pathlib import Path
@@ -24,19 +27,18 @@ from generate_authscript_vectors import bech32m, sha256
 
 
 def transaction(utxo, script, output, locktime, sequence):
-    inputs = b'\x01' + h.outpoint(*utxo) + b'\x00' + struct.pack('<I', sequence)
-    outputs = b'\x01' + b.output(99_000_000, output)
-    witness = b'\x02\x01\x00' + h.compact(len(script)) + script
-    version, lock = struct.pack('<I', 2), struct.pack('<I', locktime)
-    return version + inputs + outputs + lock, version + b'\x00\x01' + inputs + outputs + witness + lock
+    return ENVELOPE.transaction(utxo, script, [], output, locktime=locktime, sequence=sequence)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bindir', type=Path, default=Path('/root/Neurai/src'))
+    options(parser)
     args = parser.parse_args()
+    global ENVELOPE
+    ENVELOPE = Envelope(args.auth, args.wrapped, args.signer)
     directory = Path(tempfile.mkdtemp(prefix='timelock-regtest-'))
-    report = {'results': [], 'boundaries': [], 'binary_sha256': h.digest_file(args.bindir / 'neuraid'),
+    report = {'results': [], 'auth': args.auth, 'wrapped': args.wrapped, 'envelope_sha256': h.digest_file(Path(__file__).with_name('review_auth_envelope.py')), 'boundaries': [], 'binary_sha256': h.digest_file(args.bindir / 'neuraid'),
               'source_sha256': {p.name: h.digest_file(p) for p in (Path(__file__), *[
                   Path(__file__).with_name(f) for f in ['review-introspection-regtest.py',
                   'review-csfs-block-limit-regtest.py', 'review-arithmetic-regtest.py',
@@ -100,8 +102,8 @@ def main():
                 script = h.push(a.number(operand)) + bytes([0xb1 if absolute else 0xb2, 0x75])
                 script += b'\x00\xcd' + h.push(output) + b'\x87'
                 tag = sha256(b'NeuraiAuthScript')
-                program = sha256(tag + tag + b'\x01\x00' + sha256(script))
-                payments[bech32m('tnq', 1, program)] = 1
+                program = ENVELOPE.program(script)
+                payments[ENVELOPE.address(source, program)] = 1
                 contracts.append((family, output, script, program))
             funding = source.rpc('sendmany', '', payments)
             mine()
@@ -109,7 +111,7 @@ def main():
             indices = {o['scriptPubKey']['hex']: o['n'] for o in funded['vout']}
             spends = []
             for family, output, script, program in contracts:
-                utxo = funding, indices[(b'\x51\x20' + program).hex()]
+                utxo = funding, indices[ENVELOPE.output(program).hex()]
                 spends.append((family, utxo, output, script, transaction(utxo, script, output, locktime, sequence)))
 
             def reject_all(stage):
