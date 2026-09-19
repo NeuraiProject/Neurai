@@ -469,9 +469,9 @@ bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, script_ver
     return true;
 }
 
-bool static CheckSignatureEncodingForPubKey(const std::vector<unsigned char> &vchSig, const valtype& vchPubKey, script_verify_flags flags, ScriptError *serror)
+bool static CheckSignatureEncodingForFamily(const valtype& vchSig, bool postQuantum, script_verify_flags flags, ScriptError *serror)
 {
-    if (!IsPostQuantumPubKey(vchPubKey)) {
+    if (!postQuantum) {
         return CheckSignatureEncoding(vchSig, flags, serror);
     }
 
@@ -490,6 +490,11 @@ bool static CheckSignatureEncodingForPubKey(const std::vector<unsigned char> &vc
     }
 
     return true;
+}
+
+bool static CheckSignatureEncodingForPubKey(const valtype& vchSig, const valtype& vchPubKey, script_verify_flags flags, ScriptError *serror)
+{
+    return CheckSignatureEncodingForFamily(vchSig, IsPostQuantumPubKey(vchPubKey), flags, serror);
 }
 
 bool static CheckPubKeyEncoding(const valtype &vchPubKey, script_verify_flags flags, const SigVersion &sigversion, ScriptError *serror)
@@ -2365,7 +2370,16 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             // Note how this makes the exact order of pubkey/signature evaluation
                             // distinguishable by CHECKMULTISIG NOT if the STRICTENC flag is set.
                             // See the script_(in)valid tests for details.
-                            if (!CheckSignatureEncodingForPubKey(vchSig, vchPubKey, flags, serror) ||
+                            // After strict-family activation, v1 multisig signatures are
+                            // encoded for their own family, not every candidate key. The
+                            // fixed ML-DSA length is disjoint from canonical ECDSA DER.
+                            // Preserve historical evaluation before activation and in
+                            // other script versions; CHECKSIG is unchanged.
+                            const bool independentFamily = sigversion == SIGVERSION_AUTHSCRIPT &&
+                                (flags & SCRIPT_VERIFY_AUTHSCRIPT_STRICT);
+                            const bool keyPQ = IsPostQuantumPubKey(vchPubKey);
+                            const bool sigPQ = independentFamily ? vchSig.size() == ML_DSA_44_SIG_SIZE + 1 : keyPQ;
+                            if (!CheckSignatureEncodingForFamily(vchSig, sigPQ, flags, serror) ||
                                 !CheckPubKeyEncoding(vchPubKey, flags, sigversion, serror))
                             {
                                 // serror is set
@@ -2373,7 +2387,8 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             }
 
                             // Check signature
-                            bool fOk = checker.CheckSig(vchSig, vchPubKey, scriptCode, sigversion);
+                            bool fOk = (!independentFamily || sigPQ == keyPQ) &&
+                                checker.CheckSig(vchSig, vchPubKey, scriptCode, sigversion);
 
                             if (fOk)
                             {

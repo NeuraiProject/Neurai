@@ -48,6 +48,29 @@ The witness stack for spending is structured as:
 
 This design separates authentication (who) from authorization logic (what and how), allowing covenants to be written as pure script logic while optionally requiring key-holder approval.
 
+### Mixed ECDSA/PQ multisig in witness v1
+
+At `nStrictAuthScriptHeight`, `SCRIPT_VERIFY_AUTHSCRIPT_STRICT` also enables
+family-independent signature encoding checks in v1 `OP_CHECKMULTISIG` and
+`OP_CHECKMULTISIGVERIFY`. A nonempty signature of `ML_DSA_44_SIG_SIZE + 1` bytes
+is treated as ML-DSA-44 plus its sighash byte; other signatures use ECDSA
+encoding checks. The existing encoding flags, sighash checks, pubkey checks,
+NULLDUMMY and NULLFAIL rules still apply. Empty signatures remain deliberately
+invalid signatures, not authorization.
+
+A signature skips candidate keys of the other family without consuming the
+signature. It must still verify against a matching key in script order. Thus
+`1 <ECDSA pubkey> <PQ pubkey> 2 CHECKMULTISIG` can be satisfied by either key.
+This is alternative authorization, not a requirement for both algorithms;
+use a 2-of-2 threshold when both signatures are required.
+
+Before this height, signature encoding is checked against each candidate key,
+preserving historical validation, including mixed-family failures. This is a
+consensus change that enables previously rejected spends, and must be included
+in the activation release. Mainnet/testnet heights remain unscheduled. The
+change applies only to witness v1 script execution (native or P2SH-wrapped);
+it does not change CHECKSIG, Legacy/v0 multisig, or the fixed v2/v3 templates.
+
 ---
 
 ## Covenant Building Blocks

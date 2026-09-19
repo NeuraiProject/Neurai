@@ -275,7 +275,10 @@ enum class script_verify_flag_name : uint8_t {
     // authType bound to the version (v2 -> 0x01, v3 -> 0x02), a versioned
     // commitment (preimage lead byte 0x02 / 0x03) and its own sighash domain
     // (SIGVERSION_AUTHSCRIPT_STRICT). Flag off -> v2/v3 stay upgradable
-    // (anyone-can-spend, discouraged by policy). Witness v1 is untouched.
+    // (anyone-can-spend, discouraged by policy). Also enables family-independent
+    // signature encoding in v1 CHECKMULTISIG: a valid PQ/ECDSA signature skips
+    // candidate keys of the other family. With the flag off, v1 retains its
+    // historical candidate-key-dependent encoding checks. CHECKSIG is unchanged.
     //
     SCRIPT_VERIFY_AUTHSCRIPT_STRICT,                        // bit 41
 

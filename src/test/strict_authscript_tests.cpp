@@ -913,6 +913,45 @@ BOOST_AUTO_TEST_CASE(v1_multisig_key_family_matching)
                         const bool verified = VerifyInput(tx, spent, flags, &error);
                         BOOST_CHECK_MESSAGE(verified, ScriptErrorString(error));
                         BOOST_CHECK_EQUAL(error, SCRIPT_ERR_OK);
+
+                        // Height gating must retain the exact historical result.
+                        const bool historicalFailure = keys.first.IsPQ() != keys.second.IsPQ() &&
+                            required == 1 && firstSigner == 0;
+                        BOOST_CHECK_EQUAL(VerifyInput(tx, spent, flags & ~SCRIPT_VERIFY_AUTHSCRIPT_STRICT, &error),
+                                          !historicalFailure);
+                        BOOST_CHECK_EQUAL(error, historicalFailure ? SCRIPT_ERR_SIG_DER : SCRIPT_ERR_OK);
+
+                        const auto rejects = [&](const CMutableTransaction& bad, ScriptError expected) {
+                            BOOST_CHECK(!VerifyInput(bad, spent, flags | SCRIPT_VERIFY_NULLFAIL, &error));
+                            BOOST_CHECK_EQUAL(error, expected);
+                        };
+                        auto bad = tx;
+                        bad.vout[0].nValue--; // Valid encodings, invalid signatures.
+                        rejects(bad, SCRIPT_ERR_SIG_NULLFAIL);
+                        bad = tx;
+                        bad.vin[0].scriptWitness.stack[2] = {1};
+                        rejects(bad, SCRIPT_ERR_SIG_DER);
+                        bad = tx;
+                        bad.vin[0].scriptWitness.stack[1 + required].pop_back();
+                        rejects(bad, SCRIPT_ERR_SIG_DER);
+                        bad = tx;
+                        bad.vin[0].scriptWitness.stack[1 + required].push_back(1);
+                        rejects(bad, SCRIPT_ERR_SIG_DER);
+                        bad = tx;
+                        // Execution visits the last signature first.
+                        bad.vin[0].scriptWitness.stack[1 + required].back() = 0;
+                        rejects(bad, SCRIPT_ERR_SIG_HASHTYPE);
+                        bad = tx;
+                        bad.vin[0].scriptWitness.stack[1] = {1};
+                        rejects(bad, SCRIPT_ERR_SIG_NULLDUMMY);
+                        bad = tx;
+                        for (int i = 0; i < required; ++i) bad.vin[0].scriptWitness.stack[2 + i].clear();
+                        rejects(bad, opcode == OP_CHECKMULTISIG ? SCRIPT_ERR_EVAL_FALSE : SCRIPT_ERR_CHECKMULTISIGVERIFY);
+                        if (required == 2) {
+                            bad = tx;
+                            std::swap(bad.vin[0].scriptWitness.stack[2], bad.vin[0].scriptWitness.stack[3]);
+                            rejects(bad, SCRIPT_ERR_SIG_NULLFAIL);
+                        }
                     }
                 }
             }
