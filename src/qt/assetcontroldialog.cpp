@@ -39,6 +39,7 @@
 #include <QSortFilterProxyModel>
 #include <QCompleter>
 #include <QLineEdit>
+#include <QSignalBlocker>
 
 QList<CAmount> AssetControlDialog::payAmounts;
 CCoinControl* AssetControlDialog::assetControl = new CCoinControl();
@@ -158,7 +159,8 @@ AssetControlDialog::AssetControlDialog(const PlatformStyle *_platformStyle, QWid
 
     // Add the assets into the dropdown menu
     connect(ui->viewAdministrator, SIGNAL(clicked()), this, SLOT(viewAdministratorClicked()));
-    connect(ui->assetList, SIGNAL(currentIndexChanged(QString)), this, SLOT(onAssetSelected(QString)));
+    connect(ui->assetList, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
+            this, [this](int) { onAssetSelected(ui->assetList->currentText()); });
 
     /** Setup the asset list combobox */
     stringModel = new QStringListModel;
@@ -801,12 +803,15 @@ void AssetControlDialog::updateAssetList(bool fSetOnStart)
         list << QString::fromStdString(name);
     }
 
-    stringModel->setStringList(list);
-
-    int index = ui->assetList->findText(QString::fromStdString(assetControl->strAssetSelected));
-    if (index != -1 ) { // -1 for not found
-        fOnStartUp = fSetOnStart;
-        ui->assetList->setCurrentIndex(index);
+    {
+        // Rebuilding/restoring the list is not a user change of asset. Model
+        // resets may emit multiple index changes, or none when restoring index 0.
+        const QSignalBlocker blocker(ui->assetList);
+        stringModel->setStringList(list);
+        int index = ui->assetList->findText(QString::fromStdString(assetControl->strAssetSelected));
+        if (index != -1) {
+            ui->assetList->setCurrentIndex(index);
+        }
     }
 
     updateView();
@@ -814,11 +819,7 @@ void AssetControlDialog::updateAssetList(bool fSetOnStart)
 
 void AssetControlDialog::onAssetSelected(QString name)
 {
-    if (fOnStartUp) {
-        fOnStartUp = false;
-    } else {
-        assetControl->UnSelectAll();
-    }
+    assetControl->UnSelectAll();
 
     AssetControlDialog::updateLabels(model, this);
     updateView();

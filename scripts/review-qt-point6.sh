@@ -8,6 +8,10 @@ printf 'Artifacts: %s\n' "$review_dir"
 mkdir "$review_dir/source" "$review_dir/run"
 git -c safe.directory="$source_root" -C "$source_root" rev-parse HEAD > "$review_dir/revision.txt"
 git -c safe.directory="$source_root" -C "$source_root" archive HEAD | tar -x -C "$review_dir/source"
+git -c safe.directory="$source_root" -C "$source_root" diff --binary HEAD > "$review_dir/working-tree.patch"
+if [ -s "$review_dir/working-tree.patch" ]; then
+    git -C "$review_dir/source" apply "$review_dir/working-tree.patch"
+fi
 cp "$source_root/scripts/review-qt-wallet-flows.cpp" "$review_dir/source/src/qt/test/test_main.cpp"
 sha256sum "$source_root/scripts/review-qt-wallet-flows.cpp" > "$review_dir/harness.sha256"
 cd "$review_dir/source"

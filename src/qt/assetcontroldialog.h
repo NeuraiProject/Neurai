@@ -63,7 +63,6 @@ public:
     static QList<CAmount> payAmounts;
     static CCoinControl *assetControl;
     static bool fSubtractFeeFromAmount;
-    bool fOnStartUp;
 
     QStringListModel* stringModel;
     QSortFilterProxyModel* proxy;

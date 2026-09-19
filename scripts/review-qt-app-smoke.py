@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 
 spec = importlib.util.spec_from_file_location('helper', Path(__file__).with_name('review-introspection-regtest.py'))
 h = importlib.util.module_from_spec(spec)
@@ -15,9 +16,19 @@ binary = Path(sys.argv[1]).resolve()
 (root / 'neuraid').symlink_to(binary)
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 report = {'binary_sha256': h.digest_file(binary), 'results': []}
-node = h.Node(root, root / 'node', ['-pqwallet=1', '-bypassdownload=1'])
+node = h.Node(root, root / 'node', ['-pqwallet=1', '-bypassdownload=1',
+    '-mnemonic=abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'])
 try:
-    node.ready()
+    # A fresh GUI wallet can spend more than the helper's 20 seconds in keygen.
+    deadline = time.monotonic() + 120
+    while True:
+        try:
+            node.rpc('getblockcount')
+            break
+        except (OSError, RuntimeError):
+            if node.proc.poll() is not None or time.monotonic() >= deadline:
+                raise RuntimeError('GUI startup did not reach RPC readiness')
+            time.sleep(0.2)
     miner = node.rpc('getnewaddress')
     node.rpc('generatetoaddress', 110, miner)
     for family in ('pq', 'ecdsa'):
