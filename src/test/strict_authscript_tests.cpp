@@ -758,4 +758,43 @@ BOOST_AUTO_TEST_CASE(review_asset_introspection_uses_script_flags)
     }
 }
 
+BOOST_AUTO_TEST_CASE(p2sh_strict_real_signatures_and_template)
+{
+    for (bool pq : {false, true}) {
+        const CKey key = pq ? MakePQKey() : MakeEcdsaKey();
+        const auto dest = StrictDest(key);
+        const CScript redeem = GetScriptForDestination(dest);
+        const CScript p2sh = GetScriptForDestination(CScriptID(redeem));
+        CBasicKeyStore keystore;
+        keystore.AddCScript(redeem);
+        auto tx = MakeSpendTx();
+        BOOST_REQUIRE(SignStrictInput(keystore, key, dest, p2sh, tx));
+        const CScript canonical = CScript() << ToByteVector(redeem);
+        BOOST_CHECK(tx.vin[0].scriptSig == canonical);
+        ScriptError error;
+        BOOST_CHECK(VerifyInput(tx, p2sh, STRICT_FLAGS, &error));
+        BOOST_CHECK_EQUAL(error, SCRIPT_ERR_OK);
+        auto malformed = tx;
+        malformed.vin[0].scriptSig = CScript() << OP_0 << ToByteVector(redeem);
+        BOOST_CHECK(!VerifyInput(malformed, p2sh, STRICT_FLAGS, &error));
+        BOOST_CHECK_EQUAL(error, SCRIPT_ERR_WITNESS_MALLEATED_P2SH);
+        malformed = tx;
+        malformed.vin[0].scriptWitness.stack.back() = {OP_TRUE, OP_NOP};
+        BOOST_CHECK(!VerifyInput(malformed, p2sh, STRICT_FLAGS, &error));
+        BOOST_CHECK_EQUAL(error, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+        malformed = tx;
+        malformed.vin[0].scriptWitness.stack[1].clear();
+        BOOST_CHECK(!VerifyInput(malformed, p2sh, STRICT_FLAGS, &error));
+        BOOST_CHECK_EQUAL(error, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+        malformed = tx;
+        malformed.vout[0].nValue -= 1;
+        BOOST_CHECK(!VerifyInput(malformed, p2sh, STRICT_FLAGS, &error));
+        BOOST_CHECK_EQUAL(error, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+        BOOST_CHECK(VerifyInput(tx, p2sh, NO_STRICT_FLAGS, &error));
+        BOOST_CHECK_EQUAL(error, SCRIPT_ERR_OK);
+        BOOST_CHECK(!VerifyInput(tx, p2sh, NO_STRICT_DISCOURAGE, &error));
+        BOOST_CHECK_EQUAL(error, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM);
+    }
+}
+
 BOOST_AUTO_TEST_SUITE_END()

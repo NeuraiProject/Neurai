@@ -3,6 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "crypto/sha256.h"
+#include "hash.h"
 #include "chain.h"
 #include "consensus/consensus.h"
 #include "consensus/tx_verify.h"
@@ -1616,6 +1617,67 @@ BOOST_AUTO_TEST_CASE(complete_witness_argument_limits)
            REVIEW_BYTES_FLAGS, SCRIPT_ERR_OP_RETURN);
     verify(CScript() << OP_TRUE, {ReviewBytes{1}}, REVIEW_BYTES_FLAGS, SCRIPT_ERR_EVAL_FALSE);
     verify(CScript() << OP_DROP << OP_TRUE, {ReviewBytes{1}}, REVIEW_BYTES_FLAGS, SCRIPT_ERR_OK);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+BOOST_FIXTURE_TEST_SUITE(p2sh_witness_review_tests, BasicTestingSetup)
+
+BOOST_AUTO_TEST_CASE(redeemscript_and_scriptsig_exact_shape)
+{
+    const CScript script = CScript() << OP_TRUE;
+    for (int version : {0, 1}) {
+        ReviewBytes digest(32);
+        CScriptWitness witness;
+        if (version == 0) {
+            CSHA256().Write(script.data(), script.size()).Finalize(digest.data());
+        } else {
+            const auto commitment = GetAuthScriptCommitment(0, nullptr, script);
+            digest.assign(commitment.begin(), commitment.end());
+            witness.stack.push_back(ReviewBytes{0});
+        }
+        witness.stack.emplace_back(script.begin(), script.end());
+        const CScript redeem = CScript() << (version ? OP_1 : OP_0) << digest;
+        const ReviewBytes bytes(redeem.begin(), redeem.end());
+        const auto hash = Hash160(redeem);
+        const CScript p2sh = CScript() << OP_HASH160 << ToByteVector(hash) << OP_EQUAL;
+        const auto check = [&](const CScript& sig, const CScript& output, const CScriptWitness& w,
+                               script_verify_flags flags, ScriptError expected) {
+            BOOST_TEST_CONTEXT("version=" << version << " scriptSig=" << HexStr(sig)) {
+                ScriptError error;
+                const bool ok = VerifyScript(sig, output, &w, flags, BaseSignatureChecker(), &error);
+                BOOST_CHECK_EQUAL(ok, expected == SCRIPT_ERR_OK);
+                BOOST_CHECK_EQUAL(error, expected);
+            }
+        };
+        const auto flags = REVIEW_BYTES_FLAGS | SCRIPT_VERIFY_CLEANSTACK;
+        check(CScript(), redeem, witness, flags, SCRIPT_ERR_OK);
+        check(CScript() << bytes, p2sh, witness, flags, SCRIPT_ERR_OK);
+        check(CScript() << OP_0, redeem, witness, flags, SCRIPT_ERR_WITNESS_MALLEATED);
+        check(CScript() << OP_0 << bytes, p2sh, witness, flags, SCRIPT_ERR_WITNESS_MALLEATED_P2SH);
+        check(CScript() << OP_NOP << bytes, p2sh, witness, flags, SCRIPT_ERR_SIG_PUSHONLY);
+        CScript nonminimal;
+        nonminimal << OP_PUSHDATA1;
+        nonminimal.push_back(bytes.size());
+        nonminimal.insert(nonminimal.end(), bytes.begin(), bytes.end());
+        check(nonminimal, p2sh, witness, flags, SCRIPT_ERR_WITNESS_MALLEATED_P2SH);
+        check(nonminimal, p2sh, witness, flags | SCRIPT_VERIFY_MINIMALDATA, SCRIPT_ERR_MINIMALDATA);
+        auto wrong = bytes;
+        wrong.back() ^= 1;
+        check(CScript() << wrong, p2sh, witness, flags, SCRIPT_ERR_EVAL_FALSE);
+        check(CScript(), p2sh, witness, flags, SCRIPT_ERR_INVALID_STACK_OPERATION);
+        auto wrongWitness = witness;
+        wrongWitness.stack.back() = ReviewBytes{OP_0};
+        check(CScript() << bytes, p2sh, wrongWitness, flags, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+        CScriptWitness empty;
+        check(CScript() << bytes, p2sh, empty, flags, version == 0 ?
+              SCRIPT_ERR_WITNESS_PROGRAM_WITNESS_EMPTY : SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+        // A P2SH contract that is not a witness program cannot consume witness data.
+        const auto legacyHash = Hash160(script);
+        check(CScript() << ReviewBytes(script.begin(), script.end()),
+              CScript() << OP_HASH160 << ToByteVector(legacyHash) << OP_EQUAL, witness, flags,
+              SCRIPT_ERR_WITNESS_UNEXPECTED);
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()
