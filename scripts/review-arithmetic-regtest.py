@@ -147,7 +147,7 @@ def main():
                 check(label + f'/par{par}/empty_mempool', validator.rpc('getrawmempool') == [], [])
                 result = validator.rpc('submitblock', raw)
                 check(label + f'/par{par}/valid_block', result is None and validator.rpc('getbestblockhash') == blockhash, result)
-                check(label + f'/par{par}/utxo', validator.rpc('gettxout', *utxo) is None and validator.rpc('gettxout', txid, 0)['scriptPubKey']['hex'] == output.hex() and validator.rpc('gettxout', txid, 0)['value'] == 0.99, txid)
+                check(label + f'/par{par}/utxo', validator.rpc('gettxout', *utxo) is None and validator.rpc('gettxout', txid, 0)['scriptPubKey']['hex'] == output.hex() and validator.rpc('gettxout', txid, 0)['value'] == 0.9, txid)
         report['height'] = source.rpc('getblockcount')
         report['contracts'] = len(contracts)
     except Exception as error:

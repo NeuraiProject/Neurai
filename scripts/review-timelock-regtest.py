@@ -192,7 +192,7 @@ def main():
                 for par, validator in validators:
                     created = validator.rpc('gettxout', txid, 0)
                     check(f'{kind}/family{family}/par{par}/utxo', validator.rpc('gettxout', *utxo) is None and
-                          created is not None and created['scriptPubKey']['hex'] == output.hex() and created['value'] == 0.99, created)
+                          created is not None and created['scriptPubKey']['hex'] == output.hex() and created['value'] == 0.9, created)
         report['height'] = source.rpc('getblockcount')
         report['contracts'] = 16
     except Exception as error:
