@@ -809,6 +809,10 @@ void CTxMemPool::removeForReorg(const CCoinsViewCache *pcoins, unsigned int nMem
     // Remove transactions spending a coinbase which are now immature and no-longer-final transactions
     LOCK(cs);
     setEntries txToRemove;
+    // Disconnected parents have already been readmitted. Include their outputs
+    // when checking restricted transfers against the restored asset state.
+    CCoinsViewMemPool mempoolView(const_cast<CCoinsViewCache*>(pcoins), *this);
+    CCoinsViewCache assetView(&mempoolView);
     for (indexed_transaction_set::const_iterator it = mapTx.begin(); it != mapTx.end(); it++) {
         const CTransaction& tx = it->GetTx();
         LockPoints lp = it->GetLockPoints();
@@ -829,6 +833,18 @@ void CTxMemPool::removeForReorg(const CCoinsViewCache *pcoins, unsigned int nMem
                     break;
                 }
             }
+        }
+        // A disconnected tag, verifier update or unfreeze can invalidate an
+        // otherwise final transfer. Restrict this check to indexed restricted
+        // assets; remove their descendants together after finishing the walk.
+        if (passets && AreRestrictedAssetsDeployed() &&
+            (mapHashVerifierChanged.count(tx.GetHash()) ||
+             mapHashMarkedGlobalFrozen.count(tx.GetHash()))) {
+            CValidationState state;
+            std::vector<std::pair<std::string, uint256>> reissues;
+            if (!Consensus::CheckTxAssets(tx, state, assetView, passets,
+                                         nMemPoolHeight, false, reissues))
+                txToRemove.insert(it);
         }
         // Reference inputs must remain confirmed and uncontested after a reorg.
         // A disconnected reference transaction may have been re-admitted to the

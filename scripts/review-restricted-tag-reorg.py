@@ -15,9 +15,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bindir', type=Path, default=Path('/root/Neurai/src'))
     parser.add_argument('--target', choices=['pq', 'ecdsa', 'authscript'], default='ecdsa')
+    parser.add_argument('--coin-only-child', action='store_true', help='Reproduce the original ordinary-coin descendant')
     args = parser.parse_args()
     directory = Path(tempfile.mkdtemp(prefix='restricted-tag-reorg-'))
-    report = {'results': [], 'target': args.target, 'binary_sha256': m.digest_file(args.bindir / 'neuraid'),
+    report = {'results': [], 'target': args.target, 'coin_only_child': args.coin_only_child,
+              'binary_sha256': m.digest_file(args.bindir / 'neuraid'),
               'source_sha256': m.digest_file(Path(__file__))}
     nodes = []
 
@@ -54,6 +56,9 @@ def main():
         confirm('target_tag', source.rpc('addtagtoaddress', '#REORGTAG', target, holder))
         tagblock = source.rpc('getbestblockhash')
         tagheight = source.rpc('getblockcount')
+        # Rewinding this unrelated block must preserve a valid package, including
+        # a restricted child whose asset input exists only in the mempool.
+        unrelated = source.rpc('generatetoaddress', 1, miner)[0]
         coin = next(o for o in source.rpc('listunspent', 100) if o['spendable'] and o['amount'] > 3)
         raw = source.rpc('createrawtransaction', [{'txid': issued['txid'], 'vout': asset['n']},
                          {'txid': coin['txid'], 'vout': coin['vout']}],
@@ -64,13 +69,26 @@ def main():
         check('parent_final', decoded['locktime'] == 0 and all(v['sequence'] == 0xffffffff for v in decoded['vin']), decoded['locktime'])
         parent = source.rpc('sendrawtransaction', signed['hex'])
         change = next(o for o in decoded['vout'] if o['value'] > 0)
+        asset_change = next(o for o in decoded['vout'] if b'$REORGROOT'.hex() in o['scriptPubKey']['hex'])
         legacy = 'tBURNXXXXXXXXXXXXXXXXXXXXXXXVZLroy'  # Legacy output; disposable regtest coins.
-        rawchild = source.rpc('createrawtransaction', [{'txid': parent, 'vout': change['n']}],
-                             {legacy: round(change['value'] - 1, 8)}, 0)
+        child_inputs = [{'txid': parent, 'vout': change['n']}]
+        child_outputs = [{legacy: round(change['value'] - 1, 8)}]
+        if not args.coin_only_child:
+            child_inputs.append({'txid': parent, 'vout': asset_change['n']})
+            child_outputs.append({holder: {'transfer': {'$REORGROOT': 5}}})
+        rawchild = source.rpc('createrawtransaction', child_inputs, child_outputs, 0)
         childsig = source.rpc('signrawtransaction', rawchild)
         check('child_signed', childsig['complete'], childsig.get('errors'))
         child = source.rpc('sendrawtransaction', childsig['hex'])
         check('both_pending', all(t in source.rpc('getrawmempool') for t in (parent, child)), [parent, child])
+        source.rpc('invalidateblock', unrelated)
+        check('unrelated_reorg_keeps_tag', source.rpc('checkaddresstag', target, '#REORGTAG') is True, target)
+        pending = source.rpc('getrawmempool')
+        check('unrelated_reorg_keeps_parent', parent in pending, pending)
+        check('unrelated_reorg_keeps_child', child in pending, pending)
+        template = source.rpc('getblocktemplate', {'rules': ['segwit']})
+        check('valid_package_minable', {parent, child}.issubset({t['txid'] for t in template['transactions']}),
+              [t['txid'] for t in template['transactions']])
         source.rpc('invalidateblock', tagblock)
         check('height_rewound', source.rpc('getblockcount') == tagheight - 1, source.rpc('getblockcount'))
         check('tag_disconnected', source.rpc('checkaddresstag', target, '#REORGTAG') is False, target)
@@ -85,9 +103,8 @@ def main():
             check('mining_available', False, {'code': error.code, 'message': str(error)}, stop=False)
         else:
             check('mining_available', True, [t['txid'] for t in template['transactions']])
-        # The miner has a fallback that may remove the bad package after failing.
         pending_after_template = source.rpc('getrawmempool')
-        check('miner_fallback_removed_package', parent not in pending_after_template and child not in pending_after_template,
+        check('package_stays_absent', parent not in pending_after_template and child not in pending_after_template,
               pending_after_template, stop=False)
         try:
             retry_template = source.rpc('getblocktemplate', {'rules': ['segwit']})
@@ -111,7 +128,7 @@ def main():
         check('tag_restored', source.rpc('checkaddresstag', target, '#REORGTAG') is True, target)
         template = source.rpc('getblocktemplate', {'rules': ['segwit']})
         check('mining_restored', True, [t['txid'] for t in template['transactions']])
-        # The miner fallback removed this package; explicitly re-admit after restoring the tag.
+        # Explicitly re-admit the evicted package after restoring the tag.
         for txid, rawhex in ((parent, signed['hex']), (child, childsig['hex'])):
             if txid not in source.rpc('getrawmempool'):
                 check('readmit/' + txid, source.rpc('sendrawtransaction', rawhex) == txid, txid)
