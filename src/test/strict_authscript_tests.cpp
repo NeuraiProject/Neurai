@@ -797,4 +797,80 @@ BOOST_AUTO_TEST_CASE(p2sh_strict_real_signatures_and_template)
     }
 }
 
+BOOST_AUTO_TEST_CASE(v1_authenticated_contracts_native_and_p2sh)
+{
+    const std::vector<unsigned char> argument{0x12, 0x34, 0x56};
+    std::vector<unsigned char> digest(32);
+    CSHA256().Write(argument.data(), argument.size()).Finalize(digest.data());
+    for (bool pq : {false, true}) {
+        const CKey key = pq ? MakePQKey() : MakeEcdsaKey();
+        const auto pubkey = key.GetPubKey();
+        const uint8_t authType = pq ? 1 : 2;
+        for (int family = 0; family < 4; ++family) {
+            CScript output;
+            if (family == 0) output = GetScriptForDestination(MakeEcdsaKey().GetPubKey().GetID());
+            else output = CScript() << CScript::EncodeOP_N(family) << std::vector<unsigned char>(32, 0x42);
+            const CScript script = CScript() << OP_SHA256 << digest << OP_EQUALVERIFY << OP_0
+                                             << OP_OUTPUTSCRIPT << ToByteVector(output) << OP_EQUAL;
+            const auto commitment = GetAuthScriptCommitment(authType, &pubkey, script);
+            const CScript native = CScript() << OP_1 << ToByteVector(commitment);
+            CBasicKeyStore keystore;
+            keystore.AddKeyPubKey(key, pubkey);
+            keystore.AddCScript(native);
+            AuthScriptSpendData data;
+            data.auth_type = authType;
+            data.pubkey = pubkey;
+            data.key_id = pubkey.GetID();
+            data.witnessScript = script;
+            data.functional_args = {argument};
+            data.is_default_template = false;
+            keystore.AddAuthScriptSpendData(commitment, data);
+            for (bool wrapped : {false, true}) {
+                BOOST_TEST_CONTEXT("pq=" << pq << " family=" << family << " p2sh=" << wrapped) {
+                    const CScript spent = wrapped ? GetScriptForDestination(CScriptID(native)) : native;
+                    auto tx = MakeSpendTx();
+                    tx.vout[0].scriptPubKey = output;
+                    const CTransaction unsignedTx(tx);
+                    TransactionSignatureCreator creator(&keystore, &unsignedTx, 0, kAmount, SIGHASH_ALL);
+                    SignatureData sigdata;
+                    BOOST_REQUIRE(ProduceSignature(creator, spent, sigdata));
+                    UpdateTransaction(tx, 0, sigdata);
+                    BOOST_REQUIRE_EQUAL(tx.vin[0].scriptWitness.stack.size(), 5);
+                    BOOST_CHECK(tx.vin[0].scriptWitness.stack[3] == argument);
+                    const auto flags = STRICT_FLAGS | SCRIPT_VERIFY_OUTPUTSCRIPT;
+                    ScriptError error;
+                    BOOST_CHECK(VerifyInput(tx, spent, flags, &error));
+                    BOOST_CHECK_EQUAL(error, SCRIPT_ERR_OK);
+                    auto bad = tx;
+                    bad.vin[0].scriptWitness.stack[3][0] ^= 1;
+                    BOOST_CHECK(!VerifyInput(bad, spent, flags, &error));
+                    BOOST_CHECK_EQUAL(error, SCRIPT_ERR_EQUALVERIFY);
+                    bad = tx;
+                    bad.vin[0].scriptWitness.stack[1].clear();
+                    BOOST_CHECK(!VerifyInput(bad, spent, flags, &error));
+                    BOOST_CHECK_EQUAL(error, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+                    bad = tx;
+                    bad.vout[0].nValue -= 1;
+                    BOOST_CHECK(!VerifyInput(bad, spent, flags, &error));
+                    BOOST_CHECK_EQUAL(error, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+                    bad = tx;
+                    bad.vin[0].scriptWitness.stack[0][0] = pq ? 2 : 1;
+                    BOOST_CHECK(!VerifyInput(bad, spent, flags, &error));
+                    BOOST_CHECK_EQUAL(error, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+                    // A fresh valid auth signature cannot override the contract's output condition.
+                    bad = tx;
+                    bad.vout[0].scriptPubKey = CScript() << OP_RETURN;
+                    const CTransaction changedTx(bad);
+                    TransactionSignatureCreator changedCreator(&keystore, &changedTx, 0, kAmount, SIGHASH_ALL);
+                    std::vector<unsigned char> signature;
+                    BOOST_REQUIRE(changedCreator.CreateSig(signature, pubkey.GetID(), script, SIGVERSION_AUTHSCRIPT, authType));
+                    bad.vin[0].scriptWitness.stack[1] = signature;
+                    BOOST_CHECK(!VerifyInput(bad, spent, flags, &error));
+                    BOOST_CHECK_EQUAL(error, SCRIPT_ERR_EVAL_FALSE);
+                }
+            }
+        }
+    }
+}
+
 BOOST_AUTO_TEST_SUITE_END()

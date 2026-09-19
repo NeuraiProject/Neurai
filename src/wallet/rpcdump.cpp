@@ -217,7 +217,8 @@ void ImportScript(CWallet* const pwallet, const CScript& script, const std::stri
 
     pwallet->MarkDirty();
 
-    if (!pwallet->HaveWatchOnly(script) && !pwallet->AddWatchOnly(script, 0 /* nCreateTime */)) {
+    if (::IsMine(*pwallet, script) != ISMINE_SPENDABLE &&
+        !pwallet->HaveWatchOnly(script) && !pwallet->AddWatchOnly(script, 0 /* nCreateTime */)) {
         throw JSONRPCError(RPC_WALLET_ERROR, "Error adding address to wallet");
     }
 
@@ -225,7 +226,16 @@ void ImportScript(CWallet* const pwallet, const CScript& script, const std::stri
         if (!pwallet->HaveCScript(script) && !pwallet->AddCScript(script)) {
             throw JSONRPCError(RPC_WALLET_ERROR, "Error adding p2sh redeemScript to wallet");
         }
-        ImportAddress(pwallet, CScriptID(script), strLabel);
+        // Registering the redeemScript can make the P2SH output spendable with
+        // keys already in the wallet. Do not recurse through ImportAddress's
+        // watch-only rejection after persisting that script.
+        const CTxDestination destination = CScriptID(script);
+        const CScript output = GetScriptForDestination(destination);
+        if (::IsMine(*pwallet, output) != ISMINE_SPENDABLE &&
+            !pwallet->HaveWatchOnly(output) && !pwallet->AddWatchOnly(output, 0 /* nCreateTime */)) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "Error adding address to wallet");
+        }
+        pwallet->SetAddressBook(destination, strLabel, "receive");
     } else {
         CTxDestination destination;
         if (ExtractDestination(script, destination)) {
@@ -259,6 +269,7 @@ UniValue importaddress(const JSONRPCRequest& request)
             "2. \"label\"            (string, optional, default=\"\") An optional label\n"
             "3. rescan               (boolean, optional, default=true) Rescan the wallet for transactions\n"
             "4. p2sh                 (boolean, optional, default=false) Add the P2SH version of the script as well\n"
+            "   If the wallet already has the keys, registering the redeem script can make its P2SH output spendable.\n"
             "\nNote: This call can take minutes to complete if rescan is true.\n"
             "If you have the full public key, you should call importpubkey instead of this.\n"
             "\nNote: If you import a non-standard raw script in hex form, outputs sending to it will be treated\n"

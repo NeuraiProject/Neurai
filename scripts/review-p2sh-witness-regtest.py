@@ -25,12 +25,13 @@ def spend(utxo, script_sig, witness, output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bindir', type=Path, default=Path('/root/Neurai/src'))
+    parser.add_argument('--keys-first', action='store_true', help='Import keys before redeem scripts to exercise owned P2SH registration')
     args = parser.parse_args()
     directory = Path(tempfile.mkdtemp(prefix='p2sh-witness-regtest-'))
     files = [Path(__file__), *[Path(__file__).with_name(f) for f in (
         'review-arithmetic-regtest.py', 'review-introspection-regtest.py',
         'review-csfs-block-limit-regtest.py', 'generate_authscript_vectors.py')]]
-    report = {'results': [], 'binary_sha256': h.digest_file(args.bindir / 'neuraid'),
+    report = {'keys_before_scripts': args.keys_first, 'results': [], 'binary_sha256': h.digest_file(args.bindir / 'neuraid'),
               'source_sha256': {p.name: h.digest_file(p) for p in files}}
     nodes, validators = [], []
 
@@ -60,13 +61,17 @@ def main():
             address = keys.rpc('getnewaddress', '', family)
             redeems.append(bytes.fromhex(keys.rpc('validateaddress', address)['scriptPubKey']))
             secrets.append(keys.rpc('dumpprivkey', address))
+        if args.keys_first:
+            for secret in secrets:
+                source.rpc('importprivkey', secret, '', False)
         outputs = []
         for redeem in redeems:
             source.rpc('importaddress', redeem.hex(), '', False, True)
             digest = hashlib.new('ripemd160', a.sha256(redeem)).digest()
             outputs.append(b'\xa9\x14' + digest + b'\x87')
-        for secret in secrets:
-            source.rpc('importprivkey', secret, '', False)
+        if not args.keys_first:
+            for secret in secrets:
+                source.rpc('importprivkey', secret, '', False)
         raw = struct.pack('<I', 2) + b'\x00' + h.compact(4) + b''.join(b.output(1_000_000_000, p) for p in outputs) + bytes(4)
         funded = source.rpc('fundrawtransaction', raw.hex())
         signed = source.rpc('signrawtransaction', funded['hex'])
