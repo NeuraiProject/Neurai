@@ -363,7 +363,7 @@ public:
         consensus.nSegwitEnabled = true;
         consensus.nCSVEnabled = true;
         consensus.nPQWitnessEnabled = true; // PQ (ML-DSA-44) active on testnet
-        consensus.nStrictAuthScriptHeight = std::numeric_limits<int>::max(); // strict AuthScript families (witness v2/v3): local candidate, not scheduled on testnet
+        consensus.nStrictAuthScriptHeight = 440000; // strict AuthScript families (witness v2/v3) and NIP-041 activate on testnet at block 440000
         consensus.nCATEnabled = true;  // OP_CAT (BIP 347) active on testnet
         consensus.nCTVEnabled = true;  // OP_CTV (BIP 119) active on testnet
         consensus.nCSFSEnabled = true;  // OP_CHECKSIGFROMSTACK active on testnet

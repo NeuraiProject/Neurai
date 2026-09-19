@@ -32,6 +32,7 @@
 
 #include <boost/test/unit_test.hpp>
 
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -729,6 +730,32 @@ BOOST_AUTO_TEST_CASE(activation_context_is_scoped)
     custom.nStrictAuthScriptHeight = 150;
     BOOST_CHECK(!custom.IsStrictAuthScriptActive(149));
     BOOST_CHECK(custom.IsStrictAuthScriptActive(150));
+}
+
+// Pin the real network schedule, not just a regtest override. Historical
+// testnet flags remain identical to the previously unscheduled configuration.
+BOOST_AUTO_TEST_CASE(testnet_activation_schedule)
+{
+    const auto testnet = CreateChainParams(CBaseChainParams::TESTNET);
+    const auto mainnet = CreateChainParams(CBaseChainParams::MAIN);
+    const auto regtest = CreateChainParams(CBaseChainParams::REGTEST);
+    const auto& consensus = testnet->GetConsensus();
+    BOOST_REQUIRE_EQUAL(consensus.nStrictAuthScriptHeight, 440000);
+    BOOST_CHECK(consensus.nPQWitnessEnabled);
+    BOOST_CHECK_EQUAL(mainnet->GetConsensus().nStrictAuthScriptHeight, std::numeric_limits<int>::max());
+    BOOST_CHECK_EQUAL(regtest->GetConsensus().nStrictAuthScriptHeight, 0);
+    auto previous = consensus;
+    previous.nStrictAuthScriptHeight = std::numeric_limits<int>::max();
+    const script_verify_flags activation = SCRIPT_VERIFY_AUTHSCRIPT_STRICT | SCRIPT_VERIFY_AUTHDEST;
+    for (int height : {0, 436165, 439998, 439999, 440000, 440001}) {
+        const bool active = consensus.IsStrictAuthScriptActive(height);
+        BOOST_CHECK_EQUAL(active, height >= 440000);
+        const auto flags = ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, active, height);
+        const auto oldFlags = ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, previous, false, height);
+        BOOST_CHECK((flags & activation) == (active ? activation : 0));
+        BOOST_CHECK((flags & ~activation) == (oldFlags & ~activation));
+        if (!active) BOOST_CHECK(flags == oldFlags);
+    }
 }
 
 // A v1 covenant can inspect an output paid to a strict asset destination.

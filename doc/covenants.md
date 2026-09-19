@@ -48,6 +48,20 @@ The witness stack for spending is structured as:
 
 This design separates authentication (who) from authorization logic (what and how), allowing covenants to be written as pure script logic while optionally requiring key-holder approval.
 
+### Strict AuthScript activation schedule
+
+Testnet activates strict PQ witness v2 (`tpq1z…`), strict ECDSA witness v3
+(`tnq1r…`) and NIP-041 destination introspection at **block 440000**.
+This height also enables the strict-flag rules described below for v1 mixed
+multisig. Earlier blocks retain their previous validation rules. Wallet and
+mempool admission use the next block's height, so strict addresses become
+available with the tip at 439999. Nodes must run the updated software before
+block 440000. This is a scheduled consensus change, not deployment by this
+repository alone.
+
+Mainnet remains unscheduled. Regtest remains active from height 0 by default;
+`-strictauthscriptheight` can override the height for regtest activation tests.
+
 ### Mixed ECDSA/PQ multisig in witness v1
 
 At `nStrictAuthScriptHeight`, `SCRIPT_VERIFY_AUTHSCRIPT_STRICT` also enables
