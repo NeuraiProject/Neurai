@@ -550,3 +550,305 @@ BOOST_AUTO_TEST_CASE(modern_flags_underflow_and_size_limits)
 }
 
 BOOST_AUTO_TEST_SUITE_END()
+
+BOOST_FIXTURE_TEST_SUITE(poseidon_review_tests, BasicTestingSetup)
+
+BOOST_AUTO_TEST_CASE(byte_sponge_vectors_and_witness_arguments)
+{
+    // Python big integers and NIP-036 byte padding, shared pinned RC/MDS constants.
+    struct Vector { const char* input; const char* output; };
+    const Vector vectors[] = {
+        {"", "067761295e881eec953a764e4d72bbccedf07472b57b9a3f754dcb5012441956"},
+        {"00", "03e0d2ebfc1f715a436de3d6bf37c9632b33fe6a52c4127a6063ab2a6dc12926"},
+        {"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d", "1fdba9cb5ed5f33da3b2223236cbfc355a47906a1588b6eab00933ae7a1445f5"},
+        {"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e", "14f5046f58397839af50f7b95a50324a97a8ec182660cf85377b026b0ca6d310"},
+        {"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "25b8af87ce603ad9560c89d435b1b4bdf1aa579a5136c479975db18a00d84cf9"},
+        {"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20", "11f4d35b5bb6f9394b5bc848a1782f6a8a8be5baf2b9f12c7563eb0bd9ed9f64"},
+        {"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c", "23cfd24ca33621e8d72dbe8033f674441626e90c5c5401f1d4e6309df2df740f"},
+        {"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d", "19f817a2c194fd3d02ac4b6929f40f12724279f6016b71519578a16185a1b757"},
+        {"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e", "2752b5df09440108dda14a9180026737c45e314d89f71515d0aa53979596323b"},
+        {"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b", "192b08cca9c1ac64df308e7448d9e0da1d2d16ce7b80b42618acc3e0b5198a6f"},
+        {"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c", "222174e87a474ee008b0a6769bc76261a5f05e731a638414f668d0ded0523f53"},
+        {"01000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "079460506102d573845c1a79f6daf0b5820a030eb2a9b5f34e2fee6889c8ce88"},
+        {"02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "1eac62c7328eb3c5c94401ce37fcefbcdf127d7cb1d5cedd7620010d28b7d363"},
+        {"03000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "03a9f9a2c97539633b34b1fb679c4eb0d5055126554598b7ca529aa60c5ddae4"},
+        {"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "0d6a41f61e6e7925da46e47726b9d153644e96c02a89947cf2143d718908a9b0"},
+        {"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "1b283a96e318b055af0ce6146333e9b8051dbbc02aa945f878ebdcaf711d1e4a"},
+        {"30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001", "253ea0caffc708a991bd491251425a1fdade99dd1bb26f33ea7478dbb415efc9"},
+        {"30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000002", "054f24efe74f468258300b2e87088db8a046ad67306b108df03fd3c8bd624e07"},
+    };
+    const auto flags = REVIEW_BYTES_FLAGS | SCRIPT_VERIFY_POSEIDON;
+    for (const auto& vector : vectors) {
+        BOOST_TEST_CONTEXT("input=" << vector.input) {
+            const auto input = ParseHex(vector.input);
+            const auto output = ParseHex(vector.output);
+            ReviewWrappedScript(CScript() << input << OP_POSEIDON << OP_SIZE << 32 << OP_EQUALVERIFY
+                                << output << OP_EQUAL, flags, SCRIPT_ERR_OK);
+            auto wrong = output;
+            wrong[0] ^= 1;
+            ReviewWrappedScript(CScript() << input << OP_POSEIDON << wrong << OP_EQUAL,
+                                flags, SCRIPT_ERR_EVAL_FALSE);
+            const CScript script = CScript() << OP_POSEIDON << output << OP_EQUAL;
+            const auto program = GetAuthScriptCommitment(0x00, nullptr, script);
+            CScriptWitness witness;
+            witness.stack = {ReviewBytes{0}, input, ReviewBytes(script.begin(), script.end())};
+            ScriptError error;
+            BOOST_CHECK(VerifyScript(CScript(), CScript() << OP_1 << ReviewBytes(program.begin(), program.end()),
+                                    &witness, flags, BaseSignatureChecker(), &error));
+            BOOST_CHECK_EQUAL(error, SCRIPT_ERR_OK);
+        }
+    }
+}
+
+BOOST_AUTO_TEST_CASE(exact_budget_reset_and_skipped_branch)
+{
+    const auto flags = REVIEW_BYTES_FLAGS | SCRIPT_VERIFY_POSEIDON | SCRIPT_VERIFY_CHECKSIGFROMSTACK;
+    CScript atLimit;
+    atLimit << ReviewPayload(3072);
+    for (int i = 0; i < 10; ++i) atLimit << OP_DUP << OP_POSEIDON << OP_DROP;
+    atLimit << OP_DROP;
+    // Scripts remain below MAX_SCRIPT_SIZE: duplicate the payload, do not repeat pushes.
+    ReviewWrappedScript(CScript(atLimit) << OP_TRUE, flags, SCRIPT_ERR_OK);
+    ReviewWrappedScript(CScript(atLimit) << ReviewBytes{1} << OP_POSEIDON,
+                        flags, SCRIPT_ERR_POSEIDON_BUDGET); // 30721 bytes, not 11 full payloads
+    // Empty input costs zero input bytes but still hashes with padding.
+    ReviewWrappedScript(CScript(atLimit) << OP_0 << OP_POSEIDON << OP_DROP << OP_TRUE,
+                        flags, SCRIPT_ERR_OK);
+    ReviewWrappedScript(CScript(atLimit) << OP_0 << OP_IF << ReviewBytes{1} << OP_POSEIDON
+                        << OP_DROP << OP_ENDIF << OP_TRUE, flags, SCRIPT_ERR_OK);
+    // A failed evaluation cannot leak the consumed budget into the next script.
+    ReviewWrappedScript(CScript(atLimit) << OP_TRUE, flags, SCRIPT_ERR_OK);
+}
+
+BOOST_AUTO_TEST_CASE(poseidon_flag_and_element_limit_are_independent)
+{
+    ReviewWrappedScript(CScript() << OP_POSEIDON, REVIEW_BYTES_FLAGS | SCRIPT_VERIFY_MODERN_HASHES,
+                        SCRIPT_ERR_BAD_OPCODE);
+    ReviewWrappedScript(CScript() << OP_POSEIDON, REVIEW_BYTES_FLAGS | SCRIPT_VERIFY_POSEIDON,
+                        SCRIPT_ERR_INVALID_STACK_OPERATION);
+    ReviewWrappedScript(CScript() << OP_0 << OP_IF << OP_POSEIDON << OP_ENDIF << OP_TRUE,
+                        REVIEW_BYTES_FLAGS, SCRIPT_ERR_OK);
+    for (size_t length : {size_t(520), size_t(521), size_t(3072), size_t(3073)}) {
+        for (bool wide : {false, true}) {
+            auto flags = REVIEW_BYTES_FLAGS | SCRIPT_VERIFY_POSEIDON;
+            if (wide) flags |= SCRIPT_VERIFY_CHECKSIGFROMSTACK;
+            const auto expected = length <= (wide ? 3072U : 520U) ? SCRIPT_ERR_OK : SCRIPT_ERR_PUSH_SIZE;
+            ReviewWrappedScript(CScript() << ReviewPayload(length) << OP_POSEIDON << OP_DROP << OP_TRUE,
+                                flags, expected);
+            const CScript script = CScript() << OP_POSEIDON << OP_DROP << OP_TRUE;
+            const auto program = GetAuthScriptCommitment(0x00, nullptr, script);
+            CScriptWitness witness;
+            witness.stack = {ReviewBytes{0}, ReviewPayload(length), ReviewBytes(script.begin(), script.end())};
+            ScriptError error;
+            BOOST_CHECK_EQUAL(VerifyScript(CScript(), CScript() << OP_1 << ReviewBytes(program.begin(), program.end()),
+                                          &witness, flags, BaseSignatureChecker(), &error), expected == SCRIPT_ERR_OK);
+            BOOST_CHECK_EQUAL(error, expected);
+        }
+    }
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+namespace {
+ReviewBytes ReviewMerkleProof(unsigned int depth)
+{
+    ReviewBytes proof{static_cast<unsigned char>(depth)};
+    for (unsigned int level = 0; level < depth; ++level)
+        for (unsigned int j = 0; j < 32; ++j) proof.push_back((37 * level + j) & 0xff);
+    for (unsigned int i = 0; i < (depth + 7) / 8; ++i) proof.push_back(0xa5);
+    return proof;
+}
+CScript ReviewMerkleScript(const ReviewBytes& leaf, const ReviewBytes& scheme,
+                          const ReviewBytes& proof, const ReviewBytes& root)
+{
+    return CScript() << leaf << scheme << proof << root << OP_CHECKMERKLEINCLUSION;
+}
+}
+
+BOOST_FIXTURE_TEST_SUITE(merkle_opcode_review_tests, BasicTestingSetup)
+
+BOOST_AUTO_TEST_CASE(independent_roots_destinations_and_mutations)
+{
+    struct Vector { unsigned char scheme; unsigned int depth; unsigned char version; const char* root; };
+    // scripts/generate-merkle-review-vectors.mjs: independent hash/path calculation.
+    const Vector vectors[] = {
+        {1, 0, 1, "491176b0f443c65a7c7d72df47d6cbc0d04e111fb5a619f60d3e77677ab6f919"},
+        {1, 0, 2, "121e01fd47d8c2ecdb10fa6f0a51a97a48cebd0de5231f274f5076a03e371868"},
+        {1, 0, 3, "3cea1c8fb8815b13cc24bb320c9b7887ad2a0c76c96bb249720f7c550924d4e6"},
+        {1, 1, 1, "a7f27106d4a927dcb3ca1274d79d3d1c8adc3b1293d7af62bb0a74bb1b61c644"},
+        {1, 1, 2, "7f8da84fcef42ddd8d5da6cf6216d4c960db13ab571203932715edb62b6d7e1c"},
+        {1, 1, 3, "135d98f0b756e17c15e552972fc0c830274374153919327368060c35009f0a2b"},
+        {1, 7, 1, "48dc31ffc4a4db7fec6b2de76f1809a5c2b2f605acfaaa6d533d47377fc903ea"},
+        {1, 7, 2, "f1a8f5304b98d692742cfd66a53fe3023ea3cfce53e560373c55afb10cc30052"},
+        {1, 7, 3, "e2faca14bd668b3a3ab12d196f089a03e7b8a758b20e9723fbbc9bc93a5cd463"},
+        {1, 8, 1, "7134ebea93fee12cb559da087a5870aecfe60889c92ca8523a000cdd7739049d"},
+        {1, 8, 2, "0f0feafa388bbd3d7fb290277c372fda3c8c57adfd81837c8f63c7f73f92cc57"},
+        {1, 8, 3, "063819f020eb0d3435f0404f8a37350f16e2cc3a433d2ffa141e2a549939669f"},
+        {1, 9, 1, "51bfd9914faf4bac084edd963c60136e47bfaff38f36d82a55c6268b5ac53558"},
+        {1, 9, 2, "cabba54a0a36e20fb6ab55a6544d55146e342e24aaafc96883aef6f376044dc0"},
+        {1, 9, 3, "1219af21246e321d86510fe9417b9b04edfd2e232ddae635dc7a53ff9e1b6b34"},
+        {1, 16, 1, "ed46db28a967a0db1c8e15c862f9938f0c320820619149524f9094fc45274fdb"},
+        {1, 16, 2, "62e3453bf376f013ba4b8a5655238ae4008caf347cfa816f8acee10ac20e7053"},
+        {1, 16, 3, "290ee47d3d05d3b44e929361e4e567cd8e6e8938155ef4e407305577fe0c2596"},
+        {1, 31, 1, "2c5e606eca178a9262875b33240c5ddd85a989dff428781c9a19803e66667e38"},
+        {1, 31, 2, "307fbf854b26dbd19cc458d534051aa805cd8eac307f4078cfd6b609476a73d6"},
+        {1, 31, 3, "09bc995fe11d4226ea484735721b34d95ca77d32176ec66fb542e99346ee09ca"},
+        {1, 32, 1, "9bde1c9478b24e74acde3893f547c8525848c859a2e7eeca7011586e7e166722"},
+        {1, 32, 2, "32a73aa72197073598ad03b333567e4689553a2d5c03f24b674fe905d75de45e"},
+        {1, 32, 3, "93ebfd8da7593c0971a0acb4e409d4ee682b2e607cabfb49186e85d84947f896"},
+        {2, 0, 1, "491176b0f443c65a7c7d72df47d6cbc0d04e111fb5a619f60d3e77677ab6f919"},
+        {2, 0, 2, "121e01fd47d8c2ecdb10fa6f0a51a97a48cebd0de5231f274f5076a03e371868"},
+        {2, 0, 3, "3cea1c8fb8815b13cc24bb320c9b7887ad2a0c76c96bb249720f7c550924d4e6"},
+        {2, 1, 1, "e14517da9d21ea21d7039633876f22b3e545c0f6102195e044ad0b6a6b94a8dc"},
+        {2, 1, 2, "3202f596c1ad3b22e960996f4678c34ea2e55b374d0e0cab451efec948ab5b8a"},
+        {2, 1, 3, "6bea2593dbb58c90438ac00827a86b4abdf5686a2523f98c55fdeed2346d6ce3"},
+        {2, 7, 1, "596c78bc9a53b735faef333881835d4e53d733e1a6f279b281793e3775642405"},
+        {2, 7, 2, "4e92358cafcc0014863b0aafef7c90beb7e35b91223fb6cd21814bc1eaf61ac9"},
+        {2, 7, 3, "aad8d448b792b55bb1370cf5fd011abaa88d7046a3c60ecfefa6236cdeb63021"},
+        {2, 8, 1, "1dbb07d4c4da5383adc6211ce4ce42b0e8f5920cae4bd4a02e88e6b8ea486bef"},
+        {2, 8, 2, "f3e33798884bf20d6e58cfa2182adcbf25afe54efcfea6c4b0b85c0aa45ddeea"},
+        {2, 8, 3, "ae6b92fd7609d02e24c240a571887c6d58c28adfcb115b36c09d3ec4bca428ec"},
+        {2, 9, 1, "04c42f1ea321b807d5c8377f5313e27b2c52d7d139ecc199e56a683e010c3739"},
+        {2, 9, 2, "979025782f58227e0488090d473557c6eb9e059c3fced7702ce37d94bd69c135"},
+        {2, 9, 3, "6c77779e373f0310399305583d9682a73895d014cc25d352596474f30eeccaed"},
+        {2, 16, 1, "2755cb41f707a82e15e13ca1e4b86091446f099765d1e8040a3f16e5dd67897d"},
+        {2, 16, 2, "05250d7d0d782ff0390ebd538a3f9117e6212691fb67f53fda2365d436e02bbe"},
+        {2, 16, 3, "a235b48e3d3fcf1e5831734d78316b45bedad2dd7d0df8fad664c1299baf6f67"},
+        {2, 31, 1, "de7cf90df430e7ec413195cc1060f6b149ddd0faaea812bd0fd7996815980c20"},
+        {2, 31, 2, "f15b725fd9e3ca044ba274f0a462837a119cc1be4e7a09763da4449396508795"},
+        {2, 31, 3, "b2ad55598404fb2e853853b3d152596a85aacd567eeaa4834eeb69c256ff0aed"},
+        {2, 32, 1, "ddfe5649fb4cb4f0d6cdb8d29682b140cd3e36c7aeb3fe017221559ef2a8f793"},
+        {2, 32, 2, "0af920ead7f4e8182571509afaa6bcebdaf0bb947b20d0efd2bca23c94f35933"},
+        {2, 32, 3, "5bd1e6680a4187b12dca160298f39f1e80c2fbdf61a6d86f58084d3d9c87e130"},
+        {3, 0, 1, "e46e20db49e842154b399b4b5f7200464f9370a5bee4d92a971d96b24d802cfc"},
+        {3, 0, 2, "3ff103374c1cebfd660cbe9f9ef14bc42cbabff49026d0ea7d3720f3dfe5b55a"},
+        {3, 0, 3, "096634ab32448c364818d2e2dc6cdd759aba16f07cded2b41d9820581b30791c"},
+        {3, 1, 1, "0d1cf924bb3487a1cc395ef4825a26e340449f8563c096a31b29ed122ece5d54"},
+        {3, 1, 2, "c0e153a803a3a6e6a7d1cac02f44a8989f0d0fb5beb6c5f7aec2f5375319ae8a"},
+        {3, 1, 3, "12b3942a8b296128c156e7de11233369fbd9fdef2aecaa9e74ab984d97265723"},
+        {3, 7, 1, "67f10a154b2aa11a3612488a8bab41a3bd0b6681c6c4ff191fa913c41d37c1be"},
+        {3, 7, 2, "306663ffe8f9a633fe31fd1331eeb5a56d80c56dcfefe1b1ec73a4492716fabd"},
+        {3, 7, 3, "19b88b33ee8c68411aeb45a2d0c2a4cdd563821d46cd53d11ec2ad36cb3dbba9"},
+        {3, 8, 1, "6ba1e5923c1ff0c0708b2994bd8138067ca28822931aa09309f2584279099f72"},
+        {3, 8, 2, "eaebc585ad4065359f4a0c00c096c8fe0c83ebd2990a6cc78b5436972c718623"},
+        {3, 8, 3, "5d781f361edffb3149bf6ed3b44c254598594ef741823cfccc8f297647de1ec1"},
+        {3, 9, 1, "760816419fe137d5f948c2b9711b93df159ff38bd0dfbac9b1296a8aa5b3c35b"},
+        {3, 9, 2, "75f3b4f1d8ab154dc29e3a721a71d6c51958b1ebd4a6138e5b1369b0f6cc8d36"},
+        {3, 9, 3, "ffb7ab02eb92a644a4916830f35a12576762337e636fc5074b83eb639ef90e9f"},
+        {3, 16, 1, "633e0fbc92b018c24a88f951baf71110849297e8a40f185519773f32e5e6a12e"},
+        {3, 16, 2, "4fc1fa70d76d4fb81c76a548b63f527cf3e89e250a99481cb28f55b5b8e44441"},
+        {3, 16, 3, "a96563e31aaede282982b3d07d02b4644518bac291df07d36456a58c932af751"},
+        {3, 31, 1, "2b34be23f88fbe66bde89f1475c368d25cd71b365b596dd9068baf1385199c35"},
+        {3, 31, 2, "c4d2fcdbcd64733118fecb4dcb16da340c9429175012c751f35377d874f5d05c"},
+        {3, 31, 3, "5fb52c42b612602dc30f4578ca7091879f17a6b9ebac79c007e299fc26e97000"},
+        {3, 32, 1, "eb8560bd63034b6e607d4fcf0f96149838a18813aca5746252eed372875e089a"},
+        {3, 32, 2, "46e2e7680222218cdf2f765521cab01402c94f6b1e6d5d4e51ae663527346b0a"},
+        {3, 32, 3, "e671a96cd9f84be7939b11ecea2f377cae5f6992ffc2b21b40f0ac4bac8dea2a"},
+        {4, 0, 1, "c3e8f071cd73953c3ec0ef9cf9f963edf735449f0b4fe799769a4b9e794e5664"},
+        {4, 0, 2, "302abf71c5b4ab901c81429865398872d618d47e6e5b5d76194fd5f7fce7d22b"},
+        {4, 0, 3, "b81126497cc5f75b78417e5a269445a17834d80064fdf540eb4f29a394f07ac7"},
+        {4, 1, 1, "7200337727dbe2b6ce23413dc06c35485086239dcef638fd08ae034eb1e41cf8"},
+        {4, 1, 2, "3d2bd90e95e50df7255c10e8dca3809311a953a3fd047324b6b7dbc19a912a87"},
+        {4, 1, 3, "8a113d7c087aa1fb884b55906eb6f3ed3358cd406591a4816371ae1a6a77ce0a"},
+        {4, 7, 1, "3136f7f10afb239a1fbc1f89434f0c5ceaaf00ff9971651c060120a7254785c8"},
+        {4, 7, 2, "e3de49e0af9e8a409e754499484285128983e7a5e1445a50f42fd7cf825a2655"},
+        {4, 7, 3, "09db72ecd6f225182d88bfb0985e85e8c7ac88268fb26b2b4bdbdf38da6a5df7"},
+        {4, 8, 1, "b434777c5b964e203a4f538c5133c186567175bc82b7b799383cb60ba8de41a5"},
+        {4, 8, 2, "af4ef14219079fe00f58067929cf7f1d907d7f86073050092e5aff6ceedcaaca"},
+        {4, 8, 3, "1eb46873d0cd7061a1d0145a81f79e14778abb56705bd25a2b77edf287e2ee20"},
+        {4, 9, 1, "ce3f8e1eb467a823052da3dc789436a5e4a814a7fdaad24a765fd58e15408842"},
+        {4, 9, 2, "2760575a297871d68eebe9d1e4c504d04bf158a12152f9df8ae7a17c6b4cca44"},
+        {4, 9, 3, "09722587f886f9e9d911df9469a39f8a0846637038f78762dc59d2dcf1e3d2ac"},
+        {4, 16, 1, "83a0840953926aae48f755a68d0c95a4b99be52a2bb60fce4175ab174b3349b3"},
+        {4, 16, 2, "5d946e16396be5c913df6286cbfbb481ec7a058eb0696927e4541b9bdfeff47d"},
+        {4, 16, 3, "a41b6f7bfa2ec08d7d5cd7f771935e924083281a48445851798575f684b99fa8"},
+        {4, 31, 1, "04b95758e584a0242fd45846cf83a291c86acd336eb1598b9228320085c3ebba"},
+        {4, 31, 2, "c2f344ec1e4d7405b151b0f3477e3f7822b3cc8fddc51ef33c2c0f3c273ad0bf"},
+        {4, 31, 3, "53c44b2b5d5531152eb24e862ac8a021b7117f079c48933c2da736b534023593"},
+        {4, 32, 1, "6fbcdff44e7d510b8af397d15ca882a5347baae614faa5a43b5a3c89c90e44e3"},
+        {4, 32, 2, "910f1e6c2370bfe1461ff947fdae21196fa4743f807b10805c99e7e57e3cd36b"},
+        {4, 32, 3, "b2baed86b62039e23ff932d5d050b9bf4c7c74ccb7247bb5f6922e8c48d5706a"},
+    };
+    const auto flags = REVIEW_BYTES_FLAGS | SCRIPT_VERIFY_MERKLE_INCLUSION | SCRIPT_VERIFY_KECCAK_BLAKE2B;
+    for (const auto& v : vectors) {
+        BOOST_TEST_CONTEXT("scheme=" << int(v.scheme) << " depth=" << v.depth << " version=" << int(v.version)) {
+            ReviewBytes leaf{v.version};
+            const auto commitment = ReviewPayload(32);
+            leaf.insert(leaf.end(), commitment.begin(), commitment.end());
+            if (v.scheme == 1) {
+                ReviewBytes digest(32);
+                CSHA256().Write(leaf.data(), leaf.size()).Finalize(digest.data());
+                leaf = digest;
+            }
+            const auto proof = ReviewMerkleProof(v.depth);
+            const auto root = ParseHex(v.root);
+            ReviewWrappedScript(ReviewMerkleScript(leaf, {v.scheme}, proof, root), flags, SCRIPT_ERR_OK);
+            // Check actual v1 witness arguments, including the 1029-byte depth-32 proof.
+            const CScript script = CScript() << OP_CHECKMERKLEINCLUSION;
+            const auto program = GetAuthScriptCommitment(0x00, nullptr, script);
+            CScriptWitness witness;
+            witness.stack = {ReviewBytes{0}, leaf, ReviewBytes{v.scheme}, proof, root,
+                             ReviewBytes(script.begin(), script.end())};
+            ScriptError error;
+            BOOST_CHECK(VerifyScript(CScript(), CScript() << OP_1 << ReviewBytes(program.begin(), program.end()),
+                                    &witness, flags, BaseSignatureChecker(), &error));
+            BOOST_CHECK_EQUAL(error, SCRIPT_ERR_OK);
+            auto changed = leaf;
+            changed[0] ^= 1;
+            ReviewWrappedScript(ReviewMerkleScript(changed, {v.scheme}, proof, root), flags, SCRIPT_ERR_EVAL_FALSE);
+            auto badRoot = root;
+            badRoot[0] ^= 1;
+            ReviewWrappedScript(ReviewMerkleScript(leaf, {v.scheme}, proof, badRoot), flags, SCRIPT_ERR_EVAL_FALSE);
+            for (bool append : {false, true}) {
+                auto malformed = proof;
+                if (append) malformed.push_back(0); else malformed.pop_back();
+                // Malformed proof produces false, not an opcode exception: OP_NOT must succeed.
+                ReviewWrappedScript(ReviewMerkleScript(leaf, {v.scheme}, malformed, root) << OP_NOT,
+                                    flags, SCRIPT_ERR_OK);
+            }
+            if (v.depth) {
+                auto sibling = proof;
+                sibling[1] ^= 1;
+                ReviewWrappedScript(ReviewMerkleScript(leaf, {v.scheme}, sibling, root), flags, SCRIPT_ERR_EVAL_FALSE);
+                auto direction = proof;
+                direction[1 + 32 * v.depth] ^= 1;
+                ReviewWrappedScript(ReviewMerkleScript(leaf, {v.scheme}, direction, root), flags, SCRIPT_ERR_EVAL_FALSE);
+                if (v.depth % 8) {
+                    // Existing format ignores unused high bitmap bits; do not tighten consensus here.
+                    auto unused = proof;
+                    unused.back() ^= 0x80;
+                    ReviewWrappedScript(ReviewMerkleScript(leaf, {v.scheme}, unused, root), flags, SCRIPT_ERR_OK);
+                }
+            }
+            // SHA schemes need only NIP-031; Keccak/BLAKE2b also require NIP-030.
+            ReviewWrappedScript(ReviewMerkleScript(leaf, {v.scheme}, proof, root),
+                                flags & ~SCRIPT_VERIFY_KECCAK_BLAKE2B,
+                                v.scheme <= 2 ? SCRIPT_ERR_OK : SCRIPT_ERR_EVAL_FALSE);
+        }
+    }
+}
+
+BOOST_AUTO_TEST_CASE(format_depth_and_flag_rejections)
+{
+    const auto flags = REVIEW_BYTES_FLAGS | SCRIPT_VERIFY_MERKLE_INCLUSION | SCRIPT_VERIFY_KECCAK_BLAKE2B;
+    const auto leaf = ReviewPayload(32);
+    for (const auto& scheme : std::vector<ReviewBytes>{{}, {0}, {5}, {255}, {1,0}}) {
+        ReviewWrappedScript(ReviewMerkleScript(leaf, scheme, {0}, leaf) << OP_NOT, flags, SCRIPT_ERR_OK);
+    }
+    for (size_t size : {size_t(0),size_t(31),size_t(33)}) {
+        ReviewWrappedScript(ReviewMerkleScript(leaf, {1}, {0}, ReviewPayload(size)) << OP_NOT, flags, SCRIPT_ERR_OK);
+        ReviewWrappedScript(ReviewMerkleScript(ReviewPayload(size), {1}, {0}, leaf) << OP_NOT, flags, SCRIPT_ERR_OK);
+    }
+    ReviewWrappedScript(ReviewMerkleScript(leaf, {1}, ReviewMerkleProof(33), leaf) << OP_NOT, flags, SCRIPT_ERR_OK);
+    for (int count = 0; count < 4; ++count) {
+        CScript script;
+        for (int i = 0; i < count; ++i) script << leaf;
+        ReviewWrappedScript(script << OP_CHECKMERKLEINCLUSION, flags, SCRIPT_ERR_INVALID_STACK_OPERATION);
+    }
+    ReviewWrappedScript(CScript() << OP_CHECKMERKLEINCLUSION, flags & ~SCRIPT_VERIFY_MERKLE_INCLUSION,
+                        SCRIPT_ERR_BAD_OPCODE);
+    ReviewWrappedScript(CScript() << OP_0 << OP_IF << OP_CHECKMERKLEINCLUSION << OP_ENDIF << OP_TRUE,
+                        flags & ~SCRIPT_VERIFY_MERKLE_INCLUSION, SCRIPT_ERR_OK);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
