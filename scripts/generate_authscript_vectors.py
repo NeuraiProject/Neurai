@@ -59,7 +59,7 @@ def generate():
         preimage = bytes([version]) + descriptor + sha256(b'\x51')
         sha_input = tag + tag + preimage
         commitment = sha256(sha_input)
-        hrp = 'pq' if version == 2 else 'nq'
+        hrp = {1: 'nc', 2: 'pq', 3: 'nq'}[version]
         commitments.append({
             'version': version, 'auth_type': auth_type, 'key': key_name,
             'auth_descriptor_hex': descriptor.hex(), 'preimage_hex': preimage.hex(),

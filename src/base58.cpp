@@ -518,7 +518,7 @@ public:
         std::vector<uint8_t> conv;
         if (!bech32::ConvertBits<8, 5, true>(hash_bytes, conv)) return "";
         data.insert(data.end(), conv.begin(), conv.end());
-        return bech32::Encode(GetParams().Bech32HRP(), data, bech32::Encoding::BECH32M);
+        return bech32::Encode(GetParams().Bech32HRPAuthScript(), data, bech32::Encoding::BECH32M);
     }
     std::string operator()(const WitnessStrictAuthScript& id) const {
         // Bech32m: witness version 2 (HRP "pq"/"tpq") or 3 (HRP "nq"/"tnq") + 32-byte commitment.
@@ -550,12 +550,14 @@ CTxDestination DecodeDestination(const std::string& str)
             return CNoDestination();
         }
         const uint8_t version = dec.data[0];
-        // Canonical HRP/version pairs only. Any other combination is rejected
+        // Only canonical HRP/version pairs are accepted. Other combinations are rejected
         // even with a valid checksum:
-        //   Bech32HRP()          ("nq"/"tnq") <-> version 1 (generic) or 3 (strict ECDSA)
+        //   Bech32HRPAuthScript() ("nc"/"tnc") <-> version 1 (generic)
+        //   Bech32HRP()          ("nq"/"tnq") <-> version 3 (strict ECDSA)
         //   Bech32HRPStrictPQ()  ("pq"/"tpq") <-> version 2 (strict PQ)
         const bool canonical =
-            (dec.hrp == GetParams().Bech32HRP() && (version == 1 || version == STRICT_AUTHSCRIPT_WITNESS_V3_ECDSA)) ||
+            (dec.hrp == GetParams().Bech32HRPAuthScript() && version == 1) ||
+            (dec.hrp == GetParams().Bech32HRP() && version == STRICT_AUTHSCRIPT_WITNESS_V3_ECDSA) ||
             (dec.hrp == GetParams().Bech32HRPStrictPQ() && version == STRICT_AUTHSCRIPT_WITNESS_V2_PQ);
         if (!canonical) {
             return CNoDestination();

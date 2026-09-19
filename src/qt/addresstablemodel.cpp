@@ -382,7 +382,7 @@ QString AddressTableModel::addRow(const QString &type, const QString &label, con
         }
         if (newKey.IsPQ()) {
             CTxDestination dest;
-            if (!wallet->GetDefaultAuthScriptDestination(newKey, dest)) {
+            if (!IsStrictAuthScriptActiveInContext() || !wallet->GetStrictAuthScriptDestination(newKey, dest)) {
                 editStatus = KEY_GENERATION_FAILURE;
                 return QString();
             }

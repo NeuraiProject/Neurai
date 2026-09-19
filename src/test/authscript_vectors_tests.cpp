@@ -115,7 +115,7 @@ BOOST_AUTO_TEST_CASE(commitment_vectors)
     BOOST_CHECK(strictECDSA.commitment == c_v3_ecdsa);
 }
 
-// Address vectors: mainnet (nq/pq) and testnet/regtest (tnq/tpq) HRPs for the
+// Address vectors: mainnet (nc/nq/pq) and testnet/regtest (tnc/tnq/tpq) HRPs for the
 // same five commitments above.
 BOOST_AUTO_TEST_CASE(address_vectors)
 {
@@ -135,9 +135,9 @@ BOOST_AUTO_TEST_CASE(address_vectors)
 
     struct Vector { const char* label; const CTxDestination dest; const char* mainnet; const char* testnet; };
     const Vector vectors[] = {
-        {"v1 generic, PQ key",     v1pq,     "nq1p3y7kpr5qvg8czeqgw2kzg4w9msc7yw39h4z0qdvp3etwf7qzreksq9aae0",  "tnq1p3y7kpr5qvg8czeqgw2kzg4w9msc7yw39h4z0qdvp3etwf7qzrekspu06gq"},
-        {"v1 generic, ECDSA key",  v1ecdsa,  "nq1ptmusnhle7v08l0f5aarptp3l5jxxhat8mzl9r0xht7aexfrjf6ds53x86l",  "tnq1ptmusnhle7v08l0f5aarptp3l5jxxhat8mzl9r0xht7aexfrjf6ds4g5qts"},
-        {"v1 generic, no key",     v1noauth, "nq1p5mqcrlxczdlx2552xrjw94zhk5thsguygxu0thvfz8pqsjshaeashxe740",  "tnq1p5mqcrlxczdlx2552xrjw94zhk5thsguygxu0thvfz8pqsjshaeasklteyq"},
+        {"v1 generic, PQ key",     v1pq,     "nc1p3y7kpr5qvg8czeqgw2kzg4w9msc7yw39h4z0qdvp3etwf7qzreksj3ypsd",  "tnc1p3y7kpr5qvg8czeqgw2kzg4w9msc7yw39h4z0qdvp3etwf7qzreksngkxpz"},
+        {"v1 generic, ECDSA key",  v1ecdsa,  "nc1ptmusnhle7v08l0f5aarptp3l5jxxhat8mzl9r0xht7aexfrjf6dsx9lmna",  "tnc1ptmusnhle7v08l0f5aarptp3l5jxxhat8mzl9r0xht7aexfrjf6ds8uduzj"},
+        {"v1 generic, no key",     v1noauth, "nc1p5mqcrlxczdlx2552xrjw94zhk5thsguygxu0thvfz8pqsjshaeas9jqzud",  "tnc1p5mqcrlxczdlx2552xrjw94zhk5thsguygxu0thvfz8pqsjshaeasytj9dz"},
         {"v2 strict PQ",           v2pq,     "pq1zuu4w8s5cmp7m5jgjd06szmnv7ta2esg4znnag5sdyhydja6pgezqsh4e35",  "tpq1zuu4w8s5cmp7m5jgjd06szmnv7ta2esg4znnag5sdyhydja6pgezq3w87qm"},
         {"v3 strict ECDSA",        v3ecdsa,  "nq1rfhp4uj95p8amf246zygx7aqcyjq5mqg7zm0jndcg848ydagemfasrnxzdt",  "tnq1rfhp4uj95p8amf246zygx7aqcyjq5mqg7zm0jndcg848ydagemfasz259uy"},
     };

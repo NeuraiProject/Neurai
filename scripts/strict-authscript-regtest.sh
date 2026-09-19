@@ -37,7 +37,7 @@ A_EC=$(A getnewaddress "" ecdsa)
 B_LEG=$(B getnewaddress)
 B_EC=$(B getnewaddress "" ecdsa)
 echo "A_V1=$A_V1"; echo "A_PQ=$A_PQ"; echo "A_EC=$A_EC"; echo "B_LEG=$B_LEG"; echo "B_EC=$B_EC"
-check "${A_V1:0:5}" "tnq1p" "A default address is generic AuthScript v1"
+check "${A_V1:0:5}" "tnc1p" "A default address is generic AuthScript v1"
 check "${A_PQ:0:5}" "tpq1z" "A strict PQ address prefix"
 check "${A_EC:0:5}" "tnq1r" "A strict ECDSA address prefix"
 check "${B_EC:0:5}" "tnq1r" "B strict ECDSA address prefix"

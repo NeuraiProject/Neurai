@@ -249,6 +249,7 @@ public:
         base58Prefixes[EXT_SECRET_KEY]    = {0x04, 0x88, 0xAD, 0xE4};
         base58Prefixes[EXT_PQ_SECRET_KEY] = {0x04, 0x88, 0xAC, 0x24}; // xpqp... (mainnet)
         strBech32HRP = "nq";
+        strBech32HRPAuthScript = "nc";
         strBech32HRPStrictPQ = "pq";
 
         // Neurai BIP44 cointype in mainnet is '0'
@@ -501,6 +502,7 @@ public:
         base58Prefixes[EXT_SECRET_KEY]    = {0x04, 0x35, 0x83, 0x94};
         base58Prefixes[EXT_PQ_SECRET_KEY] = {0x04, 0x35, 0x81, 0xD5}; // tpqp... (testnet)
         strBech32HRP = "tnq";
+        strBech32HRPAuthScript = "tnc";
         strBech32HRPStrictPQ = "tpq";
 
         // Neurai BIP44 cointype in testnet
@@ -743,6 +745,7 @@ public:
         base58Prefixes[EXT_SECRET_KEY]    = {0x04, 0x35, 0x83, 0x94};
         base58Prefixes[EXT_PQ_SECRET_KEY] = {0x04, 0x35, 0x81, 0xD5}; // tpqp... (regtest)
         strBech32HRP = "tnq";
+        strBech32HRPAuthScript = "tnc";
         strBech32HRPStrictPQ = "tpq";
 
         // Neurai BIP44 cointype in regtest

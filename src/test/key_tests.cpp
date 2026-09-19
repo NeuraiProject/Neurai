@@ -208,9 +208,9 @@ BOOST_FIXTURE_TEST_SUITE(key_tests, BasicTestingSetup)
         witnessScript << OP_TRUE;
         const CTxDestination authScriptDest = CTxDestination(WitnessV1AuthScript(GetAuthScriptCommitment(0x01, &pubkey1, witnessScript)));
         const std::string encoded = EncodeDestination(authScriptDest);
-        // Mainnet PQ witness-v1 addresses use HRP "nq" (bech32m). Testnet and
-        // regtest = "tnq". BasicTestingSetup defaults to MAIN.
-        BOOST_CHECK(encoded.rfind("nq1", 0) == 0);
+        // Mainnet PQ witness-v1 addresses use HRP "nc" (bech32m). Testnet and
+        // regtest = "tnc". BasicTestingSetup defaults to MAIN.
+        BOOST_CHECK(encoded.rfind("nc1p", 0) == 0);
         BOOST_CHECK(DecodeDestination(encoded) == authScriptDest);
     }
 

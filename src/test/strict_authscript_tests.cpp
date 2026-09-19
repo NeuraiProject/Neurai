@@ -210,13 +210,19 @@ BOOST_AUTO_TEST_CASE(address_encoding_canonical_pairs)
     const std::string a1 = EncodeDestination(d1);
     BOOST_CHECK_EQUAL(a2.substr(0, 5), "tpq1z");
     BOOST_CHECK_EQUAL(a3.substr(0, 5), "tnq1r");
-    BOOST_CHECK_EQUAL(a1.substr(0, 5), "tnq1p");
+    BOOST_CHECK_EQUAL(a1.substr(0, 5), "tnc1p");
 
     BOOST_CHECK(DecodeDestination(a2) == CTxDestination(d2));
     BOOST_CHECK(DecodeDestination(a3) == CTxDestination(d3));
     BOOST_CHECK(DecodeDestination(a1) == CTxDestination(d1));
     BOOST_CHECK(IsValidDestinationString(a2));
     BOOST_CHECK(IsValidDestinationString(a3));
+    const auto oldV1 = EncodeWithHrp("tnq", 1, d1);
+    BOOST_CHECK(!IsValidDestination(DecodeDestination(oldV1)));
+    BOOST_CHECK(!IsValidDestination(DecodeDestination(EncodeWithHrp("tnc", 2, d2.commitment))));
+    BOOST_CHECK(!IsValidDestination(DecodeDestination(EncodeWithHrp("tnc", 3, d3.commitment))));
+    BOOST_CHECK(!IsValidDestination(DecodeDestination(EncodeWithHrp("nc", 1, d1))));
+
 
     // Cross HRP/version combinations are rejected even with a valid checksum.
     BOOST_CHECK(!IsValidDestination(DecodeDestination(EncodeWithHrp("tnq", 2, d2.commitment))));

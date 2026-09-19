@@ -14,8 +14,8 @@
       "preimage_hex": "0101a05d28b4002d7dec7a19065454c94d7c3c3496d94ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260",
       "tagged_sha256_input_hex": "392c8f40e348d26fd6d921326074e0f368ffd896785e41e32382f9ff114e6f44392c8f40e348d26fd6d921326074e0f368ffd896785e41e32382f9ff114e6f440101a05d28b4002d7dec7a19065454c94d7c3c3496d94ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260",
       "commitment_hex": "893d608e80620f81640872ac2455c5dc31e23a25bd44f035818e56e4f8021e6d",
-      "mainnet": "nq1p3y7kpr5qvg8czeqgw2kzg4w9msc7yw39h4z0qdvp3etwf7qzreksq9aae0",
-      "testnet_regtest": "tnq1p3y7kpr5qvg8czeqgw2kzg4w9msc7yw39h4z0qdvp3etwf7qzrekspu06gq"
+      "mainnet": "nc1p3y7kpr5qvg8czeqgw2kzg4w9msc7yw39h4z0qdvp3etwf7qzreksj3ypsd",
+      "testnet_regtest": "tnc1p3y7kpr5qvg8czeqgw2kzg4w9msc7yw39h4z0qdvp3etwf7qzreksngkxpz"
     },
     {
       "version": 1,
@@ -25,8 +25,8 @@
       "preimage_hex": "01024ee1a90caa1874aa7dd2e0013a6da5cd7844aec54ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260",
       "tagged_sha256_input_hex": "392c8f40e348d26fd6d921326074e0f368ffd896785e41e32382f9ff114e6f44392c8f40e348d26fd6d921326074e0f368ffd896785e41e32382f9ff114e6f4401024ee1a90caa1874aa7dd2e0013a6da5cd7844aec54ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260",
       "commitment_hex": "5ef909dff9f31e7fbd34ef4615863fa48c6bf567d8be51bcd75fbb9324724e9b",
-      "mainnet": "nq1ptmusnhle7v08l0f5aarptp3l5jxxhat8mzl9r0xht7aexfrjf6ds53x86l",
-      "testnet_regtest": "tnq1ptmusnhle7v08l0f5aarptp3l5jxxhat8mzl9r0xht7aexfrjf6ds4g5qts"
+      "mainnet": "nc1ptmusnhle7v08l0f5aarptp3l5jxxhat8mzl9r0xht7aexfrjf6dsx9lmna",
+      "testnet_regtest": "tnc1ptmusnhle7v08l0f5aarptp3l5jxxhat8mzl9r0xht7aexfrjf6ds8uduzj"
     },
     {
       "version": 1,
@@ -36,8 +36,8 @@
       "preimage_hex": "01004ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260",
       "tagged_sha256_input_hex": "392c8f40e348d26fd6d921326074e0f368ffd896785e41e32382f9ff114e6f44392c8f40e348d26fd6d921326074e0f368ffd896785e41e32382f9ff114e6f4401004ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260",
       "commitment_hex": "a6c181fcd8137e65528a30e4e2d457b51778238441b8f5dd8911c2084a17ee7b",
-      "mainnet": "nq1p5mqcrlxczdlx2552xrjw94zhk5thsguygxu0thvfz8pqsjshaeashxe740",
-      "testnet_regtest": "tnq1p5mqcrlxczdlx2552xrjw94zhk5thsguygxu0thvfz8pqsjshaeasklteyq"
+      "mainnet": "nc1p5mqcrlxczdlx2552xrjw94zhk5thsguygxu0thvfz8pqsjshaeas9jqzud",
+      "testnet_regtest": "tnc1p5mqcrlxczdlx2552xrjw94zhk5thsguygxu0thvfz8pqsjshaeasytj9dz"
     },
     {
       "version": 2,

@@ -3590,7 +3590,7 @@ UniValue listpqaddresses(const JSONRPCRequest& request)
             "\nReturns the list of post-quantum (ML-DSA-44) Bech32m addresses in the wallet.\n"
             "\nResult:\n"
             "[                        (json array of strings)\n"
-            "  \"address\"             (string) A post-quantum Bech32m address (nq1...)\n"
+            "  \"address\"             (string) A generic AuthScript v1 address with a PQ key (nc1p.../tnc1p...)\n"
             "  ...\n"
             "]\n"
             "\nExamples:\n"

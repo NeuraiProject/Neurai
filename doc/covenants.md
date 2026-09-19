@@ -810,3 +810,15 @@ headroom for additional commitments inside the same script.
 - [Atomic Swaps](atomicswaps.md) — Cross-chain atomic swap protocol
 - [DePIN Client Protocol](depinreceivemsg.md) — DePIN messaging layer documentation
 - [NIP-036 v2](../NIP/Pendiente/036-OP_POSEIDON-v2.md) — Full Poseidon-on-BN254 specification, byte sponge, DoS analysis
+
+### AuthScript contract address encoding
+
+Generic witness v1 uses Bech32m HRP `nc` on mainnet and `tnc` on
+testnet/regtest: `nc1p…` / `tnc1p…`. The former `nq1p…` / `tnq1p…`
+representations are rejected; no legacy-prefix alias or address migration is
+provided. This changes address encoding only, not commitments or consensus.
+Strict PQ v2 keeps `pq1z…` / `tpq1z…`; strict ECDSA v3 keeps
+`nq1r…` / `tnq1r…`. Qt generates strict v2 receiving destinations for PQ
+wallets once activated. Generic v1 construction remains available through
+the existing RPC paths for contracts. Old testnet address-book strings and
+external integrations must be updated; this is intentionally incompatible.
