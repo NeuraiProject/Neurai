@@ -1681,3 +1681,107 @@ BOOST_AUTO_TEST_CASE(redeemscript_and_scriptsig_exact_shape)
 }
 
 BOOST_AUTO_TEST_SUITE_END()
+
+// R1: byte inventory through the real interpreter, without signature mocks.
+namespace {
+void ReviewNonoperativeScript(const CScript& script, script_verify_flags flags, ScriptError expected)
+{
+    for (int family = 0; family < 3; ++family) {
+        for (bool wrapped : {false, true}) {
+            BOOST_TEST_CONTEXT("family=" << family << " p2sh=" << wrapped) {
+                CScript destination = script;
+                CScript scriptSig;
+                CScriptWitness witness;
+                const ReviewBytes bytes(script.begin(), script.end());
+                if (family == 1) {
+                    ReviewBytes digest(32);
+                    CSHA256().Write(script.data(), script.size()).Finalize(digest.data());
+                    destination = CScript() << OP_0 << digest;
+                    witness.stack = {bytes};
+                } else if (family == 2) {
+                    const auto commitment = GetAuthScriptCommitment(0x00, nullptr, script);
+                    destination = CScript() << OP_1 << ToByteVector(commitment);
+                    witness.stack = {ReviewBytes{0x00}, bytes};
+                }
+                if (wrapped) {
+                    scriptSig << ReviewBytes(destination.begin(), destination.end());
+                    destination = CScript() << OP_HASH160 << ToByteVector(Hash160(destination)) << OP_EQUAL;
+                }
+                ScriptError error = SCRIPT_ERR_UNKNOWN_ERROR;
+                const bool ok = VerifyScript(scriptSig, destination, &witness, flags,
+                                             BaseSignatureChecker(), &error);
+                BOOST_CHECK_EQUAL(ok, expected == SCRIPT_ERR_OK);
+                BOOST_CHECK_EQUAL(error, expected);
+            }
+        }
+    }
+}
+}
+
+BOOST_FIXTURE_TEST_SUITE(nonoperative_opcode_review_tests, BasicTestingSetup)
+
+BOOST_AUTO_TEST_CASE(byte_execution_branch_and_data_matrix)
+{
+    const std::vector<unsigned char> disabled = {
+        0x7e, 0x7f, 0x80, 0x81, 0x83, 0x84, 0x85, 0x86,
+        0x8d, 0x8e, 0x95, 0x96, 0x97, 0x98, 0x99};
+    std::vector<unsigned char> bad = {0x50, 0x62, 0x65, 0x66, 0x89, 0x8a,
+                                    0xfa, 0xfb, 0xfd, 0xfe, 0xff, 0xfc};
+    for (const auto& range : std::vector<std::pair<int, int>>{
+            {0xbd, 0xbf}, {0xc3, 0xc4}, {0xc6, 0xc7}, {0xd8, 0xdc}, {0xdf, 0xf9}}) {
+        for (int byte = range.first; byte <= range.second; ++byte) bad.push_back(byte);
+    }
+    const script_verify_flags base = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_AUTHSCRIPT;
+    for (bool strict : {false, true}) {
+        const auto flags = strict ? base | SCRIPT_VERIFY_AUTHSCRIPT_STRICT | SCRIPT_VERIFY_AUTHDEST : base;
+        for (bool isDisabled : {false, true}) {
+            for (unsigned char byte : isDisabled ? disabled : bad) {
+                BOOST_TEST_CONTEXT("byte=" << int(byte) << " strict=" << strict) {
+                    const auto opcode = static_cast<opcodetype>(byte);
+                    ReviewNonoperativeScript(CScript() << opcode << OP_TRUE, flags,
+                        isDisabled ? SCRIPT_ERR_DISABLED_OPCODE : SCRIPT_ERR_BAD_OPCODE);
+                    ReviewNonoperativeScript(CScript() << OP_0 << OP_IF << opcode << OP_ENDIF << OP_TRUE,
+                        flags, isDisabled ? SCRIPT_ERR_DISABLED_OPCODE :
+                        (byte == 0x65 || byte == 0x66) ? SCRIPT_ERR_BAD_OPCODE : SCRIPT_ERR_OK);
+                    ReviewNonoperativeScript(CScript() << ReviewBytes{byte, 0x42} << ReviewBytes{byte, 0x42} << OP_EQUAL,
+                        flags | SCRIPT_VERIFY_MINIMALDATA, SCRIPT_ERR_OK);
+                }
+            }
+        }
+    }
+}
+
+BOOST_AUTO_TEST_CASE(expansion_nops_consensus_and_policy)
+{
+    const script_verify_flags base = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_AUTHSCRIPT;
+    for (const auto opcode : {OP_NOP1, OP_NOP9, OP_NOP10}) {
+        for (bool discourage : {false, true}) {
+            BOOST_TEST_CONTEXT("opcode=" << int(opcode) << " discourage=" << discourage) {
+                const auto flags = discourage ? base | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS : base;
+                ReviewNonoperativeScript(CScript() << opcode << OP_TRUE, flags,
+                    discourage ? SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS : SCRIPT_ERR_OK);
+                ReviewNonoperativeScript(CScript() << OP_0 << OP_IF << opcode << OP_ENDIF << OP_TRUE,
+                    flags, SCRIPT_ERR_OK);
+                ReviewNonoperativeScript(CScript() << ReviewBytes{static_cast<unsigned char>(opcode)} << OP_DROP << OP_TRUE,
+                    flags, SCRIPT_ERR_OK);
+            }
+        }
+    }
+}
+
+BOOST_AUTO_TEST_CASE(conditional_disabled_opcodes_enabled_control)
+{
+    const auto flags = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_AUTHSCRIPT |
+                       SCRIPT_VERIFY_CAT | SCRIPT_VERIFY_64BIT_INTEGERS;
+    for (const auto opcode : {OP_CAT, OP_MUL, OP_DIV, OP_MOD}) {
+        ReviewNonoperativeScript(CScript() << OP_0 << OP_IF << opcode << OP_ENDIF << OP_TRUE,
+            flags, SCRIPT_ERR_OK);
+    }
+    ReviewNonoperativeScript(CScript() << ReviewBytes{0xaa} << ReviewBytes{0xbb} << OP_CAT << ReviewBytes{0xaa, 0xbb} << OP_EQUAL,
+        flags, SCRIPT_ERR_OK);
+    ReviewNonoperativeScript(CScript() << 2 << 3 << OP_MUL << 6 << OP_EQUAL, flags, SCRIPT_ERR_OK);
+    ReviewNonoperativeScript(CScript() << 6 << 2 << OP_DIV << 3 << OP_EQUAL, flags, SCRIPT_ERR_OK);
+    ReviewNonoperativeScript(CScript() << 7 << 3 << OP_MOD << 1 << OP_EQUAL, flags, SCRIPT_ERR_OK);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
