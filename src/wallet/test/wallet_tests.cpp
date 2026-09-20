@@ -6,6 +6,8 @@
 
 #include "wallet/wallet.h"
 #include "chainparams.h"
+#include "base58.h"
+#include "wallet/walletdb.h"
 
 #include <set>
 #include <stdint.h>
@@ -605,6 +607,42 @@ BOOST_FIXTURE_TEST_SUITE(wallet_tests, WalletTestingSetup)
 
         // Reset mock time for other tests.
         SetMockTime(0);
+    }
+
+    BOOST_AUTO_TEST_CASE(DiscardInvalidAddressMetadata_Test)
+    {
+        CWalletDBWrapper dbw(&bitdb, "invalid_address_metadata.dat");
+        const CTxDestination v1 = WitnessV1AuthScript(uint256S("01"));
+        const CTxDestination v3 = WitnessStrictAuthScript(3, uint256S("02"));
+        const std::string retired = "nq1p5mqcrlxczdlx2552xrjw94zhk5thsguygxu0thvfz8pqsjshaeashxe740";
+        {
+            CWalletDB db(dbw, "cr+");
+            for (const auto& address : {retired, std::string("malformed")}) {
+                BOOST_REQUIRE(db.WriteName(address, "discard"));
+                BOOST_REQUIRE(db.WritePurpose(address, "receive"));
+                BOOST_REQUIRE(db.WriteDestData(address, "rr0", "discard"));
+            }
+            for (const auto& dest : {v1, v3}) {
+                const auto address = EncodeDestination(dest);
+                BOOST_REQUIRE(db.WriteName(address, "keep"));
+                BOOST_REQUIRE(db.WritePurpose(address, "receive"));
+                BOOST_REQUIRE(db.WriteDestData(address, "rr1", "keep"));
+            }
+        }
+        CWallet loaded(std::unique_ptr<CWalletDBWrapper>(new CWalletDBWrapper(&bitdb, "invalid_address_metadata.dat")));
+        CStrictAuthScriptContext below(false);
+        bool firstRun;
+        BOOST_REQUIRE_EQUAL(loaded.LoadWallet(firstRun), DB_LOAD_OK);
+        BOOST_CHECK_EQUAL(loaded.mapAddressBook.size(), 2U);
+        BOOST_CHECK(loaded.mapAddressBook.count(CNoDestination()) == 0);
+        for (const auto& dest : {v1, v3}) {
+            BOOST_REQUIRE(loaded.mapAddressBook.count(dest) == 1);
+            BOOST_CHECK_EQUAL(loaded.mapAddressBook.at(dest).name, "keep");
+            BOOST_CHECK_EQUAL(loaded.mapAddressBook.at(dest).purpose, "receive");
+            BOOST_CHECK_EQUAL(loaded.mapAddressBook.at(dest).destdata.at("rr1"), "keep");
+        }
+        BOOST_CHECK_EQUAL(loaded.GetDestValues("rr").size(), 2U);
+        BOOST_CHECK(!IsStrictAuthScriptActiveInContext());
     }
 
     BOOST_AUTO_TEST_CASE(LoadReceiveRequests_Test)

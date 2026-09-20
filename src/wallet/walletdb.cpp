@@ -281,13 +281,22 @@ bool ReadKeyValue(CWallet* pwallet, CDataStream& ssKey, CDataStream& ssValue,
         {
             std::string strAddress;
             ssKey >> strAddress;
-            ssValue >> pwallet->mapAddressBook[DecodeDestination(strAddress)].name;
+            std::string name;
+            ssValue >> name;
+            // Loading metadata must not depend on the current activation tip.
+            CStrictAuthScriptContext context(true);
+            const auto dest = DecodeDestination(strAddress);
+            if (IsValidDestination(dest)) pwallet->mapAddressBook[dest].name = name;
         }
         else if (strType == "purpose")
         {
             std::string strAddress;
             ssKey >> strAddress;
-            ssValue >> pwallet->mapAddressBook[DecodeDestination(strAddress)].purpose;
+            std::string purpose;
+            ssValue >> purpose;
+            CStrictAuthScriptContext context(true);
+            const auto dest = DecodeDestination(strAddress);
+            if (IsValidDestination(dest)) pwallet->mapAddressBook[dest].purpose = purpose;
         }
         else if (strType == "tx")
         {
@@ -563,7 +572,11 @@ bool ReadKeyValue(CWallet* pwallet, CDataStream& ssKey, CDataStream& ssValue,
             ssKey >> strAddress;
             ssKey >> strKey;
             ssValue >> strValue;
-            if (!pwallet->LoadDestData(DecodeDestination(strAddress), strKey, strValue))
+            CStrictAuthScriptContext context(true);
+            const auto dest = DecodeDestination(strAddress);
+            // Retired or malformed address strings are discarded, not migrated.
+            if (!IsValidDestination(dest)) return true;
+            if (!pwallet->LoadDestData(dest, strKey, strValue))
             {
                 strErr = "Error reading wallet database: LoadDestData failed";
                 return false;

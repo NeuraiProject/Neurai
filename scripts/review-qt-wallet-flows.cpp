@@ -8,6 +8,7 @@
 #include "net.h"
 #include "consensus/validation.h"
 #include "qt/walletmodel.h"
+#include "qt/addresstablemodel.h"
 #include "qt/optionsmodel.h"
 #include "qt/platformstyle.h"
 #include "qt/signverifymessagedialog.h"
@@ -92,6 +93,24 @@ int main(int argc, char** argv) {
         std::unique_ptr<const PlatformStyle> style(PlatformStyle::instantiate("other"));
         OptionsModel options;
         WalletModel model(style.get(), &wallet, &options);
+        {
+            CWallet receiving(std::unique_ptr<CWalletDBWrapper>(new CWalletDBWrapper(&bitdb, "pq_receiving.dat")));
+            bool firstReceiving;
+            receiving.LoadWallet(firstReceiving);
+            receiving.UseBip44(true);
+            receiving.UsePQ(true);
+            gArgs.ForceSetArg("-keypool", "3");
+            receiving.GenerateNewSeed();
+            Check(receiving.IsPQEnabled(), "receive/pq-wallet");
+            WalletModel receiveModel(style.get(), &receiving, &options);
+            const auto address = receiveModel.getAddressTableModel()->addRow(AddressTableModel::Receive, "strict", "");
+            Check(address.startsWith("tpq1z"), "receive/new-pq-is-v2");
+            Check(receiveModel.validateAddress(address), "receive/new-pq-valid");
+            CStrictAuthScriptContext below(false);
+            const auto unavailable = receiveModel.getAddressTableModel()->addRow(AddressTableModel::Receive, "inactive", "");
+            Check(unavailable.isEmpty(), "receive/before-activation-no-v1-fallback");
+        }
+
         for (size_t v = 0; v < destinations.size(); ++v) {
             const auto label = "v" + std::to_string(v);
             QString address = QString::fromStdString(EncodeDestination(destinations[v]));
