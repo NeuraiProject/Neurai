@@ -995,6 +995,15 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
                             maxDescendantsToVisit));
             }
 
+            // NIP025-patch1: resolve the complete bounded eviction set against
+            // live chain + mempool coins. No cached classification can become
+            // stale after reorg/reload, and no removal has happened yet.
+            CCoinsViewMemPool assetViewMemPool(pcoinsTip, pool);
+            CCoinsViewCache assetView(&assetViewMemPool);
+            if (ReplacementInvolvesAssets(tx, allConflicting, assetView)) {
+                return state.Invalid(false, REJECT_NONSTANDARD, "replacement-involves-assets");
+            }
+
             for (unsigned int j = 0; j < tx.vin.size(); j++)
             {
                 // We don't want to accept replacements that require low

@@ -5,6 +5,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "policy/rbf.h"
+#include "coins.h"
 
 bool SignalsOptInRBF(const CTransaction &tx)
 {
@@ -46,4 +47,34 @@ RBFTransactionState IsRBFOptIn(const CTransaction &tx, CTxMemPool &pool)
         }
     }
     return RBF_TRANSACTIONSTATE_FINAL;
+}
+
+namespace {
+bool AssetOperation(const CScript& script)
+{
+    return script.IsAssetScript() || script.IsNullAsset();
+}
+}
+
+bool InvolvesAssets(const CTransaction& tx, const CCoinsViewCache& view)
+{
+    for (const auto& output : tx.vout) {
+        if (AssetOperation(output.scriptPubKey)) return true;
+    }
+    for (const auto& input : tx.vin) {
+        const Coin& coin = view.AccessCoin(input.prevout);
+        if (coin.IsSpent() || AssetOperation(coin.out.scriptPubKey)) return true;
+    }
+    return false;
+}
+
+bool ReplacementInvolvesAssets(const CTransaction& candidate,
+                              const CTxMemPool::setEntries& evicted,
+                              const CCoinsViewCache& view)
+{
+    if (InvolvesAssets(candidate, view)) return true;
+    for (const auto& entry : evicted) {
+        if (InvolvesAssets(entry->GetTx(), view)) return true;
+    }
+    return false;
 }

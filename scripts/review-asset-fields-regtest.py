@@ -135,7 +135,7 @@ def main():
             tag = sha256(b'NeuraiAuthScript')
             commitment = sha256(tag + tag + b'\x01\x00' + sha256(contract))
             contract_spk = b'\x51\x20' + commitment
-            funding = confirmed(f'v{version}/fund_contract', node.rpc('sendtoaddress', bech32m('tnq', 1, commitment), 1))
+            funding = confirmed(f'v{version}/fund_contract', node.rpc('sendtoaddress', bech32m('tnc', 1, commitment), 1))
             index = next(out['n'] for out in funding['vout'] if out['scriptPubKey']['hex'] == contract_spk.hex())
             inputs = [(funding['txid'], index), asset_input]
 
@@ -200,7 +200,7 @@ def main():
                 spk = b'\x51\x20' + commitment
                 fund_case = 'unsupported' if unavailable is not None else ('wrong_hash' if len(expected) == 1 else 'all_fields')
                 funding = confirmed(label + '/' + mode + '/fund_' + fund_case,
-                                    node.rpc('sendtoaddress', bech32m('tnq', 1, commitment), 1))
+                                    node.rpc('sendtoaddress', bech32m('tnc', 1, commitment), 1))
                 out_index = next(out['n'] for out in funding['vout'] if out['scriptPubKey']['hex'] == spk.hex())
                 inputs = [(funding['txid'], out_index)] + ([] if mode == 'reference' else [asset])
                 outputs = ([(0, output)] if mode != 'reference' else []) + [(COIN - 10_000_000, miner_script)]

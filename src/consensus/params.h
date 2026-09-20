@@ -181,13 +181,6 @@ struct Params {
      *  ApplyConsensusOptIns co-sets SCRIPT_VERIFY_64BIT_INTEGERS whenever
      *  this is true — MTP after 2038 does not fit in a 4-byte CScriptNum. */
     bool nCHAINCONTEXTEnabled;
-    /** NIP-025: If a transaction spends at least one asset-wrapped AuthScript v1
-     *  UTXO, require nSequence >= 0xfffffffe on every input of that transaction.
-     *  Covers DEX partial-fill covenants AND plain asset transfers to PQ
-     *  (witness-v1) addresses — the predicate cannot distinguish the two at
-     *  consensus level. true on testnet/regtest; false on mainnet until future
-     *  activation. */
-    bool nASSETRBFBlockEnabled;
     /** Strict rejection of outputs that contain OP_XNA_ASSET but are not a
      *  valid asset/null-asset script. The legacy (origin/main) rule accepts
      *  such an output when its script *starts* with OP_XNA_ASSET; the strict

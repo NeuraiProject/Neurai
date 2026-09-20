@@ -928,3 +928,32 @@ is unsupported and does not fall back to the historical domain.
 
 See [NIP-044 v2](../NIP/Pendiente/044-AuthScript-Arbol-de-Scripts-MAST-v2.md)
 and [validation evidence](../NIP/bench/nip044-integracion.md).
+
+### Asset replacement policy (NIP025-patch1)
+
+Asset operations may use ordinary BIP68/CSV sequence numbers. The former
+consensus requirement that every input use a sequence of at least `0xfffffffe`
+has been removed for the reset-network deployment; such a removal is a
+consensus relaxation on a network that enforced the old rule. Do not deploy
+this revision as an uncoordinated update to that network.
+
+Transaction replacement is disabled by default (`-mempoolreplacement=0`), as
+before. When enabled, ordinary XNA replacements retain the existing opt-in RBF
+rules. A replacement involving asset inputs, asset outputs or administrative
+asset outputs is rejected with `replacement-involves-assets`. This includes a
+replacement that would evict an asset operation indirectly through an ordinary
+ancestor. The bounded eviction set is classified from live chain/mempool coins;
+no protection metadata is persisted. Read-only reference inputs alone do not
+trigger protection.
+
+Initial admission of a valid asset operation remains possible even if its
+CSV sequence signals BIP125. That signal does not promise effective
+replaceability under local policy. The wallet's `bumpfee` RPC remains deprecated;
+this change does not enable it or redefine BIP125 reporting.
+
+This policy does not confer finality, prevent conflicting valid blocks, or
+prevent expiry/eviction. It also prevents legitimate replacement fee bumps and
+allows a protected child to pin an ordinary parent. Applications must account
+for these limits; CPFP is an option only where outputs, package limits and miner
+support allow it. Asset balances, permission checks and signatures remain
+consensus requirements independent of this replacement policy.
