@@ -98,6 +98,11 @@ def main():
             weight_target=args.weight_target, inputs_per_transaction=args.inputs_per_tx, opcodes_per_input=ops, classic_units_per_input=classic,
             poseidon_bytes_per_input=poseidon, initial_argument_bytes=sum(map(len,wa)), input_sigop_cost=0, output_sigop_cost_per_transaction=4,
             static_script_bytes=len(script))
+        report['workload']['expected_block_poseidon_work'] = count * work * args.inputs_per_tx
+        report['workload']['next_transaction_exceeds_work_budget'] = bool(work_active and work and (count+1)*work*args.inputs_per_tx > 200000)
+        report['workload']['next_transaction_exceeds_weight_target'] = (count+1)*txweight+4000 > min(args.weight_target,limit-4000)
+        report['warmup_samples'] = 5
+        report['sampling_method'] = 'First submitblock to empty mempool, then five warmups and repeated verifychain(level=4, depth=1); not independent cold starts'
         funding=[]
         for i in range(count*args.inputs_per_tx):
             txid=source.rpc('sendtoaddress',address,2)
@@ -116,6 +121,10 @@ def main():
         cpu1,rss=counters(source.proc.pid)
         report['admission']=dict(daemon_cpu_s=cpu1-cpu0,wall_s=time.perf_counter()-start_wall,daemon_hwm_kib=rss)
         check('mempool_all_spends',set(ids).issubset(set(source.rpc('getrawmempool'))))
+        costs = [source.rpc('getmempoolentry', txid)['poseidonwork'] for txid in ids]
+        check('mempool_work_matches_model', all(cost == work*args.inputs_per_tx for cost in costs),
+              dict(total=sum(costs), expected=count*work*args.inputs_per_tx))
+        report['workload']['observed_mempool_poseidon_work'] = sum(costs)
         tip=source.rpc('generatetoaddress',1,miner)[0]
         block=source.rpc('getblock',tip)
         check('block_all_spends',set(ids).issubset(set(block['tx'])))
