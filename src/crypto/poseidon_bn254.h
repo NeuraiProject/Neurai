@@ -26,6 +26,11 @@ namespace crypto {
 void PoseidonBN254(const unsigned char* data, size_t len,
                    unsigned char hash[32]);
 
+/** NIP-043 canonical 32-byte BE field check and binary Merkle node.
+ * Node returns false for noncanonical operands; no reduction modulo r. */
+bool IsCanonicalPoseidonField(const unsigned char bytes[32]);
+bool PoseidonMerkleNode(const unsigned char left[32], const unsigned char right[32], unsigned char out[32]);
+
 // =====================================================================
 // Internal API — exposed for unit tests in src/test/poseidon_tests.cpp.
 // Not API-stable. Consumers other than the in-tree tests should ignore

@@ -7,6 +7,7 @@
 #include "crypto/blake2b.h"
 #include "crypto/keccak256.h"
 #include "crypto/sha256.h"
+#include "crypto/poseidon_bn254.h"
 
 #include <cstring>
 
@@ -21,6 +22,10 @@ bool InitRunning(const unsigned char* leaf, size_t leafLen,
                   uint8_t scheme, unsigned char out[32])
 {
     switch (scheme) {
+        case SCHEME_POSEIDON_BN254:
+            if (leafLen != 32 || !crypto::IsCanonicalPoseidonField(leaf)) return false;
+            std::memcpy(out, leaf, 32);
+            return true;
         case SCHEME_BITCOIN_NEURAI:
             if (leafLen != 32) return false;
             std::memcpy(out, leaf, 32);
@@ -71,6 +76,7 @@ bool VerifyMerkleInclusion(const unsigned char* leaf,    size_t leafLen,
 
     const uint8_t depth = proof[0];
     if (depth > NIP031_MAX_DEPTH) return false;
+    if (scheme == SCHEME_POSEIDON_BN254 && (depth == 0 || !crypto::IsCanonicalPoseidonField(root))) return false;
 
     const size_t siblingsBytes = static_cast<size_t>(depth) * 32u;
     const size_t bitmapBytes   = (depth + 7u) / 8u;
@@ -92,7 +98,11 @@ bool VerifyMerkleInclusion(const unsigned char* leaf,    size_t leafLen,
             std::memcpy(buf,      running,         32);
             std::memcpy(buf + 32, sibPtr + i * 32, 32);
         }
-        NodeHash(scheme, buf, running);
+        if (scheme == SCHEME_POSEIDON_BN254) {
+            if (!crypto::PoseidonMerkleNode(buf, buf + 32, running)) return false;
+        } else {
+            NodeHash(scheme, buf, running);
+        }
     }
 
     return std::memcmp(running, root, 32) == 0;

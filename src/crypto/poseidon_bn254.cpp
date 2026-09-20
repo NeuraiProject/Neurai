@@ -471,3 +471,26 @@ void PoseidonBN254(const unsigned char* data, size_t len, unsigned char hash[32]
 }
 
 } // namespace crypto
+
+namespace crypto {
+bool IsCanonicalPoseidonField(const unsigned char bytes[32])
+{
+    // BN254 scalar modulus in canonical big-endian order.
+    static constexpr unsigned char modulus[32] = {
+        0x30,0x64,0x4e,0x72,0xe1,0x31,0xa0,0x29,0xb8,0x50,0x45,0xb6,0x81,0x81,0x58,0x5d,
+        0x28,0x33,0xe8,0x48,0x79,0xb9,0x70,0x91,0x43,0xe1,0xf5,0x93,0xf0,0x00,0x00,0x01
+    };
+    return std::memcmp(bytes, modulus, 32) < 0;
+}
+
+bool PoseidonMerkleNode(const unsigned char left[32], const unsigned char right[32], unsigned char out[32])
+{
+    if (!IsCanonicalPoseidonField(left) || !IsCanonicalPoseidonField(right)) return false;
+    using namespace poseidon_bn254_detail;
+    const uint64_t zero[4] = {};
+    Fr state[3] = {FrFromCanonical(zero), FrFromBytesBE(left), FrFromBytesBE(right)};
+    Permutation(state);
+    FrToBytesBE(state[0], out);
+    return true;
+}
+} // namespace crypto

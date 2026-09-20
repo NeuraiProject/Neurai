@@ -123,6 +123,15 @@ struct Params {
     /** NIP-042: independent activation of the tagged TXHASH format. */
     int nTxHashHeight{std::numeric_limits<int>::max()};
     bool IsTxHashActive(int height) const { return height >= nTxHashHeight; }
+    // NIP-043: independent activation, unscheduled unless set for the network.
+    int nAssetMessageHeight{std::numeric_limits<int>::max()};
+    bool IsAssetMessageActive(int height) const { return height >= nAssetMessageHeight; }
+    // NIP-043: independent activation, unscheduled unless set for the network.
+    int nInputFieldHeight{std::numeric_limits<int>::max()};
+    bool IsInputFieldActive(int height) const { return height >= nInputFieldHeight; }
+    // NIP-043: independent activation, unscheduled unless set for the network.
+    int nMerklePoseidonHeight{std::numeric_limits<int>::max()};
+    bool IsMerklePoseidonActive(int height) const { return height >= nMerklePoseidonHeight; }
     /** Enable OP_TXFIELD (NOP7) - push raw bytes of spent output fields to stack.
      *  Required for recursive DEX covenants. true on testnet/regtest; false on mainnet. */
     bool nTXFIELDEnabled;

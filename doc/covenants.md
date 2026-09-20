@@ -856,3 +856,45 @@ Strict PQ v2 keeps `pq1z…` / `tpq1z…`; strict ECDSA v3 keeps
 wallets once activated. Generic v1 construction remains available through
 the existing RPC paths for contracts. Old testnet address-book strings and
 external integrations must be updated; this is intentionally incompatible.
+
+
+## NIP-043: state-thread primitives
+
+These three capabilities have independent height gates: reset testnet block 1,
+regtest height 0, mainnet unscheduled. Regtest overrides are
+`-assetmessageheight`, `-inputfieldheight`, and `-merkleposeidonheight`.
+They do not implement ZK, MAST or custody; those remain separate dependencies.
+
+* `OP_OUTPUTASSETFIELD`, `OP_INPUTASSETFIELD`, `OP_REFINPUTASSETFIELD`: selector
+  `08` requires `SCRIPT_VERIFY_ASSETMESSAGEFIELD` (bit 45). It reads only a
+  transfer payload within its single push, followed by `OP_DROP` and no
+  trailing script. After name and amount it requires `54 20 <32 bytes>` or
+  `12 20 <32 bytes>` and optionally exactly eight expiration bytes. The result
+  is the 32-byte message or the 34-byte IPFS multihash. Absent, truncated,
+  noncanonical or unknown encodings fail; old selectors are unchanged.
+  Both known asset markers are recognizable; the asset consensus rules still
+  govern which marker can appear in a new output at each height.
+* `OP_INPUTFIELD` (`c4`, bit 46): `(index selector -- field)`. Selector `01`
+  returns raw eight-byte LE nValue, **including with 64-bit arithmetic active**;
+  `02` returns the historical v1 commitment, `03` the complete spent script,
+  and `04` the strict NIP-041 version-plus-commitment (also requires AUTHDEST).
+  It indexes spent inputs, never reference inputs. Unknown selectors, unavailable
+  prevouts, invalid indices and fields over the effective element limit fail.
+  Its preactivation behavior is BAD_OPCODE. Reference-field behavior is unchanged.
+* Merkle scheme `05` requires MERKLE_INCLUSION, POSEIDON and
+  `SCRIPT_VERIFY_MERKLE_POSEIDON` (bit 47). A node is the first field element of
+  `Permutation(0,left,right)`, not the NIP-036 byte sponge. Leaf, siblings and
+  root must be canonical BN254 field elements in 32-byte big-endian form.
+  Depth is 1..32; bitmap order and unused-bit behavior match NIP-031. Each
+  structurally complete path is charged `62 * depth` against the same per-script
+  Poseidon budget as OP_POSEIDON, before cryptographic work, even if verification
+  later fails. Malformed paths return false; insufficient budget aborts with
+  POSEIDON_BUDGET. Scheme 05 unavailable also returns false, preserving the
+  existing unknown-scheme behavior; disabling the whole opcode yields BAD_OPCODE.
+
+Reproducible first-deliverable example: `scripts/review-contract-thread-regtest.py`.
+It constructs a real UNIQUE thread under AuthScript v1 with 32-byte state and an
+ECDSA or ML-DSA-44 CSFS oracle signing `DOMAIN || old_state || new_state`
+exactly as in NIP-043 §8. DOMAIN binds the network genesis and UNIQUE issuance
+outpoint; the transfer scripts are compared in full. This is a
+state-transition integration test, not a private pool or an audited application.

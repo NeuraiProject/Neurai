@@ -98,6 +98,9 @@ inline script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
     if (consensus.nCTVEnabled)              base |= SCRIPT_VERIFY_CHECKTEMPLATEVERIFY;
     if (consensus.nCSFSEnabled && consensus.IsSignatureOpcodesActive(nHeight))             base |= SCRIPT_VERIFY_CHECKSIGFROMSTACK;
     if (consensus.IsTxHashActive(nHeight))           base |= SCRIPT_VERIFY_TXHASH;
+    if (consensus.IsAssetMessageActive(nHeight)) base |= SCRIPT_VERIFY_ASSETMESSAGEFIELD;
+    if (consensus.IsInputFieldActive(nHeight)) base |= SCRIPT_VERIFY_INPUTFIELD;
+    if (consensus.IsMerklePoseidonActive(nHeight)) base |= SCRIPT_VERIFY_MERKLE_POSEIDON;
     if (consensus.nTXFIELDEnabled)          base |= SCRIPT_VERIFY_TXFIELD;
     if (consensus.nSPLITEnabled)            base |= SCRIPT_VERIFY_SPLIT;
     if (consensus.nREVERSEBYTESEnabled)     base |= SCRIPT_VERIFY_REVERSEBYTES;

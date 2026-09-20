@@ -293,6 +293,11 @@ enum class script_verify_flag_name : uint8_t {
     //
     SCRIPT_VERIFY_AUTHDEST,                                 // bit 42
 
+    // NIP-043 primitives. Preserve the pending ZK/MAST reservations.
+    SCRIPT_VERIFY_ASSETMESSAGEFIELD = 45, // NIP-043; 43/44 reserved for ZK/MAST
+    SCRIPT_VERIFY_INPUTFIELD = 46,
+    SCRIPT_VERIFY_MERKLE_POSEIDON = 47,
+
     // End marker — must always be last.
     SCRIPT_VERIFY_END_MARKER
 };
@@ -481,6 +486,9 @@ public:
     // NIP-024: Push the XNA satoshi value of the selected input's prevout
     // (raw 8-byte LE). Requires the checker to have been constructed with
     // m_allPrevouts; otherwise returns false (fail-closed).
+    virtual bool GetInputField(unsigned int nInput, unsigned char selector,
+                               std::vector<unsigned char>& result) const { return false; }
+
     virtual bool GetInputValue(unsigned int nInput, std::vector<unsigned char>& result) const
     {
         return false;
@@ -625,6 +633,8 @@ public:
     bool GetOutputValue(unsigned int nOut, std::vector<unsigned char>& result) const override;
 
     bool GetInputValue(unsigned int nInput, std::vector<unsigned char>& result) const override;
+    bool GetInputField(unsigned int nInput, unsigned char selector,
+                       std::vector<unsigned char>& result) const override;
 
     bool GetOutputScript(unsigned int nOut, std::vector<unsigned char>& result) const override;
 

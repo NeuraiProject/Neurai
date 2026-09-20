@@ -252,6 +252,7 @@ enum opcodetype
     // Slot choice: inside MAX_OPCODE, outside the NIP-033 BLS reservation
     // (0xd8..0xdc) and not claimed by any pending proposal (0xbd/0xbe are).
     OP_OUTPUTAUTHDEST = 0xc2,
+    OP_INPUTFIELD = 0xc4, // NIP-043: spent input introspection
 
     // NIP-034a: modern hash opcodes in previously unassigned slots.
     // NIP-036 occupies slot 0xc9 (OP_POSEIDON, the SNARK-friendly

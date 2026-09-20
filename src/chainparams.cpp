@@ -368,6 +368,9 @@ public:
         consensus.nCATEnabled = true;  // OP_CAT (BIP 347) active on testnet
         consensus.nCTVEnabled = true;  // OP_CTV (BIP 119) active on testnet
         consensus.nCSFSEnabled = true;  // OP_CHECKSIGFROMSTACK active on testnet
+        consensus.nAssetMessageHeight = 1; // NIP-043: reset testnet only
+        consensus.nInputFieldHeight = 1; // NIP-043: reset testnet only
+        consensus.nMerklePoseidonHeight = 1; // NIP-043: reset testnet only
         consensus.nTxHashHeight = 1; // NIP-042: reset testnet, first block after genesis
         consensus.nTXFIELDEnabled = true; // OP_TXFIELD (NOP7) active on testnet
         consensus.nSPLITEnabled = true;   // OP_SPLIT (NOP8) active on testnet
@@ -604,6 +607,9 @@ public:
         consensus.nCATEnabled = true;  // OP_CAT (BIP 347) active on regtest
         consensus.nCTVEnabled = true;  // OP_CTV (BIP 119) active on regtest
         consensus.nCSFSEnabled = true;  // OP_CHECKSIGFROMSTACK active on regtest
+        consensus.nAssetMessageHeight = 0; // NIP-043: regtest
+        consensus.nInputFieldHeight = 0; // NIP-043: regtest
+        consensus.nMerklePoseidonHeight = 0; // NIP-043: regtest
         consensus.nTxHashHeight = 0; // NIP-042: active by default on regtest
         consensus.nTXFIELDEnabled = true; // OP_TXFIELD (NOP7) active on regtest
         consensus.nSPLITEnabled = true;   // OP_SPLIT (NOP8) active on regtest
@@ -877,6 +883,21 @@ void TurnOffBIP66() {
 void UpdateSignatureOpcodesHeight(int nHeight)
 {
     globalChainParams->UpdateSignatureOpcodesHeight(nHeight);
+}
+
+void UpdateAssetMessageHeight(int nHeight)
+{
+    globalChainParams->UpdateAssetMessageHeight(nHeight);
+}
+
+void UpdateInputFieldHeight(int nHeight)
+{
+    globalChainParams->UpdateInputFieldHeight(nHeight);
+}
+
+void UpdateMerklePoseidonHeight(int nHeight)
+{
+    globalChainParams->UpdateMerklePoseidonHeight(nHeight);
 }
 
 void UpdateTxHashHeight(int nHeight)

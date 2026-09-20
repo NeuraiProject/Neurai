@@ -1161,8 +1161,22 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                                 scheme == nip031::SCHEME_BITCOIN_NEURAI ||
                                 scheme == nip031::SCHEME_SHA256_PLAIN ||
                                 ((scheme == nip031::SCHEME_KECCAK256_PLAIN ||
-                                  scheme == nip031::SCHEME_BLAKE2B_PLAIN) && nip030);
+                                  scheme == nip031::SCHEME_BLAKE2B_PLAIN) && nip030) ||
+                                (scheme == nip031::SCHEME_POSEIDON_BN254 &&
+                                 (flags & SCRIPT_VERIFY_MERKLE_POSEIDON) && (flags & SCRIPT_VERIFY_POSEIDON));
                             if (scheme_available) {
+                                // Charge before any Poseidon work. Malformed proof shapes
+                                // return false without hashing; well-shaped invalid proofs pay.
+                                if (scheme == nip031::SCHEME_POSEIDON_BN254 && !vchProof.empty()) {
+                                    const size_t depth = vchProof[0];
+                                    if (depth >= 1 && depth <= nip031::NIP031_MAX_DEPTH &&
+                                        vchProof.size() == 1 + 32 * depth + (depth + 7) / 8) {
+                                        const size_t cost = 62 * depth;
+                                        if (cost > MAX_POSEIDON_INPUT_BYTES_PER_SCRIPT - nPoseidonInputBytes)
+                                            return set_error(serror, SCRIPT_ERR_POSEIDON_BUDGET);
+                                        nPoseidonInputBytes += cost;
+                                    }
+                                }
                                 ok = nip031::VerifyMerkleInclusion(
                                     vchLeaf.data(),  vchLeaf.size(),
                                     scheme,
@@ -1247,7 +1261,8 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         if (nOut < 0)
                             return set_error(serror, SCRIPT_ERR_OUTPUTASSETFIELD);
 
-                        if (selector == 0x00 || selector >= 0x08)
+                        if (selector == 0x00 || selector > 0x08 ||
+                            (selector == 0x08 && !(flags & SCRIPT_VERIFY_ASSETMESSAGEFIELD)))
                             return set_error(serror, SCRIPT_ERR_OUTPUTASSETFIELD);
 
                         valtype vchResult;
@@ -1286,7 +1301,8 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         if (nInput < 0)
                             return set_error(serror, SCRIPT_ERR_INPUTASSETFIELD);
 
-                        if (selector == 0x00 || selector >= 0x08)
+                        if (selector == 0x00 || selector > 0x08 ||
+                            (selector == 0x08 && !(flags & SCRIPT_VERIFY_ASSETMESSAGEFIELD)))
                             return set_error(serror, SCRIPT_ERR_INPUTASSETFIELD);
 
                         valtype vchResult;
@@ -1356,11 +1372,14 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                     }
                         break;
 
+                    case OP_INPUTFIELD:
                     case OP_REFINPUTFIELD:
                     {
+                        const bool spent = opcode == OP_INPUTFIELD;
+                        const ScriptError fieldError = spent ? SCRIPT_ERR_INPUTFIELD : SCRIPT_ERR_REFINPUTFIELD;
                         // NIP-hardfork gating: unassigned byte pre-activation → BAD_OPCODE with
                         // flag off (fail-closed), not NOP.
-                        if (!(flags & SCRIPT_VERIFY_REFINPUTS))
+                        if (!(flags & (spent ? SCRIPT_VERIFY_INPUTFIELD : SCRIPT_VERIFY_REFINPUTS)))
                             return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
 
                         // (nRef selector -- field_bytes)
@@ -1369,31 +1388,32 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
 
                         const valtype& vchSelector = stacktop(-1);
                         if (vchSelector.size() != 1)
-                            return set_error(serror, SCRIPT_ERR_REFINPUTFIELD);
+                            return set_error(serror, fieldError);
                         const unsigned char selector = vchSelector[0];
 
                         const int nRef = CScriptNum(stacktop(-2), fRequireMinimal).getint();
                         if (nRef < 0)
-                            return set_error(serror, SCRIPT_ERR_REFINPUTFIELD);
+                            return set_error(serror, fieldError);
 
                         // Selectors 0x01-0x03 valid (value, authcommitment, scriptPubKey);
                         // NIP-041 adds 0x04 (33-byte AuthScript destination) once activated.
                         const bool fAuthDestSelector = (selector == AUTHDEST_SELECTOR) && (flags & SCRIPT_VERIFY_AUTHDEST);
                         if (selector == 0x00 || (selector >= 0x04 && !fAuthDestSelector))
-                            return set_error(serror, SCRIPT_ERR_REFINPUTFIELD);
+                            return set_error(serror, fieldError);
 
                         valtype vchResult;
-                        if (!checker.GetRefInputField(static_cast<unsigned int>(nRef), selector, vchResult))
-                            return set_error(serror, SCRIPT_ERR_REFINPUTFIELD);
+                        if (!(spent ? checker.GetInputField(static_cast<unsigned int>(nRef), selector, vchResult)
+                                    : checker.GetRefInputField(static_cast<unsigned int>(nRef), selector, vchResult)))
+                            return set_error(serror, fieldError);
 
                         // NIP-018: size check lifted from the checker (selector
                         // 0x03 returns a scriptPubKey). Keep SCRIPT_ERR_REFINPUTFIELD
                         // to preserve opcode semantics.
                         if (vchResult.size() > EffectiveMaxScriptElementSize(flags))
-                            return set_error(serror, SCRIPT_ERR_REFINPUTFIELD);
+                            return set_error(serror, fieldError);
 
                         // Selector 0x01 (nValue): convert to CScriptNum if 64-bit integers enabled
-                        if (selector == 0x01 && (flags & SCRIPT_VERIFY_64BIT_INTEGERS) && vchResult.size() == 8)
+                        if (!spent && selector == 0x01 && (flags & SCRIPT_VERIFY_64BIT_INTEGERS) && vchResult.size() == 8)
                         {
                             int64_t nValue;
                             memcpy(&nValue, vchResult.data(), 8);
@@ -1427,7 +1447,8 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             return set_error(serror, SCRIPT_ERR_REFINPUTASSETFIELD);
 
                         // Selectors 0x01-0x07 valid (same as OP_OUTPUTASSETFIELD)
-                        if (selector == 0x00 || selector >= 0x08)
+                        if (selector == 0x00 || selector > 0x08 ||
+                            (selector == 0x08 && !(flags & SCRIPT_VERIFY_ASSETMESSAGEFIELD)))
                             return set_error(serror, SCRIPT_ERR_REFINPUTASSETFIELD);
 
                         valtype vchResult;
@@ -3419,6 +3440,49 @@ bool TransactionSignatureChecker::GetOutputAuthCommitment(unsigned int nOut,
     return true;
 }
 
+// NIP-043 only: strict transfer-message grammar, bounded to the single push.
+// Historical selectors deliberately continue to use their original parsers.
+static bool GetTransferMessage(const CScript& script, std::vector<unsigned char>& result)
+{
+    int type = 0, start = 0;
+    bool owner = false;
+    AssetMarker marker;
+    if (!script.IsAssetScript(type, owner, start, marker) || type != TX_TRANSFER_ASSET)
+        return false;
+    const size_t prefix = script[0] == OP_DUP ? 25 : 34;
+    if (script.size() <= prefix || script[prefix] != OP_XNA_ASSET) return false;
+    auto pc = script.begin() + prefix + 1;
+    opcodetype op;
+    std::vector<unsigned char> payload;
+    if (!script.GetOp(pc, op, payload) || op > OP_PUSHDATA4 || payload.size() < 4 ||
+        !script.GetOp(pc, op) || op != OP_DROP || pc != script.end()) return false;
+    const bool knownMarker = (payload[0] == 'x' && payload[1] == 'n' && payload[2] == 'a') ||
+                             (payload[0] == 'r' && payload[1] == 'v' && payload[2] == 'n');
+    if (!knownMarker || payload[3] != XNA_T) return false;
+    CDataStream stream(std::vector<unsigned char>(payload.begin() + 4, payload.end()), SER_NETWORK, PROTOCOL_VERSION);
+    try {
+        const uint64_t nameSize = ReadCompactSize(stream);
+        if (nameSize > stream.size()) return false;
+        stream.ignore(nameSize);
+        int64_t amount;
+        stream >> amount;
+        unsigned char tag;
+        stream >> tag;
+        if (tag != static_cast<unsigned char>(TXID_NOTIFIER) && tag != static_cast<unsigned char>(IPFS_SHA2_256)) return false;
+        if (ReadCompactSize(stream) != 32) return false;
+        std::vector<unsigned char> message(32);
+        stream.read(reinterpret_cast<char*>(message.data()), message.size());
+        if (stream.size() != 0 && stream.size() != 8) return false;
+        if (tag == static_cast<unsigned char>(IPFS_SHA2_256)) {
+            message.insert(message.begin(), {tag, 32});
+        }
+        result = std::move(message);
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
 bool TransactionSignatureChecker::GetOutputAssetField(unsigned int nOut,
                                                       unsigned char selector,
                                                       std::vector<unsigned char>& result) const
@@ -3427,6 +3491,7 @@ bool TransactionSignatureChecker::GetOutputAssetField(unsigned int nOut,
         return false;
 
     const CScript& scriptPubKey = txTo->vout[nOut].scriptPubKey;
+    if (selector == 0x08) return GetTransferMessage(scriptPubKey, result);
     std::string strAddress;
 
     CAssetTransfer transfer;
@@ -3465,6 +3530,7 @@ bool TransactionSignatureChecker::GetInputAssetField(unsigned int nInput,
         return false;
 
     const CScript& scriptPubKey = (*m_allPrevouts)[nInput].scriptPubKey;
+    if (selector == 0x08) return GetTransferMessage(scriptPubKey, result);
     std::string strAddress;
 
     CAssetTransfer transfer;
@@ -3536,21 +3602,12 @@ bool TransactionSignatureChecker::GetRefInputCount(std::vector<unsigned char>& r
     return true;
 }
 
-bool TransactionSignatureChecker::GetRefInputField(unsigned int nRef, unsigned char selector,
-                                                    std::vector<unsigned char>& result) const
+static bool GetPrevoutField(const CTxOut& refOut, unsigned char selector, std::vector<unsigned char>& result)
 {
-    if (!txTo || !m_refOutputs)
-        return false;
-    if (nRef >= m_refOutputs->size())
-        return false;
-
-    const CTxOut& refOut = (*m_refOutputs)[nRef];
-
     switch (selector) {
         case 0x01: { // nValue (8 bytes LE) — matches TXFIELD_SPENT_VALUE
-            int64_t val = refOut.nValue;
             result.resize(8);
-            memcpy(result.data(), &val, 8);
+            WriteLE64(result.data(), static_cast<uint64_t>(refOut.nValue));
             return true;
         }
         case 0x02: { // AuthScript commitment (32 bytes) — matches TXFIELD_SPENT_AUTHCOMMITMENT
@@ -3581,6 +3638,20 @@ bool TransactionSignatureChecker::GetRefInputField(unsigned int nRef, unsigned c
     }
 }
 
+bool TransactionSignatureChecker::GetRefInputField(unsigned int nRef, unsigned char selector,
+                                                     std::vector<unsigned char>& result) const
+{
+    if (!txTo || !m_refOutputs || nRef >= m_refOutputs->size()) return false;
+    return GetPrevoutField((*m_refOutputs)[nRef], selector, result);
+}
+
+bool TransactionSignatureChecker::GetInputField(unsigned int nInput, unsigned char selector,
+                                               std::vector<unsigned char>& result) const
+{
+    if (!txTo || !m_allPrevouts || nInput >= txTo->vin.size() || nInput >= m_allPrevouts->size()) return false;
+    return GetPrevoutField((*m_allPrevouts)[nInput], selector, result);
+}
+
 bool TransactionSignatureChecker::GetRefInputAssetField(unsigned int nRef, unsigned char selector,
                                                          std::vector<unsigned char>& result) const
 {
@@ -3590,6 +3661,7 @@ bool TransactionSignatureChecker::GetRefInputAssetField(unsigned int nRef, unsig
         return false;
 
     const CScript& scriptPubKey = (*m_refOutputs)[nRef].scriptPubKey;
+    if (selector == 0x08) return GetTransferMessage(scriptPubKey, result);
     std::string strAddress;
 
     CAssetTransfer transfer;
