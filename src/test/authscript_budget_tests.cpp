@@ -6,6 +6,7 @@
 #include "test/test_neurai.h"
 #include "utilstrencodings.h"
 #include <boost/test/unit_test.hpp>
+#include <algorithm>
 
 namespace {
 using Bytes = std::vector<unsigned char>;
@@ -141,6 +142,110 @@ BOOST_AUTO_TEST_CASE(tree_envelope_is_exclusive_to_v1)
         ScriptError err;
         BOOST_CHECK_EQUAL(VerifyScript(CScript(),output,&witness,vf,BaseSignatureChecker(),&err),version==1);
         BOOST_CHECK_EQUAL(err,version==1?SCRIPT_ERR_OK:SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+}
+// Deterministic generated programs, with an independent sum over the input
+// schedule (not over interpreter internals). Reproducible seed for failures.
+BOOST_AUTO_TEST_CASE(generated_classic_hash_schedules)
+{
+    const auto flags=GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());
+    uint32_t seed=0x0462026;
+    auto next=[&]() { seed=1664525u*seed+1013904223u; return seed; };
+    const opcodetype ops[]={OP_SHA256,OP_HASH160,OP_HASH256,OP_RIPEMD160};
+    for (int sample=0;sample<256;++sample) {
+        CScript script;
+        std::vector<Bytes> inputs;
+        size_t cost=0;
+        const int count=20+next()%30;
+        for(int i=0;i<count;++i) {
+            const auto op=ops[(next()>>16)%4];
+            const size_t size=(next()>>8)%3073;
+            inputs.emplace_back(size,static_cast<unsigned char>(i));
+            cost+=size+((op==OP_HASH160||op==OP_HASH256)?160:64);
+            script<<op<<OP_DROP;
+        }
+        std::reverse(inputs.begin(),inputs.end());
+        script<<OP_TRUE;
+        for(bool enabled : {false,true}) {
+            ScriptError err;
+            const bool expected=!enabled||cost<=65536;
+            BOOST_CHECK_EQUAL(Run(inputs,script,enabled?flags:flags&~SCRIPT_VERIFY_AUTHSCRIPT_BUDGET,SIGVERSION_AUTHSCRIPT,err),expected);
+            BOOST_CHECK_EQUAL(err,expected?SCRIPT_ERR_OK:SCRIPT_ERR_AUTHSCRIPT_HASH_BUDGET);
+        }
+    }
+}
+BOOST_AUTO_TEST_CASE(classic_and_poseidon_budgets_are_independent)
+{
+    const auto flags=GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());
+    // Cartesian boundary matrix in both execution orders. Each invocation has
+    // fresh budgets, including after the preceding invocation has failed.
+    for(int classic : {65535,65536,65537}) for(int poseidon : {30719,30720,30721})
+    for(bool poseidonFirst : {false,true}) {
+        CScript script;std::vector<Bytes> inputs;
+        auto appendClassic=[&]() {
+            for(int i=0;i<21;++i) {
+                inputs.emplace_back(i<20?3072:classic-20*3136-64,0x42);
+                script<<OP_SHA256<<OP_DROP;
+            }
+        };
+        auto appendPoseidon=[&]() {
+            for(int remaining=poseidon;remaining>0;) {
+                const int size=std::min(3072,remaining);
+                inputs.emplace_back(size,0x42);remaining-=size;
+                script<<OP_POSEIDON<<OP_DROP;
+            }
+        };
+        if(poseidonFirst) { appendPoseidon();appendClassic(); }
+        else { appendClassic();appendPoseidon(); }
+        std::reverse(inputs.begin(),inputs.end());script<<OP_TRUE;
+        ScriptError err;
+        const bool ok=classic<=65536&&poseidon<=30720;
+        BOOST_CHECK_EQUAL(Run(inputs,script,flags,SIGVERSION_AUTHSCRIPT,err),ok);
+        const auto expected=ok?SCRIPT_ERR_OK:
+            ((poseidonFirst&&poseidon>30720)||classic<=65536?SCRIPT_ERR_POSEIDON_BUDGET:SCRIPT_ERR_AUTHSCRIPT_HASH_BUDGET);
+        BOOST_CHECK_EQUAL(err,expected);
+    }
+}
+BOOST_AUTO_TEST_CASE(generated_merkle_budget_schedules)
+{
+    const auto flags=GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());
+    uint32_t seed=0x46abcd;
+    auto next=[&]() { seed=1664525u*seed+1013904223u; return seed; };
+    for(int sample=0;sample<512;++sample) {
+        const int scheme=1+((next()>>16)%4), depth=(next()>>16)%33;
+        const size_t leafSize=scheme==1?32:(next()>>8)%3073;
+        const bool malformed=(next()>>16)&1;
+        Bytes proof(1+depth*32+(depth+7)/8);proof[0]=depth;
+        if(malformed)proof.pop_back();
+        std::vector<Bytes> stack{Bytes(leafSize),Bytes{static_cast<unsigned char>(scheme)},proof,Bytes(32)};
+        for(int i=0;i<20;++i)stack.emplace_back(3072);
+        CScript script;for(int i=0;i<20;++i)script<<OP_SHA256<<OP_DROP;
+        script<<OP_CHECKMERKLEINCLUSION<<OP_DROP<<OP_TRUE;
+        const size_t merkle=scheme==1?224*depth:leafSize+64+128*depth;
+        const bool expected=malformed||62720+merkle<=65536;
+        ScriptError err;
+        BOOST_CHECK_EQUAL(Run(stack,script,flags,SIGVERSION_AUTHSCRIPT,err),expected);
+        BOOST_CHECK_EQUAL(err,expected?SCRIPT_ERR_OK:SCRIPT_ERR_AUTHSCRIPT_HASH_BUDGET);
+    }
+}
+BOOST_AUTO_TEST_CASE(poseidon_merkle_shares_only_poseidon_budget)
+{
+    const auto flags=GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());
+    for(int last : {3009,3010,3011}) for(bool malformed : {false,true}) {
+        Bytes proof(34);proof[0]=1;if(malformed)proof.pop_back();
+        std::vector<Bytes> inputs{Bytes(32),Bytes{5},proof,Bytes(32)};
+        for(int i=0;i<9;++i)inputs.emplace_back(3072);
+        inputs.emplace_back(last);
+        for(int i=0;i<20;++i)inputs.emplace_back(3072);
+        inputs.emplace_back(2752);
+        CScript script;
+        for(int i=0;i<21;++i)script<<OP_SHA256<<OP_DROP; // exactly 65536 classic units
+        for(int i=0;i<10;++i)script<<OP_POSEIDON<<OP_DROP;
+        script<<OP_CHECKMERKLEINCLUSION<<OP_DROP<<OP_TRUE;
+        const bool expected=malformed||last<=3010; // 9*3072 + 3010 + 62 = 30720
+        ScriptError err;
+        BOOST_CHECK_EQUAL(Run(inputs,script,flags,SIGVERSION_AUTHSCRIPT,err),expected);
+        BOOST_CHECK_EQUAL(err,expected?SCRIPT_ERR_OK:SCRIPT_ERR_POSEIDON_BUDGET);
     }
 }
 BOOST_AUTO_TEST_CASE(network_schedule)

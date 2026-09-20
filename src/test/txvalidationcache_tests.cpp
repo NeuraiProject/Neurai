@@ -27,6 +27,9 @@
 
 bool CheckInputs(const CTransaction &tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData &txdata, std::vector<CScriptCheck> *pvChecks, std::shared_ptr<std::vector<CTxOut>> pRefOutputs = nullptr, ChainContext chainCtx = {}, bool* pfUsesChainContext = nullptr);
 
+// Internal entry point exercised by the startup-rewind sentinel below.
+void UpdateMempoolForReorg(DisconnectedBlockTransactions&, bool);
+
 BOOST_AUTO_TEST_SUITE(tx_validationcache_tests)
 
     static bool
@@ -434,6 +437,61 @@ BOOST_AUTO_TEST_CASE(rewind_without_readmission_crosses_strict_height)
     BOOST_CHECK(chainActive.Tip()->GetBlockHash() == target);
     BOOST_CHECK(!IsStrictAuthScriptActiveForChildOf(target));
     BOOST_CHECK_EQUAL(mempool.size(), 0U);
+    // A fresh candidate is constructed under the restored inactive context.
+    std::unique_ptr<CBlockTemplate> candidate = BlockAssembler(GetParams()).CreateNewBlock(reward);
+    BOOST_REQUIRE(candidate);
+    BOOST_CHECK(candidate->block.hashPrevBlock == target);
+    // A repeated rewind with no insufficiently-validated active blocks is inert.
+    BOOST_REQUIRE(RewindBlockIndex(GetParams()));
+    BOOST_CHECK_EQUAL(chainActive.Height(), 118);
+}
+BOOST_AUTO_TEST_CASE(rewind_without_readmission_crosses_budget_height)
+{
+    auto& consensus = const_cast<Consensus::Params&>(GetParams().GetConsensus());
+    struct RestoreHeight {
+        Consensus::Params& params;
+        int height;
+        ~RestoreHeight() { params.nAuthScriptBudgetHeight = height; }
+    } restore{consensus, consensus.nAuthScriptBudgetHeight};
+    // TestChain100Setup does not create the asset undo DB used by DisconnectBlock.
+    struct AssetUndoDB {
+        CAssetsDB* previous;
+        AssetUndoDB() : previous(passetsdb) { passetsdb = new CAssetsDB(1 << 20, true, true); }
+        ~AssetUndoDB() { delete passetsdb; passetsdb = previous; }
+    } assetUndoDB;
+    consensus.nAuthScriptBudgetHeight = 120;
+    const CScript reward = CScript() << ToByteVector(coinbaseKey.GetPubKey()) << OP_CHECKSIG;
+    for (int i = 0; i < 21; ++i) CreateAndProcessBlock({}, reward);
+    BOOST_REQUIRE_EQUAL(chainActive.Height(), 121);
+    BOOST_REQUIRE(IsWitnessEnabled(chainActive[118], consensus));
+    BOOST_REQUIRE(ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, true, chainActive.Height()+1) & SCRIPT_VERIFY_AUTHSCRIPT_BUDGET);
+    const uint256 target = chainActive[118]->GetBlockHash();
+    // Emulate the on-disk status left by a node that had not validated witness.
+    // Only this disposable fixture's index is modified.
+    // All descendants belong to the same old-validation segment.
+    for (int height = 119; height <= 121; ++height)
+        chainActive[height]->nStatus &= ~BLOCK_OPT_WITNESS;
+    BOOST_REQUIRE(RewindBlockIndex(GetParams()));
+    BOOST_CHECK_EQUAL(chainActive.Height(), 118);
+    BOOST_CHECK(chainActive.Tip()->GetBlockHash() == target);
+    BOOST_CHECK(!(ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, true, chainActive.Height()+1) & SCRIPT_VERIFY_AUTHSCRIPT_BUDGET));
+    BOOST_CHECK_EQUAL(mempool.size(), 0U);
+    // Observable sentinel for a stale pending sweep: deliberately insert a
+    // script-invalid but mature/final legacy spend without admission. An empty
+    // reorg must not run a leftover full script sweep after startup rewind.
+    CMutableTransaction sentinel;
+    sentinel.vin.emplace_back(COutPoint(coinbaseTxns[0].GetHash(), 0));
+    sentinel.vin[0].scriptSig = CScript() << OP_0;
+    sentinel.vout.emplace_back(coinbaseTxns[0].vout[0].nValue - 1000, reward);
+    const auto sentinelId = sentinel.GetHash();
+    {
+        LOCK(cs_main);
+        mempool.addUnchecked(sentinelId, TestMemPoolEntryHelper().Time(GetTime()).Fee(1000).FromTx(sentinel));
+        DisconnectedBlockTransactions empty;
+        UpdateMempoolForReorg(empty, true);
+        BOOST_CHECK(mempool.exists(sentinelId));
+        mempool.clear();
+    }
     // A fresh candidate is constructed under the restored inactive context.
     std::unique_ptr<CBlockTemplate> candidate = BlockAssembler(GetParams()).CreateNewBlock(reward);
     BOOST_REQUIRE(candidate);

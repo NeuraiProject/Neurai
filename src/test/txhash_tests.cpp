@@ -769,6 +769,32 @@ BOOST_AUTO_TEST_CASE(txhash_old_mask_collision_is_separated)
     BOOST_CHECK(x != y);
 }
 
+// NIP-046: repeated introspection on a large synthetic transaction has
+// identical results with and without precomputation. This is an interpreter
+// test, not a claim that its coins/references exist in a chain.
+BOOST_AUTO_TEST_CASE(txhash_budget_large_transaction_repeated)
+{
+    auto mtx=BuildTestTx(1000,1000);
+    mtx.nVersion=3;
+    for(int i=0;i<128;++i)mtx.vrefin.emplace_back(uint256S("46"),i);
+    const CTransaction tx(mtx);
+    std::vector<unsigned char> expected;
+    BOOST_REQUIRE(DirectTxFieldHash(tx,0,511,expected,false));
+    for(bool cached : {false,true}) for(bool enabled : {false,true}) {
+        PrecomputedTransactionData data(tx);
+        data.ready=cached;data.refInputsReady=cached;
+        TransactionSignatureChecker checker(&tx,0,0,data);
+        CScript script;
+        for(int i=0;i<256;++i)script<<std::vector<unsigned char>{0xff,0x01}<<OP_TXHASH<<expected<<OP_EQUALVERIFY;
+        script<<OP_TRUE;
+        std::vector<std::vector<unsigned char>> stack;
+        ScriptError error;
+        const auto flags=enabled?TXHASH_FLAGS|SCRIPT_VERIFY_AUTHSCRIPT_BUDGET:TXHASH_FLAGS;
+        BOOST_CHECK_EQUAL(EvalScript(stack,script,flags,checker,SIGVERSION_AUTHSCRIPT,&error),enabled);
+        BOOST_CHECK_EQUAL(error,enabled?SCRIPT_ERR_OK:SCRIPT_ERR_OP_COUNT);
+    }
+}
+
 BOOST_AUTO_TEST_CASE(txhash_partial_cache)
 {
     CMutableTransaction mtx = BuildTestTx(2, 2);

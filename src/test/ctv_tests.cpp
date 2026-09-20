@@ -107,6 +107,19 @@ uint256 ComputeCtvHash(const CTransaction& tx, uint32_t nIn)
     outputsHash.Finalize(outResult);
     ss.Write(outResult, CSHA256::OUTPUT_SIZE);
 
+    if (tx.nVersion == 3) {
+        CDataStream referenceField(SER_NETWORK, PROTOCOL_VERSION);
+        referenceField << static_cast<uint32_t>(tx.vrefin.size());
+        if (!tx.vrefin.empty()) {
+            CDataStream outpoints(SER_NETWORK, PROTOCOL_VERSION);
+            for (const auto& reference : tx.vrefin) outpoints << reference;
+            uint256 hash;
+            CSHA256().Write(reinterpret_cast<const unsigned char*>(outpoints.data()), outpoints.size()).Finalize(hash.begin());
+            referenceField << hash;
+        }
+        ss.Write(reinterpret_cast<const unsigned char*>(referenceField.data()), referenceField.size());
+    }
+
     uint32_t inputIndex = nIn;
     ss.Write((const unsigned char*)&inputIndex, 4);
 
@@ -439,6 +452,8 @@ BOOST_AUTO_TEST_CASE(ctv_address_family_vectors_and_mutations)
         original.vout.emplace_back(200000, CScript() << OP_TRUE);
         original.vrefin.emplace_back(uint256S("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"), 7);
         original.vrefin.emplace_back(uint256S("202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f"), 9);
+        const auto independentDigest=ComputeCtvHash(CTransaction(original),1);
+        BOOST_CHECK(std::vector<unsigned char>(independentDigest.begin(),independentDigest.end())==ParseHex(vector.digest));
         const CScript covenant = CScript() << ParseHex(vector.digest) << OP_CHECKTEMPLATEVERIFY << OP_DROP << OP_TRUE;
         for (int mutation = 0; mutation <= 13; ++mutation) {
             CMutableTransaction changed = original;
@@ -474,6 +489,31 @@ BOOST_AUTO_TEST_CASE(ctv_address_family_vectors_and_mutations)
                 }
             }
         }
+    }
+}
+
+// NIP-046: CTV keeps its own precomputed hashes and is not charged as an
+// explicit hash opcode. Its opcode count still follows the active budget.
+BOOST_AUTO_TEST_CASE(ctv_budget_large_transaction_repeated)
+{
+    auto mtx=BuildCtvTestTx(1000,1000);
+    mtx.nVersion=3;
+    for(int i=0;i<128;++i)mtx.vrefin.emplace_back(uint256S("46"),i);
+    const CTransaction tx(mtx);
+    const auto digest=ComputeCtvHash(tx,0);
+    const std::vector<unsigned char> expected(digest.begin(),digest.end());
+    for(bool cached : {false,true}) for(bool enabled : {false,true}) for(int count : {200,511,512}) {
+        PrecomputedTransactionData data(tx);data.ctvReady=cached;data.ctvRefInputsReady=cached;
+        TransactionSignatureChecker checker(&tx,0,0,data);
+        CScript script;script<<expected;
+        for(int i=0;i<count;++i)script<<OP_CHECKTEMPLATEVERIFY;
+        script<<OP_DROP<<OP_TRUE;
+        std::vector<std::vector<unsigned char>> stack;
+        ScriptError error;
+        const auto flags=enabled?CTV_FLAGS|SCRIPT_VERIFY_AUTHSCRIPT_BUDGET:CTV_FLAGS;
+        const bool ok=count+1<=(enabled?512:201);
+        BOOST_CHECK_EQUAL(EvalScript(stack,script,flags,checker,SIGVERSION_AUTHSCRIPT,&error),ok);
+        BOOST_CHECK_EQUAL(error,ok?SCRIPT_ERR_OK:SCRIPT_ERR_OP_COUNT);
     }
 }
 
