@@ -21,6 +21,8 @@ static const unsigned int MAX_BLOCK_WEIGHT_RIP2 = 8000000;
 /** The maximum allowed size for a serialized block, in bytes after RIP 2(only for buffer size limits) */
 static const unsigned int MAX_BLOCK_SERIALIZED_SIZE_RIP2 = 8000000;
 
+// Deterministic Poseidon permutations, enforced after its height activation.
+static constexpr uint64_t MAX_BLOCK_POSEIDON_WORK = 200000;
 /** The maximum allowed number of signature check operations in a block (network rule) */
 static const int64_t MAX_BLOCK_SIGOPS_COST = 80000;
 /** Coinbase transaction outputs can only be spent after this number of new blocks (network rule) */

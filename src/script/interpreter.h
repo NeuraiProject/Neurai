@@ -13,6 +13,7 @@
 #include "primitives/transaction.h"
 
 #include <vector>
+#include <atomic>
 #include <stdint.h>
 #include <string>
 
@@ -300,6 +301,7 @@ enum class script_verify_flag_name : uint8_t {
     SCRIPT_VERIFY_INPUTFIELD = 46,
     SCRIPT_VERIFY_MERKLE_POSEIDON = 47,
     SCRIPT_VERIFY_AUTHSCRIPT_BUDGET = 48,
+    SCRIPT_VERIFY_POSEIDON_WORK = 49,
 
     // End marker — must always be last.
     SCRIPT_VERIFY_END_MARKER
@@ -443,6 +445,29 @@ bool AuthScriptTreeSignatureHash(const uint256& base, const AuthScriptTreeContex
 // Shape only: no hashing or signature checks. Shared by consensus and sigop accounting.
 bool ParseAuthScriptTreeWitness(const CScriptWitness& witness, size_t& argsOffset, ScriptError* error = nullptr);
 
+/** Shared by all script checks of a block (or a mempool transaction).
+ * Reserve before hashing. Failed reservations never wrap or exceed the cap.
+ * Thread scheduling cannot affect acceptance of a valid block. */
+class PoseidonWorkBudget {
+    const uint64_t limit;
+    std::atomic<uint64_t> used{0};
+    std::atomic<bool> exceeded{false};
+public:
+    explicit PoseidonWorkBudget(uint64_t limitIn) : limit(limitIn) {}
+    bool Charge(uint64_t units) {
+        uint64_t previous = used.load(std::memory_order_relaxed);
+        do {
+            if (units > limit - previous) {
+                exceeded.store(true, std::memory_order_relaxed);
+                return false;
+            }
+        } while (!used.compare_exchange_weak(previous, previous + units, std::memory_order_relaxed));
+        return true;
+    }
+    uint64_t Used() const { return used.load(std::memory_order_relaxed); }
+    bool Exceeded() const { return exceeded.load(std::memory_order_relaxed); }
+};
+
 class BaseSignatureChecker
 {
 public:
@@ -451,6 +476,8 @@ public:
     // reference HEIGHT / MTP can be re-validated on every new tip.
     // `mutable` because VerifyScript takes `const BaseSignatureChecker&`.
     mutable bool fChainContextObserved{false};
+    // Owned by CScriptCheck; shared unchanged through BASE/P2SH/witness/MAST.
+    PoseidonWorkBudget* poseidonWorkBudget{nullptr};
 
     virtual bool CheckSig(const std::vector<unsigned char> &scriptSig, const std::vector<unsigned char> &vchPubKey, const CScript &scriptCode, SigVersion sigversion, uint8_t authType = 0x00) const
     {

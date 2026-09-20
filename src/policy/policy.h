@@ -28,6 +28,8 @@ static const unsigned int DEFAULT_BLOCK_MIN_TX_FEE = 1000;
 static const unsigned int MAX_STANDARD_TX_WEIGHT = 400000;
 /** Maximum number of signature check operations in an IsStandard() P2SH script */
 static const unsigned int MAX_P2SH_SIGOPS = 15;
+/** Maximum Poseidon work relayed in a single transaction after activation. */
+static constexpr uint64_t MAX_STANDARD_TX_POSEIDON_WORK = 20000;
 /** The maximum number of sigops we're willing to relay/mine in a single tx */
 static const unsigned int MAX_STANDARD_TX_SIGOPS_COST = MAX_BLOCK_SIGOPS_COST/5;
 /** Default for -maxmempool, maximum megabytes of mempool memory usage */
@@ -101,6 +103,7 @@ inline script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
     if (consensus.IsAssetMessageActive(nHeight)) base |= SCRIPT_VERIFY_ASSETMESSAGEFIELD;
     if (consensus.IsInputFieldActive(nHeight)) base |= SCRIPT_VERIFY_INPUTFIELD;
     if (consensus.nPQWitnessEnabled && consensus.IsAuthScriptTreeActive(nHeight)) base |= SCRIPT_VERIFY_AUTHSCRIPT_TREE;
+    if (consensus.IsPoseidonWorkActive(nHeight)) base |= SCRIPT_VERIFY_POSEIDON_WORK;
     if (consensus.IsAuthScriptBudgetActive(nHeight)) base |= SCRIPT_VERIFY_AUTHSCRIPT_BUDGET;
     if (consensus.IsMerklePoseidonActive(nHeight)) base |= SCRIPT_VERIFY_MERKLE_POSEIDON;
     if (consensus.nTXFIELDEnabled)          base |= SCRIPT_VERIFY_TXFIELD;

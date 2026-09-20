@@ -2,6 +2,7 @@
 // Distributed under the MIT software license.
 #include "chainparams.h"
 #include "crypto/poseidon_bn254.h"
+#include "crypto/sha256.h"
 #include "script/interpreter.h"
 #include "policy/policy.h"
 #include "test/test_neurai.h"
@@ -9,6 +10,7 @@
 #include <boost/test/unit_test.hpp>
 #include <algorithm>
 #include <limits>
+#include <thread>
 
 namespace {
 using Bytes = std::vector<unsigned char>;
@@ -18,6 +20,116 @@ bool Run(std::vector<Bytes> stack, const CScript& script, script_verify_flags fl
 }
 }
 BOOST_FIXTURE_TEST_SUITE(authscript_budget_tests,Setup)
+BOOST_AUTO_TEST_CASE(poseidon_shared_work_reserves_before_hashing)
+{
+    const auto flags = GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());
+    BOOST_CHECK(flags & SCRIPT_VERIFY_POSEIDON_WORK);
+    const CScript script = CScript() << OP_POSEIDON << OP_DROP << OP_TRUE;
+    PoseidonWorkBudget budget(2);
+    BaseSignatureChecker checker;
+    checker.poseidonWorkBudget = &budget;
+    for (int i = 0; i < 3; ++i) {
+        std::vector<Bytes> stack{Bytes{}};
+        ScriptError err;
+        ScriptExecutionCost cost;
+        BOOST_CHECK_EQUAL(EvalScript(stack, script, flags, checker, SIGVERSION_AUTHSCRIPT, &err, nullptr, &cost), i < 2);
+        BOOST_CHECK_EQUAL(cost.poseidon_permutations, i < 2 ? 1 : 0);
+        BOOST_CHECK_EQUAL(err, i < 2 ? SCRIPT_ERR_OK : SCRIPT_ERR_POSEIDON_WORK_BUDGET);
+        if (i == 2) BOOST_CHECK(stack == std::vector<Bytes>{Bytes{}});
+    }
+    BOOST_CHECK_EQUAL(budget.Used(), 2);
+    BOOST_CHECK(budget.Exceeded());
+    // Merkle reserves the entire path atomically before hashing any node.
+    for (uint64_t limit : {uint64_t{31}, uint64_t{32}}) {
+        PoseidonWorkBudget merkleBudget(limit);
+        checker.poseidonWorkBudget = &merkleBudget;
+        Bytes proof(1029); proof[0] = 32;
+        std::vector<Bytes> stack{Bytes(32), Bytes{5}, proof, Bytes(32)};
+        ScriptError err;
+        const bool ok = EvalScript(stack, CScript() << OP_CHECKMERKLEINCLUSION << OP_DROP << OP_TRUE,
+                                   flags, checker, SIGVERSION_AUTHSCRIPT, &err);
+        BOOST_CHECK_EQUAL(ok, limit == 32);
+        BOOST_CHECK_EQUAL(merkleBudget.Used(), limit == 32 ? 32 : 0);
+        BOOST_CHECK_EQUAL(err, limit == 32 ? SCRIPT_ERR_OK : SCRIPT_ERR_POSEIDON_WORK_BUDGET);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(poseidon_work_parallel_reservation_and_overflow)
+{
+    PoseidonWorkBudget budget(5000);
+    std::atomic<unsigned int> successes{0};
+    std::vector<std::thread> workers;
+    for (int i = 0; i < 8; ++i) workers.emplace_back([&] {
+        for (int j = 0; j < 1000; ++j) if (budget.Charge(1)) ++successes;
+    });
+    for (auto& worker : workers) worker.join();
+    BOOST_CHECK_EQUAL(successes.load(), 5000);
+    BOOST_CHECK_EQUAL(budget.Used(), 5000);
+    BOOST_CHECK(budget.Exceeded());
+    BOOST_CHECK(!budget.Charge(std::numeric_limits<uint64_t>::max()));
+    BOOST_CHECK_EQUAL(budget.Used(), 5000);
+    PoseidonWorkBudget full(std::numeric_limits<uint64_t>::max());
+    BOOST_CHECK(full.Charge(std::numeric_limits<uint64_t>::max()));
+    BOOST_CHECK(!full.Charge(1));
+    BOOST_CHECK_EQUAL(full.Used(), std::numeric_limits<uint64_t>::max());
+}
+
+BOOST_AUTO_TEST_CASE(poseidon_work_covers_legacy_p2sh_and_witness_v0)
+{
+    const auto flags = GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());
+    const CScript leaf = CScript() << OP_0 << OP_POSEIDON << OP_DROP << OP_TRUE;
+    uint256 sha;
+    CSHA256().Write(leaf.data(), leaf.size()).Finalize(sha.begin());
+    for (int envelope = 0; envelope < 3; ++envelope) {
+        CScript sig, output = leaf;
+        CScriptWitness witness;
+        if (envelope == 1) {
+            sig << Bytes(leaf.begin(), leaf.end());
+            output = GetScriptForDestination(CScriptID(leaf));
+        } else if (envelope == 2) {
+            output = CScript() << OP_0 << ToByteVector(sha);
+            witness.stack = {Bytes(leaf.begin(), leaf.end())};
+        }
+        for (uint64_t limit : {uint64_t{0}, uint64_t{1}}) {
+            PoseidonWorkBudget work(limit);
+            BaseSignatureChecker checker;
+            checker.poseidonWorkBudget = &work;
+            ScriptError err;
+            BOOST_CHECK_EQUAL(VerifyScript(sig, output, &witness, flags, checker, &err), limit == 1);
+            BOOST_CHECK_EQUAL(err, limit == 1 ? SCRIPT_ERR_OK : SCRIPT_ERR_POSEIDON_WORK_BUDGET);
+            BOOST_CHECK_EQUAL(work.Used(), limit);
+        }
+    }
+    for (uint64_t limit : {uint64_t{32}, uint64_t{33}}) {
+        Bytes proof(1029); proof[0] = 32;
+        std::vector<Bytes> stack{Bytes(32), Bytes{5}, proof, Bytes(32), Bytes{}};
+        PoseidonWorkBudget work(limit);
+        BaseSignatureChecker checker;
+        checker.poseidonWorkBudget = &work;
+        ScriptError err;
+        const CScript script = CScript() << OP_POSEIDON << OP_DROP << OP_CHECKMERKLEINCLUSION << OP_DROP << OP_TRUE;
+        BOOST_CHECK_EQUAL(EvalScript(stack, script, flags, checker, SIGVERSION_AUTHSCRIPT, &err), limit == 33);
+        BOOST_CHECK_EQUAL(work.Used(), limit == 33 ? 33 : 1);
+        BOOST_CHECK_EQUAL(err, limit == 33 ? SCRIPT_ERR_OK : SCRIPT_ERR_POSEIDON_WORK_BUDGET);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(poseidon_work_height_schedule)
+{
+    auto main = CreateChainParams(CBaseChainParams::MAIN);
+    auto test = CreateChainParams(CBaseChainParams::TESTNET);
+    BOOST_CHECK(!main->GetConsensus().IsPoseidonWorkActive(1000000));
+    BOOST_CHECK(!test->GetConsensus().IsPoseidonWorkActive(0));
+    BOOST_CHECK(test->GetConsensus().IsPoseidonWorkActive(1));
+    auto params = GetParams().GetConsensus();
+    BOOST_CHECK(params.IsPoseidonWorkActive(0));
+    params.nPoseidonWorkHeight = 630;
+    for (int height : {629,630,631}) {
+        const auto flags = ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, params, true, height);
+        BOOST_CHECK_EQUAL(bool(flags & SCRIPT_VERIFY_POSEIDON_WORK), height >= 630);
+    }
+}
+
 BOOST_AUTO_TEST_CASE(poseidon_permutation_cost_boundaries)
 {
     // Independent chunk absorption model, including a padding-only chunk.

@@ -61,6 +61,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--bindir',type=Path,default=Path('/root/Neurai/src'))
     p.add_argument('--par',type=int,choices=[1,2],default=1)
+    p.add_argument('--poseidon-work-height',type=int,choices=[-1,0],default=0,help='-1 preserves the pre-budget baseline')
     p.add_argument('--weight-target',type=int,default=7900000)
     args=p.parse_args(); directory=Path(tempfile.mkdtemp(prefix='nip046-density-'));nodes=[]
     report=dict(results=[],par=args.par,binary_sha256=r.h.digest_file(args.bindir/'neuraid'),driver_sha256=r.h.digest_file(Path(__file__)),
@@ -69,7 +70,7 @@ def main():
         report['results'].append(dict(case=name,passed=bool(ok),observed=observed));print(('PASS ' if ok else 'FAIL ')+name,flush=True)
         if not ok:raise RuntimeError(f'{name}: {observed}')
     def start(name):
-        n=r.h.Node(args.bindir,directory/name,['-bypassdownload=1','-authscriptbudgetheight=0','-acceptnonstdtxn=0','-minrelaytxfee=0.00001','-maxsigcachesize=0',f'-par={args.par}'])
+        n=r.h.Node(args.bindir,directory/name,['-bypassdownload=1','-authscriptbudgetheight=0',f'-poseidonworkheight={args.poseidon_work_height}','-acceptnonstdtxn=0','-minrelaytxfee=0.00001','-maxsigcachesize=0',f'-par={args.par}'])
         nodes.append(n);n.ready();return n
     try:
         source=start('source');miner=source.rpc('getnewaddress','','legacy');source.rpc('generatetoaddress',610,miner)
@@ -111,7 +112,11 @@ def main():
         result=submit_slow(v,raw)
         wall=time.perf_counter()-start_wall;c1,rss=l.counters(v.proc.pid)
         report['measurement']=dict(wall_s=wall,daemon_cpu_s=c1-c0,daemon_hwm_kib=rss)
-        check('accepted',result is None and v.rpc('getbestblockhash')==expected,result)
+        active=args.poseidon_work_height>=0 and v.rpc('getblockcount')+1>=args.poseidon_work_height
+        if active and count*511>200000:
+            check('work_budget_rejected',result=='bad-blk-poseidon-work' and v.rpc('getbestblockhash')!=expected,result)
+        else:
+            check('accepted',result is None and v.rpc('getbestblockhash')==expected,result)
         report['success']=True
     except Exception as error:
         report['error']=str(error);print('ERROR '+str(error),flush=True)

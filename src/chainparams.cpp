@@ -367,6 +367,7 @@ public:
         consensus.nCATEnabled = true;  // OP_CAT (BIP 347) active on testnet
         consensus.nCTVEnabled = true;  // OP_CTV (BIP 119) active on testnet
         consensus.nCSFSEnabled = true;  // OP_CHECKSIGFROMSTACK active on testnet
+        consensus.nPoseidonWorkHeight = 1; // reset testnet
         consensus.nAuthScriptBudgetHeight = 1; // NIP-046: reset testnet
         consensus.nAssetMessageHeight = 1; // NIP-043: reset testnet only
         consensus.nInputFieldHeight = 1; // NIP-043: reset testnet only
@@ -607,6 +608,7 @@ public:
         consensus.nCATEnabled = true;  // OP_CAT (BIP 347) active on regtest
         consensus.nCTVEnabled = true;  // OP_CTV (BIP 119) active on regtest
         consensus.nCSFSEnabled = true;  // OP_CHECKSIGFROMSTACK active on regtest
+        consensus.nPoseidonWorkHeight = 0;
         consensus.nAuthScriptBudgetHeight = 0; // NIP-046: regtest
         consensus.nAssetMessageHeight = 0; // NIP-043: regtest
         consensus.nInputFieldHeight = 0; // NIP-043: regtest
@@ -914,4 +916,9 @@ void UpdateAuthScriptTreeHeight(int nHeight)
 void UpdateAuthScriptBudgetHeight(int nHeight)
 {
     globalChainParams->UpdateAuthScriptBudgetHeight(nHeight);
+}
+
+void UpdatePoseidonWorkHeight(int nHeight)
+{
+    globalChainParams->UpdatePoseidonWorkHeight(nHeight);
 }

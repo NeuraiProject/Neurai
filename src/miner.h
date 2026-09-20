@@ -148,6 +148,7 @@ private:
     uint64_t nBlockWeight;
     uint64_t nBlockTx;
     uint64_t nBlockSigOpsCost;
+    uint64_t nBlockPoseidonWork;
     CAmount nFees;
     CTxMemPool::setEntries inBlock;
     std::set<COutPoint> blockSpentOutpoints;  // NIP-014: spent outpoints in current template

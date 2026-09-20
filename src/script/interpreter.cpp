@@ -1220,6 +1220,8 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                                         const size_t cost = 62 * depth;
                                         if (cost > MAX_POSEIDON_INPUT_BYTES_PER_SCRIPT - nPoseidonInputBytes)
                                             return set_error(serror, SCRIPT_ERR_POSEIDON_BUDGET);
+                                        if (checker.poseidonWorkBudget && !checker.poseidonWorkBudget->Charge(depth))
+                                            return set_error(serror, SCRIPT_ERR_POSEIDON_WORK_BUDGET);
                                         nPoseidonInputBytes += cost;
                                         if (execution_cost) execution_cost->poseidon_permutations += depth;
                                     }
@@ -2192,6 +2194,8 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         // overflow if vch.size() were ever near SIZE_MAX.
                         if (vch.size() > MAX_POSEIDON_INPUT_BYTES_PER_SCRIPT - nPoseidonInputBytes)
                             return set_error(serror, SCRIPT_ERR_POSEIDON_BUDGET);
+                        if (checker.poseidonWorkBudget && !checker.poseidonWorkBudget->Charge(crypto::PoseidonPermutationCost(vch.size())))
+                            return set_error(serror, SCRIPT_ERR_POSEIDON_WORK_BUDGET);
                         nPoseidonInputBytes += vch.size();
                         if (execution_cost) execution_cost->poseidon_permutations += crypto::PoseidonPermutationCost(vch.size());
                         valtype vchHash(32);

@@ -124,6 +124,8 @@ struct Params {
     int nTxHashHeight{std::numeric_limits<int>::max()};
     bool IsTxHashActive(int height) const { return height >= nTxHashHeight; }
     // NIP-043: independent activation, unscheduled unless set for the network.
+    int nPoseidonWorkHeight{std::numeric_limits<int>::max()};
+    bool IsPoseidonWorkActive(int height) const { return height >= nPoseidonWorkHeight; }
     int nAuthScriptBudgetHeight{std::numeric_limits<int>::max()};
     bool IsAuthScriptBudgetActive(int height) const { return height >= nAuthScriptBudgetHeight; }
     int nAssetMessageHeight{std::numeric_limits<int>::max()};

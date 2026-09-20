@@ -25,7 +25,7 @@
 
 #include "util.h"
 
-bool CheckInputs(const CTransaction &tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData &txdata, std::vector<CScriptCheck> *pvChecks, std::shared_ptr<std::vector<CTxOut>> pRefOutputs = nullptr, ChainContext chainCtx = {}, bool* pfUsesChainContext = nullptr);
+bool CheckInputs(const CTransaction &tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData &txdata, std::vector<CScriptCheck> *pvChecks, std::shared_ptr<std::vector<CTxOut>> pRefOutputs = nullptr, ChainContext chainCtx = {}, bool* pfUsesChainContext = nullptr, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr);
 
 // Internal entry point exercised by the startup-rewind sentinel below.
 void UpdateMempoolForReorg(DisconnectedBlockTransactions&, bool);
@@ -499,5 +499,61 @@ BOOST_AUTO_TEST_CASE(rewind_without_readmission_crosses_budget_height)
     // A repeated rewind with no insufficiently-validated active blocks is inert.
     BOOST_REQUIRE(RewindBlockIndex(GetParams()));
     BOOST_CHECK_EQUAL(chainActive.Height(), 118);
+}
+BOOST_AUTO_TEST_SUITE_END()
+
+BOOST_FIXTURE_TEST_SUITE(poseidon_work_cache_tests, TestChain100Setup)
+BOOST_AUTO_TEST_CASE(cached_execution_cannot_skip_work_and_workers_share_budget)
+{
+    LOCK(cs_main);
+    CCoinsView dummy;
+    CCoinsViewCache view(&dummy);
+    const CScript leaf = CScript() << OP_0 << OP_POSEIDON << OP_DROP << OP_TRUE;
+    const auto commitment = GetAuthScriptCommitment(0, nullptr, leaf);
+    const CScript spk = CScript() << OP_1 << ToByteVector(commitment);
+    CMutableTransaction mtx;
+    mtx.nVersion = 2;
+    for (int i = 0; i < 2; ++i) {
+        COutPoint prev(GetRandHash(), 0);
+        view.AddCoin(prev, Coin(CTxOut(COIN, spk), 1, false), false);
+        mtx.vin.emplace_back(prev);
+        mtx.vin.back().scriptWitness.stack = {{0}, std::vector<unsigned char>(leaf.begin(), leaf.end())};
+    }
+    mtx.vout.emplace_back(COIN, CScript() << OP_TRUE);
+    const CTransaction tx(mtx);
+    PrecomputedTransactionData data(tx);
+    auto flags = GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());
+    flags &= ~SCRIPT_VERIFY_POSEIDON_WORK;
+    CValidationState warm;
+    BOOST_REQUIRE(CheckInputs(tx, warm, view, true, flags, true, true, data, nullptr));
+    std::vector<CScriptCheck> cached;
+    CValidationState hit;
+    BOOST_REQUIRE(CheckInputs(tx, hit, view, true, flags, true, true, data, &cached));
+    BOOST_CHECK(cached.empty());
+    // Same flags and warm cache: explicit meter MUST still execute scripts.
+    auto zero = std::make_shared<PoseidonWorkBudget>(0);
+    CValidationState reject;
+    BOOST_CHECK(!CheckInputs(tx, reject, view, true, flags, true, true, data, nullptr, nullptr, {}, nullptr, zero));
+    BOOST_CHECK(zero->Exceeded());
+    BOOST_CHECK_EQUAL(reject.GetRejectReason(), "bad-txns-poseidon-work");
+    // Charge the full amount on repeated validation under the active flag.
+    flags |= SCRIPT_VERIFY_POSEIDON_WORK;
+    for (int repeat = 0; repeat < 2; ++repeat) {
+        auto exact = std::make_shared<PoseidonWorkBudget>(2);
+        CValidationState state;
+        BOOST_REQUIRE(CheckInputs(tx, state, view, true, flags, true, true, data, nullptr, nullptr, {}, nullptr, exact));
+        BOOST_CHECK_EQUAL(exact->Used(), 2);
+    }
+    for (uint64_t limit : {uint64_t{1}, uint64_t{2}}) {
+        auto work = std::make_shared<PoseidonWorkBudget>(limit);
+        std::vector<CScriptCheck> checks;
+        CValidationState state;
+        BOOST_REQUIRE(CheckInputs(tx, state, view, true, flags, true, true, data, &checks, nullptr, {}, nullptr, work));
+        BOOST_REQUIRE_EQUAL(checks.size(), 2);
+        BOOST_CHECK(checks[0]());
+        BOOST_CHECK_EQUAL(checks[1](), limit == 2);
+        BOOST_CHECK_EQUAL(work->Used(), limit);
+        BOOST_CHECK_EQUAL(work->Exceeded(), limit == 1);
+    }
 }
 BOOST_AUTO_TEST_SUITE_END()

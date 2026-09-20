@@ -111,6 +111,7 @@ void BlockAssembler::resetBlock()
     // Reserve space for coinbase tx
     nBlockWeight = 4000;
     nBlockSigOpsCost = 400;
+    nBlockPoseidonWork = 0;
     fIncludeWitness = false;
 
     // These counters do not include coinbase tx
@@ -258,7 +259,12 @@ bool BlockAssembler::TestPackage(uint64_t packageSize, int64_t packageSigOpsCost
 //   segwit activation)
 bool BlockAssembler::TestPackageTransactions(const CTxMemPool::setEntries& package)
 {
+    uint64_t poseidonWork = nBlockPoseidonWork;
     for (const CTxMemPool::txiter it : package) {
+        if (chainparams.GetConsensus().IsPoseidonWorkActive(nHeight)) {
+            if (it->GetPoseidonWork() > MAX_BLOCK_POSEIDON_WORK - poseidonWork) return false;
+            poseidonWork += it->GetPoseidonWork();
+        }
         if (!IsFinalTx(it->GetTx(), nHeight, nLockTimeCutoff))
             return false;
         if (!fIncludeWitness && it->GetTx().HasWitness())
@@ -283,6 +289,7 @@ void BlockAssembler::AddToBlock(CTxMemPool::txiter iter)
     nBlockWeight += iter->GetTxWeight();
     ++nBlockTx;
     nBlockSigOpsCost += iter->GetSigOpCost();
+    nBlockPoseidonWork += iter->GetPoseidonWork();
     nFees += iter->GetFee();
     inBlock.insert(iter);
 

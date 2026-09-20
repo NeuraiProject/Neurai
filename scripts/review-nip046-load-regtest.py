@@ -29,6 +29,7 @@ def main():
     p.add_argument('--bindir', type=Path, default=Path('/root/Neurai/src'))
     p.add_argument('--profile', choices=['sha256', 'sha1', 'ripemd160', 'hash160', 'hash256', 'keccak256', 'blake2b', 'blake3', 'sha3_256', 'sha512', 'stack', 'copy', 'poseidon', 'poseidon-chain', 'merkle1', 'merkle2', 'merkle3', 'merkle4', 'merkle5'], required=True)
     p.add_argument('--par', type=int, choices=[1, 2], default=1)
+    p.add_argument('--poseidon-work-height', type=int, choices=[-1,0], default=0, help='-1 for historical byte-budget-only measurements')
     p.add_argument('--samples', type=int, default=30)
     p.add_argument('--inputs-per-tx', type=int, choices=[1,2], default=1)
     p.add_argument('--weight-target', type=int, default=3800000)
@@ -48,7 +49,7 @@ def main():
         if not ok: raise RuntimeError(f'{name}: {observed}')
     def start(label):
         n = r.h.Node(args.bindir, directory/label, ['-bypassdownload=1', '-acceptnonstdtxn=0',
-                    '-minrelaytxfee=0.00001', '-authscriptbudgetheight=0', '-maxsigcachesize=0', f'-par={args.par}'])
+                    '-minrelaytxfee=0.00001', '-authscriptbudgetheight=0', f'-poseidonworkheight={args.poseidon_work_height}', '-maxsigcachesize=0', f'-par={args.par}'])
         nodes.append(n); n.ready(); return n
     try:
         hashes={'sha256':0xa8,'sha1':0xa7,'ripemd160':0xa6,'hash160':0xa9,'hash256':0xaa,
@@ -89,7 +90,11 @@ def main():
         txweight=len(dummy)+3*len(r.strip_witness(dummy))
         limit=source.rpc('getblocktemplate',{'rules':['segwit']})['weightlimit']
         count=max(1,(min(args.weight_target,limit-4000)-4000)//txweight)
-        report['workload']=dict(transactions=count, tx_weight=txweight, weight_limit=limit,
+        work = 511 if args.profile == 'poseidon-chain' else 500 if args.profile == 'poseidon' else 480 if args.profile == 'merkle5' else 0
+        work_active = args.poseidon_work_height >= 0 and source.rpc('getblockcount')+1 >= args.poseidon_work_height
+        if work_active and work:
+            count = min(count, 200000 // (work * args.inputs_per_tx))
+        report['workload']=dict(poseidon_permutations_per_input=work, poseidon_work_active=work_active, transactions=count, tx_weight=txweight, weight_limit=limit,
             weight_target=args.weight_target, inputs_per_transaction=args.inputs_per_tx, opcodes_per_input=ops, classic_units_per_input=classic,
             poseidon_bytes_per_input=poseidon, initial_argument_bytes=sum(map(len,wa)), input_sigop_cost=0, output_sigop_cost_per_transaction=4,
             static_script_bytes=len(script))

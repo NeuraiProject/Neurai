@@ -139,6 +139,7 @@ typedef enum ScriptError_t
        MAX_POSEIDON_INPUT_BYTES_PER_SCRIPT (script.h) caps the cumulative
        byte length of OP_POSEIDON inputs across a script. */
     SCRIPT_ERR_POSEIDON_BUDGET,
+    SCRIPT_ERR_POSEIDON_WORK_BUDGET,
 
     /* NIP-035: OP_CHECKSIG_ED25519 strict-profile structural rejections.
        These are CONSENSUS errors (the malformed-vs-invalid split per
