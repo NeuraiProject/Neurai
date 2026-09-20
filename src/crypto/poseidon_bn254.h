@@ -10,6 +10,14 @@
 
 namespace crypto {
 
+/** Work units for the NIP-036 byte sponge: one permutation per pair of
+ * 31-byte chunks, including the mandatory padding byte. Division before
+ * addition avoids overflow even for SIZE_MAX. This does not hash data. */
+constexpr size_t PoseidonPermutationCost(size_t bytes)
+{
+    return bytes / 62 + 1;
+}
+
 /** NIP-036: Poseidon hash over the BN254 scalar field Fr.
  *
  *  Hashes a byte string via the §3.5 byte sponge (CHUNK = 31 bytes,

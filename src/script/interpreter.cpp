@@ -573,8 +573,9 @@ static bool CheckAuthScriptBudgetStack(const std::vector<valtype>& stack, size_t
     return true;
 }
 
-bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &script, script_verify_flags flags, const BaseSignatureChecker &checker, SigVersion sigversion, ScriptError *serror, const AuthScriptTreeContext* tree)
+bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &script, script_verify_flags flags, const BaseSignatureChecker &checker, SigVersion sigversion, ScriptError *serror, const AuthScriptTreeContext* tree, ScriptExecutionCost* execution_cost)
 {
+    if (execution_cost) *execution_cost = ScriptExecutionCost{};
     // The interpreter takes the strict AuthScript activation exclusively from
     // its flags. Asset introspection opcodes (OP_OUTPUTASSETFIELD,
     // OP_INPUTASSETFIELD, OP_REFINPUTASSETFIELD) reach asset parsers through
@@ -1220,6 +1221,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                                         if (cost > MAX_POSEIDON_INPUT_BYTES_PER_SCRIPT - nPoseidonInputBytes)
                                             return set_error(serror, SCRIPT_ERR_POSEIDON_BUDGET);
                                         nPoseidonInputBytes += cost;
+                                        if (execution_cost) execution_cost->poseidon_permutations += depth;
                                     }
                                 }
                                 ok = nip031::VerifyMerkleInclusion(
@@ -2191,6 +2193,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         if (vch.size() > MAX_POSEIDON_INPUT_BYTES_PER_SCRIPT - nPoseidonInputBytes)
                             return set_error(serror, SCRIPT_ERR_POSEIDON_BUDGET);
                         nPoseidonInputBytes += vch.size();
+                        if (execution_cost) execution_cost->poseidon_permutations += crypto::PoseidonPermutationCost(vch.size());
                         valtype vchHash(32);
                         crypto::PoseidonBN254(vch.data(), vch.size(), vchHash.data());
                         popstack(stack);

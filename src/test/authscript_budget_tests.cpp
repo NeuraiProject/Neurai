@@ -1,12 +1,14 @@
 // Copyright (c) 2026 The Neurai developers
 // Distributed under the MIT software license.
 #include "chainparams.h"
+#include "crypto/poseidon_bn254.h"
 #include "script/interpreter.h"
 #include "policy/policy.h"
 #include "test/test_neurai.h"
 #include "utilstrencodings.h"
 #include <boost/test/unit_test.hpp>
 #include <algorithm>
+#include <limits>
 
 namespace {
 using Bytes = std::vector<unsigned char>;
@@ -16,6 +18,108 @@ bool Run(std::vector<Bytes> stack, const CScript& script, script_verify_flags fl
 }
 }
 BOOST_FIXTURE_TEST_SUITE(authscript_budget_tests,Setup)
+BOOST_AUTO_TEST_CASE(poseidon_permutation_cost_boundaries)
+{
+    // Independent chunk absorption model, including a padding-only chunk.
+    for (size_t len = 0; len <= 3072; ++len) {
+        size_t chunks = 1;
+        for (size_t left = len; left >= 31; left -= 31) ++chunks;
+        size_t permutations = 0;
+        while (chunks) { chunks -= std::min(size_t{2}, chunks); ++permutations; }
+        BOOST_CHECK_EQUAL(crypto::PoseidonPermutationCost(len), permutations);
+    }
+    BOOST_CHECK_EQUAL(crypto::PoseidonPermutationCost(std::numeric_limits<size_t>::max()),
+                      std::numeric_limits<size_t>::max() / 62 + 1);
+    const auto flags = GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());
+    for (size_t len : {0, 1, 30, 31, 32, 61, 62, 63, 123, 124, 520, 3072}) {
+        std::vector<Bytes> stack{Bytes(len, 0x42)}, control = stack;
+        ScriptExecutionCost cost;
+        ScriptError err, controlErr;
+        const CScript script = CScript() << OP_POSEIDON;
+        BOOST_REQUIRE(EvalScript(stack, script, flags, BaseSignatureChecker(), SIGVERSION_AUTHSCRIPT, &err, nullptr, &cost));
+        BOOST_REQUIRE(EvalScript(control, script, flags, BaseSignatureChecker(), SIGVERSION_AUTHSCRIPT, &controlErr));
+        BOOST_CHECK(stack == control);
+        BOOST_CHECK_EQUAL(err, controlErr);
+        BOOST_CHECK_EQUAL(cost.poseidon_permutations, len / 62 + 1);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(poseidon_work_dense_chain_and_reset)
+{
+    const auto flags = GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());
+    ScriptExecutionCost cost;
+    ScriptError err;
+    std::vector<Bytes> stack{Bytes{}};
+    CScript script;
+    for (int i = 0; i < 511; ++i) script << OP_POSEIDON;
+    script << OP_DROP << OP_TRUE;
+    BOOST_REQUIRE(EvalScript(stack, script, flags, BaseSignatureChecker(), SIGVERSION_AUTHSCRIPT, &err, nullptr, &cost));
+    BOOST_CHECK_EQUAL(cost.poseidon_permutations, 511);
+    // Execution, not static opcode count: dead branches contribute nothing.
+    script = CScript() << OP_0 << OP_IF << OP_POSEIDON << OP_ENDIF << OP_TRUE;
+    stack.clear();
+    BOOST_REQUIRE(EvalScript(stack, script, flags, BaseSignatureChecker(), SIGVERSION_AUTHSCRIPT, &err, nullptr, &cost));
+    BOOST_CHECK_EQUAL(cost.poseidon_permutations, 0);
+    for (bool enabled : {false, true}) {
+        cost.poseidon_permutations = 999;
+        stack.clear();
+        BOOST_CHECK(!EvalScript(stack, CScript() << OP_POSEIDON, enabled ? flags : flags & ~SCRIPT_VERIFY_POSEIDON,
+                                BaseSignatureChecker(), SIGVERSION_AUTHSCRIPT, &err, nullptr, &cost));
+        BOOST_CHECK_EQUAL(err, enabled ? SCRIPT_ERR_INVALID_STACK_OPERATION : SCRIPT_ERR_BAD_OPCODE);
+        BOOST_CHECK_EQUAL(cost.poseidon_permutations, 0);
+    }
+    // Existing byte guard rejects the eleventh large hash before any work.
+    stack.assign(11, Bytes(3072));
+    script.clear();
+    for (int i = 0; i < 11; ++i) script << OP_POSEIDON << OP_DROP;
+    BOOST_CHECK(!EvalScript(stack, script, flags, BaseSignatureChecker(), SIGVERSION_AUTHSCRIPT, &err, nullptr, &cost));
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_POSEIDON_BUDGET);
+    BOOST_CHECK_EQUAL(cost.poseidon_permutations, 500);
+    // A subsequent invocation is independent, even after a failed script.
+    stack = {Bytes{}};
+    BOOST_REQUIRE(EvalScript(stack, CScript() << OP_POSEIDON, flags, BaseSignatureChecker(), SIGVERSION_AUTHSCRIPT, &err, nullptr, &cost));
+    BOOST_CHECK_EQUAL(cost.poseidon_permutations, 1);
+}
+
+BOOST_AUTO_TEST_CASE(poseidon_work_merkle_and_sponge_share_units)
+{
+    const auto flags = GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());
+    for (int depth : {1, 2, 8, 32}) {
+        Bytes proof(1 + 32 * depth + (depth + 7) / 8);
+        proof[0] = depth;
+        Bytes root(32), zero(32);
+        for (int i = 0; i < depth; ++i) {
+            Bytes next(32);
+            BOOST_REQUIRE(crypto::PoseidonMerkleNode(root.data(), zero.data(), next.data()));
+            root = next;
+        }
+        // Good, wrong root, noncanonical leaf, truncated proof, bad depth,
+        // unavailable scheme, wrong root length. Early-invalid shaped proofs
+        // deliberately pay the full depth; this is not a timing profiler.
+        for (int variant = 0; variant < 7; ++variant) {
+            auto p = proof;
+            auto r = root;
+            Bytes leaf(32);
+            auto vf = flags;
+            if (variant == 1) r.assign(32, 0);
+            if (variant == 2) leaf.assign(32, 0xff);
+            if (variant == 3) p.pop_back();
+            if (variant == 4) p[0] = 33;
+            if (variant == 5) vf &= ~SCRIPT_VERIFY_MERKLE_POSEIDON;
+            if (variant == 6) r.pop_back();
+            std::vector<Bytes> stack{leaf, Bytes{5}, p, r, Bytes{}};
+            const CScript script = CScript() << OP_POSEIDON << OP_DROP << OP_CHECKMERKLEINCLUSION;
+            auto control = stack;
+            ScriptExecutionCost cost;
+            ScriptError err, controlErr;
+            BOOST_REQUIRE(EvalScript(stack, script, vf, BaseSignatureChecker(), SIGVERSION_AUTHSCRIPT, &err, nullptr, &cost));
+            BOOST_REQUIRE(EvalScript(control, script, vf, BaseSignatureChecker(), SIGVERSION_AUTHSCRIPT, &controlErr));
+            BOOST_CHECK(stack == control);
+            BOOST_CHECK(stack.back() == (variant == 0 ? Bytes{1} : Bytes{}));
+            BOOST_CHECK_EQUAL(cost.poseidon_permutations, 1 + (variant <= 2 ? depth : 0));
+        }
+    }
+}
 BOOST_AUTO_TEST_CASE(op_count_scope_and_dynamic_charges)
 {
     const auto flags=GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());

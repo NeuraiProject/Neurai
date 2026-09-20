@@ -704,7 +704,16 @@ public:
         : TransactionSignatureChecker(&txTo, nInIn, amountIn, spentScriptPubKeyIn, allPrevoutsIn), txTo(*txToIn) {}
 };
 
-bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &script, script_verify_flags flags, const BaseSignatureChecker &checker, SigVersion sigversion, ScriptError *error = nullptr, const AuthScriptTreeContext* tree = nullptr);
+/** Deterministic work charged before hashing during one EvalScript invocation.
+ * Reset on entry, including early failure; on failure contains charges up to
+ * that point. Merkle charges its full structurally valid depth even if a
+ * noncanonical field or incorrect root makes verification fail early.
+ * This is accounting only: no new limit, activation, or block aggregation. */
+struct ScriptExecutionCost {
+    uint64_t poseidon_permutations = 0;
+};
+
+bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &script, script_verify_flags flags, const BaseSignatureChecker &checker, SigVersion sigversion, ScriptError *error = nullptr, const AuthScriptTreeContext* tree = nullptr, ScriptExecutionCost* execution_cost = nullptr);
 
 bool VerifyScript(const CScript &scriptSig, const CScript &scriptPubKey, const CScriptWitness *witness, script_verify_flags flags, const BaseSignatureChecker &checker, ScriptError *serror = nullptr);
 
