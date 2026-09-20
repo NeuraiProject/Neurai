@@ -12,6 +12,7 @@ TEST_SRCDIR = test
 TEST_BINARY=test/test_neurai$(EXEEXT)
 
 JSON_TEST_FILES = \
+  test/data/nip043_b3_fixture.json \
   test/data/txhash_csfs_vectors.json \
   test/data/script_tests.json \
   test/data/base58_keys_valid.json \
@@ -156,6 +157,7 @@ NEURAI_TESTS =\
   test/strict_authscript_tests.cpp \
   test/authdest_tests.cpp \
   test/contract_thread_tests.cpp \
+  test/contract_thread_b3_tests.cpp \
   test/authscript_tree_tests.cpp \
   test/authscript_vectors_tests.cpp \
   test/versionbits_tests.cpp \
