@@ -29,6 +29,8 @@ const char* ScriptErrorString(const ScriptError serror)
             return "Script is too big";
         case SCRIPT_ERR_PUSH_SIZE:
             return "Push value size limit exceeded";
+        case SCRIPT_ERR_AUTHSCRIPT_HASH_BUDGET:
+            return "AuthScript hash budget exceeded";
         case SCRIPT_ERR_OP_COUNT:
             return "Operation limit exceeded";
         case SCRIPT_ERR_STACK_SIZE:

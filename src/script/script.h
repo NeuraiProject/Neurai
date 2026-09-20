@@ -39,6 +39,8 @@ static const unsigned int MAX_STACK_BYTES = 262144;  // 256 KiB
 
 // Maximum number of non-push operations per script
 static const int MAX_OPS_PER_SCRIPT = 201;
+static const int MAX_OPS_PER_AUTHSCRIPT = 512;
+static const size_t MAX_CLASSIC_HASH_UNITS_PER_AUTHSCRIPT = 65536;
 
 // NIP-036 §3.7: per-script Poseidon-input-byte budget. Bounds worst-case
 // validation cost of OP_POSEIDON-saturated scripts. Enforced only when

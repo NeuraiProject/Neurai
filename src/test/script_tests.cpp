@@ -65,6 +65,7 @@ static ScriptErrorDesc script_errors[] = {
         {SCRIPT_ERR_OP_RETURN,                             "OP_RETURN"},
         {SCRIPT_ERR_SCRIPT_SIZE,                           "SCRIPT_SIZE"},
         {SCRIPT_ERR_PUSH_SIZE,                             "PUSH_SIZE"},
+        {SCRIPT_ERR_AUTHSCRIPT_HASH_BUDGET,                 "AUTHSCRIPT_HASH_BUDGET"},
         {SCRIPT_ERR_OP_COUNT,                              "OP_COUNT"},
         {SCRIPT_ERR_STACK_SIZE,                            "STACK_SIZE"},
         {SCRIPT_ERR_SIG_COUNT,                             "SIG_COUNT"},

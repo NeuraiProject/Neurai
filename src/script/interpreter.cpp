@@ -559,6 +559,20 @@ bool static CheckMinimalPush(const valtype &data, opcodetype opcode)
     return true;
 }
 
+static bool CheckAuthScriptBudgetStack(const std::vector<valtype>& stack, size_t begin, size_t end,
+                                       script_verify_flags flags, ScriptError* serror)
+{
+    if (!(flags & SCRIPT_VERIFY_AUTHSCRIPT_BUDGET)) return true;
+    if (end - begin > MAX_STACK_SIZE) return set_error(serror, SCRIPT_ERR_STACK_SIZE);
+    size_t total = 0;
+    for (size_t i = begin; i < end; ++i) {
+        if (stack[i].size() > EffectiveMaxScriptElementSize(flags)) return set_error(serror, SCRIPT_ERR_PUSH_SIZE);
+        if (stack[i].size() > MAX_STACK_BYTES - total) return set_error(serror, SCRIPT_ERR_STACK_SIZE);
+        total += stack[i].size();
+    }
+    return true;
+}
+
 bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &script, script_verify_flags flags, const BaseSignatureChecker &checker, SigVersion sigversion, ScriptError *serror, const AuthScriptTreeContext* tree)
 {
     // The interpreter takes the strict AuthScript activation exclusively from
@@ -595,6 +609,17 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
     set_error(serror, SCRIPT_ERR_UNKNOWN_ERROR);
     if (script.size() > MAX_SCRIPT_SIZE)
         return set_error(serror, SCRIPT_ERR_SCRIPT_SIZE);
+    const bool budget = (flags & SCRIPT_VERIFY_AUTHSCRIPT_BUDGET) && sigversion == SIGVERSION_AUTHSCRIPT;
+    const int maxOps = budget ? MAX_OPS_PER_AUTHSCRIPT : MAX_OPS_PER_SCRIPT;
+    if (budget && !CheckAuthScriptBudgetStack(stack, 0, stack.size(), flags, serror)) return false;
+    size_t classicHashUnits = 0;
+    auto chargeHash = [&](size_t cost) {
+        if (!budget) return true;
+        if (cost > MAX_CLASSIC_HASH_UNITS_PER_AUTHSCRIPT - classicHashUnits)
+            return set_error(serror, SCRIPT_ERR_AUTHSCRIPT_HASH_BUDGET);
+        classicHashUnits += cost;
+        return true;
+    };
     int nOpCount = 0;
     // NIP-036 §3.7: per-script Poseidon-input-byte budget. Accumulated by
     // OP_POSEIDON; rejection on overflow returns SCRIPT_ERR_POSEIDON_BUDGET.
@@ -616,7 +641,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                 return set_error(serror, SCRIPT_ERR_PUSH_SIZE);
 
             // Note how OP_RESERVED does not count towards the opcode limit.
-            if (opcode > OP_16 && ++nOpCount > MAX_OPS_PER_SCRIPT)
+            if (opcode > OP_16 && ++nOpCount > maxOps)
                 return set_error(serror, SCRIPT_ERR_OP_COUNT);
 
             // Disabled opcodes (CVE-2010-5137 lineage): rejected even inside a
@@ -832,6 +857,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             return false;
                         }
 
+                        if (!chargeHash(vchMsg.size() + 64)) return false;
                         bool fSuccess = checker.CheckSigFromStack(vchSig, vchMsg, vchPubKey);
 
                         if (!fSuccess && (flags & SCRIPT_VERIFY_NULLFAIL) && vchSig.size())
@@ -1173,6 +1199,17 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                                 (scheme == nip031::SCHEME_POSEIDON_BN254 &&
                                  (flags & SCRIPT_VERIFY_MERKLE_POSEIDON) && (flags & SCRIPT_VERIFY_POSEIDON));
                             if (scheme_available) {
+                                // Charge only structurally hashable classic proofs, before hashing.
+                                if (scheme != nip031::SCHEME_POSEIDON_BN254 && !vchProof.empty()) {
+                                    const size_t depth = vchProof[0];
+                                    if (depth <= nip031::NIP031_MAX_DEPTH &&
+                                        vchProof.size() == 1 + 32 * depth + (depth + 7) / 8 &&
+                                        (scheme != nip031::SCHEME_BITCOIN_NEURAI || vchLeaf.size() == 32)) {
+                                        const size_t cost = scheme == nip031::SCHEME_BITCOIN_NEURAI ?
+                                            224 * depth : vchLeaf.size() + 64 + 128 * depth;
+                                        if (!chargeHash(cost)) return false;
+                                    }
+                                }
                                 // Charge before any Poseidon work. Malformed proof shapes
                                 // return false without hashing; well-shaped invalid proofs pay.
                                 if (scheme == nip031::SCHEME_POSEIDON_BN254 && !vchProof.empty()) {
@@ -2062,6 +2099,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         if (stack.size() < 1)
                             return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
                         valtype &vch = stacktop(-1);
+                        if (!chargeHash(vch.size() + ((opcode == OP_HASH160 || opcode == OP_HASH256) ? 160 : 64))) return false;
                         valtype vchHash(
                                 (opcode == OP_RIPEMD160 || opcode == OP_SHA1 || opcode == OP_HASH160) ? 20 : 32);
                         if (opcode == OP_RIPEMD160)
@@ -2091,6 +2129,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         if (stack.size() < 1)
                             return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
                         valtype &vch = stacktop(-1);
+                        if (!chargeHash(vch.size() + 64)) return false;
                         valtype vchHash(32);
                         if (opcode == OP_KECCAK256)
                             crypto::Keccak256(vch.data(), vch.size(), vchHash.data());
@@ -2116,6 +2155,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         if (stack.size() < 1)
                             return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
                         valtype &vch = stacktop(-1);
+                        if (!chargeHash(vch.size() + 64)) return false;
                         if (opcode == OP_SHA512) {
                             valtype vchHash(64);
                             crypto::SHA512_Wrap(vch.data(), vch.size(), vchHash.data());
@@ -2246,7 +2286,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         // scripts hit the budget early. Mirrors the
                         // OP_CHECKMULTISIG accounting pattern at line ~2224.
                         nOpCount += CHECKSIGADD_PQ_SIGOP_COST;
-                        if (nOpCount > MAX_OPS_PER_SCRIPT)
+                        if (nOpCount > maxOps)
                             return set_error(serror, SCRIPT_ERR_OP_COUNT);
 
                         // Mandatory PQ-pubkey shape prevalidation, INDEPENDENT
@@ -2361,7 +2401,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         if (nKeysCount < 0 || nKeysCount > MAX_PUBKEYS_PER_MULTISIG)
                             return set_error(serror, SCRIPT_ERR_PUBKEY_COUNT);
                         nOpCount += nKeysCount;
-                        if (nOpCount > MAX_OPS_PER_SCRIPT)
+                        if (nOpCount > maxOps)
                             return set_error(serror, SCRIPT_ERR_OP_COUNT);
                         int ikey = ++i;
                         // ikey2 is the position of last non-signature item in the stack. Top stack item = 1.
@@ -2492,9 +2532,9 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
             // permitted. Non-widened scripts keep the implicit 520 KB bound
             // from MAX_STACK_SIZE × MAX_SCRIPT_ELEMENT_SIZE. Must stay in
             // lockstep with EffectiveMaxScriptElementSize() in interpreter.h.
-            if (flags & (SCRIPT_VERIFY_CHECKSIGFROMSTACK
+            if (budget || (flags & (SCRIPT_VERIFY_CHECKSIGFROMSTACK
                        | SCRIPT_VERIFY_MERKLE_INCLUSION
-                       | SCRIPT_VERIFY_CHECKSIGADD)) {
+                       | SCRIPT_VERIFY_CHECKSIGADD))) {
                 size_t stack_bytes = 0;
                 for (const auto& item : stack)    stack_bytes += item.size();
                 for (const auto& item : altstack) stack_bytes += item.size();
@@ -3798,6 +3838,7 @@ static bool VerifyAuthScriptTree(const CScriptWitness& witness, const std::vecto
         if (!GetAuthScriptDescriptor(type & 15, &key, descriptor))
             return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
     }
+    if (!CheckAuthScriptBudgetStack(items, offset, items.size()-2, flags, serror)) return false;
     const auto& scriptBytes = items[items.size()-2];
     const CScript script(scriptBytes.begin(), scriptBytes.end());
     const uint256 leaf = AuthScriptLeafHash(script);
@@ -3869,6 +3910,7 @@ static bool VerifyAuthScriptCore(const CScriptWitness& witness, const std::vecto
         return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
     }
 
+    if (!CheckAuthScriptBudgetStack(witness.stack, argsOffset, witness.stack.size()-1, flags, serror)) return false;
     const CPubKey* authPubKeyPtr = (authType == 0x00) ? nullptr : &authPubKey;
     const uint256 expectedCommitment = GetAuthScriptCommitment(authType, authPubKeyPtr, witnessScript);
     if (memcmp(expectedCommitment.begin(), program.data(), program.size()) != 0) {
@@ -3936,8 +3978,6 @@ static bool VerifyAuthScriptStrict(const CScriptWitness& witness, int witversion
         return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
     }
     const uint8_t authType = witness.stack[0][0];
-    if (authType >= 0x10 && authType <= 0x12)
-        return VerifyAuthScriptTree(witness, program, flags, checker, serror);
     if (authType != StrictAuthScriptAuthType(witversion)) {
         return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
     }

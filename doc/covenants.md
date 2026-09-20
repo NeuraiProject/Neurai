@@ -957,3 +957,38 @@ allows a protected child to pin an ordinary parent. Applications must account
 for these limits; CPFP is an option only where outputs, package limits and miner
 support allow it. Asset balances, permission checks and signatures remain
 consensus requirements independent of this replacement policy.
+
+## NIP-046: AuthScript execution budgets
+
+`SCRIPT_VERIFY_AUTHSCRIPT_BUDGET` (bit 48) is enabled at testnet block 1 for
+reset testnet, and at regtest height 0. Regtest accepts
+`-authscriptbudgetheight=N` (`-1` disables). Mainnet defaults to `INT_MAX`;
+activation requires a separately chosen `nAuthScriptBudgetHeight`.
+
+With this flag, `SIGVERSION_AUTHSCRIPT` uses a 512-operation limit, including
+existing CHECKSIGADD and MULTISIG surcharges. Legacy and witness v0 retain
+201. MAST uses the selected leaf's AuthScript execution; the outer P2SH script
+retains its own rules. Strict v2/v3 templates and block/transaction sigop limits
+are unchanged. Unexecuted branches count opcodes, but incur no hash charges.
+
+Each AuthScript execution has 65536 classic hash units. Simple hashes cost
+input length + 64, HASH160/HASH256 cost length + 160. CSFS charges its explicit
+message hash after encoding checks and before calling the checker, including
+empty signatures. Merkle scheme 01 costs 224 per level; schemes 02–04 cost
+leaf length + 64 + 128 per level. Structurally unhashable classic proofs retain
+their false result without charges. Well-formed incorrect proofs pay. Charges
+precede hashing; exhaustion returns `AuthScript hash budget exceeded`.
+Poseidon retains its separate 30720-byte budget, shared with Merkle scheme 05.
+
+Initial arguments are limited to 1000 elements and 262144 bytes, with existing
+per-element limits. Envelope signatures, pubkeys, leaf script and MAST control
+are not execution arguments. Main stack plus altstack obey the same byte cap
+after each opcode. The flag alone does not widen elements. A leading DROP
+cannot conceal an initially oversized stack.
+
+Flags follow the height of the block being validated; mempool uses the next
+height. Both activation directions revalidate pending transactions and remove
+invalid entries and descendants. Script-cache results remain flag-specific.
+These are consensus rules, not only relay policy. Testnet activation is for
+experimentation; resource benchmarks and mainnet deployment review remain
+separate from functional correctness tests.

@@ -158,6 +158,7 @@ NEURAI_TESTS =\
   test/strict_authscript_tests.cpp \
   test/authdest_tests.cpp \
   test/contract_thread_tests.cpp \
+  test/authscript_budget_tests.cpp \
   test/contract_thread_b3_tests.cpp \
   test/contract_thread_b1_tests.cpp \
   test/authscript_tree_tests.cpp \

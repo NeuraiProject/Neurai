@@ -299,6 +299,7 @@ enum class script_verify_flag_name : uint8_t {
     SCRIPT_VERIFY_ASSETMESSAGEFIELD = 45, // NIP-043; bit 43 reserved for ZK
     SCRIPT_VERIFY_INPUTFIELD = 46,
     SCRIPT_VERIFY_MERKLE_POSEIDON = 47,
+    SCRIPT_VERIFY_AUTHSCRIPT_BUDGET = 48,
 
     // End marker — must always be last.
     SCRIPT_VERIFY_END_MARKER
