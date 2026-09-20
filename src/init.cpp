@@ -629,6 +629,7 @@ std::string HelpMessage(HelpMessageMode mode)
         strUsage += HelpMessageOpt("-nip040height=<n>", "Override the NIP-040 asset marker fork height (regtest-only)");
         strUsage += HelpMessageOpt("-assetmessageheight=<n>", "Override NIP-043 AssetMessage activation height (regtest-only)");
         strUsage += HelpMessageOpt("-inputfieldheight=<n>", "Override NIP-043 InputField activation height (regtest-only)");
+        strUsage += HelpMessageOpt("-authscripttreeheight=<n>", "Override NIP-044 activation height (regtest-only)");
         strUsage += HelpMessageOpt("-merkleposeidonheight=<n>", "Override NIP-043 MerklePoseidon activation height (regtest-only)");
         strUsage += HelpMessageOpt("-txhashheight=<n>", "Override NIP-042 TXHASH activation height (regtest-only)");
         strUsage += HelpMessageOpt("-signatureopcodesheight=<n>", "Override CSFS/Ed25519/CHECKSIGADD activation height (regtest-only)");
@@ -1374,6 +1375,13 @@ bool AppInitParameterInteraction()
         UpdateInputFieldHeight(static_cast<int>(height));
     }
 
+    if (gArgs.IsArgSet("-authscripttreeheight")) {
+        if (!chainparams.MineBlocksOnDemand()) return InitError("AuthScript tree height may only be overridden on regtest.");
+        int64_t height;
+        if (!ParseInt64(gArgs.GetArg("-authscripttreeheight", ""), &height) || height < 0 || height > std::numeric_limits<int>::max())
+            return InitError("Invalid -authscripttreeheight");
+        UpdateAuthScriptTreeHeight(static_cast<int>(height));
+    }
     if (gArgs.IsArgSet("-merkleposeidonheight")) {
         if (!chainparams.MineBlocksOnDemand()) return InitError("MerklePoseidon height may only be overridden on regtest.");
         int64_t height;

@@ -100,6 +100,7 @@ inline script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
     if (consensus.IsTxHashActive(nHeight))           base |= SCRIPT_VERIFY_TXHASH;
     if (consensus.IsAssetMessageActive(nHeight)) base |= SCRIPT_VERIFY_ASSETMESSAGEFIELD;
     if (consensus.IsInputFieldActive(nHeight)) base |= SCRIPT_VERIFY_INPUTFIELD;
+    if (consensus.nPQWitnessEnabled && consensus.IsAuthScriptTreeActive(nHeight)) base |= SCRIPT_VERIFY_AUTHSCRIPT_TREE;
     if (consensus.IsMerklePoseidonActive(nHeight)) base |= SCRIPT_VERIFY_MERKLE_POSEIDON;
     if (consensus.nTXFIELDEnabled)          base |= SCRIPT_VERIFY_TXFIELD;
     if (consensus.nSPLITEnabled)            base |= SCRIPT_VERIFY_SPLIT;
@@ -178,7 +179,7 @@ bool AreInputsStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs,
      * These limits are adequate for multi-signature up to n-of-100 using OP_CHECKSIG, OP_ADD, and OP_EQUAL,
      */
 bool IsWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs,
-                        bool largeWitnessItemsActive);
+                        bool largeWitnessItemsActive, script_verify_flags treeFlags = SCRIPT_VERIFY_NONE);
 
 extern CFeeRate incrementalRelayFee;
 extern CFeeRate dustRelayFee;

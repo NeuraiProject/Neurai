@@ -263,7 +263,7 @@ bool AreInputsStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs,
 }
 
 bool IsWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs,
-                        bool largeWitnessItemsActive)
+                        bool largeWitnessItemsActive, script_verify_flags treeFlags)
 {
     if (tx.IsCoinBase())
         return true; // Coinbases are skipped
@@ -312,6 +312,19 @@ bool IsWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs,
             if (stack[0].size() != 1 || stack[1].size() > maxSig || stack[2].size() > maxPubKey || stack[3].size() != 1)
                 return false;
             continue;
+        }
+
+        if (witnessversion == 1 && witnessprogram.size() == 32 &&
+            (treeFlags & SCRIPT_VERIFY_AUTHSCRIPT_TREE)) {
+            const auto& witness = tx.vin[i].scriptWitness;
+            if (!witness.stack.empty() && witness.stack[0].size() == 1 &&
+                witness.stack[0][0] >= 0x10 && witness.stack[0][0] <= 0x12) {
+                size_t offset;
+                if (!ParseAuthScriptTreeWitness(witness, offset) ||
+                    witness.stack.size()-offset-2 > MAX_STACK_SIZE) return false;
+                for (size_t j=offset; j+2<witness.stack.size(); ++j)
+                    if (witness.stack[j].size() > EffectiveMaxScriptElementSize(treeFlags)) return false;
+            }
         }
 
         // Check P2WSH standard limits

@@ -64,7 +64,7 @@ BOOST_AUTO_TEST_CASE(none_is_zero)
 
 BOOST_AUTO_TEST_CASE(end_marker_matches_flag_count)
 {
-    // Highest assigned flag: bit 47 (NIP-043). Bits 43/44 remain reserved.
+    // Highest assigned flag: bit 47 (NIP-043). Bit 43 remains reserved; NIP-044 uses 44.
     // NIP-041 remains at bit 42.
     // Previously: SCRIPT_VERIFY_AUTHSCRIPT_STRICT at bit 41 (strict AuthScript
     // families, witness v2/v3), SCRIPT_VERIFY_CHECKSIGADD at bit 40 (NIP-039),

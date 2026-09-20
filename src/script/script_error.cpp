@@ -81,6 +81,10 @@ const char* ScriptErrorString(const ScriptError serror)
             return "Witness program has incorrect length";
         case SCRIPT_ERR_WITNESS_PROGRAM_WITNESS_EMPTY:
             return "Witness program was passed an empty witness";
+        case SCRIPT_ERR_AUTHSCRIPT_TREE_CONTROL:
+            return "Invalid AuthScript tree control block";
+        case SCRIPT_ERR_AUTHSCRIPT_TREE_LEAF_VERSION:
+            return "Unknown AuthScript tree leaf version";
         case SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH:
             return "Witness program hash mismatch";
         case SCRIPT_ERR_WITNESS_MALLEATED:

@@ -898,3 +898,33 @@ ECDSA or ML-DSA-44 CSFS oracle signing `DOMAIN || old_state || new_state`
 exactly as in NIP-043 §8. DOMAIN binds the network genesis and UNIQUE issuance
 outpoint; the transfer scripts are compared in full. This is a
 state-transition integration test, not a private pool or an audited application.
+
+
+## NIP-044 AuthScript trees (initial integration)
+
+Witness v1 additionally supports markers `0x10` (NoAuth), `0x11` (ML-DSA global)
+and `0x12` (compressed ECDSA global), gated by `SCRIPT_VERIFY_AUTHSCRIPT_TREE`
+(bit 44) and the base AuthScript flag. The final two witness items are the leaf
+script and `0x01 || siblings` control block, with siblings ordered leaf-to-root
+and depth at most 32. Commitment version `0x04` hashes the ordinary descriptor
+and the sorted-pair Merkle root. Existing `0x00/0x01/0x02` spends are unchanged.
+
+Transaction signatures use `TaggedHash("NeuraiAuthTreeSig", 0x01 || role ||
+authType || program || leafHash || baseSighash)`. The message is 99 bytes; role
+is 0 for global authentication and 1 for internal CHECKSIG/CHECKSIGADD/MULTISIG.
+The base is the ordinary AuthScript sighash using the complete witness marker.
+CSFS and Ed25519 still sign explicit messages using their existing conventions.
+
+Sigops come from the penultimate witness item, plus one for global authentication
+only. The control block is not Script. Initial arguments are limited to 1000;
+leaf size is at most 10000 bytes. TREE does not raise the 201-opcode budget or
+widen the effective argument-element limit by itself.
+
+Activation: reset testnet height 1, regtest 0 with `-authscripttreeheight`, mainnet
+unscheduled. No live network has been updated by this integration. Wallet tree
+import, backup and automatic leaf selection are not implemented. Manual contract
+signing uses the explicit tree context API; arbitrary partial-signature merging
+is unsupported and does not fall back to the historical domain.
+
+See [NIP-044 v2](../NIP/Pendiente/044-AuthScript-Arbol-de-Scripts-MAST-v2.md)
+and [validation evidence](../NIP/bench/nip044-integracion.md).

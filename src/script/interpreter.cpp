@@ -559,7 +559,7 @@ bool static CheckMinimalPush(const valtype &data, opcodetype opcode)
     return true;
 }
 
-bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &script, script_verify_flags flags, const BaseSignatureChecker &checker, SigVersion sigversion, ScriptError *serror)
+bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &script, script_verify_flags flags, const BaseSignatureChecker &checker, SigVersion sigversion, ScriptError *serror, const AuthScriptTreeContext* tree)
 {
     // The interpreter takes the strict AuthScript activation exclusively from
     // its flags. Asset introspection opcodes (OP_OUTPUTASSETFIELD,
@@ -568,6 +568,14 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
     // never fall back to the ambient default. Script checks run on worker
     // threads that do not inherit the validating thread's scope.
     CStrictAuthScriptContext strictAuthScriptContext((flags & SCRIPT_VERIFY_AUTHSCRIPT_STRICT) != 0);
+
+    if (tree && (!tree->IsValid() || sigversion != SIGVERSION_AUTHSCRIPT ||
+        !(flags & SCRIPT_VERIFY_AUTHSCRIPT_TREE) || !(flags & SCRIPT_VERIFY_AUTHSCRIPT)))
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    const auto checkTransactionSig = [&](const valtype& sig, const valtype& key, const CScript& code) {
+        return tree ? checker.CheckTreeSig(sig, key, code, *tree, 1)
+                    : checker.CheckSig(sig, key, code, sigversion);
+    };
 
     static const CScriptNum bnZero(0);
     static const CScriptNum bnOne(1);
@@ -2275,7 +2283,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         // satisfied" — counter unchanged, no verify call.
                         bool fSuccess = false;
                         if (!vchSig.empty()) {
-                            fSuccess = checker.CheckSig(vchSig, vchPubKey, scriptCode, sigversion);
+                            fSuccess = checkTransactionSig(vchSig, vchPubKey, scriptCode);
                         }
 
                         // NULLFAIL: matches OP_CHECKSIG.
@@ -2322,7 +2330,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             //serror is set
                             return false;
                         }
-                        bool fSuccess = checker.CheckSig(vchSig, vchPubKey, scriptCode, sigversion);
+                        bool fSuccess = checkTransactionSig(vchSig, vchPubKey, scriptCode);
 
                         if (!fSuccess && (flags & SCRIPT_VERIFY_NULLFAIL) && vchSig.size())
                             return set_error(serror, SCRIPT_ERR_SIG_NULLFAIL);
@@ -2411,7 +2419,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
 
                             // Check signature
                             bool fOk = (!independentFamily || sigPQ == keyPQ) &&
-                                checker.CheckSig(vchSig, vchPubKey, scriptCode, sigversion);
+                                checkTransactionSig(vchSig, vchPubKey, scriptCode);
 
                             if (fOk)
                             {
@@ -2834,6 +2842,62 @@ uint256 SignatureHash(const CScript &scriptCode, const CTransaction &txTo, unsig
 bool TransactionSignatureChecker::VerifySignature(const std::vector<unsigned char> &vchSig, const CPubKey &pubkey, const uint256 &sighash) const
 {
     return pubkey.Verify(sighash, vchSig);
+}
+
+uint256 AuthScriptLeafHash(const CScript& script)
+{
+    CDataStream bytes(SER_NETWORK, PROTOCOL_VERSION);
+    bytes << uint8_t(1) << std::vector<unsigned char>(script.begin(), script.end());
+    return TaggedHash("NeuraiAuthLeaf", std::vector<unsigned char>(bytes.begin(), bytes.end()));
+}
+
+uint256 AuthScriptBranchHash(const uint256& a, const uint256& b)
+{
+    const bool less = std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end());
+    const uint256& first = less ? a : b;
+    const uint256& second = less ? b : a;
+    std::vector<unsigned char> bytes(first.begin(), first.end());
+    bytes.insert(bytes.end(), second.begin(), second.end());
+    return TaggedHash("NeuraiAuthBranch", bytes);
+}
+
+uint256 AuthScriptTreeCommitment(const std::vector<unsigned char>& descriptor, const uint256& root)
+{
+    std::vector<unsigned char> bytes{4};
+    bytes.insert(bytes.end(), descriptor.begin(), descriptor.end());
+    bytes.insert(bytes.end(), root.begin(), root.end());
+    return TaggedHash("NeuraiAuthScript", bytes);
+}
+
+bool AuthScriptTreeSignatureHash(const uint256& base, const AuthScriptTreeContext& context, uint8_t role, uint256& result)
+{
+    if (!context.IsValid() || role > 1 || (role == 0 && context.authType == 0x10)) return false;
+    std::vector<unsigned char> bytes{1, role, context.authType};
+    bytes.insert(bytes.end(), context.program.begin(), context.program.end());
+    bytes.insert(bytes.end(), context.leaf.begin(), context.leaf.end());
+    bytes.insert(bytes.end(), base.begin(), base.end());
+    result = TaggedHash("NeuraiAuthTreeSig", bytes);
+    return true;
+}
+
+bool TransactionSignatureChecker::GetTreeSigHash(const CScript& script, int hashType,
+    const AuthScriptTreeContext& context, uint8_t role, uint256& result) const
+{
+    if (!context.IsValid() || !txTo || nIn >= txTo->vin.size()) return false;
+    const uint256 base = SignatureHash(script, *txTo, nIn, hashType, amount, SIGVERSION_AUTHSCRIPT, txdata, context.authType);
+    return AuthScriptTreeSignatureHash(base, context, role, result);
+}
+
+bool TransactionSignatureChecker::CheckTreeSig(const std::vector<unsigned char>& sig,
+    const std::vector<unsigned char>& key, const CScript& script,
+    const AuthScriptTreeContext& context, uint8_t role) const
+{
+    CPubKey pubkey(key);
+    if (sig.empty() || !pubkey.IsValid()) return false;
+    uint256 digest;
+    if (!GetTreeSigHash(script, sig.back(), context, role, digest)) return false;
+    // VerifySignature's virtual dispatch preserves the cache using the FINAL digest.
+    return VerifySignature(std::vector<unsigned char>(sig.begin(), sig.end()-1), pubkey, digest);
 }
 
 bool TransactionSignatureChecker::CheckSig(const std::vector<unsigned char> &vchSigIn, const std::vector<unsigned char> &vchPubKey, const CScript &scriptCode, SigVersion sigversion, uint8_t authType) const
@@ -3692,6 +3756,72 @@ bool TransactionSignatureChecker::GetRefInputAssetField(unsigned int nRef, unsig
     return false;
 }
 
+bool ParseAuthScriptTreeWitness(const CScriptWitness& witness, size_t& argsOffset, ScriptError* serror)
+{
+    const auto& stack = witness.stack;
+    if (stack.empty() || stack[0].size() != 1 || stack[0][0] < 0x10 || stack[0][0] > 0x12)
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    argsOffset = stack[0][0] == 0x10 ? 1 : 3;
+    if (stack.size() < argsOffset + 2)
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    const auto& control = stack.back();
+    if (control.empty() || control.size() > 1025 || (control.size()-1)%32)
+        return set_error(serror, SCRIPT_ERR_AUTHSCRIPT_TREE_CONTROL);
+    if (control[0] != 1) return set_error(serror, SCRIPT_ERR_AUTHSCRIPT_TREE_LEAF_VERSION);
+    if (stack[stack.size()-2].size() > MAX_SCRIPT_SIZE)
+        return set_error(serror, SCRIPT_ERR_SCRIPT_SIZE);
+    return true;
+}
+
+static bool VerifyAuthScriptTree(const CScriptWitness& witness, const std::vector<unsigned char>& program,
+    script_verify_flags flags, const BaseSignatureChecker& checker, ScriptError* serror)
+{
+    if (!(flags & SCRIPT_VERIFY_AUTHSCRIPT_TREE))
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    size_t offset;
+    if (!ParseAuthScriptTreeWitness(witness, offset, serror)) return false;
+    const auto& items = witness.stack;
+    if (items.size()-offset-2 > MAX_STACK_SIZE) return set_error(serror, SCRIPT_ERR_STACK_SIZE);
+    std::vector<valtype> args;
+    for (size_t i=offset; i+2<items.size(); ++i) {
+        if (items[i].size() > EffectiveMaxScriptElementSize(flags)) return set_error(serror, SCRIPT_ERR_PUSH_SIZE);
+        args.push_back(items[i]);
+    }
+    const uint8_t type = items[0][0];
+    CPubKey key;
+    std::vector<unsigned char> descriptor{0};
+    if (type != 0x10) {
+        key = CPubKey(items[2]);
+        if (!key.IsValid() || (type == 0x11 && !key.IsPQ()) ||
+            (type == 0x12 && !IsCompressedPubKey(items[2])))
+            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+        if (!GetAuthScriptDescriptor(type & 15, &key, descriptor))
+            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+    const auto& scriptBytes = items[items.size()-2];
+    const CScript script(scriptBytes.begin(), scriptBytes.end());
+    const uint256 leaf = AuthScriptLeafHash(script);
+    uint256 root = leaf;
+    const auto& control = items.back();
+    for (size_t i=1; i<control.size(); i+=32) {
+        uint256 sibling;
+        std::copy(control.begin()+i, control.begin()+i+32, sibling.begin());
+        root = AuthScriptBranchHash(root, sibling);
+    }
+    const AuthScriptTreeContext context(type, AuthScriptTreeCommitment(descriptor, root), leaf);
+    if (!std::equal(program.begin(), program.end(), context.program.begin()))
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    if (type != 0x10) {
+        if (!CheckPubKeyEncoding(items[2], flags, SIGVERSION_AUTHSCRIPT, serror) ||
+            !CheckSignatureEncodingForPubKey(items[1], items[2], flags, serror)) return false;
+        if (!checker.CheckTreeSig(items[1], items[2], script, context, 0))
+            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+    if (!EvalScript(args, script, flags, checker, SIGVERSION_AUTHSCRIPT, serror, &context)) return false;
+    if (args.size() != 1 || !CastToBool(args.back())) return set_error(serror, SCRIPT_ERR_EVAL_FALSE);
+    return set_success(serror);
+}
+
 static bool VerifyAuthScriptCore(const CScriptWitness& witness, const std::vector<unsigned char>& program, script_verify_flags flags, const BaseSignatureChecker& checker, ScriptError* serror)
 {
     if (program.size() != 32 || (flags & SCRIPT_VERIFY_AUTHSCRIPT) == 0) {
@@ -3705,6 +3835,8 @@ static bool VerifyAuthScriptCore(const CScriptWitness& witness, const std::vecto
     }
 
     const uint8_t authType = witness.stack[0][0];
+    if (authType >= 0x10 && authType <= 0x12)
+        return VerifyAuthScriptTree(witness, program, flags, checker, serror);
     const valtype& witnessScriptBytes = witness.stack.back();
     CScript witnessScript(witnessScriptBytes.begin(), witnessScriptBytes.end());
     CPubKey authPubKey;
@@ -3804,6 +3936,8 @@ static bool VerifyAuthScriptStrict(const CScriptWitness& witness, int witversion
         return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
     }
     const uint8_t authType = witness.stack[0][0];
+    if (authType >= 0x10 && authType <= 0x12)
+        return VerifyAuthScriptTree(witness, program, flags, checker, serror);
     if (authType != StrictAuthScriptAuthType(witversion)) {
         return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
     }
@@ -4122,6 +4256,16 @@ size_t static WitnessSigOps(int witversion, const std::vector<unsigned char> &wi
     if (witversion == 1 && witprogram.size() == 32 && (flags & SCRIPT_VERIFY_AUTHSCRIPT)) {
         if (witness.stack.empty()) {
             return 0;
+        }
+        if ((flags & SCRIPT_VERIFY_AUTHSCRIPT_TREE) && witness.stack[0].size() == 1 &&
+            witness.stack[0][0] >= 0x10 && witness.stack[0][0] <= 0x12) {
+            size_t offset;
+            if (!ParseAuthScriptTreeWitness(witness, offset)) return 0;
+            const auto& bytes = witness.stack[witness.stack.size()-2];
+            CScript leaf(bytes.begin(), bytes.end());
+            return leaf.GetSigOpCount(true, (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) != 0,
+                (flags & SCRIPT_VERIFY_CHECKSIGADD) != 0, (flags & SCRIPT_VERIFY_ED25519) != 0)
+                + (witness.stack[0][0] != 0x10 ? 1 : 0);
         }
         size_t sigops = 0;
         if (witness.stack.size() > 1) {

@@ -370,6 +370,7 @@ public:
         consensus.nCSFSEnabled = true;  // OP_CHECKSIGFROMSTACK active on testnet
         consensus.nAssetMessageHeight = 1; // NIP-043: reset testnet only
         consensus.nInputFieldHeight = 1; // NIP-043: reset testnet only
+        consensus.nAuthScriptTreeHeight = 1; // NIP-044: reset testnet / regtest only
         consensus.nMerklePoseidonHeight = 1; // NIP-043: reset testnet only
         consensus.nTxHashHeight = 1; // NIP-042: reset testnet, first block after genesis
         consensus.nTXFIELDEnabled = true; // OP_TXFIELD (NOP7) active on testnet
@@ -609,6 +610,7 @@ public:
         consensus.nCSFSEnabled = true;  // OP_CHECKSIGFROMSTACK active on regtest
         consensus.nAssetMessageHeight = 0; // NIP-043: regtest
         consensus.nInputFieldHeight = 0; // NIP-043: regtest
+        consensus.nAuthScriptTreeHeight = 0; // NIP-044: reset testnet / regtest only
         consensus.nMerklePoseidonHeight = 0; // NIP-043: regtest
         consensus.nTxHashHeight = 0; // NIP-042: active by default on regtest
         consensus.nTXFIELDEnabled = true; // OP_TXFIELD (NOP7) active on regtest
@@ -903,4 +905,9 @@ void UpdateMerklePoseidonHeight(int nHeight)
 void UpdateTxHashHeight(int nHeight)
 {
     globalChainParams->UpdateTxHashHeight(nHeight);
+}
+
+void UpdateAuthScriptTreeHeight(int nHeight)
+{
+    globalChainParams->UpdateAuthScriptTreeHeight(nHeight);
 }

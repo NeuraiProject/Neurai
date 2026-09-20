@@ -91,6 +91,7 @@ public:
     void UpdateStrictAuthScriptHeight(int nHeight);
     void UpdateAssetMessageHeight(int nHeight) { consensus.nAssetMessageHeight = nHeight; }
     void UpdateInputFieldHeight(int nHeight) { consensus.nInputFieldHeight = nHeight; }
+    void UpdateAuthScriptTreeHeight(int nHeight) { consensus.nAuthScriptTreeHeight = nHeight; }
     void UpdateMerklePoseidonHeight(int nHeight) { consensus.nMerklePoseidonHeight = nHeight; }
     void UpdateTxHashHeight(int nHeight) { consensus.nTxHashHeight = nHeight; }
     void UpdateSignatureOpcodesHeight(int nHeight) { consensus.nSignatureOpcodesHeight = nHeight; }
@@ -275,6 +276,7 @@ void UpdateStrictAuthScriptHeight(int nHeight);
 void UpdateSignatureOpcodesHeight(int nHeight);
 void UpdateAssetMessageHeight(int nHeight);
 void UpdateInputFieldHeight(int nHeight);
+void UpdateAuthScriptTreeHeight(int nHeight);
 void UpdateMerklePoseidonHeight(int nHeight);
 void UpdateTxHashHeight(int nHeight);
 

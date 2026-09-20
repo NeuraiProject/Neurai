@@ -130,6 +130,8 @@ struct Params {
     int nInputFieldHeight{std::numeric_limits<int>::max()};
     bool IsInputFieldActive(int height) const { return height >= nInputFieldHeight; }
     // NIP-043: independent activation, unscheduled unless set for the network.
+    int nAuthScriptTreeHeight{std::numeric_limits<int>::max()};
+    bool IsAuthScriptTreeActive(int height) const { return height >= nAuthScriptTreeHeight; }
     int nMerklePoseidonHeight{std::numeric_limits<int>::max()};
     bool IsMerklePoseidonActive(int height) const { return height >= nMerklePoseidonHeight; }
     /** Enable OP_TXFIELD (NOP7) - push raw bytes of spent output fields to stack.

@@ -293,8 +293,10 @@ enum class script_verify_flag_name : uint8_t {
     //
     SCRIPT_VERIFY_AUTHDEST,                                 // bit 42
 
-    // NIP-043 primitives. Preserve the pending ZK/MAST reservations.
-    SCRIPT_VERIFY_ASSETMESSAGEFIELD = 45, // NIP-043; 43/44 reserved for ZK/MAST
+    SCRIPT_VERIFY_AUTHSCRIPT_TREE = 44, // NIP-044
+
+    // NIP-043 primitives. Preserve the pending ZK reservation.
+    SCRIPT_VERIFY_ASSETMESSAGEFIELD = 45, // NIP-043; bit 43 reserved for ZK
     SCRIPT_VERIFY_INPUTFIELD = 46,
     SCRIPT_VERIFY_MERKLE_POSEIDON = 47,
 
@@ -424,6 +426,22 @@ struct ChainContext {
     bool available{false};
 };
 
+// NIP-044: explicit per-spend context; no ambient state and no historical fallback.
+struct AuthScriptTreeContext {
+    const uint8_t authType;
+    const uint256 program;
+    const uint256 leaf;
+    AuthScriptTreeContext(uint8_t type, const uint256& programIn, const uint256& leafIn)
+        : authType(type), program(programIn), leaf(leafIn) {}
+    bool IsValid() const { return authType == 0x10 || authType == 0x11 || authType == 0x12; }
+};
+uint256 AuthScriptLeafHash(const CScript& script);
+uint256 AuthScriptBranchHash(const uint256& a, const uint256& b);
+uint256 AuthScriptTreeCommitment(const std::vector<unsigned char>& descriptor, const uint256& root);
+bool AuthScriptTreeSignatureHash(const uint256& base, const AuthScriptTreeContext& context, uint8_t role, uint256& result);
+// Shape only: no hashing or signature checks. Shared by consensus and sigop accounting.
+bool ParseAuthScriptTreeWitness(const CScriptWitness& witness, size_t& argsOffset, ScriptError* error = nullptr);
+
 class BaseSignatureChecker
 {
 public:
@@ -437,6 +455,11 @@ public:
     {
         return false;
     }
+
+    virtual bool CheckTreeSig(const std::vector<unsigned char>& sig, const std::vector<unsigned char>& key,
+                              const CScript& script, const AuthScriptTreeContext& context, uint8_t role) const { return false; }
+    virtual bool GetTreeSigHash(const CScript& script, int hashType, const AuthScriptTreeContext& context,
+                               uint8_t role, uint256& result) const { return false; }
 
     virtual bool CheckLockTime(const CScriptNum &nLockTime) const
     {
@@ -616,6 +639,10 @@ public:
     TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const PrecomputedTransactionData &txdataIn, const CScript& spentScriptPubKeyIn, const std::vector<CTxOut>* allPrevoutsIn, const std::vector<CTxOut>* refOutputsIn, ChainContext chainCtx = {})
         : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn), m_spentScriptPubKey(&spentScriptPubKeyIn), m_allPrevouts(allPrevoutsIn), m_refOutputs(refOutputsIn), m_chainContext(chainCtx) {}
 
+    bool CheckTreeSig(const std::vector<unsigned char>& sig, const std::vector<unsigned char>& key,
+                      const CScript& script, const AuthScriptTreeContext& context, uint8_t role) const override;
+    bool GetTreeSigHash(const CScript& script, int hashType, const AuthScriptTreeContext& context,
+                       uint8_t role, uint256& result) const override;
     bool CheckSig(const std::vector<unsigned char> &scriptSig, const std::vector<unsigned char> &vchPubKey, const CScript &scriptCode, SigVersion sigversion, uint8_t authType = 0x00) const override;
 
     bool CheckLockTime(const CScriptNum &nLockTime) const override;
@@ -676,7 +703,7 @@ public:
         : TransactionSignatureChecker(&txTo, nInIn, amountIn, spentScriptPubKeyIn, allPrevoutsIn), txTo(*txToIn) {}
 };
 
-bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &script, script_verify_flags flags, const BaseSignatureChecker &checker, SigVersion sigversion, ScriptError *error = nullptr);
+bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &script, script_verify_flags flags, const BaseSignatureChecker &checker, SigVersion sigversion, ScriptError *error = nullptr, const AuthScriptTreeContext* tree = nullptr);
 
 bool VerifyScript(const CScript &scriptSig, const CScript &scriptPubKey, const CScriptWitness *witness, script_verify_flags flags, const BaseSignatureChecker &checker, ScriptError *serror = nullptr);
 

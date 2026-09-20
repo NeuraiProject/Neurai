@@ -146,7 +146,12 @@ bool ExtractIndexedPubKeyFromInput(const CTxIn& input, const std::vector<unsigne
         const auto& stack = input.scriptWitness.stack;
         if (stack.size() >= 4 && stack[0].size() == 1) {
             uint8_t authType = stack[0][0];
-            if (authType == 0x01 || authType == 0x02) {
+            size_t treeOffset = 0;
+            const bool treeGlobal = (authType == 0x11 || authType == 0x12) &&
+                ParseAuthScriptTreeWitness(input.scriptWitness, treeOffset);
+            if (authType == 0x01 || authType == 0x02 || treeGlobal) {
+                // MAST 0x10 has no global key; its arguments must not be indexed.
+                // Validated 0x11/0x12 use the same pubkey header position.
                 // stack[2] is the pubkey
                 CPubKey candidate(stack[2]);
                 if (candidate.IsValid()) {
@@ -824,7 +829,8 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         if (tx.HasWitness() && fRequireStandard &&
             !IsWitnessStandard(tx, view,
                                consensus.nMerkleInclusionEnabled || (fSignatureOpcodesActive &&
-                               (consensus.nCSFSEnabled || consensus.nEd25519Enabled || consensus.nCheckSigAddEnabled))))
+                               (consensus.nCSFSEnabled || consensus.nEd25519Enabled || consensus.nCheckSigAddEnabled)),
+                               ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, fStrictAuthScriptActive, chainActive.Height()+1)))
             return state.DoS(0, false, REJECT_NONSTANDARD, "bad-witness-nonstandard", true);
 
         int64_t nSigOpsCost = GetTransactionSigOpCost(tx, view,
@@ -1106,7 +1112,7 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         if (fStrictAuthScriptActive) {
             currentBlockScriptVerifyFlags |= SCRIPT_VERIFY_AUTHSCRIPT_STRICT | SCRIPT_VERIFY_AUTHDEST;
         }
-        const script_verify_flags heightFlags = SCRIPT_VERIFY_CHECKSIGFROMSTACK | SCRIPT_VERIFY_CHECKSIGADD | SCRIPT_VERIFY_ED25519 | SCRIPT_VERIFY_TXHASH | SCRIPT_VERIFY_ASSETMESSAGEFIELD | SCRIPT_VERIFY_INPUTFIELD | SCRIPT_VERIFY_MERKLE_POSEIDON;
+        const script_verify_flags heightFlags = SCRIPT_VERIFY_CHECKSIGFROMSTACK | SCRIPT_VERIFY_CHECKSIGADD | SCRIPT_VERIFY_ED25519 | SCRIPT_VERIFY_TXHASH | SCRIPT_VERIFY_ASSETMESSAGEFIELD | SCRIPT_VERIFY_INPUTFIELD | SCRIPT_VERIFY_MERKLE_POSEIDON | SCRIPT_VERIFY_AUTHSCRIPT_TREE;
         currentBlockScriptVerifyFlags &= ~heightFlags;
         currentBlockScriptVerifyFlags |= ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, chainparams.GetConsensus(),
             fStrictAuthScriptActive, chainActive.Height() + 1) & heightFlags;
@@ -2012,6 +2018,7 @@ static void MempoolCheckScriptRuleTransition(CTxMemPool& pool,
         params.IsSignatureOpcodesActive(nOldCandidateHeight) == params.IsSignatureOpcodesActive(nNewCandidateHeight) &&
         params.IsAssetMessageActive(nOldCandidateHeight) == params.IsAssetMessageActive(nNewCandidateHeight) &&
         params.IsInputFieldActive(nOldCandidateHeight) == params.IsInputFieldActive(nNewCandidateHeight) &&
+        params.IsAuthScriptTreeActive(nOldCandidateHeight) == params.IsAuthScriptTreeActive(nNewCandidateHeight) &&
         params.IsMerklePoseidonActive(nOldCandidateHeight) == params.IsMerklePoseidonActive(nNewCandidateHeight) &&
         params.IsTxHashActive(nOldCandidateHeight) == params.IsTxHashActive(nNewCandidateHeight))
         return;
