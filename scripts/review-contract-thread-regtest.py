@@ -33,8 +33,8 @@ def address(script):
     return t._ctv.bech32m('tnc', 1, c), b'\x51\x20' + c
 
 
-def transfer(prefix, name, state, expiration=b''):
-    payload = b'xnat' + h.compact(len(name)) + name.encode() + struct.pack('<q', h.COIN) + b'\x54\x20' + state + expiration
+def transfer(prefix, name, state, expiration=b'', message_tag=0x54):
+    payload = b'xnat' + h.compact(len(name)) + name.encode() + struct.pack('<q', h.COIN) + bytes([message_tag,32]) + state + expiration
     return prefix + b'\xc0' + push(payload) + b'\x75'
 
 
@@ -63,9 +63,11 @@ def main():
     parser.add_argument('--bindir', type=Path, default=Path('/root/Neurai/src'))
     parser.add_argument('--oracle', choices=('ecdsa','pq'), default='ecdsa')
     parser.add_argument('--signer', type=Path, default=Path('/tmp/authscript-review-signer'))
+    parser.add_argument('--sponsor', choices=('legacy','ecdsa','pq'), default='legacy')
+    parser.add_argument('--strict-height', type=int, default=0)
     args = parser.parse_args()
     directory = Path(tempfile.mkdtemp(prefix='nip043-regtest-'))
-    report = dict(results=[], oracle=args.oracle, binary_sha256=h.digest_file(args.bindir/'neuraid'),
+    report = dict(results=[], oracle=args.oracle, sponsor=args.sponsor, strict_height=args.strict_height, binary_sha256=h.digest_file(args.bindir/'neuraid'),
                   signer_sha256=h.digest_file(args.signer),
                   source_sha256={p.name:h.digest_file(p) for p in (Path(__file__),
                     Path(__file__).with_name('review-txhash-regtest.py'),
@@ -77,9 +79,9 @@ def main():
         report['results'].append(dict(case=label,passed=bool(ok),observed=observed))
         print(('PASS ' if ok else 'FAIL ')+label,flush=True)
         if not ok: raise RuntimeError(f'{label}: {observed}')
-    def node(label, par=1):
+    def node(label, par=1, extra=()):
         n=h.Node(args.bindir,directory/label,['-assetmessageheight=620','-inputfieldheight=620',
-            '-merkleposeidonheight=620','-bypassdownload=1','-acceptnonstdtxn=0',f'-par={par}'])
+            '-merkleposeidonheight=620',f'-strictauthscriptheight={args.strict_height}','-bypassdownload=1','-acceptnonstdtxn=0',f'-par={par}',*extra])
         nodes.append(n);n.ready();return n
     def replay(n, blocks):
         for block in blocks:
@@ -135,8 +137,19 @@ def main():
         state_utxo=locate(confirm(n.rpc('transfer',name,1,state_addr,initial.hex())),state_spk,True)
         check('thread/initial_state_bytes',n.rpc('gettxout',*state_utxo)['scriptPubKey']['hex']==transfer(state_spk,name,initial).hex())
         # Sponsor is wallet-owned, kept out of automatic coin selection.
-        coin_tx=confirm(n.rpc('sendtoaddress',miner,1))
-        coin=next((coin_tx['txid'],o['n']) for o in coin_tx['vout'] if o['value']==1)
+        sponsor_node=node('sponsor-wallet',extra=['-strictauthscriptheight=0']+(['-pqwallet=1'] if args.sponsor=='pq' else [])) if args.sponsor!='legacy' else n
+        sponsor_address=miner if args.sponsor=='legacy' else sponsor_node.rpc('getnewaddress','',args.sponsor)
+        sponsor_spk=sponsor_node.rpc('validateaddress',sponsor_address)['scriptPubKey']
+        # Raw native outputs can be funded before their spend rules activate.
+        # Decode/generate the strict destination only in the helper wallet.
+        funding_coin=next(u for u in n.rpc('listunspent') if u['amount']>2)
+        funding_value=round(funding_coin['amount']*h.COIN)
+        funding_raw=a.raw_transaction([(funding_coin['txid'],funding_coin['vout'])],
+            [(h.COIN,bytes.fromhex(sponsor_spk)),(funding_value-h.COIN-1_000_000,wallet_script)],[],[[]])
+        funding_signed=n.rpc('signrawtransaction',funding_raw)['hex']
+        coin_tx=confirm(n.rpc('sendrawtransaction',funding_signed))
+        coin=next((coin_tx['txid'],o['n']) for o in coin_tx['vout'] if o['value']==1 and o['scriptPubKey']['hex']==sponsor_spk)
+        check('sponsor/family',sponsor_spk.startswith({'legacy':'76a914','ecdsa':'5320','pq':'5220'}[args.sponsor]),sponsor_spk)
         n.rpc('lockunspent',False,[dict(txid=coin[0],vout=coin[1])])
         input_script=b'\x00'+push(b'\x01')+b'\xc4'+push(struct.pack('<q',h.COIN))+b'\x87'
         input_utxo=fund(input_script)
@@ -151,15 +164,21 @@ def main():
         inverted_raw=h.transaction(inverted_utxo,inverted_script,wallet_script)
         next_state=bytes(range(32,64))
         inputs=[state_utxo,coin]
-        def state_raw(state=next_state, target=state_spk, signature=None, signed_state=None, expiration=b'', signing_domain=None, state_value=0):
-            outputs=[(state_value,transfer(target,name,state,expiration)),(90_000_000,wallet_script)]
-            message=(domain if signing_domain is None else signing_domain)+initial+(state if signed_state is None else signed_state)
+        if sponsor_node is not n:
+            replay(sponsor_node,[n.rpc('getblock',n.rpc('getblockhash',i),False) for i in range(1,n.rpc('getblockcount')+1)])
+        def state_raw(state=next_state, target=state_spk, signature=None, signed_state=None, expiration=b'', signing_domain=None, state_value=0, old_state=initial, spent_inputs=None, change=90_000_000, message_tag=0x54):
+            outputs=[(state_value,transfer(target,name,state,expiration,message_tag)),(change,wallet_script)]
+            message=(domain if signing_domain is None else signing_domain)+old_state+(state if signed_state is None else signed_state)
             if signature is None:
                 signature=bytes.fromhex(subprocess.check_output([str(args.signer),'sign',args.oracle],
                     input=secret+'\n'+sha(message).hex()+'\n',text=True).strip())
-            wire=a.raw_transaction(inputs,outputs,[],[[b'\x00',signature,state_script],[]])
+            wire=a.raw_transaction(inputs if spent_inputs is None else spent_inputs,outputs,[],[[b'\x00',signature,state_script],[]])
+            if spent_inputs is None and sponsor_node is not n:
+                return sponsor_node.rpc('signrawtransaction',wire)['hex']
             return n.rpc('signrawtransaction',wire)['hex']
         good=state_raw()
+        sponsor_only=a.raw_transaction([coin],[(90_000_000,wallet_script)],[],[[]])
+        sponsor_only=sponsor_node.rpc('signrawtransaction',sponsor_only)['hex']
         report['oracle_vector']=dict(network_genesis=network_genesis,issuance_txid=issuance['txid'],
             issuance_vout=issuance_vout,unique=name,domain=domain.hex(),old=initial.hex(),new=next_state.hex(),
             pubkey=pub.hex(),message=(domain+initial+next_state).hex(),
@@ -169,6 +188,8 @@ def main():
                'merkle':h.transaction(merkle_utxo,merkle_script,wallet_script),
                'reference_message':h.transaction(ref_utxo,refscript,wallet_script,[state_utxo])}
         n.rpc('generatetoaddress',618-n.rpc('getblockcount'),miner)
+        r=n.rpc('testmempoolaccept',[sponsor_only])[0]
+        check('sponsor/below_height',r.get('allowed')==(args.sponsor=='legacy' or args.strict_height<=619),r)
         for label,raw in cases.items():
             r=n.rpc('testmempoolaccept',[raw])[0];check(label+'/below_height',not r.get('allowed'),r)
         history=[n.rpc('getblock',n.rpc('getblockhash',i),False) for i in range(1,619)]
@@ -185,10 +206,13 @@ def main():
         check('ascending/inverse_and_child_evicted',all(x not in n.rpc('getrawmempool') for x in (inverted_txid,child_txid)))
         r=n.rpc('testmempoolaccept',[inverted_raw])[0]
         check('ascending/inverse_rejected',not r.get('allowed'),r)
+        r=n.rpc('testmempoolaccept',[sponsor_only])[0]
+        check('sponsor/candidate620',r.get('allowed')==(args.sponsor=='legacy' or args.strict_height<=620),r)
         for label,raw in cases.items():
             r=n.rpc('testmempoolaccept',[raw])[0];check(label+'/candidate620',r.get('allowed')==1,r)
         for label,raw in [('changed_state_without_oracle',state_raw(bytes([9])*32,signed_state=next_state)),
                           ('bad_signature',state_raw(signature=b'')),
+                          ('ipfs_not_32_byte_state',state_raw(message_tag=0x12,signed_state=b'\x12\x20'+next_state)),
                           ('expiry_with_valid_oracle',state_raw(expiration=bytes(8))),
                           ('wrong_instance_domain',state_raw(signing_domain=bytes(32))),
                           ('nonzero_state_value',state_raw(state_value=1)),
@@ -198,6 +222,8 @@ def main():
         pending={label:n.rpc('sendrawtransaction',cases[label]) for label in ('inputfield','merkle','reference_message')}
         n.rpc('invalidateblock',block619)
         check('reorg/tip618',n.rpc('getblockcount')==618)
+        r=n.rpc('testmempoolaccept',[sponsor_only])[0]
+        check('sponsor/descending_height',r.get('allowed')==(args.sponsor=='legacy' or args.strict_height<=619),r)
         r=n.rpc('testmempoolaccept',[inverted_raw])[0]
         check('descending/inverse_valid_again',r.get('allowed')==1,r)
         for label,txid in pending.items():check(label+'/evicted_on_crossing',txid not in n.rpc('getrawmempool'))
@@ -236,6 +262,29 @@ def main():
         command=n.proc.args;n.close();n.log=(n.directory/'process.log').open('a')
         n.proc=subprocess.Popen(command,stdout=n.log,stderr=subprocess.STDOUT);n.ready()
         check('restart/state_persisted',n.rpc('gettxout',txid,0) is not None)
+        # Deliverable 1 can chain two genuine oracle transitions in the same block.
+        # This does not assert the ZK custody transition rules of deliverable 2.
+        state2=bytes([0xa2])*32;state3=bytes([0xa3])*32
+        raw2=state_raw(state=state2,old_state=next_state,spent_inputs=[(txid,0),(txid,1)],change=80_000_000)
+        id2=n.rpc('sendrawtransaction',raw2)
+        raw3=state_raw(state=state3,old_state=state2,spent_inputs=[(id2,0),(id2,1)],change=70_000_000)
+        id3=n.rpc('sendrawtransaction',raw3)
+        both=n.rpc('generatetoaddress',1,miner)[0]
+        ordered=n.rpc('getblock',both)['tx']
+        check('thread/two_transitions_same_block',id2 in ordered and id3 in ordered and ordered.index(id2)<ordered.index(id3))
+        final=n.rpc('gettxout',id3,0)
+        check('thread/final_state_and_zero_value',final['value']==0 and final['scriptPubKey']['hex']==transfer(state_spk,name,state3).hex())
+        check('thread/intermediate_consumed',n.rpc('gettxout',id2,0) is None)
+        n.rpc('invalidateblock',both)
+        old=n.rpc('gettxout',txid,0,False)
+        check('thread/two_disconnect_restore',old is not None and old['value']==0 and old['scriptPubKey']['hex']==transfer(state_spk,name,next_state).hex())
+        check('thread/two_readmitted',all(i in n.rpc('getrawmempool') for i in (id2,id3)))
+        n.rpc('reconsiderblock',both)
+        check('thread/two_reconnect_restore',n.rpc('gettxout',id3,0,False)['scriptPubKey']['hex']==transfer(state_spk,name,state3).hex())
+        wire=n.rpc('getblock',both,False)
+        for validator in [v for v in nodes if v.directory.name in ('validator1','validator2')]:
+            replay(validator,[wire])
+            check(validator.directory.name+'/two_transitions_block',validator.rpc('getbestblockhash')==both)
         invalid_dir=directory/'invalid-option';invalid_dir.mkdir()
         for option in ('assetmessageheight','inputfieldheight','merkleposeidonheight'):
             for value in ('-1','2147483648','1.5'):

@@ -207,4 +207,37 @@ BOOST_AUTO_TEST_CASE(independent_activation_heights)
     BOOST_CHECK_EQUAL((SCRIPT_VERIFY_NONE|SCRIPT_VERIFY_INPUTFIELD).as_int(),uint64_t{1}<<46);
     BOOST_CHECK_EQUAL((SCRIPT_VERIFY_NONE|SCRIPT_VERIFY_MERKLE_POSEIDON).as_int(),uint64_t{1}<<47);
 }
+// These are contract-template checks, not restrictions on all asset messages.
+BOOST_AUTO_TEST_CASE(state_template_rejects_ipfs_and_nonexact_script)
+{
+    for (int version=0;version<=3;++version) {
+        for (auto op : {OP_OUTPUTASSETFIELD,OP_INPUTASSETFIELD,OP_REFINPUTASSETFIELD}) {
+            Bytes value;ScriptError error;
+            CScript require32=CScript()<<OP_0<<Bytes{8}<<op<<OP_SIZE<<32<<OP_EQUALVERIFY<<OP_DROP<<OP_TRUE;
+            BOOST_CHECK(Run(require32,Asset(version,Payload()),FLAGS,value,error));
+            // IPFS is valid to the parser but not to this 32-byte state contract.
+            BOOST_CHECK(!Run(require32,Asset(version,Payload(0x12)),FLAGS,value,error));
+            BOOST_CHECK_EQUAL(error,SCRIPT_ERR_EQUALVERIFY);
+        }
+        auto exact=Asset(version,Payload());Bytes value;ScriptError error;
+        CScript compare=CScript()<<OP_0<<Bytes{3}<<OP_INPUTFIELD<<Bytes(exact.begin(),exact.end())<<OP_EQUALVERIFY<<OP_TRUE;
+        BOOST_CHECK(Run(compare,exact,FLAGS,value,error));
+        BOOST_CHECK(!Run(compare,exact<<OP_NOP,FLAGS,value,error));
+        BOOST_CHECK_EQUAL(error,SCRIPT_ERR_EQUALVERIFY);
+    }
+}
+BOOST_AUTO_TEST_CASE(zero_carrier_requires_numeric_mode)
+{
+    Bytes value;ScriptError error;
+    const auto flags=FLAGS|SCRIPT_VERIFY_OUTPUTVALUE;
+    CScript equality=CScript()<<OP_0<<OP_OUTPUTVALUE<<OP_0<<OP_EQUALVERIFY<<OP_TRUE;
+    BOOST_CHECK(Run(equality,Asset(1,Payload()),flags|SCRIPT_VERIFY_64BIT_INTEGERS,value,error));
+    BOOST_CHECK(!Run(equality,Asset(1,Payload()),flags,value,error));
+    BOOST_CHECK_EQUAL(error,SCRIPT_ERR_EQUALVERIFY);
+    // NUMEQUAL is not a workaround: raw eight-byte zero exceeds the four-byte
+    // numeric bound when the integer expansion flag is disabled.
+    CScript numeric=CScript()<<OP_0<<OP_OUTPUTVALUE<<OP_0<<OP_NUMEQUALVERIFY<<OP_TRUE;
+    BOOST_CHECK(Run(numeric,Asset(1,Payload()),flags|SCRIPT_VERIFY_64BIT_INTEGERS,value,error));
+    BOOST_CHECK(!Run(numeric,Asset(1,Payload()),flags,value,error));
+}
 BOOST_AUTO_TEST_SUITE_END()
