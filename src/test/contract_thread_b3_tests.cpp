@@ -70,7 +70,7 @@ BOOST_AUTO_TEST_CASE(b3_templates_and_mode_with_real_poseidon)
 {
     const auto f=Fixture();const auto standard=GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());
     const auto c=ParseHex(f["program"].get_str()),cv=ParseHex(f["vault_program"].get_str());
-    for(int sponsorVersion : {0,2,3}) for(int mutation=0;mutation<=14;++mutation) {
+    for(int sponsorVersion : {0,2,3}) for(int mutation=0;mutation<=20;++mutation) {
         auto old=ParseHex(f["old"].get_str());
         if(mutation==1)old.back()=0; // Valid opening of mode 0, not merely a wrong digest.
         if(mutation==2)old.back()=2;
@@ -83,6 +83,16 @@ BOOST_AUTO_TEST_CASE(b3_templates_and_mode_with_real_poseidon)
         if(mutation==9)sponsor=Asset(Bytes(32,7),"OTHER");
         if(mutation==10)sponsor<<OP_NOP;
         if(mutation==11)state<<OP_NOP;
+        // Exact sponsor templates: matching input/output bytes alone is insufficient.
+        if(mutation==15)sponsor.pop_back();
+        if(mutation==16)sponsor.insert(sponsor.begin(),OP_NOP);
+        if(mutation==17) {
+            auto wrapped=Asset(Bytes(32,7),"OTHER");
+            sponsor.insert(sponsor.end(),wrapped.begin()+34,wrapped.end());
+        }
+        if(mutation==18)sponsor=CScript()<<OP_0<<Bytes(20,7);
+        if(mutation==19)sponsor=CScript()<<OP_2<<Bytes(31,7);
+        if(mutation==20)sponsor=CScript()<<OP_3<<Bytes(33,7);
         std::vector<CTxOut> prev{CTxOut(0,state),CTxOut(0,Asset(cv,f["name"].get_str())),CTxOut(0,Asset(cv,f["name"].get_str())),CTxOut(200000000,sponsor)};
         CMutableTransaction mut;mut.nVersion=3;mut.vin.resize(4);
         mut.vout={CTxOut(0,state),CTxOut(0,Asset(cv,f["name"].get_str(),200000000)),CTxOut(190000000,sponsor)};
