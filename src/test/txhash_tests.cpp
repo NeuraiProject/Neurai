@@ -3,9 +3,13 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "script/interpreter.h"
+#include "script/standard.h"
+#include "data/txhash_csfs_vectors.json.h"
+#include <univalue.h>
 #include "script/script.h"
 #include "script/script_error.h"
 #include "hash.h"
+#include "crypto/common.h"
 #include "primitives/transaction.h"
 #include "test/test_neurai.h"
 #include "streams.h"
@@ -45,6 +49,7 @@ CMutableTransaction BuildTestTx(int numInputs = 1, int numOutputs = 1)
         vin.prevout.hash = uint256S("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890");
         vin.prevout.n = i;
         vin.nSequence = 0xfffffffe;
+        vin.scriptWitness.stack = {{1}}; // exercise populated BIP143 caches
         tx.vin.push_back(vin);
     }
 
@@ -60,12 +65,12 @@ CMutableTransaction BuildTestTx(int numInputs = 1, int numOutputs = 1)
 
 // Helper: run OP_TXHASH with a given selector on a transaction, return the result hash
 // Returns true on success, false on script failure
-bool RunTxHash(const CTransaction& tx, unsigned int nIn, unsigned char selector,
+bool RunTxHash(const CTransaction& tx, unsigned int nIn, uint16_t selector,
                std::vector<unsigned char>& resultHash, ScriptError* err = nullptr)
 {
     // Script: <selector> OP_TXHASH
     CScript scriptPubKey;
-    scriptPubKey << std::vector<unsigned char>(1, selector) << OP_TXHASH << OP_TRUE;
+    scriptPubKey << std::vector<unsigned char>{static_cast<unsigned char>(selector), static_cast<unsigned char>(selector >> 8)} << OP_TXHASH << OP_TRUE;
 
     CScript scriptSig;
     CScriptWitness witness;
@@ -91,7 +96,7 @@ bool RunTxHash(const CTransaction& tx, unsigned int nIn, unsigned char selector,
 }
 
 // Helper: run OP_TXHASH via GetTxFieldHash directly (for precise testing)
-bool DirectTxFieldHash(const CTransaction& tx, unsigned int nIn, unsigned char selector,
+bool DirectTxFieldHash(const CTransaction& tx, unsigned int nIn, uint16_t selector,
                        std::vector<unsigned char>& result, bool useCache = true)
 {
     if (useCache) {
@@ -104,13 +109,12 @@ bool DirectTxFieldHash(const CTransaction& tx, unsigned int nIn, unsigned char s
     }
 }
 
-// Helper: compute expected double-SHA256 of data
-uint256 DoubleHash(const unsigned char* data, size_t len)
+uint256 ExpectedHash(uint16_t mask, const unsigned char* data, size_t len)
 {
-    CHash256 hasher;
-    hasher.Write(data, len);
+    const auto tag = ParseHex("618cd8231ef0cfb834a51353a65ca5a7442562307a1855525e894a2dd1dcddee");
+    const unsigned char selector[] = {static_cast<unsigned char>(mask), static_cast<unsigned char>(mask >> 8)};
     uint256 result;
-    hasher.Finalize(result.begin());
+    CSHA256().Write(tag.data(), tag.size()).Write(tag.data(), tag.size()).Write(selector, 2).Write(data, len).Finalize(result.begin());
     return result;
 }
 
@@ -134,18 +138,18 @@ BOOST_AUTO_TEST_CASE(txhash_selector_zero_fails)
 
 BOOST_AUTO_TEST_CASE(txhash_selector_all_fields_succeeds)
 {
-    // Selector 0xFF (all fields) must succeed
+    // All nine defined bits must succeed
     CMutableTransaction mtx = BuildTestTx();
     CTransaction tx(mtx);
     std::vector<unsigned char> result;
 
-    BOOST_CHECK(DirectTxFieldHash(tx, 0, 0xFF, result));
+    BOOST_CHECK(DirectTxFieldHash(tx, 0, 0x1FF, result));
     BOOST_CHECK_EQUAL(result.size(), 32u);
 }
 
-BOOST_AUTO_TEST_CASE(txhash_selector_must_be_one_byte)
+BOOST_AUTO_TEST_CASE(txhash_selector_reserved_bits_fail)
 {
-    // Selector of 2+ bytes must fail via EvalScript (size != 1 check)
+    // Bit 9 is reserved even though the selector has the correct length.
     CMutableTransaction mtx = BuildTestTx();
     CTransaction tx(mtx);
 
@@ -195,9 +199,9 @@ BOOST_AUTO_TEST_CASE(txhash_version_only)
     BOOST_CHECK(DirectTxFieldHash(tx, 0, TXHASH_VERSION, result));
     BOOST_CHECK_EQUAL(result.size(), 32u);
 
-    // Compute expected: double-SHA256 of little-endian uint32_t version=2
-    uint32_t ver = 2;
-    uint256 expected = DoubleHash((const unsigned char*)&ver, 4);
+    // Tagged hash of selector and little-endian uint32_t version=2
+    unsigned char ver[4]; WriteLE32(ver, 2);
+    uint256 expected = ExpectedHash(1, (const unsigned char*)&ver, 4);
     BOOST_CHECK(std::vector<unsigned char>(expected.begin(), expected.end()) == result);
 }
 
@@ -212,8 +216,8 @@ BOOST_AUTO_TEST_CASE(txhash_locktime_only)
     BOOST_CHECK(DirectTxFieldHash(tx, 0, TXHASH_LOCKTIME, result));
     BOOST_CHECK_EQUAL(result.size(), 32u);
 
-    uint32_t locktime = 500000;
-    uint256 expected = DoubleHash((const unsigned char*)&locktime, 4);
+    unsigned char locktime[4]; WriteLE32(locktime, 500000);
+    uint256 expected = ExpectedHash(2, (const unsigned char*)&locktime, 4);
     BOOST_CHECK(std::vector<unsigned char>(expected.begin(), expected.end()) == result);
 }
 
@@ -237,8 +241,8 @@ BOOST_AUTO_TEST_CASE(txhash_prevouts_only)
     uint256 expectedSubhash;
     prevoutsHasher.Finalize(expectedSubhash.begin());
 
-    // Final hash wraps the sub-hash in another double-SHA256
-    uint256 expected = DoubleHash(expectedSubhash.begin(), 32);
+    // Final tagged hash commits to the selector and the sub-hash.
+    uint256 expected = ExpectedHash(4, expectedSubhash.begin(), 32);
     BOOST_CHECK(std::vector<unsigned char>(expected.begin(), expected.end()) == result);
 }
 
@@ -254,12 +258,12 @@ BOOST_AUTO_TEST_CASE(txhash_sequences_only)
 
     CHash256 seqHasher;
     for (const auto& txin : tx.vin) {
-        uint32_t nSeq = txin.nSequence;
+        unsigned char nSeq[4]; WriteLE32(nSeq, txin.nSequence);
         seqHasher.Write((const unsigned char*)&nSeq, 4);
     }
     uint256 expectedSubhash;
     seqHasher.Finalize(expectedSubhash.begin());
-    uint256 expected = DoubleHash(expectedSubhash.begin(), 32);
+    uint256 expected = ExpectedHash(8, expectedSubhash.begin(), 32);
     BOOST_CHECK(std::vector<unsigned char>(expected.begin(), expected.end()) == result);
 }
 
@@ -281,7 +285,7 @@ BOOST_AUTO_TEST_CASE(txhash_outputs_only)
     }
     uint256 expectedSubhash;
     outHasher.Finalize(expectedSubhash.begin());
-    uint256 expected = DoubleHash(expectedSubhash.begin(), 32);
+    uint256 expected = ExpectedHash(16, expectedSubhash.begin(), 32);
     BOOST_CHECK(std::vector<unsigned char>(expected.begin(), expected.end()) == result);
 }
 
@@ -295,10 +299,10 @@ BOOST_AUTO_TEST_CASE(txhash_cur_prevout_only)
     BOOST_CHECK(DirectTxFieldHash(tx, 0, TXHASH_CUR_PREVOUT, result));
     BOOST_CHECK_EQUAL(result.size(), 32u);
 
-    // Expected: double-SHA256 of serialized prevout for input 0
+    // Tagged hash of selector and serialized prevout for input 0
     CDataStream s(SER_NETWORK, PROTOCOL_VERSION);
     s << tx.vin[0].prevout;
-    uint256 expected = DoubleHash((const unsigned char*)s.data(), s.size());
+    uint256 expected = ExpectedHash(32, (const unsigned char*)s.data(), s.size());
     BOOST_CHECK(std::vector<unsigned char>(expected.begin(), expected.end()) == result);
 }
 
@@ -312,8 +316,8 @@ BOOST_AUTO_TEST_CASE(txhash_cur_sequence_only)
     BOOST_CHECK(DirectTxFieldHash(tx, 0, TXHASH_CUR_SEQUENCE, result));
     BOOST_CHECK_EQUAL(result.size(), 32u);
 
-    uint32_t nSeq = tx.vin[0].nSequence;
-    uint256 expected = DoubleHash((const unsigned char*)&nSeq, 4);
+    unsigned char nSeq[4]; WriteLE32(nSeq, tx.vin[0].nSequence);
+    uint256 expected = ExpectedHash(64, (const unsigned char*)&nSeq, 4);
     BOOST_CHECK(std::vector<unsigned char>(expected.begin(), expected.end()) == result);
 }
 
@@ -328,8 +332,8 @@ BOOST_AUTO_TEST_CASE(txhash_input_index_only)
         BOOST_CHECK(DirectTxFieldHash(tx, i, TXHASH_INPUT_INDEX, result));
         BOOST_CHECK_EQUAL(result.size(), 32u);
 
-        uint32_t idx = i;
-        uint256 expected = DoubleHash((const unsigned char*)&idx, 4);
+        unsigned char idx[4]; WriteLE32(idx, i);
+        uint256 expected = ExpectedHash(128, (const unsigned char*)&idx, 4);
         BOOST_CHECK(std::vector<unsigned char>(expected.begin(), expected.end()) == result);
     }
 }
@@ -350,14 +354,9 @@ BOOST_AUTO_TEST_CASE(txhash_version_and_locktime)
     BOOST_CHECK(DirectTxFieldHash(tx, 0, TXHASH_VERSION | TXHASH_LOCKTIME, result));
     BOOST_CHECK_EQUAL(result.size(), 32u);
 
-    // Expected: double-SHA256(version_le32 || locktime_le32)
-    CHash256 hasher;
-    uint32_t ver = 2;
-    uint32_t lt = 123456;
-    hasher.Write((const unsigned char*)&ver, 4);
-    hasher.Write((const unsigned char*)&lt, 4);
-    uint256 expected;
-    hasher.Finalize(expected.begin());
+    CDataStream fields(SER_GETHASH, 0);
+    fields << uint32_t{2} << uint32_t{123456};
+    const auto expected = ExpectedHash(3, reinterpret_cast<const unsigned char*>(fields.data()), fields.size());
     BOOST_CHECK(std::vector<unsigned char>(expected.begin(), expected.end()) == result);
 }
 
@@ -518,7 +517,7 @@ BOOST_AUTO_TEST_CASE(txhash_disabled_treated_as_nop)
     // Script: <0x01> OP_TXHASH OP_TRUE
     // Without TXHASH flag: NOP6 is a no-op, stack = [0x01, 0x01], script succeeds
     CScript scriptPubKey;
-    scriptPubKey << std::vector<unsigned char>(1, 0x01) << OP_TXHASH << OP_TRUE;
+    scriptPubKey << std::vector<unsigned char>{0x01, 0x00} << OP_TXHASH << OP_TRUE;
 
     ScriptError serror;
     PrecomputedTransactionData txdata(tx);
@@ -536,7 +535,7 @@ BOOST_AUTO_TEST_CASE(txhash_disabled_discourage_nops_fails)
     CTransaction tx(mtx);
 
     CScript scriptPubKey;
-    scriptPubKey << std::vector<unsigned char>(1, 0x01) << OP_TXHASH;
+    scriptPubKey << std::vector<unsigned char>{0x01, 0x00} << OP_TXHASH;
 
     ScriptError serror;
     PrecomputedTransactionData txdata(tx);
@@ -560,7 +559,7 @@ BOOST_AUTO_TEST_CASE(txhash_evalscript_pushes_hash)
 
     // Script: <0xFF> OP_TXHASH OP_SIZE <32> OP_EQUALVERIFY OP_TRUE
     CScript scriptPubKey;
-    scriptPubKey << std::vector<unsigned char>(1, 0xFF) << OP_TXHASH;
+    scriptPubKey << std::vector<unsigned char>{0xff, 0x01} << OP_TXHASH;
     scriptPubKey << OP_SIZE << CScriptNum(32) << OP_EQUALVERIFY << OP_TRUE;
 
     ScriptError serror;
@@ -579,8 +578,8 @@ BOOST_AUTO_TEST_CASE(txhash_equalverify_same_tx)
     CTransaction tx(mtx);
 
     CScript scriptPubKey;
-    scriptPubKey << std::vector<unsigned char>(1, 0x01) << OP_TXHASH;
-    scriptPubKey << std::vector<unsigned char>(1, 0x01) << OP_TXHASH;
+    scriptPubKey << std::vector<unsigned char>{0x01, 0x00} << OP_TXHASH;
+    scriptPubKey << std::vector<unsigned char>{0x01, 0x00} << OP_TXHASH;
     scriptPubKey << OP_EQUALVERIFY << OP_TRUE;
 
     ScriptError serror;
@@ -605,7 +604,7 @@ BOOST_AUTO_TEST_CASE(txhash_covenant_output_check)
 
     // Script: <0x10> OP_TXHASH <expectedHash> OP_EQUAL
     CScript scriptPubKey;
-    scriptPubKey << std::vector<unsigned char>(1, TXHASH_OUTPUTS) << OP_TXHASH;
+    scriptPubKey << std::vector<unsigned char>{TXHASH_OUTPUTS, 0x00} << OP_TXHASH;
     scriptPubKey << expectedHash << OP_EQUAL;
 
     ScriptError serror;
@@ -620,20 +619,20 @@ BOOST_AUTO_TEST_CASE(txhash_covenant_output_check)
 }
 
 
-// Independent Python fingerprints cover the ordered results of ALL 255 masks,
+// Independent Python fingerprints cover the ordered results of ALL 511 masks,
 // rather than comparing only two paths that could share the same hashing bug.
 BOOST_AUTO_TEST_CASE(txhash_all_masks_family_vectors)
 {
     struct Vector { const char* script; const char* fingerprint; };
     const Vector vectors[] = {
-        {"76a914000102030405060708090a0b0c0d0e0f1011121388ac", "2ea01813056daa5fac482cbc29f7a95a00ed2ec1fa5dc825a0569be55e7a17a8"},
-        {"76a914000102030405060708090a0b0c0d0e0f1011121388acc015786e61740843545641535345540065cd1d0000000075", "31c98646f6bab441d3a04ed0cf9d36bdf914d698e73c0c713ca297a85dece712"},
-        {"5120000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "6bde33c1a598eb83a5e32d2c0fba30247b78e8aeb79f8960178f2e0647678578"},
-        {"5120000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fc015786e61740843545641535345540065cd1d0000000075", "d17a2ab61bd7d59770f4f044d53acd1b07cd002f6bd97207b51184c2bd87dac5"},
-        {"5220000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "35fce58bc56a0b128ab7db74d973fb67c7f5d88564a4789eacc13fe039b6afde"},
-        {"5220000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fc015786e61740843545641535345540065cd1d0000000075", "5bb44f0a1e0eed172ecf130271263a6b6bae7d60ab52fca047316d67f1d20617"},
-        {"5320000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "ada1492ce975e06aaa3e83186454608d2a096f4166100bbed27dc6e203682759"},
-        {"5320000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fc015786e61740843545641535345540065cd1d0000000075", "61cb1b03b3368ffbe5d0e31080edc7ae2b5cbe48ad42ed133a479e8e24c0394a"},
+        {"76a914000102030405060708090a0b0c0d0e0f1011121388ac", "f7fe6aebf499d2f73008c1efbdc3e889510e7cd28bb23d4efc5af1bf23ab9be3"},
+        {"76a914000102030405060708090a0b0c0d0e0f1011121388acc015786e61740843545641535345540065cd1d0000000075", "e054d3414d451ee9051a5cde167610c32587e15597c36756fec9131e54e68dce"},
+        {"5120000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "a6392032a9367311188527d2122963ba13b6f2b08d50118b62e1c30404e7d454"},
+        {"5120000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fc015786e61740843545641535345540065cd1d0000000075", "a6c3a58f690dfbe9df377556182cb185012b0d95e4d25e2d906ec371360d58be"},
+        {"5220000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "2dd0878c07efb933e01c66025bc8fe10a2bc575fbd432120762be5d89f569f3a"},
+        {"5220000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fc015786e61740843545641535345540065cd1d0000000075", "36525809355b9ac493b28d146a13511e9ae4c19f6fa0ea357ad20f74a7d5a2a1"},
+        {"5320000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "a7ec40328a96e6bc80fe8c0388b5b4b9ac5a09ec87fe834be4c45d0cda78b437"},
+        {"5320000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fc015786e61740843545641535345540065cd1d0000000075", "bf09ea6edbf18f9c7b8e989a71c9421a04987dcc5500c9b24acb8e4e9819e9fe"},
     };
     for (const auto& vector : vectors) {
         CMutableTransaction original;
@@ -643,6 +642,7 @@ BOOST_AUTO_TEST_CASE(txhash_all_masks_family_vectors)
         original.vin[0].prevout = COutPoint(uint256S("1f1e1d1c1b1a191817161514131211100f0e0d0c0b0a09080706050403020100"), 7);
         original.vin[1].prevout = COutPoint(uint256S("3f3e3d3c3b3a393837363534333231302f2e2d2c2b2a29282726252423222120"), 9);
         original.vin[0].nSequence = 0xfffffffe;
+        original.vin[0].scriptWitness.stack = {{1}};
         original.vin[1].nSequence = 0xfffffffd;
         const auto script = ParseHex(vector.script);
         original.vout.emplace_back(100000, CScript(script.begin(), script.end()));
@@ -650,17 +650,17 @@ BOOST_AUTO_TEST_CASE(txhash_all_masks_family_vectors)
         original.vrefin.emplace_back(uint256S("aa"), 7);
         original.vrefin.emplace_back(uint256S("bb"), 9);
         const CTransaction baseline(original);
-        std::vector<std::vector<unsigned char>> expected(256);
+        std::vector<std::vector<unsigned char>> expected(512);
         for (bool cached : {false, true}) {
             CSHA256 fingerprint;
             const PrecomputedTransactionData data(baseline);
             const TransactionSignatureChecker withCache(&baseline, 1, 0, data);
             const TransactionSignatureChecker withoutCache(&baseline, 1, 0);
-            for (int mask = 1; mask <= 255; ++mask) {
+            for (int mask = 1; mask <= 511; ++mask) {
                 BOOST_TEST_CONTEXT("fingerprint=" << vector.fingerprint << " mask=" << mask << " cached=" << cached) {
                     std::vector<std::vector<unsigned char>> stack;
                     ScriptError error;
-                    const CScript query = CScript() << std::vector<unsigned char>{static_cast<unsigned char>(mask)} << OP_TXHASH;
+                    const CScript query = CScript() << std::vector<unsigned char>{static_cast<unsigned char>(mask), static_cast<unsigned char>(mask >> 8)} << OP_TXHASH;
                     BOOST_REQUIRE(EvalScript(stack, query, TXHASH_FLAGS, cached ? withCache : withoutCache, SIGVERSION_BASE, &error));
                     BOOST_REQUIRE_EQUAL(stack.size(), 1U);
                     BOOST_REQUIRE_EQUAL(stack.back().size(), 32U);
@@ -673,7 +673,7 @@ BOOST_AUTO_TEST_CASE(txhash_all_masks_family_vectors)
             fingerprint.Finalize(digest);
             BOOST_CHECK(HexStr(digest, digest + 32) == vector.fingerprint);
         }
-        const unsigned char affected[] = {1, 2, 4, 0x24, 8, 0x48, 16, 16, 0, 0, 0, 0, 0xe0, 16};
+        const uint16_t affected[] = {0x101, 2, 4, 0x24, 8, 0x48, 16, 16, 0x100, 0x100, 0, 0, 0xe0, 16};
         for (int mutation = 0; mutation < 14; ++mutation) {
             CMutableTransaction changed = original;
             unsigned int index = 1;
@@ -697,12 +697,145 @@ BOOST_AUTO_TEST_CASE(txhash_all_masks_family_vectors)
             const PrecomputedTransactionData data(tx);
             const TransactionSignatureChecker withCache(&tx, index, 0, data);
             const TransactionSignatureChecker withoutCache(&tx, index, 0);
-            for (int mask = 1; mask <= 255; ++mask) for (const auto* checker : {&withCache, &withoutCache}) {
+            for (int mask = 1; mask <= 511; ++mask) for (const auto* checker : {&withCache, &withoutCache}) {
                 BOOST_TEST_CONTEXT("fingerprint=" << vector.fingerprint << " mutation=" << mutation << " mask=" << mask) {
                     std::vector<unsigned char> actual;
                     BOOST_REQUIRE(checker->GetTxFieldHash(mask, actual));
                     BOOST_CHECK_EQUAL(actual != expected[mask], (mask & affected[mutation]) != 0);
                 }
+            }
+        }
+    }
+}
+
+
+BOOST_AUTO_TEST_CASE(txhash_invalid_selectors)
+{
+    const CTransaction tx(BuildTestTx());
+    const TransactionSignatureChecker checker(&tx, 0, 0);
+    for (const auto& selector : std::vector<std::vector<unsigned char>>{
+            {}, {1}, {0x10}, {0xff}, {0, 0}, {0, 2}, {0xff, 0xff}, {1, 0, 0}}) {
+        std::vector<std::vector<unsigned char>> stack;
+        ScriptError error;
+        BOOST_CHECK(!EvalScript(stack, CScript() << selector << OP_TXHASH,
+                               TXHASH_FLAGS, checker, SIGVERSION_BASE, &error));
+        BOOST_CHECK_EQUAL(error, SCRIPT_ERR_TXHASH);
+    }
+    std::vector<unsigned char> digest;
+    for (int bit = 9; bit < 16; ++bit) {
+        BOOST_CHECK(!checker.GetTxFieldHash(1U << bit, digest));
+        BOOST_CHECK(!checker.GetTxFieldHash((1U << bit) | 0x1ff, digest));
+    }
+}
+
+BOOST_AUTO_TEST_CASE(txhash_empty_refs_and_version)
+{
+    CMutableTransaction a = BuildTestTx();
+    CMutableTransaction b = a;
+    b.nVersion = 3;
+    const CTransaction v2(a), v3(b);
+    const auto expected = ParseHex("308542cb639a0e6ac414070f3be7c7e13827c7dde337c4d1202853376519fab1");
+    for (bool cached : {false, true}) {
+        std::vector<unsigned char> digest;
+        BOOST_REQUIRE(DirectTxFieldHash(v2, 0, 0x100, digest, cached));
+        BOOST_CHECK(digest == expected);
+        BOOST_REQUIRE(DirectTxFieldHash(v3, 0, 0x100, digest, cached));
+        BOOST_CHECK(digest == expected);
+        for (uint16_t mask = 1; mask < 512; ++mask) {
+            std::vector<unsigned char> x, y;
+            BOOST_REQUIRE(DirectTxFieldHash(v2, 0, mask, x, cached));
+            BOOST_REQUIRE(DirectTxFieldHash(v3, 0, mask, y, cached));
+            BOOST_CHECK_EQUAL(x == y, !(mask & 1));
+        }
+    }
+    // Invalid current input only matters if a current-input field is selected.
+    std::vector<unsigned char> digest;
+    BOOST_CHECK(DirectTxFieldHash(v3, 100, 0x100, digest));
+    BOOST_CHECK(digest == expected);
+}
+
+BOOST_AUTO_TEST_CASE(txhash_old_mask_collision_is_separated)
+{
+    CMutableTransaction mtx = BuildTestTx();
+    mtx.vin[0].nSequence = mtx.nVersion;
+    const CTransaction tx(mtx);
+    CDataStream version(SER_GETHASH, 0), sequence(SER_GETHASH, 0);
+    version << uint32_t(tx.nVersion);
+    sequence << tx.vin[0].nSequence;
+    BOOST_CHECK(std::equal(version.begin(), version.end(), sequence.begin(), sequence.end())); // identical old preimages for 0x01/0x40
+    std::vector<unsigned char> x, y;
+    BOOST_REQUIRE(DirectTxFieldHash(tx, 0, 1, x));
+    BOOST_REQUIRE(DirectTxFieldHash(tx, 0, 0x40, y));
+    BOOST_CHECK(x != y);
+}
+
+BOOST_AUTO_TEST_CASE(txhash_partial_cache)
+{
+    CMutableTransaction mtx = BuildTestTx(2, 2);
+    mtx.nVersion = 3;
+    mtx.vrefin.emplace_back(uint256S("123456"), 9);
+    const CTransaction tx(mtx);
+    for (bool regular : {false, true}) for (bool references : {false, true}) {
+        PrecomputedTransactionData data(tx);
+        data.ready = regular;
+        data.refInputsReady = references;
+        const TransactionSignatureChecker checker(&tx, 0, 0, data);
+        for (uint16_t mask = 1; mask < 512; ++mask) {
+            std::vector<unsigned char> a, b;
+            BOOST_REQUIRE(checker.GetTxFieldHash(mask, a));
+            BOOST_REQUIRE(DirectTxFieldHash(tx, 0, mask, b, false));
+            BOOST_CHECK(a == b);
+        }
+    }
+}
+
+
+BOOST_AUTO_TEST_CASE(txhash_csfs_fixed_vectors)
+{
+    UniValue vectors;
+    BOOST_REQUIRE(vectors.read(std::string(reinterpret_cast<const char*>(json_tests::txhash_csfs_vectors), sizeof(json_tests::txhash_csfs_vectors))));
+    BOOST_REQUIRE_EQUAL(vectors.size(), 2U);
+    const auto flags = TXHASH_FLAGS | SCRIPT_VERIFY_AUTHSCRIPT | SCRIPT_VERIFY_CHECKSIGFROMSTACK |
+        SCRIPT_VERIFY_DERSIG | SCRIPT_VERIFY_STRICTENC | SCRIPT_VERIFY_NULLFAIL | SCRIPT_VERIFY_LOW_S;
+    for (const auto& vector : vectors.getValues()) {
+        const auto pub = ParseHex(vector["pubkey"].get_str());
+        const auto sig = ParseHex(vector["signature"].get_str());
+        CMutableTransaction mtx = BuildTestTx();
+        mtx.nVersion = 3;
+        mtx.nLockTime = 0;
+        mtx.vin[0].nSequence = 0xffffffff;
+        mtx.vout = {CTxOut(100000, CScript() << OP_TRUE)};
+        mtx.vrefin.emplace_back(uint256S("5f5e5d5c5b5a595857565554535251504f4e4d4c4b4a49484746454443424140"), 0x12345678);
+        mtx.vrefin.emplace_back(uint256S("7f7e7d7c7b7a797877767574737271706f6e6d6c6b6a69686766656463626160"), 0x87654321);
+        const CTransaction baseline(mtx);
+        std::vector<unsigned char> digest;
+        BOOST_REQUIRE(DirectTxFieldHash(baseline, 0, 0x110, digest));
+        BOOST_CHECK_EQUAL(HexStr(digest), vector["digest"].get_str());
+        uint256 signedHash;
+        CSHA256().Write(digest.data(), digest.size()).Finalize(signedHash.begin());
+        BOOST_CHECK_EQUAL(HexStr(signedHash.begin(), signedHash.end()), vector["signed_hash"].get_str());
+        for (int mutation = 0; mutation < 6; ++mutation) {
+            CMutableTransaction changed = mtx;
+            auto signature = sig;
+            uint16_t mask = 0x110;
+            if (mutation == 1) mask = 0x100;
+            if (mutation == 2) ++changed.vrefin[0].n;
+            if (mutation == 3) std::swap(changed.vrefin[0], changed.vrefin[1]);
+            if (mutation == 4) ++changed.vout[0].nValue;
+            if (mutation == 5) signature[10] ^= 1;
+            const CScript contract = CScript() << std::vector<unsigned char>{static_cast<unsigned char>(mask), static_cast<unsigned char>(mask >> 8)}
+                << OP_TXHASH << pub << OP_CHECKSIGFROMSTACK;
+            const auto commitment = GetAuthScriptCommitment(0, nullptr, contract);
+            const CScript spk = CScript() << OP_1 << ToByteVector(commitment);
+            changed.vin[0].scriptWitness.stack = {{0}, signature, std::vector<unsigned char>(contract.begin(), contract.end())};
+            const CTransaction tx(changed);
+            const PrecomputedTransactionData cache(tx);
+            const TransactionSignatureChecker checker(&tx, 0, COIN, cache);
+            ScriptError error;
+            const bool valid = VerifyScript(CScript(), spk, &tx.vin[0].scriptWitness, flags, checker, &error);
+            BOOST_TEST_CONTEXT(vector["algorithm"].get_str() << " mutation=" << mutation) {
+                BOOST_CHECK_EQUAL(valid, mutation == 0);
+                BOOST_CHECK_EQUAL(error, mutation == 0 ? SCRIPT_ERR_OK : SCRIPT_ERR_SIG_NULLFAIL);
             }
         }
     }

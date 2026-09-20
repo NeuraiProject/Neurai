@@ -112,7 +112,7 @@ def main():
                         literal = (c.ctv(3, 0, [0xffffffff] * 2, good_outputs, 0, refs)
                                    if opcode == 'ctv' else
                                    t.field_hash(16, 3, 0, [bytes(36)] * 2, [0xffffffff] * 2, good_outputs, 0))
-                        script = b'\xb3\x75\x51' if opcode == 'ctv' else h.push(b'\x10') + b'\xb5\x87'
+                        script = b'\xb3\x75\x51' if opcode == 'ctv' else h.push(b'\x10\x00') + b'\xb5\x87'
                         if fixed:
                             script = b'\x76' + h.push(literal) + b'\x88' + script
                         program = env.program(script)

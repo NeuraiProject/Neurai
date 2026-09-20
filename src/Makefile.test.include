@@ -12,6 +12,7 @@ TEST_SRCDIR = test
 TEST_BINARY=test/test_neurai$(EXEEXT)
 
 JSON_TEST_FILES = \
+  test/data/txhash_csfs_vectors.json \
   test/data/script_tests.json \
   test/data/base58_keys_valid.json \
   test/data/base58_encode_decode.json \

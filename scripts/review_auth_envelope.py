@@ -38,7 +38,7 @@ class Envelope:
         return b'\xa9\x14' + hash160(native) + b'\x87' if self.wrapped else native
 
     def address(self, node, program):
-        return node.rpc('decodescript', (b'\x51\x20' + program).hex())['p2sh'] if self.wrapped else bech32m('tnq', 1, program)
+        return node.rpc('decodescript', (b'\x51\x20' + program).hex())['p2sh'] if self.wrapped else bech32m('tnc', 1, program)
 
     def sign(self, digest):
         return bytes.fromhex(subprocess.check_output([str(self.signer), 'sign', self.family],

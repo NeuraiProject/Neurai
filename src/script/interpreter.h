@@ -460,7 +460,7 @@ public:
         return false;
     }
 
-    virtual bool GetTxFieldHash(unsigned char fieldSelector, std::vector<unsigned char>& result) const
+    virtual bool GetTxFieldHash(uint16_t fieldSelector, std::vector<unsigned char>& result) const
     {
         return false;
     }
@@ -618,7 +618,7 @@ public:
 
     bool CheckSigFromStack(const std::vector<unsigned char>& sig, const std::vector<unsigned char>& msg, const std::vector<unsigned char>& pubkey) const override;
 
-    bool GetTxFieldHash(unsigned char fieldSelector, std::vector<unsigned char>& result) const override;
+    bool GetTxFieldHash(uint16_t fieldSelector, std::vector<unsigned char>& result) const override;
 
     bool GetTxField(unsigned char selector, std::vector<unsigned char>& result) const override;
 

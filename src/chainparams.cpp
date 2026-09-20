@@ -134,7 +134,7 @@ public:
         consensus.nCTVEnabled = false;  // OP_CTV (BIP 119) not yet active on mainnet
         consensus.nSignatureOpcodesHeight = std::numeric_limits<int>::max(); // not scheduled on mainnet
         consensus.nCSFSEnabled = true; // gated by nSignatureOpcodesHeight
-        consensus.nTXHASHEnabled = false;  // OP_TXHASH not yet active on mainnet
+        consensus.nTxHashHeight = std::numeric_limits<int>::max(); // NIP-042: unscheduled on mainnet
         consensus.nTXFIELDEnabled = false; // OP_TXFIELD (NOP7) not yet active on mainnet
         consensus.nSPLITEnabled = false;   // OP_SPLIT (NOP8) not yet active on mainnet
         consensus.nREVERSEBYTESEnabled = false; // OP_REVERSEBYTES not yet active on mainnet
@@ -368,7 +368,7 @@ public:
         consensus.nCATEnabled = true;  // OP_CAT (BIP 347) active on testnet
         consensus.nCTVEnabled = true;  // OP_CTV (BIP 119) active on testnet
         consensus.nCSFSEnabled = true;  // OP_CHECKSIGFROMSTACK active on testnet
-        consensus.nTXHASHEnabled = true;  // OP_TXHASH active on testnet
+        consensus.nTxHashHeight = 1; // NIP-042: reset testnet, first block after genesis
         consensus.nTXFIELDEnabled = true; // OP_TXFIELD (NOP7) active on testnet
         consensus.nSPLITEnabled = true;   // OP_SPLIT (NOP8) active on testnet
         consensus.nREVERSEBYTESEnabled = true; // OP_REVERSEBYTES active on testnet
@@ -604,7 +604,7 @@ public:
         consensus.nCATEnabled = true;  // OP_CAT (BIP 347) active on regtest
         consensus.nCTVEnabled = true;  // OP_CTV (BIP 119) active on regtest
         consensus.nCSFSEnabled = true;  // OP_CHECKSIGFROMSTACK active on regtest
-        consensus.nTXHASHEnabled = true;  // OP_TXHASH active on regtest
+        consensus.nTxHashHeight = 0; // NIP-042: active by default on regtest
         consensus.nTXFIELDEnabled = true; // OP_TXFIELD (NOP7) active on regtest
         consensus.nSPLITEnabled = true;   // OP_SPLIT (NOP8) active on regtest
         consensus.nREVERSEBYTESEnabled = true; // OP_REVERSEBYTES active on regtest
@@ -877,4 +877,9 @@ void TurnOffBIP66() {
 void UpdateSignatureOpcodesHeight(int nHeight)
 {
     globalChainParams->UpdateSignatureOpcodesHeight(nHeight);
+}
+
+void UpdateTxHashHeight(int nHeight)
+{
+    globalChainParams->UpdateTxHashHeight(nHeight);
 }

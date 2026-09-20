@@ -402,7 +402,7 @@ BOOST_AUTO_TEST_CASE(other_introspection_opcodes_are_family_agnostic)
             BOOST_CHECK_MESSAGE(Run(tx, CScript() << OP_TXLOCKTIME, FLAGS, stack, err), what << ": OP_TXLOCKTIME");
 
             // OP_TXHASH over the outputs: succeeds for every family and commits to the exact script.
-            BOOST_CHECK_MESSAGE(Run(tx, CScript() << valtype{0x10} << OP_TXHASH, FLAGS, stack, err) && stack.back().size() == 32,
+            BOOST_CHECK_MESSAGE(Run(tx, CScript() << valtype{0x10, 0x00} << OP_TXHASH, FLAGS, stack, err) && stack.back().size() == 32,
                                 what << ": OP_TXHASH (outputs)");
             if (!stack.empty()) txhashes.push_back(stack.back());
 

@@ -853,10 +853,12 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
 
                         const valtype& vchSelector = stacktop(-1);
-                        if (vchSelector.size() != 1)
+                        if (vchSelector.size() != 2)
+                            return set_error(serror, SCRIPT_ERR_TXHASH);
+                        const uint16_t fieldSelector = uint16_t(vchSelector[0]) | (uint16_t(vchSelector[1]) << 8);
+                        if (fieldSelector == 0 || (fieldSelector & ~uint16_t{0x01ff}))
                             return set_error(serror, SCRIPT_ERR_TXHASH);
 
-                        unsigned char fieldSelector = vchSelector[0];
                         valtype vchHash;
                         if (!checker.GetTxFieldHash(fieldSelector, vchHash))
                             return set_error(serror, SCRIPT_ERR_TXHASH);
@@ -3079,36 +3081,16 @@ bool TransactionSignatureChecker::CheckSigFromStack(const std::vector<unsigned c
     return pubkey.Verify(msgHash, sig);
 }
 
-// OP_TXHASH field selector bits.
-//
-// The field selector is a single byte pushed onto the stack before OP_TXHASH.
-// Each bit selects a transaction field to include in the hash:
-//
-//   Bit 0 (0x01): nVersion     - transaction version (4 bytes LE)
-//   Bit 1 (0x02): nLockTime   - transaction locktime (4 bytes LE)
-//   Bit 2 (0x04): prevouts    - double-SHA256 of all input prevouts
-//   Bit 3 (0x08): sequences   - double-SHA256 of all input sequences
-//   Bit 4 (0x10): outputs     - double-SHA256 of all serialized outputs
-//   Bit 5 (0x20): cur_prevout - serialized prevout of current input (nIn)
-//   Bit 6 (0x40): cur_seq     - sequence number of current input (nIn)
-//   Bit 7 (0x80): input_index - index of current input as uint32 LE
-//
-// The selected fields are concatenated in bit order and hashed with
-// double-SHA256 (CHash256), consistent with BIP143/SignatureHash.
-// Sub-hashes for prevouts/sequences/outputs also use double-SHA256,
-// enabling reuse of PrecomputedTransactionData cache (O(1) vs O(n)).
-//
-// Selector 0x00 is invalid (returns false). The hash is deterministic:
-// same selector + same transaction + same input index = same result.
-//
-static const unsigned char TXHASH_VERSION       = (1 << 0);  // 0x01
-static const unsigned char TXHASH_LOCKTIME      = (1 << 1);  // 0x02
-static const unsigned char TXHASH_PREVOUTS      = (1 << 2);  // 0x04
-static const unsigned char TXHASH_SEQUENCES     = (1 << 3);  // 0x08
-static const unsigned char TXHASH_OUTPUTS       = (1 << 4);  // 0x10
-static const unsigned char TXHASH_CUR_PREVOUT   = (1 << 5);  // 0x20
-static const unsigned char TXHASH_CUR_SEQUENCE  = (1 << 6);  // 0x40
-static const unsigned char TXHASH_INPUT_INDEX   = (1 << 7);  // 0x80
+// NIP-042: fixed uint16 LE selector; fields are committed in ascending bit order.
+static constexpr uint16_t TXHASH_VERSION = 0x0001;
+static constexpr uint16_t TXHASH_LOCKTIME = 0x0002;
+static constexpr uint16_t TXHASH_PREVOUTS = 0x0004;
+static constexpr uint16_t TXHASH_SEQUENCES = 0x0008;
+static constexpr uint16_t TXHASH_OUTPUTS = 0x0010;
+static constexpr uint16_t TXHASH_CUR_PREVOUT = 0x0020;
+static constexpr uint16_t TXHASH_CUR_SEQUENCE = 0x0040;
+static constexpr uint16_t TXHASH_INPUT_INDEX = 0x0080;
+static constexpr uint16_t TXHASH_REFINPUTS = 0x0100;
 
 // OP_TXFIELD field selector bytes.
 //
@@ -3128,101 +3110,39 @@ static const unsigned char TXFIELD_SPENT_VALUE          = 0x01;
 static const unsigned char TXFIELD_SPENT_AUTHCOMMITMENT = 0x02;
 static const unsigned char TXFIELD_SPENT_FULLSCRIPT     = 0x03;
 
-bool TransactionSignatureChecker::GetTxFieldHash(unsigned char fieldSelector, std::vector<unsigned char>& result) const
+bool TransactionSignatureChecker::GetTxFieldHash(uint16_t fieldSelector, std::vector<unsigned char>& result) const
 {
-    if (fieldSelector == 0)
-        return false;
+    if (!txTo || fieldSelector == 0 || (fieldSelector & ~uint16_t{0x01ff})) return false;
+    if ((fieldSelector & (TXHASH_CUR_PREVOUT | TXHASH_CUR_SEQUENCE | TXHASH_INPUT_INDEX)) && nIn >= txTo->vin.size()) return false;
 
-    // Double SHA256 (CHash256) for consistency with BIP143 SignatureHash
-    // and PrecomputedTransactionData cache which also uses double SHA256.
-    CHash256 ss;
-
-    if (fieldSelector & TXHASH_VERSION) {
-        uint32_t nVersion = txTo->nVersion;
-        ss.Write((const unsigned char*)&nVersion, 4);
+    // Serialization operators write fixed-width integers in LE, never host order.
+    CDataStream fields(SER_GETHASH, 0);
+    fields << fieldSelector;
+    const bool ready = txdata && txdata->ready;
+    if (fieldSelector & TXHASH_VERSION) fields << uint32_t(txTo->nVersion);
+    if (fieldSelector & TXHASH_LOCKTIME) fields << txTo->nLockTime;
+    if (fieldSelector & TXHASH_PREVOUTS) fields << (ready ? txdata->hashPrevouts : GetPrevoutHash(*txTo));
+    if (fieldSelector & TXHASH_SEQUENCES) fields << (ready ? txdata->hashSequence : GetSequenceHash(*txTo));
+    if (fieldSelector & TXHASH_OUTPUTS) fields << (ready ? txdata->hashOutputs : GetOutputsHash(*txTo));
+    if (fieldSelector & TXHASH_CUR_PREVOUT) fields << txTo->vin[nIn].prevout;
+    if (fieldSelector & TXHASH_CUR_SEQUENCE) fields << txTo->vin[nIn].nSequence;
+    if (fieldSelector & TXHASH_INPUT_INDEX) fields << uint32_t(nIn);
+    if (fieldSelector & TXHASH_REFINPUTS) {
+        // Non-v3 transactions cannot carry references in consensus. Define their
+        // contribution independently of any un-serialized in-memory vector.
+        static const uint256 empty = CHashWriter(SER_GETHASH, 0).GetHash();
+        fields << (txTo->nVersion != 3 ? empty :
+            (txdata && txdata->refInputsReady ? txdata->hashRefInputs : GetRefInputsHash(*txTo)));
     }
-
-    if (fieldSelector & TXHASH_LOCKTIME) {
-        uint32_t nLockTime = txTo->nLockTime;
-        ss.Write((const unsigned char*)&nLockTime, 4);
-    }
-
-    // Use PrecomputedTransactionData cache when available (O(1) vs O(n)).
-    // The cache stores double-SHA256 hashes, matching our CHash256 hasher.
-    const bool cacheready = txdata && txdata->ready;
-
-    if (fieldSelector & TXHASH_PREVOUTS) {
-        if (cacheready) {
-            ss.Write(txdata->hashPrevouts.begin(), CHash256::OUTPUT_SIZE);
-        } else {
-            CHash256 prevoutsHash;
-            for (const auto& txin : txTo->vin) {
-                CDataStream s(SER_NETWORK, PROTOCOL_VERSION);
-                s << txin.prevout;
-                prevoutsHash.Write((const unsigned char*)s.data(), s.size());
-            }
-            unsigned char prevResult[CHash256::OUTPUT_SIZE];
-            prevoutsHash.Finalize(prevResult);
-            ss.Write(prevResult, CHash256::OUTPUT_SIZE);
-        }
-    }
-
-    if (fieldSelector & TXHASH_SEQUENCES) {
-        if (cacheready) {
-            ss.Write(txdata->hashSequence.begin(), CHash256::OUTPUT_SIZE);
-        } else {
-            CHash256 sequencesHash;
-            for (const auto& txin : txTo->vin) {
-                uint32_t nSequence = txin.nSequence;
-                sequencesHash.Write((const unsigned char*)&nSequence, 4);
-            }
-            unsigned char seqResult[CHash256::OUTPUT_SIZE];
-            sequencesHash.Finalize(seqResult);
-            ss.Write(seqResult, CHash256::OUTPUT_SIZE);
-        }
-    }
-
-    if (fieldSelector & TXHASH_OUTPUTS) {
-        if (cacheready) {
-            ss.Write(txdata->hashOutputs.begin(), CHash256::OUTPUT_SIZE);
-        } else {
-            CHash256 outputsHash;
-            for (const auto& txout : txTo->vout) {
-                CDataStream s(SER_NETWORK, PROTOCOL_VERSION);
-                s << txout;
-                outputsHash.Write((const unsigned char*)s.data(), s.size());
-            }
-            unsigned char outResult[CHash256::OUTPUT_SIZE];
-            outputsHash.Finalize(outResult);
-            ss.Write(outResult, CHash256::OUTPUT_SIZE);
-        }
-    }
-
-    if (fieldSelector & TXHASH_CUR_PREVOUT) {
-        if (nIn >= txTo->vin.size())
-            return false;
-        CDataStream s(SER_NETWORK, PROTOCOL_VERSION);
-        s << txTo->vin[nIn].prevout;
-        ss.Write((const unsigned char*)s.data(), s.size());
-    }
-
-    if (fieldSelector & TXHASH_CUR_SEQUENCE) {
-        if (nIn >= txTo->vin.size())
-            return false;
-        uint32_t nSequence = txTo->vin[nIn].nSequence;
-        ss.Write((const unsigned char*)&nSequence, 4);
-    }
-
-    if (fieldSelector & TXHASH_INPUT_INDEX) {
-        if (nIn >= txTo->vin.size())
-            return false;
-        uint32_t inputIndex = nIn;
-        ss.Write((const unsigned char*)&inputIndex, 4);
-    }
-
-    uint256 hash;
-    ss.Finalize(hash.begin());
-    result.assign(hash.begin(), hash.end());
+    static const uint256 tag = [] {
+        const std::string name = "NeuraiTxHash";
+        uint256 hash;
+        CSHA256().Write(reinterpret_cast<const unsigned char*>(name.data()), name.size()).Finalize(hash.begin());
+        return hash;
+    }();
+    result.resize(32);
+    CSHA256().Write(tag.begin(), 32).Write(tag.begin(), 32)
+        .Write(reinterpret_cast<const unsigned char*>(fields.data()), fields.size()).Finalize(result.data());
     return true;
 }
 

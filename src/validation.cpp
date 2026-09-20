@@ -1106,10 +1106,10 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         if (fStrictAuthScriptActive) {
             currentBlockScriptVerifyFlags |= SCRIPT_VERIFY_AUTHSCRIPT_STRICT | SCRIPT_VERIFY_AUTHDEST;
         }
-        const script_verify_flags signatureFlags = SCRIPT_VERIFY_CHECKSIGFROMSTACK | SCRIPT_VERIFY_CHECKSIGADD | SCRIPT_VERIFY_ED25519;
-        currentBlockScriptVerifyFlags &= ~signatureFlags;
+        const script_verify_flags heightFlags = SCRIPT_VERIFY_CHECKSIGFROMSTACK | SCRIPT_VERIFY_CHECKSIGADD | SCRIPT_VERIFY_ED25519 | SCRIPT_VERIFY_TXHASH;
+        currentBlockScriptVerifyFlags &= ~heightFlags;
         currentBlockScriptVerifyFlags |= ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, chainparams.GetConsensus(),
-            fStrictAuthScriptActive, chainActive.Height() + 1) & signatureFlags;
+            fStrictAuthScriptActive, chainActive.Height() + 1) & heightFlags;
         if (!CheckInputsFromMempoolAndCache(tx, state, view, pool, currentBlockScriptVerifyFlags, true, txdata, pRefOutputs, chainCtx))
         {
             // If we're using promiscuousmempoolflags, we may hit this normally
@@ -2009,7 +2009,8 @@ static void MempoolCheckScriptRuleTransition(CTxMemPool& pool,
 {
     AssertLockHeld(cs_main);
     if (params.IsStrictAuthScriptActive(nOldCandidateHeight) == params.IsStrictAuthScriptActive(nNewCandidateHeight) &&
-        params.IsSignatureOpcodesActive(nOldCandidateHeight) == params.IsSignatureOpcodesActive(nNewCandidateHeight))
+        params.IsSignatureOpcodesActive(nOldCandidateHeight) == params.IsSignatureOpcodesActive(nNewCandidateHeight) &&
+        params.IsTxHashActive(nOldCandidateHeight) == params.IsTxHashActive(nNewCandidateHeight))
         return;
     // Only a disconnect can leave parents momentarily unavailable, and only a
     // disconnect is always followed by UpdateMempoolForReorg. When connecting,

@@ -131,40 +131,74 @@ OP_VERIFY
 // ... remaining spending conditions
 ```
 
-### OP_TXHASH — Flexible Commitments
+### OP_TXHASH — Flexible Commitments (NIP-042)
 
-OP_TXHASH produces a double-SHA256 hash over a configurable combination of transaction fields. A single-byte bitmask selects which fields to include:
+`OP_TXHASH` (`0xb5`, NOP6) consumes exactly two bytes: a nonzero 16-bit
+little-endian mask. Bits 0–8 are defined (511 valid masks); bits 9–15 and
+all other selector lengths fail with `SCRIPT_ERR_TXHASH`.
 
-| Bit | Field |
-|-----|-------|
-| 0 | Transaction version |
-| 1 | Transaction locktime |
-| 2 | All input prevouts |
-| 3 | All input sequences |
-| 4 | All serialized outputs |
-| 5 | Current input's prevout |
-| 6 | Current input's sequence |
-| 7 | Current input index |
+| Bit | Serialized field |
+|-----|------------------|
+| 0 | Transaction version, uint32 LE |
+| 1 | Transaction locktime, uint32 LE |
+| 2 | SHA256d of concatenated input outpoints |
+| 3 | SHA256d of concatenated input sequences, uint32 LE each |
+| 4 | SHA256d of concatenated serialized outputs |
+| 5 | Current input's outpoint (32 raw hash bytes + uint32 LE index) |
+| 6 | Current input's sequence, uint32 LE |
+| 7 | Current input index, uint32 LE |
+| 8 | SHA256d of concatenated reference outpoints, in their original order |
 
-All nonzero one-byte masks are valid; `0x00` is rejected. Selected fields are
-concatenated in bit order. The prevout, sequence and output sub-hashes also use
-double-SHA256.
+Selected fields are concatenated in bit order, after the two-byte mask:
 
-Unselected fields remain free. No mask commits to scriptSigs, witness data or
-reference inputs, even `0xff`. In particular, NIP-014 references in a v3
-transaction are committed by CTV but not by TXHASH. Contracts that need to
-constrain references must check them separately or use an appropriate CTV
-commitment. Output scripts are serialized in full, including witness version,
-program and asset suffix.
-
-**Example: Output-Only Covenant**
-
-Commit only to the outputs (bit 4 = `0x10`), allowing the transaction to have any inputs:
-
+```text
+tag = SHA256("NeuraiTxHash")
+digest = SHA256(tag || tag || mask_le16 || selected_fields)
 ```
-0x10 OP_TXHASH
-<expected_outputs_hash> OP_EQUAL
+
+Sub-hashes use double SHA256; the final tagged hash uses single SHA256.
+There is no count prefix in the outpoint, sequence, output or reference lists.
+Each output contains an int64 LE value followed by a CompactSize-prefixed
+script, including its full witness program and asset suffix. Bits 5–7 require
+a valid current input index. For non-v3 transactions or an empty reference
+list, bit 8 contributes `SHA256d("")`.
+
+Unselected fields remain free. No mask commits to scriptSigs or witness data.
+Bit 8 binds reference **outpoints**, unlike checking only their destination
+scripts. Reordering references changes the digest precisely when bit 8 is set.
+The tag does not identify a network, application or oracle; protocols needing
+that separation must include their own application/network tag in the signed
+message.
+
+**Output-only covenant** (the push contains bytes `10 00`, not a Script number):
+
+```text
+<10 00> OP_TXHASH <expected_digest> OP_EQUAL
 ```
+
+**Outputs and references authorized by an oracle:**
+
+```text
+witness arguments: [oracle_signature]
+script: <10 01> OP_TXHASH <oracle_pubkey> OP_CHECKSIGFROMSTACK
+```
+
+CSFS verifies a signature over `SHA256(digest)`, with a trailing signature-type
+byte removed before verification. This applies to both ECDSA and ML-DSA-44.
+A saved ML-DSA signature must verify, but randomized signing need not reproduce
+its bytes. To bind an application, sign `SHA256(app_tag || digest)` and build
+that message with `<app_tag> <10 01> OP_TXHASH OP_CAT`.
+
+**No references:** `<00 01> OP_TXHASH` yields raw digest bytes
+`308542cb639a0e6ac414070f3be7c7e13827c7dde337c4d1202853376519fab1`.
+These are hash bytes, not the reversed `uint256::GetHex()` display order.
+
+Activation uses `nTxHashHeight`: block **1 of the reset testnet**, block 0 of
+regtest by default, and no scheduled mainnet height. `-txhashheight=<n>` is a
+regtest-only override. `SCRIPT_VERIFY_TXHASH` governs selector and digest
+together; the old format is removed. Before activation the opcode is NOP6 in
+consensus and discouraged by standard policy. Mempool checks use the next
+block's height and revalidate entries when a reorg crosses activation.
 
 ### Transaction Introspection Opcodes
 
@@ -600,7 +634,7 @@ Each opcode does one thing well. Complex behavior emerges from composition rathe
 
 ### Graceful Degradation
 
-Every opcode introduced via NOP replacement (`OP_CHECKTEMPLATEVERIFY`, `OP_CHECKSIGFROMSTACK`, `OP_TXHASH`, `OP_TXFIELD`, `OP_SPLIT`) falls back to NOP behavior when its activation flag is not set. Re-enabled opcodes (`OP_CAT`, `OP_MUL`, `OP_DIV`, `OP_MOD`) return `SCRIPT_ERR_DISABLED_OPCODE` when their flag is not set. This ensures soft-fork compatibility.
+Every opcode introduced via NOP replacement (`OP_CHECKTEMPLATEVERIFY`, `OP_CHECKSIGFROMSTACK`, `OP_TXHASH`, `OP_TXFIELD`, `OP_SPLIT`) falls back to NOP behavior when its activation flag is not set. Re-enabled opcodes (`OP_CAT`, `OP_MUL`, `OP_DIV`, `OP_MOD`) return `SCRIPT_ERR_DISABLED_OPCODE` when their flag is not set. These rules define pre-activation evaluation; activating stack-changing opcodes still requires the network's coordinated consensus upgrade.
 
 ### Post-Quantum Readiness
 
@@ -620,7 +654,7 @@ All data pushed onto the stack is bounded by the effective per-element cap: `MAX
 
 ### Quadratic Hashing Prevention
 
-Both CTV and TXHASH use precomputed sub-hashes (`PrecomputedTransactionData`) to ensure O(1) evaluation per input. A transaction with N inputs evaluating the same opcode does O(N) total work, not O(N²).
+CTV and TXHASH use precomputed sub-hashes (`PrecomputedTransactionData`) for O(1) evaluation per opcode after the cache is populated. Without a populated cache, each execution that selects a list hashes that list again in O(n) time.
 
 ### Arithmetic Overflow Protection
 

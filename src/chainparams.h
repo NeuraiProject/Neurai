@@ -89,6 +89,7 @@ public:
     void UpdateAssetMarkerNip040Height(int nHeight);
     void UpdateDepinTransferStateHeight(int nHeight);
     void UpdateStrictAuthScriptHeight(int nHeight);
+    void UpdateTxHashHeight(int nHeight) { consensus.nTxHashHeight = nHeight; }
     void UpdateSignatureOpcodesHeight(int nHeight) { consensus.nSignatureOpcodesHeight = nHeight; }
     void TurnOffSegwit();
     void TurnOffCSV();
@@ -269,6 +270,7 @@ void UpdateDepinTransferStateHeight(int nHeight);
 /** Regtest only: move the strict AuthScript (witness v2/v3) activation height. */
 void UpdateStrictAuthScriptHeight(int nHeight);
 void UpdateSignatureOpcodesHeight(int nHeight);
+void UpdateTxHashHeight(int nHeight);
 
 void TurnOffSegwit();
 

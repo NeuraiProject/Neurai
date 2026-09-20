@@ -9,6 +9,7 @@
 
 #include "uint256.h"
 #include <map>
+#include <limits>
 #include <string>
 
 namespace Consensus {
@@ -119,9 +120,9 @@ struct Params {
     int nSignatureOpcodesHeight{0};
     bool IsSignatureOpcodesActive(int height) const { return height >= nSignatureOpcodesHeight; }
     bool nCSFSEnabled;
-    /** Enable OP_TXHASH - push hash of selected transaction fields to stack.
-     *  true on testnet/regtest; false on mainnet until future activation. */
-    bool nTXHASHEnabled;
+    /** NIP-042: independent activation of the tagged TXHASH format. */
+    int nTxHashHeight{std::numeric_limits<int>::max()};
+    bool IsTxHashActive(int height) const { return height >= nTxHashHeight; }
     /** Enable OP_TXFIELD (NOP7) - push raw bytes of spent output fields to stack.
      *  Required for recursive DEX covenants. true on testnet/regtest; false on mainnet. */
     bool nTXFIELDEnabled;

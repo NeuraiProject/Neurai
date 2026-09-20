@@ -10,11 +10,14 @@
 // regtest test path, not here.
 
 #include "consensus/params.h"
+#include "chainparams.h"
+#include "chainparamsbase.h"
 #include "policy/policy.h"
 #include "script/interpreter.h"
 #include "test/test_neurai.h"
 
 #include <boost/test/unit_test.hpp>
+#include <limits>
 
 namespace {
 
@@ -26,7 +29,7 @@ Consensus::Params AllOptInsSetTo(bool on)
     p.nCATEnabled              = on;
     p.nCTVEnabled              = on;
     p.nCSFSEnabled             = on;
-    p.nTXHASHEnabled           = on;
+    p.nTxHashHeight            = on ? 0 : std::numeric_limits<int>::max();
     p.nTXFIELDEnabled          = on;
     p.nSPLITEnabled            = on;
     p.nREVERSEBYTESEnabled     = on;
@@ -148,4 +151,41 @@ BOOST_AUTO_TEST_CASE(signature_opcodes_follow_explicit_height)
     SetSignatureOpcodeCandidateHeight(oldHeight);
 }
 
+
+BOOST_AUTO_TEST_CASE(txhash_follows_own_height)
+{
+    Consensus::Params p = AllOptInsSetTo(false);
+    for (int activation : {0, 1, 120, std::numeric_limits<int>::max()}) {
+        p.nTxHashHeight = activation;
+        for (int height : {0, 1, 119, 120, 121}) {
+            const auto flags = ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, p, false, height);
+            BOOST_CHECK_EQUAL(bool(flags & SCRIPT_VERIFY_TXHASH), height >= activation);
+            BOOST_CHECK_EQUAL(bool(flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK), false);
+        }
+    }
+}
+
+BOOST_AUTO_TEST_CASE(txhash_network_schedules)
+{
+    for (const auto& network : {CBaseChainParams::MAIN, CBaseChainParams::TESTNET, CBaseChainParams::REGTEST}) {
+        const auto params = CreateChainParams(network);
+        const auto& consensus = params->GetConsensus();
+        const int expected = network == CBaseChainParams::MAIN ? std::numeric_limits<int>::max() :
+            (network == CBaseChainParams::TESTNET ? 1 : 0);
+        BOOST_CHECK_EQUAL(consensus.nTxHashHeight, expected);
+        for (int height : {0, 1, 120}) {
+            const auto flags = ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, consensus, false, height);
+            BOOST_CHECK_EQUAL(bool(flags & SCRIPT_VERIFY_TXHASH), height >= expected);
+        }
+    }
+    Consensus::Params p = AllOptInsSetTo(false);
+    p.nTxHashHeight = 1;
+    const auto saved = GetSignatureOpcodeCandidateHeight();
+    // Tip at genesis: wallet/policy helpers target block 1, also after a rewind.
+    for (int tip : {0, 1, 0}) {
+        SetSignatureOpcodeCandidateHeight(tip + 1);
+        BOOST_CHECK(bool(GetStandardScriptVerifyFlagsWithConsensusOptIns(p) & SCRIPT_VERIFY_TXHASH));
+    }
+    SetSignatureOpcodeCandidateHeight(saved);
+}
 BOOST_AUTO_TEST_SUITE_END()
