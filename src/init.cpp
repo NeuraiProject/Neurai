@@ -628,6 +628,7 @@ std::string HelpMessage(HelpMessageMode mode)
         strUsage += HelpMessageOpt("-limitdescendantsize=<n>", strprintf("Do not accept transactions if any ancestor would have more than <n> kilobytes of in-mempool descendants (default: %u).", DEFAULT_DESCENDANT_SIZE_LIMIT));
         strUsage += HelpMessageOpt("-vbparams=deployment:start:end", "Use given start/end times for specified version bits deployment (regtest-only)");
         strUsage += HelpMessageOpt("-nip040height=<n>", "Override the NIP-040 asset marker fork height (regtest-only)");
+        strUsage += HelpMessageOpt("-zkverifyheight=<n>", "Override ZKVERIFY activation (regtest-only, -1 disables)");
         strUsage += HelpMessageOpt("-poseidonworkheight=<n>", "Override Poseidon work activation (regtest-only, -1 disables)");
         strUsage += HelpMessageOpt("-authscriptbudgetheight=<n>", "Override NIP-046 activation height (regtest-only, -1 disables)");
         strUsage += HelpMessageOpt("-assetmessageheight=<n>", "Override NIP-043 AssetMessage activation height (regtest-only)");
@@ -1389,6 +1390,13 @@ bool AppInitParameterInteraction()
         if (!ParseInt64(gArgs.GetArg("-authscripttreeheight", ""), &height) || height < 0 || height > std::numeric_limits<int>::max())
             return InitError("Invalid -authscripttreeheight");
         UpdateAuthScriptTreeHeight(static_cast<int>(height));
+    }
+    if (gArgs.IsArgSet("-zkverifyheight")) {
+        if (!chainparams.MineBlocksOnDemand()) return InitError("ZKVERIFY height may only be overridden on regtest.");
+        int64_t height;
+        if (!ParseInt64(gArgs.GetArg("-zkverifyheight", ""), &height) || height < -1 || height > std::numeric_limits<int>::max())
+            return InitError("Invalid -zkverifyheight");
+        UpdateZKVerifyHeight(height == -1 ? std::numeric_limits<int>::max() : static_cast<int>(height));
     }
     if (gArgs.IsArgSet("-poseidonworkheight")) {
         if (!chainparams.MineBlocksOnDemand()) return InitError("Poseidon work height may only be overridden on regtest.");

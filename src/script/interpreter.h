@@ -294,10 +294,11 @@ enum class script_verify_flag_name : uint8_t {
     //
     SCRIPT_VERIFY_AUTHDEST,                                 // bit 42
 
+    SCRIPT_VERIFY_ZKVERIFY = 43, // NIP-018
     SCRIPT_VERIFY_AUTHSCRIPT_TREE = 44, // NIP-044
 
-    // NIP-043 primitives. Preserve the pending ZK reservation.
-    SCRIPT_VERIFY_ASSETMESSAGEFIELD = 45, // NIP-043; bit 43 reserved for ZK
+    // NIP-043 primitives.
+    SCRIPT_VERIFY_ASSETMESSAGEFIELD = 45, // NIP-043
     SCRIPT_VERIFY_INPUTFIELD = 46,
     SCRIPT_VERIFY_MERKLE_POSEIDON = 47,
     SCRIPT_VERIFY_AUTHSCRIPT_BUDGET = 48,
@@ -309,6 +310,9 @@ enum class script_verify_flag_name : uint8_t {
 
 // Import all flag names into the enclosing scope for source compatibility.
 using enum script_verify_flag_name;
+
+// Provisional NIP-018 cost; final worst-block calibration is required.
+static constexpr unsigned int ZKVERIFY_SIGOP_COST = 140;
 
 // Canonical empty-flags value.
 static constexpr script_verify_flags SCRIPT_VERIFY_NONE{};
@@ -334,14 +338,14 @@ static constexpr script_verify_flags::value_type MAX_SCRIPT_VERIFY_FLAGS =
 //   - SCRIPT_VERIFY_CHECKSIGADD is set (NIP-039: PQ signatures
 //     (2421 B) and pubkeys (1313 B) flow through the generic
 //     accumulator independently of CSFS / Merkle-inclusion).
-// Otherwise returns MAX_SCRIPT_ELEMENT_SIZE (520). Single source of
+// ZKVERIFY also widens the cap for VKs (776 B). Otherwise 520 B. Source of
 // truth for every call site in EvalScript and the witness verification
 // paths.
 inline unsigned int EffectiveMaxScriptElementSize(script_verify_flags flags)
 {
     return (flags & (SCRIPT_VERIFY_CHECKSIGFROMSTACK
                    | SCRIPT_VERIFY_MERKLE_INCLUSION
-                   | SCRIPT_VERIFY_CHECKSIGADD))
+                   | SCRIPT_VERIFY_CHECKSIGADD | SCRIPT_VERIFY_ZKVERIFY))
          ? MAX_PQ_SCRIPT_ELEMENT_SIZE
          : MAX_SCRIPT_ELEMENT_SIZE;
 }

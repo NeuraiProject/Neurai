@@ -254,6 +254,7 @@ enum opcodetype
     // Slot choice: inside MAX_OPCODE, outside the NIP-033 BLS reservation
     // (0xd8..0xdc) and not claimed by any pending proposal (0xbd/0xbe are).
     OP_OUTPUTAUTHDEST = 0xc2,
+    OP_ZKVERIFY = 0xc3, // NIP-018 profile 1
     OP_INPUTFIELD = 0xc4, // NIP-043: spent input introspection
 
     // NIP-034a: modern hash opcodes in previously unassigned slots.
@@ -799,6 +800,8 @@ public:
     // Optional opcodes count once when their respective verification flags are
     // active. Defaults preserve context-free/historical callers. CHECKSIGADD
     // also retains its separate dynamic per-script operation surcharge.
+    unsigned int CountZKVerify() const;
+
     unsigned int GetSigOpCount(bool fAccurate, bool countCSFS = false, bool countCheckSigAdd = false, bool countEd25519 = false) const;
 
     /**

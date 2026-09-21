@@ -64,7 +64,8 @@ BOOST_AUTO_TEST_CASE(none_is_zero)
 
 BOOST_AUTO_TEST_CASE(end_marker_matches_flag_count)
 {
-    // Highest assigned flag: bit 49 (Poseidon work). Bit 43 remains reserved; NIP-044 uses 44.
+    // Highest assigned flag: bit 49 (Poseidon work). NIP-018 uses bit 43; NIP-044 uses 44.
+    BOOST_CHECK_EQUAL(script_verify_flags{SCRIPT_VERIFY_ZKVERIFY}.as_int(), uint64_t{1} << 43);
     // NIP-041 remains at bit 42.
     // Previously: SCRIPT_VERIFY_AUTHSCRIPT_STRICT at bit 41 (strict AuthScript
     // families, witness v2/v3), SCRIPT_VERIFY_CHECKSIGADD at bit 40 (NIP-039),

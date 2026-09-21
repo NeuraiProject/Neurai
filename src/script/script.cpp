@@ -162,6 +162,7 @@ const char* GetOpName(opcodetype opcode)
     case OP_REFINPUTCOUNT          : return "OP_REFINPUTCOUNT";
     case OP_OUTPUTAUTHCOMMITMENT   : return "OP_OUTPUTAUTHCOMMITMENT";
     case OP_OUTPUTAUTHDEST         : return "OP_OUTPUTAUTHDEST";
+    case OP_ZKVERIFY: return "OP_ZKVERIFY";
     case OP_INPUTFIELD             : return "OP_INPUTFIELD";
     case OP_INPUTVALUE             : return "OP_INPUTVALUE";
     case OP_CHAINCONTEXT           : return "OP_CHAINCONTEXT";
@@ -201,6 +202,17 @@ const char* GetOpName(opcodetype opcode)
     default:
         return "OP_UNKNOWN";
     }
+}
+
+// Static count: pushed bytes are data; inactive branches still consume cost.
+unsigned int CScript::CountZKVerify() const
+{
+    unsigned int count = 0;
+    auto pc = begin();
+    opcodetype opcode;
+    while (pc < end() && GetOp(pc, opcode))
+        if (opcode == OP_ZKVERIFY) ++count;
+    return count;
 }
 
 unsigned int CScript::GetSigOpCount(bool fAccurate, bool countCSFS, bool countCheckSigAdd, bool countEd25519) const

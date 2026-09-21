@@ -1131,7 +1131,7 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         if (fStrictAuthScriptActive) {
             currentBlockScriptVerifyFlags |= SCRIPT_VERIFY_AUTHSCRIPT_STRICT | SCRIPT_VERIFY_AUTHDEST;
         }
-        const script_verify_flags heightFlags = SCRIPT_VERIFY_CHECKSIGFROMSTACK | SCRIPT_VERIFY_CHECKSIGADD | SCRIPT_VERIFY_ED25519 | SCRIPT_VERIFY_TXHASH | SCRIPT_VERIFY_ASSETMESSAGEFIELD | SCRIPT_VERIFY_INPUTFIELD | SCRIPT_VERIFY_MERKLE_POSEIDON | SCRIPT_VERIFY_AUTHSCRIPT_TREE | SCRIPT_VERIFY_AUTHSCRIPT_BUDGET | SCRIPT_VERIFY_POSEIDON_WORK;
+        const script_verify_flags heightFlags = SCRIPT_VERIFY_CHECKSIGFROMSTACK | SCRIPT_VERIFY_CHECKSIGADD | SCRIPT_VERIFY_ED25519 | SCRIPT_VERIFY_TXHASH | SCRIPT_VERIFY_ASSETMESSAGEFIELD | SCRIPT_VERIFY_INPUTFIELD | SCRIPT_VERIFY_MERKLE_POSEIDON | SCRIPT_VERIFY_AUTHSCRIPT_TREE | SCRIPT_VERIFY_AUTHSCRIPT_BUDGET | SCRIPT_VERIFY_POSEIDON_WORK | SCRIPT_VERIFY_ZKVERIFY;
         currentBlockScriptVerifyFlags &= ~heightFlags;
         currentBlockScriptVerifyFlags |= ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, chainparams.GetConsensus(),
             fStrictAuthScriptActive, chainActive.Height() + 1) & heightFlags;
@@ -2075,6 +2075,7 @@ static void MempoolCheckScriptRuleTransition(CTxMemPool& pool,
         params.IsInputFieldActive(nOldCandidateHeight) == params.IsInputFieldActive(nNewCandidateHeight) &&
         params.IsAuthScriptTreeActive(nOldCandidateHeight) == params.IsAuthScriptTreeActive(nNewCandidateHeight) &&
         params.IsMerklePoseidonActive(nOldCandidateHeight) == params.IsMerklePoseidonActive(nNewCandidateHeight) &&
+        params.IsZKVerifyActive(nOldCandidateHeight) == params.IsZKVerifyActive(nNewCandidateHeight) &&
         params.IsPoseidonWorkActive(nOldCandidateHeight) == params.IsPoseidonWorkActive(nNewCandidateHeight) &&
         params.IsAuthScriptBudgetActive(nOldCandidateHeight) == params.IsAuthScriptBudgetActive(nNewCandidateHeight) &&
         params.IsTxHashActive(nOldCandidateHeight) == params.IsTxHashActive(nNewCandidateHeight))

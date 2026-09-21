@@ -992,3 +992,32 @@ invalid entries and descendants. Script-cache results remain flag-specific.
 These are consensus rules, not only relay policy. Testnet activation is for
 experimentation; resource benchmarks and mainnet deployment review remain
 separate from functional correctness tests.
+
+### NIP-018: `OP_ZKVERIFY` integration (experimental)
+
+`OP_ZKVERIFY` (`0xc3`, verification flag bit 43) executes only in
+`SIGVERSION_AUTHSCRIPT`, including NIP-044 leaves. Its stack is
+`proof vk input_1 ... input_k k profile -> bool`. Profile is the exact byte
+`01`; `k` is a minimal Script number of at most four bytes, in `[1,16]`.
+Public inputs are canonical 32-byte big-endian BN254 scalars. Verification
+keys and proofs use the strict compressed arkworks encoding described in
+NIP-018. The script must authenticate the verification key and bind the
+public inputs to its intended statement.
+
+An empty proof produces false after checking profile, count and inputs,
+without parsing the verification key. A nonempty invalid proof fails the
+script. Local backend failures take the operational-error path, rather than
+marking a block or peer invalid.
+
+Each opcode in a revealed AuthScript script/MAST leaf costs **140 sigops
+provisionally**, including unexecuted branches. Bytes in pushes and MAST
+control blocks do not count. Standard transactions allow at most four such
+opcodes across all inputs. The flag also enables the existing 3072-byte
+item cap and 256-KiB stack-byte limit.
+
+Activation is scheduled at height 1 on reset testnet and defaults to height
+0 on regtest (`-zkverifyheight`, `-1` disables). Mainnet remains unscheduled.
+This is an integration under review: final cost calibration, bounded caches
+and the remaining NIP-018 checklist are required before declaring it ready
+for deployment. The legacy 32-bit `libneuraiconsensus` ABI does not expose
+this flag.

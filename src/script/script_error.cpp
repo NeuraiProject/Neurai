@@ -13,6 +13,15 @@ const char* ScriptErrorString(const ScriptError serror)
     {
         case SCRIPT_ERR_BACKEND_FAILURE:
             return "Local cryptographic backend failure";
+        case SCRIPT_ERR_ZK_STACK_SIZE: return "ZKVERIFY STACK_SIZE";
+        case SCRIPT_ERR_ZK_BAD_SIGVERSION: return "ZKVERIFY BAD_SIGVERSION";
+        case SCRIPT_ERR_ZK_BAD_PROFILE: return "ZKVERIFY BAD_PROFILE";
+        case SCRIPT_ERR_ZK_INPUT_COUNT: return "ZKVERIFY INPUT_COUNT";
+        case SCRIPT_ERR_ZK_PUBLIC_INPUT_SIZE: return "ZKVERIFY PUBLIC_INPUT_SIZE";
+        case SCRIPT_ERR_ZK_PUBLIC_INPUT_RANGE: return "ZKVERIFY PUBLIC_INPUT_RANGE";
+        case SCRIPT_ERR_ZK_VK_ENCODING: return "ZKVERIFY VK_ENCODING";
+        case SCRIPT_ERR_ZK_PROOF_ENCODING: return "ZKVERIFY PROOF_ENCODING";
+        case SCRIPT_ERR_ZK_VERIFY_FAILED: return "ZKVERIFY VERIFY_FAILED";
         case SCRIPT_ERR_OK:
             return "No error";
         case SCRIPT_ERR_EVAL_FALSE:

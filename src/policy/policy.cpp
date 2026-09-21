@@ -268,6 +268,7 @@ bool IsWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs,
     if (tx.IsCoinBase())
         return true; // Coinbases are skipped
 
+    unsigned int zkOps = 0;
     for (unsigned int i = 0; i < tx.vin.size(); i++)
     {
         // We don't care if witness for this input is empty, since it must not be bloated.
@@ -299,6 +300,21 @@ bool IsWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs,
         if (!prevScript.IsWitnessProgram(witnessversion, witnessprogram) &&
             !GetAssetScriptWitnessProgram(prevScript, witnessversion, witnessprogram))
             return false;
+
+        if (witnessversion == 1 && witnessprogram.size() == 32 &&
+            (treeFlags & SCRIPT_VERIFY_ZKVERIFY)) {
+            const auto& witness = tx.vin[i].scriptWitness;
+            size_t scriptIndex = witness.stack.size()-1;
+            if ((treeFlags & SCRIPT_VERIFY_AUTHSCRIPT_TREE) && witness.stack[0].size()==1 &&
+                witness.stack[0][0]>=0x10 && witness.stack[0][0]<=0x12) {
+                size_t offset;
+                if (!ParseAuthScriptTreeWitness(witness, offset)) return false;
+                --scriptIndex;
+            }
+            const auto& bytes = witness.stack[scriptIndex];
+            zkOps += CScript(bytes.begin(), bytes.end()).CountZKVerify();
+            if (zkOps > 4) return false;
+        }
 
         // Strict AuthScript families: the witness is a fixed 4-item template.
         // Consensus enforces the exact shape; policy additionally bounds the

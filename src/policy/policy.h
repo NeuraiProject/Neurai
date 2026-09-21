@@ -103,6 +103,7 @@ inline script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
     if (consensus.IsAssetMessageActive(nHeight)) base |= SCRIPT_VERIFY_ASSETMESSAGEFIELD;
     if (consensus.IsInputFieldActive(nHeight)) base |= SCRIPT_VERIFY_INPUTFIELD;
     if (consensus.nPQWitnessEnabled && consensus.IsAuthScriptTreeActive(nHeight)) base |= SCRIPT_VERIFY_AUTHSCRIPT_TREE;
+    if (consensus.IsZKVerifyActive(nHeight)) base |= SCRIPT_VERIFY_ZKVERIFY;
     if (consensus.IsPoseidonWorkActive(nHeight)) base |= SCRIPT_VERIFY_POSEIDON_WORK;
     if (consensus.IsAuthScriptBudgetActive(nHeight)) base |= SCRIPT_VERIFY_AUTHSCRIPT_BUDGET;
     if (consensus.IsMerklePoseidonActive(nHeight)) base |= SCRIPT_VERIFY_MERKLE_POSEIDON;

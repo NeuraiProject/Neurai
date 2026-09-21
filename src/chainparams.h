@@ -89,6 +89,7 @@ public:
     void UpdateAssetMarkerNip040Height(int nHeight);
     void UpdateDepinTransferStateHeight(int nHeight);
     void UpdateStrictAuthScriptHeight(int nHeight);
+    void UpdateZKVerifyHeight(int nHeight) { consensus.nZKVerifyHeight = nHeight; }
     void UpdatePoseidonWorkHeight(int nHeight) { consensus.nPoseidonWorkHeight = nHeight; }
     void UpdateAuthScriptBudgetHeight(int nHeight) { consensus.nAuthScriptBudgetHeight = nHeight; }
     void UpdateAssetMessageHeight(int nHeight) { consensus.nAssetMessageHeight = nHeight; }
@@ -277,6 +278,7 @@ void UpdateDepinTransferStateHeight(int nHeight);
 void UpdateStrictAuthScriptHeight(int nHeight);
 void UpdateSignatureOpcodesHeight(int nHeight);
 void UpdateAuthScriptBudgetHeight(int nHeight);
+void UpdateZKVerifyHeight(int nHeight);
 void UpdatePoseidonWorkHeight(int nHeight);
 void UpdateAssetMessageHeight(int nHeight);
 void UpdateInputFieldHeight(int nHeight);

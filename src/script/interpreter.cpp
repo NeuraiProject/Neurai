@@ -6,6 +6,7 @@
 
 #include "interpreter.h"
 #include "crypto/backend_error.h"
+#include "crypto/groth16_bn254.h"
 
 #include "assets/assets.h"
 #include "assets/assettypes.h"
@@ -1242,6 +1243,54 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         stack.push_back(ok ? vchTrue : vchFalse);
                     }
                         break;
+
+                    case OP_ZKVERIFY:
+                    {
+                        if (!(flags & SCRIPT_VERIFY_ZKVERIFY))
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
+                        if (sigversion != SIGVERSION_AUTHSCRIPT)
+                            return set_error(serror, SCRIPT_ERR_ZK_BAD_SIGVERSION);
+                        if (stack.empty()) return set_error(serror, SCRIPT_ERR_ZK_STACK_SIZE);
+                        if (stack.back() != valtype{1}) return set_error(serror, SCRIPT_ERR_ZK_BAD_PROFILE);
+                        if (stack.size() < 2) return set_error(serror, SCRIPT_ERR_ZK_STACK_SIZE);
+                        int64_t k;
+                        try { k = CScriptNum(stack[stack.size()-2], true, 4).getint(); }
+                        catch (const scriptnum_error&) { return set_error(serror, SCRIPT_ERR_ZK_INPUT_COUNT); }
+                        if (k < 1 || k > 16) return set_error(serror, SCRIPT_ERR_ZK_INPUT_COUNT);
+                        if (stack.size() < static_cast<size_t>(k)+4)
+                            return set_error(serror, SCRIPT_ERR_ZK_STACK_SIZE);
+                        const size_t first = stack.size()-k-4;
+                        // Canonical BN254 Fr, big endian. Check even for empty proof.
+                        static const unsigned char modulus[32] = {
+                            0x30,0x64,0x4e,0x72,0xe1,0x31,0xa0,0x29,0xb8,0x50,0x45,0xb6,0x81,0x81,0x58,0x5d,
+                            0x28,0x33,0xe8,0x48,0x79,0xb9,0x70,0x91,0x43,0xe1,0xf5,0x93,0xf0,0x00,0x00,0x01};
+                        valtype inputs;
+                        inputs.reserve(k*32);
+                        for (size_t j=static_cast<size_t>(k); j-- > 0;) {
+                            const auto& input = stack[first+2+j];
+                            if (input.size()!=32) return set_error(serror, SCRIPT_ERR_ZK_PUBLIC_INPUT_SIZE);
+                            if (!std::lexicographical_compare(input.begin(), input.end(), modulus, modulus+32))
+                                return set_error(serror, SCRIPT_ERR_ZK_PUBLIC_INPUT_RANGE);
+                            inputs.insert(inputs.begin(), input.begin(), input.end());
+                        }
+                        const auto& proof = stack[first];
+                        const auto& vk = stack[first+1];
+                        bool valid = false;
+                        if (!proof.empty()) {
+                            switch (neurai::zk::VerifyChecked(vk, proof, inputs)) {
+                            case neurai::zk::Result::VALID: valid = true; break;
+                            case neurai::zk::Result::INVALID: return set_error(serror, SCRIPT_ERR_ZK_VERIFY_FAILED);
+                            case neurai::zk::Result::INPUT_COUNT: return set_error(serror, SCRIPT_ERR_ZK_INPUT_COUNT);
+                            case neurai::zk::Result::INPUT_RANGE: return set_error(serror, SCRIPT_ERR_ZK_PUBLIC_INPUT_RANGE);
+                            case neurai::zk::Result::VK_ENCODING: return set_error(serror, SCRIPT_ERR_ZK_VK_ENCODING);
+                            case neurai::zk::Result::PROOF_ENCODING: return set_error(serror, SCRIPT_ERR_ZK_PROOF_ENCODING);
+                            case neurai::zk::Result::INTERNAL: throw CryptoBackendError();
+                            }
+                        }
+                        stack.resize(first);
+                        stack.push_back(valid ? valtype{1} : valtype{});
+                        break;
+                    }
 
                     case OP_OUTPUTAUTHDEST:
                     {
@@ -2532,7 +2581,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
             // lockstep with EffectiveMaxScriptElementSize() in interpreter.h.
             if (budget || (flags & (SCRIPT_VERIFY_CHECKSIGFROMSTACK
                        | SCRIPT_VERIFY_MERKLE_INCLUSION
-                       | SCRIPT_VERIFY_CHECKSIGADD))) {
+                       | SCRIPT_VERIFY_CHECKSIGADD | SCRIPT_VERIFY_ZKVERIFY))) {
                 size_t stack_bytes = 0;
                 for (const auto& item : stack)    stack_bytes += item.size();
                 for (const auto& item : altstack) stack_bytes += item.size();
@@ -4307,6 +4356,7 @@ size_t static WitnessSigOps(int witversion, const std::vector<unsigned char> &wi
             CScript leaf(bytes.begin(), bytes.end());
             return leaf.GetSigOpCount(true, (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) != 0,
                 (flags & SCRIPT_VERIFY_CHECKSIGADD) != 0, (flags & SCRIPT_VERIFY_ED25519) != 0)
+                + ((flags & SCRIPT_VERIFY_ZKVERIFY) ? leaf.CountZKVerify()*ZKVERIFY_SIGOP_COST : 0)
                 + (witness.stack[0][0] != 0x10 ? 1 : 0);
         }
         size_t sigops = 0;
@@ -4314,6 +4364,7 @@ size_t static WitnessSigOps(int witversion, const std::vector<unsigned char> &wi
             CScript subscript(witness.stack.back().begin(), witness.stack.back().end());
             sigops = subscript.GetSigOpCount(true, (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) != 0,
                 (flags & SCRIPT_VERIFY_CHECKSIGADD) != 0, (flags & SCRIPT_VERIFY_ED25519) != 0);
+            if (flags & SCRIPT_VERIFY_ZKVERIFY) sigops += subscript.CountZKVerify()*ZKVERIFY_SIGOP_COST;
         }
         if (witness.stack[0].size() == 1 && witness.stack[0][0] != 0x00) {
             sigops += 1;
