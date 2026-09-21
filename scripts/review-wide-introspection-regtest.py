@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Real wide transactions: independent TXHASH digests and spent/reference/output queries.
-Prepared for the next phase; not yet executed against the node.
 Runs isolated regtests. Results are resource screening, not mainnet approval.
 """
 import argparse
@@ -23,13 +22,13 @@ def main():
     p.add_argument('--inputs',type=int,choices=[100,1000],default=100)
     p.add_argument('--par',type=int,choices=[1,2],default=1)
     p.add_argument('--bindir',type=Path,default=Path('/root/Neurai/src'))
-    args=p.parse_args();directory=Path(tempfile.mkdtemp(prefix='wide-introspection-'));nodes=[]
+    args=p.parse_args();ref_count=64 if args.inputs==100 else 128;directory=Path(tempfile.mkdtemp(prefix='wide-introspection-'));nodes=[]
     report=dict(profile=args.profile,inputs=args.inputs,par=args.par,binary_sha256=h.digest_file(args.bindir/'neuraid'),driver_sha256=h.digest_file(Path(__file__)),results=[],measurements=[])
     def check(name,ok,value=None):
         report['results'].append(dict(case=name,passed=bool(ok),observed=value));print(('PASS ' if ok else 'FAIL ')+name,flush=True)
         if not ok:raise RuntimeError(f'{name}: {value}')
     def start(name):
-        n=m.w.WorkTestNode(args.bindir,directory/name,['-bypassdownload=1','-acceptnonstdtxn=0','-authscriptbudgetheight=0','-poseidonworkheight=0','-maxsigcachesize=0',f'-par={args.par}'])
+        n=m.w.WorkTestNode(args.bindir,directory/name,['-bypassdownload=1','-acceptnonstdtxn=0','-minrelaytxfee=0.00001','-authscriptbudgetheight=0','-poseidonworkheight=0','-maxsigcachesize=0',f'-par={args.par}'])
         nodes.append(n);n.ready();return n
     def measure(n,label,method,*params):
         cpu,_=d.l.counters(n.proc.pid);t=time.perf_counter();v=n.rpc(method,*params);elapsed=time.perf_counter()-t;after,mem=d.l.counters(n.proc.pid)
@@ -45,7 +44,7 @@ def main():
             # Compare the last spent input's script to this input's script; then
             # query the last reference and last output. All indices are real.
             num=lambda i:h.push(i.to_bytes((i.bit_length()+8)//8,'little'))
-            unit=(num(args.inputs-1)+b'\x53\xc4\x53\xb6\x88'+num(127)+b'\x53\xd2\x78\x88'+num(999)+b'\xcd\x78\x88')
+            unit=(num(args.inputs-1)+b'\x53\xc4\x53\xb6\x88'+num(ref_count-1)+b'\x53\xd2\x78\x88'+num(999)+b'\xcd\x78\x88')
             # Nine counted opcodes per round, plus DROP and VERIFY; pushes do not count.
             script=unit*56+b'\x75\x69\x51';ops=506
         # Count serialized opcodes independently of the construction formula.
@@ -70,6 +69,8 @@ def main():
             coins += [(txid,o['n']) for o in out if o['scriptPubKey']['hex']==spk.hex()]
             refs += [(txid,o['n']) for o in out if o['scriptPubKey']['hex']==pay.hex() and o['value']==1]
         check('funding/counts',len(coins)==args.inputs and len(refs)==128,(len(coins),len(refs)))
+        allrefs=refs
+        refs=allrefs[:ref_count]
         outputs=[((args.inputs*200000000-10000000)//1000, pay)]*1000  # 0.1 XNA total fee.
         prevouts=[h.outpoint(*x) for x in coins];reference_bytes=[h.outpoint(*x) for x in refs]
         witnesses=[]
@@ -80,18 +81,22 @@ def main():
             witnesses.append(stack+[script])
         def wire(ws,outs=outputs,rr=refs):return bytes.fromhex(r.a.raw_transaction(coins,outs,rr,ws))
         good=wire(witnesses);badw=[list(x) for x in witnesses];badw[-1][1]=b'';bad=wire(badw)
-        report['workload']=dict(inputs=args.inputs,outputs=1000,references=128,opcodes=ops,script_bytes=len(script),tx_weight=len(good)+3*len(r.strip_witness(good)),txhash_calls=170*args.inputs if args.profile=='txhash' else 0,field_queries=224*args.inputs if args.profile=='fields' else 0)
+        report['workload']=dict(inputs=args.inputs,outputs=1000,references=ref_count,opcodes=ops,script_bytes=len(script),tx_weight=len(good)+3*len(r.strip_witness(good)),txhash_calls=170*args.inputs if args.profile=='txhash' else 0,field_queries=224*args.inputs if args.profile=='fields' else 0)
         check('model/ops',ops<=512)
         check('negative/witness_only',r.strip_witness(good)==r.strip_witness(bad))
         admit=measure(n,'mempool_valid','testmempoolaccept',[good.hex()])[0]
         if args.inputs==100:
             check('policy/standard',bool(admit.get('allowed')),admit)
+            extra=n.rpc('testmempoolaccept',[wire(witnesses,rr=allrefs[:65]).hex()])[0]
+            check('policy/reference_limit',not extra.get('allowed') and 'too-many-refinputs' in extra.get('reject-reason',''),extra)
             result=n.rpc('testmempoolaccept',[bad.hex()])[0]
             check('policy/late_guard',not result.get('allowed') and 'Script failed an OP_VERIFY operation' in result.get('reject-reason',''),result)
             txid=n.rpc('sendrawtransaction',good.hex());template=measure(n,'template','getblocktemplate',{'rules':['segwit']})
             check('miner/included',txid in [x['txid'] for x in template['transactions']])
         else:
-            check('policy/oversize',not admit.get('allowed') and 'tx-size' in admit.get('reject-reason',''),admit)
+            check('policy/reference_limit',not admit.get('allowed') and 'too-many-refinputs' in admit.get('reject-reason',''),admit)
+            smallrefs=n.rpc('testmempoolaccept',[wire(witnesses,rr=allrefs[:64]).hex()])[0]
+            check('policy/oversize',not smallrefs.get('allowed') and 'tx-size' in smallrefs.get('reject-reason',''),smallrefs)
         history=[n.rpc('getblock',n.rpc('getblockhash',i),False) for i in range(1,n.rpc('getblockcount')+1)]
         template=n.rpc('getblocktemplate',{'rules':['segwit']});template['coinbasevalue']=0
         v=start('validator')
@@ -103,8 +108,17 @@ def main():
             t=dict(template);t['curtime']+=delta
             return d.build(t,[(r.strip_witness(tx),tx)])
         def reject(name,tx,delta):
-            raw,_,_=blockwire(tx,delta);result=measure(v,name,'submitblock',raw.hex())
-            check(name,result is not None and v.rpc('getbestblockhash')==tip,result)
+            raw,_,_=blockwire(tx,delta)
+            log=v.directory/'regtest'/'debug.log';offset=log.stat().st_size
+            result=measure(v,name,'submitblock',raw.hex())
+            diagnostic=('Script failed an OP_VERIFY operation' if 'guard' in name else
+                        'OP_REFINPUTFIELD failed' if name.endswith('reference_index') else
+                        'Script failed an OP_EQUALVERIFY operation')
+            # Workers expose a generic queue error; synchronous validation must
+            # also identify the intended failed opcode in its new log segment.
+            expected=isinstance(result,str) and (result=='block-validation-failed' or diagnostic in result)
+            check(name,expected and (args.par==2 or diagnostic.encode() in log.read_bytes()[offset:]) and
+                  v.rpc('getbestblockhash')==tip,result)
         reject('negative/late_guard',bad,0)
         if args.profile=='txhash':
             reject('negative/reference_order',wire(witnesses,rr=refs[::-1]),1)
