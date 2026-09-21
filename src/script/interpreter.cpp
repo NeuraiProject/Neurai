@@ -5,6 +5,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "interpreter.h"
+#include "crypto/backend_error.h"
 
 #include "assets/assets.h"
 #include "assets/assettypes.h"
@@ -2539,6 +2540,10 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                     return set_error(serror, SCRIPT_ERR_STACK_SIZE);
             }
         }
+    }
+    catch (const CryptoBackendError&)
+    {
+        return set_error(serror, SCRIPT_ERR_BACKEND_FAILURE);
     }
     catch (...)
     {

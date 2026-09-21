@@ -4,7 +4,7 @@ crypto_libneurai_mcl_a_CPPFLAGS = $(AM_CPPFLAGS) -I$(srcdir)/crypto/mcl/include 
   -DMCL_BINT_ASM=0 -DMCL_MSM=0 -Dmcl=neurai_mcl_detail -Dcybozu=neurai_cybozu_detail
 crypto_libneurai_mcl_a_CXXFLAGS = $(AM_CXXFLAGS) $(CXXFLAGS) $(PIC_FLAGS) $(PIE_FLAGS) \
   -march=x86-64 -mtune=generic -mno-bmi -mno-bmi2 -mno-adx -mno-avx -mno-avx2
-crypto_libneurai_mcl_a_SOURCES = crypto/mcl/src/fp.cpp crypto/mcl_backend.cpp crypto/mcl_backend.h crypto/mcl_config.h
+crypto_libneurai_mcl_a_SOURCES = crypto/mcl/src/fp.cpp crypto/mcl_backend.cpp crypto/mcl_backend.h crypto/mcl_config.h crypto/groth16_bn254.cpp crypto/groth16_bn254.h crypto/backend_error.h
 MCL_DIST = crypto/mcl/README.neurai.md \
   crypto/mcl/COPYRIGHT \
   crypto/mcl/UPSTREAM.json \

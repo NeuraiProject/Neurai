@@ -2345,7 +2345,7 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
                         }
                         vEraseQueue.push_back(orphanHash);
                     }
-                    else if (!fMissingInputs2)
+                    else if (!fMissingInputs2 && !stateDummy.IsError())
                     {
                         int nDos = 0;
                         if (stateDummy.IsInvalid(nDos) && nDos > 0)
@@ -2373,6 +2373,11 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
 
             for (uint256 hash : vEraseQueue)
                 EraseOrphanTx(hash);
+        }
+        else if (state.IsError())
+        {
+            // Local failure: do not poison recentRejects or relay an unverified tx.
+            LogPrint(BCLog::MEMPOOL, "Transaction validation failed locally: %s\n", FormatStateMessage(state));
         }
         else if (fMissingInputs)
         {

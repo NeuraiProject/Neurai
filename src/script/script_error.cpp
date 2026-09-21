@@ -11,6 +11,8 @@ const char* ScriptErrorString(const ScriptError serror)
 {
     switch (serror)
     {
+        case SCRIPT_ERR_BACKEND_FAILURE:
+            return "Local cryptographic backend failure";
         case SCRIPT_ERR_OK:
             return "No error";
         case SCRIPT_ERR_EVAL_FALSE:

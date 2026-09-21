@@ -5,6 +5,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "validation.h"
+#include "crypto/backend_error.h"
 
 #include "arith_uint256.h"
 #include "chain.h"
@@ -348,7 +349,7 @@ enum FlushStateMode {
 static bool FlushStateToDisk(const CChainParams& chainParams, CValidationState &state, FlushStateMode mode, int nManualPruneHeight=0);
 static void FindFilesToPruneManual(std::set<int>& setFilesToPrune, int nManualPruneHeight);
 static void FindFilesToPrune(std::set<int>& setFilesToPrune, uint64_t nPruneAfterHeight);
-bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks = nullptr, std::shared_ptr<std::vector<CTxOut>> pRefOutputs = nullptr, ChainContext chainCtx = {}, bool* pfUsesChainContext = nullptr, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr);
+bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks = nullptr, std::shared_ptr<std::vector<CTxOut>> pRefOutputs = nullptr, ChainContext chainCtx = {}, bool* pfUsesChainContext = nullptr, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr, std::shared_ptr<ScriptExecutionStatus> executionStatus = nullptr);
 static FILE* OpenUndoFile(const CDiskBlockPos &pos, bool fReadOnly = false);
 
 bool CheckFinalTx(const CTransaction &tx, int flags)
@@ -1090,6 +1091,7 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
                 MAX_STANDARD_TX_POSEIDON_WORK : std::numeric_limits<uint64_t>::max());
 
         if (!CheckInputs(tx, state, view, true, scriptVerifyFlags, true, false, txdata, nullptr, pRefOutputs, chainCtx, &fUsesChainContext_local, txPoseidonWork)) {
+            if (state.IsError()) return false;
             if (txPoseidonWork && txPoseidonWork->Exceeded())
                 return state.Invalid(false, REJECT_NONSTANDARD, "bad-txns-poseidon-work");
             // SCRIPT_VERIFY_CLEANSTACK requires SCRIPT_VERIFY_WITNESS, so we
@@ -1101,6 +1103,7 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
                 // Only the witness is missing, so the transaction itself may be fine.
                 state.SetCorruptionPossible();
             }
+            if (stateDummy.IsError()) { state = stateDummy; return false; }
             return false; // state filled in by CheckInputs
         }
 
@@ -1140,6 +1143,7 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
                 MAX_STANDARD_TX_POSEIDON_WORK : std::numeric_limits<uint64_t>::max());
         if (!CheckInputsFromMempoolAndCache(tx, state, view, pool, currentBlockScriptVerifyFlags, true, txdata, pRefOutputs, chainCtx, consensusPoseidonWork, &fUsesChainContext_local))
         {
+            if (state.IsError()) return false;
             if (consensusPoseidonWork && consensusPoseidonWork->Exceeded())
                 return state.Invalid(false, REJECT_NONSTANDARD, "bad-txns-poseidon-work");
             // If we're using promiscuousmempoolflags, we may hit this normally
@@ -1892,15 +1896,27 @@ void UpdateCoins(const CTransaction& tx, CCoinsViewCache& inputs, int nHeight)
 }
 
 bool CScriptCheck::operator()() {
-    const CScript &scriptSig = ptxTo->vin[nIn].scriptSig;
-    const CScriptWitness *witness = &ptxTo->vin[nIn].scriptWitness;
     CachingTransactionSignatureChecker checker(ptxTo, nIn, m_tx_out.nValue, cacheStore, *txdata, m_tx_out.scriptPubKey, m_allPrevouts.get(), m_refOutputs.get(), m_chainContext);
     checker.poseidonWorkBudget = m_poseidonWork.get();
-    const bool ok = VerifyScript(scriptSig, m_tx_out.scriptPubKey, witness, nFlags, checker, &error);
+    return CheckWith(checker);
+}
+
+bool CScriptCheck::CheckWith(const BaseSignatureChecker& checker) {
+    const CScript &scriptSig = ptxTo->vin[nIn].scriptSig;
+    const CScriptWitness *witness = &ptxTo->vin[nIn].scriptWitness;
+    bool ok = false;
+    try {
+        ok = VerifyScript(scriptSig, m_tx_out.scriptPubKey, witness, nFlags, checker, &error);
+    } catch (const CryptoBackendError&) {
+        // Also cover authentication checks outside EvalScript.
+        error = SCRIPT_ERR_BACKEND_FAILURE;
+    }
     // NIP-026: surface whether the script exercised OP_CHAINCONTEXT.
     // Read regardless of success — a failed script may have still touched
     // the opcode before failing, and the mempool wants an honest record.
     fChainContextObserved = checker.fChainContextObserved;
+    if (error == SCRIPT_ERR_BACKEND_FAILURE && m_executionStatus)
+        m_executionStatus->SetLocalFailure();
     return ok;
 }
 
@@ -1980,10 +1996,15 @@ static void MempoolRemoveForNewTip(CTxMemPool& pool,
         // commonly, a deadline-based covenant whose HEIGHT / MTP
         // constraint flipped when the tip advanced.
         auto work = std::make_shared<PoseidonWorkBudget>((flags & SCRIPT_VERIFY_POSEIDON_WORK) ? MAX_STANDARD_TX_POSEIDON_WORK : std::numeric_limits<uint64_t>::max());
-        return !CheckInputs(tx, stateDummy, view, true, flags,
+        const bool valid = CheckInputs(tx, stateDummy, view, true, flags,
                             /*cacheSigStore=*/true,
                             /*cacheFullScriptStore=*/false,
-                            txdata, nullptr, pRefOutputs, newCtx, nullptr, work) || work->Used() != entry.GetPoseidonWork();
+                            txdata, nullptr, pRefOutputs, newCtx, nullptr, work);
+        if (stateDummy.IsError()) {
+            LogPrintf("Mempool script revalidation failed locally; retaining transaction\n");
+            return false;
+        }
+        return !valid || work->Used() != entry.GetPoseidonWork();
     });
 }
 
@@ -2140,9 +2161,14 @@ static void MempoolEvictScriptRuleEntries(CTxMemPool& pool)
         CValidationState stateDummy;
         PrecomputedTransactionData txdata(tx);
         auto work = std::make_shared<PoseidonWorkBudget>((flags & SCRIPT_VERIFY_POSEIDON_WORK) ? MAX_STANDARD_TX_POSEIDON_WORK : std::numeric_limits<uint64_t>::max());
-        return !CheckInputs(tx, stateDummy, view, true, flags,
+        const bool valid = CheckInputs(tx, stateDummy, view, true, flags,
                             /*cacheSigStore=*/true, /*cacheFullScriptStore=*/false,
-                            txdata, nullptr, pRefOutputs, candidateCtx, nullptr, work) || work->Used() != entry.GetPoseidonWork();
+                            txdata, nullptr, pRefOutputs, candidateCtx, nullptr, work);
+        if (stateDummy.IsError()) {
+            LogPrintf("Mempool script revalidation failed locally; retaining transaction\n");
+            return false;
+        }
+        return !valid || work->Used() != entry.GetPoseidonWork();
     });
 }
 
@@ -2179,8 +2205,10 @@ static void MempoolCheckAssetMarkerTransition(CTxMemPool& pool,
  *
  * Non-static (and re-declared) in src/test/txvalidationcache_tests.cpp
  */
-bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks, std::shared_ptr<std::vector<CTxOut>> pRefOutputs, ChainContext chainCtx, bool* pfUsesChainContext, std::shared_ptr<PoseidonWorkBudget> poseidonWork)
+bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks, std::shared_ptr<std::vector<CTxOut>> pRefOutputs, ChainContext chainCtx, bool* pfUsesChainContext, std::shared_ptr<PoseidonWorkBudget> poseidonWork, std::shared_ptr<ScriptExecutionStatus> executionStatus)
 {
+    if (!executionStatus) executionStatus = std::make_shared<ScriptExecutionStatus>();
+    if (!executionStatus->Apply(state)) return false;
     if (!poseidonWork && (flags & SCRIPT_VERIFY_POSEIDON_WORK))
         poseidonWork = std::make_shared<PoseidonWorkBudget>(MAX_BLOCK_POSEIDON_WORK);
     if (!tx.IsCoinBase())
@@ -2245,7 +2273,7 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                 // spent being checked as a part of CScriptCheck.
 
                 // Verify signature
-                CScriptCheck check(coin.out, tx, i, flags, cacheSigStore, &txdata, pAllPrevouts, pRefOutputs, chainCtx, poseidonWork);
+                CScriptCheck check(coin.out, tx, i, flags, cacheSigStore, &txdata, pAllPrevouts, pRefOutputs, chainCtx, poseidonWork, executionStatus);
                 if (pvChecks) {
                     pvChecks->push_back(CScriptCheck());
                     check.swap(pvChecks->back());
@@ -2255,6 +2283,7 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                     // later op; the mempool still wants to re-validate
                     // this entry on tip changes.
                     if (pfUsesChainContext) *pfUsesChainContext |= check.fChainContextObserved;
+                    if (!executionStatus->Apply(state)) return false;
                     if (check.GetScriptError() == SCRIPT_ERR_POSEIDON_WORK_BUDGET)
                         return state.Invalid(false, REJECT_INVALID, "bad-txns-poseidon-work");
                     if (flags & STANDARD_NOT_MANDATORY_VERIFY_FLAGS) {
@@ -2265,10 +2294,11 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                         // avoid splitting the network between upgraded and
                         // non-upgraded nodes.
                         CScriptCheck check2(coin.out, tx, i,
-                                flags & ~STANDARD_NOT_MANDATORY_VERIFY_FLAGS, cacheSigStore, &txdata, pAllPrevouts, pRefOutputs, chainCtx);
+                                flags & ~STANDARD_NOT_MANDATORY_VERIFY_FLAGS, cacheSigStore, &txdata, pAllPrevouts, pRefOutputs, chainCtx, nullptr, executionStatus);
                         if (check2())
                             return state.Invalid(false, REJECT_NONSTANDARD, strprintf("non-mandatory-script-verify-flag (%s)", ScriptErrorString(check.GetScriptError())));
                     }
+                    if (!executionStatus->Apply(state)) return false;
                     // Failures of other flags indicate a transaction that is
                     // invalid in new blocks, e.g. an invalid P2SH. We DoS ban
                     // such nodes as they are not following the protocol. That
@@ -3137,6 +3167,8 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
     CBlockUndo blockundo;
     std::vector<std::pair<std::string, CBlockAssetUndo> > vUndoAssetData;
 
+    auto blockExecutionStatus = std::make_shared<ScriptExecutionStatus>();
+    ScriptExecutionStatusGuard localFailureGuard(blockExecutionStatus, state);
     CCheckQueueControl<CScriptCheck> control(fScriptChecks && nScriptCheckThreads ? &scriptcheckqueue : nullptr);
 
     std::vector<int> prevheights;
@@ -3333,7 +3365,7 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
                 GetChainIdForParams(chainparams),
                 true
             };
-            if (!CheckInputs(tx, state, view, fScriptChecks, flags, fCacheResults, fCacheResults, txdata[i], nScriptCheckThreads ? &vChecks : nullptr, pRefOutputs, chainCtx, nullptr, blockPoseidonWork)) {
+            if (!CheckInputs(tx, state, view, fScriptChecks, flags, fCacheResults, fCacheResults, txdata[i], nScriptCheckThreads ? &vChecks : nullptr, pRefOutputs, chainCtx, nullptr, blockPoseidonWork, blockExecutionStatus)) {
                 if (blockPoseidonWork && blockPoseidonWork->Exceeded())
                     return state.DoS(100, false, REJECT_INVALID, "bad-blk-poseidon-work");
                 return error("ConnectBlock(): CheckInputs on %s failed with %s",
@@ -3415,6 +3447,7 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
                                REJECT_INVALID, "bad-cb-amount");
 
     const bool scriptsOk = control.Wait();
+    if (!blockExecutionStatus->Apply(state)) return false;
     if (blockPoseidonWork && blockPoseidonWork->Exceeded())
         return state.DoS(100, false, REJECT_INVALID, "bad-blk-poseidon-work");
     if (!scriptsOk)

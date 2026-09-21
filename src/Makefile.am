@@ -358,6 +358,8 @@ crypto_libneurai_crypto_a_CPPFLAGS = $(AM_CPPFLAGS) \
     -DBLAKE3_USE_NEON=0
 crypto_libneurai_crypto_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 crypto_libneurai_crypto_a_SOURCES = \
+  script/execution_status.h \
+  crypto/backend_error.h \
   crypto/aes.cpp \
   crypto/aes.h \
   crypto/chacha20.h \

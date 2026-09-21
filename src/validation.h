@@ -18,6 +18,7 @@
 #include "policy/feerate.h"
 #include "script/interpreter.h" // ChainContext (NIP-026)
 #include "script/script_error.h"
+#include "script/execution_status.h"
 #include "script/verify_flags.h"
 #include "sync.h"
 #include "versionbits.h"
@@ -420,6 +421,7 @@ private:
     std::shared_ptr<std::vector<CTxOut>> m_allPrevouts;
     std::shared_ptr<std::vector<CTxOut>> m_refOutputs;   // NIP-014
     std::shared_ptr<PoseidonWorkBudget> m_poseidonWork;
+    std::shared_ptr<ScriptExecutionStatus> m_executionStatus;
     ChainContext m_chainContext{};                       // NIP-026
 
 public:
@@ -430,10 +432,12 @@ public:
     bool fChainContextObserved{false};
 
     CScriptCheck(): ptxTo(nullptr), nIn(0), nFlags(SCRIPT_VERIFY_NONE), cacheStore(false), error(SCRIPT_ERR_UNKNOWN_ERROR), txdata(nullptr) {}
-    CScriptCheck(const CTxOut& outIn, const CTransaction& txToIn, unsigned int nInIn, script_verify_flags nFlagsIn, bool cacheIn, PrecomputedTransactionData* txdataIn, std::shared_ptr<std::vector<CTxOut>> allPrevoutsIn = nullptr, std::shared_ptr<std::vector<CTxOut>> refOutputsIn = nullptr, ChainContext chainCtxIn = {}, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr) :
-        m_tx_out(outIn), ptxTo(&txToIn), nIn(nInIn), nFlags(nFlagsIn), cacheStore(cacheIn), error(SCRIPT_ERR_UNKNOWN_ERROR), txdata(txdataIn), m_allPrevouts(std::move(allPrevoutsIn)), m_refOutputs(std::move(refOutputsIn)), m_poseidonWork(std::move(poseidonWork)), m_chainContext(chainCtxIn) { }
+    CScriptCheck(const CTxOut& outIn, const CTransaction& txToIn, unsigned int nInIn, script_verify_flags nFlagsIn, bool cacheIn, PrecomputedTransactionData* txdataIn, std::shared_ptr<std::vector<CTxOut>> allPrevoutsIn = nullptr, std::shared_ptr<std::vector<CTxOut>> refOutputsIn = nullptr, ChainContext chainCtxIn = {}, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr, std::shared_ptr<ScriptExecutionStatus> executionStatus = nullptr) :
+        m_tx_out(outIn), ptxTo(&txToIn), nIn(nInIn), nFlags(nFlagsIn), cacheStore(cacheIn), error(SCRIPT_ERR_UNKNOWN_ERROR), txdata(txdataIn), m_allPrevouts(std::move(allPrevoutsIn)), m_refOutputs(std::move(refOutputsIn)), m_poseidonWork(std::move(poseidonWork)), m_executionStatus(std::move(executionStatus)), m_chainContext(chainCtxIn) { }
 
     bool operator()();
+    // Execute through the same validation/error path with a supplied checker.
+    bool CheckWith(const BaseSignatureChecker& checker);
 
     void swap(CScriptCheck &check) {
         std::swap(ptxTo, check.ptxTo);
@@ -447,6 +451,7 @@ public:
         std::swap(m_refOutputs, check.m_refOutputs);
         std::swap(m_chainContext, check.m_chainContext);
         std::swap(m_poseidonWork, check.m_poseidonWork);
+        std::swap(m_executionStatus, check.m_executionStatus);
         std::swap(fChainContextObserved, check.fChainContextObserved);
     }
 

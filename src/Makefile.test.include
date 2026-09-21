@@ -33,6 +33,9 @@ GENERATED_TEST_FILES = $(JSON_TEST_FILES:.json=.json.h) $(RAW_TEST_FILES:.raw=.r
 # test_neurai binary #
 NEURAI_TESTS =\
   test/mcl_backend_tests.cpp \
+  test/groth16_tests.cpp \
+  test/backend_failure_tests.cpp \
+  test/data/groth16_vectors.h \
   test/assets/asset_tests.cpp \
   test/assets/serialization_tests.cpp \
   test/assets/asset_tx_tests.cpp \
