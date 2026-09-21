@@ -94,7 +94,7 @@ def main():
             if entry is not None: break
             time.sleep(0.25)
         check('transaction enters refreshed template',entry is not None)
-        check('template charges four proofs',entry['sigops']==560,entry['sigops'])
+        check('template charges four proofs',entry['sigops']==1120,entry['sigops'])
         block=source.rpc('generatetoaddress',1,miner)[0]
         source.rpc('invalidateblock',block)
         check('reorg still active readmits proof',txid in source.rpc('getrawmempool'))

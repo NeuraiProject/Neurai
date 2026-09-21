@@ -215,3 +215,88 @@ BOOST_AUTO_TEST_CASE(height_gate)
     BOOST_CHECK(!(CreateChainParams(CBaseChainParams::MAIN)->GetConsensus().IsZKVerifyActive(440000)));
 }
 BOOST_AUTO_TEST_SUITE_END()
+
+#include <thread>
+#include <atomic>
+namespace {
+struct CacheFixture : Fixture {
+    CacheFixture() { neurai::zk::ResetCaches(); }
+    ~CacheFixture() { neurai::zk::ResetCaches(); }
+};
+}
+BOOST_FIXTURE_TEST_SUITE(zkverify_cache_tests, CacheFixture)
+BOOST_AUTO_TEST_CASE(independent_key_vector)
+{
+    const auto key=neurai::zk::VerificationCacheKey(vk,proof,inputs);
+    BOOST_CHECK_EQUAL(HexStr(key.begin(),key.end()),"2bf05a83c548e9dd51ddae112aefa5b883fc121073f79ed3ad8df0ca9c4e7011");
+}
+BOOST_AUTO_TEST_CASE(disabled_cold_and_hot)
+{
+    neurai::zk::ResetCaches(0,0);
+    BOOST_CHECK(Verify()==Result::VALID); BOOST_CHECK(Verify()==Result::VALID);
+    BOOST_CHECK_EQUAL(neurai::zk::GetCacheInfo().result_hits,0U);
+    neurai::zk::ResetCaches();
+    BOOST_CHECK(Verify()==Result::VALID);
+    BOOST_CHECK_EQUAL(neurai::zk::GetCacheInfo().result_hits,0U);
+    BOOST_CHECK(Verify()==Result::VALID);
+    BOOST_CHECK_EQUAL(neurai::zk::GetCacheInfo().result_hits,1U);
+    BOOST_CHECK(neurai::zk::Verify(vk,proof,inputs,false)==Result::VALID);
+    BOOST_CHECK_EQUAL(neurai::zk::GetCacheInfo().result_hits,1U);
+    proof=ParseHex(groth16_vectors::RERANDOMIZED);
+    BOOST_CHECK(Verify()==Result::VALID);
+    BOOST_CHECK_EQUAL(neurai::zk::GetCacheInfo().vk_hits,1U);
+}
+BOOST_AUTO_TEST_CASE(full_cache_and_eviction)
+{
+    neurai::zk::ResetCaches(1,1);
+    BOOST_CHECK(Verify()==Result::VALID);
+    proof=ParseHex(groth16_vectors::RERANDOMIZED);
+    BOOST_CHECK(Verify()==Result::VALID);
+    BOOST_CHECK_EQUAL(neurai::zk::GetCacheInfo().result_evictions,1U);
+    proof=ParseHex(groth16_vectors::PROOF);
+    BOOST_CHECK(Verify()==Result::VALID);
+    BOOST_CHECK_EQUAL(neurai::zk::GetCacheInfo().result_evictions,2U);
+    vk=ParseHex(groth16_vectors::OTHER_VK);
+    BOOST_CHECK(Verify()==Result::INVALID);
+    BOOST_CHECK_EQUAL(neurai::zk::GetCacheInfo().vk_evictions,1U);
+    vk=ParseHex(groth16_vectors::VK); inputs.resize(32);
+    BOOST_CHECK(Verify()==Result::INPUT_COUNT);
+    BOOST_CHECK(Verify()==Result::INPUT_COUNT); // hit must still check k
+    BOOST_CHECK(neurai::zk::GetCacheInfo().vk_hits>0);
+    BOOST_CHECK(neurai::zk::GetCacheInfo().bytes<2*1024*1024);
+}
+BOOST_AUTO_TEST_CASE(hits_do_not_hide_invalid_arguments)
+{
+    BOOST_CHECK(Verify()==Result::VALID);
+    const auto goodInputs=inputs, goodVK=vk, goodProof=proof;
+    for(int i=0;i<2;++i) {
+        inputs.back()^=1; BOOST_CHECK(Verify()==Result::INVALID); inputs=goodInputs;
+        inputs[0]=0xff; BOOST_CHECK(Verify()==Result::INPUT_RANGE); inputs=goodInputs;
+        inputs.pop_back(); BOOST_CHECK(Verify()==Result::INPUT_COUNT); inputs=goodInputs;
+        proof.pop_back(); BOOST_CHECK(Verify()==Result::PROOF_ENCODING); proof=goodProof;
+        vk.push_back(0); BOOST_CHECK(Verify()==Result::VK_ENCODING); vk=goodVK;
+    }
+    BOOST_CHECK_EQUAL(neurai::zk::GetCacheInfo().result_hits,0U);
+    auto stack=ZKStack();
+    BOOST_CHECK(ExecuteZK(stack,SCRIPT_VERIFY_NONE)==SCRIPT_ERR_BAD_OPCODE);
+    stack=ZKStack(); stack.back()={2};
+    BOOST_CHECK(ExecuteZK(stack)==SCRIPT_ERR_ZK_BAD_PROFILE);
+    stack=ZKStack();
+    BOOST_CHECK(ExecuteZK(stack,SCRIPT_VERIFY_ZKVERIFY,SIGVERSION_BASE)==SCRIPT_ERR_ZK_BAD_SIGVERSION);
+}
+BOOST_AUTO_TEST_CASE(concurrent_eviction)
+{
+    neurai::zk::ResetCaches(1,1);
+    std::atomic<bool> good{true}; std::vector<std::thread> threads;
+    for(int t=0;t<16;++t) threads.emplace_back([&,t] {
+        auto p=ParseHex(t%2 ? groth16_vectors::RERANDOMIZED : groth16_vectors::PROOF);
+        for(int i=0;i<16;++i)
+            if(neurai::zk::Verify(vk,p,inputs)!=Result::VALID) good=false;
+    });
+    for(auto& t:threads)t.join();
+    BOOST_CHECK(good.load());
+    const auto stats=neurai::zk::GetCacheInfo();
+    BOOST_CHECK_EQUAL(stats.active,0U); BOOST_CHECK(stats.peak>0 && stats.peak<=4);
+    BOOST_CHECK(stats.result_hits>0);
+}
+BOOST_AUTO_TEST_SUITE_END()

@@ -311,8 +311,8 @@ enum class script_verify_flag_name : uint8_t {
 // Import all flag names into the enclosing scope for source compatibility.
 using enum script_verify_flag_name;
 
-// Provisional NIP-018 cost; final worst-block calibration is required.
-static constexpr unsigned int ZKVERIFY_SIGOP_COST = 140;
+// NIP-018: calibrated x86-64 cost with margin; see cache-review evidence.
+static constexpr unsigned int ZKVERIFY_SIGOP_COST = 280;
 
 // Canonical empty-flags value.
 static constexpr script_verify_flags SCRIPT_VERIFY_NONE{};

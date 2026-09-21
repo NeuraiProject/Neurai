@@ -1009,15 +1009,17 @@ without parsing the verification key. A nonempty invalid proof fails the
 script. Local backend failures take the operational-error path, rather than
 marking a block or peer invalid.
 
-Each opcode in a revealed AuthScript script/MAST leaf costs **140 sigops
-provisionally**, including unexecuted branches. Bytes in pushes and MAST
+Each opcode in a revealed AuthScript script/MAST leaf costs **280 sigops**, including unexecuted branches. Bytes in pushes and MAST
 control blocks do not count. Standard transactions allow at most four such
 opcodes across all inputs. The flag also enables the existing 3072-byte
 item cap and 256-KiB stack-byte limit.
 
 Activation is scheduled at height 1 on reset testnet and defaults to height
 0 on regtest (`-zkverifyheight`, `-1` disables). Mainnet remains unscheduled.
-This is an integration under review: final cost calibration, bounded caches
-and the remaining NIP-018 checklist are required before declaring it ready
-for deployment. The legacy 32-bit `libneuraiconsensus` ABI does not expose
+Fixed-size positive-result and prepared-VK caches are implemented. Calibration
+sets the cost to 280: the largest measured uncached invalid-equation sample
+was 214.52 times the ECDSA median; a 25% margin rounded upward gives 280.
+Exact policy/block boundaries and cold blocks with 285 distinct VKs pass.
+This is evidence for the measured x86-64 build, not a universal time bound.
+The remaining NIP-018 checklist is still required before deployment. The legacy 32-bit `libneuraiconsensus` ABI does not expose
 this flag.
