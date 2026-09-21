@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mixed-resource screening on disposable regtests; real executed CSFS signatures.
+"""Mixed-resource screening on disposable regtests; real executed internal signatures.
 No mainnet thresholds. Repeated verifychain samples are not cold first receptions.
 """
 import argparse
@@ -30,7 +30,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bindir', type=Path, default=Path('/root/Neurai/src'))
     parser.add_argument('--signer', type=Path, default=Path('/tmp/authscript-review-signer'))
-    parser.add_argument('--profile', choices=['mixed', 'mixed-ecdsa', 'mixed-pq', 'saturation-ecdsa', 'saturation-pq'], required=True)
+    parser.add_argument('--profile', choices=['mixed', 'mixed-ecdsa', 'mixed-pq', 'saturation-ecdsa', 'saturation-pq', 'checksigadd-ecdsa', 'checksigadd-pq', 'ed25519'], required=True)
     parser.add_argument('--par', type=int, choices=[1, 2], default=1)
     parser.add_argument('--cache-mib', type=int, choices=[0, 32], default=0)
     parser.add_argument('--samples', type=int, default=5)
@@ -70,12 +70,17 @@ def main():
         return result
 
     try:
+        checksigadd = args.profile.startswith('checksigadd-')
+        ed25519 = args.profile == 'ed25519'
         family = 'pq' if args.profile.endswith('-pq') else 'ecdsa' if args.profile.endswith('-ecdsa') else None
         pub, secret = b'', ''
         if family:
             public, secret = subprocess.check_output([str(args.signer), 'keygen', family], text=True).splitlines()
             pub = bytes.fromhex(public)
-        saturation = args.profile.startswith('saturation-')
+        if ed25519:
+            ed = module('mixed_ed', 'review-ed25519-regtest.py')
+            pub = ed.PK
+        saturation = args.profile.startswith('saturation-') or checksigadd or ed25519
         if saturation:
             # Keep sig/msg/pub on the stack: 3DUP executes a real CSFS on each
             # iteration. CheckSigFromStack has no signature-cache shortcut.
@@ -92,6 +97,13 @@ def main():
             script += b'\x69\x51'  # late guard, after all work and signatures
             main_work, signatures, classic, ops = 300, int(bool(family)), 65536, 465+2*bool(family)
             count, fillers = 666, 0
+        if checksigadd:
+            script = b'\xc9'*50+b'\x75'+b'\x6f\xde\x51\x9d'*40+b'\x6d\x75\x69\x51'
+            main_work, signatures, classic, ops = 50, 40, 0, 494
+            count, fillers = 1700, 230
+        if ed25519:
+            script = script.replace(b'\xb4', b'\xdd')
+            classic = 0
         filler_script = b'\xc9'*500+b'\x75\x69\x51'
         address, spk = r.address(script)
         _, filler_spk = r.address(filler_script)
@@ -99,7 +111,7 @@ def main():
         expected_sigops = count*(signatures+4)+fillers*4
         report['workload'] = dict(main_transactions=count, filler_transactions=fillers,
             poseidon_work=expected_work, tx_sigops=expected_sigops,
-            executed_signatures=count*signatures, unique_signatures=count if family else 0,
+            executed_signatures=count*signatures, unique_signatures=count if family else 1 if ed25519 else 0,
             main_classic_units=classic, main_opcodes=ops, main_script_bytes=len(script),
             reused_signature_per_input=saturation, witness_family='native v1 NoAuth')
         check('model/budgets', expected_work <= 200000 and expected_sigops+400 < 80000 and ops <= 512)
@@ -123,8 +135,19 @@ def main():
             msg = r.sha(b'Neurai/mixed-resource-test/'+h.outpoint(*coin))
             sig = bytes.fromhex(subprocess.check_output([str(args.signer), 'sign', family],
                   input=secret+'\n'+r.sha(msg).hex()+'\n', text=True).strip()) if family else b''
+            if checksigadd:
+                prevout = h.outpoint(*coin)
+                sequence = b'\xff'*4
+                preimage = (struct.pack('<I', 3)+r.b.hash256(prevout)+r.b.hash256(sequence)+prevout+
+                    h.compact(len(script))+script+struct.pack('<Q', 200000000)+sequence+
+                    r.b.hash256(r.b.output(190000000, pay))+r.b.hash256(b'')+bytes(4)+b'\x00'+struct.pack('<I', 1))
+                sig = bytes.fromhex(subprocess.check_output([str(args.signer), 'sign', family],
+                    input=secret+'\n'+r.b.hash256(preimage).hex()+'\n', text=True).strip())
+                msg = b''  # CHECKSIGADD starts its counter at zero.
+            if ed25519:
+                sig, msg = ed.SIG, b''
             arguments = [b'\x01']
-            if family:
+            if family or ed25519:
                 arguments += [sig, msg]
             if saturation:
                 arguments += [pub, b'']
@@ -142,17 +165,23 @@ def main():
             if bad_guard:
                 arguments[0] = b''
             if bad_message:
-                arguments[2] = bytes([arguments[2][0] ^ 1])+arguments[2][1:]
+                arguments[2] = bytes([arguments[2][0] ^ 1])+arguments[2][1:] if arguments[2] else b'\x01'
             return bytes.fromhex(r.a.raw_transaction([coin], [(190000000, pay)], [], [[b'\x00', *arguments, leaf]]))
 
         wires = [wire(e) for e in entries]
         bad = wire(last, bad_guard=True)
         check('negative/same_txid_different_witness', r.strip_witness(bad) == r.strip_witness(wires[-1]) and bad != wires[-1])
         result = measured(n, 'late_guard_mempool', 'testmempoolaccept', [bad.hex()])[0]
-        check('negative/late_guard_mempool', not result.get('allowed') and 'VERIFY' in result.get('reject-reason', '').upper(), result)
-        if family:
+        check('negative/late_guard_mempool', not result.get('allowed') and 'Script failed an OP_VERIFY operation' in result.get('reject-reason', ''), result)
+        if family or ed25519:
             result = measured(n, 'bad_message_mempool', 'testmempoolaccept', [wire(last, bad_message=True).hex()])[0]
-            check('negative/message_is_authenticated', not result.get('allowed') and 'signature' in result.get('reject-reason', '').lower(), result)
+            check('negative/counter_is_checked' if checksigadd else 'negative/message_is_authenticated',
+                  not result.get('allowed') and ('NUMEQUALVERIFY' if checksigadd else 'Script failed an OP_VERIFY operation' if ed25519 else 'signature') in
+                  (result.get('reject-reason', '') if checksigadd or ed25519 else result.get('reject-reason', '').lower()), result)
+            if checksigadd:
+                tampered = wires[-1].replace(struct.pack('<Q', 190000000), struct.pack('<Q', 189000000), 1)
+                result = measured(n, 'bad_output_mempool', 'testmempoolaccept', [tampered.hex()])[0]
+                check('negative/output_is_authenticated', not result.get('allowed') and 'signature' in result.get('reject-reason', '').lower(), result)
         history = [n.rpc('getblock', n.rpc('getblockhash', height), False) for height in range(1, n.rpc('getblockcount')+1)]
         template = n.rpc('getblocktemplate', {'rules': ['segwit']})
         template['coinbasevalue'] = 0

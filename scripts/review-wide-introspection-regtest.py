@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Real wide transactions: independent TXHASH digests and spent/reference/output queries.
+Prepared for the next phase; not yet executed against the node.
+Runs isolated regtests. Results are resource screening, not mainnet approval.
+"""
+import argparse
+import importlib.util
+import json
+from pathlib import Path
+import statistics
+import struct
+import tempfile
+import time
+import traceback
+
+spec=importlib.util.spec_from_file_location('mixed',Path(__file__).with_name('review-mixed-resources-regtest.py'))
+m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+r,h,d=m.r,m.h,m.d
+
+def main():
+    p=argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--profile',choices=['txhash','fields'],required=True)
+    p.add_argument('--inputs',type=int,choices=[100,1000],default=100)
+    p.add_argument('--par',type=int,choices=[1,2],default=1)
+    p.add_argument('--bindir',type=Path,default=Path('/root/Neurai/src'))
+    args=p.parse_args();directory=Path(tempfile.mkdtemp(prefix='wide-introspection-'));nodes=[]
+    report=dict(profile=args.profile,inputs=args.inputs,par=args.par,binary_sha256=h.digest_file(args.bindir/'neuraid'),driver_sha256=h.digest_file(Path(__file__)),results=[],measurements=[])
+    def check(name,ok,value=None):
+        report['results'].append(dict(case=name,passed=bool(ok),observed=value));print(('PASS ' if ok else 'FAIL ')+name,flush=True)
+        if not ok:raise RuntimeError(f'{name}: {value}')
+    def start(name):
+        n=m.w.WorkTestNode(args.bindir,directory/name,['-bypassdownload=1','-acceptnonstdtxn=0','-authscriptbudgetheight=0','-poseidonworkheight=0','-maxsigcachesize=0',f'-par={args.par}'])
+        nodes.append(n);n.ready();return n
+    def measure(n,label,method,*params):
+        cpu,_=d.l.counters(n.proc.pid);t=time.perf_counter();v=n.rpc(method,*params);elapsed=time.perf_counter()-t;after,mem=d.l.counters(n.proc.pid)
+        report['measurements'].append(dict(case=label,wall_s=elapsed,daemon_cpu_s=after-cpu,daemon_hwm_kib=mem));return v
+    try:
+        n=start('source');miner=n.rpc('getnewaddress','','legacy');pay=bytes.fromhex(n.rpc('validateaddress',miner)['scriptPubKey']);n.rpc('generatetoaddress',610,miner)
+        # The exact expected digest is a witness argument, avoiding a commitment cycle.
+        # [guard, expected] -> 170*(selector TXHASH OVER EQUALVERIFY) -> DROP VERIFY TRUE.
+        if args.profile=='txhash':
+            script=(h.push(b'\xff\x01')+b'\xb5\x78\x88')*170+b'\x75\x69\x51'
+            ops=512
+        else:
+            # Compare the last spent input's script to this input's script; then
+            # query the last reference and last output. All indices are real.
+            num=lambda i:h.push(i.to_bytes((i.bit_length()+8)//8,'little'))
+            unit=(num(args.inputs-1)+b'\x53\xc4\x53\xb6\x88'+num(127)+b'\x53\xd2\x78\x88'+num(999)+b'\xcd\x78\x88')
+            # Nine counted opcodes per round, plus DROP and VERIFY; pushes do not count.
+            script=unit*56+b'\x75\x69\x51';ops=506
+        # Count serialized opcodes independently of the construction formula.
+        pos=counted=0
+        while pos<len(script):
+            op=script[pos];pos+=1
+            if op<=75:pos+=op
+            elif op in (76,77,78):
+                width={76:1,77:2,78:4}[op];length=int.from_bytes(script[pos:pos+width],'little');pos+=width+length
+            elif op>96:counted+=1
+        check('model/serialized_opcount',pos==len(script) and counted==ops,counted)
+        _,spk=r.address(script)
+        # Fund in batches so funding itself stays within standard transaction size.
+        coins=[];refs=[]
+        for number in range(0,args.inputs+128,400):
+            items=[(200000000,spk) if i<args.inputs else (100000000,pay) for i in range(number,min(number+400,args.inputs+128))]
+            raw=struct.pack('<I',2)+b'\x00'+h.compact(len(items))+b''.join(r.b.output(v,s) for v,s in items)+bytes(4)
+            f=n.rpc('fundrawtransaction',raw.hex(),{'feeRate':0.001});sg=n.rpc('signrawtransaction',f['hex']);check(f'funding/{number}',sg['complete'])
+            txid=n.rpc('sendrawtransaction',sg['hex']);n.rpc('generatetoaddress',1,miner)
+            # Change can be inserted at any index. Match scripts and amounts.
+            out=n.rpc('getrawtransaction',txid,True)['vout']
+            coins += [(txid,o['n']) for o in out if o['scriptPubKey']['hex']==spk.hex()]
+            refs += [(txid,o['n']) for o in out if o['scriptPubKey']['hex']==pay.hex() and o['value']==1]
+        check('funding/counts',len(coins)==args.inputs and len(refs)==128,(len(coins),len(refs)))
+        outputs=[((args.inputs*200000000-10000000)//1000, pay)]*1000  # 0.1 XNA total fee.
+        prevouts=[h.outpoint(*x) for x in coins];reference_bytes=[h.outpoint(*x) for x in refs]
+        witnesses=[]
+        for i in range(args.inputs):
+            stack=[b'\x00',b'\x01']
+            if args.profile=='txhash':stack.append(r.t.field_hash(511,3,0,prevouts,[0xffffffff]*args.inputs,outputs,i,reference_bytes))
+            else:stack.append(pay)
+            witnesses.append(stack+[script])
+        def wire(ws,outs=outputs,rr=refs):return bytes.fromhex(r.a.raw_transaction(coins,outs,rr,ws))
+        good=wire(witnesses);badw=[list(x) for x in witnesses];badw[-1][1]=b'';bad=wire(badw)
+        report['workload']=dict(inputs=args.inputs,outputs=1000,references=128,opcodes=ops,script_bytes=len(script),tx_weight=len(good)+3*len(r.strip_witness(good)),txhash_calls=170*args.inputs if args.profile=='txhash' else 0,field_queries=224*args.inputs if args.profile=='fields' else 0)
+        check('model/ops',ops<=512)
+        check('negative/witness_only',r.strip_witness(good)==r.strip_witness(bad))
+        admit=measure(n,'mempool_valid','testmempoolaccept',[good.hex()])[0]
+        if args.inputs==100:
+            check('policy/standard',bool(admit.get('allowed')),admit)
+            result=n.rpc('testmempoolaccept',[bad.hex()])[0]
+            check('policy/late_guard',not result.get('allowed') and 'Script failed an OP_VERIFY operation' in result.get('reject-reason',''),result)
+            txid=n.rpc('sendrawtransaction',good.hex());template=measure(n,'template','getblocktemplate',{'rules':['segwit']})
+            check('miner/included',txid in [x['txid'] for x in template['transactions']])
+        else:
+            check('policy/oversize',not admit.get('allowed') and 'tx-size' in admit.get('reject-reason',''),admit)
+        history=[n.rpc('getblock',n.rpc('getblockhash',i),False) for i in range(1,n.rpc('getblockcount')+1)]
+        template=n.rpc('getblocktemplate',{'rules':['segwit']});template['coinbasevalue']=0
+        v=start('validator')
+        for block in history:
+            result=v.rpc('submitblock',block)
+            if result is not None:raise RuntimeError('history: '+str(result))
+        tip=v.rpc('getbestblockhash')
+        def blockwire(tx,delta):
+            t=dict(template);t['curtime']+=delta
+            return d.build(t,[(r.strip_witness(tx),tx)])
+        def reject(name,tx,delta):
+            raw,_,_=blockwire(tx,delta);result=measure(v,name,'submitblock',raw.hex())
+            check(name,result is not None and v.rpc('getbestblockhash')==tip,result)
+        reject('negative/late_guard',bad,0)
+        if args.profile=='txhash':
+            reject('negative/reference_order',wire(witnesses,rr=refs[::-1]),1)
+            changed=list(outputs);changed[-1]=(changed[-1][0]-1,pay)
+            reject('negative/output_amount',wire(witnesses,outs=changed),2)
+            wrong=[list(x) for x in witnesses];wrong[-1][2]=wrong[0][2]
+            reject('negative/input_index',wire(wrong),3)
+        else:
+            changed=list(outputs);changed[-1]=(changed[-1][0],b'\x51')
+            reject('negative/output_script',wire(witnesses,outs=changed),1)
+            reject('negative/reference_index',wire(witnesses,rr=refs[:-1]),2)
+        raw,bhash,weight=blockwire(good,4);report['workload']['block_weight']=weight
+        result=measure(v,'first_valid','submitblock',raw.hex());check('block/valid',result is None and v.rpc('getbestblockhash')==bhash,result)
+        for i in range(6):check(f'verifychain/{i}',measure(v,f'verifychain/{i}','verifychain',4,1))
+        measure(v,'reorg','invalidateblock',bhash);check('reorg/tip',v.rpc('getbestblockhash')==tip)
+        expected=r.b.hash256(r.strip_witness(good))[::-1].hex()
+        check('reorg/policy', (expected in v.rpc('getrawmempool'))==(args.inputs==100))
+        reject('negative/warm_guard',bad,5)
+        v.rpc('reconsiderblock',bhash);check('reorg/restored',v.rpc('getbestblockhash')==bhash)
+        report['success']=True
+    except Exception as e:
+        report['error']=str(e);report['traceback']=traceback.format_exc();print(report['traceback'],flush=True)
+    finally:
+        for n in reversed(nodes):n.close()
+        (directory/'report.json').write_text(json.dumps(report,indent=2)+'\n');print('REPORT '+str(directory/'report.json'),flush=True)
+    return int(not report.get('success'))
+if __name__=='__main__':raise SystemExit(main())
