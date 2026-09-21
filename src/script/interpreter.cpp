@@ -2225,9 +2225,11 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         valtype &vchSig    = stacktop(-3);
 
                         using crypto::ed25519::StructuralResult;
-                        const auto pkCheck = crypto::ed25519::ValidatePubkey(
-                            vchPubKey.data(), vchPubKey.size());
-                        switch (pkCheck) {
+                        const auto verification = crypto::ed25519::VerifyStrictDetailed(
+                            vchPubKey.data(), vchPubKey.size(),
+                            vchSig.data(), vchSig.size(),
+                            vchMsg.data(), vchMsg.size());
+                        switch (verification.structural) {
                             case StructuralResult::OK: break;
                             case StructuralResult::PUBKEY_SIZE_INVALID:
                                 return set_error(serror, SCRIPT_ERR_ED25519_PUBKEY_SIZE);
@@ -2235,14 +2237,6 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             case StructuralResult::PUBKEY_NOT_ON_CURVE:
                             case StructuralResult::PUBKEY_NON_SUBGROUP:
                                 return set_error(serror, SCRIPT_ERR_ED25519_PUBKEY_ENCODING);
-                            default:
-                                return set_error(serror, SCRIPT_ERR_ED25519_PUBKEY_ENCODING);
-                        }
-
-                        const auto sigCheck = crypto::ed25519::ValidateSignature(
-                            vchSig.data(), vchSig.size());
-                        switch (sigCheck) {
-                            case StructuralResult::OK: break;
                             case StructuralResult::SIG_SIZE_INVALID:
                                 return set_error(serror, SCRIPT_ERR_ED25519_SIG_SIZE);
                             case StructuralResult::SIG_R_NON_CANONICAL:
@@ -2253,11 +2247,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             default:
                                 return set_error(serror, SCRIPT_ERR_ED25519_SIG_ENCODING);
                         }
-
-                        const bool fSuccess = crypto::ed25519::VerifyStrict(
-                            vchPubKey.data(), vchPubKey.size(),
-                            vchSig.data(),    vchSig.size(),
-                            vchMsg.data(),    vchMsg.size());
+                        const bool fSuccess = verification.valid;
 
                         popstack(stack); // pubkey
                         popstack(stack); // msg

@@ -9,14 +9,8 @@
 // the human-readable single source of truth; these inline values are
 // the machine-checkable mirror — same convention as poseidon_vectors.
 //
-// Test scope today:
-//   - structural / canonical-encoding rejections that DO NOT need the
-//     vendored ref10 backend run as ordinary BOOST_CHECK_EQUAL asserts.
-//   - PureEd25519 verification asserts are wired with the canonical
-//     RFC 8032 §7.1 KAT but tagged BOOST_AUTO_TEST_CASE_EXPECTED_FAILURES
-//     because crypto/ed25519.cpp::VerifyStrict() is currently a stub.
-//     When the ref10 backend lands, drop those decorators in a single
-//     diff and the same tests start passing for real.
+// Coverage: structural errors, RFC 8032 KATs, Wycheproof, and Script
+// acceptance/error semantics with the real strict-profile ref10 verifier.
 
 #include "crypto/ed25519.h"
 #include "data/wycheproof_ed25519.json.h"
@@ -331,6 +325,14 @@ BOOST_AUTO_TEST_CASE(every_vector_matches_strict_profile)
                 sig.data(), sig.size(),
                 msg.data(), msg.size());
 
+            const auto detailed = crypto::ed25519::VerifyStrictDetailed(
+                pk.data(), pk.size(), sig.data(), sig.size(), msg.data(), msg.size());
+            auto structural = ValidatePubkey(pk.data(), pk.size());
+            if (structural == StructuralResult::OK)
+                structural = ValidateSignature(sig.data(), sig.size());
+            BOOST_CHECK(detailed.structural == structural);
+            BOOST_CHECK_EQUAL(detailed.valid, got);
+
             const bool want = (result == "valid");
             if (got != want) {
                 BOOST_ERROR("Wycheproof tcId " << tcId
@@ -544,6 +546,55 @@ BOOST_AUTO_TEST_CASE(script_op_verify_after_failure)
     ScriptError err;
     BOOST_CHECK(!RunEd25519Script(s, SCRIPT_VERIFY_ED25519, err));
     BOOST_CHECK_EQUAL(err, SCRIPT_ERR_VERIFY);
+}
+
+BOOST_AUTO_TEST_CASE(script_structural_error_precedence)
+{
+    ScriptError err;
+    // A malformed key must win over a simultaneously malformed signature.
+    auto script = Ed25519CheckSigScript("", "", "");
+    BOOST_CHECK(!RunEd25519Script(script, SCRIPT_VERIFY_ED25519, err));
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_ED25519_PUBKEY_SIZE);
+    script = Ed25519CheckSigScript("", "",
+        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f");
+    BOOST_CHECK(!RunEd25519Script(script, SCRIPT_VERIFY_ED25519, err));
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_ED25519_PUBKEY_ENCODING);
+}
+
+BOOST_AUTO_TEST_CASE(script_wycheproof_errors_and_results)
+{
+    const auto root = ReadEd25519WycheproofJson();
+    const auto& groups = root["testGroups"].get_array();
+    for (size_t gi = 0; gi < groups.size(); ++gi) {
+        const auto& group = groups[gi];
+        const auto pkHex = group["publicKey"]["pk"].get_str();
+        const auto pk = ParseHex(pkHex);
+        const auto& tests = group["tests"].get_array();
+        for (size_t ti = 0; ti < tests.size(); ++ti) {
+            const auto& test = tests[ti];
+            const auto sig = ParseHex(test["sig"].get_str());
+            ScriptError expected = SCRIPT_ERR_OK;
+            const auto pkCheck = ValidatePubkey(pk.data(), pk.size());
+            const auto sigCheck = ValidateSignature(sig.data(), sig.size());
+            if (pkCheck != StructuralResult::OK)
+                expected = pkCheck == StructuralResult::PUBKEY_SIZE_INVALID ?
+                    SCRIPT_ERR_ED25519_PUBKEY_SIZE : SCRIPT_ERR_ED25519_PUBKEY_ENCODING;
+            else if (sigCheck != StructuralResult::OK)
+                expected = sigCheck == StructuralResult::SIG_SIZE_INVALID ?
+                    SCRIPT_ERR_ED25519_SIG_SIZE : SCRIPT_ERR_ED25519_SIG_ENCODING;
+            auto script = Ed25519CheckSigScript(test["sig"].get_str(), test["msg"].get_str(), pkHex);
+            ScriptError err;
+            std::vector<unsigned char> top;
+            // Wycheproof includes 1023-byte messages; use the expanded element
+            // limit active on testnet, without changing Ed25519 verification rules.
+            const bool executed = RunEd25519ScriptWithStackTop(script,
+                SCRIPT_VERIFY_ED25519 | SCRIPT_VERIFY_CHECKSIGADD, err, top);
+            BOOST_CHECK_EQUAL(err, expected);
+            BOOST_CHECK_EQUAL(executed, expected == SCRIPT_ERR_OK);
+            if (executed)
+                BOOST_CHECK_EQUAL(!top.empty(), test["result"].get_str() == "valid");
+        }
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()
