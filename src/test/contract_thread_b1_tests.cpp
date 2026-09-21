@@ -38,7 +38,7 @@ BOOST_AUTO_TEST_CASE(frozen_leaf_and_poseidon)
 BOOST_AUTO_TEST_CASE(real_openings_modes_shape_and_csv)
 {
     auto f=Fixture();const auto c=ParseHex(f["program"].get_str());const auto flags=GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());
-    for(int family : {0,2,3}) for(int mutation=0;mutation<=24;++mutation){
+    for(int family : {0,2,3}) for(int mutation=0;mutation<=36;++mutation){
         auto old=ParseHex(f["old"].get_str()),next=ParseHex(f["new"].get_str());
         if(mutation==1)old.back()=1;
         if(mutation==2)next.back()=0;
@@ -50,8 +50,25 @@ BOOST_AUTO_TEST_CASE(real_openings_modes_shape_and_csv)
         if(mutation==17)sponsor=CScript()<<OP_HASH160<<Bytes(20,7)<<OP_EQUAL;
         if(mutation==18)sponsor=CScript()<<OP_1<<Bytes(32,7);
         if(mutation==19)sponsor<<OP_NOP;
+        // Keep input and refund identical: these reject the sponsor template,
+        // not merely a mismatch between the two scripts.
+        if(mutation==25)sponsor.pop_back();
+        if(mutation==26)sponsor.insert(sponsor.begin(),OP_NOP);
+        if(mutation==27){
+            auto asset=State(Bytes(32,7),"RWAX#OTHER",Bytes(32,1));
+            sponsor.insert(sponsor.end(),asset.begin()+34,asset.end());
+        }
+        if(mutation==28)sponsor=CScript()<<OP_0<<Bytes(20,7);
+        if(mutation==29)sponsor=CScript()<<OP_2<<Bytes(31,7);
+        if(mutation==30)sponsor=CScript()<<OP_2<<Bytes(33,7);
+        if(mutation==31)sponsor=CScript()<<OP_3<<Bytes(31,7);
+        if(mutation==32)sponsor=CScript()<<OP_3<<Bytes(33,7);
+        if(mutation==33)sponsor=CScript()<<OP_0<<Bytes(32,7);
         CScript before=State(c,f["unique"].get_str(),Poseidon(old)),after=State(c,f["unique"].get_str(),Poseidon(next));
         if(mutation==20)after<<OP_NOP;
+        if(mutation==34)before<<OP_NOP;
+        if(mutation==35)before=State(c,"RWAX#OTHER",Poseidon(old));
+        if(mutation==36)after=State(c,"RWAX#OTHER",Poseidon(next));
         CMutableTransaction mut;mut.nVersion=3;mut.vin.resize(2);mut.vin[0].nSequence=1440;
         mut.vout={CTxOut(0,after),CTxOut(190000000,sponsor)};
         std::vector<CTxOut> prev{CTxOut(0,before),CTxOut(200000000,sponsor)};

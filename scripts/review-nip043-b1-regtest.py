@@ -40,16 +40,18 @@ def main():
         pay=bytes.fromhex(sponsor.rpc('validateaddress',payout)['scriptPubKey'])
         funding=confirm(n.rpc('sendtoaddress',payout,2))
         coin=(funding['txid'],next(o['n'] for o in funding['vout'] if o['value']==2 and o['scriptPubKey']['hex']==pay.hex()))
+        extra_funding=confirm(n.rpc('sendtoaddress',payout,2))
+        extra_coin=(extra_funding['txid'],next(o['n'] for o in extra_funding['vout'] if o['value']==2 and o['scriptPubKey']['hex']==pay.hex()))
         if sponsor is not n:
             for height in range(1,n.rpc('getblockcount')+1):
                 result=sponsor.rpc('submitblock',n.rpc('getblock',n.rpc('getblockhash',height),False))
                 if result is not None:raise RuntimeError(result)
         inputs=[state,coin];outputs=[(0,after),(190_000_000,pay)]
         witness=[[b'\x10',bytes.fromhex(f['old']),bytes.fromhex(f['new']),bytes.fromhex(f['leaf']),bytes.fromhex(f['control'])],[]]
-        def raw(seq=f['delay'],outs=outputs,ws=witness):
-            wire=bytearray.fromhex(r.a.raw_transaction(inputs,outs,[],ws))
+        def raw(seq=f['delay'],outs=outputs,ws=witness,ins=inputs):
+            wire=bytearray.fromhex(r.a.raw_transaction(ins,outs,[],ws))
             # v3 marker/flag, two inputs, first outpoint and empty scriptSig.
-            assert wire[6]==2 and wire[43]==0
+            assert wire[6]==len(ins) and len(ins)<253 and wire[43]==0
             wire[44:48]=struct.pack('<I',seq)
             return sponsor.rpc('signrawtransaction',wire.hex())['hex']
         good=raw()
@@ -85,6 +87,9 @@ def main():
         o=outputs.copy();o[0]=(1,after);reject('B1/nonzero_state_xna',raw(outs=o))
         o=outputs.copy();o[1]=(190_000_000,b'\x53\x20'+bytes(32));reject('B1/redirect_sponsor',raw(outs=o))
         o=outputs+[(0,b'\x6a')];reject('B1/extra_output',raw(outs=o))
+        o=outputs.copy();o[1]=(390_000_000,pay)
+        reject('B1/extra_funded_input',raw(outs=o,ws=witness+[[]],ins=inputs+[extra_coin]))
+        o=outputs.copy();o[0]=(0,after+b'\x61');reject('B1/state_script_suffix',raw(outs=o))
         txid=n.rpc('sendrawtransaction',good);activated=n.rpc('generatetoaddress',1,miner)[0]
         check('B1/mined_at_exact_boundary',n.rpc('getblockcount')==first_valid_height)
         check('B1/new_state_exact',n.rpc('gettxout',txid,0)['scriptPubKey']['hex']==after.hex())

@@ -70,7 +70,7 @@ BOOST_AUTO_TEST_CASE(b3_templates_and_mode_with_real_poseidon)
 {
     const auto f=Fixture();const auto standard=GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());
     const auto c=ParseHex(f["program"].get_str()),cv=ParseHex(f["vault_program"].get_str());
-    for(int sponsorVersion : {0,2,3}) for(int mutation=0;mutation<=20;++mutation) {
+    for(int sponsorVersion : {0,2,3}) for(int mutation=0;mutation<=34;++mutation) {
         auto old=ParseHex(f["old"].get_str());
         if(mutation==1)old.back()=0; // Valid opening of mode 0, not merely a wrong digest.
         if(mutation==2)old.back()=2;
@@ -93,12 +93,26 @@ BOOST_AUTO_TEST_CASE(b3_templates_and_mode_with_real_poseidon)
         if(mutation==18)sponsor=CScript()<<OP_0<<Bytes(20,7);
         if(mutation==19)sponsor=CScript()<<OP_2<<Bytes(31,7);
         if(mutation==20)sponsor=CScript()<<OP_3<<Bytes(33,7);
+        if(mutation==21)sponsor=CScript()<<OP_2<<Bytes(33,7);
+        if(mutation==22)sponsor=CScript()<<OP_3<<Bytes(31,7);
+        if(mutation==23)sponsor=CScript()<<OP_0<<Bytes(32,7);
         std::vector<CTxOut> prev{CTxOut(0,state),CTxOut(0,Asset(cv,f["name"].get_str())),CTxOut(0,Asset(cv,f["name"].get_str())),CTxOut(200000000,sponsor)};
         CMutableTransaction mut;mut.nVersion=3;mut.vin.resize(4);
         mut.vout={CTxOut(0,state),CTxOut(0,Asset(cv,f["name"].get_str(),200000000)),CTxOut(190000000,sponsor)};
         if(mutation==4)mut.vout[0].scriptPubKey=Asset(c,f["unique"].get_str(),100000000,Bytes(32));
         if(mutation==5){mut.vin.resize(5);prev.emplace_back(0,sponsor);}
         if(mutation==6)mut.vout.emplace_back(0,CScript()<<OP_RETURN);
+        if(mutation==24)prev[1].scriptPubKey=Asset(cv,f["name"].get_str(),100000000,Bytes(32,1));
+        if(mutation==25)prev[2].scriptPubKey=Asset(cv,f["name"].get_str(),100000000,Bytes(32,1));
+        if(mutation==26)mut.vout[1].scriptPubKey=Asset(cv,f["name"].get_str(),200000000,Bytes(32,1));
+        if(mutation==27)prev[0].nValue=1;
+        if(mutation==28)prev[1].nValue=1;
+        if(mutation==29)prev[2].nValue=1;
+        if(mutation==30)mut.vout[0].nValue=1;
+        if(mutation==31)mut.vout[1].nValue=1;
+        if(mutation==32)mut.vout[2].scriptPubKey=CScript()<<OP_3<<Bytes(32,8);
+        if(mutation==33)prev[1].scriptPubKey=Asset(ParseHex(f["deposit_program"].get_str()),f["name"].get_str());
+        if(mutation==34)prev[2].scriptPubKey=Asset(ParseHex(f["deposit_program"].get_str()),f["name"].get_str());
         auto flags=standard;
         if(mutation==12)flags &= ~SCRIPT_VERIFY_64BIT_INTEGERS;
         if(mutation==13)flags &= ~SCRIPT_VERIFY_AUTHSCRIPT_TREE;
