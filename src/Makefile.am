@@ -30,7 +30,7 @@ LIBNEURAI_COMMON=libneurai_common.a
 LIBNEURAI_CONSENSUS=libneurai_consensus.a
 LIBNEURAI_CLI=libneurai_cli.a
 LIBNEURAI_UTIL=libneurai_util.a
-LIBNEURAI_CRYPTO=crypto/libneurai_crypto.a
+LIBNEURAI_CRYPTO=crypto/libneurai_crypto.a crypto/libneurai_mcl.a
 LIBNEURAIQT=qt/libneuraiqt.a
 LIBSECP256K1=secp256k1/libsecp256k1.la
 
@@ -704,3 +704,5 @@ endif
 if ENABLE_QT_TESTS
 include Makefile.qttest.include
 endif
+
+include Makefile.mcl.include

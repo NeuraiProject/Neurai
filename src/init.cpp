@@ -18,6 +18,7 @@
 #include "compat/sanity.h"
 #include "consensus/validation.h"
 #include "crypto/pq_sanity.h"
+#include "crypto/mcl_backend.h"
 #include "fs.h"
 #include "httpserver.h"
 #include "httprpc.h"
@@ -896,6 +897,11 @@ bool InitSanityCheck(void)
 
     if (!Random_SanityCheck()) {
         InitError("OS cryptographic RNG sanity check failure. Aborting.");
+        return false;
+    }
+
+    if (!MCL_InitSanityCheck()) {
+        InitError("BN254 cryptography sanity check failure. Aborting.");
         return false;
     }
 
