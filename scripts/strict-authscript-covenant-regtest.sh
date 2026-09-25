@@ -2,10 +2,15 @@
 # NIP-041 covenant example on regtest. Host-side wrapper:
 #   - starts a disposable regtest node inside the build container (neurai-strict)
 #   - runs the JS driver in a Node container sharing that container's network
-# Usage: bash scripts/strict-authscript-covenant-regtest.sh [path-to-neurai-scripts]
+# Usage: bash scripts/strict-authscript-covenant-regtest.sh [path-to-neurai-scripts]  # or set NEURAI_SCRIPTS_DIR
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
-LIBS="${1:-/home/mark/src/AAA-experimento/librerias-neurai/neurai-scripts}"
+LIBS="${1:-${NEURAI_SCRIPTS_DIR:-}}"
+if [[ -z "$LIBS" || ! -d "$LIBS" ]]; then
+  echo "Provide an existing neurai-scripts directory as argument or NEURAI_SCRIPTS_DIR" >&2
+  exit 2
+fi
+LIBS="$(cd "$LIBS" && pwd -P)"
 NODE_IMAGE="${NODE_IMAGE:-node:20-bookworm}"
 BUILD_CONTAINER="${BUILD_CONTAINER:-neurai-strict}"
 BASE=/tmp/strict-covenant
