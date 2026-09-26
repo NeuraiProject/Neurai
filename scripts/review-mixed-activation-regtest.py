@@ -67,9 +67,9 @@ def main():
         for node in nodes:
             node.ready()
         wait(lambda: len(source.rpc('getpeerinfo')) == 1, 'P2P handshake')
-        # Below HEIGHT the PQ wallet has no address of its own (strict v2 is not
-        # active and it never manages generic v1): it mines to a Legacy key made
-        # by the classic peer and imported into the PQ wallet.
+        # Below HEIGHT nothing can pay to the PQ wallet's strict v2 addresses
+        # (and it never manages generic v1): it mines to a Legacy key made by
+        # the classic peer and imported into the PQ wallet.
         legacy = peer.rpc('getnewaddress')
         source.rpc('importprivkey', peer.rpc('dumpprivkey', legacy), '', False)
         miner = legacy

@@ -73,8 +73,8 @@ mine() { syncmempool; N1 generatetoaddress "$1" "$(cat $STATE/n1_miner)" >/dev/n
 phase2a() {
   mkdir -p "$BASE/N1" "$BASE/N2" "$STATE"
   startN1; waitrpc N1 18541; startN2; waitrpc N2 18542
-  # Below activation the PQ wallet N1 has no address of its own (strict v2 is not
-  # active and it never manages generic v1): it mines to a Legacy key made by the
+  # Below activation nothing can pay to the PQ wallet N1's strict v2 addresses
+  # (and it never manages generic v1): it mines to a Legacy key made by the
   # classic wallet N2 and imported into N1.
   local miner_leg; miner_leg=$(N2 getnewaddress)
   N1 importprivkey "$(N2 dumpprivkey "$miner_leg")" "" false

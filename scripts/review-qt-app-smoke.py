@@ -14,7 +14,7 @@ spec.loader.exec_module(h)
 root = Path(tempfile.mkdtemp(prefix='qt-app-smoke-'))
 binary = Path(sys.argv[1]).resolve()
 (root / 'neuraid').symlink_to(binary)
-os.environ['QT_QPA_PLATFORM'] = 'offscreen'
+os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')  # xcb under a virtual display for depends (static) Qt builds
 report = {'binary_sha256': h.digest_file(binary), 'results': []}
 node = h.Node(root, root / 'node', ['-addresstype=pq', '-bypassdownload=1',
     '-mnemonic=abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'])

@@ -879,7 +879,10 @@ Strict PQ v2 keeps `pq1z…` / `tpq1z…`; strict ECDSA v3 keeps
 The wallet address type is chosen with `-addresstype=legacy|pq|ecdsa` when the
 wallet file is created (default `legacy`) and stored in it; opening an existing
 wallet with a different `-addresstype` is an init error, and without the option
-the stored type is used (`getwalletinfo` reports it). The type is what the
+the stored type is used (`getwalletinfo` reports it). In the GUI, the
+first-run wallet dialog (create or restore from seed words) offers the three
+types, preset to `-addresstype`; when restoring, the type must be the one the
+wallet was created with, since each type derives its own keys. The type is what the
 wallet hands out by default, in Qt and over RPC (`getnewaddress`,
 `getaccountaddress`, `getrawchangeaddress`, change outputs, the asset RPCs and
 mining):
@@ -891,9 +894,13 @@ mining):
 | `ecdsa` | strict v3 | none: it never hands out Legacy |
 
 `pq` and `ecdsa` require `-bip44=1` (their keys derive from the mnemonic seed:
-`m_pq` and `m/84'` branches) and hand out nothing until AuthScript and the
-strict families apply to the next block; there is no Legacy fallback before
-that. `-pqwallet` was replaced by `-addresstype=pq` and is refused at startup.
+`m_pq` and `m/84'` branches). Their addresses are handed out at any time, even
+with no network or no scheduled activation, but nothing pays to them until
+AuthScript and the strict families apply to the next block: before that, a
+strict address does not decode for paying (sends to it are refused), policy
+rejects outputs to it, and the wallet refuses change to its family, mining to
+it and asset operations that would create such an output. There is no Legacy
+fallback. `-pqwallet` was replaced by `-addresstype=pq` and is refused at startup.
 Generic v1 is a contract family: contracts are built and signed by
 contract tooling, and the wallet never manages v1. It does not hand out v1
 addresses, does not count v1 outputs as its own (whatever spend data an older

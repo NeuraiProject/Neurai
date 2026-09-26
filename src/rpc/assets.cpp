@@ -591,8 +591,13 @@ UniValue UpdateGlobalRestrictedAsset(const JSONRPCRequest &request, const int8_t
 
 #ifdef ENABLE_WALLET
 // New receive destination of the wallet's own address type (-addresstype).
+// The asset output goes to it right away, so its family must be active.
 static CTxDestination NewWalletReceiveDestination(CWallet* const pwallet)
 {
+    std::string inactive;
+    if (!CWallet::IsAddressTypeActive(WalletAddressTypeName(pwallet->GetAddressType()), inactive)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, inactive);
+    }
     if (pwallet->GetAddressType() == WalletAddressType::LEGACY) {
         CPubKey newKey;
         if (!pwallet->GetKeyFromPool(newKey)) {

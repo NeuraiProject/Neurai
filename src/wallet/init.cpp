@@ -20,7 +20,9 @@ std::string GetWalletHelpString(bool showDebug)
                                                                   "or ecdsa (strict ECDSA, witness v3) (default: %s). The wallet then hands out only that type by default "
                                                                   "(receive, change, mining); an ecdsa wallet never hands out legacy addresses. The type is stored in the "
                                                                   "wallet file: opening an existing wallet with a different -addresstype is an error. pq and ecdsa require "
-                                                                  "-bip44=1, and their addresses are only handed out once the network activates them"),
+                                                                  "-bip44=1; their addresses are handed out at any time, but payments to them (including change and "
+                                                                  "mining) are refused until the network activates them. In the GUI, the "
+                                                                  "first-run wallet dialog offers the three types, preset to this value"),
                                                                   WalletAddressTypeName(DEFAULT_WALLET_ADDRESS_TYPE)));
     strUsage += HelpMessageOpt("-bip44=<n>", strprintf(_("Sets the wallet to use/not use bip44 12-words, non-bip44=0 or bip44=1 (default: 1). "
                                                                  "Note: By default 12-words will automatically be generated for you (random word selection). See -mnemonic and -mnemonicpassphrase "

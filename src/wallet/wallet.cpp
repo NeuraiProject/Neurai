@@ -58,7 +58,7 @@ const uint32_t BIP32_HARDENED_KEY_LIMIT = 0x80000000;
 
 std::string my_words;
 std::string my_passphrase;
-bool my_pq = false;
+std::optional<WalletAddressType> my_address_type;
 
 /**
  * Fees smaller than this (in satoshi) are considered zero fee (for transaction creation)
@@ -1358,9 +1358,10 @@ bool CWallet::GetNewDestinationOfType(const std::string& addressType, bool inter
 {
     AssertLockHeld(cs_wallet);
 
-    if (!IsAddressTypeActive(addressType, error)) {
-        return false;
-    }
+    // Handing out an address does not depend on activation: payments to a
+    // strict family are refused until it is active (the address does not
+    // decode for paying, policy rejects the output, and change and mining
+    // check IsAddressTypeActive()).
 
     if (addressType == "pq") {
         if (!IsPQEnabled()) {
@@ -2046,14 +2047,14 @@ CPubKey CWallet::GenerateNewSeed()
 	CPubKey seed(vchSeed.begin(), vchSeed.end());
 	newHdChain.seed_id = seed.GetID();
 
-    if (my_pq || hdChain.IsPQEnabled())
+    // The address type (and so the PQ flag) is decided before the seed.
+    if (hdChain.IsPQEnabled())
         newHdChain.UsePQ(true);
 
 	SetHDChain(newHdChain, false);
 
 	my_passphrase.clear();
 	my_words.clear();
-    my_pq = false;
 
 	return seed;
 
@@ -4926,9 +4927,11 @@ bool CWallet::TopUpStrictEcdsaKeyPool(unsigned int kpSize)
 {
     LOCK(cs_wallet);
 
-    // Only on chains where the strict families are active, and only for
-    // wallets that can derive the m/84' branch (BIP44 seed available).
-    if (!IsStrictAuthScriptActiveInContext() || !IsBip44Enabled() || g_vchSeed.size() < 32) {
+    // Only for wallets that can derive the m/84' branch (BIP44 seed
+    // available), and in legacy/PQ wallets only where the strict families
+    // are active. For an ecdsa wallet it is the main keypool: always kept.
+    if ((!IsStrictAuthScriptActiveInContext() && GetAddressType() != WalletAddressType::ECDSA) ||
+        !IsBip44Enabled() || g_vchSeed.size() < 32) {
         return true;
     }
     if (IsLocked()) {
@@ -5766,8 +5769,11 @@ CWallet* CWallet:: CreateWalletFromFile(const std::string walletFile)
     // The address family is chosen when the wallet file is created
     // (-addresstype) and cannot change afterwards. The value was validated by
     // WalletParameterInteraction().
+    const std::string strAddressType = gArgs.GetArg("-addresstype", "");
     WalletAddressType requestedAddressType = DEFAULT_WALLET_ADDRESS_TYPE;
-    ParseWalletAddressType(gArgs.GetArg("-addresstype", WalletAddressTypeName(DEFAULT_WALLET_ADDRESS_TYPE)), requestedAddressType);
+    if (!strAddressType.empty()) {
+        ParseWalletAddressType(strAddressType, requestedAddressType);
+    }
     if (!fFirstRun) {
         const uint8_t nStored = walletInstance->GetStoredAddressType();
         if (nStored > static_cast<uint8_t>(WalletAddressType::ECDSA)) {
@@ -5779,7 +5785,7 @@ CWallet* CWallet:: CreateWalletFromFile(const std::string walletFile)
             return nullptr;
         }
         const WalletAddressType walletAddressType = walletInstance->GetAddressType();
-        if (gArgs.IsArgSet("-addresstype") && requestedAddressType != walletAddressType) {
+        if (!strAddressType.empty() && requestedAddressType != walletAddressType) {
             InitError(strprintf(_("Wallet %s was created with -addresstype=%s and cannot be opened with -addresstype=%s. "
                 "The address type is fixed when the wallet is created: remove the option or use a new wallet file."),
                 walletFile, WalletAddressTypeName(walletAddressType), WalletAddressTypeName(requestedAddressType)));
@@ -5808,14 +5814,6 @@ CWallet* CWallet:: CreateWalletFromFile(const std::string walletFile)
                 WalletAddressTypeName(requestedAddressType)));
             return nullptr;
         }
-        if (requestedAddressType == WalletAddressType::PQ) {
-            walletInstance->UsePQ(true);
-        }
-        if (!walletInstance->SetAddressType(requestedAddressType)) {
-            InitError(strprintf(_("Error creating %s: writing the wallet address type failed"), walletFile));
-            return nullptr;
-        }
-        LogPrintf("parameter interaction: -addresstype=%s\n", WalletAddressTypeName(requestedAddressType));
 
         if (!walletInstance->hdChain.IsBip44()) {
             CPubKey seed = walletInstance->GenerateNewSeed();
@@ -5823,11 +5821,30 @@ CWallet* CWallet:: CreateWalletFromFile(const std::string walletFile)
                 throw std::runtime_error(std::string(__func__) + ": Storing HD seed failed");
         }
 
-        // If this is the first run, show the bip44 gui to the user
+        // If this is the first run, show the bip44 gui to the user. The GUI
+        // dialog also picks the address type, preset to -addresstype (it is
+        // only shown for BIP44 wallets, which every type supports).
+        WalletAddressType addressType = requestedAddressType;
         if (walletInstance->hdChain.IsBip44()){
-            if (gArgs.GetArg("-mnemonic", "").empty() && gArgs.GetArg("-mnemonicpassphrase", "").empty())
+            if (gArgs.GetArg("-mnemonic", "").empty() && gArgs.GetArg("-mnemonicpassphrase", "").empty()) {
+                my_address_type.reset();
                 uiInterface.ShowMnemonic(CClientUIInterface::MODAL);
+                if (my_address_type) {
+                    addressType = *my_address_type;
+                }
+                my_address_type.reset();
+            }
         }
+
+        // Decided before the seed is derived: the HD chain carries the PQ flag.
+        if (addressType == WalletAddressType::PQ) {
+            walletInstance->UsePQ(true);
+        }
+        if (!walletInstance->SetAddressType(addressType)) {
+            InitError(strprintf(_("Error creating %s: writing the wallet address type failed"), walletFile));
+            return nullptr;
+        }
+        LogPrintf("Wallet address type: %s\n", WalletAddressTypeName(addressType));
 
         // generate a new seed
         if (walletInstance->hdChain.IsBip44())

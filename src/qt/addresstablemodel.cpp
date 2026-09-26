@@ -9,6 +9,7 @@
 #include "walletmodel.h"
 
 #include "base58.h"
+#include "script/script.h"
 #include "wallet/wallet.h"
 
 
@@ -243,7 +244,12 @@ bool AddressTableModel::setData(const QModelIndex &index, const QVariant &value,
     if(role == Qt::EditRole)
     {
         LOCK(wallet->cs_wallet); /* For SetAddressBook / DelAddressBook */
-        CTxDestination curAddress = DecodeDestination(rec->address.toStdString());
+        CTxDestination curAddress;
+        {
+            // An existing entry, whatever the activation state (as when loading).
+            CStrictAuthScriptContext bookkeeping(true);
+            curAddress = DecodeDestination(rec->address.toStdString());
+        }
         if(index.column() == Label)
         {
             // Do nothing, if old label == new label
@@ -341,6 +347,7 @@ QString AddressTableModel::addRow(const QString &type, const QString &label, con
 {
     std::string strLabel = label.toStdString();
     std::string strAddress = address.toStdString();
+    CTxDestination entryDest;
 
     editStatus = OK;
 
@@ -354,7 +361,8 @@ QString AddressTableModel::addRow(const QString &type, const QString &label, con
         // Check for duplicate addresses
         {
             LOCK(wallet->cs_wallet);
-            if(wallet->mapAddressBook.count(DecodeDestination(strAddress)))
+            entryDest = DecodeDestination(strAddress);
+            if(wallet->mapAddressBook.count(entryDest))
             {
                 editStatus = DUPLICATE_ADDRESS;
                 return QString();
@@ -388,6 +396,9 @@ QString AddressTableModel::addRow(const QString &type, const QString &label, con
                 return QString();
             }
         }
+        // Kept as generated: a strict address does not decode for paying
+        // until its family is active, but it is already the wallet's own.
+        entryDest = dest;
         strAddress = EncodeDestination(dest);
     }
     else
@@ -396,7 +407,7 @@ QString AddressTableModel::addRow(const QString &type, const QString &label, con
     }
 
     // Add entry
-    wallet->SetAddressBook(DecodeDestination(strAddress), strLabel,
+    wallet->SetAddressBook(entryDest, strLabel,
                            (type == Send ? "send" : "receive"));
     return QString::fromStdString(strAddress);
 }
@@ -411,6 +422,7 @@ bool AddressTableModel::removeRows(int row, int count, const QModelIndex &parent
         // Also refuse to remove receiving addresses.
         return false;
     }
+    CStrictAuthScriptContext bookkeeping(true); // an existing entry
     wallet->DelAddressBook(DecodeDestination(rec->address.toStdString()));
     return true;
 }
@@ -421,6 +433,7 @@ QString AddressTableModel::labelForAddress(const QString &address) const
 {
     {
         LOCK(wallet->cs_wallet);
+        CStrictAuthScriptContext bookkeeping(true); // a lookup, not a payment
         CTxDestination destination = DecodeDestination(address.toStdString());
         std::map<CTxDestination, CAddressBookData>::iterator mi = wallet->mapAddressBook.find(destination);
         if (mi != wallet->mapAddressBook.end())

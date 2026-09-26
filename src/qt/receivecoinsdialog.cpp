@@ -213,7 +213,7 @@ void ReceiveCoinsDialog::on_receiveButton_clicked()
         address = model->getAddressTableModel()->addRow(AddressTableModel::Receive, label, "");
     }
     if (address.isEmpty()) {
-        QMessageBox::warning(this, tr("Receive"), tr("Could not generate a receiving address. Check wallet availability and network activation."));
+        QMessageBox::warning(this, tr("Receive"), tr("Could not generate a receiving address. Check that the wallet is available and unlocked."));
         return;
     }
     SendCoinsRecipient info(address, label,

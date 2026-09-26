@@ -14,7 +14,34 @@
 
 #if !TEST
   #include <qt/guiutil.h>
+  #include <util.h>
   #include <wallet/wallet.h>
+#endif
+
+#include <QRadioButton>
+
+#if !TEST
+namespace {
+// The address type the dialog starts with: -addresstype, Legacy by default.
+WalletAddressType PresetAddressType()
+{
+    WalletAddressType type = DEFAULT_WALLET_ADDRESS_TYPE;
+    ParseWalletAddressType(gArgs.GetArg("-addresstype", WalletAddressTypeName(DEFAULT_WALLET_ADDRESS_TYPE)), type);
+    return type;
+}
+
+void CheckAddressType(QRadioButton* legacy, QRadioButton* pq, QRadioButton* ecdsa, WalletAddressType type)
+{
+    (type == WalletAddressType::PQ ? pq : type == WalletAddressType::ECDSA ? ecdsa : legacy)->setChecked(true);
+}
+
+WalletAddressType CheckedAddressType(const QRadioButton* pq, const QRadioButton* ecdsa)
+{
+    if (pq->isChecked()) return WalletAddressType::PQ;
+    if (ecdsa->isChecked()) return WalletAddressType::ECDSA;
+    return WalletAddressType::LEGACY;
+}
+} // namespace
 #endif
 
 MnemonicDialog::MnemonicDialog(QWidget *parent) :
@@ -101,6 +128,9 @@ MnemonicDialog2::MnemonicDialog2(QWidget *parent) :
         MnemonicDialog2::ui->languageSeedWords->addItem(languagesDetails[langNum].label);
     }
     MnemonicDialog2::ui->languageSeedWords->installEventFilter(this);
+#if !TEST
+    CheckAddressType(ui->addressTypeLegacyRadio, ui->addressTypePQRadio, ui->addressTypeEcdsaRadio, PresetAddressType());
+#endif
 
 };
 
@@ -147,7 +177,7 @@ void MnemonicDialog2::on_acceptButton_clicked()
     }
 
 #if !TEST
-    my_pq = MnemonicDialog2::ui->pqWalletCheckBox->isChecked();
+    my_address_type = CheckedAddressType(ui->addressTypePQRadio, ui->addressTypeEcdsaRadio);
 #endif
 
     Q_EMIT allCloseRequested();
@@ -189,6 +219,9 @@ MnemonicDialog3::MnemonicDialog3(QWidget *parent) :
         MnemonicDialog3::ui->languageSeedWords->addItem(languagesDetails[langNum].label);
     }
     MnemonicDialog3::ui->languageSeedWords->installEventFilter(this);
+#if !TEST
+    CheckAddressType(ui->addressTypeLegacyRadio, ui->addressTypePQRadio, ui->addressTypeEcdsaRadio, PresetAddressType());
+#endif
 };
 
 bool MnemonicDialog3::eventFilter(QObject *obj, QEvent *ev)
@@ -249,12 +282,14 @@ void MnemonicDialog3::on_acceptButton_clicked()
          
         my_words.clear();
         my_passphrase.clear();
-        my_pq = false;
+#if !TEST
+        my_address_type.reset();
+#endif
         return;
     }
 
 #if !TEST
-    my_pq = MnemonicDialog3::ui->pqWalletCheckBox->isChecked();
+    my_address_type = CheckedAddressType(ui->addressTypePQRadio, ui->addressTypeEcdsaRadio);
 #endif
 
     Q_EMIT allCloseRequested();

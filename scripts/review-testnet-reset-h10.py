@@ -5,7 +5,7 @@ Runs isolated nodes with the real -testnet parameters of the current binary
 (fresh data directories, no seeds) and checks, on both sides of the opt-in
 activation height H:
   * legacy spends, tx v3, an OP_CAT P2SH spend and the NIP-040 asset marker;
-  * wallet refusal of AuthScript/strict receive addresses before H;
+  * strict wallet addresses handed out before H but not payable until H;
   * -addresstype (legacy, pq, ecdsa): default family on each side of H, the
     ecdsa wallet never handing out Legacy, and the error when an existing
     wallet is opened with a different -addresstype;
@@ -29,6 +29,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+GENESIS = '0000008b384aeffecdab182575dc4e86c9f07f90318c65088532660ed9a8a021'  # reset testnet, 2026-09-26
 H = 10                       # opt-in activation height of the reset testnet
 MATURITY = 5                 # COINBASE_MATURITY_TESTNET
 MARKER_RVN = '72766e'        # "rvn" asset marker
@@ -235,6 +236,7 @@ def main():
 
         info = a.rpc('getblockchaininfo')
         check('network is testnet', info['chain'] == 'test', info['chain'])
+        check('chain starts at the reset-testnet genesis', a.rpc('getblockhash', 0) == GENESIS, a.rpc('getblockhash', 0))
 
 
         def tip():
@@ -317,20 +319,21 @@ def main():
         mine(MATURITY + 1)                               # tip 6: coinbase of block 1 is mature
         check('tip before probes', tip() == MATURITY + 1, tip())
 
-        expect_error('PQ wallet refuses its default (strict v2) address before H',
-                     lambda: b.rpc('getnewaddress'), 'not active yet')
+        # Addresses are handed out before H; paying to them is what is refused.
+        b_early = b.rpc('getnewaddress')
+        check('PQ wallet hands out its default (strict v2) address before H', b_early.startswith('tpq1z'), b_early)
         expect_error('wallet never hands out generic AuthScript v1 (contract) addresses',
                      lambda: b.rpc('getnewaddress', '', 'authscript'), 'Unknown address type')
-        expect_error('wallet refuses a strict pq address before H',
-                     lambda: b.rpc('getnewaddress', '', 'pq'), 'not active')
         types = [n.rpc('getwalletinfo')['addresstype'] for n in (a, b, c)]
         check('wallets report the -addresstype they were created with', types == ['legacy', 'pq', 'ecdsa'], types)
-        expect_error('ecdsa wallet refuses its default (strict v3) address before H',
-                     lambda: c.rpc('getnewaddress'), 'not active yet')
+        c_early = c.rpc('getnewaddress')
+        check('ecdsa wallet hands out its default (strict v3) address before H', c_early.startswith('tnq1r'), c_early)
         expect_error('ecdsa wallet never hands out Legacy (no fallback before H)',
                      lambda: c.rpc('getnewaddress', '', 'legacy'), 'strict ECDSA wallet')
-        expect_error('ecdsa wallet refuses strict v3 change before H',
-                     lambda: c.rpc('getrawchangeaddress'), 'not active yet')
+        expect_error('payment to a strict address handed out before H is refused before H',
+                     lambda: a.rpc('sendtoaddress', c_early, 1), 'Invalid')
+        expect_error('ecdsa wallet does not mine to strict v3 before H',
+                     lambda: c.rpc('generate', 1), 'not active yet')
 
         legacy_txid = a.rpc('sendtoaddress', a.rpc('getnewaddress'), 1)
         check('legacy payment accepted before H', legacy_txid in a.rpc('getrawmempool'), legacy_txid)
@@ -438,8 +441,11 @@ def main():
         check('ecdsa wallet mines to a strict v3 output',
               coinbase['vout'][0]['scriptPubKey']['hex'].startswith('5320'), coinbase['vout'][0]['scriptPubKey'])
         a.rpc('sendtoaddress', c_address, 5)
-        wait(lambda: len(c.rpc('getrawmempool')) > 0, 'payment to the ecdsa wallet')
+        a.rpc('sendtoaddress', c_early, 1)
+        wait(lambda: len(c.rpc('getrawmempool')) > 1, 'payments to the ecdsa wallet')
         c.rpc('generatetoaddress', 1, c.rpc('getnewaddress'))
+        check('address handed out before H receives once H is reached',
+              c.rpc('getreceivedbyaddress', c_early) == 1, c.rpc('getreceivedbyaddress', c_early))
         spend = c.rpc('sendtoaddress', miner, 1)
         spend_tx = c.rpc('getrawtransaction', spend, True)
         change_spks = [o['scriptPubKey']['hex'] for o in spend_tx['vout'] if o['scriptPubKey'].get('addresses') != [miner]]

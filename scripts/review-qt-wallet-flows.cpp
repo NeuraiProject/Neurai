@@ -1,5 +1,10 @@
 // Standalone GUI review harness. Built as test_main.cpp in an isolated Qt build.
+#if defined(HAVE_CONFIG_H)
+#include "config/neurai-config.h"
+#endif
 #include "test/test_neurai.h"
+#include "base58.h"
+#include "script/ismine.h"
 #include "wallet/wallet.h"
 #include "wallet/coincontrol.h"
 #include "assets/myassetsdb.h"
@@ -20,6 +25,7 @@
 #include "qt/assetcontroldialog.h"
 #include "qt/assetsdialog.h"
 #include "qt/sendassetsentry.h"
+#include "qt/mnemonicdialog.h"
 #include <QApplication>
 #include <QPlainTextEdit>
 #include <QLineEdit>
@@ -28,11 +34,30 @@
 #include <QMessageBox>
 #include <QVBoxLayout>
 #include <QAbstractButton>
+#include <QCheckBox>
+#include <QRadioButton>
 #include <QDir>
+#include <QRegularExpression>
 #include <QClipboard>
 #include <QComboBox>
 #include <QStringListModel>
 #include <iostream>
+
+// A static Qt (depends build) only has the platform plugins imported here,
+// as in the original test_main.cpp.
+#if defined(QT_STATICPLUGIN)
+#include <QtPlugin>
+#if defined(QT_QPA_PLATFORM_MINIMAL)
+Q_IMPORT_PLUGIN(QMinimalIntegrationPlugin);
+#endif
+#if defined(QT_QPA_PLATFORM_XCB)
+Q_IMPORT_PLUGIN(QXcbIntegrationPlugin);
+#elif defined(QT_QPA_PLATFORM_WINDOWS)
+Q_IMPORT_PLUGIN(QWindowsIntegrationPlugin);
+#elif defined(QT_QPA_PLATFORM_COCOA)
+Q_IMPORT_PLUGIN(QCocoaIntegrationPlugin);
+#endif
+#endif
 
 static int checks = 0;
 static void Check(bool ok, const std::string& label) {
@@ -46,7 +71,9 @@ template<typename T> T* Field(QObject& parent, const char* name) {
     return field;
 }
 int main(int argc, char** argv) {
-    qputenv("QT_QPA_PLATFORM", "offscreen");
+    // offscreen by default; builds whose Qt only ships xcb/wayland (depends)
+    // run under a virtual display with QT_QPA_PLATFORM=xcb.
+    if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM")) qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication app(argc, argv);
     app.setApplicationName("Neurai-point6-review");
     QTimer watchdog;
@@ -85,11 +112,12 @@ int main(int argc, char** argv) {
         pq.MakeNewKeyPQ(); ec.MakeNewKey(true);
         wallet.AddKeyPubKey(pq, pq.GetPubKey());
         wallet.AddKeyPubKey(ec, ec.GetPubKey());
-        std::vector<CTxDestination> destinations(4);
+        // Wallet families: Legacy, strict PQ (v2) and strict ECDSA (v3). Generic
+        // AuthScript v1 is a contract family the wallet never manages.
+        std::vector<CTxDestination> destinations(3);
         destinations[0] = ec.GetPubKey().GetID();
-        Check(wallet.GetDefaultAuthScriptDestination(pq.GetPubKey(), destinations[1]), "register/v1");
-        Check(wallet.GetStrictAuthScriptDestination(pq.GetPubKey(), destinations[2]), "register/v2");
-        Check(wallet.GetStrictAuthScriptDestination(ec.GetPubKey(), destinations[3]), "register/v3");
+        Check(wallet.GetStrictAuthScriptDestination(pq.GetPubKey(), destinations[1]), "register/v2");
+        Check(wallet.GetStrictAuthScriptDestination(ec.GetPubKey(), destinations[2]), "register/v3");
         std::unique_ptr<const PlatformStyle> style(PlatformStyle::instantiate("other"));
         OptionsModel options;
         WalletModel model(style.get(), &wallet, &options);
@@ -106,13 +134,100 @@ int main(int argc, char** argv) {
             const auto address = receiveModel.getAddressTableModel()->addRow(AddressTableModel::Receive, "strict", "");
             Check(address.startsWith("tpq1z"), "receive/new-pq-is-v2");
             Check(receiveModel.validateAddress(address), "receive/new-pq-valid");
+            // Before activation the address is still handed out (payments to
+            // it are what is refused), and it lands in the address book.
             CStrictAuthScriptContext below(false);
-            const auto unavailable = receiveModel.getAddressTableModel()->addRow(AddressTableModel::Receive, "inactive", "");
-            Check(unavailable.isEmpty(), "receive/before-activation-no-v1-fallback");
+            const auto early = receiveModel.getAddressTableModel()->addRow(AddressTableModel::Receive, "inactive", "");
+            Check(early.startsWith("tpq1z"), "receive/pq-before-activation-still-v2");
+            Check(receiveModel.getAddressTableModel()->labelForAddress(early) == "inactive",
+                  "receive/pq-before-activation-in-address-book");
+            Check(!receiveModel.validateAddress(early), "receive/pq-before-activation-not-payable");
+        }
+        {
+            // First-run wallet dialog: three address types, Legacy preselected,
+            // preset from -addresstype; the choice goes to wallet creation.
+            MnemonicDialog dialog;
+            auto create = dialog.findChild<MnemonicDialog2*>();
+            auto restore = dialog.findChild<MnemonicDialog3*>();
+            Check(create && restore, "dialog/pages");
+            for (QWidget* page : {static_cast<QWidget*>(create), static_cast<QWidget*>(restore)}) {
+                Check(page->findChild<QCheckBox*>("pqWalletCheckBox") == nullptr, "dialog/no-pq-checkbox");
+                Check(page->findChildren<QRadioButton*>(QRegularExpression("^addressType")).size() == 3, "dialog/three-types");
+                Check(page->findChild<QRadioButton*>("addressTypeLegacyRadio")->isChecked(), "dialog/legacy-by-default");
+            }
+            QMetaObject::invokeMethod(create, "on_generateButton_clicked");
+            const QString words = Field<QPlainTextEdit>(*create, "seedwordsText")->toPlainText();
+            Field<QRadioButton>(*create, "addressTypeEcdsaRadio")->setChecked(true);
+            my_address_type.reset();
+            QMetaObject::invokeMethod(create, "on_acceptButton_clicked");
+            Check(my_address_type && *my_address_type == WalletAddressType::ECDSA, "dialog/create-picks-ecdsa");
+            Field<QPlainTextEdit>(*restore, "seedwordsEdit")->setPlainText(words);
+            Field<QRadioButton>(*restore, "addressTypePQRadio")->setChecked(true);
+            my_address_type.reset();
+            QMetaObject::invokeMethod(restore, "on_acceptButton_clicked");
+            Check(my_address_type && *my_address_type == WalletAddressType::PQ, "dialog/restore-picks-pq");
+            Field<QPlainTextEdit>(*restore, "seedwordsEdit")->setPlainText("not valid words");
+            QMetaObject::invokeMethod(restore, "on_acceptButton_clicked");
+            Check(!my_address_type, "dialog/invalid-words-clear-choice");
+            my_address_type.reset();
+            dialog.show();
+            for (int page : {1, 2}) {
+                QMetaObject::invokeMethod(&dialog, "onChangeWindowRequested", Q_ARG(int, page));
+                app.processEvents();
+                Check(dialog.grab().save(QString("wallet-dialog-%1.png").arg(page == 1 ? "create" : "restore")),
+                      "dialog/render");
+            }
+            dialog.hide();
+            gArgs.ForceSetArg("-addresstype", "pq");
+            MnemonicDialog preset;
+            Check(Field<QRadioButton>(*preset.findChild<MnemonicDialog2*>(), "addressTypePQRadio")->isChecked() &&
+                  Field<QRadioButton>(*preset.findChild<MnemonicDialog3*>(), "addressTypePQRadio")->isChecked(),
+                  "dialog/preset-from-addresstype");
+            gArgs.ForceSetArg("-addresstype", "");
+        }
+        {
+            // -addresstype=ecdsa: the GUI hands out strict v3 only, never Legacy.
+            CWallet receiving(std::unique_ptr<CWalletDBWrapper>(new CWalletDBWrapper(&bitdb, "ecdsa_receiving.dat")));
+            bool firstReceiving;
+            receiving.LoadWallet(firstReceiving);
+            receiving.UseBip44(true);
+            receiving.GenerateNewSeed();
+            Check(receiving.SetAddressType(WalletAddressType::ECDSA), "receive/ecdsa-wallet");
+            WalletModel receiveModel(style.get(), &receiving, &options);
+            const auto address = receiveModel.getAddressTableModel()->addRow(AddressTableModel::Receive, "strict", "");
+            Check(address.startsWith("tnq1r"), "receive/new-ecdsa-is-v3");
+            Check(receiveModel.validateAddress(address), "receive/new-ecdsa-valid");
+            Check(IsMine(receiving, GetScriptForDestination(DecodeDestination(address.toStdString()))) == ISMINE_SPENDABLE,
+                  "receive/new-ecdsa-is-mine");
+            CStrictAuthScriptContext below(false);
+            const auto early = receiveModel.getAddressTableModel()->addRow(AddressTableModel::Receive, "inactive", "");
+            Check(early.startsWith("tnq1r"), "receive/ecdsa-before-activation-still-v3-no-legacy");
+            Check(receiveModel.getAddressTableModel()->labelForAddress(early) == "inactive",
+                  "receive/ecdsa-before-activation-in-address-book");
+            Check(receiveModel.saveReceiveRequest(early.toStdString(), 1, "request"),
+                  "receive/ecdsa-before-activation-request-saved");
+            Check(!receiveModel.validateAddress(early), "receive/ecdsa-before-activation-not-payable");
+        }
+        {
+            // -addresstype=legacy (default): the GUI keeps handing out Legacy.
+            CWallet receiving(std::unique_ptr<CWalletDBWrapper>(new CWalletDBWrapper(&bitdb, "legacy_receiving.dat")));
+            bool firstReceiving;
+            receiving.LoadWallet(firstReceiving);
+            receiving.UseBip44(true);
+            receiving.GenerateNewSeed();
+            Check(receiving.SetAddressType(WalletAddressType::LEGACY), "receive/legacy-wallet");
+            WalletModel receiveModel(style.get(), &receiving, &options);
+            const auto address = receiveModel.getAddressTableModel()->addRow(AddressTableModel::Receive, "legacy", "");
+            const CTxDestination dest = DecodeDestination(address.toStdString());
+            Check(boost::get<CKeyID>(&dest) != nullptr, "receive/new-legacy-is-p2pkh");
+            CStrictAuthScriptContext below(false);
+            const auto early = receiveModel.getAddressTableModel()->addRow(AddressTableModel::Receive, "early", "");
+            Check(!early.isEmpty(), "receive/legacy-available-before-activation");
         }
 
         for (size_t v = 0; v < destinations.size(); ++v) {
-            const auto label = "v" + std::to_string(v);
+            static const char* const families[] = {"legacy", "v2", "v3"};
+            const std::string label = families[v];
             QString address = QString::fromStdString(EncodeDestination(destinations[v]));
             Check(model.validateAddress(address), label + "/validate");
             ReceiveRequestDialog receive;
@@ -179,7 +294,7 @@ int main(int argc, char** argv) {
             CoinControlDialog::coinControl->Select(COutPoint(txid, index));
             CoinControlDialog::payAmounts = {COIN / 2};
             CoinControlDialog::updateLabels(&model, &control);
-            const int expected = v == 0 ? 226 : v == 3 ? 148 : 1056;
+            const int expected = v == 0 ? 226 : v == 2 ? 148 : 1056;
             auto text = Field<QLabel>(control, "labelCoinControlBytes")->text();
             Check(text.contains(QString::number(expected)), label + "/coin-control-bytes " + text.toStdString());
             CoinControlDialog::coinControl->UnSelectAll();

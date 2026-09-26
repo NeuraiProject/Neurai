@@ -27,9 +27,9 @@ inmempool() { A getrawmempool | jget 'sys.argv[2] in d' "$1"; }
 echo "== start"
 startA; waitrpc A
 startF; waitrpc F
-# A PQ wallet has no address of its own below activation (strict v2 is not
-# active and generic v1 is a contract family it never manages), so its funds
-# come from a Legacy key made by F and imported into A.
+# Below activation a PQ wallet hands out strict v2 addresses, but nothing can
+# pay to them until then (and generic v1 is a contract family it never
+# manages), so its funds come from a Legacy key made by F and imported into A.
 A_LEG=$(F getnewaddress)
 A importprivkey "$(F dumpprivkey "$A_LEG")" "" false
 ALT_LEG=$(F getnewaddress)   # coinbase address for the alternative branch (makes its blocks differ)
@@ -39,8 +39,12 @@ check "${F_EC:0:5}" "tnq1r" "factory node (activation height 0) produces strict 
 echo "== below activation (tip 110, next block 111 < $ACT)"
 mine 110
 check "$(A getblockcount)" "110" "tip height"
-if A getnewaddress "" pq >/dev/null 2>&1; then bad "strict PQ address must not be available below activation"; else ok "getnewaddress pq refused below activation"; fi
-if A getnewaddress "" ecdsa >/dev/null 2>&1; then bad "strict ECDSA address must not be available below activation"; else ok "getnewaddress ecdsa refused below activation"; fi
+# Addresses are handed out below activation; paying to them is what is refused.
+A_EARLY_PQ=$(A getnewaddress "" pq 2>&1)
+A_EARLY_EC=$(A getnewaddress "" ecdsa 2>&1)
+check "${A_EARLY_PQ:0:5}" "tpq1z" "strict PQ address handed out below activation"
+check "${A_EARLY_EC:0:5}" "tnq1r" "strict ECDSA address handed out below activation"
+if A sendtoaddress "$A_EARLY_PQ" 1 >/dev/null 2>&1; then bad "must not pay to the wallet's own strict address below activation"; else ok "sendtoaddress to its own strict address refused below activation"; fi
 check "$(A validateaddress "$F_EC" | jget 'str(d["isvalid"])')" "False" "strict address is not decodable below activation"
 if A sendtoaddress "$F_EC" 1 >/dev/null 2>&1; then bad "must not pay to a strict address below activation"; else ok "sendtoaddress to a strict address refused below activation"; fi
 check "$(A getwalletinfo | jget 'str("keypoolsize_strict_ecdsa" in d)')" "False" "no strict ECDSA keypool below activation"
@@ -65,11 +69,13 @@ T_FUND_PQ=$(fund_raw "$A_PQ")
 T_FUND_EC=$(fund_raw "$A_EC")
 A_EC2=$(A getnewaddress "" ecdsa)
 T_FUND_EC2=$(fund_raw "$A_EC2")           # spent later by a transaction left PENDING across the reorg
+T_FUND_EARLY=$(fund_raw "$A_EARLY_EC")    # the address handed out below activation
 mine 1
 check "$(A getblockcount)" "$ACT" "tip is the activation block"
 B_ACT=$(A getblockhash $ACT)
 B_PREV=$(A getblockhash $((ACT-1)))
 check "$(A getrawtransaction "$T_FUND_PQ" true | jget 'd["confirmations"]')" "1" "payment to strict PQ confirmed in the activation block"
+check "$(A listunspent 1 9999 "[\"$A_EARLY_EC\"]" | jget 'str(len(d))')" "1" "address handed out below activation receives once active"
 
 # spend_all ADDR DEST -> txid (explicit UTXO, whole amount minus fee)
 spend_all() {
@@ -90,7 +96,7 @@ TIP_BEFORE=$(A getbestblockhash)
 echo "== reorganise below the activation height (invalidate block $((ACT-1)) -> tip $((ACT-2)))"
 A invalidateblock "$B_PREV" >/dev/null
 check "$(A getblockcount)" "$((ACT-2))" "tip went below activation"
-if A getnewaddress "" pq >/dev/null 2>&1; then bad "strict addresses must be unavailable again below activation"; else ok "getnewaddress pq refused again after the reorg"; fi
+if A sendtoaddress "$A_PQ" 1 >/dev/null 2>&1; then bad "strict payments must be refused again below activation"; else ok "sendtoaddress to a strict address refused again after the reorg"; fi
 check "$(A validateaddress "$A_PQ" | jget 'str(d["isvalid"])')" "False" "strict address not decodable again after the reorg"
 # Disconnected transactions go back through mempool acceptance under the rules
 # of the new next block (inactive). Paying TO a v2/v3 output is refused by

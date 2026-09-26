@@ -287,13 +287,55 @@
     </spacer>
    </item>
    <item>
-    <widget class="QCheckBox" name="pqWalletCheckBox">
-     <property name="toolTip">
-      <string>Enable this if the wallet you are restoring originally used post-quantum addresses with ML-DSA-44 (FIPS 204). Restoring a PQ wallet as legacy will derive different addresses.</string>
+    <widget class="QGroupBox" name="addressTypeGroup">
+     <property name="title">
+      <string>Address type of the wallet being restored</string>
      </property>
-     <property name="text">
-      <string>This seed belongs to a Post-Quantum wallet (ML-DSA-44 / FIPS 204)</string>
-     </property>
+     <layout class="QVBoxLayout" name="addressTypeLayout">
+      <item>
+       <widget class="QRadioButton" name="addressTypeLegacyRadio">
+        <property name="toolTip">
+         <string>Classic Base58 addresses, available from the start of the chain.</string>
+        </property>
+        <property name="text">
+         <string>Legacy (secp256k1, Base58) - default</string>
+        </property>
+        <property name="checked">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QRadioButton" name="addressTypePQRadio">
+        <property name="toolTip">
+         <string>Quantum-resistant signatures with ML-DSA-44 (FIPS 204): strict post-quantum witness v2 addresses.</string>
+        </property>
+        <property name="text">
+         <string>Post-Quantum (ML-DSA-44 / FIPS 204)</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QRadioButton" name="addressTypeEcdsaRadio">
+        <property name="toolTip">
+         <string>Standard secp256k1 signatures with strict ECDSA witness v3 addresses. This wallet never hands out Legacy addresses.</string>
+        </property>
+        <property name="text">
+         <string>ECDSA (secp256k1, witness v3)</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="addressTypeNote">
+        <property name="text">
+         <string>Choose the type the wallet was created with: each type derives its own addresses from the seed, so restoring with a different type shows a different wallet. The type is stored in the wallet and cannot be changed later.</string>
+        </property>
+        <property name="wordWrap">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+     </layout>
     </widget>
    </item>
    <item>

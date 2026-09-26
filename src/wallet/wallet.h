@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <atomic>
 #include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <stdint.h>
@@ -45,7 +46,6 @@ extern bool fWalletRbf;
 
 extern std::string my_words;
 extern std::string my_passphrase;
-extern bool my_pq;
 
 static const unsigned int DEFAULT_KEYPOOL_SIZE = 1000;
 //! -paytxfee default
@@ -89,6 +89,9 @@ static const WalletAddressType DEFAULT_WALLET_ADDRESS_TYPE = WalletAddressType::
 bool ParseWalletAddressType(const std::string& name, WalletAddressType& type);
 //! The -addresstype / address_type name of a family.
 std::string WalletAddressTypeName(WalletAddressType type);
+//! Address type picked in the first-run GUI wallet dialog (preset to
+//! -addresstype); unset when no dialog chose one.
+extern std::optional<WalletAddressType> my_address_type;
 
 static const int64_t TIMESTAMP_MIN = 0;
 
@@ -1107,9 +1110,10 @@ public:
     bool GetNewDestinationOfType(const std::string& addressType, bool internal, CTxDestination& dest, std::string& error, CPubKey* pPubKey = nullptr);
     /** New destination of the wallet's own family (GetAddressType()). */
     bool GetNewDestination(bool internal, CTxDestination& dest, std::string& error);
-    /** Whether addresses of that family may be handed out for the next block
-     *  (the strict families need AuthScript and strict activation); fills
-     *  error otherwise. Legacy is always active. */
+    /** Whether outputs of that family may be created for the next block
+     *  (change, mining, immediate asset destinations; the strict families
+     *  need AuthScript and strict activation); fills error otherwise. Legacy
+     *  is always active. Handing out addresses does not depend on it. */
     static bool IsAddressTypeActive(const std::string& addressType, std::string& error);
     /** The receive destination a key of this wallet stands for: strict v2 for
      *  a PQ key, strict v3 in a strict ECDSA wallet, Legacy otherwise. */

@@ -474,37 +474,36 @@ public:
         nPruneAfterHeight = 1000;
 
         // SHA256 testnet: KAWPOW never activates — keeps Bitcoin-style 4-byte nNonce format
-        // Must be set BEFORE genesis mining so GetHash() uses the SHA256d path
+        // Must be set BEFORE the genesis hash below is computed
         nKAAAWWWPOWActivationTime = 0xFFFFFFFF;
         nKAWPOWActivationTime = nKAAAWWWPOWActivationTime;
 
-        // Testnet has a fixed, stable genesis: no automatic epoch reset, no dependency on any
-        // local file. The genesis time is a code constant and the block is auto-mined
-        // deterministically at startup (same inputs -> same nonce -> same hash), so every node
-        // converges on the same genesis. This is the epoch-0 genesis the network has always run
-        // (the old auto-reset never fired, so no epoch was ever incremented).
-        static const uint32_t TESTNET_BASE_TIME = 1774828800; // 2026-03-30 00:00:00 UTC
+        // Genesis of the reset testnet (2026-09-26): fixed time, nonce and hash,
+        // same coinbase as before. Every node starts from this block.
+        static const uint32_t TESTNET_GENESIS_TIME = 1790380800; // 2026-09-26 00:00:00 UTC
+        static const uint32_t TESTNET_GENESIS_NONCE = 3409810;
+        static const char* TESTNET_GENESIS_HASH = "0000008b384aeffecdab182575dc4e86c9f07f90318c65088532660ed9a8a021";
 
-        uint32_t nGenesisTime = TESTNET_BASE_TIME;
-
-        // Auto-mine genesis (deterministic). TODO(NIP-hardening): hardcode nonce+hash behind an
-        // assert once the genesis hash no longer depends on bNetwork (see finding #17).
-        // Computing only this hash with SHA256d is not enough: every block hash in
-        // the process follows bNetwork (CBlockHeader::GetHash), and processes that
-        // build these params without selecting testnet as their block network
-        // (unit-test fixtures) rely on both agreeing.
-        genesis = CreateGenesisBlock(nGenesisTime, 0, 0x1e00ffff, 2, 50000 * COIN);
-        {
+        uint32_t nGenesisTime = TESTNET_GENESIS_TIME;
+        genesis = CreateGenesisBlock(nGenesisTime, TESTNET_GENESIS_NONCE, 0x1e00ffff, 2, 50000 * COIN);
+        // Block hashes follow the process-wide block network (bNetwork, see
+        // finding #17): SHA256d in a process running as testnet (neuraid and
+        // neurai-qt select it) or regtest, which is the network's hash and is
+        // pinned here. Processes that build these params without selecting a
+        // block network (unit-test fixtures, neurai-tx) hash with the X16R
+        // family; they mine a nonce valid under their own hashing so the
+        // genesis stays self-consistent there.
+        if (bNetwork.fSHA256Mining) {
+            consensus.hashGenesisBlock = genesis.GetHash();
+            assert(consensus.hashGenesisBlock == uint256S(TESTNET_GENESIS_HASH));
+        } else {
             arith_uint256 hashTarget = arith_uint256().SetCompact(genesis.nBits);
+            genesis.nNonce = 0;
             while (UintToArith256(genesis.GetHash()) > hashTarget) {
                 ++genesis.nNonce;
             }
+            consensus.hashGenesisBlock = genesis.GetHash();
         }
-        consensus.hashGenesisBlock = genesis.GetHash();
-
-        LogPrintf("Testnet genesis — time: %u  nonce: %u  hash: %s\n",
-            nGenesisTime, genesis.nNonce,
-            consensus.hashGenesisBlock.ToString());
 
         assert(genesis.hashMerkleRoot == uint256S("4b28bf93d960cd83d1889757381d5a587208464e9075bdc0739151fbe15f5951"));
 
@@ -735,7 +734,7 @@ public:
         nPruneAfterHeight = 1000;
 
         // SHA256 regtest: KAWPOW never activates — keeps Bitcoin-style 4-byte nNonce format
-        // Must be set BEFORE genesis mining so GetHash() uses the SHA256d path
+        // Must be set BEFORE the genesis hash below is computed
         nKAAAWWWPOWActivationTime = 0xFFFFFFFF;
         nKAWPOWActivationTime = nKAAAWWWPOWActivationTime;
 

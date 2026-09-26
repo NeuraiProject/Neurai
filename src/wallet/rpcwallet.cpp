@@ -178,18 +178,6 @@ UniValue getmywords(const JSONRPCRequest& request)
 }
 
 
-// A PQ wallet hands out strict PQ (witness v2) addresses; generic AuthScript
-// v1 is reserved for contracts. Consensus only protects v2 outputs once
-// AuthScript and the strict families apply, so refuse to hand one out for
-// receiving before that holds for the next block.
-static void EnsureStrictPQReceiveActive()
-{
-    std::string error;
-    if (!CWallet::IsAddressTypeActive("pq", error)) {
-        throw JSONRPCError(RPC_WALLET_ERROR, error);
-    }
-}
-
 UniValue getnewaddress(const JSONRPCRequest& request)
 {
     CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
@@ -205,7 +193,7 @@ UniValue getnewaddress(const JSONRPCRequest& request)
             "so payments received with the address will be credited to 'account'.\n"
             "\nArguments:\n"
             "1. \"account\"        (string, optional) DEPRECATED. The account name for the address to be linked to. If not provided, the default account \"\" is used. It can also be set to the empty string \"\" to represent the default account. The account does not need to exist, it will be created if there is no account by the given name.\n"
-            "2. \"address_type\"   (string, optional) The address family: \"legacy\" (Base58, secp256k1), \"pq\" (strict post-quantum, witness v2, pq1.../tpq1...) or \"ecdsa\" (strict ECDSA, witness v3, nq1r.../tnq1r...). If omitted, the wallet's address type (-addresstype when it was created, see getwalletinfo) is used. \"pq\" needs a pq wallet; an ecdsa wallet refuses \"legacy\". Generic AuthScript v1 (nc1p.../tnc1p...) is a contract family and is never handed out by the wallet.\n"
+            "2. \"address_type\"   (string, optional) The address family: \"legacy\" (Base58, secp256k1), \"pq\" (strict post-quantum, witness v2, pq1.../tpq1...) or \"ecdsa\" (strict ECDSA, witness v3, nq1r.../tnq1r...). If omitted, the wallet's address type (-addresstype when it was created, see getwalletinfo) is used. \"pq\" needs a pq wallet; an ecdsa wallet refuses \"legacy\". Strict addresses are handed out before the network activates them, but payments to them are refused until then. Generic AuthScript v1 (nc1p.../tnc1p...) is a contract family and is never handed out by the wallet.\n"
             "\nResult:\n"
             "\"address\"    (string) The new neurai address\n"
             "\nExamples:\n"
@@ -249,7 +237,6 @@ UniValue getnewaddress(const JSONRPCRequest& request)
         dest = newKey.GetID();
         if (newKey.IsPQ()) {
             // Only reachable for a PQ key in a wallet not flagged as PQ.
-            EnsureStrictPQReceiveActive();
             if (!pwallet->GetStrictAuthScriptDestination(newKey, dest)) {
                 throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive strict PQ destination for new PQ key");
             }
@@ -264,11 +251,6 @@ UniValue getnewaddress(const JSONRPCRequest& request)
 
 CTxDestination GetAccountAddress(CWallet* const pwallet, std::string strAccount, bool bForceNew=false)
 {
-    std::string inactive;
-    if (!CWallet::IsAddressTypeActive(WalletAddressTypeName(pwallet->GetAddressType()), inactive)) {
-        throw JSONRPCError(RPC_WALLET_ERROR, inactive);
-    }
-
     CPubKey pubKey;
     if (!pwallet->GetAccountPubkey(pubKey, strAccount, bForceNew)) {
         throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
@@ -368,9 +350,6 @@ UniValue getrawchangeaddress(const JSONRPCRequest& request)
     reservekey.KeepKey();
 
     CTxDestination dest = vchPubKey.GetID();
-    if (vchPubKey.IsPQ()) {
-        EnsureStrictPQReceiveActive();
-    }
     if (vchPubKey.IsPQ() && !pwallet->GetStrictAuthScriptDestination(vchPubKey, dest)) {
         throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive strict PQ destination for PQ change key");
     }
@@ -2930,7 +2909,7 @@ UniValue getwalletinfo(const JSONRPCRequest& request)
     if (!seed_id.IsNull() && pwallet->CanSupportFeature(FEATURE_HD_SPLIT)) {
         obj.push_back(Pair("keypoolsize_hd_internal",   (int64_t)(pwallet->GetKeyPoolSize() - kpExternalSize)));
     }
-    if (IsStrictAuthScriptActiveInContext() && pwallet->IsBip44Enabled()) {
+    if ((IsStrictAuthScriptActiveInContext() || pwallet->GetAddressType() == WalletAddressType::ECDSA) && pwallet->IsBip44Enabled()) {
         obj.push_back(Pair("keypoolsize_strict_ecdsa", (int64_t)pwallet->GetStrictEcdsaKeyPoolSize(false)));
         obj.push_back(Pair("keypoolsize_strict_ecdsa_internal", (int64_t)pwallet->GetStrictEcdsaKeyPoolSize(true)));
     }
