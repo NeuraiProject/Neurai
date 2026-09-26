@@ -9,8 +9,8 @@ DEPIN transfer state (closed / open / sealed) on real nodes.
 Node 0 issues and owns the DEPIN asset, node 1 is a plain holder. The test
 walks the state machine through the wallet RPCs (opendepin / closedepin /
 sealdepin), checks holder transfers in every state, the mempool rules (one
-pending operation per asset, never inserted when rejected, replacement
-allowed, eviction on close), reorgs after every transition with
+pending operation per asset, never inserted when rejected, no replacement
+of asset transactions, eviction on close), reorgs after every transition with
 invalidateblock, and the activation frontier with -depinstateheight.
 """
 
@@ -32,9 +32,8 @@ class DepinTransferStateTest(NeuraiTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 2
-        # -walletrbf so the wallet's state operations signal BIP125 and the
-        # replacement case below can be exercised
-        # -mempoolreplacement is off by default; the replacement case needs it
+        # Enable BIP125 replacement generally to prove that the asset-specific
+        # NIP-025 policy still rejects replacement of a DEPIN state operation.
         self.extra_args = [['-assetindex', '-walletrbf=1', '-mempoolreplacement=1',
                             '-depinstateheight=' + str(FORK_HEIGHT)]] * self.num_nodes
 
@@ -215,8 +214,8 @@ class DepinTransferStateTest(NeuraiTestFramework):
         assert_equal("closed", self.state(n0))
         assert_equal([], n0.getrawmempool())
 
-        # The pending OPEN is a raw transaction signalling BIP125, so the
-        # replacement case below can be exercised (the wallet does not opt in)
+        # The pending OPEN signals BIP125. Asset transactions still cannot be
+        # replaced under NIP-025, even when general replacement is enabled.
         owner_txid, owner_vout = self.owner_outpoint(n0)
         open_txid = self.raw_state_operation(n0, "open_depin", owner_txid, owner_vout, 1, sequence=0xfffffffd)
         assert_equal([open_txid], n0.getrawmempool())
@@ -238,7 +237,8 @@ class DepinTransferStateTest(NeuraiTestFramework):
         assert_raises_rpc_error(-26, "bad-txns-depin-state-change-already-in-mempool", n0.sendrawtransaction, signed)
         assert_equal([open_txid], n0.getrawmempool())
 
-        # A replacement of the pending operation (same inputs, higher fee) is allowed
+        # A replacement of the pending operation (same inputs, higher fee) is
+        # rejected because the eviction set contains an asset transaction.
         original = n0.decoderawtransaction(n0.getrawtransaction(open_txid))
         inputs = [{"txid": vin['txid'], "vout": vin['vout'], "sequence": 0xfffffffd} for vin in original['vin']]
         xna_change = [vout for vout in original['vout']
@@ -248,8 +248,10 @@ class DepinTransferStateTest(NeuraiTestFramework):
             n0.getnewaddress(): {"open_depin": {"asset_name": ASSET}},
             xna_change[0]['scriptPubKey']['addresses'][0]: round(xna_change[0]['value'] - 1, 8),
         })
-        replacement = n0.sendrawtransaction(n0.signrawtransaction(bumped)['hex'])
-        assert_equal([replacement], n0.getrawmempool())
+        signed_bumped = n0.signrawtransaction(bumped)['hex']
+        assert_raises_rpc_error(-26, "replacement-involves-assets",
+                                n0.sendrawtransaction, signed_bumped)
+        assert_equal([open_txid], n0.getrawmempool())
 
         # Once the pending operation is gone (mined), the next one enters
         self.mine(n0)
