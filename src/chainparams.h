@@ -98,6 +98,7 @@ public:
     void UpdateMerklePoseidonHeight(int nHeight) { consensus.nMerklePoseidonHeight = nHeight; }
     void UpdateTxHashHeight(int nHeight) { consensus.nTxHashHeight = nHeight; }
     void UpdateSignatureOpcodesHeight(int nHeight) { consensus.nSignatureOpcodesHeight = nHeight; }
+    void UpdateOptInFeaturesHeight(int nHeight) { consensus.nOptInFeaturesHeight = nHeight; }
     void TurnOffSegwit();
     void TurnOffCSV();
     void TurnOffBIP34();
@@ -277,6 +278,7 @@ void UpdateDepinTransferStateHeight(int nHeight);
 /** Regtest only: move the strict AuthScript (witness v2/v3) activation height. */
 void UpdateStrictAuthScriptHeight(int nHeight);
 void UpdateSignatureOpcodesHeight(int nHeight);
+void UpdateOptInFeaturesHeight(int nHeight);
 void UpdateAuthScriptBudgetHeight(int nHeight);
 void UpdateZKVerifyHeight(int nHeight);
 void UpdatePoseidonWorkHeight(int nHeight);

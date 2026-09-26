@@ -178,6 +178,23 @@ UniValue getmywords(const JSONRPCRequest& request)
 }
 
 
+// A PQ key maps to an AuthScript destination, which consensus only protects
+// from the network's opt-in height on. Refuse to hand one out for receiving
+// before AuthScript applies to the next block.
+static void EnsureAuthScriptReceiveActive()
+{
+    const Consensus::Params& consensus = GetParams().GetConsensus();
+    if (!consensus.IsPQWitnessActive(GetSignatureOpcodeCandidateHeight())) {
+        if (!consensus.nPQWitnessEnabled || consensus.nOptInFeaturesHeight == std::numeric_limits<int>::max()) {
+            throw JSONRPCError(RPC_WALLET_ERROR,
+                "AuthScript (post-quantum) addresses are not active yet on this chain; their activation is not scheduled");
+        }
+        throw JSONRPCError(RPC_WALLET_ERROR, strprintf(
+            "AuthScript (post-quantum) addresses are not active yet on this chain; they apply from block %d",
+            consensus.nOptInFeaturesHeight));
+    }
+}
+
 UniValue getnewaddress(const JSONRPCRequest& request)
 {
     CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
@@ -230,6 +247,9 @@ UniValue getnewaddress(const JSONRPCRequest& request)
             throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
         }
         dest = newKey.GetID();
+        if (newKey.IsPQ()) {
+            EnsureAuthScriptReceiveActive();
+        }
         if (newKey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(newKey, dest)) {
             throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive AuthScript destination for new PQ key");
         }
@@ -249,6 +269,7 @@ CTxDestination GetAccountAddress(CWallet* const pwallet, std::string strAccount,
     }
 
     if (pubKey.IsPQ()) {
+        EnsureAuthScriptReceiveActive();
         CTxDestination dest;
         if (!pwallet->GetDefaultAuthScriptDestination(pubKey, dest)) {
             throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive AuthScript destination for account PQ key");
@@ -336,6 +357,9 @@ UniValue getrawchangeaddress(const JSONRPCRequest& request)
     reservekey.KeepKey();
 
     CTxDestination dest = vchPubKey.GetID();
+    if (vchPubKey.IsPQ()) {
+        EnsureAuthScriptReceiveActive();
+    }
     if (vchPubKey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(vchPubKey, dest)) {
         throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive AuthScript destination for PQ change key");
     }
@@ -1392,7 +1416,8 @@ public:
             // if we were to have the private keys. This is just to make sure that the script is valid and that,
             // if found in a transaction, we would still accept and relay that transaction.
             script_verify_flags verify_flags = MANDATORY_SCRIPT_VERIFY_FLAGS | SCRIPT_VERIFY_WITNESS_PUBKEYTYPE;
-            if (GetParams().GetConsensus().nPQWitnessEnabled) {
+            // AuthScript applies from the network's opt-in height; evaluate the next block.
+            if (GetParams().GetConsensus().IsPQWitnessActive(GetSignatureOpcodeCandidateHeight())) {
                 verify_flags |= SCRIPT_VERIFY_AUTHSCRIPT;
             }
             if (!ProduceSignature(DummySignatureCreator(pwallet), witscript, sigs) ||
@@ -1421,7 +1446,8 @@ public:
             // if we were to have the private keys. This is just to make sure that the script is valid and that,
             // if found in a transaction, we would still accept and relay that transaction.
             script_verify_flags verify_flags = MANDATORY_SCRIPT_VERIFY_FLAGS | SCRIPT_VERIFY_WITNESS_PUBKEYTYPE;
-            if (GetParams().GetConsensus().nPQWitnessEnabled) {
+            // AuthScript applies from the network's opt-in height; evaluate the next block.
+            if (GetParams().GetConsensus().IsPQWitnessActive(GetSignatureOpcodeCandidateHeight())) {
                 verify_flags |= SCRIPT_VERIFY_AUTHSCRIPT;
             }
             if (!ProduceSignature(DummySignatureCreator(pwallet), witscript, sigs) ||

@@ -3419,6 +3419,12 @@ bool CWallet::CreateNewChangeAddress(CReserveKey& reservekey, CTxDestination& de
     }
 
     if (vchPubKey.IsPQ()) {
+        // A PQ change key maps to an AuthScript output, which consensus only
+        // protects from the network's opt-in height on.
+        if (!GetParams().GetConsensus().IsPQWitnessActive(GetSignatureOpcodeCandidateHeight())) {
+            strFailReason = _("AuthScript (post-quantum) change outputs are not active yet on this chain");
+            return false;
+        }
         if (!GetDefaultAuthScriptDestination(vchPubKey, dest)) {
             strFailReason = _("Failed to derive AuthScript destination for reserved PQ key");
             return false;

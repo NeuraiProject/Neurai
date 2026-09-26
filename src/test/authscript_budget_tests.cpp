@@ -119,8 +119,10 @@ BOOST_AUTO_TEST_CASE(poseidon_work_height_schedule)
     auto main = CreateChainParams(CBaseChainParams::MAIN);
     auto test = CreateChainParams(CBaseChainParams::TESTNET);
     BOOST_CHECK(!main->GetConsensus().IsPoseidonWorkActive(1000000));
+    // Reset testnet: block 10 (plan 2026-09-26 v2).
     BOOST_CHECK(!test->GetConsensus().IsPoseidonWorkActive(0));
-    BOOST_CHECK(test->GetConsensus().IsPoseidonWorkActive(1));
+    BOOST_CHECK(!test->GetConsensus().IsPoseidonWorkActive(9));
+    BOOST_CHECK(test->GetConsensus().IsPoseidonWorkActive(10));
     auto params = GetParams().GetConsensus();
     BOOST_CHECK(params.IsPoseidonWorkActive(0));
     params.nPoseidonWorkHeight = 630;
@@ -469,8 +471,10 @@ BOOST_AUTO_TEST_CASE(network_schedule)
     auto main=CreateChainParams(CBaseChainParams::MAIN);
     auto test=CreateChainParams(CBaseChainParams::TESTNET);
     BOOST_CHECK(!main->GetConsensus().IsAuthScriptBudgetActive(1000000));
+    // Reset testnet: block 10 (plan 2026-09-26 v2).
     BOOST_CHECK(!test->GetConsensus().IsAuthScriptBudgetActive(0));
-    BOOST_CHECK(test->GetConsensus().IsAuthScriptBudgetActive(1));
+    BOOST_CHECK(!test->GetConsensus().IsAuthScriptBudgetActive(9));
+    BOOST_CHECK(test->GetConsensus().IsAuthScriptBudgetActive(10));
     BOOST_CHECK(GetParams().GetConsensus().IsAuthScriptBudgetActive(0));
     auto params=GetParams().GetConsensus();params.nAuthScriptBudgetHeight=120;
     BOOST_CHECK(!(ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS,params,true,119)&SCRIPT_VERIFY_AUTHSCRIPT_BUDGET));

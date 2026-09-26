@@ -202,6 +202,16 @@ UniValue generatetoaddress(const JSONRPCRequest& request)
     std::shared_ptr<CReserveScript> coinbaseScript = std::make_shared<CReserveScript>();
     coinbaseScript->reserveScript = GetScriptForDestination(destination);
 
+    // A coinbase paid to an AuthScript family that does not apply yet would not
+    // be protected by consensus (unknown witness version until activation).
+    {
+        LOCK(cs_main);
+        if (IsInactiveAuthScriptOutput(coinbaseScript->reserveScript, GetParams().GetConsensus(), chainActive.Height() + 1)) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
+                "Error: this AuthScript address is not active yet on this chain; mine to a legacy address until activation");
+        }
+    }
+
     return generateBlocks(coinbaseScript, nGenerate, nMaxTries, false);
 }
 

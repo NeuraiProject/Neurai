@@ -49,6 +49,18 @@ enum class XnaAssetPlacement {
  */
 XnaAssetPlacement CheckXnaAssetOutputPlacement(const CScript& scriptPubKey, bool strict);
 
+namespace Consensus {
+/**
+ * Height-dependent half of the OP_XNA_ASSET placement rule (NIP revision 010).
+ * CheckTransaction has no context and always applies the legacy rule; callers
+ * that know the height of the block (ContextualCheckBlock, mempool acceptance
+ * for the next block, mempool re-validation) call this when
+ * Consensus::Params::IsXnaAssetStrictActive(height). It inspects exactly the
+ * outputs CheckTransaction inspects, with the strict rule.
+ */
+bool CheckXnaAssetStrictPlacement(const CTransaction& tx, CValidationState& state);
+} // namespace Consensus
+
 /** Context-independent validity checks */
 bool CheckTransaction(const CTransaction& tx, CValidationState& state, bool fCheckDuplicateInputs=true, bool fMempoolCheck = false, bool fBlockCheck = false);
 

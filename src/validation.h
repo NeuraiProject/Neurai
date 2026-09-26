@@ -642,6 +642,14 @@ bool DumpMempool();
 bool LoadMempool();
 
 /** XNA START */
+/**
+ * Policy helper. On a network that schedules AuthScript, witness v1 and the
+ * strict v2/v3 families are unknown witness versions to consensus until they
+ * apply, so an output created for them before that height is not protected.
+ * Returns true when `scriptPubKey` is such an output for a block at `nHeight`.
+ */
+bool IsInactiveAuthScriptOutput(const CScript& scriptPubKey, const Consensus::Params& consensus, int nHeight);
+
 bool AreAssetsDeployed();
 
 bool AreMessagesDeployed();

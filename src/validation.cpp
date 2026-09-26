@@ -622,6 +622,33 @@ static bool CheckInputsFromMempoolAndCache(const CTransaction& tx, CValidationSt
     return CheckInputs(tx, state, view, true, flags, cacheSigStore, true, txdata, nullptr, pRefOutputs, chainCtx, pfUsesChainContext, poseidonWork);
 }
 
+bool IsInactiveAuthScriptOutput(const CScript& scriptPubKey, const Consensus::Params& consensus, int nHeight)
+{
+    if (!consensus.nPQWitnessEnabled)
+        return false; // the network does not schedule AuthScript: policy unchanged
+    const bool fV1Active = consensus.IsPQWitnessActive(nHeight);
+    const bool fStrictActive = fV1Active && consensus.IsStrictAuthScriptActive(nHeight);
+    if (fStrictActive)
+        return false;
+    int version = -1;
+    std::vector<unsigned char> program;
+    if (!scriptPubKey.IsWitnessProgram(version, program) &&
+        !GetAssetScriptWitnessProgram(scriptPubKey, version, program, nullptr, /*fStrictActive=*/true))
+        return false;
+    if (version == 1)
+        return !fV1Active;
+    return (version == 2 || version == 3);
+}
+
+static bool CreatesInactiveAuthScriptOutput(const CTransaction& tx, const Consensus::Params& consensus, int nHeight)
+{
+    for (const CTxOut& out : tx.vout) {
+        if (IsInactiveAuthScriptOutput(out.scriptPubKey, consensus, nHeight))
+            return true;
+    }
+    return false;
+}
+
 static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool& pool, CValidationState& state, const CTransactionRef& ptx,
                               bool* pfMissingInputs, int64_t nAcceptTime, std::list<CTransactionRef>* plTxnReplaced,
                               bool bypass_limits, const CAmount& nAbsurdFee, std::vector<COutPoint>& coins_to_uncache, bool test_accept)
@@ -647,6 +674,15 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
     if (!CheckTransaction(tx, state, fCheckDuplicates, fCheckMempool))
         return false; // state filled in by CheckTransaction
 
+    // Height-dependent half of the OP_XNA_ASSET placement rule, for the next
+    // block. No peer penalty: a peer one block behind may still relay a
+    // transaction that was valid for its own next block.
+    if (chainparams.GetConsensus().IsXnaAssetStrictActive(chainActive.Height() + 1)) {
+        CValidationState placementState;
+        if (!Consensus::CheckXnaAssetStrictPlacement(tx, placementState))
+            return state.DoS(0, false, REJECT_INVALID, placementState.GetRejectReason());
+    }
+
     // Coinbase is only valid in a block, not as a loose transaction
     if (tx.IsCoinBase())
         return state.DoS(100, false, REJECT_INVALID, "coinbase");
@@ -662,9 +698,15 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
     if (fRequireStandard && !IsStandardTx(tx, reason, witnessEnabled))
         return state.DoS(0, false, REJECT_NONSTANDARD, reason);
 
-    // NIP-014: reject v3 before activation
-    if (tx.nVersion == 3 && !chainparams.GetConsensus().nREFINPUTSEnabled) {
+    // NIP-014: reject v3 before activation (evaluated for the next block)
+    if (tx.nVersion == 3 && !chainparams.GetConsensus().IsRefInputsActive(chainActive.Height() + 1)) {
         return state.DoS(0, false, REJECT_NONSTANDARD, "version-v3-not-active");
+    }
+
+    // Policy only: do not relay outputs to AuthScript families that do not
+    // apply yet to the next block, so funds are not sent there by accident.
+    if (CreatesInactiveAuthScriptOutput(tx, chainparams.GetConsensus(), chainActive.Height() + 1)) {
+        return state.DoS(0, false, REJECT_NONSTANDARD, "authscript-output-not-active");
     }
 
     // Only accept nLockTime-using transactions that can be mined in the next
@@ -816,8 +858,10 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         /** XNA END */
 
         // Check for non-standard pay-to-script-hash in inputs
-        if (fRequireStandard && !AreInputsStandard(tx, view, (fSignatureOpcodesActive && chainparams.GetConsensus().nCSFSEnabled),
-                (fSignatureOpcodesActive && chainparams.GetConsensus().nCheckSigAddEnabled), (fSignatureOpcodesActive && chainparams.GetConsensus().nEd25519Enabled)))
+        const int nNextHeight = chainActive.Height() + 1;
+        const auto& optin = chainparams.GetConsensus();
+        if (fRequireStandard && !AreInputsStandard(tx, view, (fSignatureOpcodesActive && optin.IsOptInActive(optin.nCSFSEnabled, nNextHeight)),
+                (fSignatureOpcodesActive && optin.IsOptInActive(optin.nCheckSigAddEnabled, nNextHeight)), (fSignatureOpcodesActive && optin.IsOptInActive(optin.nEd25519Enabled, nNextHeight))))
             return state.Invalid(false, REJECT_NONSTANDARD, "bad-txns-nonstandard-inputs");
 
         // Check for non-standard witness in P2WSH. The wider per-item cap
@@ -829,8 +873,10 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         const auto& consensus = chainparams.GetConsensus();
         if (tx.HasWitness() && fRequireStandard &&
             !IsWitnessStandard(tx, view,
-                               consensus.nMerkleInclusionEnabled || (fSignatureOpcodesActive &&
-                               (consensus.nCSFSEnabled || consensus.nEd25519Enabled || consensus.nCheckSigAddEnabled)),
+                               consensus.IsOptInActive(consensus.nMerkleInclusionEnabled, nNextHeight) || (fSignatureOpcodesActive &&
+                               (consensus.IsOptInActive(consensus.nCSFSEnabled, nNextHeight) ||
+                                consensus.IsOptInActive(consensus.nEd25519Enabled, nNextHeight) ||
+                                consensus.IsOptInActive(consensus.nCheckSigAddEnabled, nNextHeight))),
                                ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, fStrictAuthScriptActive, chainActive.Height()+1)))
             return state.DoS(0, false, REJECT_NONSTANDARD, "bad-witness-nonstandard", true);
 
@@ -1123,18 +1169,15 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         // invalid blocks (using TestBlockValidity), however allowing such
         // transactions into the mempool can be exploited as a DoS attack.
         script_verify_flags currentBlockScriptVerifyFlags = GetBlockScriptFlags(chainActive.Tip(), GetParams().GetConsensus());
-        // The transaction is a candidate for the NEXT block. For flags that
-        // activate by height (strict AuthScript families and NIP-041) use that
-        // block's state, otherwise a spend valid from the first active block
-        // would be refused while the tip is still the last inactive one.
-        currentBlockScriptVerifyFlags &= ~(SCRIPT_VERIFY_AUTHSCRIPT_STRICT | SCRIPT_VERIFY_AUTHDEST);
-        if (fStrictAuthScriptActive) {
-            currentBlockScriptVerifyFlags |= SCRIPT_VERIFY_AUTHSCRIPT_STRICT | SCRIPT_VERIFY_AUTHDEST;
-        }
-        const script_verify_flags heightFlags = SCRIPT_VERIFY_CHECKSIGFROMSTACK | SCRIPT_VERIFY_CHECKSIGADD | SCRIPT_VERIFY_ED25519 | SCRIPT_VERIFY_TXHASH | SCRIPT_VERIFY_ASSETMESSAGEFIELD | SCRIPT_VERIFY_INPUTFIELD | SCRIPT_VERIFY_MERKLE_POSEIDON | SCRIPT_VERIFY_AUTHSCRIPT_TREE | SCRIPT_VERIFY_AUTHSCRIPT_BUDGET | SCRIPT_VERIFY_POSEIDON_WORK | SCRIPT_VERIFY_ZKVERIFY;
-        currentBlockScriptVerifyFlags &= ~heightFlags;
+        // The transaction is a candidate for the NEXT block. Every flag that
+        // depends on the network and the height (all consensus opt-ins: strict
+        // AuthScript families, NIP-041, the opt-in switches and the per-feature
+        // heights) takes that block's state, otherwise a spend valid from the
+        // first active block would be refused while the tip is still the last
+        // inactive one, and vice versa after a reorg below an activation.
+        currentBlockScriptVerifyFlags &= ~CONSENSUS_OPT_IN_FLAGS;
         currentBlockScriptVerifyFlags |= ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, chainparams.GetConsensus(),
-            fStrictAuthScriptActive, chainActive.Height() + 1) & heightFlags;
+            fStrictAuthScriptActive, chainActive.Height() + 1);
         // Mine using consensus cost, never the potentially weaker flags from
         // -promiscuousmempoolflags (which can skip witness execution entirely).
         std::shared_ptr<PoseidonWorkBudget> consensusPoseidonWork;
@@ -2078,7 +2121,10 @@ static void MempoolCheckScriptRuleTransition(CTxMemPool& pool,
         params.IsZKVerifyActive(nOldCandidateHeight) == params.IsZKVerifyActive(nNewCandidateHeight) &&
         params.IsPoseidonWorkActive(nOldCandidateHeight) == params.IsPoseidonWorkActive(nNewCandidateHeight) &&
         params.IsAuthScriptBudgetActive(nOldCandidateHeight) == params.IsAuthScriptBudgetActive(nNewCandidateHeight) &&
-        params.IsTxHashActive(nOldCandidateHeight) == params.IsTxHashActive(nNewCandidateHeight))
+        params.IsTxHashActive(nOldCandidateHeight) == params.IsTxHashActive(nNewCandidateHeight) &&
+        // Every opt-in switch (AuthScript, opcodes, tx v3, strict OP_XNA_ASSET
+        // placement) shares nOptInFeaturesHeight.
+        (nOldCandidateHeight >= params.nOptInFeaturesHeight) == (nNewCandidateHeight >= params.nOptInFeaturesHeight))
         return;
     // Only a disconnect can leave parents momentarily unavailable, and only a
     // disconnect is always followed by UpdateMempoolForReorg. When connecting,
@@ -2116,8 +2162,25 @@ static void MempoolEvictScriptRuleEntries(CTxMemPool& pool)
         true
     };
 
+    const Consensus::Params& consensus = chainparams.GetConsensus();
     pool.removeForStrictAuthScriptTransition([&](const CTxMemPoolEntry& entry) -> bool {
         const CTransaction& tx = entry.GetTx();
+        // Structural rules that CheckInputs cannot see: a v3 transaction with
+        // no special opcode, and the strict OP_XNA_ASSET output placement.
+        if (tx.nVersion == 3 && !consensus.IsRefInputsActive(nCandidateHeight)) {
+            return true;
+        }
+        // Policy: outputs to AuthScript families that no longer apply to the
+        // candidate block would be unprotected if mined there.
+        if (CreatesInactiveAuthScriptOutput(tx, consensus, nCandidateHeight)) {
+            return true;
+        }
+        if (consensus.IsXnaAssetStrictActive(nCandidateHeight)) {
+            CValidationState placementState;
+            if (!Consensus::CheckXnaAssetStrictPlacement(tx, placementState)) {
+                return true;
+            }
+        }
         for (const CTxIn& txin : tx.vin) {
             Coin coin;
             if (viewMempool.GetCoin(txin.prevout, coin) && SpendsStrictAuthScriptProgram(txin, coin.out.scriptPubKey)) {
@@ -3154,7 +3217,7 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
     }
 
     // NIP-014: reject v3 transactions before activation
-    if (!chainparams.GetConsensus().nREFINPUTSEnabled) {
+    if (!chainparams.GetConsensus().IsRefInputsActive(pindex->nHeight)) {
         for (const auto& tx : block.vtx) {
             if (tx->nVersion == 3) {
                 return state.DoS(100, false, REJECT_INVALID, "bad-txns-v3-not-active");
@@ -5012,6 +5075,15 @@ static bool ContextualCheckBlock(const CBlock& block, CValidationState& state, c
         }
     }
 
+    // Height-dependent transaction rules that the context-free CheckTransaction
+    // cannot apply: strict OP_XNA_ASSET placement (NIP revision 010).
+    if (consensusParams.IsXnaAssetStrictActive(nHeight)) {
+        for (const auto& tx : block.vtx) {
+            if (!Consensus::CheckXnaAssetStrictPlacement(*tx, state))
+                return false;
+        }
+    }
+
     // Enforce rule that the coinbase starts with serialized block height
     CScript expect = CScript() << nHeight;
 
@@ -6655,8 +6727,25 @@ void SetEnforcedCoinbase(bool value)
     fCheckCoinbaseAssetsIsActive = value;
 }
 
+// Fresh test networks run assets, RIP5 and the asset VersionBits deployments
+// from the genesis block as a pure rule (Consensus::Params::
+// nAssetsActiveFromGenesis): the answer never depends on the chain tip, so a
+// reorg down to genesis validates early blocks exactly like a fresh node. The
+// sticky flag is still set because other readers (e.g. the undo record limits)
+// consult it directly, and true is the correct value for the whole chain.
+static bool AssetDeploymentActiveFromGenesis(bool& fStickyFlag)
+{
+    if (!GetParams().GetConsensus().nAssetsActiveFromGenesis)
+        return false;
+    fStickyFlag = true;
+    return true;
+}
+
 bool AreEnforcedValuesDeployed()
 {
+    if (AssetDeploymentActiveFromGenesis(fEnforcedValuesIsActive))
+        return true;
+
     if (fEnforcedValuesIsActive)
         return true;
 
@@ -6669,6 +6758,9 @@ bool AreEnforcedValuesDeployed()
 
 bool AreCoinbaseCheckAssetsDeployed()
 {
+    if (AssetDeploymentActiveFromGenesis(fCheckCoinbaseAssetsIsActive))
+        return true;
+
     if (fCheckCoinbaseAssetsIsActive)
         return true;
 
@@ -6681,6 +6773,9 @@ bool AreCoinbaseCheckAssetsDeployed()
 
 bool AreAssetsDeployed()
 {
+    if (AssetDeploymentActiveFromGenesis(fAssetsIsActive))
+        return true;
+
     if (fAssetsIsActive)
         return true;
 
@@ -6705,6 +6800,9 @@ bool AreAssetsDeployed()
 
 bool IsRip5Active()
 {
+    if (AssetDeploymentActiveFromGenesis(fRip5IsActive))
+        return true;
+
     if (fRip5IsActive)
         return true;
 
@@ -6733,6 +6831,9 @@ bool AreMessagesDeployed() {
 }
 
 bool AreTransferScriptsSizeDeployed() {
+
+    if (AssetDeploymentActiveFromGenesis(fTransferScriptIsActive))
+        return true;
 
     if (fTransferScriptIsActive)
         return true;

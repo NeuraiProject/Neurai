@@ -2,10 +2,11 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-// NIP revision 010: the strict OP_XNA_ASSET rejection must be gated by
-// nXNAAssetStrictEnabled. On mainnet (strict off) CheckTransaction must
-// reproduce origin/main byte-for-byte; on testnet/regtest (strict on) the
-// strict rule stays in force.
+// NIP revision 010: the strict OP_XNA_ASSET rejection is gated by
+// nXNAAssetStrictEnabled and, since the testnet reset plan (2026-09-26 v2), by
+// the block height (nOptInFeaturesHeight). CheckTransaction has no context and
+// always reproduces origin/main byte-for-byte; the strict rule is applied by
+// Consensus::CheckXnaAssetStrictPlacement from its activation height.
 
 #include "chainparams.h"
 #include "consensus/tx_verify.h"
@@ -70,12 +71,28 @@ CScript P2pkhThenXnaAt25()
     return s;
 }
 
-std::string RejectReason(const CScript& spk)
+// Verdict of the context-free check alone (CheckBlock/CheckTransaction).
+std::string ContextFreeReason(const CScript& spk)
 {
     const CTransaction tx(MakeTxWithOutput(spk));
     CValidationState state;
     bool ok = CheckTransaction(tx, state);
     return ok ? std::string() : state.GetRejectReason();
+}
+
+// Effective verdict for a block at `height`: the context-free check followed
+// by the height-dependent strict rule, as ContextualCheckBlock and the mempool
+// apply them.
+std::string RejectReasonAtHeight(const CScript& spk, int height)
+{
+    const CTransaction tx(MakeTxWithOutput(spk));
+    CValidationState state;
+    if (!CheckTransaction(tx, state))
+        return state.GetRejectReason();
+    if (GetParams().GetConsensus().IsXnaAssetStrictActive(height) &&
+        !Consensus::CheckXnaAssetStrictPlacement(tx, state))
+        return state.GetRejectReason();
+    return std::string();
 }
 
 } // namespace
@@ -119,12 +136,23 @@ BOOST_AUTO_TEST_CASE(xna_first_unparseable_gated_by_network)
     BOOST_REQUIRE(!spk.IsNullAsset());
 
     {
-        NetworkGuard g(CBaseChainParams::REGTEST); // strict on
-        BOOST_CHECK_EQUAL(RejectReason(spk), "bad-txns-bad-asset-script");
+        NetworkGuard g(CBaseChainParams::REGTEST); // strict from genesis
+        // CheckBlock alone must not apply the height-dependent rule...
+        BOOST_CHECK_EQUAL(ContextFreeReason(spk), std::string());
+        // ...the contextual check does.
+        BOOST_CHECK_EQUAL(RejectReasonAtHeight(spk, 1), "bad-txns-bad-asset-script");
+    }
+    {
+        NetworkGuard g(CBaseChainParams::TESTNET); // strict from block 10
+        BOOST_CHECK_EQUAL(ContextFreeReason(spk), std::string());
+        BOOST_CHECK_EQUAL(RejectReasonAtHeight(spk, 9), std::string());
+        BOOST_CHECK_EQUAL(RejectReasonAtHeight(spk, 10), "bad-txns-bad-asset-script");
+        BOOST_CHECK_EQUAL(RejectReasonAtHeight(spk, 11), "bad-txns-bad-asset-script");
     }
     {
         NetworkGuard g(CBaseChainParams::MAIN); // strict off → origin/main accepts
-        BOOST_CHECK_EQUAL(RejectReason(spk), std::string());
+        BOOST_CHECK_EQUAL(RejectReasonAtHeight(spk, 1), std::string());
+        BOOST_CHECK_EQUAL(RejectReasonAtHeight(spk, 2000000), std::string());
     }
 }
 
@@ -136,32 +164,29 @@ BOOST_AUTO_TEST_CASE(xna_out_of_position_rejected_both_modes)
     BOOST_REQUIRE(!spk.IsAssetScript());
     BOOST_REQUIRE(!spk.IsNullAsset());
 
-    {
-        NetworkGuard g(CBaseChainParams::REGTEST);
-        BOOST_CHECK_EQUAL(RejectReason(spk), "bad-txns-op-xna-asset-not-in-right-script-location");
-    }
-    {
-        NetworkGuard g(CBaseChainParams::MAIN);
-        BOOST_CHECK_EQUAL(RejectReason(spk), "bad-txns-op-xna-asset-not-in-right-script-location");
+    for (const auto& net : {CBaseChainParams::REGTEST, CBaseChainParams::TESTNET, CBaseChainParams::MAIN}) {
+        NetworkGuard g(net);
+        BOOST_CHECK_EQUAL(ContextFreeReason(spk), "bad-txns-op-xna-asset-not-in-right-script-location");
+        BOOST_CHECK_EQUAL(RejectReasonAtHeight(spk, 9), "bad-txns-op-xna-asset-not-in-right-script-location");
+        BOOST_CHECK_EQUAL(RejectReasonAtHeight(spk, 10), "bad-txns-op-xna-asset-not-in-right-script-location");
     }
 }
 
 // Test 3: the loosening trap — P2PKH + 0xc0 at byte 25. origin/main rejects it
 // (script[0] != OP_XNA_ASSET); the lenient path must NOT accept it (which it
-// would if it used HasAssetOpcodeInExpectedPosition).
+// would if it used HasAssetOpcodeInExpectedPosition). The context-free check
+// rejects it on every network before the strict rule is reached, so the reject
+// reason is the legacy one everywhere.
 BOOST_AUTO_TEST_CASE(xna_p2pkh_at_byte25_not_loosened_on_mainnet)
 {
     const CScript spk = P2pkhThenXnaAt25();
     BOOST_REQUIRE(!spk.IsAssetScript());
     BOOST_REQUIRE(!spk.IsNullAsset());
 
-    {
-        NetworkGuard g(CBaseChainParams::MAIN); // lenient — must still reject
-        BOOST_CHECK_EQUAL(RejectReason(spk), "bad-txns-op-xna-asset-not-in-right-script-location");
-    }
-    {
-        NetworkGuard g(CBaseChainParams::REGTEST); // strict — rejects as bad script
-        BOOST_CHECK_EQUAL(RejectReason(spk), "bad-txns-bad-asset-script");
+    for (const auto& net : {CBaseChainParams::MAIN, CBaseChainParams::TESTNET, CBaseChainParams::REGTEST}) {
+        NetworkGuard g(net);
+        BOOST_CHECK_EQUAL(ContextFreeReason(spk), "bad-txns-op-xna-asset-not-in-right-script-location");
+        BOOST_CHECK_EQUAL(RejectReasonAtHeight(spk, 10), "bad-txns-op-xna-asset-not-in-right-script-location");
     }
 }
 
@@ -172,13 +197,10 @@ BOOST_AUTO_TEST_CASE(plain_output_accepted_both_modes)
     const CScript spk = CScript() << OP_DUP << OP_HASH160 << hash20 << OP_EQUALVERIFY << OP_CHECKSIG;
     BOOST_REQUIRE(!spk.IsAssetScript());
 
-    {
-        NetworkGuard g(CBaseChainParams::REGTEST);
-        BOOST_CHECK_EQUAL(RejectReason(spk), std::string());
-    }
-    {
-        NetworkGuard g(CBaseChainParams::MAIN);
-        BOOST_CHECK_EQUAL(RejectReason(spk), std::string());
+    for (const auto& net : {CBaseChainParams::REGTEST, CBaseChainParams::TESTNET, CBaseChainParams::MAIN}) {
+        NetworkGuard g(net);
+        BOOST_CHECK_EQUAL(RejectReasonAtHeight(spk, 9), std::string());
+        BOOST_CHECK_EQUAL(RejectReasonAtHeight(spk, 10), std::string());
     }
 }
 

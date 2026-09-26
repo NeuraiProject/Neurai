@@ -193,8 +193,9 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
     pblock->nNonce64         = 0;
     pblock->nHeight          = nHeight;
     pblocktemplate->vTxSigOpsCost[0] = WITNESS_SCALE_FACTOR * GetLegacySigOpCount(*pblock->vtx[0],
-        (chainparams.GetConsensus().IsSignatureOpcodesActive(nHeight) && chainparams.GetConsensus().nCSFSEnabled), (chainparams.GetConsensus().IsSignatureOpcodesActive(nHeight) && chainparams.GetConsensus().nCheckSigAddEnabled),
-        (chainparams.GetConsensus().IsSignatureOpcodesActive(nHeight) && chainparams.GetConsensus().nEd25519Enabled));
+        (chainparams.GetConsensus().IsSignatureOpcodesActive(nHeight) && chainparams.GetConsensus().IsOptInActive(chainparams.GetConsensus().nCSFSEnabled, nHeight)),
+        (chainparams.GetConsensus().IsSignatureOpcodesActive(nHeight) && chainparams.GetConsensus().IsOptInActive(chainparams.GetConsensus().nCheckSigAddEnabled, nHeight)),
+        (chainparams.GetConsensus().IsSignatureOpcodesActive(nHeight) && chainparams.GetConsensus().IsOptInActive(chainparams.GetConsensus().nEd25519Enabled, nHeight)));
 
     CValidationState state;
     if (!TestBlockValidity(state, chainparams, *pblock, pindexPrev, false, false)) {

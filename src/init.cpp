@@ -637,6 +637,7 @@ std::string HelpMessage(HelpMessageMode mode)
         strUsage += HelpMessageOpt("-merkleposeidonheight=<n>", "Override NIP-043 MerklePoseidon activation height (regtest-only)");
         strUsage += HelpMessageOpt("-txhashheight=<n>", "Override NIP-042 TXHASH activation height (regtest-only)");
         strUsage += HelpMessageOpt("-signatureopcodesheight=<n>", "Override CSFS/Ed25519/CHECKSIGADD activation height (regtest-only)");
+        strUsage += HelpMessageOpt("-optinfeaturesheight=<n>", "Override the activation height of the opt-in feature switches (regtest-only)");
         strUsage += HelpMessageOpt("-strictauthscriptheight=<n>", "Override the strict AuthScript (witness v2/v3) activation height (regtest-only)");
         strUsage += HelpMessageOpt("-depinstateheight=<n>", "Override the DEPIN transfer state (open/close/seal) activation height (regtest-only)");
     }
@@ -1436,6 +1437,15 @@ bool AppInitParameterInteraction()
             return InitError("Invalid -signatureopcodesheight");
         UpdateSignatureOpcodesHeight(static_cast<int>(height));
         LogPrintf("Setting signature opcode activation height to %ld\n", height);
+    }
+
+    if (gArgs.IsArgSet("-optinfeaturesheight")) {
+        if (!chainparams.MineBlocksOnDemand()) return InitError("Opt-in feature height may only be overridden on regtest.");
+        int64_t height;
+        if (!ParseInt64(gArgs.GetArg("-optinfeaturesheight", ""), &height) || height < 0 || height > std::numeric_limits<int>::max())
+            return InitError("Invalid -optinfeaturesheight");
+        UpdateOptInFeaturesHeight(static_cast<int>(height));
+        LogPrintf("Setting opt-in feature activation height to %ld\n", height);
     }
 
     if (gArgs.IsArgSet("-strictauthscriptheight")) {

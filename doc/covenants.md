@@ -48,19 +48,39 @@ The witness stack for spending is structured as:
 
 This design separates authentication (who) from authorization logic (what and how), allowing covenants to be written as pure script logic while optionally requiring key-holder approval.
 
+### Reset testnet activation schedule
+
+The reset testnet runs blocks 1-9 with the rules that predate the new NIPs,
+and **block 10** is the first block that applies all of them:
+
+- the opt-in switches (`nOptInFeaturesHeight`): AuthScript v1, the introspection
+  and hash opcodes, 64-bit arithmetic, OP_CAT/OP_SPLIT/CTV, tx v3 with `vrefin`
+  (NIP-014) and the strict OP_XNA_ASSET placement rule;
+- strict AuthScript families and NIP-041 (`nStrictAuthScriptHeight`);
+- CSFS, Ed25519 and CHECKSIGADD (`nSignatureOpcodesHeight`);
+- TXHASH, NIP-043 primitives, MAST, NIP-046 budgets, ZKVERIFY and Poseidon work;
+- the NIP-040 asset marker (`rvn` outputs before block 10, `xna` from block 10;
+  legacy `rvn` UTXOs stay spendable) and the DEPIN transfer state.
+
+Assets, RIP5 and the asset VersionBits deployments are active from genesis as a
+pure rule (`nAssetsActiveFromGenesis`), and the v1.0.6 consensus fixes apply
+from genesis. NIP-028 (30-second blocks) is not scheduled. Block validation uses
+the height of the block; wallet and mempool admission use the next block's
+height, so new-rule transactions are accepted with the tip at block 9.
+
+Mainnet remains unscheduled. Regtest applies everything from height 0 by
+default; `-optinfeaturesheight`, `-strictauthscriptheight`,
+`-signatureopcodesheight` and the per-feature overrides move the heights for
+activation tests.
+
 ### Strict AuthScript activation schedule
 
-Testnet activates strict PQ witness v2 (`tpq1z…`), strict ECDSA witness v3
-(`tnq1r…`) and NIP-041 destination introspection at **block 440000**.
-This height also enables the strict-flag rules described below for v1 mixed
-multisig. Earlier blocks retain their previous validation rules. Wallet and
-mempool admission use the next block's height, so strict addresses become
-available with the tip at 439999. Nodes must run the updated software before
-block 440000. This is a scheduled consensus change, not deployment by this
-repository alone.
-
-Mainnet remains unscheduled. Regtest remains active from height 0 by default;
-`-strictauthscriptheight` can override the height for regtest activation tests.
+Strict PQ witness v2 (`tpq1z…`), strict ECDSA witness v3 (`tnq1r…`) and NIP-041
+destination introspection activate at block 10 of the reset testnet (see
+above). This height also enables the strict-flag rules described below for v1
+mixed multisig. Earlier blocks retain their previous validation rules. Wallet
+and mempool admission use the next block's height, so strict addresses become
+available with the tip at block 9.
 
 ### Mixed ECDSA/PQ multisig in witness v1
 
@@ -193,7 +213,7 @@ that message with `<app_tag> <10 01> OP_TXHASH OP_CAT`.
 `308542cb639a0e6ac414070f3be7c7e13827c7dde337c4d1202853376519fab1`.
 These are hash bytes, not the reversed `uint256::GetHex()` display order.
 
-Activation uses `nTxHashHeight`: block **1 of the reset testnet**, block 0 of
+Activation uses `nTxHashHeight`: block **10 of the reset testnet**, block 0 of
 regtest by default, and no scheduled mainnet height. `-txhashheight=<n>` is a
 regtest-only override. `SCRIPT_VERIFY_TXHASH` governs selector and digest
 together; the old format is removed. Before activation the opcode is NOP6 in
@@ -702,7 +722,8 @@ compatibility with every historical testnet block; deployment needs coordination
 
 CSFS, CHECKSIGADD and Ed25519 share `nSignatureOpcodesHeight`. Their individual
 capability switches only take effect at or above that height. Mainnet leaves
-the height unscheduled (`INT_MAX`); testnet and regtest retain height zero.
+the height unscheduled (`INT_MAX`); the reset testnet uses block 10 and regtest
+height zero.
 `-signatureopcodesheight=N` overrides the height only on regtest.
 
 Block validation supplies the block's height explicitly. Mempool admission,
@@ -786,8 +807,9 @@ standardness cap for downstream items.
 
 - Slot `0xc9` was previously **`bad-opcode`**, never a reserved NOP.
 - Activation gates on `consensus.nPoseidonEnabled` (true on
-  testnet/regtest from genesis, false on mainnet until a future
-  activation NIP). Activation is a hard fork.
+  testnet/regtest, applied from the opt-in activation height: block 10
+  of the reset testnet, genesis on regtest; false on mainnet until a
+  future activation NIP). Activation is a hard fork.
 - With `SCRIPT_VERIFY_POSEIDON` (bit 38) **unset**, the handler returns
   `SCRIPT_ERR_BAD_OPCODE` — *not* `DISCOURAGE_UPGRADABLE_NOPS`. This
   matches the activation pattern of NIP-026 / NIP-030 / NIP-031 /
@@ -860,7 +882,7 @@ external integrations must be updated; this is intentionally incompatible.
 
 ## NIP-043: state-thread primitives
 
-These three capabilities have independent height gates: reset testnet block 1,
+These three capabilities have independent height gates: reset testnet block 10,
 regtest height 0, mainnet unscheduled. Regtest overrides are
 `-assetmessageheight`, `-inputfieldheight`, and `-merkleposeidonheight`.
 They do not implement ZK, MAST or custody; those remain separate dependencies.
@@ -920,7 +942,7 @@ only. The control block is not Script. Initial arguments are limited to 1000;
 leaf size is at most 10000 bytes. TREE does not raise the 201-opcode budget or
 widen the effective argument-element limit by itself.
 
-Activation: reset testnet height 1, regtest 0 with `-authscripttreeheight`, mainnet
+Activation: reset testnet height 10, regtest 0 with `-authscripttreeheight`, mainnet
 unscheduled. No live network has been updated by this integration. Wallet tree
 import, backup and automatic leaf selection are not implemented. Manual contract
 signing uses the explicit tree context API; arbitrary partial-signature merging
@@ -960,7 +982,7 @@ consensus requirements independent of this replacement policy.
 
 ## NIP-046: AuthScript execution budgets
 
-`SCRIPT_VERIFY_AUTHSCRIPT_BUDGET` (bit 48) is enabled at testnet block 1 for
+`SCRIPT_VERIFY_AUTHSCRIPT_BUDGET` (bit 48) is enabled at block 10 of the
 reset testnet, and at regtest height 0. Regtest accepts
 `-authscriptbudgetheight=N` (`-1` disables). Mainnet defaults to `INT_MAX`;
 activation requires a separately chosen `nAuthScriptBudgetHeight`.
@@ -1014,7 +1036,7 @@ control blocks do not count. Standard transactions allow at most four such
 opcodes across all inputs. The flag also enables the existing 3072-byte
 item cap and 256-KiB stack-byte limit.
 
-Activation is scheduled at height 1 on reset testnet and defaults to height
+Activation is scheduled at height 10 on reset testnet and defaults to height
 0 on regtest (`-zkverifyheight`, `-1` disables). Mainnet remains unscheduled.
 Fixed-size positive-result and prepared-VK caches are implemented. Calibration
 sets the cost to 280: the largest measured uncached invalid-equation sample

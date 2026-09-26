@@ -804,6 +804,9 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // Testnet and regtest enforce from genesis (height 0): testnet after the full
         // history replay recorded in NIP/190826 (3.2.1), regtest has no history.
         SelectParams(CBaseChainParams::TESTNET);
+        // Sign for a block where AuthScript applies: on the reset testnet the
+        // opt-in features start at nOptInFeaturesHeight (plan 2026-09-26 v2).
+        SetSignatureOpcodeCandidateHeight(GetParams().GetConsensus().nOptInFeaturesHeight);
         BOOST_CHECK_EQUAL(GetParams().GetConsensus().nAssetTransferOverflowCheckActivation, 0);
         BOOST_CHECK(IsAssetTransferOverflowActive(0, GetParams().GetConsensus()));
         SelectParams(CBaseChainParams::REGTEST);
@@ -817,6 +820,9 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         BOOST_TEST_MESSAGE("Running Asset PQ witness destination test");
 
         SelectParams(CBaseChainParams::TESTNET);
+        // Sign for a block where AuthScript applies: on the reset testnet the
+        // opt-in features start at nOptInFeaturesHeight (plan 2026-09-26 v2).
+        SetSignatureOpcodeCandidateHeight(GetParams().GetConsensus().nOptInFeaturesHeight);
 
         uint256 witnessCommitment(uint256S("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"));
         CTxDestination pqDestination = WitnessV1AuthScript(witnessCommitment);
@@ -878,6 +884,9 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         BOOST_TEST_MESSAGE("Running Asset PQ transfer signing test");
 
         SelectParams(CBaseChainParams::TESTNET);
+        // Sign for a block where AuthScript applies: on the reset testnet the
+        // opt-in features start at nOptInFeaturesHeight (plan 2026-09-26 v2).
+        SetSignatureOpcodeCandidateHeight(GetParams().GetConsensus().nOptInFeaturesHeight);
 
         CBasicKeyStore keystore;
         CKey key;
@@ -938,6 +947,9 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         BOOST_TEST_MESSAGE("Running Asset PQ owner signing policy test");
 
         SelectParams(CBaseChainParams::TESTNET);
+        // Sign for a block where AuthScript applies: on the reset testnet the
+        // opt-in features start at nOptInFeaturesHeight (plan 2026-09-26 v2).
+        SetSignatureOpcodeCandidateHeight(GetParams().GetConsensus().nOptInFeaturesHeight);
 
         CBasicKeyStore keystore;
         CKey key;
@@ -1006,6 +1018,9 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         BOOST_TEST_MESSAGE("Running PQ witness dummy signature test");
 
         SelectParams(CBaseChainParams::TESTNET);
+        // Sign for a block where AuthScript applies: on the reset testnet the
+        // opt-in features start at nOptInFeaturesHeight (plan 2026-09-26 v2).
+        SetSignatureOpcodeCandidateHeight(GetParams().GetConsensus().nOptInFeaturesHeight);
 
         CBasicKeyStore keystore;
         CKey key;

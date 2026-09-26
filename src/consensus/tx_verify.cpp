@@ -97,6 +97,31 @@ XnaAssetPlacement CheckXnaAssetOutputPlacement(const CScript& scriptPubKey, bool
     return XnaAssetPlacement::Ok;
 }
 
+bool Consensus::CheckXnaAssetStrictPlacement(const CTransaction& tx, CValidationState& state)
+{
+    // CheckTransaction applies the placement rule only to transactions that
+    // are not asset issuances; issuances are verified by their own rules.
+    if (tx.IsNewAsset() || tx.IsReissueAsset() || tx.IsNewUniqueAsset() ||
+        tx.IsNewMsgChannelAsset() || tx.IsNewQualifierAsset() || tx.IsNewRestrictedAsset())
+        return true;
+
+    for (const auto& out : tx.vout) {
+        int nType;
+        bool fIsOwner;
+        if (out.scriptPubKey.IsAssetScript(nType, fIsOwner) || out.scriptPubKey.IsNullAsset())
+            continue;
+        switch (CheckXnaAssetOutputPlacement(out.scriptPubKey, /*strict=*/true)) {
+            case XnaAssetPlacement::NotInRightLocation:
+                return state.DoS(100, false, REJECT_INVALID, "bad-txns-op-xna-asset-not-in-right-script-location");
+            case XnaAssetPlacement::BadAssetScript:
+                return state.DoS(100, false, REJECT_INVALID, "bad-txns-bad-asset-script");
+            case XnaAssetPlacement::Ok:
+                break;
+        }
+    }
+    return true;
+}
+
 namespace {
 
 bool GetAssetMetadataFromNewAssetTx(const CTransaction& tx, const std::string& assetName, CNewAsset& asset)
@@ -749,9 +774,10 @@ bool CheckTransaction(const CTransaction& tx, CValidationState &state, bool fChe
                 // OP_XNA_ASSET metadata outputs that are validated separately.
                 continue;
             } else {
-                // OP_XNA_ASSET placement rule, gated by network (NIP revision 010).
-                switch (CheckXnaAssetOutputPlacement(out.scriptPubKey,
-                                                     GetParams().GetConsensus().nXNAAssetStrictEnabled)) {
+                // OP_XNA_ASSET placement rule (NIP revision 010). This check has
+                // no height, so it applies the legacy rule; the strict rule is
+                // height-dependent and applied by CheckXnaAssetStrictPlacement.
+                switch (CheckXnaAssetOutputPlacement(out.scriptPubKey, /*strict=*/false)) {
                     case XnaAssetPlacement::NotInRightLocation:
                         return state.DoS(100, false, REJECT_INVALID,
                                          "bad-txns-op-xna-asset-not-in-right-script-location");
@@ -939,10 +965,14 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
             fIsAsset = true;
 
         if (fIsAsset) {
+            // The marker rule depends on the height. In the mempool a peer one
+            // block away from the activation height may relay a transaction
+            // that is valid for its own next block, so it is not penalised.
+            const int nMarkerDoS = fCheckMempool ? 0 : 100;
             if (!fNip040Active && marker == AssetMarker::NEURAI_XNA)
-                return state.DoS(100, false, REJECT_INVALID, "bad-txns-asset-marker-before-nip040", false, "", tx.GetHash());
+                return state.DoS(nMarkerDoS, false, REJECT_INVALID, "bad-txns-asset-marker-before-nip040", false, "", tx.GetHash());
             if (fNip040Active && marker == AssetMarker::LEGACY_RVN)
-                return state.DoS(100, false, REJECT_INVALID, "bad-txns-legacy-asset-marker-after-nip040", false, "", tx.GetHash());
+                return state.DoS(nMarkerDoS, false, REJECT_INVALID, "bad-txns-legacy-asset-marker-after-nip040", false, "", tx.GetHash());
         }
 
         if (assetCache) {
@@ -1185,10 +1215,10 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
                 } else {
                     if (out.scriptPubKey.Find(OP_XNA_ASSET)) {
                         if (AreRestrictedAssetsDeployed()) {
-                            // Same placement rule as CheckTransaction, gated by
-                            // network (NIP revision 010).
+                            // Same placement rule as CheckTransaction, with the
+                            // strict rule from its activation height (NIP revision 010).
                             switch (CheckXnaAssetOutputPlacement(out.scriptPubKey,
-                                                                 GetParams().GetConsensus().nXNAAssetStrictEnabled)) {
+                                                                 GetParams().GetConsensus().IsXnaAssetStrictActive(nCandidateHeight))) {
                                 case XnaAssetPlacement::NotInRightLocation:
                                     return state.DoS(100, false, REJECT_INVALID,
                                                      "bad-txns-op-xna-asset-not-in-right-script-location", false, "", tx.GetHash());

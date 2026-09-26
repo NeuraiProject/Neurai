@@ -738,24 +738,25 @@ BOOST_AUTO_TEST_CASE(activation_context_is_scoped)
     BOOST_CHECK(custom.IsStrictAuthScriptActive(150));
 }
 
-// Pin the real network schedule, not just a regtest override. Historical
-// testnet flags remain identical to the previously unscheduled configuration.
+// Pin the real network schedule, not just a regtest override. On the reset
+// testnet the strict families activate at block 10 with the other new NIPs
+// (plan 2026-09-26 v2); below it the flags equal the unscheduled configuration.
 BOOST_AUTO_TEST_CASE(testnet_activation_schedule)
 {
     const auto testnet = CreateChainParams(CBaseChainParams::TESTNET);
     const auto mainnet = CreateChainParams(CBaseChainParams::MAIN);
     const auto regtest = CreateChainParams(CBaseChainParams::REGTEST);
     const auto& consensus = testnet->GetConsensus();
-    BOOST_REQUIRE_EQUAL(consensus.nStrictAuthScriptHeight, 440000);
+    BOOST_REQUIRE_EQUAL(consensus.nStrictAuthScriptHeight, 10);
     BOOST_CHECK(consensus.nPQWitnessEnabled);
     BOOST_CHECK_EQUAL(mainnet->GetConsensus().nStrictAuthScriptHeight, std::numeric_limits<int>::max());
     BOOST_CHECK_EQUAL(regtest->GetConsensus().nStrictAuthScriptHeight, 0);
     auto previous = consensus;
     previous.nStrictAuthScriptHeight = std::numeric_limits<int>::max();
     const script_verify_flags activation = SCRIPT_VERIFY_AUTHSCRIPT_STRICT | SCRIPT_VERIFY_AUTHDEST;
-    for (int height : {0, 436165, 439998, 439999, 440000, 440001}) {
+    for (int height : {0, 1, 8, 9, 10, 11, 440000}) {
         const bool active = consensus.IsStrictAuthScriptActive(height);
-        BOOST_CHECK_EQUAL(active, height >= 440000);
+        BOOST_CHECK_EQUAL(active, height >= 10);
         const auto flags = ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, active, height);
         const auto oldFlags = ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, previous, false, height);
         BOOST_CHECK((flags & activation) == (active ? activation : 0));
