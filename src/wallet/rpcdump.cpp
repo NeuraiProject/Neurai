@@ -147,8 +147,8 @@ UniValue importprivkey(const JSONRPCRequest& request)
     assert(key.VerifyPubKey(pubkey));
     CKeyID vchAddress = pubkey.GetID();
     CTxDestination dest = GetDestinationForPubKey(pubkey);
-    if (pubkey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(pubkey, dest)) {
-        throw JSONRPCError(RPC_WALLET_ERROR, "Error deriving AuthScript destination for imported PQ key");
+    if (pubkey.IsPQ() && !pwallet->GetStrictAuthScriptDestination(pubkey, dest)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Error deriving strict PQ destination for imported PQ key");
     }
     {
         pwallet->MarkDirty();
@@ -473,8 +473,8 @@ UniValue importpubkey(const JSONRPCRequest& request)
     LOCK2(cs_main, pwallet->cs_wallet);
 
     CTxDestination importDest = pubKey.GetID();
-    if (pubKey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(pubKey, importDest)) {
-        throw JSONRPCError(RPC_WALLET_ERROR, "Error deriving AuthScript destination for imported PQ pubkey");
+    if (pubKey.IsPQ() && !pwallet->GetStrictAuthScriptDestination(pubKey, importDest)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Error deriving strict PQ destination for imported PQ pubkey");
     }
     ImportAddress(pwallet, importDest, strLabel);
     ImportScript(pwallet, GetScriptForRawPubKey(pubKey), strLabel, false);
@@ -577,7 +577,7 @@ UniValue importwallet(const JSONRPCRequest& request)
         pwallet->RegisterStrictAuthScriptForKey(pubkey);
         if (pubkey.IsPQ()) {
             CTxDestination pqDest;
-            if (!pwallet->GetDefaultAuthScriptDestination(pubkey, pqDest)) {
+            if (!pwallet->GetStrictAuthScriptDestination(pubkey, pqDest)) {
                 fGood = false;
                 continue;
             }
@@ -585,7 +585,7 @@ UniValue importwallet(const JSONRPCRequest& request)
         pwallet->mapKeyMetadata[keyid].nCreateTime = nTime;
         if (fLabel) {
             CTxDestination dest = GetDestinationForPubKey(pubkey);
-            if (pubkey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(pubkey, dest)) {
+            if (pubkey.IsPQ() && !pwallet->GetStrictAuthScriptDestination(pubkey, dest)) {
                 fGood = false;
                 continue;
             }
@@ -834,6 +834,8 @@ UniValue getmasterkeyinfo(const JSONRPCRequest& request)
                 "{                           (json object)\n"
                 "  \"bip32_root_private\" : (string) extended master private key,\n"
                 "  \"bip32_root_public\" :  (string) extended master public key,\n"
+                "  \"address_type\" : (string) the wallet address type (-addresstype): legacy, pq or ecdsa\n"
+                "  \"strict_ecdsa_derivation_path\" : (string, ecdsa wallets) account path of its witness v3 keys\n"
                 "  \"account_derivation_path\" : (string) The derivation path to the account public/private keys\n"
                 "  \"external_derivation_path\" : (string) The derivation path prefix for receiving addresses\n"
                 "  \"internal_derivation_path\" : (string) The derivation path prefix for change addresses\n"
@@ -867,6 +869,12 @@ UniValue getmasterkeyinfo(const JSONRPCRequest& request)
             ret.push_back(std::make_pair("wallet_type", "BIP44"));
         else
             ret.push_back(std::make_pair("wallet_type", "Legacy"));
+        ret.push_back(std::make_pair("address_type", WalletAddressTypeName(pwallet->GetAddressType())));
+        if (pwallet->GetAddressType() == WalletAddressType::ECDSA) {
+            // Strict ECDSA (witness v3) keys: m/84'/coin_type'/0'/{0,1}/index.
+            const uint32_t nCoinType = (GetParams().NetworkIDString() == "main") ? 1900 : 1;
+            ret.push_back(std::make_pair("strict_ecdsa_derivation_path", strprintf("m/84'/%d'/0'", nCoinType)));
+        }
 
         if (!pwallet->GetHDChain().IsBip44() && !pwallet->IsPQEnabled()) {
             CKey seed;
@@ -1141,8 +1149,8 @@ UniValue ProcessImport(CWallet * const pwallet, const UniValue& data, const int6
 
                     CKeyID vchAddress = pubkey.GetID();
                     CTxDestination pubkey_dest = GetDestinationForPubKey(pubkey);
-                    if (pubkey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(pubkey, pubkey_dest)) {
-                        throw JSONRPCError(RPC_WALLET_ERROR, "Error deriving AuthScript destination for imported PQ key");
+                    if (pubkey.IsPQ() && !pwallet->GetStrictAuthScriptDestination(pubkey, pubkey_dest)) {
+                        throw JSONRPCError(RPC_WALLET_ERROR, "Error deriving strict PQ destination for imported PQ key");
                     }
                     pwallet->MarkDirty();
                     pwallet->SetAddressBook(pubkey_dest, label, "receive");
@@ -1266,8 +1274,8 @@ UniValue ProcessImport(CWallet * const pwallet, const UniValue& data, const int6
 
                 CKeyID vchAddress = pubKey.GetID();
                 CTxDestination wallet_dest = GetDestinationForPubKey(pubKey);
-                if (pubKey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(pubKey, wallet_dest)) {
-                    throw JSONRPCError(RPC_WALLET_ERROR, "Error deriving AuthScript destination for imported PQ key");
+                if (pubKey.IsPQ() && !pwallet->GetStrictAuthScriptDestination(pubKey, wallet_dest)) {
+                    throw JSONRPCError(RPC_WALLET_ERROR, "Error deriving strict PQ destination for imported PQ key");
                 }
                 pwallet->MarkDirty();
                 pwallet->SetAddressBook(wallet_dest, label, "receive");

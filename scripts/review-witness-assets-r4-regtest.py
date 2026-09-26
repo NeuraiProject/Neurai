@@ -61,7 +61,7 @@ def main():
             raise RuntimeError(label + ': ' + str(observed))
     try:
         source = h.Node(args.bindir, directory / 'source',
-                        ['-pqwallet=1', '-par=1', '-acceptnonstdtxn=0', '-bypassdownload=1'])
+                        ['-addresstype=pq', '-par=1', '-acceptnonstdtxn=0', '-bypassdownload=1'])
         nodes.append(source)
         source.ready()
         miner = source.rpc('getnewaddress')

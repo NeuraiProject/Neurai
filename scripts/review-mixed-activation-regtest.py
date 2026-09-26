@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Mixed Legacy/v1/v2/v3 spends, strict assets and compact blocks at activation."""
+"""Mixed Legacy/v2/v3 wallet spends, strict assets and compact blocks at activation.
+
+Generic AuthScript v1 is a contract family the wallet never manages, so it is
+not part of the wallet-signed mix."""
 import importlib.util
 import json
 from pathlib import Path
@@ -55,7 +58,7 @@ def main():
 
     try:
         p2p = port()
-        source = h.Node(bindir, directory / 'source', ['-pqwallet=1', '-par=1', '-bypassdownload=1',
+        source = h.Node(bindir, directory / 'source', ['-addresstype=pq', '-par=1', '-bypassdownload=1',
                     f'-strictauthscriptheight={HEIGHT}', '-listen=1', f'-port={p2p}', '-debug=cmpctblock'])
         nodes.append(source)
         peer = h.Node(bindir, directory / 'peer', ['-par=2', '-bypassdownload=1',
@@ -64,18 +67,21 @@ def main():
         for node in nodes:
             node.ready()
         wait(lambda: len(source.rpc('getpeerinfo')) == 1, 'P2P handshake')
-        miner = source.rpc('getnewaddress')
+        # Below HEIGHT the PQ wallet has no address of its own (strict v2 is not
+        # active and it never manages generic v1): it mines to a Legacy key made
+        # by the classic peer and imported into the PQ wallet.
+        legacy = peer.rpc('getnewaddress')
+        source.rpc('importprivkey', peer.rpc('dumpprivkey', legacy), '', False)
+        miner = legacy
         source.rpc('generatetoaddress', HEIGHT - 1, miner)
         wait(lambda: peer.rpc('getbestblockhash') == source.rpc('getbestblockhash'), 'initial sync')
         # Warm up compact-block announcements before the activation block.
         wait(lambda: any(p.get('version', 0) for p in source.rpc('getpeerinfo')), 'version handshake')
-        legacy = peer.rpc('getnewaddress')
-        source.rpc('importprivkey', peer.rpc('dumpprivkey', legacy), '', False)
-        addresses = [legacy, source.rpc('getnewaddress'), source.rpc('getnewaddress', '', 'pq'), source.rpc('getnewaddress', '', 'ecdsa')]
+        addresses = [legacy, source.rpc('getnewaddress', '', 'pq'), source.rpc('getnewaddress', '', 'ecdsa')]
         prefixes = [source.rpc('validateaddress', a)['scriptPubKey'] for a in addresses]
         # First transaction only spends old confirmed coins. The zero-locktime
         # variant below isolates asset activation from transaction finality.
-        issuance = source.rpc('issue', 'MIXEDHEIGHT', 10, addresses[3])[0]
+        issuance = source.rpc('issue', 'MIXEDHEIGHT', 10, addresses[2])[0]
         original = source.rpc('getrawtransaction', issuance, True)
         signed = source.rpc('signrawtransaction', base_transaction(original, 0).hex())
         check('issuance/zero_locktime_signed', signed['complete'], signed.get('errors'))
@@ -96,12 +102,12 @@ def main():
         check('activation/issuance_confirmed', source.rpc('getrawtransaction', issuance, True)['confirmations'] == 1, issuance)
         funded = source.rpc('getrawtransaction', funding, True)
         inputs = [{'txid': funding, 'vout': next(o['n'] for o in funded['vout'] if o['scriptPubKey']['hex'] == spk)} for spk in prefixes]
-        tx = source.rpc('createrawtransaction', inputs, {legacy: 39}, 0)
+        tx = source.rpc('createrawtransaction', inputs, {legacy: 29}, 0)
         signed = source.rpc('signrawtransaction', tx)
         check('mixed/signed', signed['complete'], signed.get('errors'))
         decoded = source.rpc('decoderawtransaction', signed['hex'])
-        check('mixed/four_families', len(decoded['vin']) == 4 and bool(decoded['vin'][0]['scriptSig']['hex']) and
-              [len(v.get('txinwitness', [])) for v in decoded['vin']] == [0, 4, 4, 4], decoded['txid'])
+        check('mixed/three_families', len(decoded['vin']) == 3 and bool(decoded['vin'][0]['scriptSig']['hex']) and
+              [len(v.get('txinwitness', [])) for v in decoded['vin']] == [0, 4, 4], decoded['txid'])
         mixed = source.rpc('sendrawtransaction', signed['hex'])
         wait(lambda: mixed in peer.rpc('getrawmempool'), 'mixed relay')
         mixed_block = source.rpc('generatetoaddress', 1, miner)[0]

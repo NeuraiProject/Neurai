@@ -363,9 +363,16 @@ QString AddressTableModel::addRow(const QString &type, const QString &label, con
     }
     else if(type == Receive)
     {
-        // Generate a new address to associate with given label
-        CPubKey newKey;
-        if(!wallet->GetKeyFromPool(newKey))
+        // Generate a new address of the wallet's address type (-addresstype)
+        // to associate with given label
+        CTxDestination dest;
+        std::string error;
+        bool fGenerated;
+        {
+            LOCK(wallet->cs_wallet);
+            fGenerated = wallet->GetNewDestination(false, dest, error);
+        }
+        if(!fGenerated)
         {
             WalletModel::UnlockContext ctx(walletModel->requestUnlock());
             if(!ctx.isValid())
@@ -374,22 +381,14 @@ QString AddressTableModel::addRow(const QString &type, const QString &label, con
                 editStatus = WALLET_UNLOCK_FAILURE;
                 return QString();
             }
-            if(!wallet->GetKeyFromPool(newKey))
+            LOCK(wallet->cs_wallet);
+            if(!wallet->GetNewDestination(false, dest, error))
             {
                 editStatus = KEY_GENERATION_FAILURE;
                 return QString();
             }
         }
-        if (newKey.IsPQ()) {
-            CTxDestination dest;
-            if (!IsStrictAuthScriptActiveInContext() || !wallet->GetStrictAuthScriptDestination(newKey, dest)) {
-                editStatus = KEY_GENERATION_FAILURE;
-                return QString();
-            }
-            strAddress = EncodeDestination(dest);
-        } else {
-            strAddress = EncodeDestination(newKey.GetID());
-        }
+        strAddress = EncodeDestination(dest);
     }
     else
     {

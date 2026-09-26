@@ -30,7 +30,7 @@ def main():
             raise RuntimeError(label)
 
     def start(name):
-        node = h.Node(bindir, root / name, ['-pqwallet=1', '-addressindex=1', '-assetindex=1', '-bypassdownload=1'])
+        node = h.Node(bindir, root / name, ['-addresstype=pq', '-addressindex=1', '-assetindex=1', '-bypassdownload=1'])
         nodes.append(node)
         node.ready()
         return node

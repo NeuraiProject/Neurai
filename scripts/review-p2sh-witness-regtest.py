@@ -44,7 +44,7 @@ def main():
 
     try:
         source = h.Node(args.bindir, directory / 'source',
-                        ['-bypassdownload=1', '-acceptnonstdtxn=0', '-pqwallet=1', '-par=1'])
+                        ['-bypassdownload=1', '-acceptnonstdtxn=0', '-addresstype=pq', '-par=1'])
         nodes.append(source)
         source.ready()
         miner = source.rpc('getnewaddress')
@@ -54,7 +54,7 @@ def main():
         redeems = [b'\x00\x20' + a.sha256(b'\x51'),
                    b'\x51\x20' + a.sha256(tag + tag + b'\x01\x00' + a.sha256(b'\x51'))]
         # Import redeem scripts before their private keys: importaddress is a watch-only RPC.
-        keys = h.Node(args.bindir, directory / 'keys', ['-pqwallet=1'])
+        keys = h.Node(args.bindir, directory / 'keys', ['-addresstype=pq'])
         nodes.append(keys)
         keys.ready()
         secrets = []

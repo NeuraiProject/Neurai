@@ -103,7 +103,7 @@ def main():
         if not ok:
             raise RuntimeError(label + ': ' + str(observed))
     try:
-        node = h.Node(args.bindir, directory / 'node', ['-pqwallet=1', '-par=1', '-assumevalid=0', '-bypassdownload=1'])
+        node = h.Node(args.bindir, directory / 'node', ['-addresstype=pq', '-par=1', '-assumevalid=0', '-bypassdownload=1'])
         nodes.append(node)
         node.ready()
         node.rpc('setmocktime', 1800000000)

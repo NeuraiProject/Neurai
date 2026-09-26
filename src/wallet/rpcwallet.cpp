@@ -178,20 +178,15 @@ UniValue getmywords(const JSONRPCRequest& request)
 }
 
 
-// A PQ key maps to an AuthScript destination, which consensus only protects
-// from the network's opt-in height on. Refuse to hand one out for receiving
-// before AuthScript applies to the next block.
-static void EnsureAuthScriptReceiveActive()
+// A PQ wallet hands out strict PQ (witness v2) addresses; generic AuthScript
+// v1 is reserved for contracts. Consensus only protects v2 outputs once
+// AuthScript and the strict families apply, so refuse to hand one out for
+// receiving before that holds for the next block.
+static void EnsureStrictPQReceiveActive()
 {
-    const Consensus::Params& consensus = GetParams().GetConsensus();
-    if (!consensus.IsPQWitnessActive(GetSignatureOpcodeCandidateHeight())) {
-        if (!consensus.nPQWitnessEnabled || consensus.nOptInFeaturesHeight == std::numeric_limits<int>::max()) {
-            throw JSONRPCError(RPC_WALLET_ERROR,
-                "AuthScript (post-quantum) addresses are not active yet on this chain; their activation is not scheduled");
-        }
-        throw JSONRPCError(RPC_WALLET_ERROR, strprintf(
-            "AuthScript (post-quantum) addresses are not active yet on this chain; they apply from block %d",
-            consensus.nOptInFeaturesHeight));
+    std::string error;
+    if (!CWallet::IsAddressTypeActive("pq", error)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, error);
     }
 }
 
@@ -210,7 +205,7 @@ UniValue getnewaddress(const JSONRPCRequest& request)
             "so payments received with the address will be credited to 'account'.\n"
             "\nArguments:\n"
             "1. \"account\"        (string, optional) DEPRECATED. The account name for the address to be linked to. If not provided, the default account \"\" is used. It can also be set to the empty string \"\" to represent the default account. The account does not need to exist, it will be created if there is no account by the given name.\n"
-            "2. \"address_type\"   (string, optional) The address family: \"legacy\" (Base58, secp256k1), \"pq\" (strict post-quantum, witness v2, pq1.../tpq1...) or \"ecdsa\" (strict ECDSA, witness v3, nq1r.../tnq1r...). If omitted, the wallet's default family is used (legacy for classic wallets, generic AuthScript v1 for PQ wallets).\n"
+            "2. \"address_type\"   (string, optional) The address family: \"legacy\" (Base58, secp256k1), \"pq\" (strict post-quantum, witness v2, pq1.../tpq1...) or \"ecdsa\" (strict ECDSA, witness v3, nq1r.../tnq1r...). If omitted, the wallet's address type (-addresstype when it was created, see getwalletinfo) is used. \"pq\" needs a pq wallet; an ecdsa wallet refuses \"legacy\". Generic AuthScript v1 (nc1p.../tnc1p...) is a contract family and is never handed out by the wallet.\n"
             "\nResult:\n"
             "\"address\"    (string) The new neurai address\n"
             "\nExamples:\n"
@@ -234,6 +229,11 @@ UniValue getnewaddress(const JSONRPCRequest& request)
         pwallet->TopUpKeyPool();
     }
 
+    // Without an explicit type, the wallet's own address type (like the GUI).
+    if (addressType.empty() && pwallet->GetAddressType() != WalletAddressType::LEGACY) {
+        addressType = WalletAddressTypeName(pwallet->GetAddressType());
+    }
+
     CTxDestination dest;
     if (!addressType.empty()) {
         std::string error;
@@ -248,10 +248,11 @@ UniValue getnewaddress(const JSONRPCRequest& request)
         }
         dest = newKey.GetID();
         if (newKey.IsPQ()) {
-            EnsureAuthScriptReceiveActive();
-        }
-        if (newKey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(newKey, dest)) {
-            throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive AuthScript destination for new PQ key");
+            // Only reachable for a PQ key in a wallet not flagged as PQ.
+            EnsureStrictPQReceiveActive();
+            if (!pwallet->GetStrictAuthScriptDestination(newKey, dest)) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive strict PQ destination for new PQ key");
+            }
         }
     }
 
@@ -263,20 +264,23 @@ UniValue getnewaddress(const JSONRPCRequest& request)
 
 CTxDestination GetAccountAddress(CWallet* const pwallet, std::string strAccount, bool bForceNew=false)
 {
+    std::string inactive;
+    if (!CWallet::IsAddressTypeActive(WalletAddressTypeName(pwallet->GetAddressType()), inactive)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, inactive);
+    }
+
     CPubKey pubKey;
     if (!pwallet->GetAccountPubkey(pubKey, strAccount, bForceNew)) {
         throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
     }
 
-    if (pubKey.IsPQ()) {
-        EnsureAuthScriptReceiveActive();
-        CTxDestination dest;
-        if (!pwallet->GetDefaultAuthScriptDestination(pubKey, dest)) {
-            throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive AuthScript destination for account PQ key");
-        }
-        return dest;
+    // The account address in the form the wallet hands it out (strict v2 for
+    // PQ keys, strict v3 in an ecdsa wallet).
+    CTxDestination dest;
+    if (!pwallet->GetDestinationForOwnKey(pubKey, dest)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive the destination of the account key");
     }
-    return pubKey.GetID();
+    return dest;
 }
 
 UniValue getaccountaddress(const JSONRPCRequest& request)
@@ -326,7 +330,7 @@ UniValue getrawchangeaddress(const JSONRPCRequest& request)
             "\nReturns a new Neurai address, for receiving change.\n"
             "This is for use with raw transactions, NOT normal use.\n"
             "\nArguments:\n"
-            "1. \"address_type\"   (string, optional) \"legacy\", \"pq\" (strict witness v2) or \"ecdsa\" (strict witness v3). Default: the wallet's default family.\n"
+            "1. \"address_type\"   (string, optional) \"legacy\", \"pq\" (strict witness v2) or \"ecdsa\" (strict witness v3). Default: the wallet's address type (-addresstype when it was created).\n"
             "\nResult:\n"
             "\"address\"    (string) The address\n"
             "\nExamples:\n"
@@ -340,10 +344,17 @@ UniValue getrawchangeaddress(const JSONRPCRequest& request)
         pwallet->TopUpKeyPool();
     }
 
-    if (request.params.size() > 0 && !request.params[0].isNull() && !request.params[0].get_str().empty()) {
+    std::string changeType;
+    if (request.params.size() > 0 && !request.params[0].isNull())
+        changeType = request.params[0].get_str();
+    // Without an explicit type, the wallet's own address type, like its receive addresses.
+    if (changeType.empty() && pwallet->GetAddressType() != WalletAddressType::LEGACY) {
+        changeType = WalletAddressTypeName(pwallet->GetAddressType());
+    }
+    if (!changeType.empty()) {
         CTxDestination typedDest;
         std::string error;
-        if (!pwallet->GetNewDestinationOfType(request.params[0].get_str(), true, typedDest, error)) {
+        if (!pwallet->GetNewDestinationOfType(changeType, true, typedDest, error)) {
             throw JSONRPCError(RPC_WALLET_ERROR, error);
         }
         return EncodeDestination(typedDest);
@@ -358,10 +369,10 @@ UniValue getrawchangeaddress(const JSONRPCRequest& request)
 
     CTxDestination dest = vchPubKey.GetID();
     if (vchPubKey.IsPQ()) {
-        EnsureAuthScriptReceiveActive();
+        EnsureStrictPQReceiveActive();
     }
-    if (vchPubKey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(vchPubKey, dest)) {
-        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive AuthScript destination for PQ change key");
+    if (vchPubKey.IsPQ() && !pwallet->GetStrictAuthScriptDestination(vchPubKey, dest)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive strict PQ destination for PQ change key");
     }
 
     return EncodeDestination(dest);
@@ -2882,6 +2893,7 @@ UniValue getwalletinfo(const JSONRPCRequest& request)
             "{\n"
             "  \"walletname\": xxxxx,             (string) the wallet name\n"
             "  \"walletversion\": xxxxx,          (numeric) the wallet version\n"
+            "  \"addresstype\": \"type\",           (string) the address type fixed when the wallet was created (-addresstype): legacy, pq or ecdsa\n"
             "  \"balance\": xxxxxxx,              (numeric) the total confirmed balance of the wallet in " + CURRENCY_UNIT + "\n"
             "  \"unconfirmed_balance\": xxx,      (numeric) the total unconfirmed balance of the wallet in " + CURRENCY_UNIT + "\n"
             "  \"immature_balance\": xxxxxx,      (numeric) the total immature balance of the wallet in " + CURRENCY_UNIT + "\n"
@@ -2907,6 +2919,7 @@ UniValue getwalletinfo(const JSONRPCRequest& request)
     size_t kpExternalSize = pwallet->KeypoolCountExternalKeys();
     obj.push_back(Pair("walletname", pwallet->GetName()));
     obj.push_back(Pair("walletversion", pwallet->GetVersion()));
+    obj.push_back(Pair("addresstype",   WalletAddressTypeName(pwallet->GetAddressType())));
     obj.push_back(Pair("balance",       ValueFromAmount(pwallet->GetBalance())));
     obj.push_back(Pair("unconfirmed_balance", ValueFromAmount(pwallet->GetUnconfirmedBalance())));
     obj.push_back(Pair("immature_balance",    ValueFromAmount(pwallet->GetImmatureBalance())));
@@ -3512,6 +3525,12 @@ UniValue generate(const JSONRPCRequest& request)
         max_tries = request.params[1].get_int();
     }
 
+    // A pq or ecdsa wallet mines to its own strict family, which must be active.
+    std::string inactive;
+    if (!CWallet::IsAddressTypeActive(WalletAddressTypeName(pwallet->GetAddressType()), inactive)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, inactive);
+    }
+
     std::shared_ptr<CReserveScript> coinbase_script;
     pwallet->GetScriptForMining(coinbase_script);
 
@@ -3616,7 +3635,7 @@ UniValue listpqaddresses(const JSONRPCRequest& request)
             "\nReturns the list of post-quantum (ML-DSA-44) Bech32m addresses in the wallet.\n"
             "\nResult:\n"
             "[                        (json array of strings)\n"
-            "  \"address\"             (string) A generic AuthScript v1 address with a PQ key (nc1p.../tnc1p...)\n"
+            "  \"address\"             (string) A strict post-quantum (witness v2) address of a PQ key (pq1.../tpq1...)\n"
             "  ...\n"
             "]\n"
             "\nExamples:\n"
@@ -3635,8 +3654,9 @@ UniValue listpqaddresses(const JSONRPCRequest& request)
             continue;
         if (!pubkey.IsPQ())
             continue;
+        // Strict PQ v2 is the wallet's PQ family; generic v1 is for contracts.
         CTxDestination dest;
-        if (pwallet->GetDefaultAuthScriptDestination(pubkey, dest, false)) {
+        if (pwallet->GetStrictAuthScriptDestination(pubkey, dest, false)) {
             ret.push_back(EncodeDestination(dest));
         }
     }

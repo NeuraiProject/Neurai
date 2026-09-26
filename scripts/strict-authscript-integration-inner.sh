@@ -61,7 +61,7 @@ phase1() {
 # ---------------------------------------------------------------------------------
 # Phase 2a: two connected nodes, same activation height. N1 = PQ wallet, 1 script
 # thread. N2 = classic wallet, 8 script threads, compact-block logging.
-startN1() { "$BIN/neuraid" $COMMON -listen=1 -port=18641 -datadir="$BASE/N1" -rpcport=18541 -pqwallet=1 -par=1 -strictauthscriptheight=$ACT "$@" -daemon >/dev/null; }
+startN1() { "$BIN/neuraid" $COMMON -listen=1 -port=18641 -datadir="$BASE/N1" -rpcport=18541 -addresstype=pq -par=1 -strictauthscriptheight=$ACT "$@" -daemon >/dev/null; }
 startN2() { "$BIN/neuraid" $COMMON -listen=1 -port=18642 -datadir="$BASE/N2" -rpcport=18542 -par=8 -debug=cmpctblock -connect=127.0.0.1:18641 -strictauthscriptheight=$ACT "$@" -daemon >/dev/null; }
 N1() { cli N1 18541 "$@"; }; N2() { cli N2 18542 "$@"; }
 syncmempool() { for i in $(seq 1 40); do
@@ -73,7 +73,12 @@ mine() { syncmempool; N1 generatetoaddress "$1" "$(cat $STATE/n1_miner)" >/dev/n
 phase2a() {
   mkdir -p "$BASE/N1" "$BASE/N2" "$STATE"
   startN1; waitrpc N1 18541; startN2; waitrpc N2 18542
-  N1 getnewaddress > $STATE/n1_miner
+  # Below activation the PQ wallet N1 has no address of its own (strict v2 is not
+  # active and it never manages generic v1): it mines to a Legacy key made by the
+  # classic wallet N2 and imported into N1.
+  local miner_leg; miner_leg=$(N2 getnewaddress)
+  N1 importprivkey "$(N2 dumpprivkey "$miner_leg")" "" false
+  echo "$miner_leg" > $STATE/n1_miner
   N1 generatetoaddress $((ACT-1)) "$(cat $STATE/n1_miner)" >/dev/null; syncblocks
   check "$(N2 getblockcount)" "$((ACT-1))" "both nodes at the last inactive height"
   local A_PQ A_EC B_EC B_LEG

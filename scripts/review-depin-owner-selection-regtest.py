@@ -15,7 +15,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--pqwallet', action='store_true')
     args = parser.parse_args()
-    flags = ['-bypassdownload=1'] + (['-pqwallet=1'] if args.pqwallet else [])
+    flags = ['-bypassdownload=1'] + (['-addresstype=pq'] if args.pqwallet else [])
     directory = Path(tempfile.mkdtemp(prefix='depin-owner-selection-'))
     bindir = Path('/root/Neurai/src')
     report = {'results': [], 'pqwallet': args.pqwallet, 'binary_sha256': h.digest_file(bindir / 'neuraid'),

@@ -28,8 +28,8 @@ class PQAssetTest(NeuraiTestFramework):
         self.num_nodes = 3
         self.extra_args = [
             ["-assetindex"],
-            ["-assetindex", "-pqwallet"],
-            ["-assetindex", "-pqwallet"],
+            ["-assetindex", "-addresstype=pq"],
+            ["-assetindex", "-addresstype=pq"],
         ]
 
     def mine_and_sync(self, miner=0, blocks=1):

@@ -48,7 +48,7 @@ def main():
         bid=n.rpc('sendrawtransaction',b);check('XNA/replaced',aid not in n.rpc('getrawmempool') and bid in n.rpc('getrawmempool'));mine()
         # Asset destination matrix. v1 NoAuth is used only as an explicit public fixture.
         v1addr,v1=r.address(b'\x51')
-        pq=new('pq',extra=['-pqwallet=1']);pqaddr=pq.rpc('getnewaddress','','pq');pqspk=bytes.fromhex(pq.rpc('validateaddress',pqaddr)['scriptPubKey'])
+        pq=new('pq',extra=['-addresstype=pq']);pqaddr=pq.rpc('getnewaddress','','pq');pqspk=bytes.fromhex(pq.rpc('validateaddress',pqaddr)['scriptPubKey'])
         ecdsa=n.rpc('getnewaddress','','ecdsa');esp=bytes.fromhex(n.rpc('validateaddress',ecdsa)['scriptPubKey'])
         for family,dest,spk in [('legacy',addr,pay),('v1',v1addr,v1),('v3',ecdsa,esp),('v2',pqaddr,pqspk)]:
             name='RBF'+family.upper();n.rpc('issue',name,1,dest);mine()

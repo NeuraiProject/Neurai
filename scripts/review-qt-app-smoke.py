@@ -16,7 +16,7 @@ binary = Path(sys.argv[1]).resolve()
 (root / 'neuraid').symlink_to(binary)
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 report = {'binary_sha256': h.digest_file(binary), 'results': []}
-node = h.Node(root, root / 'node', ['-pqwallet=1', '-bypassdownload=1',
+node = h.Node(root, root / 'node', ['-addresstype=pq', '-bypassdownload=1',
     '-mnemonic=abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'])
 try:
     # A fresh GUI wallet can spend more than the helper's 20 seconds in keygen.

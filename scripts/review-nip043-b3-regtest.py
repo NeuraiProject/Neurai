@@ -58,7 +58,7 @@ def main():
   deposit=fund_asset(f['name'],10,cd,bytes([7])*32)
   with_message=fund_asset(f['name'],10,cv,bytes([8])*32)
   third_reserve=fund_asset(f['name'],10,cv) if args.chain else None
-  sponsor=node('sponsor',extra=['-pqwallet=1']) if args.sponsor=='pq' else n
+  sponsor=node('sponsor',extra=['-addresstype=pq']) if args.sponsor=='pq' else n
   payout=miner if args.sponsor=='legacy' else sponsor.rpc('getnewaddress','',args.sponsor)
   pay=bytes.fromhex(sponsor.rpc('validateaddress',payout)['scriptPubKey'])
   coin_tx=confirm(n.rpc('sendtoaddress',payout,2));coin=(coin_tx['txid'],next(o['n'] for o in coin_tx['vout'] if o['value']==2 and o['scriptPubKey']['hex']==pay.hex()))

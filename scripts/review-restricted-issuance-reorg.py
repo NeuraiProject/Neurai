@@ -14,7 +14,7 @@ spec.loader.exec_module(m)
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bindir', type=Path, default=Path('/root/Neurai/src'))
-    parser.add_argument('--target', choices=['pq', 'ecdsa', 'authscript', 'legacy'], default='ecdsa')
+    parser.add_argument('--target', choices=['pq', 'ecdsa', 'legacy'], default='ecdsa')
     parser.add_argument('--coin-only-child', action='store_true', help='Reproduce the original ordinary-coin descendant')
     parser.add_argument('--disconnect-fee', action='store_true', help='Disconnect the original non-coinbase fee funding too')
     parser.add_argument('--competing', action='store_true')
@@ -32,20 +32,20 @@ def main():
             raise RuntimeError(f'{label}: {observed}')
 
     try:
-        source = m.Node(args.bindir, directory / 'source', ['-pqwallet=1', '-acceptnonstdtxn=0', '-bypassdownload=1'])
+        source = m.Node(args.bindir, directory / 'source', ['-addresstype=pq', '-acceptnonstdtxn=0', '-bypassdownload=1'])
         nodes.append(source)
         source.ready()
         miner = source.rpc('getnewaddress')
         source.rpc('generatetoaddress', 500, miner)
         holder = source.rpc('getnewaddress', '', 'pq' if args.target == 'ecdsa' else 'ecdsa')
         if args.target == 'legacy':
-            keynode = m.Node(args.bindir, directory / 'legacykeys', ['-pqwallet=0'])
+            keynode = m.Node(args.bindir, directory / 'legacykeys', ['-addresstype=legacy'])
             nodes.append(keynode)
             keynode.ready()
             target = keynode.rpc('getnewaddress', '', 'legacy')
             source.rpc('importprivkey', keynode.rpc('dumpprivkey', target), '', False)
         else:
-            target = source.rpc('getnewaddress') if args.target == 'authscript' else source.rpc('getnewaddress', '', args.target)
+            target = source.rpc('getnewaddress', '', args.target)
 
         def confirm(label, value):
             txid = value[0] if isinstance(value, list) else value

@@ -14,7 +14,7 @@ spec.loader.exec_module(m)
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bindir', type=Path, default=Path('/root/Neurai/src'))
-    parser.add_argument('--target', choices=['pq', 'ecdsa', 'authscript'], default='ecdsa')
+    parser.add_argument('--target', choices=['pq', 'ecdsa'], default='ecdsa')
     parser.add_argument('--coin-only-child', action='store_true', help='Reproduce the original ordinary-coin descendant')
     args = parser.parse_args()
     directory = Path(tempfile.mkdtemp(prefix='restricted-tag-reorg-'))
@@ -30,13 +30,13 @@ def main():
             raise RuntimeError(f'{label}: {observed}')
 
     try:
-        source = m.Node(args.bindir, directory / 'source', ['-pqwallet=1', '-acceptnonstdtxn=0', '-bypassdownload=1'])
+        source = m.Node(args.bindir, directory / 'source', ['-addresstype=pq', '-acceptnonstdtxn=0', '-bypassdownload=1'])
         nodes.append(source)
         source.ready()
         miner = source.rpc('getnewaddress')
         source.rpc('generatetoaddress', 500, miner)
         holder = source.rpc('getnewaddress', '', 'pq' if args.target == 'ecdsa' else 'ecdsa')
-        target = source.rpc('getnewaddress') if args.target == 'authscript' else source.rpc('getnewaddress', '', args.target)
+        target = source.rpc('getnewaddress', '', args.target)
 
         def confirm(label, value):
             txid = value[0] if isinstance(value, list) else value

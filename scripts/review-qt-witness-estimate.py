@@ -80,7 +80,7 @@ if args.regtest:
     nodes = []
     try:
         bindir = Path('/root/Neurai/src')
-        source = h.Node(bindir, out / 'source', ['-pqwallet=1', '-bypassdownload=1'])
+        source = h.Node(bindir, out / 'source', ['-addresstype=pq', '-bypassdownload=1'])
         nodes.append(source)
         legacy = h.Node(bindir, out / 'legacy', [])
         nodes.append(legacy)

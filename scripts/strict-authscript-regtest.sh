@@ -20,8 +20,8 @@ jget() { local code=$1; shift; python3 -c 'import json,sys; d=json.load(sys.stdi
 syncmempool() { for i in $(seq 1 30); do
   local missing; missing=$(python3 -c 'import json,sys; a=set(json.loads(sys.argv[1])); b=set(json.loads(sys.argv[2])); print(len(b-a))' "$(A getrawmempool)" "$(B getrawmempool 2>/dev/null || echo '[]')")
   [ "$missing" = "0" ] && return 0; sleep 1; done; echo "  (mempool sync timeout)"; }
-mine() { syncmempool; A generatetoaddress "$1" "$A_V1" >/dev/null; sleep 1; }
-startA() { "$BIN/neuraid" $COMMON -datadir="$BASE/A" -port=18601 -rpcport=18501 -pqwallet=1 -daemon >/dev/null; }
+mine() { syncmempool; A generatetoaddress "$1" "$A_DEF" >/dev/null; sleep 1; }
+startA() { "$BIN/neuraid" $COMMON -datadir="$BASE/A" -port=18601 -rpcport=18501 -addresstype=pq -daemon >/dev/null; }
 startB() { "$BIN/neuraid" $COMMON -datadir="$BASE/B" -port=18602 -rpcport=18502 -connect=127.0.0.1:18601 -daemon >/dev/null; }
 waitrpc() { for i in $(seq 1 120); do if "$@" getblockcount >/dev/null 2>&1; then return 0; fi; sleep 1; done; echo "node did not start"; exit 1; }
 waitsync() { for i in $(seq 1 30); do [ "$(A getblockcount)" = "$(B getblockcount)" ] && return 0; sleep 1; done; bad "nodes did not sync"; }
@@ -31,13 +31,14 @@ startA; waitrpc A
 startB; waitrpc B
 
 echo "== addresses"
-A_V1=$(A getnewaddress)
+A_DEF=$(A getnewaddress)   # PQ wallet default: strict PQ v2 (also the mining address)
 A_PQ=$(A getnewaddress "" pq)
 A_EC=$(A getnewaddress "" ecdsa)
 B_LEG=$(B getnewaddress)
 B_EC=$(B getnewaddress "" ecdsa)
-echo "A_V1=$A_V1"; echo "A_PQ=$A_PQ"; echo "A_EC=$A_EC"; echo "B_LEG=$B_LEG"; echo "B_EC=$B_EC"
-check "${A_V1:0:5}" "tnc1p" "A default address is generic AuthScript v1"
+echo "A_DEF=$A_DEF"; echo "A_PQ=$A_PQ"; echo "A_EC=$A_EC"; echo "B_LEG=$B_LEG"; echo "B_EC=$B_EC"
+if A getnewaddress "" authscript >/dev/null 2>&1; then bad "the wallet must never hand out generic v1 (contract) addresses"; else ok "the wallet never hands out generic v1 (contract) addresses"; fi
+check "${A_DEF:0:5}" "tpq1z" "A default address is strict PQ v2"
 check "${A_PQ:0:5}" "tpq1z" "A strict PQ address prefix"
 check "${A_EC:0:5}" "tnq1r" "A strict ECDSA address prefix"
 check "${B_EC:0:5}" "tnq1r" "B strict ECDSA address prefix"
@@ -176,7 +177,7 @@ change_type() {
 }
 check "$(change_type A "$A_PQ")" "witness_v2_strict_pq" "change of a strict PQ spend is strict PQ"
 check "$(change_type A "$A_EC")" "witness_v3_strict_ecdsa" "change of a strict ECDSA spend is strict ECDSA (PQ wallet)"
-check "$(change_type A "$A_V1")" "witness_v1_authscript" "change of a generic v1 spend is generic v1"
+check "$(change_type A "$A_DEF")" "witness_v2_strict_pq" "change of a spend from the PQ default address is strict PQ"
 check "$(change_type B "$B_LEG")" "pubkeyhash" "change of a legacy spend is legacy"
 check "$(change_type B "$B_EC")" "witness_v3_strict_ecdsa" "change of a strict ECDSA spend is strict ECDSA (classic wallet)"
 

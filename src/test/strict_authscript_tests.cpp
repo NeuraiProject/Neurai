@@ -23,6 +23,7 @@
 #include "policy/policy.h"
 #include "primitives/transaction.h"
 #include "script/interpreter.h"
+#include "script/ismine.h"
 #include "script/script.h"
 #include "script/script_error.h"
 #include "script/sign.h"
@@ -1055,6 +1056,44 @@ BOOST_AUTO_TEST_CASE(witness_sighash_modes_and_reference_vectors)
             }
         }
     }
+}
+
+// Generic AuthScript v1 is a contract family the wallet never manages: even a
+// keystore holding the key and the v1 spend data does not own a v1 output,
+// plain or asset-wrapped. The strict v2 form of the same key stays spendable.
+BOOST_AUTO_TEST_CASE(wallet_never_owns_generic_v1)
+{
+    CKey key;
+    key.MakeNewKeyPQ();
+    const CPubKey pubkey = key.GetPubKey();
+    CBasicKeyStore keystore;
+    BOOST_REQUIRE(keystore.AddKeyPubKey(key, pubkey));
+
+    AuthScriptSpendData v1;
+    v1.auth_type = 0x01;
+    v1.witnessScript = CScript() << OP_TRUE;
+    v1.pubkey = pubkey;
+    v1.key_id = pubkey.GetID();
+    v1.is_default_template = true;
+    const uint256 commitment = GetAuthScriptCommitment(0x01, &pubkey, v1.witnessScript);
+    BOOST_REQUIRE(keystore.AddAuthScriptSpendData(commitment, v1));
+    const CScript v1Script = GetScriptForDestination(WitnessV1AuthScript(commitment));
+    BOOST_CHECK(IsMine(keystore, v1Script) == ISMINE_NO);
+
+    CScript v1Asset = v1Script;
+    CAssetTransfer("V1CONTRACT", COIN).ConstructTransaction(v1Asset, AssetMarker::NEURAI_XNA);
+    BOOST_CHECK(IsMine(keystore, v1Asset) == ISMINE_NO);
+
+    WitnessStrictAuthScript strict;
+    BOOST_REQUIRE(GetStrictAuthScriptDestinationForPubKey(pubkey, strict));
+    AuthScriptSpendData v2;
+    v2.auth_type = StrictAuthScriptAuthType(strict.version);
+    v2.witnessScript = GetStrictAuthScriptTemplate();
+    v2.pubkey = pubkey;
+    v2.key_id = pubkey.GetID();
+    v2.is_default_template = true;
+    BOOST_REQUIRE(keystore.AddAuthScriptSpendData(strict.version, strict.commitment, v2));
+    BOOST_CHECK(IsMine(keystore, GetScriptForDestination(strict)) == ISMINE_SPENDABLE);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -37,7 +37,7 @@ def main():
             raise RuntimeError(f'{label}: {observed}')
 
     try:
-        source = m.Node(args.bindir, directory / 'source', ['-pqwallet=1', '-acceptnonstdtxn=0', '-par=1', '-bypassdownload=1'])
+        source = m.Node(args.bindir, directory / 'source', ['-addresstype=pq', '-acceptnonstdtxn=0', '-par=1', '-bypassdownload=1'])
         nodes.append(source)
         source.ready()
         miner = source.rpc('getnewaddress')

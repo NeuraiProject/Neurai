@@ -137,7 +137,7 @@ def main():
         state_utxo=locate(confirm(n.rpc('transfer',name,1,state_addr,initial.hex())),state_spk,True)
         check('thread/initial_state_bytes',n.rpc('gettxout',*state_utxo)['scriptPubKey']['hex']==transfer(state_spk,name,initial).hex())
         # Sponsor is wallet-owned, kept out of automatic coin selection.
-        sponsor_node=node('sponsor-wallet',extra=['-strictauthscriptheight=0']+(['-pqwallet=1'] if args.sponsor=='pq' else [])) if args.sponsor!='legacy' else n
+        sponsor_node=node('sponsor-wallet',extra=['-strictauthscriptheight=0']+(['-addresstype=pq'] if args.sponsor=='pq' else [])) if args.sponsor!='legacy' else n
         sponsor_address=miner if args.sponsor=='legacy' else sponsor_node.rpc('getnewaddress','',args.sponsor)
         sponsor_spk=sponsor_node.rpc('validateaddress',sponsor_address)['scriptPubKey']
         # Raw native outputs can be funded before their spend rules activate.

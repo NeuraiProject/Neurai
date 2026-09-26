@@ -29,7 +29,7 @@ def main():
         print(('PASS ' if passed else 'FAIL ') + label, flush=True)
 
     try:
-        node = h.Node(args.bindir, directory / 'node', ['-pqwallet=1'])
+        node = h.Node(args.bindir, directory / 'node', ['-addresstype=pq'])
         node.ready()
         for family in ('pq', 'ecdsa'):
             native = node.rpc('getnewaddress', '', family)

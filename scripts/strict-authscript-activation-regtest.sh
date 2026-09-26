@@ -13,7 +13,7 @@ rm -rf "$BASE"; mkdir -p "$BASE/A" "$BASE/F"
 COMMON="-regtest -server -listen=0 -txindex=1 -fallbackfee=0.001 -printtoconsole=0 -rpcuser=u -rpcpassword=p -keypool=3"
 A() { "$BIN/neurai-cli" -regtest -datadir="$BASE/A" -rpcport=18511 -rpcuser=u -rpcpassword=p "$@"; }
 F() { "$BIN/neurai-cli" -regtest -datadir="$BASE/F" -rpcport=18512 -rpcuser=u -rpcpassword=p "$@"; }
-startA() { "$BIN/neuraid" $COMMON -datadir="$BASE/A" -rpcport=18511 -pqwallet=1 -strictauthscriptheight=$ACT -daemon >/dev/null; }
+startA() { "$BIN/neuraid" $COMMON -datadir="$BASE/A" -rpcport=18511 -addresstype=pq -strictauthscriptheight=$ACT -daemon >/dev/null; }
 startF() { "$BIN/neuraid" $COMMON -datadir="$BASE/F" -rpcport=18512 -daemon >/dev/null; }
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "PASS: $1"; }
@@ -21,13 +21,18 @@ bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 check() { if [ "$1" = "$2" ]; then ok "$3 ($1)"; else bad "$3 (got '$1', want '$2')"; fi; }
 jget() { local code=$1; shift; python3 -c 'import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1]))' "$code" "$@"; }
 waitrpc() { for i in $(seq 1 120); do if "$@" getblockcount >/dev/null 2>&1; then return 0; fi; sleep 1; done; echo "node did not start"; exit 1; }
-mine() { A generatetoaddress "$1" "$A_V1" >/dev/null; }
+mine() { A generatetoaddress "$1" "$A_LEG" >/dev/null; }
 inmempool() { A getrawmempool | jget 'sys.argv[2] in d' "$1"; }
 
 echo "== start"
 startA; waitrpc A
 startF; waitrpc F
-A_V1=$(A getnewaddress)
+# A PQ wallet has no address of its own below activation (strict v2 is not
+# active and generic v1 is a contract family it never manages), so its funds
+# come from a Legacy key made by F and imported into A.
+A_LEG=$(F getnewaddress)
+A importprivkey "$(F dumpprivkey "$A_LEG")" "" false
+ALT_LEG=$(F getnewaddress)   # coinbase address for the alternative branch (makes its blocks differ)
 F_EC=$(F getnewaddress "" ecdsa)          # a syntactically valid strict ECDSA address
 check "${F_EC:0:5}" "tnq1r" "factory node (activation height 0) produces strict addresses"
 
@@ -60,7 +65,6 @@ T_FUND_PQ=$(fund_raw "$A_PQ")
 T_FUND_EC=$(fund_raw "$A_EC")
 A_EC2=$(A getnewaddress "" ecdsa)
 T_FUND_EC2=$(fund_raw "$A_EC2")           # spent later by a transaction left PENDING across the reorg
-ALT_V1=$(A getnewaddress)   # coinbase address for the alternative branch (makes its blocks differ)
 mine 1
 check "$(A getblockcount)" "$ACT" "tip is the activation block"
 B_ACT=$(A getblockhash $ACT)
@@ -73,13 +77,13 @@ spend_all() {
   local raw; raw=$(A createrawtransaction "[{\"txid\":\"$(echo "$u"|jget 'd["txid"]')\",\"vout\":$(echo "$u"|jget 'd["vout"]')}]" "{\"$2\":$(echo "$u" | jget '"%.8f" % (d["amount"]-0.05)')}")
   A sendrawtransaction "$(A signrawtransaction "$raw" | jget 'd["hex"]')"
 }
-T_SPEND_PQ=$(spend_all "$A_PQ" "$A_V1")
-T_SPEND_EC=$(spend_all "$A_EC" "$A_V1")
+T_SPEND_PQ=$(spend_all "$A_PQ" "$A_LEG")
+T_SPEND_EC=$(spend_all "$A_EC" "$A_LEG")
 mine 1
 check "$(A getrawtransaction "$T_SPEND_PQ" true | jget 'd["confirmations"]')" "1" "strict PQ spend confirmed above activation"
 check "$(A getrawtransaction "$T_SPEND_EC" true | jget 'd["confirmations"]')" "1" "strict ECDSA spend confirmed above activation"
 # A strict spend that is only pending (never mined) when the reorg happens.
-T_PENDING=$(spend_all "$A_EC2" "$A_V1")
+T_PENDING=$(spend_all "$A_EC2" "$A_LEG")
 check "$(inmempool "$T_PENDING")" "True" "pending strict ECDSA spend admitted above activation"
 TIP_BEFORE=$(A getbestblockhash)
 
@@ -89,9 +93,11 @@ check "$(A getblockcount)" "$((ACT-2))" "tip went below activation"
 if A getnewaddress "" pq >/dev/null 2>&1; then bad "strict addresses must be unavailable again below activation"; else ok "getnewaddress pq refused again after the reorg"; fi
 check "$(A validateaddress "$A_PQ" | jget 'str(d["isvalid"])')" "False" "strict address not decodable again after the reorg"
 # Disconnected transactions go back through mempool acceptance under the rules
-# of the new next block (inactive). Paying TO a v2/v3 output is just a standard
-# output; SPENDING one is an upgradable-witness spend that policy discourages.
-check "$(inmempool "$T_FUND_PQ")" "True" "payment to strict PQ re-admitted to the mempool"
+# of the new next block (inactive). Paying TO a v2/v3 output is refused by
+# policy below activation: consensus would still treat it as an unknown witness
+# version, so the output would not be protected. SPENDING one is an
+# upgradable-witness spend that policy discourages.
+check "$(inmempool "$T_FUND_PQ")" "False" "payment to strict PQ NOT re-admitted below activation (unprotected output)"
 check "$(inmempool "$T_SPEND_PQ")" "False" "strict PQ spend NOT re-admitted below activation (discouraged upgradable witness)"
 check "$(inmempool "$T_SPEND_EC")" "False" "strict ECDSA spend NOT re-admitted below activation"
 check "$(inmempool "$T_PENDING")" "False" "strict spend that was already pending is evicted when the tip crosses below activation"
@@ -104,7 +110,11 @@ check "$(A validateaddress "$A_PQ" | jget 'str(d["isvalid"])+"/"+str(d["ismine"]
 
 echo "== alternative branch crossing the activation height again"
 A invalidateblock "$B_PREV" >/dev/null
-A generatetoaddress 4 "$ALT_V1" >/dev/null  # new blocks ACT-1 .. ACT+2 on a different branch
+A generatetoaddress 1 "$ALT_LEG" >/dev/null  # new block ACT-1 on a different branch
+# The payment to strict PQ was refused below activation; the next block is the
+# first active one, so the wallet can submit it again.
+A sendrawtransaction "$(A gettransaction "$T_FUND_PQ" | jget 'd["hex"]')" >/dev/null
+A generatetoaddress 3 "$ALT_LEG" >/dev/null  # blocks ACT .. ACT+2 on the new branch
 check "$(A getblockcount)" "$((ACT+2))" "new branch is above activation"
 check "$([ "$(A getblockhash $ACT)" != "$B_ACT" ] && echo different)" "different" "activation block differs on the new branch"
 check "$(A getrawtransaction "$T_FUND_PQ" true | jget 'd["confirmations"] >= 1')" "True" "payment to strict PQ mined on the new branch"
@@ -113,7 +123,7 @@ check "$(A getrawtransaction "$T_FUND_PQ" true | jget 'd["confirmations"] >= 1')
 check "$(inmempool "$T_SPEND_PQ")" "False" "refused strict spend is still out of the mempool"
 T_RESENT=$(A sendrawtransaction "$(A gettransaction "$T_SPEND_PQ" | jget 'd["hex"]')")
 check "$T_RESENT" "$T_SPEND_PQ" "the same strict PQ spend is accepted once the branch is above activation"
-A generatetoaddress 1 "$ALT_V1" >/dev/null
+A generatetoaddress 1 "$ALT_LEG" >/dev/null
 check "$(A getrawtransaction "$T_SPEND_PQ" true | jget 'd["confirmations"]')" "1" "strict PQ output spent on the new branch"
 
 echo "== restart: activation context is restored from the loaded tip"

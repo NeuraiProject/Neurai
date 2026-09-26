@@ -289,6 +289,9 @@ public:
     //! write the hdchain model (external chain child index counter)
     bool WriteHDChain(const CHDChain& chain);
 
+    //! write the wallet address family (WalletAddressType)
+    bool WriteAddressType(uint8_t nType);
+
     //! Begin a new transaction
     bool TxnBegin();
     //! Commit current transaction

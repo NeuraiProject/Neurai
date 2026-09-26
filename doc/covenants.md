@@ -874,10 +874,32 @@ testnet/regtest: `nc1p…` / `tnc1p…`. The former `nq1p…` / `tnq1p…`
 representations are rejected; no legacy-prefix alias or address migration is
 provided. This changes address encoding only, not commitments or consensus.
 Strict PQ v2 keeps `pq1z…` / `tpq1z…`; strict ECDSA v3 keeps
-`nq1r…` / `tnq1r…`. Qt generates strict v2 receiving destinations for PQ
-wallets once activated. Generic v1 construction remains available through
-the existing RPC paths for contracts. Old testnet address-book strings and
-external integrations must be updated; this is intentionally incompatible.
+`nq1r…` / `tnq1r…`.
+
+The wallet address type is chosen with `-addresstype=legacy|pq|ecdsa` when the
+wallet file is created (default `legacy`) and stored in it; opening an existing
+wallet with a different `-addresstype` is an init error, and without the option
+the stored type is used (`getwalletinfo` reports it). The type is what the
+wallet hands out by default, in Qt and over RPC (`getnewaddress`,
+`getaccountaddress`, `getrawchangeaddress`, change outputs, the asset RPCs and
+mining):
+
+| `-addresstype` | Default | Also on request |
+|---|---|---|
+| `legacy` | Legacy (Base58) | strict v3 (`"ecdsa"`) |
+| `pq` | strict v2 | strict v3 (`"ecdsa"`) |
+| `ecdsa` | strict v3 | none: it never hands out Legacy |
+
+`pq` and `ecdsa` require `-bip44=1` (their keys derive from the mnemonic seed:
+`m_pq` and `m/84'` branches) and hand out nothing until AuthScript and the
+strict families apply to the next block; there is no Legacy fallback before
+that. `-pqwallet` was replaced by `-addresstype=pq` and is refused at startup.
+Generic v1 is a contract family: contracts are built and signed by
+contract tooling, and the wallet never manages v1. It does not hand out v1
+addresses, does not count v1 outputs as its own (whatever spend data an older
+wallet file holds), does not sign messages for them and does not store v1
+spend data. Old testnet address-book strings and external integrations must be
+updated; this is intentionally incompatible.
 
 
 ## NIP-043: state-thread primitives

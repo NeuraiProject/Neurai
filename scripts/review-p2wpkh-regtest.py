@@ -44,13 +44,13 @@ def main():
 
     try:
         source = h.Node(args.bindir, directory / 'source',
-                        ['-bypassdownload=1', '-acceptnonstdtxn=0', '-pqwallet=1', '-par=1'])
+                        ['-bypassdownload=1', '-acceptnonstdtxn=0', '-addresstype=pq', '-par=1'])
         nodes.append(source)
         source.ready()
         miner = source.rpc('getnewaddress')
         source.rpc('generatetoaddress', 110, miner)
         output = bytes.fromhex(source.rpc('validateaddress', miner)['scriptPubKey'])
-        keys = h.Node(args.bindir, directory / 'keys', ['-pqwallet=0'])
+        keys = h.Node(args.bindir, directory / 'keys', ['-addresstype=legacy'])
         nodes.append(keys)
         keys.ready()
         address = keys.rpc('getnewaddress', '', 'legacy')

@@ -67,7 +67,7 @@ def main():
         if not ok:
             raise RuntimeError(label + ': ' + str(observed))
     try:
-        node = h.Node(args.bindir, directory / 'node', ['-pqwallet=1'])
+        node = h.Node(args.bindir, directory / 'node', ['-addresstype=pq'])
         node.ready()
         miner = node.rpc('getnewaddress')
         node.rpc('generatetoaddress', 500, miner)

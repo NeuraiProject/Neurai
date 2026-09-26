@@ -35,7 +35,7 @@ def main():
         state=(state_tx['txid'],next(o['n'] for o in state_tx['vout'] if o['scriptPubKey']['hex']==before.hex()))
         funded_height=n.rpc('getblockcount');first_valid_height=funded_height+f['delay']
         report['funding_height']=funded_height;report['first_valid_height']=first_valid_height
-        sponsor=node('sponsor',extra=['-pqwallet=1']) if args.sponsor=='pq' else n
+        sponsor=node('sponsor',extra=['-addresstype=pq']) if args.sponsor=='pq' else n
         payout=miner if args.sponsor=='legacy' else sponsor.rpc('getnewaddress','',args.sponsor)
         pay=bytes.fromhex(sponsor.rpc('validateaddress',payout)['scriptPubKey'])
         funding=confirm(n.rpc('sendtoaddress',payout,2))

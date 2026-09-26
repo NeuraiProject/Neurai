@@ -36,6 +36,7 @@
 #include "wallet/fees.h"
 #include "wallet/bip39.h"
 
+#include <algorithm>
 #include <assert.h>
 
 #include <boost/algorithm/string/replace.hpp>
@@ -352,8 +353,9 @@ CPubKey CWallet::GenerateNewKeyPQ(CWalletDB& walletdb, bool internal)
     if (!AddKeyPubKeyWithDB(walletdb, secret, pubkey))
         throw std::runtime_error(std::string(__func__) + ": AddKey failed");
 
-    CTxDestination pqDest;
-    if (!GetDefaultAuthScriptDestination(pubkey, pqDest, true))
+    // A PQ key is a wallet key through its strict v2 form only; generic
+    // AuthScript v1 is a contract family the wallet never manages.
+    if (!RegisterStrictAuthScriptForKey(pubkey))
         throw std::runtime_error(std::string(__func__) + ": AddAuthScriptSpendData failed");
 
     return pubkey;
@@ -503,8 +505,8 @@ bool CWallet::AddKeyPubKeyWithDB(CWalletDB &walletdb, const CKey& secret, const 
         RemoveWatchOnly(script);
     }
 
-    // Every PQ key is reachable through two destinations: generic AuthScript
-    // v1 and strict v2. Register the strict one as soon as the key exists
+    // A PQ key is a wallet key through its strict v2 destination (generic
+    // AuthScript v1 is for contracts). Register it as soon as the key exists
     // (generation, keypool refill after a mnemonic restore, imports), so a
     // rescan discovers strict payments without the user re-requesting addresses.
     if (pubkey.IsPQ()) {
@@ -636,19 +638,19 @@ bool CWallet::LoadCScript(const CScript& redeemScript)
 
 bool CWallet::AddAuthScriptSpendData(const uint256& commitment, const AuthScriptSpendData& spendData)
 {
-    if (!CCryptoKeyStore::AddAuthScriptSpendData(commitment, spendData)) {
-        return false;
-    }
-    return CWalletDB(*dbw).WriteAuthScriptSpendData(commitment, spendData);
+    // Generic AuthScript v1 is a contract family the wallet never manages.
+    return false;
 }
 
 bool CWallet::LoadAuthScriptSpendData(const uint256& commitment, const AuthScriptSpendData& spendData)
 {
-    return CCryptoKeyStore::AddAuthScriptSpendData(commitment, spendData);
+    return false; // see AddAuthScriptSpendData(commitment, ...)
 }
 
 bool CWallet::AddAuthScriptSpendData(uint8_t witnessVersion, const uint256& commitment, const AuthScriptSpendData& spendData)
 {
+    if (witnessVersion == 1)
+        return false; // generic AuthScript v1: never managed by the wallet
     if (!CCryptoKeyStore::AddAuthScriptSpendData(witnessVersion, commitment, spendData)) {
         return false;
     }
@@ -1194,67 +1196,36 @@ bool CWallet::GetAccountPubkey(CPubKey &pubKey, std::string strAccount, bool bFo
         if (!account.vchPubKey.IsValid())
             bForceNew = true;
         else {
-            // Check if the current key has been used
-            CTxDestination accountDest = account.vchPubKey.IsPQ() ? CTxDestination() : CTxDestination(account.vchPubKey.GetID());
-            if (account.vchPubKey.IsPQ() && !GetDefaultAuthScriptDestination(account.vchPubKey, accountDest)) {
+            // Check if the current key has been used, in the form the wallet
+            // hands it out (strict v2 for PQ keys, v3 in a strict ECDSA wallet).
+            std::vector<CScript> accountScripts;
+            CTxDestination accountDest;
+            if (!GetDestinationForOwnKey(account.vchPubKey, accountDest))
                 return false;
-            }
-            CScript scriptPubKey = GetScriptForDestination(accountDest);
+            accountScripts.push_back(GetScriptForDestination(accountDest));
             for (std::map<uint256, CWalletTx>::iterator it = mapWallet.begin();
-                 it != mapWallet.end() && account.vchPubKey.IsValid();
+                 it != mapWallet.end() && account.vchPubKey.IsValid() && !bForceNew;
                  ++it)
                 for (const CTxOut& txout : (*it).second.tx->vout)
-                    if (txout.scriptPubKey == scriptPubKey) {
+                    if (std::find(accountScripts.begin(), accountScripts.end(), txout.scriptPubKey) != accountScripts.end()) {
                         bForceNew = true;
                         break;
                     }
         }
     }
 
-    // Generate a new key
+    // Generate a new key of the wallet's own family.
     if (bForceNew) {
-        if (!GetKeyFromPool(account.vchPubKey, false))
+        CTxDestination accountDest;
+        std::string error;
+        if (!GetNewDestinationOfType(WalletAddressTypeName(GetAddressType()), false, accountDest, error, &account.vchPubKey))
             return false;
-
-        CTxDestination accountDest = account.vchPubKey.IsPQ() ? CTxDestination() : CTxDestination(account.vchPubKey.GetID());
-        if (account.vchPubKey.IsPQ() && !GetDefaultAuthScriptDestination(account.vchPubKey, accountDest)) {
-            return false;
-        }
         SetAddressBook(accountDest, strAccount, "receive");
         walletdb.WriteAccount(strAccount, account);
     }
 
     pubKey = account.vchPubKey;
 
-    return true;
-}
-
-bool CWallet::GetDefaultAuthScriptDestination(const CPubKey& pubKey, CTxDestination& dest, bool persist)
-{
-    if (!pubKey.IsValid() || !pubKey.IsPQ()) {
-        return false;
-    }
-
-    CScript witnessScript;
-    witnessScript << OP_TRUE;
-    const uint256 commitment = GetAuthScriptCommitment(0x01, &pubKey, witnessScript);
-    if (commitment.IsNull()) {
-        return false;
-    }
-
-    if (persist) {
-        AuthScriptSpendData spendData;
-        spendData.auth_type = 0x01;
-        spendData.witnessScript = witnessScript;
-        spendData.pubkey = pubKey;
-        spendData.key_id = pubKey.GetID();
-        spendData.is_default_template = true;
-        if (!AddAuthScriptSpendData(commitment, spendData)) {
-            return false;
-        }
-    }
-
-    dest = CTxDestination(WitnessV1AuthScript(commitment));
     return true;
 }
 
@@ -1283,9 +1254,9 @@ bool CWallet::GetStrictAuthScriptDestination(const CPubKey& pubKey, CTxDestinati
 
 bool CWallet::RegisterStrictAuthScriptForKey(const CPubKey& pubKey)
 {
-    if (!IsStrictAuthScriptActiveInContext()) {
-        return true;
-    }
+    // Registration only lets the wallet recognise its own strict outputs. It
+    // does not depend on activation: handing addresses out does, so a wallet
+    // loaded before the activation height still sees payments made after it.
     WitnessStrictAuthScript strict;
     if (!GetStrictAuthScriptDestinationForPubKey(pubKey, strict)) {
         return true; // uncompressed keys have no strict destination
@@ -1300,9 +1271,6 @@ bool CWallet::RegisterStrictAuthScriptForKey(const CPubKey& pubKey)
 void CWallet::BackfillStrictAuthScriptSpendData()
 {
     LOCK(cs_wallet);
-    if (!IsStrictAuthScriptActiveInContext()) {
-        return;
-    }
     for (const CKeyID& keyID : GetKeys()) {
         CPubKey pubkey;
         if (GetPubKey(keyID, pubkey) && pubkey.IsPQ()) {
@@ -1386,18 +1354,17 @@ CPubKey CWallet::GenerateNewStrictEcdsaKey(CWalletDB& walletdb, bool internal)
     return pubkey;
 }
 
-bool CWallet::GetNewDestinationOfType(const std::string& addressType, bool internal, CTxDestination& dest, std::string& error)
+bool CWallet::GetNewDestinationOfType(const std::string& addressType, bool internal, CTxDestination& dest, std::string& error, CPubKey* pPubKey)
 {
     AssertLockHeld(cs_wallet);
 
-    if ((addressType == "pq" || addressType == "ecdsa") && !IsStrictAuthScriptActiveInContext()) {
-        error = "Strict AuthScript address families (witness v2/v3) are not active on this chain";
+    if (!IsAddressTypeActive(addressType, error)) {
         return false;
     }
 
     if (addressType == "pq") {
         if (!IsPQEnabled()) {
-            error = "Strict PQ addresses require a post-quantum wallet (-pqwallet=1)";
+            error = "Strict PQ addresses require a post-quantum wallet (-addresstype=pq)";
             return false;
         }
         CPubKey pubkey;
@@ -1409,6 +1376,7 @@ bool CWallet::GetNewDestinationOfType(const std::string& addressType, bool inter
             error = "Failed to derive strict PQ destination";
             return false;
         }
+        if (pPubKey) *pPubKey = pubkey;
         return true;
     }
 
@@ -1426,6 +1394,7 @@ bool CWallet::GetNewDestinationOfType(const std::string& addressType, bool inter
             error = "Failed to derive strict ECDSA destination";
             return false;
         }
+        if (pPubKey) *pPubKey = pubkey;
         return true;
     }
 
@@ -1434,17 +1403,39 @@ bool CWallet::GetNewDestinationOfType(const std::string& addressType, bool inter
             error = "Legacy addresses are not available in a post-quantum wallet";
             return false;
         }
+        if (GetAddressType() == WalletAddressType::ECDSA) {
+            error = "Legacy addresses are not available in a strict ECDSA wallet (-addresstype=ecdsa)";
+            return false;
+        }
         CPubKey pubkey;
         if (!GetKeyFromPool(pubkey, internal)) {
             error = "Keypool ran out, please call keypoolrefill first";
             return false;
         }
         dest = pubkey.GetID();
+        if (pPubKey) *pPubKey = pubkey;
         return true;
     }
 
     error = "Unknown address type '" + addressType + "' (expected \"legacy\", \"pq\" or \"ecdsa\")";
     return false;
+}
+
+bool CWallet::GetNewDestination(bool internal, CTxDestination& dest, std::string& error)
+{
+    return GetNewDestinationOfType(WalletAddressTypeName(GetAddressType()), internal, dest, error);
+}
+
+bool CWallet::GetDestinationForOwnKey(const CPubKey& pubKey, CTxDestination& dest)
+{
+    if (pubKey.IsPQ()) {
+        return GetStrictAuthScriptDestination(pubKey, dest, false);
+    }
+    if (GetAddressType() == WalletAddressType::ECDSA) {
+        return GetStrictAuthScriptDestination(pubKey, dest, false);
+    }
+    dest = pubKey.GetID();
+    return true;
 }
 
 void CWallet::MarkDirty()
@@ -2136,6 +2127,71 @@ bool CWallet::IsPQEnabled() const
     // non-PQ at runtime, without touching the persisted flag — reporting code
     // that needs the raw historical state must read hdChain.IsPQEnabled().
     return IsHDEnabled() && hdChain.IsPQEnabled() && hdChain.IsBip44();
+}
+
+bool ParseWalletAddressType(const std::string& name, WalletAddressType& type)
+{
+    if (name == "legacy") {
+        type = WalletAddressType::LEGACY;
+    } else if (name == "pq") {
+        type = WalletAddressType::PQ;
+    } else if (name == "ecdsa") {
+        type = WalletAddressType::ECDSA;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+std::string WalletAddressTypeName(WalletAddressType type)
+{
+    switch (type) {
+    case WalletAddressType::PQ: return "pq";
+    case WalletAddressType::ECDSA: return "ecdsa";
+    case WalletAddressType::LEGACY: break;
+    }
+    return "legacy";
+}
+
+WalletAddressType CWallet::GetAddressType() const
+{
+    if (nStoredAddressType == static_cast<uint8_t>(WalletAddressType::ECDSA)) {
+        return WalletAddressType::ECDSA;
+    }
+    // Legacy and PQ are told apart by the HD chain, which also selects the key
+    // derivation; this covers wallet files created before the record existed.
+    return IsPQEnabled() ? WalletAddressType::PQ : WalletAddressType::LEGACY;
+}
+
+bool CWallet::SetAddressType(WalletAddressType type)
+{
+    LOCK(cs_wallet);
+    if (!CWalletDB(*dbw).WriteAddressType(static_cast<uint8_t>(type))) {
+        return false;
+    }
+    nStoredAddressType = static_cast<uint8_t>(type);
+    return true;
+}
+
+bool CWallet::IsAddressTypeActive(const std::string& addressType, std::string& error)
+{
+    if (addressType != "pq" && addressType != "ecdsa") {
+        return true;
+    }
+    // Strict v2/v3 outputs are only protected once AuthScript and the strict
+    // families apply to the next block; before that none is handed out.
+    const Consensus::Params& consensus = GetParams().GetConsensus();
+    if (consensus.IsPQWitnessActive(GetSignatureOpcodeCandidateHeight()) && IsStrictAuthScriptActiveInContext()) {
+        return true;
+    }
+    const std::string family = addressType == "pq" ? "Post-quantum addresses" : "Strict ECDSA addresses";
+    const int nActivation = std::max(consensus.nOptInFeaturesHeight, consensus.nStrictAuthScriptHeight);
+    if (!consensus.nPQWitnessEnabled || nActivation == std::numeric_limits<int>::max()) {
+        error = family + " are not active yet on this chain; their activation is not scheduled";
+    } else {
+        error = strprintf("%s are not active yet on this chain; they apply from block %d", family, nActivation);
+    }
+    return false;
 }
 
 int64_t CWalletTx::GetTxTime() const
@@ -3408,6 +3464,26 @@ bool CWallet::CreateNewChangeAddress(CReserveKey& reservekey, CTxDestination& de
     //  rediscover unknown transactions that were written with keys of ours to recover
     //  post-backup change.
 
+    if (GetAddressType() == WalletAddressType::ECDSA) {
+        // A strict ECDSA wallet only hands out witness v3: change is reserved
+        // from the strict ECDSA keypool (internal chain).
+        std::string error;
+        if (!IsAddressTypeActive("ecdsa", error)) {
+            strFailReason = error;
+            return false;
+        }
+        CPubKey pubkey;
+        if (!reservekey.GetReservedStrictEcdsaKey(pubkey, true)) {
+            strFailReason = _("Strict ECDSA keypool ran out, please unlock the wallet or call keypoolrefill first");
+            return false;
+        }
+        if (!GetStrictAuthScriptDestination(pubkey, dest, false)) {
+            strFailReason = _("Failed to derive strict ECDSA change destination");
+            return false;
+        }
+        return true;
+    }
+
     // Reserve a new key pair from key pool
     CPubKey vchPubKey;
     bool ret;
@@ -3419,14 +3495,16 @@ bool CWallet::CreateNewChangeAddress(CReserveKey& reservekey, CTxDestination& de
     }
 
     if (vchPubKey.IsPQ()) {
-        // A PQ change key maps to an AuthScript output, which consensus only
-        // protects from the network's opt-in height on.
-        if (!GetParams().GetConsensus().IsPQWitnessActive(GetSignatureOpcodeCandidateHeight())) {
-            strFailReason = _("AuthScript (post-quantum) change outputs are not active yet on this chain");
+        // PQ change goes to strict PQ (witness v2), like receive addresses;
+        // consensus only protects it once AuthScript and the strict families
+        // apply to the next block.
+        if (!GetParams().GetConsensus().IsPQWitnessActive(GetSignatureOpcodeCandidateHeight()) ||
+            !IsStrictAuthScriptActiveInContext()) {
+            strFailReason = _("Post-quantum change outputs are not active yet on this chain");
             return false;
         }
-        if (!GetDefaultAuthScriptDestination(vchPubKey, dest)) {
-            strFailReason = _("Failed to derive AuthScript destination for reserved PQ key");
+        if (!GetStrictAuthScriptDestination(vchPubKey, dest)) {
+            strFailReason = _("Failed to derive strict PQ destination for reserved PQ key");
             return false;
         }
     } else {
@@ -3518,7 +3596,7 @@ bool CWallet::GetChangeScriptForFamily(int family, CReserveKey& reservekey, CScr
             return false;
         }
     } else {
-        // Legacy in a classic wallet, generic AuthScript v1 in a PQ wallet.
+        // Any other family goes to the wallet's own one.
         if (!CreateNewChangeAddress(reservekey, dest, strFailReason)) {
             return false;
         }
@@ -5362,7 +5440,24 @@ void CWallet::MarkReserveKeysAsUsed(int64_t keypool_id)
 void CWallet::GetScriptForMining(std::shared_ptr<CReserveScript> &script)
 {
     std::shared_ptr<CReserveKey> rKey = std::make_shared<CReserveKey>(this);
+    const WalletAddressType type = GetAddressType();
+    std::string error;
+    if (!IsAddressTypeActive(WalletAddressTypeName(type), error)) {
+        // Mining to a strict family before it is active would create an
+        // unprotected output: no coinbase script (empty reserveScript).
+        script = rKey;
+        return;
+    }
     CPubKey pubkey;
+    if (type == WalletAddressType::ECDSA) {
+        CTxDestination dest;
+        if (!rKey->GetReservedStrictEcdsaKey(pubkey, false) || !GetStrictAuthScriptDestination(pubkey, dest, false)) {
+            return;
+        }
+        script = rKey;
+        script->reserveScript = GetScriptForDestination(dest);
+        return;
+    }
     if (!rKey->GetReservedKey(pubkey))
     {
         return;
@@ -5370,8 +5465,9 @@ void CWallet::GetScriptForMining(std::shared_ptr<CReserveScript> &script)
 
     script = rKey;
     if (pubkey.IsPQ()) {
+        // Strict PQ v2, the wallet's PQ family; generic v1 is for contracts.
         CTxDestination dest;
-        if (!GetDefaultAuthScriptDestination(pubkey, dest)) {
+        if (!GetStrictAuthScriptDestination(pubkey, dest)) {
             script.reset();
             return;
         }
@@ -5667,6 +5763,30 @@ CWallet* CWallet:: CreateWalletFromFile(const std::string walletFile)
             "to fresh addresses. PQ key generation is disabled for this wallet."), walletFile));
     }
 
+    // The address family is chosen when the wallet file is created
+    // (-addresstype) and cannot change afterwards. The value was validated by
+    // WalletParameterInteraction().
+    WalletAddressType requestedAddressType = DEFAULT_WALLET_ADDRESS_TYPE;
+    ParseWalletAddressType(gArgs.GetArg("-addresstype", WalletAddressTypeName(DEFAULT_WALLET_ADDRESS_TYPE)), requestedAddressType);
+    if (!fFirstRun) {
+        const uint8_t nStored = walletInstance->GetStoredAddressType();
+        if (nStored > static_cast<uint8_t>(WalletAddressType::ECDSA)) {
+            InitError(strprintf(_("Error loading %s: unknown wallet address type %d (created by a newer version?)"), walletFile, (int)nStored));
+            return nullptr;
+        }
+        if (nStored != 0 && (nStored == static_cast<uint8_t>(WalletAddressType::PQ)) != walletInstance->hdChain.IsPQEnabled()) {
+            InitError(strprintf(_("Error loading %s: its address type record does not match its HD chain"), walletFile));
+            return nullptr;
+        }
+        const WalletAddressType walletAddressType = walletInstance->GetAddressType();
+        if (gArgs.IsArgSet("-addresstype") && requestedAddressType != walletAddressType) {
+            InitError(strprintf(_("Wallet %s was created with -addresstype=%s and cannot be opened with -addresstype=%s. "
+                "The address type is fixed when the wallet is created: remove the option or use a new wallet file."),
+                walletFile, WalletAddressTypeName(walletAddressType), WalletAddressTypeName(requestedAddressType)));
+            return nullptr;
+        }
+    }
+
     if (fFirstRun)
     {
         // ensure this wallet.dat can only be opened by clients supporting HD with chain split and expects no default key
@@ -5680,16 +5800,22 @@ CWallet* CWallet:: CreateWalletFromFile(const std::string walletFile)
         walletInstance->UseBip44(gArgs.GetBoolArg("-bip44", true));
         LogPrintf("parameter interaction: -bip44 wallet enabled: %s\n", gArgs.GetBoolArg("-bip44", true));
 
-        if (gArgs.GetBoolArg("-pqwallet", false)) {
-            // PQ keys derive from the BIP44 mnemonic seed: without BIP44 the
-            // seed would be empty and every wallet would derive the same keys.
-            if (!gArgs.GetBoolArg("-bip44", true)) {
-                InitError(_("-pqwallet requires -bip44=1: PQ keys derive from the BIP44 mnemonic seed"));
-                return nullptr;
-            }
-            walletInstance->UsePQ(true);
-            LogPrintf("parameter interaction: -pqwallet (ML-DSA-44) enabled\n");
+        if (requestedAddressType != WalletAddressType::LEGACY && !gArgs.GetBoolArg("-bip44", true)) {
+            // PQ (m_pq) and strict ECDSA (m/84') keys derive from the BIP44
+            // mnemonic seed: without BIP44 the seed would be empty and every
+            // wallet would derive the same keys.
+            InitError(strprintf(_("-addresstype=%s requires -bip44=1: its keys derive from the BIP44 mnemonic seed"),
+                WalletAddressTypeName(requestedAddressType)));
+            return nullptr;
         }
+        if (requestedAddressType == WalletAddressType::PQ) {
+            walletInstance->UsePQ(true);
+        }
+        if (!walletInstance->SetAddressType(requestedAddressType)) {
+            InitError(strprintf(_("Error creating %s: writing the wallet address type failed"), walletFile));
+            return nullptr;
+        }
+        LogPrintf("parameter interaction: -addresstype=%s\n", WalletAddressTypeName(requestedAddressType));
 
         if (!walletInstance->hdChain.IsBip44()) {
             CPubKey seed = walletInstance->GenerateNewSeed();

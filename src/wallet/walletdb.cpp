@@ -370,15 +370,13 @@ bool ReadKeyValue(CWallet* pwallet, CDataStream& ssKey, CDataStream& ssValue,
         }
         else if (strType == "authscript")
         {
+            // Generic AuthScript v1 spend data from older wallets. v1 is a
+            // contract family the wallet never manages, so the record is read
+            // (to keep the database walk intact) and discarded.
             uint256 commitment;
             ssKey >> commitment;
             AuthScriptSpendData spendData;
             ssValue >> spendData;
-            if (!pwallet->LoadAuthScriptSpendData(commitment, spendData))
-            {
-                strErr = "Error reading wallet database: LoadAuthScriptSpendData failed";
-                return false;
-            }
         }
         else if (strType == "authscriptv")
         {
@@ -388,7 +386,9 @@ bool ReadKeyValue(CWallet* pwallet, CDataStream& ssKey, CDataStream& ssValue,
             ssKey >> commitment;
             AuthScriptSpendData spendData;
             ssValue >> spendData;
-            if (!pwallet->LoadAuthScriptSpendData(witnessVersion, commitment, spendData))
+            if (witnessVersion == 1) {
+                // Generic AuthScript v1: never managed by the wallet (see "authscript").
+            } else if (!pwallet->LoadAuthScriptSpendData(witnessVersion, commitment, spendData))
             {
                 strErr = "Error reading wallet database: LoadAuthScriptSpendData (versioned) failed";
                 return false;
@@ -591,6 +591,12 @@ bool ReadKeyValue(CWallet* pwallet, CDataStream& ssKey, CDataStream& ssValue,
                 strErr = "Error reading wallet database: SetHDChain failed";
                 return false;
             }
+        }
+        else if (strType == "addresstype")
+        {
+            uint8_t nType = 0;
+            ssValue >> nType;
+            pwallet->LoadAddressType(nType);
         }
         else if (strType == "cbip39words")
         {
@@ -954,7 +960,9 @@ bool CWalletDB::RecoverKeysOnlyFilter(void *callbackData, CDataStream ssKey, CDa
         fReadOK = ReadKeyValue(dummyWallet, ssKey, ssValue,
                                dummyWss, strType, strErr);
     }
-    if (!IsKeyType(strType) && strType != "hdchain")
+    // The address family decides which keys the wallet hands out: a salvaged
+    // wallet must keep it.
+    if (!IsKeyType(strType) && strType != "hdchain" && strType != "addresstype")
         return false;
     if (!fReadOK)
     {
@@ -1057,6 +1065,11 @@ bool CWalletDB::EraseDestData(const std::string &address, const std::string &key
 bool CWalletDB::WriteHDChain(const CHDChain& chain)
 {
     return WriteIC(std::string("hdchain"), chain);
+}
+
+bool CWalletDB::WriteAddressType(uint8_t nType)
+{
+    return WriteIC(std::string("addresstype"), nType);
 }
 
 bool CWalletDB::TxnBegin()

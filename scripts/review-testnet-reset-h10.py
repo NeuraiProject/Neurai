@@ -6,6 +6,9 @@ Runs isolated nodes with the real -testnet parameters of the current binary
 activation height H:
   * legacy spends, tx v3, an OP_CAT P2SH spend and the NIP-040 asset marker;
   * wallet refusal of AuthScript/strict receive addresses before H;
+  * -addresstype (legacy, pq, ecdsa): default family on each side of H, the
+    ecdsa wallet never handing out Legacy, and the error when an existing
+    wallet is opened with a different -addresstype;
   * mempool eviction and continued mining after a reorg from above H back to H-2;
   * a reorg down to the genesis block (assets are a pure rule from genesis);
   * P2P separation from a node of the previous testnet (optional old binary).
@@ -46,7 +49,7 @@ def free_port():
 class TestnetNode:
     def __init__(self, bindir, directory, extra_args=()):
         self.directory = directory
-        directory.mkdir(parents=True)
+        directory.mkdir(parents=True, exist_ok=True)   # exist_ok: restarts reuse the data directory
         self.rpc_port = free_port()
         self.p2p_port = free_port()
         self.log = (directory / 'process.log').open('w')
@@ -97,6 +100,15 @@ class TestnetNode:
             except Exception:
                 self.proc.kill()
         self.log.close()
+
+
+def init_error(bindir, directory, extra_args):
+    """Starts neuraid expecting it to refuse to start; returns (exit code, output)."""
+    directory.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.run([str(Path(bindir) / 'neuraid'), '-testnet', '-server=0', '-listen=0', '-connect=0',
+                           '-dnsseed=0', '-discover=0', '-txindex=1', f'-datadir={directory}', *extra_args],
+                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=300)
+    return proc.returncode, proc.stdout
 
 
 # --- minimal transaction serialization ------------------------------------
@@ -215,8 +227,9 @@ def main():
 
     try:
         a = TestnetNode(args.bindir, directory / 'a')                     # legacy wallet, main actor
-        b = TestnetNode(args.bindir, directory / 'b', ['-pqwallet=1'])    # PQ wallet, rival chain
-        nodes += [a, b]
+        b = TestnetNode(args.bindir, directory / 'b', ['-addresstype=pq'])    # PQ wallet, rival chain
+        c = TestnetNode(args.bindir, directory / 'c', ['-addresstype=ecdsa'])  # strict ECDSA wallet
+        nodes += [a, b, c]
         for node in nodes:
             node.ready()
 
@@ -304,10 +317,20 @@ def main():
         mine(MATURITY + 1)                               # tip 6: coinbase of block 1 is mature
         check('tip before probes', tip() == MATURITY + 1, tip())
 
-        expect_error('PQ wallet refuses its default AuthScript address before H',
+        expect_error('PQ wallet refuses its default (strict v2) address before H',
                      lambda: b.rpc('getnewaddress'), 'not active yet')
+        expect_error('wallet never hands out generic AuthScript v1 (contract) addresses',
+                     lambda: b.rpc('getnewaddress', '', 'authscript'), 'Unknown address type')
         expect_error('wallet refuses a strict pq address before H',
                      lambda: b.rpc('getnewaddress', '', 'pq'), 'not active')
+        types = [n.rpc('getwalletinfo')['addresstype'] for n in (a, b, c)]
+        check('wallets report the -addresstype they were created with', types == ['legacy', 'pq', 'ecdsa'], types)
+        expect_error('ecdsa wallet refuses its default (strict v3) address before H',
+                     lambda: c.rpc('getnewaddress'), 'not active yet')
+        expect_error('ecdsa wallet never hands out Legacy (no fallback before H)',
+                     lambda: c.rpc('getnewaddress', '', 'legacy'), 'strict ECDSA wallet')
+        expect_error('ecdsa wallet refuses strict v3 change before H',
+                     lambda: c.rpc('getrawchangeaddress'), 'not active yet')
 
         legacy_txid = a.rpc('sendtoaddress', a.rpc('getnewaddress'), 1)
         check('legacy payment accepted before H', legacy_txid in a.rpc('getrawmempool'), legacy_txid)
@@ -394,7 +417,52 @@ def main():
         version1 = b.rpc('getblock', b.rpc('getblockhash', 1))['versionHex']
         check('rival block 1 already carries the asset version bits', int(version1, 16) >= 0x30000000, version1)
         b_address = b.rpc('getnewaddress')
-        check('PQ wallet hands out an AuthScript address once H is reached', b_address.startswith('tnc1'), b_address)
+        check('PQ wallet hands out a strict PQ (v2) address once H is reached', b_address.startswith('tpq1'), b_address)
+        check('wallet does not own a generic v1 contract address', not b.rpc('validateaddress', V1_ADDRESS)['ismine'],
+              b.rpc('validateaddress', V1_ADDRESS))
+        check('legacy wallet keeps handing out Legacy after H', not a.rpc('getnewaddress').startswith('tnq1'), 'legacy')
+
+        # ---- -addresstype=ecdsa above H, and the fixed wallet type -----------
+        c.rpc('addnode', f'127.0.0.1:{a.p2p_port}', 'onetry')
+        wait(lambda: c.rpc('getbestblockhash') == a.rpc('getbestblockhash'), 'ecdsa node sync')
+        c_address = c.rpc('getnewaddress')
+        check('ecdsa wallet hands out a strict ECDSA (v3) address once H is reached', c_address.startswith('tnq1r'), c_address)
+        check('ecdsa wallet owns its v3 address', c.rpc('validateaddress', c_address)['ismine'], c_address)
+        c_change = c.rpc('getrawchangeaddress')
+        check('ecdsa wallet change is strict v3', c_change.startswith('tnq1r'), c_change)
+        expect_error('ecdsa wallet refuses Legacy after H', lambda: c.rpc('getnewaddress', '', 'legacy'), 'strict ECDSA wallet')
+        expect_error('ecdsa wallet has no PQ addresses', lambda: c.rpc('getnewaddress', '', 'pq'), '-addresstype=pq')
+        # Mining and spending from the ecdsa wallet: coinbase and change are v3.
+        c_mined = c.rpc('generate', 1)[0]
+        coinbase = c.rpc('getrawtransaction', c.rpc('getblock', c_mined)['tx'][0], True)
+        check('ecdsa wallet mines to a strict v3 output',
+              coinbase['vout'][0]['scriptPubKey']['hex'].startswith('5320'), coinbase['vout'][0]['scriptPubKey'])
+        a.rpc('sendtoaddress', c_address, 5)
+        wait(lambda: len(c.rpc('getrawmempool')) > 0, 'payment to the ecdsa wallet')
+        c.rpc('generatetoaddress', 1, c.rpc('getnewaddress'))
+        spend = c.rpc('sendtoaddress', miner, 1)
+        spend_tx = c.rpc('getrawtransaction', spend, True)
+        change_spks = [o['scriptPubKey']['hex'] for o in spend_tx['vout'] if o['scriptPubKey'].get('addresses') != [miner]]
+        check('ecdsa wallet spend sends its change to strict v3',
+              bool(change_spks) and all(x.startswith('5320') for x in change_spks), change_spks)
+        c.stop()
+        nodes.remove(c)
+        code, output = init_error(args.bindir, directory / 'c', ['-addresstype=legacy'])
+        check('existing ecdsa wallet refuses to open with -addresstype=legacy',
+              code != 0 and 'was created with -addresstype=ecdsa' in output, output[-400:])
+        c = TestnetNode(args.bindir, directory / 'c')
+        nodes.append(c)
+        c.ready()
+        check('without -addresstype the wallet keeps its stored type',
+              c.rpc('getwalletinfo')['addresstype'] == 'ecdsa' and c.rpc('getnewaddress').startswith('tnq1r'),
+              c.rpc('getwalletinfo')['addresstype'])
+        code, output = init_error(args.bindir, directory / 'fresh-pqwallet', ['-pqwallet=1'])
+        check('-pqwallet is refused (replaced by -addresstype=pq)',
+              code != 0 and '-addresstype=pq' in output, output[-400:])
+        code, output = init_error(args.bindir, directory / 'fresh-unknown', ['-addresstype=authscript'])
+        check('unknown -addresstype is refused', code != 0 and 'Unknown -addresstype' in output, output[-400:])
+        code, output = init_error(args.bindir, directory / 'fresh-nobip44', ['-addresstype=ecdsa', '-bip44=0'])
+        check('-addresstype=ecdsa requires -bip44=1', code != 0 and 'requires -bip44=1' in output, output[-400:])
 
         # ---- P2P separation from the previous testnet ---------------------------
         if args.old_bindir:

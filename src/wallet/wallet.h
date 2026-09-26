@@ -75,6 +75,21 @@ static const bool DEFAULT_DISABLE_WALLET = false;
 
 extern const char * DEFAULT_WALLET_DAT;
 
+/** Address family a wallet hands out by default (receive, change, mining).
+ *  Chosen with -addresstype when the wallet file is created and stored in it;
+ *  the numeric values are persisted. Generic AuthScript v1 is a contract
+ *  family and never a wallet address type. */
+enum class WalletAddressType : uint8_t {
+    LEGACY = 1, //!< Base58 P2PKH, secp256k1 keys on the BIP44 branch
+    PQ = 2,     //!< strict post-quantum (witness v2), ML-DSA-44 keys on the m_pq branch
+    ECDSA = 3,  //!< strict ECDSA (witness v3), secp256k1 keys on the m/84' branch
+};
+static const WalletAddressType DEFAULT_WALLET_ADDRESS_TYPE = WalletAddressType::LEGACY;
+//! Parses a -addresstype value ("legacy", "pq" or "ecdsa").
+bool ParseWalletAddressType(const std::string& name, WalletAddressType& type);
+//! The -addresstype / address_type name of a family.
+std::string WalletAddressTypeName(WalletAddressType type);
+
 static const int64_t TIMESTAMP_MIN = 0;
 
 class CBlockIndex;
@@ -734,6 +749,10 @@ private:
     /* the HD chain data model (external chain counters) */
     CHDChain hdChain;
 
+    /* Persisted "addresstype" record; 0 when absent (wallet files created
+     * before the record existed: legacy or PQ, told apart by the HD chain). */
+    uint8_t nStoredAddressType = 0;
+
     /* HD derive new child key (on internal or external chain) */
     void DeriveNewChildKey(CWalletDB &walletdb, CKeyMetadata& metadata, CKey& secret, bool internal = false);
 
@@ -1067,7 +1086,6 @@ public:
                               int& nChangePosInOut, std::string& strFailReason, const CCoinControl& coin_control, bool fNewAsset, const std::vector<CNewAsset> assets, const CTxDestination destination, bool fTransferAsset, bool fReissueAsset, const CReissueAsset& reissueAsset, const AssetType& assetType, AssetMarker assetMarker, bool sign);
 
     bool CreateNewChangeAddress(CReserveKey& reservekey, CTxDestination& dest, std::string& strFailReason);
-    bool GetDefaultAuthScriptDestination(const CPubKey& pubKey, CTxDestination& dest, bool persist = true);
     /** Strict AuthScript destination: witness v2 for a PQ key, witness v3 for a
      *  compressed secp256k1 key. Persists the (version, commitment) spend data. */
     bool GetStrictAuthScriptDestination(const CPubKey& pubKey, CTxDestination& dest, bool persist = true);
@@ -1086,7 +1104,16 @@ public:
     /** Address type selector: "legacy", "pq" (strict witness v2) or "ecdsa"
      *  (strict witness v3). Returns false and fills error when the wallet
      *  cannot produce that family. */
-    bool GetNewDestinationOfType(const std::string& addressType, bool internal, CTxDestination& dest, std::string& error);
+    bool GetNewDestinationOfType(const std::string& addressType, bool internal, CTxDestination& dest, std::string& error, CPubKey* pPubKey = nullptr);
+    /** New destination of the wallet's own family (GetAddressType()). */
+    bool GetNewDestination(bool internal, CTxDestination& dest, std::string& error);
+    /** Whether addresses of that family may be handed out for the next block
+     *  (the strict families need AuthScript and strict activation); fills
+     *  error otherwise. Legacy is always active. */
+    static bool IsAddressTypeActive(const std::string& addressType, std::string& error);
+    /** The receive destination a key of this wallet stands for: strict v2 for
+     *  a PQ key, strict v3 in a strict ECDSA wallet, Legacy otherwise. */
+    bool GetDestinationForOwnKey(const CPubKey& pubKey, CTxDestination& dest);
     /** Change script for an input family (see ChangeFamily in wallet.cpp):
      *  legacy, generic AuthScript v1, strict PQ (witness v2) or strict ECDSA
      *  (witness v3). Change always returns to the family it was spent from;
@@ -1269,6 +1296,14 @@ public:
 
     /* Enable/disable PQ mode on the HD chain */
     void UsePQ(bool b = true) { hdChain.UsePQ(b); }
+
+    /* Address family of this wallet (see WalletAddressType). */
+    WalletAddressType GetAddressType() const;
+    /* Raw persisted "addresstype" value (0 when the record is absent). */
+    uint8_t GetStoredAddressType() const { return nStoredAddressType; }
+    void LoadAddressType(uint8_t nType) { nStoredAddressType = nType; }
+    /* Persist the address family; only when the wallet file is created. */
+    bool SetAddressType(WalletAddressType type);
 
 
     /* Generates a new HD seed (will not be activated) */

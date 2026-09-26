@@ -14,7 +14,7 @@ spec.loader.exec_module(m)
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bindir', type=Path, default=Path('/root/Neurai/src'))
-    parser.add_argument('--target', choices=['pq', 'ecdsa', 'authscript'], default='ecdsa')
+    parser.add_argument('--target', choices=['pq', 'ecdsa'], default='ecdsa')
     parser.add_argument('--checkmempool', type=int, choices=[0, 1], default=0)
     parser.add_argument('--event', choices=['tag', 'global', 'address', 'child-address', 'verifier'], default='tag')
     parser.add_argument('--asset-child', action='store_true')
@@ -35,7 +35,7 @@ def main():
             raise RuntimeError(f'{label}: {observed}')
 
     try:
-        source = m.Node(args.bindir, directory / 'source', ['-pqwallet=1', '-bypassdownload=1'])
+        source = m.Node(args.bindir, directory / 'source', ['-addresstype=pq', '-bypassdownload=1'])
         observer = m.Node(args.bindir, directory / 'observer', ['-disablewallet=1', '-bypassdownload=1', '-assumevalid=0', f'-checkmempool={args.checkmempool}'])
         nodes.extend([source, observer])
         source.ready()
@@ -43,7 +43,7 @@ def main():
         miner = source.rpc('getnewaddress')
         source.rpc('generatetoaddress', 500, miner)
         holder = source.rpc('getnewaddress', '', 'pq' if args.target == 'ecdsa' else 'ecdsa')
-        target = source.rpc('getnewaddress') if args.target == 'authscript' else source.rpc('getnewaddress', '', args.target)
+        target = source.rpc('getnewaddress', '', args.target)
 
         def confirm(label, value):
             txid = value[0] if isinstance(value, list) else value

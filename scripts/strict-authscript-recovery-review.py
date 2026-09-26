@@ -52,7 +52,7 @@ class Node:
                 "-datadir=" + str(self.path), "-rpcport=" + str(self.rpcport),
                 "-port=" + str(self.p2pport)]
         if restore:
-            args += ["-pqwallet=1", "-mnemonic=" + WORDS]
+            args += ["-addresstype=pq", "-mnemonic=" + WORDS]
         self.proc = subprocess.Popen(args, stdout=self.log, stderr=subprocess.STDOUT)
 
     def rpc(self, method, *params):
