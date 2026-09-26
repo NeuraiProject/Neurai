@@ -48,6 +48,73 @@ The witness stack for spending is structured as:
 
 This design separates authentication (who) from authorization logic (what and how), allowing covenants to be written as pure script logic while optionally requiring key-holder approval.
 
+### Reset testnet activation schedule
+
+The reset testnet runs blocks 1-9 with the rules that predate the new NIPs,
+and **block 10** is the first block that applies all of them:
+
+- the opt-in switches (`nOptInFeaturesHeight`): AuthScript v1, the introspection
+  and hash opcodes, 64-bit arithmetic, OP_CAT/OP_SPLIT/CTV, tx v3 with `vrefin`
+  (NIP-014) and the strict OP_XNA_ASSET placement rule;
+- strict AuthScript families and NIP-041 (`nStrictAuthScriptHeight`);
+- CSFS, Ed25519 and CHECKSIGADD (`nSignatureOpcodesHeight`);
+- TXHASH, NIP-043 primitives, MAST, NIP-046 budgets, ZKVERIFY and Poseidon work;
+- the NIP-040 asset marker (`rvn` outputs before block 10, `xna` from block 10;
+  legacy `rvn` UTXOs stay spendable) and the DEPIN transfer state;
+- NIP-028: 30-second blocks, the subsidy halved (and its halving interval
+  doubled to 28,800 blocks, ~10 days as before), a 120-block reorg cap (60
+  minutes, as before), the block version flag `0x40000000` required on every
+  block and peers below protocol 70029 dropped.
+
+The reset testnet keeps the `RUEN` message start and port 19100. It announces
+protocol 70030 and refuses peers below it from the first handshake, which keeps
+nodes of the previous testnet (same message start, protocol 70029) out; its new
+genesis keeps the chains apart. Regtest also announces 70030; mainnet keeps
+70029 for now.
+
+Assets, RIP5 and the asset VersionBits deployments are active from genesis as a
+pure rule (`nAssetsActiveFromGenesis`), and the v1.0.6 consensus fixes apply
+from genesis. Block validation uses
+the height of the block; wallet and mempool admission use the next block's
+height, so new-rule transactions are accepted with the tip at block 9.
+
+Mainnet remains unscheduled. Regtest applies everything from height 0 by
+default except NIP-028, which only `-blocktimereductionheight` schedules;
+`-optinfeaturesheight`, `-strictauthscriptheight`, `-signatureopcodesheight`
+and the per-feature overrides move the heights for activation tests.
+
+### Strict AuthScript activation schedule
+
+Strict PQ witness v2 (`tpq1z…`), strict ECDSA witness v3 (`tnq1r…`) and NIP-041
+destination introspection activate at block 10 of the reset testnet (see
+above). This height also enables the strict-flag rules described below for v1
+mixed multisig. Earlier blocks retain their previous validation rules. Wallet
+and mempool admission use the next block's height, so strict addresses become
+available with the tip at block 9.
+
+### Mixed ECDSA/PQ multisig in witness v1
+
+At `nStrictAuthScriptHeight`, `SCRIPT_VERIFY_AUTHSCRIPT_STRICT` also enables
+family-independent signature encoding checks in v1 `OP_CHECKMULTISIG` and
+`OP_CHECKMULTISIGVERIFY`. A nonempty signature of `ML_DSA_44_SIG_SIZE + 1` bytes
+is treated as ML-DSA-44 plus its sighash byte; other signatures use ECDSA
+encoding checks. The existing encoding flags, sighash checks, pubkey checks,
+NULLDUMMY and NULLFAIL rules still apply. Empty signatures remain deliberately
+invalid signatures, not authorization.
+
+A signature skips candidate keys of the other family without consuming the
+signature. It must still verify against a matching key in script order. Thus
+`1 <ECDSA pubkey> <PQ pubkey> 2 CHECKMULTISIG` can be satisfied by either key.
+This is alternative authorization, not a requirement for both algorithms;
+use a 2-of-2 threshold when both signatures are required.
+
+Before this height, signature encoding is checked against each candidate key,
+preserving historical validation, including mixed-family failures. This is a
+consensus change that enables previously rejected spends, and must be included
+in the activation release. Mainnet/testnet heights remain unscheduled. The
+change applies only to witness v1 script execution (native or P2SH-wrapped);
+it does not change CHECKSIG, Legacy/v0 multisig, or the fixed v2/v3 templates.
+
 ---
 
 ## Covenant Building Blocks
@@ -58,12 +125,14 @@ CTV (BIP 119) is the simplest and most restrictive covenant primitive. It verifi
 
 - Transaction version and locktime
 - Number and sequence of all inputs
+- Serialized scriptSigs, if any input has a non-empty scriptSig
 - Number, amounts, and scripts of all outputs
+- For transaction version 3, the reference input count and ordered outpoints (NIP-014)
 - The index of the input being evaluated
 
 **Properties:**
-- The template is fully deterministic — there is no flexibility in the spending transaction.
-- The hash does NOT commit to input prevouts, so the covenant works regardless of which UTXO funds it.
+- The template fixes the fields listed above, including complete output scripts and asset suffixes.
+- It does not commit to ordinary input prevouts or witness data. Reference outpoints in v3 are committed separately, so changing or reordering them changes the template.
 - Uses single-SHA256 with precomputed sub-hashes to prevent quadratic hashing.
 
 **Example: Batched Payout**
@@ -92,31 +161,74 @@ OP_VERIFY
 // ... remaining spending conditions
 ```
 
-### OP_TXHASH — Flexible Commitments
+### OP_TXHASH — Flexible Commitments (NIP-042)
 
-OP_TXHASH produces a double-SHA256 hash over a configurable combination of transaction fields. A single-byte bitmask selects which fields to include:
+`OP_TXHASH` (`0xb5`, NOP6) consumes exactly two bytes: a nonzero 16-bit
+little-endian mask. Bits 0–8 are defined (511 valid masks); bits 9–15 and
+all other selector lengths fail with `SCRIPT_ERR_TXHASH`.
 
-| Bit | Field |
-|-----|-------|
-| 0 | Transaction version |
-| 1 | Transaction locktime |
-| 2 | All input prevouts |
-| 3 | All input sequences |
-| 4 | All serialized outputs |
-| 5 | Current input's prevout |
-| 6 | Current input's sequence |
-| 7 | Current input index |
+| Bit | Serialized field |
+|-----|------------------|
+| 0 | Transaction version, uint32 LE |
+| 1 | Transaction locktime, uint32 LE |
+| 2 | SHA256d of concatenated input outpoints |
+| 3 | SHA256d of concatenated input sequences, uint32 LE each |
+| 4 | SHA256d of concatenated serialized outputs |
+| 5 | Current input's outpoint (32 raw hash bytes + uint32 LE index) |
+| 6 | Current input's sequence, uint32 LE |
+| 7 | Current input index, uint32 LE |
+| 8 | SHA256d of concatenated reference outpoints, in their original order |
 
-This is strictly more flexible than CTV: by choosing which bits to set, a script can commit to some transaction properties while leaving others free.
+Selected fields are concatenated in bit order, after the two-byte mask:
 
-**Example: Output-Only Covenant**
-
-Commit only to the outputs (bit 4 = `0x10`), allowing the transaction to have any inputs:
-
+```text
+tag = SHA256("NeuraiTxHash")
+digest = SHA256(tag || tag || mask_le16 || selected_fields)
 ```
-0x10 OP_TXHASH
-<expected_outputs_hash> OP_EQUAL
+
+Sub-hashes use double SHA256; the final tagged hash uses single SHA256.
+There is no count prefix in the outpoint, sequence, output or reference lists.
+Each output contains an int64 LE value followed by a CompactSize-prefixed
+script, including its full witness program and asset suffix. Bits 5–7 require
+a valid current input index. For non-v3 transactions or an empty reference
+list, bit 8 contributes `SHA256d("")`.
+
+Unselected fields remain free. No mask commits to scriptSigs or witness data.
+Bit 8 binds reference **outpoints**, unlike checking only their destination
+scripts. Reordering references changes the digest precisely when bit 8 is set.
+The tag does not identify a network, application or oracle; protocols needing
+that separation must include their own application/network tag in the signed
+message.
+
+**Output-only covenant** (the push contains bytes `10 00`, not a Script number):
+
+```text
+<10 00> OP_TXHASH <expected_digest> OP_EQUAL
 ```
+
+**Outputs and references authorized by an oracle:**
+
+```text
+witness arguments: [oracle_signature]
+script: <10 01> OP_TXHASH <oracle_pubkey> OP_CHECKSIGFROMSTACK
+```
+
+CSFS verifies a signature over `SHA256(digest)`, with a trailing signature-type
+byte removed before verification. This applies to both ECDSA and ML-DSA-44.
+A saved ML-DSA signature must verify, but randomized signing need not reproduce
+its bytes. To bind an application, sign `SHA256(app_tag || digest)` and build
+that message with `<app_tag> <10 01> OP_TXHASH OP_CAT`.
+
+**No references:** `<00 01> OP_TXHASH` yields raw digest bytes
+`308542cb639a0e6ac414070f3be7c7e13827c7dde337c4d1202853376519fab1`.
+These are hash bytes, not the reversed `uint256::GetHex()` display order.
+
+Activation uses `nTxHashHeight`: block **10 of the reset testnet**, block 0 of
+regtest by default, and no scheduled mainnet height. `-txhashheight=<n>` is a
+regtest-only override. `SCRIPT_VERIFY_TXHASH` governs selector and digest
+together; the old format is removed. Before activation the opcode is NOP6 in
+consensus and discouraged by standard policy. Mempool checks use the next
+block's height and revalidate entries when a reorg crosses activation.
 
 ### Transaction Introspection Opcodes
 
@@ -130,6 +242,42 @@ These opcodes push raw transaction data onto the stack for arithmetic comparison
 | `OP_OUTPUTSCRIPT` | `<index> → <scriptPubKey>` | Pushes the raw scriptPubKey of an output |
 | `OP_INPUTCOUNT` | `→ <count>` | Pushes the number of inputs |
 | `OP_OUTPUTCOUNT` | `→ <count>` | Pushes the number of outputs |
+| `OP_OUTPUTAUTHDEST` | `<index> → <33 bytes>` | NIP-041: pushes the AuthScript destination of an output as `version || commitment` |
+
+#### AuthScript destination introspection (NIP-041)
+
+`OP_OUTPUTAUTHDEST` (`0xc2`) and selector `0x04` of `OP_TXFIELD` (spent input) and
+`OP_REFINPUTFIELD` (reference input) return the destination of a script as exactly
+33 bytes: the witness version (`01` generic AuthScript, `02` strict post-quantum,
+`03` strict ECDSA) followed by the 32-byte program in its original byte order.
+They activate at the same height as the strict AuthScript families.
+
+Unlike the NIP-023 operations (`OP_OUTPUTAUTHCOMMITMENT`, selector `0x02`), which
+return 32 bytes, only understand witness v1 and merely peek at the first 34 bytes,
+these operations require a well-formed script: either the exact native program
+`OP_n 0x20 <32 bytes>`, or that program followed by a valid asset wrapper
+(`OP_XNA_ASSET <payload> OP_DROP`, nothing after it, payload deserializable).
+Trailing instructions, malformed wrappers, other witness versions or program
+lengths make the operation fail. Because the version is part of the result, the
+same 32 bytes under another version never satisfy a covenant.
+
+NIP-041 parses the payload within the pushed bytes and rejects leftovers. Hashes
+use a dedicated strict reader: tag `0x12` (IPFS) or `0x54` (transaction metadata),
+canonical CompactSize length 32, and exactly 32 data bytes. An issuance hash flag
+must be 0 or 1; flag 1 requires the hash. Transfers and reissues may omit the hash;
+a transfer with a hash may additionally carry exactly eight expiration bytes.
+Unknown tags, truncated hashes, different lengths and trailing bytes fail.
+Historical asset field parsers retain their existing behavior; this validation
+is specific to the three NIP-041 destination queries.
+
+This identifies the destination only. A covenant that cares about which asset is
+paid, and how much, must still check them with `OP_OUTPUTASSETFIELD`. The NIP-023
+operations keep their behaviour unchanged for existing contracts.
+
+```
+// "Output 0 must pay the strict post-quantum destination X"
+0 OP_OUTPUTAUTHDEST  <02 || X>  OP_EQUALVERIFY
+```
 
 ### Asset Introspection Opcodes
 
@@ -516,7 +664,7 @@ Each opcode does one thing well. Complex behavior emerges from composition rathe
 
 ### Graceful Degradation
 
-Every opcode introduced via NOP replacement (`OP_CHECKTEMPLATEVERIFY`, `OP_CHECKSIGFROMSTACK`, `OP_TXHASH`, `OP_TXFIELD`, `OP_SPLIT`) falls back to NOP behavior when its activation flag is not set. Re-enabled opcodes (`OP_CAT`, `OP_MUL`, `OP_DIV`, `OP_MOD`) return `SCRIPT_ERR_DISABLED_OPCODE` when their flag is not set. This ensures soft-fork compatibility.
+Every opcode introduced via NOP replacement (`OP_CHECKTEMPLATEVERIFY`, `OP_CHECKSIGFROMSTACK`, `OP_TXHASH`, `OP_TXFIELD`, `OP_SPLIT`) falls back to NOP behavior when its activation flag is not set. Re-enabled opcodes (`OP_CAT`, `OP_MUL`, `OP_DIV`, `OP_MOD`) return `SCRIPT_ERR_DISABLED_OPCODE` when their flag is not set. These rules define pre-activation evaluation; activating stack-changing opcodes still requires the network's coordinated consensus upgrade.
 
 ### Post-Quantum Readiness
 
@@ -536,11 +684,72 @@ All data pushed onto the stack is bounded by the effective per-element cap: `MAX
 
 ### Quadratic Hashing Prevention
 
-Both CTV and TXHASH use precomputed sub-hashes (`PrecomputedTransactionData`) to ensure O(1) evaluation per input. A transaction with N inputs evaluating the same opcode does O(N) total work, not O(N²).
+CTV and TXHASH use precomputed sub-hashes (`PrecomputedTransactionData`) for O(1) evaluation per opcode after the cache is populated. Without a populated cache, each execution that selects a list hashes that list again in O(n) time.
 
 ### Arithmetic Overflow Protection
 
 All 64-bit arithmetic operations use compiler intrinsics (`__builtin_add_overflow`, `__builtin_mul_overflow`) or equivalent manual bounds checking. Division by zero and `INT64_MIN` edge cases are explicitly handled. No undefined behavior is possible.
+
+### CSFS Signature Operation Accounting
+
+With `SCRIPT_VERIFY_CHECKSIGFROMSTACK` active, each CSFS instruction counts as
+one signature operation for either ECDSA or PQ. Counting is static: instructions
+in unexecuted branches count too, while opcode bytes inside pushed data do not.
+The existing scale applies: four cost units for legacy/P2SH, one for witness.
+P2SH's per-input policy limit includes these instructions when activated.
+
+Legacy creation-time scans include active CSFS in scriptSigs and outputs. Bare
+spent output scripts are also charged for their top-level CSFS instructions,
+so outputs created before activation cannot verify CSFS without a spend-time
+charge. Revealed P2SH and witness scripts use their respective accounting paths.
+A bare CSFS output can therefore be charged at both creation and redemption.
+The old context-free counters retain their defaults and NOP5 contributes zero
+when the activation flag is absent. Mempool accounting uses the network's
+consensus opt-in flags, matching the contextual block-validation path.
+
+### CHECKSIGADD and Ed25519 Signature Operation Accounting
+
+With their respective verification flags enabled, `OP_CHECKSIGADD` and
+`OP_CHECKSIG_ED25519` each add one static sigop, using the same scale as CSFS:
+four cost units in legacy/P2SH, one in witness. The flags are independent;
+a disabled opcode contributes no optional sigops and its execution continues
+to fail with BAD_OPCODE. Unexecuted branches count; bytes inside pushes do not.
+Bare spent output scripts are charged at redemption as well as creation,
+including outputs created before opcode activation. P2SH policy includes these
+operations in its per-input limit. Mempool and contextual block validation use
+the activated counters, as does the reported coinbase template cost.
+
+CHECKSIGADD's existing dynamic surcharge of eight against MAX_OPS_PER_SCRIPT
+is unchanged and separate from the global sigop budget. One global sigop per
+signature is consistent with CSFS and AuthScript authentication; it is not a
+claim that ECDSA, ML-DSA and Ed25519 have equal CPU costs.
+
+This tightens consensus on networks where these opcodes are already enabled
+(testnet and regtest). It does not set a new activation schedule or establish
+compatibility with every historical testnet block; deployment needs coordination.
+
+### Height activation of signature opcodes
+
+CSFS, CHECKSIGADD and Ed25519 share `nSignatureOpcodesHeight`. Their individual
+capability switches only take effect at or above that height. Mainnet leaves
+the height unscheduled (`INT_MAX`); the reset testnet uses block 10 and regtest
+height zero.
+`-signatureopcodesheight=N` overrides the height only on regtest.
+
+Block validation supplies the block's height explicitly. Mempool admission,
+including its second consensus-flags check, uses the next block's height.
+The same rule gates sigop accounting and the related witness/P2SH policy.
+Signing/RPC defaults follow the next height of the loaded chain; before loading
+a chain they default to zero. The standalone offline transaction tool has no
+chain tip and therefore uses that zero default.
+
+On a reorganization or connection crossing this height, the existing script-rule
+mempool sweep revalidates affected entries. Entries whose stored sigop cost no
+longer matches are evicted with descendants, rather than leaving stale package
+sizes/costs. They can be retransmitted and admitted under the new rules. The
+second pass after reorg readmission covers temporarily missing parents. Reorgs
+that do not cross a script-rule activation height do not trigger this full sweep.
+This does not introduce a separate historical accounting schedule on testnet.
 
 ### Signature Malleability
 
@@ -608,8 +817,9 @@ standardness cap for downstream items.
 
 - Slot `0xc9` was previously **`bad-opcode`**, never a reserved NOP.
 - Activation gates on `consensus.nPoseidonEnabled` (true on
-  testnet/regtest from genesis, false on mainnet until a future
-  activation NIP). Activation is a hard fork.
+  testnet/regtest, applied from the opt-in activation height: block 10
+  of the reset testnet, genesis on regtest; false on mainnet until a
+  future activation NIP). Activation is a hard fork.
 - With `SCRIPT_VERIFY_POSEIDON` (bit 38) **unset**, the handler returns
   `SCRIPT_ERR_BAD_OPCODE` — *not* `DISCOURAGE_UPGRADABLE_NOPS`. This
   matches the activation pattern of NIP-026 / NIP-030 / NIP-031 /
@@ -666,3 +876,211 @@ headroom for additional commitments inside the same script.
 - [Atomic Swaps](atomicswaps.md) — Cross-chain atomic swap protocol
 - [DePIN Client Protocol](depinreceivemsg.md) — DePIN messaging layer documentation
 - [NIP-036 v2](../NIP/Pendiente/036-OP_POSEIDON-v2.md) — Full Poseidon-on-BN254 specification, byte sponge, DoS analysis
+
+### AuthScript contract address encoding
+
+Generic witness v1 uses Bech32m HRP `nc` on mainnet and `tnc` on
+testnet/regtest: `nc1p…` / `tnc1p…`. The former `nq1p…` / `tnq1p…`
+representations are rejected; no legacy-prefix alias or address migration is
+provided. This changes address encoding only, not commitments or consensus.
+Strict PQ v2 keeps `pq1z…` / `tpq1z…`; strict ECDSA v3 keeps
+`nq1r…` / `tnq1r…`.
+
+The wallet address type is chosen with `-addresstype=legacy|pq|ecdsa` when the
+wallet file is created (default `legacy`) and stored in it; opening an existing
+wallet with a different `-addresstype` is an init error, and without the option
+the stored type is used (`getwalletinfo` reports it). In the GUI, the
+first-run wallet dialog (create or restore from seed words) offers the three
+types, preset to `-addresstype`; when restoring, the type must be the one the
+wallet was created with, since each type derives its own keys. The type is what the
+wallet hands out by default, in Qt and over RPC (`getnewaddress`,
+`getaccountaddress`, `getrawchangeaddress`, change outputs, the asset RPCs and
+mining):
+
+| `-addresstype` | Default | Also on request |
+|---|---|---|
+| `legacy` | Legacy (Base58) | strict v3 (`"ecdsa"`) |
+| `pq` | strict v2 | strict v3 (`"ecdsa"`) |
+| `ecdsa` | strict v3 | none: it never hands out Legacy |
+
+`pq` and `ecdsa` require `-bip44=1` (their keys derive from the mnemonic seed:
+`m_pq` and `m/84'` branches). Their addresses are handed out at any time, even
+with no network or no scheduled activation, but nothing pays to them until
+AuthScript and the strict families apply to the next block: before that, a
+strict address does not decode for paying (sends to it are refused), policy
+rejects outputs to it, and the wallet refuses change to its family, mining to
+it and asset operations that would create such an output. There is no Legacy
+fallback. `-pqwallet` was replaced by `-addresstype=pq` and is refused at startup.
+Generic v1 is a contract family: contracts are built and signed by
+contract tooling, and the wallet never manages v1. It does not hand out v1
+addresses, does not count v1 outputs as its own (whatever spend data an older
+wallet file holds), does not sign messages for them and does not store v1
+spend data. Old testnet address-book strings and external integrations must be
+updated; this is intentionally incompatible.
+
+
+## NIP-043: state-thread primitives
+
+These three capabilities have independent height gates: reset testnet block 10,
+regtest height 0, mainnet unscheduled. Regtest overrides are
+`-assetmessageheight`, `-inputfieldheight`, and `-merkleposeidonheight`.
+They do not implement ZK, MAST or custody; those remain separate dependencies.
+
+* `OP_OUTPUTASSETFIELD`, `OP_INPUTASSETFIELD`, `OP_REFINPUTASSETFIELD`: selector
+  `08` requires `SCRIPT_VERIFY_ASSETMESSAGEFIELD` (bit 45). It reads only a
+  transfer payload within its single push, followed by `OP_DROP` and no
+  trailing script. After name and amount it requires `54 20 <32 bytes>` or
+  `12 20 <32 bytes>` and optionally exactly eight expiration bytes. The result
+  is the 32-byte message or the 34-byte IPFS multihash. Absent, truncated,
+  noncanonical or unknown encodings fail; old selectors are unchanged.
+  Both known asset markers are recognizable; the asset consensus rules still
+  govern which marker can appear in a new output at each height.
+* `OP_INPUTFIELD` (`c4`, bit 46): `(index selector -- field)`. Selector `01`
+  returns raw eight-byte LE nValue, **including with 64-bit arithmetic active**;
+  `02` returns the historical v1 commitment, `03` the complete spent script,
+  and `04` the strict NIP-041 version-plus-commitment (also requires AUTHDEST).
+  It indexes spent inputs, never reference inputs. Unknown selectors, unavailable
+  prevouts, invalid indices and fields over the effective element limit fail.
+  Its preactivation behavior is BAD_OPCODE. Reference-field behavior is unchanged.
+* Merkle scheme `05` requires MERKLE_INCLUSION, POSEIDON and
+  `SCRIPT_VERIFY_MERKLE_POSEIDON` (bit 47). A node is the first field element of
+  `Permutation(0,left,right)`, not the NIP-036 byte sponge. Leaf, siblings and
+  root must be canonical BN254 field elements in 32-byte big-endian form.
+  Depth is 1..32; bitmap order and unused-bit behavior match NIP-031. Each
+  structurally complete path is charged `62 * depth` against the same per-script
+  Poseidon budget as OP_POSEIDON, before cryptographic work, even if verification
+  later fails. Malformed paths return false; insufficient budget aborts with
+  POSEIDON_BUDGET. Scheme 05 unavailable also returns false, preserving the
+  existing unknown-scheme behavior; disabling the whole opcode yields BAD_OPCODE.
+
+Reproducible first-deliverable example: `scripts/review-contract-thread-regtest.py`.
+It constructs a real UNIQUE thread under AuthScript v1 with 32-byte state and an
+ECDSA or ML-DSA-44 CSFS oracle signing `DOMAIN || old_state || new_state`
+exactly as in NIP-043 §8. DOMAIN binds the network genesis and UNIQUE issuance
+outpoint; the transfer scripts are compared in full. This is a
+state-transition integration test, not a private pool or an audited application.
+
+
+## NIP-044 AuthScript trees (initial integration)
+
+Witness v1 additionally supports markers `0x10` (NoAuth), `0x11` (ML-DSA global)
+and `0x12` (compressed ECDSA global), gated by `SCRIPT_VERIFY_AUTHSCRIPT_TREE`
+(bit 44) and the base AuthScript flag. The final two witness items are the leaf
+script and `0x01 || siblings` control block, with siblings ordered leaf-to-root
+and depth at most 32. Commitment version `0x04` hashes the ordinary descriptor
+and the sorted-pair Merkle root. Existing `0x00/0x01/0x02` spends are unchanged.
+
+Transaction signatures use `TaggedHash("NeuraiAuthTreeSig", 0x01 || role ||
+authType || program || leafHash || baseSighash)`. The message is 99 bytes; role
+is 0 for global authentication and 1 for internal CHECKSIG/CHECKSIGADD/MULTISIG.
+The base is the ordinary AuthScript sighash using the complete witness marker.
+CSFS and Ed25519 still sign explicit messages using their existing conventions.
+
+Sigops come from the penultimate witness item, plus one for global authentication
+only. The control block is not Script. Initial arguments are limited to 1000;
+leaf size is at most 10000 bytes. TREE does not raise the 201-opcode budget or
+widen the effective argument-element limit by itself.
+
+Activation: reset testnet height 10, regtest 0 with `-authscripttreeheight`, mainnet
+unscheduled. No live network has been updated by this integration. Wallet tree
+import, backup and automatic leaf selection are not implemented. Manual contract
+signing uses the explicit tree context API; arbitrary partial-signature merging
+is unsupported and does not fall back to the historical domain.
+
+See [NIP-044 v2](../NIP/Pendiente/044-AuthScript-Arbol-de-Scripts-MAST-v2.md)
+and [validation evidence](../NIP/bench/nip044-integracion.md).
+
+### Asset replacement policy (NIP025-patch1)
+
+Asset operations may use ordinary BIP68/CSV sequence numbers. The former
+consensus requirement that every input use a sequence of at least `0xfffffffe`
+has been removed for the reset-network deployment; such a removal is a
+consensus relaxation on a network that enforced the old rule. Do not deploy
+this revision as an uncoordinated update to that network.
+
+Transaction replacement is disabled by default (`-mempoolreplacement=0`), as
+before. When enabled, ordinary XNA replacements retain the existing opt-in RBF
+rules. A replacement involving asset inputs, asset outputs or administrative
+asset outputs is rejected with `replacement-involves-assets`. This includes a
+replacement that would evict an asset operation indirectly through an ordinary
+ancestor. The bounded eviction set is classified from live chain/mempool coins;
+no protection metadata is persisted. Read-only reference inputs alone do not
+trigger protection.
+
+Initial admission of a valid asset operation remains possible even if its
+CSV sequence signals BIP125. That signal does not promise effective
+replaceability under local policy. The wallet's `bumpfee` RPC remains deprecated;
+this change does not enable it or redefine BIP125 reporting.
+
+This policy does not confer finality, prevent conflicting valid blocks, or
+prevent expiry/eviction. It also prevents legitimate replacement fee bumps and
+allows a protected child to pin an ordinary parent. Applications must account
+for these limits; CPFP is an option only where outputs, package limits and miner
+support allow it. Asset balances, permission checks and signatures remain
+consensus requirements independent of this replacement policy.
+
+## NIP-046: AuthScript execution budgets
+
+`SCRIPT_VERIFY_AUTHSCRIPT_BUDGET` (bit 48) is enabled at block 10 of the
+reset testnet, and at regtest height 0. Regtest accepts
+`-authscriptbudgetheight=N` (`-1` disables). Mainnet defaults to `INT_MAX`;
+activation requires a separately chosen `nAuthScriptBudgetHeight`.
+
+With this flag, `SIGVERSION_AUTHSCRIPT` uses a 512-operation limit, including
+existing CHECKSIGADD and MULTISIG surcharges. Legacy and witness v0 retain
+201. MAST uses the selected leaf's AuthScript execution; the outer P2SH script
+retains its own rules. Strict v2/v3 templates and block/transaction sigop limits
+are unchanged. Unexecuted branches count opcodes, but incur no hash charges.
+
+Each AuthScript execution has 65536 classic hash units. Simple hashes cost
+input length + 64, HASH160/HASH256 cost length + 160. CSFS charges its explicit
+message hash after encoding checks and before calling the checker, including
+empty signatures. Merkle scheme 01 costs 224 per level; schemes 02–04 cost
+leaf length + 64 + 128 per level. Structurally unhashable classic proofs retain
+their false result without charges. Well-formed incorrect proofs pay. Charges
+precede hashing; exhaustion returns `AuthScript hash budget exceeded`.
+Poseidon retains its separate 30720-byte budget, shared with Merkle scheme 05.
+
+Initial arguments are limited to 1000 elements and 262144 bytes, with existing
+per-element limits. Envelope signatures, pubkeys, leaf script and MAST control
+are not execution arguments. Main stack plus altstack obey the same byte cap
+after each opcode. The flag alone does not widen elements. A leading DROP
+cannot conceal an initially oversized stack.
+
+Flags follow the height of the block being validated; mempool uses the next
+height. Both activation directions revalidate pending transactions and remove
+invalid entries and descendants. Script-cache results remain flag-specific.
+These are consensus rules, not only relay policy. Testnet activation is for
+experimentation; resource benchmarks and mainnet deployment review remain
+separate from functional correctness tests.
+
+### NIP-018: `OP_ZKVERIFY` integration (experimental)
+
+`OP_ZKVERIFY` (`0xc3`, verification flag bit 43) executes only in
+`SIGVERSION_AUTHSCRIPT`, including NIP-044 leaves. Its stack is
+`proof vk input_1 ... input_k k profile -> bool`. Profile is the exact byte
+`01`; `k` is a minimal Script number of at most four bytes, in `[1,16]`.
+Public inputs are canonical 32-byte big-endian BN254 scalars. Verification
+keys and proofs use the strict compressed arkworks encoding described in
+NIP-018. The script must authenticate the verification key and bind the
+public inputs to its intended statement.
+
+An empty proof produces false after checking profile, count and inputs,
+without parsing the verification key. A nonempty invalid proof fails the
+script. Local backend failures take the operational-error path, rather than
+marking a block or peer invalid.
+
+Each opcode in a revealed AuthScript script/MAST leaf costs **280 sigops**, including unexecuted branches. Bytes in pushes and MAST
+control blocks do not count. Standard transactions allow at most four such
+opcodes across all inputs. The flag also enables the existing 3072-byte
+item cap and 256-KiB stack-byte limit.
+
+Activation is scheduled at height 10 on reset testnet and defaults to height
+0 on regtest (`-zkverifyheight`, `-1` disables). Mainnet remains unscheduled.
+Fixed-size positive-result and prepared-VK caches are implemented. Calibration
+sets the cost to 280: the largest measured uncached invalid-equation sample
+was 214.52 times the ECDSA median; a 25% margin rounded upward gives 280.
+Exact policy/block boundaries and cold blocks with 285 distinct VKs pass.
+This is evidence for the measured x86-64 build, not a universal time bound.
+The remaining NIP-018 checklist is still required before deployment. The legacy 32-bit `libneuraiconsensus` ABI does not expose
+this flag.

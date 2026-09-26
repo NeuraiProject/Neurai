@@ -199,6 +199,9 @@ ReadStatus PartiallyDownloadedBlock::FillBlock(CBlock& block, const std::vector<
         return READ_STATUS_INVALID;
 
     CValidationState state;
+    // Reconstructed compact block: check it under the activation context of
+    // its own height, not the ambient default.
+    CStrictAuthScriptContext strictAuthScriptContext(IsStrictAuthScriptActiveForChildOf(block.hashPrevBlock));
     if (!CheckBlock(block, state, GetParams().GetConsensus())) {
         // TODO: We really want to just check merkle tree manually here,
         // but that is expensive, and CheckBlock caches a block's

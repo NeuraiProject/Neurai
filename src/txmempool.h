@@ -76,6 +76,7 @@ private:
     int64_t nTime;             //!< Local time when entering the mempool
     unsigned int entryHeight;  //!< Chain height when entering the mempool
     bool spendsCoinbase;       //!< keep track of transactions that spend a coinbase
+    uint64_t poseidonWork{0};
     int64_t sigOpCost;         //!< Total sigop cost
     int64_t feeDelta;          //!< Used for determining the priority of the transaction for mining in a block
     LockPoints lockPoints;     //!< Track the height and time at which tx was final
@@ -108,6 +109,8 @@ public:
     size_t GetTxWeight() const { return nTxWeight; }
     int64_t GetTime() const { return nTime; }
     unsigned int GetHeight() const { return entryHeight; }
+    uint64_t GetPoseidonWork() const { return poseidonWork; }
+    void SetPoseidonWork(uint64_t work) { poseidonWork = work; }
     int64_t GetSigOpCost() const { return sigOpCost; }
     int64_t GetModifiedFee() const { return nFee + feeDelta; }
     size_t DynamicMemoryUsage() const { return nUsageSize; }
@@ -621,6 +624,11 @@ public:
     // of the mempool's target height actually flips, so the full walk does
     // not run on every block.
     void removeForAssetMarkerTransition(bool fNip040Active);
+    /** Strict AuthScript (witness v2/v3) activation flipped for the mempool's
+     *  candidate height: evict every entry the predicate reports as affected
+     *  (it spends a strict output or creates a strict asset output), with its
+     *  descendants. Independent of the OP_CHAINCONTEXT machinery. */
+    void removeForStrictAuthScriptTransition(std::function<bool(const CTxMemPoolEntry&)> isAffected);
 
     /** DEPIN transfer state: after a reorg, drop holder transfers of assets
      *  that are no longer OPEN at the tip and pending state operations whose

@@ -9,6 +9,7 @@
 
 #include "uint256.h"
 #include <map>
+#include <limits>
 #include <string>
 
 namespace Consensus {
@@ -97,6 +98,28 @@ struct Params {
     /** Enable post-quantum (ML-DSA-44) witness v1 verification.
      *  true on testnet/regtest; false on mainnet until future activation. */
     bool nPQWitnessEnabled;
+    /** Activation height shared by the opt-in feature switches of a network:
+     *  nPQWitnessEnabled, the opcode switches applied by ApplyConsensusOptIns
+     *  (nCATEnabled ... nCheckSigAddEnabled), nREFINPUTSEnabled and
+     *  nXNAAssetStrictEnabled. A switch only states that the network schedules
+     *  the feature; a block at height h applies it when the switch is true and
+     *  h >= nOptInFeaturesHeight. Mempool, mining and wallet evaluate the
+     *  height of the next block. 0 on regtest (override with
+     *  -optinfeaturesheight); INT_MAX on mainnet, where no switch is scheduled. */
+    int nOptInFeaturesHeight{std::numeric_limits<int>::max()};
+    bool IsOptInActive(bool fEnabled, int nHeight) const { return fEnabled && nHeight >= nOptInFeaturesHeight; }
+    bool IsPQWitnessActive(int nHeight) const { return IsOptInActive(nPQWitnessEnabled, nHeight); }
+    bool IsRefInputsActive(int nHeight) const { return IsOptInActive(nREFINPUTSEnabled, nHeight); }
+    bool IsXnaAssetStrictActive(int nHeight) const { return IsOptInActive(nXNAAssetStrictEnabled, nHeight); }
+    /** Activation height of the strict AuthScript families: witness v2 (PQ,
+     *  fixed OP_TRUE template) and witness v3 (compressed ECDSA, fixed OP_TRUE
+     *  template). Blocks at or above this height enforce the strict spending
+     *  rules and recognise OP_2/OP_3-prefixed asset scripts; below it every
+     *  rule behaves exactly as before these versions existed.
+     *  0 on regtest (override with -strictauthscriptheight); INT_MAX (never)
+     *  on testnet and mainnet until their activation is decided. */
+    int nStrictAuthScriptHeight;
+    bool IsStrictAuthScriptActive(int nHeight) const { return nHeight >= nStrictAuthScriptHeight; }
     /** Enable OP_CAT (BIP 347) - stack element concatenation.
      *  true on testnet/regtest; false on mainnet until future activation. */
     bool nCATEnabled;
@@ -105,10 +128,31 @@ struct Params {
     bool nCTVEnabled;
     /** Enable OP_CHECKSIGFROMSTACK - verify signature against arbitrary message.
      *  true on testnet/regtest; false on mainnet until future activation. */
+    // Common height gate for CSFS, Ed25519 and CHECKSIGADD. Individual
+    // capability switches remain available; validation always supplies height.
+    int nSignatureOpcodesHeight{0};
+    bool IsSignatureOpcodesActive(int height) const { return height >= nSignatureOpcodesHeight; }
     bool nCSFSEnabled;
-    /** Enable OP_TXHASH - push hash of selected transaction fields to stack.
-     *  true on testnet/regtest; false on mainnet until future activation. */
-    bool nTXHASHEnabled;
+    /** NIP-042: independent activation of the tagged TXHASH format. */
+    int nTxHashHeight{std::numeric_limits<int>::max()};
+    bool IsTxHashActive(int height) const { return height >= nTxHashHeight; }
+    // NIP-043: independent activation, unscheduled unless set for the network.
+    int nZKVerifyHeight{std::numeric_limits<int>::max()};
+    bool IsZKVerifyActive(int height) const { return height >= nZKVerifyHeight; }
+    int nPoseidonWorkHeight{std::numeric_limits<int>::max()};
+    bool IsPoseidonWorkActive(int height) const { return height >= nPoseidonWorkHeight; }
+    int nAuthScriptBudgetHeight{std::numeric_limits<int>::max()};
+    bool IsAuthScriptBudgetActive(int height) const { return height >= nAuthScriptBudgetHeight; }
+    int nAssetMessageHeight{std::numeric_limits<int>::max()};
+    bool IsAssetMessageActive(int height) const { return height >= nAssetMessageHeight; }
+    // NIP-043: independent activation, unscheduled unless set for the network.
+    int nInputFieldHeight{std::numeric_limits<int>::max()};
+    bool IsInputFieldActive(int height) const { return height >= nInputFieldHeight; }
+    // NIP-043: independent activation, unscheduled unless set for the network.
+    int nAuthScriptTreeHeight{std::numeric_limits<int>::max()};
+    bool IsAuthScriptTreeActive(int height) const { return height >= nAuthScriptTreeHeight; }
+    int nMerklePoseidonHeight{std::numeric_limits<int>::max()};
+    bool IsMerklePoseidonActive(int height) const { return height >= nMerklePoseidonHeight; }
     /** Enable OP_TXFIELD (NOP7) - push raw bytes of spent output fields to stack.
      *  Required for recursive DEX covenants. true on testnet/regtest; false on mainnet. */
     bool nTXFIELDEnabled;
@@ -156,13 +200,6 @@ struct Params {
      *  ApplyConsensusOptIns co-sets SCRIPT_VERIFY_64BIT_INTEGERS whenever
      *  this is true — MTP after 2038 does not fit in a 4-byte CScriptNum. */
     bool nCHAINCONTEXTEnabled;
-    /** NIP-025: If a transaction spends at least one asset-wrapped AuthScript v1
-     *  UTXO, require nSequence >= 0xfffffffe on every input of that transaction.
-     *  Covers DEX partial-fill covenants AND plain asset transfers to PQ
-     *  (witness-v1) addresses — the predicate cannot distinguish the two at
-     *  consensus level. true on testnet/regtest; false on mainnet until future
-     *  activation. */
-    bool nASSETRBFBlockEnabled;
     /** Strict rejection of outputs that contain OP_XNA_ASSET but are not a
      *  valid asset/null-asset script. The legacy (origin/main) rule accepts
      *  such an output when its script *starts* with OP_XNA_ASSET; the strict
@@ -194,6 +231,17 @@ struct Params {
      *  heights are 0, so the shortcut's `> 0` guard skips it → VersionBits).
      *  See NIP/revision/004. */
     bool nAssetRip5ActivationByHeightEnabled;
+    /** Assets, RIP5 (messaging and restricted assets) and the asset
+     *  VersionBits deployments (transfer script size, enforced values,
+     *  coinbase assets) are active from the genesis block as a pure rule:
+     *  the activation functions return true without looking at the chain
+     *  tip and without writing their cached state. Meant for fresh test
+     *  networks, where a reorg can reach the genesis block and a cached,
+     *  tip-based activation would make early blocks validate differently
+     *  depending on the history of the process. true on the reset testnet;
+     *  false on mainnet, which keeps VersionBits exactly like origin/main, and
+     *  on regtest, whose unit tests exercise the pre-activation paths. */
+    bool nAssetsActiveFromGenesis{false};
     /** NIP-028: activation height for the testnet block-time reduction
      *  (60s → 30s) and coupled subsidy halving. Set to
      *  std::numeric_limits<int>::max() to disable on chains that did

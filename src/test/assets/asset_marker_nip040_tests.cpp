@@ -127,16 +127,16 @@ BOOST_AUTO_TEST_CASE(activation_helper_boundary)
     // The guards restored the block-1 default.
     BOOST_CHECK_EQUAL(GetParams().GetConsensus().nAssetMarkerNip040Height, 1);
 
-    // Testnet: migration fork on the live chain at 303,000 — legacy below,
-    // xna at and after. (Reset-to-1 planned when testnet restarts.)
+    // Reset testnet: the migration fork runs at block 10 with the other new
+    // NIPs (plan 2026-09-26 v2) — legacy below, xna at and after.
     SelectParams(CBaseChainParams::TESTNET);
     {
         const Consensus::Params& testnet = GetParams().GetConsensus();
-        BOOST_CHECK_EQUAL(testnet.nAssetMarkerNip040Height, 303000);
-        BOOST_CHECK(!IsAssetMarkerNip040Active(302999, testnet));
-        BOOST_CHECK(IsAssetMarkerNip040Active(303000, testnet));
-        BOOST_CHECK(MarkerForNewAssetOutput(302999, testnet) == AssetMarker::LEGACY_RVN);
-        BOOST_CHECK(MarkerForNewAssetOutput(303000, testnet) == AssetMarker::NEURAI_XNA);
+        BOOST_CHECK_EQUAL(testnet.nAssetMarkerNip040Height, 10);
+        BOOST_CHECK(!IsAssetMarkerNip040Active(9, testnet));
+        BOOST_CHECK(IsAssetMarkerNip040Active(10, testnet));
+        BOOST_CHECK(MarkerForNewAssetOutput(9, testnet) == AssetMarker::LEGACY_RVN);
+        BOOST_CHECK(MarkerForNewAssetOutput(10, testnet) == AssetMarker::NEURAI_XNA);
     }
 
     // Mainnet has not scheduled the fork: never active, whatever the height.

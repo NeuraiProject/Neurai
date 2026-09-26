@@ -5,6 +5,8 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "interpreter.h"
+#include "crypto/backend_error.h"
+#include "crypto/groth16_bn254.h"
 
 #include "assets/assets.h"
 #include "assets/assettypes.h"
@@ -469,9 +471,9 @@ bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, script_ver
     return true;
 }
 
-bool static CheckSignatureEncodingForPubKey(const std::vector<unsigned char> &vchSig, const valtype& vchPubKey, script_verify_flags flags, ScriptError *serror)
+bool static CheckSignatureEncodingForFamily(const valtype& vchSig, bool postQuantum, script_verify_flags flags, ScriptError *serror)
 {
-    if (!IsPostQuantumPubKey(vchPubKey)) {
+    if (!postQuantum) {
         return CheckSignatureEncoding(vchSig, flags, serror);
     }
 
@@ -492,6 +494,11 @@ bool static CheckSignatureEncodingForPubKey(const std::vector<unsigned char> &vc
     return true;
 }
 
+bool static CheckSignatureEncodingForPubKey(const valtype& vchSig, const valtype& vchPubKey, script_verify_flags flags, ScriptError *serror)
+{
+    return CheckSignatureEncodingForFamily(vchSig, IsPostQuantumPubKey(vchPubKey), flags, serror);
+}
+
 bool static CheckPubKeyEncoding(const valtype &vchPubKey, script_verify_flags flags, const SigVersion &sigversion, ScriptError *serror)
 {
     if ((flags & SCRIPT_VERIFY_STRICTENC) != 0 &&
@@ -503,6 +510,14 @@ bool static CheckPubKeyEncoding(const valtype &vchPubKey, script_verify_flags fl
     // Only compressed keys are accepted in segwit
     if ((flags & SCRIPT_VERIFY_WITNESS_PUBKEYTYPE) != 0 &&
         sigversion == SIGVERSION_WITNESS_V0 &&
+        !IsCompressedPubKey(vchPubKey) &&
+        !IsPostQuantumPubKey(vchPubKey))
+    {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PUBKEYTYPE);
+    }
+    // Strict AuthScript families: compressed secp256k1 or PQ only, as a
+    // consensus rule (not gated by SCRIPT_VERIFY_WITNESS_PUBKEYTYPE).
+    if (sigversion == SIGVERSION_AUTHSCRIPT_STRICT &&
         !IsCompressedPubKey(vchPubKey) &&
         !IsPostQuantumPubKey(vchPubKey))
     {
@@ -546,8 +561,39 @@ bool static CheckMinimalPush(const valtype &data, opcodetype opcode)
     return true;
 }
 
-bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &script, script_verify_flags flags, const BaseSignatureChecker &checker, SigVersion sigversion, ScriptError *serror)
+static bool CheckAuthScriptBudgetStack(const std::vector<valtype>& stack, size_t begin, size_t end,
+                                       script_verify_flags flags, ScriptError* serror)
 {
+    if (!(flags & SCRIPT_VERIFY_AUTHSCRIPT_BUDGET)) return true;
+    if (end - begin > MAX_STACK_SIZE) return set_error(serror, SCRIPT_ERR_STACK_SIZE);
+    size_t total = 0;
+    for (size_t i = begin; i < end; ++i) {
+        if (stack[i].size() > EffectiveMaxScriptElementSize(flags)) return set_error(serror, SCRIPT_ERR_PUSH_SIZE);
+        if (stack[i].size() > MAX_STACK_BYTES - total) return set_error(serror, SCRIPT_ERR_STACK_SIZE);
+        total += stack[i].size();
+    }
+    return true;
+}
+
+bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &script, script_verify_flags flags, const BaseSignatureChecker &checker, SigVersion sigversion, ScriptError *serror, const AuthScriptTreeContext* tree, ScriptExecutionCost* execution_cost)
+{
+    if (execution_cost) *execution_cost = ScriptExecutionCost{};
+    // The interpreter takes the strict AuthScript activation exclusively from
+    // its flags. Asset introspection opcodes (OP_OUTPUTASSETFIELD,
+    // OP_INPUTASSETFIELD, OP_REFINPUTASSETFIELD) reach asset parsers through
+    // the signature checker; pin the context for the whole evaluation so they
+    // never fall back to the ambient default. Script checks run on worker
+    // threads that do not inherit the validating thread's scope.
+    CStrictAuthScriptContext strictAuthScriptContext((flags & SCRIPT_VERIFY_AUTHSCRIPT_STRICT) != 0);
+
+    if (tree && (!tree->IsValid() || sigversion != SIGVERSION_AUTHSCRIPT ||
+        !(flags & SCRIPT_VERIFY_AUTHSCRIPT_TREE) || !(flags & SCRIPT_VERIFY_AUTHSCRIPT)))
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    const auto checkTransactionSig = [&](const valtype& sig, const valtype& key, const CScript& code) {
+        return tree ? checker.CheckTreeSig(sig, key, code, *tree, 1)
+                    : checker.CheckSig(sig, key, code, sigversion);
+    };
+
     static const CScriptNum bnZero(0);
     static const CScriptNum bnOne(1);
     // static const CScriptNum bnFalse(0);
@@ -566,6 +612,17 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
     set_error(serror, SCRIPT_ERR_UNKNOWN_ERROR);
     if (script.size() > MAX_SCRIPT_SIZE)
         return set_error(serror, SCRIPT_ERR_SCRIPT_SIZE);
+    const bool budget = (flags & SCRIPT_VERIFY_AUTHSCRIPT_BUDGET) && sigversion == SIGVERSION_AUTHSCRIPT;
+    const int maxOps = budget ? MAX_OPS_PER_AUTHSCRIPT : MAX_OPS_PER_SCRIPT;
+    if (budget && !CheckAuthScriptBudgetStack(stack, 0, stack.size(), flags, serror)) return false;
+    size_t classicHashUnits = 0;
+    auto chargeHash = [&](size_t cost) {
+        if (!budget) return true;
+        if (cost > MAX_CLASSIC_HASH_UNITS_PER_AUTHSCRIPT - classicHashUnits)
+            return set_error(serror, SCRIPT_ERR_AUTHSCRIPT_HASH_BUDGET);
+        classicHashUnits += cost;
+        return true;
+    };
     int nOpCount = 0;
     // NIP-036 §3.7: per-script Poseidon-input-byte budget. Accumulated by
     // OP_POSEIDON; rejection on overflow returns SCRIPT_ERR_POSEIDON_BUDGET.
@@ -587,7 +644,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                 return set_error(serror, SCRIPT_ERR_PUSH_SIZE);
 
             // Note how OP_RESERVED does not count towards the opcode limit.
-            if (opcode > OP_16 && ++nOpCount > MAX_OPS_PER_SCRIPT)
+            if (opcode > OP_16 && ++nOpCount > maxOps)
                 return set_error(serror, SCRIPT_ERR_OP_COUNT);
 
             // Disabled opcodes (CVE-2010-5137 lineage): rejected even inside a
@@ -803,6 +860,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             return false;
                         }
 
+                        if (!chargeHash(vchMsg.size() + 64)) return false;
                         bool fSuccess = checker.CheckSigFromStack(vchSig, vchMsg, vchPubKey);
 
                         if (!fSuccess && (flags & SCRIPT_VERIFY_NULLFAIL) && vchSig.size())
@@ -832,10 +890,12 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
 
                         const valtype& vchSelector = stacktop(-1);
-                        if (vchSelector.size() != 1)
+                        if (vchSelector.size() != 2)
+                            return set_error(serror, SCRIPT_ERR_TXHASH);
+                        const uint16_t fieldSelector = uint16_t(vchSelector[0]) | (uint16_t(vchSelector[1]) << 8);
+                        if (fieldSelector == 0 || (fieldSelector & ~uint16_t{0x01ff}))
                             return set_error(serror, SCRIPT_ERR_TXHASH);
 
-                        unsigned char fieldSelector = vchSelector[0];
                         valtype vchHash;
                         if (!checker.GetTxFieldHash(fieldSelector, vchHash))
                             return set_error(serror, SCRIPT_ERR_TXHASH);
@@ -864,6 +924,10 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             return set_error(serror, SCRIPT_ERR_TXFIELD);
 
                         unsigned char fieldSelector = vchSelector[0];
+                        // NIP-041: selector 0x04 only exists once activated;
+                        // before that it is an unknown selector, as always.
+                        if (fieldSelector == AUTHDEST_SELECTOR && !(flags & SCRIPT_VERIFY_AUTHDEST))
+                            return set_error(serror, SCRIPT_ERR_TXFIELD);
                         valtype vchField;
                         if (!checker.GetTxField(fieldSelector, vchField))
                             return set_error(serror, SCRIPT_ERR_TXFIELD);
@@ -1134,8 +1198,36 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                                 scheme == nip031::SCHEME_BITCOIN_NEURAI ||
                                 scheme == nip031::SCHEME_SHA256_PLAIN ||
                                 ((scheme == nip031::SCHEME_KECCAK256_PLAIN ||
-                                  scheme == nip031::SCHEME_BLAKE2B_PLAIN) && nip030);
+                                  scheme == nip031::SCHEME_BLAKE2B_PLAIN) && nip030) ||
+                                (scheme == nip031::SCHEME_POSEIDON_BN254 &&
+                                 (flags & SCRIPT_VERIFY_MERKLE_POSEIDON) && (flags & SCRIPT_VERIFY_POSEIDON));
                             if (scheme_available) {
+                                // Charge only structurally hashable classic proofs, before hashing.
+                                if (scheme != nip031::SCHEME_POSEIDON_BN254 && !vchProof.empty()) {
+                                    const size_t depth = vchProof[0];
+                                    if (depth <= nip031::NIP031_MAX_DEPTH &&
+                                        vchProof.size() == 1 + 32 * depth + (depth + 7) / 8 &&
+                                        (scheme != nip031::SCHEME_BITCOIN_NEURAI || vchLeaf.size() == 32)) {
+                                        const size_t cost = scheme == nip031::SCHEME_BITCOIN_NEURAI ?
+                                            224 * depth : vchLeaf.size() + 64 + 128 * depth;
+                                        if (!chargeHash(cost)) return false;
+                                    }
+                                }
+                                // Charge before any Poseidon work. Malformed proof shapes
+                                // return false without hashing; well-shaped invalid proofs pay.
+                                if (scheme == nip031::SCHEME_POSEIDON_BN254 && !vchProof.empty()) {
+                                    const size_t depth = vchProof[0];
+                                    if (depth >= 1 && depth <= nip031::NIP031_MAX_DEPTH &&
+                                        vchProof.size() == 1 + 32 * depth + (depth + 7) / 8) {
+                                        const size_t cost = 62 * depth;
+                                        if (cost > MAX_POSEIDON_INPUT_BYTES_PER_SCRIPT - nPoseidonInputBytes)
+                                            return set_error(serror, SCRIPT_ERR_POSEIDON_BUDGET);
+                                        if (checker.poseidonWorkBudget && !checker.poseidonWorkBudget->Charge(depth))
+                                            return set_error(serror, SCRIPT_ERR_POSEIDON_WORK_BUDGET);
+                                        nPoseidonInputBytes += cost;
+                                        if (execution_cost) execution_cost->poseidon_permutations += depth;
+                                    }
+                                }
                                 ok = nip031::VerifyMerkleInclusion(
                                     vchLeaf.data(),  vchLeaf.size(),
                                     scheme,
@@ -1151,6 +1243,78 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         stack.push_back(ok ? vchTrue : vchFalse);
                     }
                         break;
+
+                    case OP_ZKVERIFY:
+                    {
+                        if (!(flags & SCRIPT_VERIFY_ZKVERIFY))
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
+                        if (sigversion != SIGVERSION_AUTHSCRIPT)
+                            return set_error(serror, SCRIPT_ERR_ZK_BAD_SIGVERSION);
+                        if (stack.empty()) return set_error(serror, SCRIPT_ERR_ZK_STACK_SIZE);
+                        if (stack.back() != valtype{1}) return set_error(serror, SCRIPT_ERR_ZK_BAD_PROFILE);
+                        if (stack.size() < 2) return set_error(serror, SCRIPT_ERR_ZK_STACK_SIZE);
+                        int64_t k;
+                        try { k = CScriptNum(stack[stack.size()-2], true, 4).getint(); }
+                        catch (const scriptnum_error&) { return set_error(serror, SCRIPT_ERR_ZK_INPUT_COUNT); }
+                        if (k < 1 || k > 16) return set_error(serror, SCRIPT_ERR_ZK_INPUT_COUNT);
+                        if (stack.size() < static_cast<size_t>(k)+4)
+                            return set_error(serror, SCRIPT_ERR_ZK_STACK_SIZE);
+                        const size_t first = stack.size()-k-4;
+                        // Canonical BN254 Fr, big endian. Check even for empty proof.
+                        static const unsigned char modulus[32] = {
+                            0x30,0x64,0x4e,0x72,0xe1,0x31,0xa0,0x29,0xb8,0x50,0x45,0xb6,0x81,0x81,0x58,0x5d,
+                            0x28,0x33,0xe8,0x48,0x79,0xb9,0x70,0x91,0x43,0xe1,0xf5,0x93,0xf0,0x00,0x00,0x01};
+                        valtype inputs;
+                        inputs.reserve(k*32);
+                        for (size_t j=static_cast<size_t>(k); j-- > 0;) {
+                            const auto& input = stack[first+2+j];
+                            if (input.size()!=32) return set_error(serror, SCRIPT_ERR_ZK_PUBLIC_INPUT_SIZE);
+                            if (!std::lexicographical_compare(input.begin(), input.end(), modulus, modulus+32))
+                                return set_error(serror, SCRIPT_ERR_ZK_PUBLIC_INPUT_RANGE);
+                            inputs.insert(inputs.begin(), input.begin(), input.end());
+                        }
+                        const auto& proof = stack[first];
+                        const auto& vk = stack[first+1];
+                        bool valid = false;
+                        if (!proof.empty()) {
+                            switch (neurai::zk::VerifyChecked(vk, proof, inputs)) {
+                            case neurai::zk::Result::VALID: valid = true; break;
+                            case neurai::zk::Result::INVALID: return set_error(serror, SCRIPT_ERR_ZK_VERIFY_FAILED);
+                            case neurai::zk::Result::INPUT_COUNT: return set_error(serror, SCRIPT_ERR_ZK_INPUT_COUNT);
+                            case neurai::zk::Result::INPUT_RANGE: return set_error(serror, SCRIPT_ERR_ZK_PUBLIC_INPUT_RANGE);
+                            case neurai::zk::Result::VK_ENCODING: return set_error(serror, SCRIPT_ERR_ZK_VK_ENCODING);
+                            case neurai::zk::Result::PROOF_ENCODING: return set_error(serror, SCRIPT_ERR_ZK_PROOF_ENCODING);
+                            case neurai::zk::Result::INTERNAL: throw CryptoBackendError();
+                            }
+                        }
+                        stack.resize(first);
+                        stack.push_back(valid ? valtype{1} : valtype{});
+                        break;
+                    }
+
+                    case OP_OUTPUTAUTHDEST:
+                    {
+                        // NIP-041: push version||commitment (33 bytes) of a
+                        // selected output's AuthScript destination.
+                        // Unassigned byte pre-activation -> BAD_OPCODE (fail-closed).
+                        if (!(flags & SCRIPT_VERIFY_AUTHDEST))
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
+
+                        if (stack.size() < 1)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+                        const int nOut = CScriptNum(stacktop(-1), fRequireMinimal).getint();
+                        if (nOut < 0)
+                            return set_error(serror, SCRIPT_ERR_OUTPUTAUTHDEST);
+
+                        valtype vchResult;
+                        if (!checker.GetOutputAuthDest((unsigned int)nOut, vchResult))
+                            return set_error(serror, SCRIPT_ERR_OUTPUTAUTHDEST);
+
+                        popstack(stack);
+                        stack.push_back(vchResult);
+                    }
+                    break;
 
                     case OP_OUTPUTAUTHCOMMITMENT:
                     {
@@ -1196,7 +1360,8 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         if (nOut < 0)
                             return set_error(serror, SCRIPT_ERR_OUTPUTASSETFIELD);
 
-                        if (selector == 0x00 || selector >= 0x08)
+                        if (selector == 0x00 || selector > 0x08 ||
+                            (selector == 0x08 && !(flags & SCRIPT_VERIFY_ASSETMESSAGEFIELD)))
                             return set_error(serror, SCRIPT_ERR_OUTPUTASSETFIELD);
 
                         valtype vchResult;
@@ -1235,7 +1400,8 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         if (nInput < 0)
                             return set_error(serror, SCRIPT_ERR_INPUTASSETFIELD);
 
-                        if (selector == 0x00 || selector >= 0x08)
+                        if (selector == 0x00 || selector > 0x08 ||
+                            (selector == 0x08 && !(flags & SCRIPT_VERIFY_ASSETMESSAGEFIELD)))
                             return set_error(serror, SCRIPT_ERR_INPUTASSETFIELD);
 
                         valtype vchResult;
@@ -1305,11 +1471,14 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                     }
                         break;
 
+                    case OP_INPUTFIELD:
                     case OP_REFINPUTFIELD:
                     {
+                        const bool spent = opcode == OP_INPUTFIELD;
+                        const ScriptError fieldError = spent ? SCRIPT_ERR_INPUTFIELD : SCRIPT_ERR_REFINPUTFIELD;
                         // NIP-hardfork gating: unassigned byte pre-activation → BAD_OPCODE with
                         // flag off (fail-closed), not NOP.
-                        if (!(flags & SCRIPT_VERIFY_REFINPUTS))
+                        if (!(flags & (spent ? SCRIPT_VERIFY_INPUTFIELD : SCRIPT_VERIFY_REFINPUTS)))
                             return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
 
                         // (nRef selector -- field_bytes)
@@ -1318,29 +1487,32 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
 
                         const valtype& vchSelector = stacktop(-1);
                         if (vchSelector.size() != 1)
-                            return set_error(serror, SCRIPT_ERR_REFINPUTFIELD);
+                            return set_error(serror, fieldError);
                         const unsigned char selector = vchSelector[0];
 
                         const int nRef = CScriptNum(stacktop(-2), fRequireMinimal).getint();
                         if (nRef < 0)
-                            return set_error(serror, SCRIPT_ERR_REFINPUTFIELD);
+                            return set_error(serror, fieldError);
 
-                        // Selectors 0x01-0x03 valid (value, authcommitment, scriptPubKey)
-                        if (selector == 0x00 || selector >= 0x04)
-                            return set_error(serror, SCRIPT_ERR_REFINPUTFIELD);
+                        // Selectors 0x01-0x03 valid (value, authcommitment, scriptPubKey);
+                        // NIP-041 adds 0x04 (33-byte AuthScript destination) once activated.
+                        const bool fAuthDestSelector = (selector == AUTHDEST_SELECTOR) && (flags & SCRIPT_VERIFY_AUTHDEST);
+                        if (selector == 0x00 || (selector >= 0x04 && !fAuthDestSelector))
+                            return set_error(serror, fieldError);
 
                         valtype vchResult;
-                        if (!checker.GetRefInputField(static_cast<unsigned int>(nRef), selector, vchResult))
-                            return set_error(serror, SCRIPT_ERR_REFINPUTFIELD);
+                        if (!(spent ? checker.GetInputField(static_cast<unsigned int>(nRef), selector, vchResult)
+                                    : checker.GetRefInputField(static_cast<unsigned int>(nRef), selector, vchResult)))
+                            return set_error(serror, fieldError);
 
                         // NIP-018: size check lifted from the checker (selector
                         // 0x03 returns a scriptPubKey). Keep SCRIPT_ERR_REFINPUTFIELD
                         // to preserve opcode semantics.
                         if (vchResult.size() > EffectiveMaxScriptElementSize(flags))
-                            return set_error(serror, SCRIPT_ERR_REFINPUTFIELD);
+                            return set_error(serror, fieldError);
 
                         // Selector 0x01 (nValue): convert to CScriptNum if 64-bit integers enabled
-                        if (selector == 0x01 && (flags & SCRIPT_VERIFY_64BIT_INTEGERS) && vchResult.size() == 8)
+                        if (!spent && selector == 0x01 && (flags & SCRIPT_VERIFY_64BIT_INTEGERS) && vchResult.size() == 8)
                         {
                             int64_t nValue;
                             memcpy(&nValue, vchResult.data(), 8);
@@ -1374,7 +1546,8 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             return set_error(serror, SCRIPT_ERR_REFINPUTASSETFIELD);
 
                         // Selectors 0x01-0x07 valid (same as OP_OUTPUTASSETFIELD)
-                        if (selector == 0x00 || selector >= 0x08)
+                        if (selector == 0x00 || selector > 0x08 ||
+                            (selector == 0x08 && !(flags & SCRIPT_VERIFY_ASSETMESSAGEFIELD)))
                             return set_error(serror, SCRIPT_ERR_REFINPUTASSETFIELD);
 
                         valtype vchResult;
@@ -1980,6 +2153,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         if (stack.size() < 1)
                             return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
                         valtype &vch = stacktop(-1);
+                        if (!chargeHash(vch.size() + ((opcode == OP_HASH160 || opcode == OP_HASH256) ? 160 : 64))) return false;
                         valtype vchHash(
                                 (opcode == OP_RIPEMD160 || opcode == OP_SHA1 || opcode == OP_HASH160) ? 20 : 32);
                         if (opcode == OP_RIPEMD160)
@@ -2009,6 +2183,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         if (stack.size() < 1)
                             return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
                         valtype &vch = stacktop(-1);
+                        if (!chargeHash(vch.size() + 64)) return false;
                         valtype vchHash(32);
                         if (opcode == OP_KECCAK256)
                             crypto::Keccak256(vch.data(), vch.size(), vchHash.data());
@@ -2034,6 +2209,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         if (stack.size() < 1)
                             return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
                         valtype &vch = stacktop(-1);
+                        if (!chargeHash(vch.size() + 64)) return false;
                         if (opcode == OP_SHA512) {
                             valtype vchHash(64);
                             crypto::SHA512_Wrap(vch.data(), vch.size(), vchHash.data());
@@ -2068,7 +2244,10 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         // overflow if vch.size() were ever near SIZE_MAX.
                         if (vch.size() > MAX_POSEIDON_INPUT_BYTES_PER_SCRIPT - nPoseidonInputBytes)
                             return set_error(serror, SCRIPT_ERR_POSEIDON_BUDGET);
+                        if (checker.poseidonWorkBudget && !checker.poseidonWorkBudget->Charge(crypto::PoseidonPermutationCost(vch.size())))
+                            return set_error(serror, SCRIPT_ERR_POSEIDON_WORK_BUDGET);
                         nPoseidonInputBytes += vch.size();
+                        if (execution_cost) execution_cost->poseidon_permutations += crypto::PoseidonPermutationCost(vch.size());
                         valtype vchHash(32);
                         crypto::PoseidonBN254(vch.data(), vch.size(), vchHash.data());
                         popstack(stack);
@@ -2096,9 +2275,11 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         valtype &vchSig    = stacktop(-3);
 
                         using crypto::ed25519::StructuralResult;
-                        const auto pkCheck = crypto::ed25519::ValidatePubkey(
-                            vchPubKey.data(), vchPubKey.size());
-                        switch (pkCheck) {
+                        const auto verification = crypto::ed25519::VerifyStrictDetailed(
+                            vchPubKey.data(), vchPubKey.size(),
+                            vchSig.data(), vchSig.size(),
+                            vchMsg.data(), vchMsg.size());
+                        switch (verification.structural) {
                             case StructuralResult::OK: break;
                             case StructuralResult::PUBKEY_SIZE_INVALID:
                                 return set_error(serror, SCRIPT_ERR_ED25519_PUBKEY_SIZE);
@@ -2106,14 +2287,6 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             case StructuralResult::PUBKEY_NOT_ON_CURVE:
                             case StructuralResult::PUBKEY_NON_SUBGROUP:
                                 return set_error(serror, SCRIPT_ERR_ED25519_PUBKEY_ENCODING);
-                            default:
-                                return set_error(serror, SCRIPT_ERR_ED25519_PUBKEY_ENCODING);
-                        }
-
-                        const auto sigCheck = crypto::ed25519::ValidateSignature(
-                            vchSig.data(), vchSig.size());
-                        switch (sigCheck) {
-                            case StructuralResult::OK: break;
                             case StructuralResult::SIG_SIZE_INVALID:
                                 return set_error(serror, SCRIPT_ERR_ED25519_SIG_SIZE);
                             case StructuralResult::SIG_R_NON_CANONICAL:
@@ -2124,11 +2297,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             default:
                                 return set_error(serror, SCRIPT_ERR_ED25519_SIG_ENCODING);
                         }
-
-                        const bool fSuccess = crypto::ed25519::VerifyStrict(
-                            vchPubKey.data(), vchPubKey.size(),
-                            vchSig.data(),    vchSig.size(),
-                            vchMsg.data(),    vchMsg.size());
+                        const bool fSuccess = verification.valid;
 
                         popstack(stack); // pubkey
                         popstack(stack); // msg
@@ -2164,7 +2333,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         // scripts hit the budget early. Mirrors the
                         // OP_CHECKMULTISIG accounting pattern at line ~2224.
                         nOpCount += CHECKSIGADD_PQ_SIGOP_COST;
-                        if (nOpCount > MAX_OPS_PER_SCRIPT)
+                        if (nOpCount > maxOps)
                             return set_error(serror, SCRIPT_ERR_OP_COUNT);
 
                         // Mandatory PQ-pubkey shape prevalidation, INDEPENDENT
@@ -2201,7 +2370,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         // satisfied" — counter unchanged, no verify call.
                         bool fSuccess = false;
                         if (!vchSig.empty()) {
-                            fSuccess = checker.CheckSig(vchSig, vchPubKey, scriptCode, sigversion);
+                            fSuccess = checkTransactionSig(vchSig, vchPubKey, scriptCode);
                         }
 
                         // NULLFAIL: matches OP_CHECKSIG.
@@ -2248,7 +2417,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             //serror is set
                             return false;
                         }
-                        bool fSuccess = checker.CheckSig(vchSig, vchPubKey, scriptCode, sigversion);
+                        bool fSuccess = checkTransactionSig(vchSig, vchPubKey, scriptCode);
 
                         if (!fSuccess && (flags & SCRIPT_VERIFY_NULLFAIL) && vchSig.size())
                             return set_error(serror, SCRIPT_ERR_SIG_NULLFAIL);
@@ -2279,7 +2448,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         if (nKeysCount < 0 || nKeysCount > MAX_PUBKEYS_PER_MULTISIG)
                             return set_error(serror, SCRIPT_ERR_PUBKEY_COUNT);
                         nOpCount += nKeysCount;
-                        if (nOpCount > MAX_OPS_PER_SCRIPT)
+                        if (nOpCount > maxOps)
                             return set_error(serror, SCRIPT_ERR_OP_COUNT);
                         int ikey = ++i;
                         // ikey2 is the position of last non-signature item in the stack. Top stack item = 1.
@@ -2319,7 +2488,16 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             // Note how this makes the exact order of pubkey/signature evaluation
                             // distinguishable by CHECKMULTISIG NOT if the STRICTENC flag is set.
                             // See the script_(in)valid tests for details.
-                            if (!CheckSignatureEncodingForPubKey(vchSig, vchPubKey, flags, serror) ||
+                            // After strict-family activation, v1 multisig signatures are
+                            // encoded for their own family, not every candidate key. The
+                            // fixed ML-DSA length is disjoint from canonical ECDSA DER.
+                            // Preserve historical evaluation before activation and in
+                            // other script versions; CHECKSIG is unchanged.
+                            const bool independentFamily = sigversion == SIGVERSION_AUTHSCRIPT &&
+                                (flags & SCRIPT_VERIFY_AUTHSCRIPT_STRICT);
+                            const bool keyPQ = IsPostQuantumPubKey(vchPubKey);
+                            const bool sigPQ = independentFamily ? vchSig.size() == ML_DSA_44_SIG_SIZE + 1 : keyPQ;
+                            if (!CheckSignatureEncodingForFamily(vchSig, sigPQ, flags, serror) ||
                                 !CheckPubKeyEncoding(vchPubKey, flags, sigversion, serror))
                             {
                                 // serror is set
@@ -2327,7 +2505,8 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             }
 
                             // Check signature
-                            bool fOk = checker.CheckSig(vchSig, vchPubKey, scriptCode, sigversion);
+                            bool fOk = (!independentFamily || sigPQ == keyPQ) &&
+                                checkTransactionSig(vchSig, vchPubKey, scriptCode);
 
                             if (fOk)
                             {
@@ -2400,9 +2579,9 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
             // permitted. Non-widened scripts keep the implicit 520 KB bound
             // from MAX_STACK_SIZE × MAX_SCRIPT_ELEMENT_SIZE. Must stay in
             // lockstep with EffectiveMaxScriptElementSize() in interpreter.h.
-            if (flags & (SCRIPT_VERIFY_CHECKSIGFROMSTACK
+            if (budget || (flags & (SCRIPT_VERIFY_CHECKSIGFROMSTACK
                        | SCRIPT_VERIFY_MERKLE_INCLUSION
-                       | SCRIPT_VERIFY_CHECKSIGADD)) {
+                       | SCRIPT_VERIFY_CHECKSIGADD | SCRIPT_VERIFY_ZKVERIFY))) {
                 size_t stack_bytes = 0;
                 for (const auto& item : stack)    stack_bytes += item.size();
                 for (const auto& item : altstack) stack_bytes += item.size();
@@ -2410,6 +2589,10 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                     return set_error(serror, SCRIPT_ERR_STACK_SIZE);
             }
         }
+    }
+    catch (const CryptoBackendError&)
+    {
+        return set_error(serror, SCRIPT_ERR_BACKEND_FAILURE);
     }
     catch (...)
     {
@@ -2655,7 +2838,7 @@ uint256 SignatureHash(const CScript &scriptCode, const CTransaction &txTo, unsig
 {
     assert(nIn < txTo.vin.size());
 
-    if (sigversion == SIGVERSION_WITNESS_V0 || sigversion == SIGVERSION_AUTHSCRIPT)
+    if (sigversion == SIGVERSION_WITNESS_V0 || sigversion == SIGVERSION_AUTHSCRIPT || sigversion == SIGVERSION_AUTHSCRIPT_STRICT)
     {
         uint256 hashPrevouts;
         uint256 hashSequence;
@@ -2713,6 +2896,12 @@ uint256 SignatureHash(const CScript &scriptCode, const CTransaction &txTo, unsig
         ss << txTo.nLockTime;
         if (sigversion == SIGVERSION_AUTHSCRIPT) {
             ss << authType;
+        } else if (sigversion == SIGVERSION_AUTHSCRIPT_STRICT) {
+            // Strict families: commit to the witness version bound to this
+            // authType (v2 <-> 0x01, v3 <-> 0x02) and then to authType itself.
+            // The extra byte separates this domain from SIGVERSION_AUTHSCRIPT.
+            ss << (uint8_t)StrictAuthScriptWitnessVersion(authType);
+            ss << authType;
         }
         // Sighash type
         ss << nHashType;
@@ -2744,6 +2933,62 @@ uint256 SignatureHash(const CScript &scriptCode, const CTransaction &txTo, unsig
 bool TransactionSignatureChecker::VerifySignature(const std::vector<unsigned char> &vchSig, const CPubKey &pubkey, const uint256 &sighash) const
 {
     return pubkey.Verify(sighash, vchSig);
+}
+
+uint256 AuthScriptLeafHash(const CScript& script)
+{
+    CDataStream bytes(SER_NETWORK, PROTOCOL_VERSION);
+    bytes << uint8_t(1) << std::vector<unsigned char>(script.begin(), script.end());
+    return TaggedHash("NeuraiAuthLeaf", std::vector<unsigned char>(bytes.begin(), bytes.end()));
+}
+
+uint256 AuthScriptBranchHash(const uint256& a, const uint256& b)
+{
+    const bool less = std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end());
+    const uint256& first = less ? a : b;
+    const uint256& second = less ? b : a;
+    std::vector<unsigned char> bytes(first.begin(), first.end());
+    bytes.insert(bytes.end(), second.begin(), second.end());
+    return TaggedHash("NeuraiAuthBranch", bytes);
+}
+
+uint256 AuthScriptTreeCommitment(const std::vector<unsigned char>& descriptor, const uint256& root)
+{
+    std::vector<unsigned char> bytes{4};
+    bytes.insert(bytes.end(), descriptor.begin(), descriptor.end());
+    bytes.insert(bytes.end(), root.begin(), root.end());
+    return TaggedHash("NeuraiAuthScript", bytes);
+}
+
+bool AuthScriptTreeSignatureHash(const uint256& base, const AuthScriptTreeContext& context, uint8_t role, uint256& result)
+{
+    if (!context.IsValid() || role > 1 || (role == 0 && context.authType == 0x10)) return false;
+    std::vector<unsigned char> bytes{1, role, context.authType};
+    bytes.insert(bytes.end(), context.program.begin(), context.program.end());
+    bytes.insert(bytes.end(), context.leaf.begin(), context.leaf.end());
+    bytes.insert(bytes.end(), base.begin(), base.end());
+    result = TaggedHash("NeuraiAuthTreeSig", bytes);
+    return true;
+}
+
+bool TransactionSignatureChecker::GetTreeSigHash(const CScript& script, int hashType,
+    const AuthScriptTreeContext& context, uint8_t role, uint256& result) const
+{
+    if (!context.IsValid() || !txTo || nIn >= txTo->vin.size()) return false;
+    const uint256 base = SignatureHash(script, *txTo, nIn, hashType, amount, SIGVERSION_AUTHSCRIPT, txdata, context.authType);
+    return AuthScriptTreeSignatureHash(base, context, role, result);
+}
+
+bool TransactionSignatureChecker::CheckTreeSig(const std::vector<unsigned char>& sig,
+    const std::vector<unsigned char>& key, const CScript& script,
+    const AuthScriptTreeContext& context, uint8_t role) const
+{
+    CPubKey pubkey(key);
+    if (sig.empty() || !pubkey.IsValid()) return false;
+    uint256 digest;
+    if (!GetTreeSigHash(script, sig.back(), context, role, digest)) return false;
+    // VerifySignature's virtual dispatch preserves the cache using the FINAL digest.
+    return VerifySignature(std::vector<unsigned char>(sig.begin(), sig.end()-1), pubkey, digest);
 }
 
 bool TransactionSignatureChecker::CheckSig(const std::vector<unsigned char> &vchSigIn, const std::vector<unsigned char> &vchPubKey, const CScript &scriptCode, SigVersion sigversion, uint8_t authType) const
@@ -3012,36 +3257,16 @@ bool TransactionSignatureChecker::CheckSigFromStack(const std::vector<unsigned c
     return pubkey.Verify(msgHash, sig);
 }
 
-// OP_TXHASH field selector bits.
-//
-// The field selector is a single byte pushed onto the stack before OP_TXHASH.
-// Each bit selects a transaction field to include in the hash:
-//
-//   Bit 0 (0x01): nVersion     - transaction version (4 bytes LE)
-//   Bit 1 (0x02): nLockTime   - transaction locktime (4 bytes LE)
-//   Bit 2 (0x04): prevouts    - double-SHA256 of all input prevouts
-//   Bit 3 (0x08): sequences   - double-SHA256 of all input sequences
-//   Bit 4 (0x10): outputs     - double-SHA256 of all serialized outputs
-//   Bit 5 (0x20): cur_prevout - serialized prevout of current input (nIn)
-//   Bit 6 (0x40): cur_seq     - sequence number of current input (nIn)
-//   Bit 7 (0x80): input_index - index of current input as uint32 LE
-//
-// The selected fields are concatenated in bit order and hashed with
-// double-SHA256 (CHash256), consistent with BIP143/SignatureHash.
-// Sub-hashes for prevouts/sequences/outputs also use double-SHA256,
-// enabling reuse of PrecomputedTransactionData cache (O(1) vs O(n)).
-//
-// Selector 0x00 is invalid (returns false). The hash is deterministic:
-// same selector + same transaction + same input index = same result.
-//
-static const unsigned char TXHASH_VERSION       = (1 << 0);  // 0x01
-static const unsigned char TXHASH_LOCKTIME      = (1 << 1);  // 0x02
-static const unsigned char TXHASH_PREVOUTS      = (1 << 2);  // 0x04
-static const unsigned char TXHASH_SEQUENCES     = (1 << 3);  // 0x08
-static const unsigned char TXHASH_OUTPUTS       = (1 << 4);  // 0x10
-static const unsigned char TXHASH_CUR_PREVOUT   = (1 << 5);  // 0x20
-static const unsigned char TXHASH_CUR_SEQUENCE  = (1 << 6);  // 0x40
-static const unsigned char TXHASH_INPUT_INDEX   = (1 << 7);  // 0x80
+// NIP-042: fixed uint16 LE selector; fields are committed in ascending bit order.
+static constexpr uint16_t TXHASH_VERSION = 0x0001;
+static constexpr uint16_t TXHASH_LOCKTIME = 0x0002;
+static constexpr uint16_t TXHASH_PREVOUTS = 0x0004;
+static constexpr uint16_t TXHASH_SEQUENCES = 0x0008;
+static constexpr uint16_t TXHASH_OUTPUTS = 0x0010;
+static constexpr uint16_t TXHASH_CUR_PREVOUT = 0x0020;
+static constexpr uint16_t TXHASH_CUR_SEQUENCE = 0x0040;
+static constexpr uint16_t TXHASH_INPUT_INDEX = 0x0080;
+static constexpr uint16_t TXHASH_REFINPUTS = 0x0100;
 
 // OP_TXFIELD field selector bytes.
 //
@@ -3055,105 +3280,45 @@ static const unsigned char TXHASH_INPUT_INDEX   = (1 << 7);  // 0x80
 //
 // 0x04-0xff reserved for future extensions.
 //
+static bool GetAuthScriptDestination(const CScript& scriptPubKey, std::vector<unsigned char>& result); // NIP-041
+
 static const unsigned char TXFIELD_SPENT_VALUE          = 0x01;
 static const unsigned char TXFIELD_SPENT_AUTHCOMMITMENT = 0x02;
 static const unsigned char TXFIELD_SPENT_FULLSCRIPT     = 0x03;
 
-bool TransactionSignatureChecker::GetTxFieldHash(unsigned char fieldSelector, std::vector<unsigned char>& result) const
+bool TransactionSignatureChecker::GetTxFieldHash(uint16_t fieldSelector, std::vector<unsigned char>& result) const
 {
-    if (fieldSelector == 0)
-        return false;
+    if (!txTo || fieldSelector == 0 || (fieldSelector & ~uint16_t{0x01ff})) return false;
+    if ((fieldSelector & (TXHASH_CUR_PREVOUT | TXHASH_CUR_SEQUENCE | TXHASH_INPUT_INDEX)) && nIn >= txTo->vin.size()) return false;
 
-    // Double SHA256 (CHash256) for consistency with BIP143 SignatureHash
-    // and PrecomputedTransactionData cache which also uses double SHA256.
-    CHash256 ss;
-
-    if (fieldSelector & TXHASH_VERSION) {
-        uint32_t nVersion = txTo->nVersion;
-        ss.Write((const unsigned char*)&nVersion, 4);
+    // Serialization operators write fixed-width integers in LE, never host order.
+    CDataStream fields(SER_GETHASH, 0);
+    fields << fieldSelector;
+    const bool ready = txdata && txdata->ready;
+    if (fieldSelector & TXHASH_VERSION) fields << uint32_t(txTo->nVersion);
+    if (fieldSelector & TXHASH_LOCKTIME) fields << txTo->nLockTime;
+    if (fieldSelector & TXHASH_PREVOUTS) fields << (ready ? txdata->hashPrevouts : GetPrevoutHash(*txTo));
+    if (fieldSelector & TXHASH_SEQUENCES) fields << (ready ? txdata->hashSequence : GetSequenceHash(*txTo));
+    if (fieldSelector & TXHASH_OUTPUTS) fields << (ready ? txdata->hashOutputs : GetOutputsHash(*txTo));
+    if (fieldSelector & TXHASH_CUR_PREVOUT) fields << txTo->vin[nIn].prevout;
+    if (fieldSelector & TXHASH_CUR_SEQUENCE) fields << txTo->vin[nIn].nSequence;
+    if (fieldSelector & TXHASH_INPUT_INDEX) fields << uint32_t(nIn);
+    if (fieldSelector & TXHASH_REFINPUTS) {
+        // Non-v3 transactions cannot carry references in consensus. Define their
+        // contribution independently of any un-serialized in-memory vector.
+        static const uint256 empty = CHashWriter(SER_GETHASH, 0).GetHash();
+        fields << (txTo->nVersion != 3 ? empty :
+            (txdata && txdata->refInputsReady ? txdata->hashRefInputs : GetRefInputsHash(*txTo)));
     }
-
-    if (fieldSelector & TXHASH_LOCKTIME) {
-        uint32_t nLockTime = txTo->nLockTime;
-        ss.Write((const unsigned char*)&nLockTime, 4);
-    }
-
-    // Use PrecomputedTransactionData cache when available (O(1) vs O(n)).
-    // The cache stores double-SHA256 hashes, matching our CHash256 hasher.
-    const bool cacheready = txdata && txdata->ready;
-
-    if (fieldSelector & TXHASH_PREVOUTS) {
-        if (cacheready) {
-            ss.Write(txdata->hashPrevouts.begin(), CHash256::OUTPUT_SIZE);
-        } else {
-            CHash256 prevoutsHash;
-            for (const auto& txin : txTo->vin) {
-                CDataStream s(SER_NETWORK, PROTOCOL_VERSION);
-                s << txin.prevout;
-                prevoutsHash.Write((const unsigned char*)s.data(), s.size());
-            }
-            unsigned char prevResult[CHash256::OUTPUT_SIZE];
-            prevoutsHash.Finalize(prevResult);
-            ss.Write(prevResult, CHash256::OUTPUT_SIZE);
-        }
-    }
-
-    if (fieldSelector & TXHASH_SEQUENCES) {
-        if (cacheready) {
-            ss.Write(txdata->hashSequence.begin(), CHash256::OUTPUT_SIZE);
-        } else {
-            CHash256 sequencesHash;
-            for (const auto& txin : txTo->vin) {
-                uint32_t nSequence = txin.nSequence;
-                sequencesHash.Write((const unsigned char*)&nSequence, 4);
-            }
-            unsigned char seqResult[CHash256::OUTPUT_SIZE];
-            sequencesHash.Finalize(seqResult);
-            ss.Write(seqResult, CHash256::OUTPUT_SIZE);
-        }
-    }
-
-    if (fieldSelector & TXHASH_OUTPUTS) {
-        if (cacheready) {
-            ss.Write(txdata->hashOutputs.begin(), CHash256::OUTPUT_SIZE);
-        } else {
-            CHash256 outputsHash;
-            for (const auto& txout : txTo->vout) {
-                CDataStream s(SER_NETWORK, PROTOCOL_VERSION);
-                s << txout;
-                outputsHash.Write((const unsigned char*)s.data(), s.size());
-            }
-            unsigned char outResult[CHash256::OUTPUT_SIZE];
-            outputsHash.Finalize(outResult);
-            ss.Write(outResult, CHash256::OUTPUT_SIZE);
-        }
-    }
-
-    if (fieldSelector & TXHASH_CUR_PREVOUT) {
-        if (nIn >= txTo->vin.size())
-            return false;
-        CDataStream s(SER_NETWORK, PROTOCOL_VERSION);
-        s << txTo->vin[nIn].prevout;
-        ss.Write((const unsigned char*)s.data(), s.size());
-    }
-
-    if (fieldSelector & TXHASH_CUR_SEQUENCE) {
-        if (nIn >= txTo->vin.size())
-            return false;
-        uint32_t nSequence = txTo->vin[nIn].nSequence;
-        ss.Write((const unsigned char*)&nSequence, 4);
-    }
-
-    if (fieldSelector & TXHASH_INPUT_INDEX) {
-        if (nIn >= txTo->vin.size())
-            return false;
-        uint32_t inputIndex = nIn;
-        ss.Write((const unsigned char*)&inputIndex, 4);
-    }
-
-    uint256 hash;
-    ss.Finalize(hash.begin());
-    result.assign(hash.begin(), hash.end());
+    static const uint256 tag = [] {
+        const std::string name = "NeuraiTxHash";
+        uint256 hash;
+        CSHA256().Write(reinterpret_cast<const unsigned char*>(name.data()), name.size()).Finalize(hash.begin());
+        return hash;
+    }();
+    result.resize(32);
+    CSHA256().Write(tag.begin(), 32).Write(tag.begin(), 32)
+        .Write(reinterpret_cast<const unsigned char*>(fields.data()), fields.size()).Finalize(result.data());
     return true;
 }
 
@@ -3189,6 +3354,13 @@ bool TransactionSignatureChecker::GetTxField(unsigned char selector,
         // Bytes [2..33] are the 32-byte AuthScript commitment
         result.assign(data + 2, data + 34);
         return true;
+    }
+
+    case AUTHDEST_SELECTOR: {
+        // NIP-041: 33-byte AuthScript destination of the spent scriptPubKey.
+        if (!m_spentScriptPubKey)
+            return false;
+        return GetAuthScriptDestination(*m_spentScriptPubKey, result);
     }
 
     case TXFIELD_SPENT_FULLSCRIPT: {
@@ -3273,6 +3445,131 @@ bool TransactionSignatureChecker::GetOutputScript(unsigned int nOut,
     return true;
 }
 
+// NIP-041: AuthScript destination of a script as version||commitment (33 bytes).
+//
+// Deliberately stricter than the NIP-023 prefix peek: the operation claims to
+// identify WHERE funds go, so a script that merely starts like an AuthScript
+// output but carries extra instructions must not qualify. Accepted shapes:
+//   - the exact native program  OP_n 0x20 <32 bytes>            (n = 1, 2, 3)
+//   - that program followed by a well-formed asset wrapper
+//     OP_XNA_ASSET <payload> OP_DROP, with nothing after it and a payload that
+//     deserializes as one of the known asset messages.
+// Anything else (other versions or program lengths, trailing bytes, malformed
+// wrappers, P2PKH-prefixed assets) fails. This identifies the destination
+// only; asset name and amount still need OP_*ASSETFIELD checks.
+// Callers only reach this with SCRIPT_VERIFY_AUTHDEST, which shares its
+// activation height with the strict families, so v2/v3 prefixes are parsed.
+// NIP-041 only: unlike ReadWriteAssetHash, never discard bytes or silently
+// accept an absent required hash. Semantic asset checks remain elsewhere.
+static bool ReadAuthDestAssetHash(CDataStream& stream)
+{
+    unsigned char tag;
+    stream >> tag;
+    if (tag != static_cast<unsigned char>(IPFS_SHA2_256) &&
+        tag != static_cast<unsigned char>(TXID_NOTIFIER))
+        return false;
+    // ReadCompactSize also rejects non-canonical length encodings.
+    if (ReadCompactSize(stream) != 32)
+        return false;
+    char hash[32];
+    stream.read(hash, sizeof(hash)); // throws on truncation, caught by caller
+    return true;
+}
+
+static bool IsWellFormedAssetPayload(const CScript& scriptPubKey)
+{
+    // Deserialize the asset message from the PAYLOAD BYTES ONLY. The historical
+    // *FromScript parsers build their stream from the data start to the end of
+    // the script, outer OP_DROP included, so a payload that is one byte short
+    // silently borrows 0x75 as data. Those parsers stay untouched (consensus
+    // history); this operation bounds the stream to the pushed vector and also
+    // refuses leftover bytes after the message.
+    // Layout (already checked structurally by the caller):
+    //   OP_n 0x20 <32 bytes> OP_XNA_ASSET <payload> OP_DROP
+    if (scriptPubKey.size() < 36 || scriptPubKey[34] != OP_XNA_ASSET)
+        return false;
+    CScript::const_iterator pc = scriptPubKey.begin() + 35;
+    opcodetype opcode;
+    std::vector<unsigned char> payload;
+    if (!scriptPubKey.GetOp(pc, opcode, payload))
+        return false;
+    if (payload.size() < 5) // 3-byte marker + type + at least one message byte
+        return false;
+
+    const std::vector<unsigned char> message(payload.begin() + 4, payload.end());
+    CDataStream ss(message, SER_NETWORK, PROTOCOL_VERSION);
+    try {
+        // Read the wire fields explicitly. The historical class deserializers
+        // normalize malformed hashes and therefore cannot enforce this grammar.
+        std::string name;
+        ss >> name;
+        int64_t amount;
+        unsigned char units, reissuable, hasHash;
+        switch (payload[3]) {
+        case XNA_T:
+            ss >> amount;
+            if (!ss.empty()) {
+                if (!ReadAuthDestAssetHash(ss)) return false;
+                if (!ss.empty()) {
+                    int64_t expiration;
+                    ss >> expiration;
+                }
+            }
+            break;
+        case XNA_Q:
+            ss >> amount >> units >> reissuable >> hasHash;
+            if (hasHash > 1) return false;
+            if (hasHash == 1 && !ReadAuthDestAssetHash(ss)) return false;
+            break;
+        case XNA_O:
+            break;
+        case XNA_R:
+            ss >> amount >> units >> reissuable;
+            if (!ss.empty() && !ReadAuthDestAssetHash(ss)) return false;
+            break;
+        default:
+            return false;
+        }
+    } catch (const std::exception&) {
+        return false;
+    }
+    return ss.empty();
+}
+
+static bool GetAuthScriptDestination(const CScript& scriptPubKey, std::vector<unsigned char>& result)
+{
+    int version = 0;
+    std::vector<unsigned char> program;
+    if (scriptPubKey.IsWitnessProgram(version, program)) {
+        // IsWitnessProgram only matches when the push spans the whole script.
+    } else {
+        CStrictAuthScriptContext strictAuthScriptContext(true);
+        if (!GetAssetScriptWitnessProgram(scriptPubKey, version, program, nullptr, /*fStrictActive=*/true))
+            return false;
+        if (!IsWellFormedAssetPayload(scriptPubKey))
+            return false;
+    }
+    if (program.size() != 32)
+        return false;
+    if (version != 1 && !IsStrictAuthScriptWitnessVersion(version))
+        return false;
+    result.clear();
+    result.reserve(33);
+    result.push_back((unsigned char)version);
+    result.insert(result.end(), program.begin(), program.end());
+    return true;
+}
+
+bool TransactionSignatureChecker::GetOutputAuthDest(unsigned int nOut,
+                                                    std::vector<unsigned char>& result) const
+{
+    if (!txTo)
+        return false;
+    if (nOut >= txTo->vout.size())
+        return false;
+    return GetAuthScriptDestination(txTo->vout[nOut].scriptPubKey, result);
+}
+
 // NIP-023: Extract the 32-byte AuthScript v1 commitment from a selected output.
 // Mirrors TXFIELD_SPENT_AUTHCOMMITMENT (interpreter.cpp around line 2791) but
 // sourced from txTo->vout[nOut].scriptPubKey instead of the spent scriptPubKey.
@@ -3298,6 +3595,49 @@ bool TransactionSignatureChecker::GetOutputAuthCommitment(unsigned int nOut,
     return true;
 }
 
+// NIP-043 only: strict transfer-message grammar, bounded to the single push.
+// Historical selectors deliberately continue to use their original parsers.
+static bool GetTransferMessage(const CScript& script, std::vector<unsigned char>& result)
+{
+    int type = 0, start = 0;
+    bool owner = false;
+    AssetMarker marker;
+    if (!script.IsAssetScript(type, owner, start, marker) || type != TX_TRANSFER_ASSET)
+        return false;
+    const size_t prefix = script[0] == OP_DUP ? 25 : 34;
+    if (script.size() <= prefix || script[prefix] != OP_XNA_ASSET) return false;
+    auto pc = script.begin() + prefix + 1;
+    opcodetype op;
+    std::vector<unsigned char> payload;
+    if (!script.GetOp(pc, op, payload) || op > OP_PUSHDATA4 || payload.size() < 4 ||
+        !script.GetOp(pc, op) || op != OP_DROP || pc != script.end()) return false;
+    const bool knownMarker = (payload[0] == 'x' && payload[1] == 'n' && payload[2] == 'a') ||
+                             (payload[0] == 'r' && payload[1] == 'v' && payload[2] == 'n');
+    if (!knownMarker || payload[3] != XNA_T) return false;
+    CDataStream stream(std::vector<unsigned char>(payload.begin() + 4, payload.end()), SER_NETWORK, PROTOCOL_VERSION);
+    try {
+        const uint64_t nameSize = ReadCompactSize(stream);
+        if (nameSize > stream.size()) return false;
+        stream.ignore(nameSize);
+        int64_t amount;
+        stream >> amount;
+        unsigned char tag;
+        stream >> tag;
+        if (tag != static_cast<unsigned char>(TXID_NOTIFIER) && tag != static_cast<unsigned char>(IPFS_SHA2_256)) return false;
+        if (ReadCompactSize(stream) != 32) return false;
+        std::vector<unsigned char> message(32);
+        stream.read(reinterpret_cast<char*>(message.data()), message.size());
+        if (stream.size() != 0 && stream.size() != 8) return false;
+        if (tag == static_cast<unsigned char>(IPFS_SHA2_256)) {
+            message.insert(message.begin(), {tag, 32});
+        }
+        result = std::move(message);
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
 bool TransactionSignatureChecker::GetOutputAssetField(unsigned int nOut,
                                                       unsigned char selector,
                                                       std::vector<unsigned char>& result) const
@@ -3306,6 +3646,7 @@ bool TransactionSignatureChecker::GetOutputAssetField(unsigned int nOut,
         return false;
 
     const CScript& scriptPubKey = txTo->vout[nOut].scriptPubKey;
+    if (selector == 0x08) return GetTransferMessage(scriptPubKey, result);
     std::string strAddress;
 
     CAssetTransfer transfer;
@@ -3344,6 +3685,7 @@ bool TransactionSignatureChecker::GetInputAssetField(unsigned int nInput,
         return false;
 
     const CScript& scriptPubKey = (*m_allPrevouts)[nInput].scriptPubKey;
+    if (selector == 0x08) return GetTransferMessage(scriptPubKey, result);
     std::string strAddress;
 
     CAssetTransfer transfer;
@@ -3415,21 +3757,12 @@ bool TransactionSignatureChecker::GetRefInputCount(std::vector<unsigned char>& r
     return true;
 }
 
-bool TransactionSignatureChecker::GetRefInputField(unsigned int nRef, unsigned char selector,
-                                                    std::vector<unsigned char>& result) const
+static bool GetPrevoutField(const CTxOut& refOut, unsigned char selector, std::vector<unsigned char>& result)
 {
-    if (!txTo || !m_refOutputs)
-        return false;
-    if (nRef >= m_refOutputs->size())
-        return false;
-
-    const CTxOut& refOut = (*m_refOutputs)[nRef];
-
     switch (selector) {
         case 0x01: { // nValue (8 bytes LE) — matches TXFIELD_SPENT_VALUE
-            int64_t val = refOut.nValue;
             result.resize(8);
-            memcpy(result.data(), &val, 8);
+            WriteLE64(result.data(), static_cast<uint64_t>(refOut.nValue));
             return true;
         }
         case 0x02: { // AuthScript commitment (32 bytes) — matches TXFIELD_SPENT_AUTHCOMMITMENT
@@ -3444,6 +3777,9 @@ bool TransactionSignatureChecker::GetRefInputField(unsigned int nRef, unsigned c
             result.assign(data + 2, data + 34);
             return true;
         }
+        case AUTHDEST_SELECTOR: // NIP-041: 33-byte AuthScript destination
+            return GetAuthScriptDestination(refOut.scriptPubKey, result);
+
         case 0x03: { // Full scriptPubKey (raw bytes) — matches TXFIELD_SPENT_FULLSCRIPT
             // NIP-018: size cap is enforced by the caller (OP_REFINPUTFIELD)
             // using EffectiveMaxScriptElementSize(flags). Checker returns
@@ -3457,6 +3793,20 @@ bool TransactionSignatureChecker::GetRefInputField(unsigned int nRef, unsigned c
     }
 }
 
+bool TransactionSignatureChecker::GetRefInputField(unsigned int nRef, unsigned char selector,
+                                                     std::vector<unsigned char>& result) const
+{
+    if (!txTo || !m_refOutputs || nRef >= m_refOutputs->size()) return false;
+    return GetPrevoutField((*m_refOutputs)[nRef], selector, result);
+}
+
+bool TransactionSignatureChecker::GetInputField(unsigned int nInput, unsigned char selector,
+                                               std::vector<unsigned char>& result) const
+{
+    if (!txTo || !m_allPrevouts || nInput >= txTo->vin.size() || nInput >= m_allPrevouts->size()) return false;
+    return GetPrevoutField((*m_allPrevouts)[nInput], selector, result);
+}
+
 bool TransactionSignatureChecker::GetRefInputAssetField(unsigned int nRef, unsigned char selector,
                                                          std::vector<unsigned char>& result) const
 {
@@ -3466,6 +3816,7 @@ bool TransactionSignatureChecker::GetRefInputAssetField(unsigned int nRef, unsig
         return false;
 
     const CScript& scriptPubKey = (*m_refOutputs)[nRef].scriptPubKey;
+    if (selector == 0x08) return GetTransferMessage(scriptPubKey, result);
     std::string strAddress;
 
     CAssetTransfer transfer;
@@ -3496,6 +3847,73 @@ bool TransactionSignatureChecker::GetRefInputAssetField(unsigned int nRef, unsig
     return false;
 }
 
+bool ParseAuthScriptTreeWitness(const CScriptWitness& witness, size_t& argsOffset, ScriptError* serror)
+{
+    const auto& stack = witness.stack;
+    if (stack.empty() || stack[0].size() != 1 || stack[0][0] < 0x10 || stack[0][0] > 0x12)
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    argsOffset = stack[0][0] == 0x10 ? 1 : 3;
+    if (stack.size() < argsOffset + 2)
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    const auto& control = stack.back();
+    if (control.empty() || control.size() > 1025 || (control.size()-1)%32)
+        return set_error(serror, SCRIPT_ERR_AUTHSCRIPT_TREE_CONTROL);
+    if (control[0] != 1) return set_error(serror, SCRIPT_ERR_AUTHSCRIPT_TREE_LEAF_VERSION);
+    if (stack[stack.size()-2].size() > MAX_SCRIPT_SIZE)
+        return set_error(serror, SCRIPT_ERR_SCRIPT_SIZE);
+    return true;
+}
+
+static bool VerifyAuthScriptTree(const CScriptWitness& witness, const std::vector<unsigned char>& program,
+    script_verify_flags flags, const BaseSignatureChecker& checker, ScriptError* serror)
+{
+    if (!(flags & SCRIPT_VERIFY_AUTHSCRIPT_TREE))
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    size_t offset;
+    if (!ParseAuthScriptTreeWitness(witness, offset, serror)) return false;
+    const auto& items = witness.stack;
+    if (items.size()-offset-2 > MAX_STACK_SIZE) return set_error(serror, SCRIPT_ERR_STACK_SIZE);
+    std::vector<valtype> args;
+    for (size_t i=offset; i+2<items.size(); ++i) {
+        if (items[i].size() > EffectiveMaxScriptElementSize(flags)) return set_error(serror, SCRIPT_ERR_PUSH_SIZE);
+        args.push_back(items[i]);
+    }
+    const uint8_t type = items[0][0];
+    CPubKey key;
+    std::vector<unsigned char> descriptor{0};
+    if (type != 0x10) {
+        key = CPubKey(items[2]);
+        if (!key.IsValid() || (type == 0x11 && !key.IsPQ()) ||
+            (type == 0x12 && !IsCompressedPubKey(items[2])))
+            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+        if (!GetAuthScriptDescriptor(type & 15, &key, descriptor))
+            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+    if (!CheckAuthScriptBudgetStack(items, offset, items.size()-2, flags, serror)) return false;
+    const auto& scriptBytes = items[items.size()-2];
+    const CScript script(scriptBytes.begin(), scriptBytes.end());
+    const uint256 leaf = AuthScriptLeafHash(script);
+    uint256 root = leaf;
+    const auto& control = items.back();
+    for (size_t i=1; i<control.size(); i+=32) {
+        uint256 sibling;
+        std::copy(control.begin()+i, control.begin()+i+32, sibling.begin());
+        root = AuthScriptBranchHash(root, sibling);
+    }
+    const AuthScriptTreeContext context(type, AuthScriptTreeCommitment(descriptor, root), leaf);
+    if (!std::equal(program.begin(), program.end(), context.program.begin()))
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    if (type != 0x10) {
+        if (!CheckPubKeyEncoding(items[2], flags, SIGVERSION_AUTHSCRIPT, serror) ||
+            !CheckSignatureEncodingForPubKey(items[1], items[2], flags, serror)) return false;
+        if (!checker.CheckTreeSig(items[1], items[2], script, context, 0))
+            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+    if (!EvalScript(args, script, flags, checker, SIGVERSION_AUTHSCRIPT, serror, &context)) return false;
+    if (args.size() != 1 || !CastToBool(args.back())) return set_error(serror, SCRIPT_ERR_EVAL_FALSE);
+    return set_success(serror);
+}
+
 static bool VerifyAuthScriptCore(const CScriptWitness& witness, const std::vector<unsigned char>& program, script_verify_flags flags, const BaseSignatureChecker& checker, ScriptError* serror)
 {
     if (program.size() != 32 || (flags & SCRIPT_VERIFY_AUTHSCRIPT) == 0) {
@@ -3509,6 +3927,8 @@ static bool VerifyAuthScriptCore(const CScriptWitness& witness, const std::vecto
     }
 
     const uint8_t authType = witness.stack[0][0];
+    if (authType >= 0x10 && authType <= 0x12)
+        return VerifyAuthScriptTree(witness, program, flags, checker, serror);
     const valtype& witnessScriptBytes = witness.stack.back();
     CScript witnessScript(witnessScriptBytes.begin(), witnessScriptBytes.end());
     CPubKey authPubKey;
@@ -3541,6 +3961,7 @@ static bool VerifyAuthScriptCore(const CScriptWitness& witness, const std::vecto
         return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
     }
 
+    if (!CheckAuthScriptBudgetStack(witness.stack, argsOffset, witness.stack.size()-1, flags, serror)) return false;
     const CPubKey* authPubKeyPtr = (authType == 0x00) ? nullptr : &authPubKey;
     const uint256 expectedCommitment = GetAuthScriptCommitment(authType, authPubKeyPtr, witnessScript);
     if (memcmp(expectedCommitment.begin(), program.data(), program.size()) != 0) {
@@ -3580,6 +4001,73 @@ static bool VerifyAuthScriptCore(const CScriptWitness& witness, const std::vecto
     }
     if (!CastToBool(stack.back())) {
         return set_error(serror, SCRIPT_ERR_EVAL_FALSE);
+    }
+    return set_success(serror);
+}
+
+// Strict AuthScript families (witness v2 = PQ, witness v3 = ECDSA).
+//
+// Fixed template enforced by consensus:
+//   witness stack == [authType, signature, pubkey, OP_TRUE]   (exactly 4 items)
+//   authType      == StrictAuthScriptAuthType(witversion)     (v2 -> 0x01, v3 -> 0x02)
+//   pubkey        := PQ (ML-DSA-44) for v2, compressed secp256k1 for v3
+//   witnessScript == exactly one byte OP_TRUE (0x51)
+//   program       == GetAuthScriptCommitment(authType, pubkey, OP_TRUE, witversion)
+// The signature is checked under SIGVERSION_AUTHSCRIPT_STRICT with the
+// witnessScript as scriptCode. OP_TRUE is never evaluated: the template is
+// the whole spending condition.
+static bool VerifyAuthScriptStrict(const CScriptWitness& witness, int witversion, const std::vector<unsigned char>& program, script_verify_flags flags, const BaseSignatureChecker& checker, ScriptError* serror)
+{
+    if (!IsStrictAuthScriptWitnessVersion(witversion) || program.size() != 32 ||
+        (flags & SCRIPT_VERIFY_AUTHSCRIPT_STRICT) == 0) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+    if (witness.stack.size() != 4) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+    if (witness.stack[0].size() != 1) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+    const uint8_t authType = witness.stack[0][0];
+    if (authType != StrictAuthScriptAuthType(witversion)) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+
+    const valtype& authSig = witness.stack[1];
+    const valtype& vchPubKey = witness.stack[2];
+    const valtype& witnessScriptBytes = witness.stack[3];
+
+    // witnessScript must be exactly OP_TRUE.
+    if (witnessScriptBytes.size() != 1 || witnessScriptBytes[0] != OP_TRUE) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+
+    CPubKey authPubKey(vchPubKey);
+    if (!authPubKey.IsValid()) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+    if (witversion == STRICT_AUTHSCRIPT_WITNESS_V2_PQ && !authPubKey.IsPQ()) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+    if (witversion == STRICT_AUTHSCRIPT_WITNESS_V3_ECDSA && (authPubKey.IsPQ() || !authPubKey.IsCompressed())) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PUBKEYTYPE);
+    }
+
+    const CScript witnessScript(witnessScriptBytes.begin(), witnessScriptBytes.end());
+    const uint256 expectedCommitment = GetAuthScriptCommitment(authType, &authPubKey, witnessScript, (uint8_t)witversion);
+    if (expectedCommitment.IsNull() || memcmp(expectedCommitment.begin(), program.data(), program.size()) != 0) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+
+    if (!CheckPubKeyEncoding(vchPubKey, flags, SIGVERSION_AUTHSCRIPT_STRICT, serror) ||
+        !CheckSignatureEncodingForPubKey(authSig, vchPubKey, flags, serror)) {
+        return false;
+    }
+    if (authSig.empty()) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+    if (!checker.CheckSig(authSig, vchPubKey, witnessScript, SIGVERSION_AUTHSCRIPT_STRICT, authType)) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
     }
     return set_success(serror);
 }
@@ -3626,6 +4114,10 @@ static bool VerifyWitnessProgram(const CScriptWitness &witness, int witversion, 
     {
         return VerifyAuthScriptCore(witness, program, flags, checker, serror);
     }
+    else if (IsStrictAuthScriptWitnessVersion(witversion) && program.size() == 32 && (flags & SCRIPT_VERIFY_AUTHSCRIPT_STRICT))
+    {
+        return VerifyAuthScriptStrict(witness, witversion, program, flags, checker, serror);
+    }
     else if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM)
     {
         return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM);
@@ -3663,6 +4155,10 @@ static bool VerifyAssetWitnessProgram(const CScriptWitness& witness, int witvers
         (void)assetData;
         return VerifyAuthScriptCore(witness, program, flags, checker, serror);
     }
+    if (IsStrictAuthScriptWitnessVersion(witversion) && program.size() == 32 && (flags & SCRIPT_VERIFY_AUTHSCRIPT_STRICT)) {
+        (void)assetData;
+        return VerifyAuthScriptStrict(witness, witversion, program, flags, checker, serror);
+    }
 
     if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM) {
         return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM);
@@ -3681,6 +4177,9 @@ bool VerifyScript(const CScript &scriptSig, const CScript &scriptPubKey, const C
     }
     bool hadWitness = false;
 
+    // See EvalScript: activation comes from the flags for everything below.
+    CStrictAuthScriptContext strictAuthScriptContext((flags & SCRIPT_VERIFY_AUTHSCRIPT_STRICT) != 0);
+
     set_error(serror, SCRIPT_ERR_UNKNOWN_ERROR);
 
     if ((flags & SCRIPT_VERIFY_SIGPUSHONLY) != 0 && !scriptSig.IsPushOnly())
@@ -3691,7 +4190,10 @@ bool VerifyScript(const CScript &scriptSig, const CScript &scriptPubKey, const C
     int assetWitnessVersion = 0;
     std::vector<unsigned char> assetWitnessProgram;
     std::vector<unsigned char> assetData;
-    if (GetAssetScriptWitnessProgram(scriptPubKey, assetWitnessVersion, assetWitnessProgram, &assetData)) {
+    // Activation comes from the flags, never from the ambient context: script
+    // checks run on worker threads that do not inherit the block's scope.
+    const bool fStrictAssetsActive = (flags & SCRIPT_VERIFY_AUTHSCRIPT_STRICT) != 0;
+    if (GetAssetScriptWitnessProgram(scriptPubKey, assetWitnessVersion, assetWitnessProgram, &assetData, fStrictAssetsActive)) {
         if ((flags & SCRIPT_VERIFY_WITNESS) == 0) {
             return set_error(serror, SCRIPT_ERR_WITNESS_UNEXPECTED);
         }
@@ -3837,7 +4339,8 @@ size_t static WitnessSigOps(int witversion, const std::vector<unsigned char> &wi
         if (witprogram.size() == 32 && witness.stack.size() > 0)
         {
             CScript subscript(witness.stack.back().begin(), witness.stack.back().end());
-            return subscript.GetSigOpCount(true);
+            return subscript.GetSigOpCount(true, (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) != 0,
+                (flags & SCRIPT_VERIFY_CHECKSIGADD) != 0, (flags & SCRIPT_VERIFY_ED25519) != 0);
         }
     }
 
@@ -3845,15 +4348,36 @@ size_t static WitnessSigOps(int witversion, const std::vector<unsigned char> &wi
         if (witness.stack.empty()) {
             return 0;
         }
+        if ((flags & SCRIPT_VERIFY_AUTHSCRIPT_TREE) && witness.stack[0].size() == 1 &&
+            witness.stack[0][0] >= 0x10 && witness.stack[0][0] <= 0x12) {
+            size_t offset;
+            if (!ParseAuthScriptTreeWitness(witness, offset)) return 0;
+            const auto& bytes = witness.stack[witness.stack.size()-2];
+            CScript leaf(bytes.begin(), bytes.end());
+            return leaf.GetSigOpCount(true, (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) != 0,
+                (flags & SCRIPT_VERIFY_CHECKSIGADD) != 0, (flags & SCRIPT_VERIFY_ED25519) != 0)
+                + ((flags & SCRIPT_VERIFY_ZKVERIFY) ? leaf.CountZKVerify()*ZKVERIFY_SIGOP_COST : 0)
+                + (witness.stack[0][0] != 0x10 ? 1 : 0);
+        }
         size_t sigops = 0;
         if (witness.stack.size() > 1) {
             CScript subscript(witness.stack.back().begin(), witness.stack.back().end());
-            sigops = subscript.GetSigOpCount(true);
+            sigops = subscript.GetSigOpCount(true, (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) != 0,
+                (flags & SCRIPT_VERIFY_CHECKSIGADD) != 0, (flags & SCRIPT_VERIFY_ED25519) != 0);
+            if (flags & SCRIPT_VERIFY_ZKVERIFY) sigops += subscript.CountZKVerify()*ZKVERIFY_SIGOP_COST;
         }
         if (witness.stack[0].size() == 1 && witness.stack[0][0] != 0x00) {
             sigops += 1;
         }
         return sigops;
+    }
+
+    // Strict families always carry exactly one authentication signature
+    // (ML-DSA-44 for v2, ECDSA for v3) and no evaluated script. Charge one
+    // sigop per spend, matching the v1 accounting for the authentication
+    // signature, so strict spends never verify for free.
+    if (IsStrictAuthScriptWitnessVersion(witversion) && witprogram.size() == 32 && (flags & SCRIPT_VERIFY_AUTHSCRIPT_STRICT)) {
+        return 1;
     }
 
     // Future flags may be implemented here.
@@ -3863,6 +4387,7 @@ size_t static WitnessSigOps(int witversion, const std::vector<unsigned char> &wi
 size_t CountWitnessSigOps(const CScript &scriptSig, const CScript &scriptPubKey, const CScriptWitness *witness, script_verify_flags flags)
 {
     static const CScriptWitness witnessEmpty;
+    CStrictAuthScriptContext strictAuthScriptContext((flags & SCRIPT_VERIFY_AUTHSCRIPT_STRICT) != 0);
 
     if ((flags & SCRIPT_VERIFY_WITNESS) == 0)
     {
@@ -3877,7 +4402,7 @@ size_t CountWitnessSigOps(const CScript &scriptSig, const CScript &scriptPubKey,
         return WitnessSigOps(witnessversion, witnessprogram, witness ? *witness : witnessEmpty, flags);
     }
 
-    if (GetAssetScriptWitnessProgram(scriptPubKey, witnessversion, witnessprogram)) {
+    if (GetAssetScriptWitnessProgram(scriptPubKey, witnessversion, witnessprogram, nullptr, (flags & SCRIPT_VERIFY_AUTHSCRIPT_STRICT) != 0)) {
         return WitnessSigOps(witnessversion, witnessprogram, witness ? *witness : witnessEmpty, flags);
     }
 

@@ -99,20 +99,23 @@ isminetype IsMine(const CKeyStore &keystore, const CScript& scriptPubKey, bool& 
             if (keystore.HaveKey(keyID))
                 return ISMINE_SPENDABLE;
             break;
-        case TX_WITNESS_V1_AUTHSCRIPT: {
+        case TX_WITNESS_V1_AUTHSCRIPT:
+            // Generic AuthScript v1 is a contract family: contracts are built
+            // and signed by contract tooling, and the wallet never manages v1
+            // outputs as its own funds, whatever spend data a wallet file may
+            // hold. Wallet addresses are Legacy, strict PQ v2 or strict ECDSA v3.
+            break;
+        case TX_WITNESS_V2_STRICT_PQ:
+        case TX_WITNESS_V3_STRICT_ECDSA: {
             if (vSolutions[0].size() != 32) {
                 break;
             }
+            const uint8_t version = (whichType == TX_WITNESS_V2_STRICT_PQ) ? STRICT_AUTHSCRIPT_WITNESS_V2_PQ : STRICT_AUTHSCRIPT_WITNESS_V3_ECDSA;
             AuthScriptSpendData spendData;
-            const uint256 commitment(vSolutions[0]);
-            if (!keystore.GetAuthScriptSpendData(commitment, spendData)) {
+            if (!keystore.GetAuthScriptSpendData(version, uint256(vSolutions[0]), spendData)) {
                 break;
             }
-            if (spendData.auth_type == 0x00) {
-                return ISMINE_SPENDABLE;
-            }
-            if ((spendData.auth_type == 0x01 || spendData.auth_type == 0x02) &&
-                keystore.HaveKey(spendData.key_id)) {
+            if (spendData.auth_type == StrictAuthScriptAuthType(version) && keystore.HaveKey(spendData.key_id)) {
                 return ISMINE_SPENDABLE;
             }
             break;
@@ -187,14 +190,17 @@ isminetype IsMine(const CKeyStore &keystore, const CScript& scriptPubKey, bool& 
                 break;
             }
 
-            if (const WitnessV1AuthScript* authScript = boost::get<WitnessV1AuthScript>(&assetDestination)) {
+            if (boost::get<WitnessV1AuthScript>(&assetDestination)) {
+                // Asset outputs to generic AuthScript v1 are contract outputs too;
+                // the wallet never manages them (see TX_WITNESS_V1_AUTHSCRIPT).
+                break;
+            }
+
+            if (const WitnessStrictAuthScript* strict = boost::get<WitnessStrictAuthScript>(&assetDestination)) {
                 AuthScriptSpendData spendData;
-                const uint256 commitment(*authScript);
-                if (!keystore.GetAuthScriptSpendData(commitment, spendData))
+                if (!keystore.GetAuthScriptSpendData(strict->version, strict->commitment, spendData))
                     break;
-                if (spendData.auth_type == 0x00)
-                    return ISMINE_SPENDABLE;
-                if ((spendData.auth_type == 0x01 || spendData.auth_type == 0x02) &&
+                if (spendData.auth_type == StrictAuthScriptAuthType(strict->version) &&
                     keystore.HaveKey(spendData.key_id)) {
                     return ISMINE_SPENDABLE;
                 }

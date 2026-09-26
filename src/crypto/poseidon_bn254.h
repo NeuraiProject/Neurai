@@ -10,6 +10,14 @@
 
 namespace crypto {
 
+/** Work units for the NIP-036 byte sponge: one permutation per pair of
+ * 31-byte chunks, including the mandatory padding byte. Division before
+ * addition avoids overflow even for SIZE_MAX. This does not hash data. */
+constexpr size_t PoseidonPermutationCost(size_t bytes)
+{
+    return bytes / 62 + 1;
+}
+
 /** NIP-036: Poseidon hash over the BN254 scalar field Fr.
  *
  *  Hashes a byte string via the §3.5 byte sponge (CHUNK = 31 bytes,
@@ -25,6 +33,11 @@ namespace crypto {
  */
 void PoseidonBN254(const unsigned char* data, size_t len,
                    unsigned char hash[32]);
+
+/** NIP-043 canonical 32-byte BE field check and binary Merkle node.
+ * Node returns false for noncanonical operands; no reduction modulo r. */
+bool IsCanonicalPoseidonField(const unsigned char bytes[32]);
+bool PoseidonMerkleNode(const unsigned char left[32], const unsigned char right[32], unsigned char out[32]);
 
 // =====================================================================
 // Internal API — exposed for unit tests in src/test/poseidon_tests.cpp.

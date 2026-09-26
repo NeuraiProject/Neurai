@@ -19,6 +19,7 @@ enum TreeScheme : uint8_t {
     SCHEME_BITCOIN_NEURAI   = 0x01, // 32-B prehashed leaf, double-SHA256 nodes
     SCHEME_SHA256_PLAIN     = 0x02, // raw leaf, single-SHA256
     SCHEME_KECCAK256_PLAIN  = 0x03, // raw leaf, single Keccak-256 (NIP-030)
+    SCHEME_POSEIDON_BN254  = 0x05, // canonical prehashed fields; depth 1..32
     SCHEME_BLAKE2B_PLAIN    = 0x04, // raw leaf, single BLAKE2b-256 (NIP-030)
 };
 
@@ -41,12 +42,14 @@ static constexpr uint8_t NIP031_MAX_DEPTH = 32;
  * Returns false (no abort, no exception) on any malformed input:
  *   - depth > NIP031_MAX_DEPTH
  *   - proofLen != 1 + 32*depth + ceil(depth/8)
- *   - scheme not in {0x01, 0x02, 0x03, 0x04}
+ *   - scheme not in {0x01, 0x02, 0x03, 0x04, 0x05}
  *   - scheme == 0x01 and leafLen != 32
+ *   - scheme == 0x05: depth zero or noncanonical 32-byte BE field operands
  *
  * The helper does NOT consult script-verify flags. Scheme-availability
  * gating (NIP-030 dependency for 0x03/0x04) is the caller's
- * responsibility — see the OP_CHECKMERKLEINCLUSION handler in
+ * responsibility (0x05 also requires Poseidon and its NIP-043 flag).
+ * Poseidon budget accounting is the caller's responsibility — see the handler in
  * EvalScript.
  *
  * `root` must point to exactly 32 bytes; the caller is responsible for

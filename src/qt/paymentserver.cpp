@@ -641,12 +641,17 @@ void PaymentServer::fetchPaymentACK(CWallet* wallet, const SendCoinsRecipient& r
         refund_to->set_script(&s[0], s.size());
     }
     else {
-        CPubKey newKey;
-        if (wallet->GetKeyFromPool(newKey)) {
-            CKeyID keyID = newKey.GetID();
-            wallet->SetAddressBook(keyID, strAccount, "refund");
+        CTxDestination refundDest;
+        std::string error;
+        bool fGenerated;
+        {
+            LOCK(wallet->cs_wallet);
+            fGenerated = wallet->GetNewDestination(false, refundDest, error);
+        }
+        if (fGenerated) {
+            wallet->SetAddressBook(refundDest, strAccount, "refund");
 
-            CScript s = GetScriptForDestination(keyID);
+            CScript s = GetScriptForDestination(refundDest);
             payments::Output* refund_to = payment.add_refund_to();
             refund_to->set_script(&s[0], s.size());
         }

@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <atomic>
 #include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <stdint.h>
@@ -45,7 +46,6 @@ extern bool fWalletRbf;
 
 extern std::string my_words;
 extern std::string my_passphrase;
-extern bool my_pq;
 
 static const unsigned int DEFAULT_KEYPOOL_SIZE = 1000;
 //! -paytxfee default
@@ -74,6 +74,24 @@ static const bool DEFAULT_WALLETBROADCAST = true;
 static const bool DEFAULT_DISABLE_WALLET = false;
 
 extern const char * DEFAULT_WALLET_DAT;
+
+/** Address family a wallet hands out by default (receive, change, mining).
+ *  Chosen with -addresstype when the wallet file is created and stored in it;
+ *  the numeric values are persisted. Generic AuthScript v1 is a contract
+ *  family and never a wallet address type. */
+enum class WalletAddressType : uint8_t {
+    LEGACY = 1, //!< Base58 P2PKH, secp256k1 keys on the BIP44 branch
+    PQ = 2,     //!< strict post-quantum (witness v2), ML-DSA-44 keys on the m_pq branch
+    ECDSA = 3,  //!< strict ECDSA (witness v3), secp256k1 keys on the m/84' branch
+};
+static const WalletAddressType DEFAULT_WALLET_ADDRESS_TYPE = WalletAddressType::LEGACY;
+//! Parses a -addresstype value ("legacy", "pq" or "ecdsa").
+bool ParseWalletAddressType(const std::string& name, WalletAddressType& type);
+//! The -addresstype / address_type name of a family.
+std::string WalletAddressTypeName(WalletAddressType type);
+//! Address type picked in the first-run GUI wallet dialog (preset to
+//! -addresstype); unset when no dialog chose one.
+extern std::optional<WalletAddressType> my_address_type;
 
 static const int64_t TIMESTAMP_MIN = 0;
 
@@ -734,6 +752,10 @@ private:
     /* the HD chain data model (external chain counters) */
     CHDChain hdChain;
 
+    /* Persisted "addresstype" record; 0 when absent (wallet files created
+     * before the record existed: legacy or PQ, told apart by the HD chain). */
+    uint8_t nStoredAddressType = 0;
+
     /* HD derive new child key (on internal or external chain) */
     void DeriveNewChildKey(CWalletDB &walletdb, CKeyMetadata& metadata, CKey& secret, bool internal = false);
 
@@ -741,6 +763,14 @@ private:
     std::set<int64_t> setExternalKeyPool;
     int64_t m_max_keypool_index;
     std::map<CKeyID, int64_t> m_pool_key_to_index;
+
+    //! Keypool of the strict ECDSA branch (witness v3). Same semantics as the
+    //! main keypool: keys are pre-derived while the wallet is unlocked so a
+    //! locked wallet can still hand out receive and change addresses.
+    std::set<int64_t> setStrictEcdsaInternalKeyPool;
+    std::set<int64_t> setStrictEcdsaExternalKeyPool;
+    int64_t m_max_strict_keypool_index;
+    std::map<CKeyID, int64_t> m_strict_pool_key_to_index;
 
     int64_t nTimeFirstKey;
 
@@ -784,6 +814,7 @@ public:
     }
 
     void LoadKeyPool(int64_t nIndex, const CKeyPool &keypool);
+    void LoadStrictEcdsaKeyPool(int64_t nIndex, const CKeyPool &keypool);
 
     // Map from Key ID (for regular keys) or Script ID (for watch-only keys) to
     // key metadata.
@@ -822,6 +853,7 @@ public:
         nNextResend = 0;
         nLastResend = 0;
         m_max_keypool_index = 0;
+        m_max_strict_keypool_index = 0;
         nTimeFirstKey = 0;
         fBroadcastTransactions = false;
         nRelockTime = 0;
@@ -961,6 +993,8 @@ public:
     bool LoadCScript(const CScript& redeemScript);
     bool AddAuthScriptSpendData(const uint256& commitment, const AuthScriptSpendData& spendData) override;
     bool LoadAuthScriptSpendData(const uint256& commitment, const AuthScriptSpendData& spendData);
+    bool AddAuthScriptSpendData(uint8_t witnessVersion, const uint256& commitment, const AuthScriptSpendData& spendData) override;
+    bool LoadAuthScriptSpendData(uint8_t witnessVersion, const uint256& commitment, const AuthScriptSpendData& spendData);
 
     //! Adds a destination data tuple to the store, and saves it to disk
     bool AddDestData(const CTxDestination &dest, const std::string &key, const std::string &value);
@@ -1055,7 +1089,40 @@ public:
                               int& nChangePosInOut, std::string& strFailReason, const CCoinControl& coin_control, bool fNewAsset, const std::vector<CNewAsset> assets, const CTxDestination destination, bool fTransferAsset, bool fReissueAsset, const CReissueAsset& reissueAsset, const AssetType& assetType, AssetMarker assetMarker, bool sign);
 
     bool CreateNewChangeAddress(CReserveKey& reservekey, CTxDestination& dest, std::string& strFailReason);
-    bool GetDefaultAuthScriptDestination(const CPubKey& pubKey, CTxDestination& dest, bool persist = true);
+    /** Strict AuthScript destination: witness v2 for a PQ key, witness v3 for a
+     *  compressed secp256k1 key. Persists the (version, commitment) spend data. */
+    bool GetStrictAuthScriptDestination(const CPubKey& pubKey, CTxDestination& dest, bool persist = true);
+    /** Make the wallet recognise (and able to spend) the strict destination of
+     *  a key it holds: witness v2 for a PQ key, v3 for a compressed secp256k1
+     *  key. No-op when the strict families are not active on this chain or the
+     *  destination is already registered. Holding a key is not enough: IsMine
+     *  needs the versioned spend data. */
+    bool RegisterStrictAuthScriptForKey(const CPubKey& pubKey);
+    /** Register the strict v2 destination of every PQ key already in the wallet. */
+    void BackfillStrictAuthScriptSpendData();
+    /** Derive a new compressed secp256k1 key on the strict ECDSA branch
+     *  m/84'/coin_type'/0'/{0,1}/index (own counters, independent of the
+     *  legacy BIP44 branch) and register its witness v3 destination. */
+    CPubKey GenerateNewStrictEcdsaKey(CWalletDB& walletdb, bool internal);
+    /** Address type selector: "legacy", "pq" (strict witness v2) or "ecdsa"
+     *  (strict witness v3). Returns false and fills error when the wallet
+     *  cannot produce that family. */
+    bool GetNewDestinationOfType(const std::string& addressType, bool internal, CTxDestination& dest, std::string& error, CPubKey* pPubKey = nullptr);
+    /** New destination of the wallet's own family (GetAddressType()). */
+    bool GetNewDestination(bool internal, CTxDestination& dest, std::string& error);
+    /** Whether outputs of that family may be created for the next block
+     *  (change, mining, immediate asset destinations; the strict families
+     *  need AuthScript and strict activation); fills error otherwise. Legacy
+     *  is always active. Handing out addresses does not depend on it. */
+    static bool IsAddressTypeActive(const std::string& addressType, std::string& error);
+    /** The receive destination a key of this wallet stands for: strict v2 for
+     *  a PQ key, strict v3 in a strict ECDSA wallet, Legacy otherwise. */
+    bool GetDestinationForOwnKey(const CPubKey& pubKey, CTxDestination& dest);
+    /** Change script for an input family (see ChangeFamily in wallet.cpp):
+     *  legacy, generic AuthScript v1, strict PQ (witness v2) or strict ECDSA
+     *  (witness v3). Change always returns to the family it was spent from;
+     *  a family this wallet cannot produce falls back to the wallet default. */
+    bool GetChangeScriptForFamily(int family, CReserveKey& reservekey, CScript& scriptRet, std::string& strFailReason);
 
     /** XNA END */
 
@@ -1083,6 +1150,15 @@ public:
      * Marks all keys in the keypool up to and including reserve_key as used.
      */
     void MarkReserveKeysAsUsed(int64_t keypool_id);
+
+    /** Strict ECDSA (witness v3) keypool, mirroring the main keypool API. */
+    bool TopUpStrictEcdsaKeyPool(unsigned int kpSize = 0);
+    void ReserveStrictEcdsaKeyFromKeyPool(int64_t& nIndex, CKeyPool& keypool, bool fRequestedInternal);
+    void KeepStrictEcdsaKey(int64_t nIndex);
+    void ReturnStrictEcdsaKey(int64_t nIndex, bool fInternal, const CPubKey& pubkey);
+    bool GetStrictEcdsaKeyFromPool(CPubKey& result, bool internal = false);
+    void MarkStrictEcdsaReserveKeysAsUsed(int64_t keypool_id);
+    size_t GetStrictEcdsaKeyPoolSize(bool internal);
     const std::map<CKeyID, int64_t>& GetAllReserveKeys() const { return m_pool_key_to_index; }
 
     std::set< std::set<CTxDestination> > GetAddressGroupings();
@@ -1225,6 +1301,14 @@ public:
     /* Enable/disable PQ mode on the HD chain */
     void UsePQ(bool b = true) { hdChain.UsePQ(b); }
 
+    /* Address family of this wallet (see WalletAddressType). */
+    WalletAddressType GetAddressType() const;
+    /* Raw persisted "addresstype" value (0 when the record is absent). */
+    uint8_t GetStoredAddressType() const { return nStoredAddressType; }
+    void LoadAddressType(uint8_t nType) { nStoredAddressType = nType; }
+    /* Persist the address family; only when the wallet file is created. */
+    bool SetAddressType(WalletAddressType type);
+
 
     /* Generates a new HD seed (will not be activated) */
     CPubKey GenerateNewSeed();
@@ -1247,12 +1331,19 @@ protected:
     int64_t nIndex;
     CPubKey vchPubKey;
     bool fInternal;
+    //! Optional second reservation from the strict ECDSA (witness v3) keypool,
+    //! used when the change must return to that family.
+    int64_t nStrictIndex = -1;
+    CPubKey vchStrictPubKey;
+    bool fStrictInternal = false;
 public:
     explicit CReserveKey(CWallet* pwalletIn)
     {
         nIndex = -1;
         pwallet = pwalletIn;
         fInternal = false;
+        nStrictIndex = -1;
+        fStrictInternal = false;
     }
 
     CReserveKey() = default;
@@ -1267,6 +1358,10 @@ public:
     void ReturnKey();
     bool GetReservedKey(CPubKey &pubkey, bool internal = false);
     void KeepKey();
+    bool GetReservedStrictEcdsaKey(CPubKey &pubkey, bool internal = false);
+    //! Give back only one of the two reservations (the one the final change did not use).
+    void ReturnDefaultKey();
+    void ReturnStrictEcdsaKey();
     void KeepScript() override { KeepKey(); }
 };
 

@@ -39,6 +39,8 @@ static const unsigned int MAX_STACK_BYTES = 262144;  // 256 KiB
 
 // Maximum number of non-push operations per script
 static const int MAX_OPS_PER_SCRIPT = 201;
+static const int MAX_OPS_PER_AUTHSCRIPT = 512;
+static const size_t MAX_CLASSIC_HASH_UNITS_PER_AUTHSCRIPT = 65536;
 
 // NIP-036 §3.7: per-script Poseidon-input-byte budget. Bounds worst-case
 // validation cost of OP_POSEIDON-saturated scripts. Enforced only when
@@ -242,6 +244,18 @@ enum opcodetype
     // unassigned slot (0xc1). Consumes (leaf, scheme_id, proof, root)
     // and pushes a boolean. Flag off → bad-opcode.
     OP_CHECKMERKLEINCLUSION = 0xc1,
+
+    // NIP-041: AuthScript destination introspection in a previously
+    // unassigned slot (0xc2). (nOut -- version||commitment) pushes the 33-byte
+    // destination of a selected output: witness version (01 generic v1, 02
+    // strict PQ, 03 strict ECDSA) followed by the 32-byte program. Companion
+    // selector 0x04 of OP_TXFIELD / OP_REFINPUTFIELD answers the same for the
+    // spent input and for a reference input. Flag off -> bad-opcode.
+    // Slot choice: inside MAX_OPCODE, outside the NIP-033 BLS reservation
+    // (0xd8..0xdc) and not claimed by any pending proposal (0xbd/0xbe are).
+    OP_OUTPUTAUTHDEST = 0xc2,
+    OP_ZKVERIFY = 0xc3, // NIP-018 profile 1
+    OP_INPUTFIELD = 0xc4, // NIP-043: spent input introspection
 
     // NIP-034a: modern hash opcodes in previously unassigned slots.
     // NIP-036 occupies slot 0xc9 (OP_POSEIDON, the SNARK-friendly
@@ -485,6 +499,43 @@ typedef prevector<28, unsigned char> CScriptBase;
  *  historic "rvn" marker inherited from Ravencoin; NEURAI_XNA is the "xna"
  *  marker required for new outputs once NIP-040 activates. The marker never
  *  participates in asset identity — that is always the serialized name. */
+/**
+ * Strict AuthScript (witness v2/v3) activation context.
+ *
+ * Whether OP_2/OP_3-prefixed asset scripts are parsed as assets, and whether
+ * strict addresses are usable, depends on the block being processed: below the
+ * activation height everything must behave exactly as before those prefixes
+ * existed (historical blocks, reorgs across the boundary, mempool re-admission).
+ * There is deliberately no process-wide on/off switch deciding validation.
+ *
+ *  - Validation sets the context of the block (or next-block, for the mempool)
+ *    it is working on with a scoped CStrictAuthScriptContext. The scope is
+ *    thread-local and nests.
+ *  - Script verification runs on worker threads that do not inherit a scope,
+ *    so the interpreter never reads this context: it derives activation from
+ *    its flags (SCRIPT_VERIFY_AUTHSCRIPT_STRICT) and uses the explicit parser
+ *    overloads below.
+ *  - Code with no block context (wallet, RPC, address decoding) falls back to
+ *    the default, which validation keeps equal to "active for the block after
+ *    the current tip".
+ */
+void SetStrictAuthScriptActiveDefault(bool fActive);
+// Non-consensus signing/RPC defaults only. Block validation passes height explicitly.
+void SetSignatureOpcodeCandidateHeight(int height);
+int GetSignatureOpcodeCandidateHeight();
+bool IsStrictAuthScriptActiveInContext();
+
+class CStrictAuthScriptContext
+{
+private:
+    int m_previous;
+public:
+    explicit CStrictAuthScriptContext(bool fActive);
+    ~CStrictAuthScriptContext();
+    CStrictAuthScriptContext(const CStrictAuthScriptContext&) = delete;
+    CStrictAuthScriptContext& operator=(const CStrictAuthScriptContext&) = delete;
+};
+
 enum class AssetMarker : uint8_t {
     LEGACY_RVN,
     NEURAI_XNA,
@@ -746,13 +797,18 @@ public:
      * counted more accurately, assuming they are of the form
      *  ... OP_N CHECKMULTISIG ...
      */
-    unsigned int GetSigOpCount(bool fAccurate) const;
+    // Optional opcodes count once when their respective verification flags are
+    // active. Defaults preserve context-free/historical callers. CHECKSIGADD
+    // also retains its separate dynamic per-script operation surcharge.
+    unsigned int CountZKVerify() const;
+
+    unsigned int GetSigOpCount(bool fAccurate, bool countCSFS = false, bool countCheckSigAdd = false, bool countEd25519 = false) const;
 
     /**
      * Accurately count sigOps, including sigOps in
      * pay-to-script-hash transactions:
      */
-    unsigned int GetSigOpCount(const CScript& scriptSig) const;
+    unsigned int GetSigOpCount(const CScript& scriptSig, bool countCSFS = false, bool countCheckSigAdd = false, bool countEd25519 = false) const;
 
     bool IsPayToPublicKeyHash() const;
 
@@ -766,6 +822,10 @@ public:
      *  payload carries. The legacy "rvn" logic runs first, byte-for-byte
      *  unchanged; "xna" is only tried when it does not match. */
     bool IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex, AssetMarker& marker) const;
+    /** Explicit-context variant: fStrictActive says whether OP_2/OP_3 strict
+     *  AuthScript prefixes are recognised. The overloads without it read the
+     *  activation context (see CStrictAuthScriptContext). */
+    bool IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex, AssetMarker& marker, bool fStrictActive) const;
     bool IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex) const;
     bool IsAssetScript(int& nType, bool& fIsOwner) const;
     bool IsAssetScript() const;
@@ -781,6 +841,7 @@ public:
     bool IsAsset() const;
     bool IsNullAsset() const; // Checks all three of the NULL Asset Tx types
     bool IsNullAssetTxDataScript() const;
+    bool IsNullAssetTxDataScript(bool fStrictActive) const;
     bool IsNullAssetVerifierTxDataScript() const;
     bool IsNullGlobalRestrictionAssetTxDataScript() const;
     /** XNA END */

@@ -68,17 +68,21 @@ class ReplaceByFeeTest(NeuraiTestFramework):
 
     def set_test_params(self):
         self.num_nodes = 2
-        self.extra_args = [["-maxorphantx=1000",
+        # The historical cached chain uses timestamps before the current genesis.
+        self.setup_clean_chain = True
+        self.extra_args = [["-mempoolreplacement=1",
+                            "-minrelaytxfee=0.00001",
+                            "-maxorphantx=1000",
                             "-whitelist=127.0.0.1",
                             "-limitancestorcount=50",
                             "-limitancestorsize=101",
                             "-limitdescendantcount=200",
                             "-limitdescendantsize=101"],
-                           ["-mempoolreplacement=0"]]
+                           ["-mempoolreplacement=0", "-minrelaytxfee=0.00001"]]
 
     def run_test(self):
         # Leave IBD
-        self.nodes[0].generate(1)
+        self.nodes[0].generate(110)
 
         make_utxo(self.nodes[0], 1 * COIN)
 
@@ -550,21 +554,22 @@ class ReplaceByFeeTest(NeuraiTestFramework):
         us0 = self.nodes[0].listunspent()[0]
         ins = [us0]
         outs = {self.nodes[0].getnewaddress(): Decimal(1.0000000)}
-        rawtx0 = self.nodes[0].createrawtransaction(ins, outs, 0, True)
-        rawtx1 = self.nodes[0].createrawtransaction(ins, outs, 0, False)
+        # Neurai's fourth argument is reference inputs, not Bitcoin's
+        # replaceable boolean. Signal RBF explicitly in the spending input.
+        rbf_ins = [dict(us0, sequence=4294967293)]
+        rawtx0 = self.nodes[0].createrawtransaction(rbf_ins, outs, 0)
+        rawtx1 = self.nodes[0].createrawtransaction(ins, outs, 0)
         json0 = self.nodes[0].decoderawtransaction(rawtx0)
         json1 = self.nodes[0].decoderawtransaction(rawtx1)
         assert_equal(json0["vin"][0]["sequence"], 4294967293)
         assert_equal(json1["vin"][0]["sequence"], 4294967295)
 
         rawtx2 = self.nodes[0].createrawtransaction([], outs)
-        f_raw_tx2a = self.nodes[0].fundrawtransaction(rawtx2, {"replaceable": True})
-        f_raw_tx2b = self.nodes[0].fundrawtransaction(rawtx2, {"replaceable": False})
+        # Wallet funding deliberately does not offer a replaceable option.
+        funded = self.nodes[0].fundrawtransaction(rawtx2)
+        decoded = self.nodes[0].decoderawtransaction(funded['hex'])
+        assert all(vin['sequence'] >= 4294967294 for vin in decoded['vin'])
 
-        json0 = self.nodes[0].decoderawtransaction(f_raw_tx2a['hex'])
-        json1 = self.nodes[0].decoderawtransaction(f_raw_tx2b['hex'])
-        assert_equal(json0["vin"][0]["sequence"], 4294967293)
-        assert_equal(json1["vin"][0]["sequence"], 4294967294)
 
 
 if __name__ == '__main__':

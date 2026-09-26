@@ -35,13 +35,25 @@ bool TransactionSignatureCreator::CreateSig(std::vector<unsigned char>& vchSig, 
         return false;
 
     // Signing with uncompressed keys is disabled in witness scripts (PQ keys are exempt)
-    if (sigversion == SIGVERSION_WITNESS_V0 && !key.IsCompressed() && !key.IsPQ())
+    if ((sigversion == SIGVERSION_WITNESS_V0 || sigversion == SIGVERSION_AUTHSCRIPT_STRICT) && !key.IsCompressed() && !key.IsPQ())
         return false;
 
     uint256 hash = SignatureHash(scriptCode, *txTo, nIn, nHashType, amount, sigversion, nullptr, authType);
     if (!key.Sign(hash, vchSig))
         return false;
     vchSig.push_back((unsigned char)nHashType);
+    return true;
+}
+
+bool TransactionSignatureCreator::CreateTreeSig(std::vector<unsigned char>& signature, const CKeyID& keyid,
+    const CScript& script, const AuthScriptTreeContext& context, uint8_t role) const
+{
+    CKey key;
+    if (!keystore->GetKey(keyid, key) || (!key.IsPQ() && !key.IsCompressed())) return false;
+    uint256 digest;
+    if (!checker.GetTreeSigHash(script, nHashType, context, role, digest)) return false;
+    if (!key.Sign(digest, signature)) return false;
+    signature.push_back(static_cast<unsigned char>(nHashType));
     return true;
 }
 
@@ -117,6 +129,11 @@ static bool SignStep(const BaseSignatureCreator& creator, const CScript& scriptP
             return true;
         }
 
+        if (const WitnessStrictAuthScript* strict = boost::get<WitnessStrictAuthScript>(&assetDestination)) {
+            ret.push_back(ToByteVector(strict->commitment));
+            return true;
+        }
+
         return false;
     }
     /** XNA END */
@@ -150,6 +167,8 @@ static bool SignStep(const BaseSignatureCreator& creator, const CScript& scriptP
         return true;
 
     case TX_WITNESS_V1_AUTHSCRIPT:
+    case TX_WITNESS_V2_STRICT_PQ:
+    case TX_WITNESS_V3_STRICT_ECDSA:
         ret.push_back(vSolutions[0]);
         return true;
 
@@ -181,6 +200,33 @@ static CScript PushAll(const std::vector<valtype>& values)
     return result;
 }
 
+// Strict AuthScript families: build the fixed witness
+// [authType, signature, pubkey, OP_TRUE] for a (version, commitment) the
+// keystore knows how to spend.
+static bool ProduceStrictAuthScriptWitness(const BaseSignatureCreator& creator, int witnessVersion, const uint256& commitment, SignatureData& sigdata)
+{
+    AuthScriptSpendData spendData;
+    if (!creator.KeyStore().GetAuthScriptSpendData((uint8_t)witnessVersion, commitment, spendData)) {
+        return false;
+    }
+    const uint8_t authType = StrictAuthScriptAuthType(witnessVersion);
+    if (authType == 0x00 || spendData.auth_type != authType) {
+        return false;
+    }
+    const CScript witnessScript = GetStrictAuthScriptTemplate();
+    std::vector<unsigned char> vchSig;
+    if (!creator.CreateSig(vchSig, spendData.key_id, witnessScript, SIGVERSION_AUTHSCRIPT_STRICT, authType)) {
+        return false;
+    }
+    sigdata.scriptSig = CScript();
+    sigdata.scriptWitness.stack.clear();
+    sigdata.scriptWitness.stack.push_back({authType});
+    sigdata.scriptWitness.stack.push_back(vchSig);
+    sigdata.scriptWitness.stack.push_back(ToByteVector(spendData.pubkey));
+    sigdata.scriptWitness.stack.push_back(std::vector<unsigned char>(witnessScript.begin(), witnessScript.end()));
+    return true;
+}
+
 bool ProduceSignature(const BaseSignatureCreator& creator, const CScript& fromPubKey, SignatureData& sigdata)
 {
     int assetWitnessVersion = 0;
@@ -188,6 +234,12 @@ bool ProduceSignature(const BaseSignatureCreator& creator, const CScript& fromPu
     std::vector<unsigned char> assetData;
     if (GetAssetScriptWitnessProgram(fromPubKey, assetWitnessVersion, assetWitnessProgram, &assetData)) {
         uint256 commitment(assetWitnessProgram);
+        if (IsStrictAuthScriptWitnessVersion(assetWitnessVersion)) {
+            if (!ProduceStrictAuthScriptWitness(creator, assetWitnessVersion, commitment, sigdata)) {
+                return false;
+            }
+            return VerifyScript(sigdata.scriptSig, fromPubKey, &sigdata.scriptWitness, LocalScriptVerifyFlags(), creator.Checker());
+        }
         AuthScriptSpendData spendData;
         if (!creator.KeyStore().GetAuthScriptSpendData(commitment, spendData)) {
             return false;
@@ -282,6 +334,12 @@ bool ProduceSignature(const BaseSignatureCreator& creator, const CScript& fromPu
                 sigdata.scriptWitness.stack.push_back(std::vector<unsigned char>(spendData.witnessScript.begin(), spendData.witnessScript.end()));
             }
         }
+        result.clear();
+    }
+    else if (solved && (whichType == TX_WITNESS_V2_STRICT_PQ || whichType == TX_WITNESS_V3_STRICT_ECDSA))
+    {
+        const int witnessVersion = (whichType == TX_WITNESS_V2_STRICT_PQ) ? STRICT_AUTHSCRIPT_WITNESS_V2_PQ : STRICT_AUTHSCRIPT_WITNESS_V3_ECDSA;
+        solved = ProduceStrictAuthScriptWitness(creator, witnessVersion, uint256(result[0]), sigdata);
         result.clear();
     }
     else if (solved && whichType == TX_WITNESS_V0_SCRIPTHASH)
@@ -452,6 +510,22 @@ static Stacks CombineSignatures(const CScript& scriptPubKey, const BaseSignature
             return sigs2;
         return sigs1;
     case TX_WITNESS_V1_AUTHSCRIPT:
+        // Arbitrary MAST leaves have no generic partial-signature combiner.
+        // Select only a completely verified candidate; never reuse historical
+        // CHECKSIG domains or mix witnesses from different leaves.
+        if ((!sigs1.witness.empty() && sigs1.witness[0].size() == 1 && sigs1.witness[0][0] >= 0x10) ||
+            (!sigs2.witness.empty() && sigs2.witness[0].size() == 1 && sigs2.witness[0][0] >= 0x10)) {
+            for (const auto* candidate : {&sigs1, &sigs2}) {
+                const auto data = candidate->Output();
+                if (VerifyScript(data.scriptSig, scriptPubKey, &data.scriptWitness, LocalScriptVerifyFlags(), checker))
+                    return *candidate;
+            }
+            return Stacks();
+        }
+        // Historical AuthScript selection is unchanged.
+        // fall through
+    case TX_WITNESS_V2_STRICT_PQ:
+    case TX_WITNESS_V3_STRICT_ECDSA:
         if (sigs1.witness.empty() || sigs1.witness.back().empty())
             return sigs2;
         return sigs1;

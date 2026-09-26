@@ -13,6 +13,7 @@
 #include "primitives/transaction.h"
 
 #include <vector>
+#include <atomic>
 #include <stdint.h>
 #include <string>
 
@@ -269,12 +270,49 @@ enum class script_verify_flag_name : uint8_t {
     //
     SCRIPT_VERIFY_CHECKSIGADD,                              // bit 40
 
+    // Strict AuthScript families: witness v2 (post-quantum, ML-DSA-44) and
+    // witness v3 (classical, compressed secp256k1). Each version is a fixed
+    // template: exactly [authType, signature, pubkey, OP_TRUE], with the
+    // authType bound to the version (v2 -> 0x01, v3 -> 0x02), a versioned
+    // commitment (preimage lead byte 0x02 / 0x03) and its own sighash domain
+    // (SIGVERSION_AUTHSCRIPT_STRICT). Flag off -> v2/v3 stay upgradable
+    // (anyone-can-spend, discouraged by policy). Also enables family-independent
+    // signature encoding in v1 CHECKMULTISIG: a valid PQ/ECDSA signature skips
+    // candidate keys of the other family. With the flag off, v1 retains its
+    // historical candidate-key-dependent encoding checks. CHECKSIG is unchanged.
+    //
+    SCRIPT_VERIFY_AUTHSCRIPT_STRICT,                        // bit 41
+
+    // NIP-041: AuthScript destination introspection. Enables OP_OUTPUTAUTHDEST
+    // (0xc2) and selector 0x04 of OP_TXFIELD / OP_REFINPUTFIELD, which return
+    // the 33-byte destination version||commitment of an output, of the spent
+    // input and of a reference input. Activated at the same height as the
+    // strict AuthScript families (no separate schedule); it governs all three
+    // queries, also when the destination queried is a generic witness v1 one.
+    // Flag off: 0xc2 is a bad opcode and selector 0x04 is an unknown selector,
+    // exactly as before. The NIP-023 32-byte operations are untouched.
+    //
+    SCRIPT_VERIFY_AUTHDEST,                                 // bit 42
+
+    SCRIPT_VERIFY_ZKVERIFY = 43, // NIP-018
+    SCRIPT_VERIFY_AUTHSCRIPT_TREE = 44, // NIP-044
+
+    // NIP-043 primitives.
+    SCRIPT_VERIFY_ASSETMESSAGEFIELD = 45, // NIP-043
+    SCRIPT_VERIFY_INPUTFIELD = 46,
+    SCRIPT_VERIFY_MERKLE_POSEIDON = 47,
+    SCRIPT_VERIFY_AUTHSCRIPT_BUDGET = 48,
+    SCRIPT_VERIFY_POSEIDON_WORK = 49,
+
     // End marker — must always be last.
     SCRIPT_VERIFY_END_MARKER
 };
 
 // Import all flag names into the enclosing scope for source compatibility.
 using enum script_verify_flag_name;
+
+// NIP-018: calibrated x86-64 cost with margin; see cache-review evidence.
+static constexpr unsigned int ZKVERIFY_SIGOP_COST = 280;
 
 // Canonical empty-flags value.
 static constexpr script_verify_flags SCRIPT_VERIFY_NONE{};
@@ -300,14 +338,14 @@ static constexpr script_verify_flags::value_type MAX_SCRIPT_VERIFY_FLAGS =
 //   - SCRIPT_VERIFY_CHECKSIGADD is set (NIP-039: PQ signatures
 //     (2421 B) and pubkeys (1313 B) flow through the generic
 //     accumulator independently of CSFS / Merkle-inclusion).
-// Otherwise returns MAX_SCRIPT_ELEMENT_SIZE (520). Single source of
+// ZKVERIFY also widens the cap for VKs (776 B). Otherwise 520 B. Source of
 // truth for every call site in EvalScript and the witness verification
 // paths.
 inline unsigned int EffectiveMaxScriptElementSize(script_verify_flags flags)
 {
     return (flags & (SCRIPT_VERIFY_CHECKSIGFROMSTACK
                    | SCRIPT_VERIFY_MERKLE_INCLUSION
-                   | SCRIPT_VERIFY_CHECKSIGADD))
+                   | SCRIPT_VERIFY_CHECKSIGADD | SCRIPT_VERIFY_ZKVERIFY))
          ? MAX_PQ_SCRIPT_ELEMENT_SIZE
          : MAX_SCRIPT_ELEMENT_SIZE;
 }
@@ -340,7 +378,44 @@ enum SigVersion
     SIGVERSION_BASE = 0,
     SIGVERSION_WITNESS_V0 = 1,
     SIGVERSION_AUTHSCRIPT = 2,
+    /** Strict AuthScript families (witness v2 PQ / v3 ECDSA). Same BIP143-style
+     *  serialization as SIGVERSION_AUTHSCRIPT, but the preimage additionally
+     *  commits to the witness version right before authType, so a v1 signature
+     *  can never be replayed as a strict one and vice versa. */
+    SIGVERSION_AUTHSCRIPT_STRICT = 3,
 };
+
+/** NIP-041: selector of OP_TXFIELD and OP_REFINPUTFIELD returning the 33-byte
+ *  AuthScript destination (witness version || 32-byte program). */
+static const unsigned char AUTHDEST_SELECTOR = 0x04;
+
+/** Strict AuthScript families: witness version <-> mandatory authType. */
+static const int STRICT_AUTHSCRIPT_WITNESS_V2_PQ = 2;
+static const int STRICT_AUTHSCRIPT_WITNESS_V3_ECDSA = 3;
+
+/** Returns the witness version bound to an authType under the strict families
+ *  (0x01 -> 2, 0x02 -> 3), or 0 if the authType has no strict version. */
+inline int StrictAuthScriptWitnessVersion(uint8_t authType)
+{
+    if (authType == 0x01) return STRICT_AUTHSCRIPT_WITNESS_V2_PQ;
+    if (authType == 0x02) return STRICT_AUTHSCRIPT_WITNESS_V3_ECDSA;
+    return 0;
+}
+
+/** Returns the authType bound to a strict witness version (2 -> 0x01, 3 -> 0x02),
+ *  or 0x00 if the version is not a strict family. */
+inline uint8_t StrictAuthScriptAuthType(int witnessVersion)
+{
+    if (witnessVersion == STRICT_AUTHSCRIPT_WITNESS_V2_PQ) return 0x01;
+    if (witnessVersion == STRICT_AUTHSCRIPT_WITNESS_V3_ECDSA) return 0x02;
+    return 0x00;
+}
+
+inline bool IsStrictAuthScriptWitnessVersion(int witnessVersion)
+{
+    return witnessVersion == STRICT_AUTHSCRIPT_WITNESS_V2_PQ ||
+           witnessVersion == STRICT_AUTHSCRIPT_WITNESS_V3_ECDSA;
+}
 
 uint256 SignatureHash(const CScript &scriptCode, const CTransaction &txTo, unsigned int nIn, int nHashType, const CAmount &amount, SigVersion sigversion, const PrecomputedTransactionData *cache = nullptr, uint8_t authType = 0x00);
 
@@ -358,6 +433,45 @@ struct ChainContext {
     bool available{false};
 };
 
+// NIP-044: explicit per-spend context; no ambient state and no historical fallback.
+struct AuthScriptTreeContext {
+    const uint8_t authType;
+    const uint256 program;
+    const uint256 leaf;
+    AuthScriptTreeContext(uint8_t type, const uint256& programIn, const uint256& leafIn)
+        : authType(type), program(programIn), leaf(leafIn) {}
+    bool IsValid() const { return authType == 0x10 || authType == 0x11 || authType == 0x12; }
+};
+uint256 AuthScriptLeafHash(const CScript& script);
+uint256 AuthScriptBranchHash(const uint256& a, const uint256& b);
+uint256 AuthScriptTreeCommitment(const std::vector<unsigned char>& descriptor, const uint256& root);
+bool AuthScriptTreeSignatureHash(const uint256& base, const AuthScriptTreeContext& context, uint8_t role, uint256& result);
+// Shape only: no hashing or signature checks. Shared by consensus and sigop accounting.
+bool ParseAuthScriptTreeWitness(const CScriptWitness& witness, size_t& argsOffset, ScriptError* error = nullptr);
+
+/** Shared by all script checks of a block (or a mempool transaction).
+ * Reserve before hashing. Failed reservations never wrap or exceed the cap.
+ * Thread scheduling cannot affect acceptance of a valid block. */
+class PoseidonWorkBudget {
+    const uint64_t limit;
+    std::atomic<uint64_t> used{0};
+    std::atomic<bool> exceeded{false};
+public:
+    explicit PoseidonWorkBudget(uint64_t limitIn) : limit(limitIn) {}
+    bool Charge(uint64_t units) {
+        uint64_t previous = used.load(std::memory_order_relaxed);
+        do {
+            if (units > limit - previous) {
+                exceeded.store(true, std::memory_order_relaxed);
+                return false;
+            }
+        } while (!used.compare_exchange_weak(previous, previous + units, std::memory_order_relaxed));
+        return true;
+    }
+    uint64_t Used() const { return used.load(std::memory_order_relaxed); }
+    bool Exceeded() const { return exceeded.load(std::memory_order_relaxed); }
+};
+
 class BaseSignatureChecker
 {
 public:
@@ -366,11 +480,18 @@ public:
     // reference HEIGHT / MTP can be re-validated on every new tip.
     // `mutable` because VerifyScript takes `const BaseSignatureChecker&`.
     mutable bool fChainContextObserved{false};
+    // Owned by CScriptCheck; shared unchanged through BASE/P2SH/witness/MAST.
+    PoseidonWorkBudget* poseidonWorkBudget{nullptr};
 
     virtual bool CheckSig(const std::vector<unsigned char> &scriptSig, const std::vector<unsigned char> &vchPubKey, const CScript &scriptCode, SigVersion sigversion, uint8_t authType = 0x00) const
     {
         return false;
     }
+
+    virtual bool CheckTreeSig(const std::vector<unsigned char>& sig, const std::vector<unsigned char>& key,
+                              const CScript& script, const AuthScriptTreeContext& context, uint8_t role) const { return false; }
+    virtual bool GetTreeSigHash(const CScript& script, int hashType, const AuthScriptTreeContext& context,
+                               uint8_t role, uint256& result) const { return false; }
 
     virtual bool CheckLockTime(const CScriptNum &nLockTime) const
     {
@@ -399,7 +520,7 @@ public:
         return false;
     }
 
-    virtual bool GetTxFieldHash(unsigned char fieldSelector, std::vector<unsigned char>& result) const
+    virtual bool GetTxFieldHash(uint16_t fieldSelector, std::vector<unsigned char>& result) const
     {
         return false;
     }
@@ -420,6 +541,9 @@ public:
     // NIP-024: Push the XNA satoshi value of the selected input's prevout
     // (raw 8-byte LE). Requires the checker to have been constructed with
     // m_allPrevouts; otherwise returns false (fail-closed).
+    virtual bool GetInputField(unsigned int nInput, unsigned char selector,
+                               std::vector<unsigned char>& result) const { return false; }
+
     virtual bool GetInputValue(unsigned int nInput, std::vector<unsigned char>& result) const
     {
         return false;
@@ -433,6 +557,13 @@ public:
     // NIP-023: Push the 32-byte AuthScript v1 commitment from the selected output's
     // scriptPubKey. Mirrors the extraction logic of TXFIELD_SPENT_AUTHCOMMITMENT.
     virtual bool GetOutputAuthCommitment(unsigned int nOut, std::vector<unsigned char>& result) const
+    {
+        return false;
+    }
+
+    // NIP-041: push the 33-byte AuthScript destination (version||commitment)
+    // of the selected output. Unlike NIP-023 it requires a well-formed script.
+    virtual bool GetOutputAuthDest(unsigned int nOut, std::vector<unsigned char>& result) const
     {
         return false;
     }
@@ -540,6 +671,10 @@ public:
     TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const PrecomputedTransactionData &txdataIn, const CScript& spentScriptPubKeyIn, const std::vector<CTxOut>* allPrevoutsIn, const std::vector<CTxOut>* refOutputsIn, ChainContext chainCtx = {})
         : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn), m_spentScriptPubKey(&spentScriptPubKeyIn), m_allPrevouts(allPrevoutsIn), m_refOutputs(refOutputsIn), m_chainContext(chainCtx) {}
 
+    bool CheckTreeSig(const std::vector<unsigned char>& sig, const std::vector<unsigned char>& key,
+                      const CScript& script, const AuthScriptTreeContext& context, uint8_t role) const override;
+    bool GetTreeSigHash(const CScript& script, int hashType, const AuthScriptTreeContext& context,
+                       uint8_t role, uint256& result) const override;
     bool CheckSig(const std::vector<unsigned char> &scriptSig, const std::vector<unsigned char> &vchPubKey, const CScript &scriptCode, SigVersion sigversion, uint8_t authType = 0x00) const override;
 
     bool CheckLockTime(const CScriptNum &nLockTime) const override;
@@ -550,17 +685,20 @@ public:
 
     bool CheckSigFromStack(const std::vector<unsigned char>& sig, const std::vector<unsigned char>& msg, const std::vector<unsigned char>& pubkey) const override;
 
-    bool GetTxFieldHash(unsigned char fieldSelector, std::vector<unsigned char>& result) const override;
+    bool GetTxFieldHash(uint16_t fieldSelector, std::vector<unsigned char>& result) const override;
 
     bool GetTxField(unsigned char selector, std::vector<unsigned char>& result) const override;
 
     bool GetOutputValue(unsigned int nOut, std::vector<unsigned char>& result) const override;
 
     bool GetInputValue(unsigned int nInput, std::vector<unsigned char>& result) const override;
+    bool GetInputField(unsigned int nInput, unsigned char selector,
+                       std::vector<unsigned char>& result) const override;
 
     bool GetOutputScript(unsigned int nOut, std::vector<unsigned char>& result) const override;
 
     bool GetOutputAuthCommitment(unsigned int nOut, std::vector<unsigned char>& result) const override;
+    bool GetOutputAuthDest(unsigned int nOut, std::vector<unsigned char>& result) const override;
 
     bool GetOutputAssetField(unsigned int nOut, unsigned char selector, std::vector<unsigned char>& result) const override;
 
@@ -597,7 +735,16 @@ public:
         : TransactionSignatureChecker(&txTo, nInIn, amountIn, spentScriptPubKeyIn, allPrevoutsIn), txTo(*txToIn) {}
 };
 
-bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &script, script_verify_flags flags, const BaseSignatureChecker &checker, SigVersion sigversion, ScriptError *error = nullptr);
+/** Deterministic work charged before hashing during one EvalScript invocation.
+ * Reset on entry, including early failure; on failure contains charges up to
+ * that point. Merkle charges its full structurally valid depth even if a
+ * noncanonical field or incorrect root makes verification fail early.
+ * This is accounting only: no new limit, activation, or block aggregation. */
+struct ScriptExecutionCost {
+    uint64_t poseidon_permutations = 0;
+};
+
+bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &script, script_verify_flags flags, const BaseSignatureChecker &checker, SigVersion sigversion, ScriptError *error = nullptr, const AuthScriptTreeContext* tree = nullptr, ScriptExecutionCost* execution_cost = nullptr);
 
 bool VerifyScript(const CScript &scriptSig, const CScript &scriptPubKey, const CScriptWitness *witness, script_verify_flags flags, const BaseSignatureChecker &checker, ScriptError *serror = nullptr);
 

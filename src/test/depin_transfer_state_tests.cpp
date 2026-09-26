@@ -1017,7 +1017,7 @@ BOOST_AUTO_TEST_CASE(reorg_restores_previous_state_and_persists)
 // (11) Mempool: holder transfers are tracked from the mempool view (an
 // input from an unconfirmed ancestor counts), one pending state operation
 // per asset (a chained second one is rejected without being inserted, also
-// under test_accept; a replacement is allowed), and a connected CLOSE
+// under test_accept; asset replacement is prohibited), and a connected CLOSE
 // evicts the holder transfers and leaves no references behind.
 BOOST_AUTO_TEST_CASE(mempool_bookkeeping_and_eviction)
 {
@@ -1090,8 +1090,8 @@ BOOST_AUTO_TEST_CASE(mempool_bookkeeping_and_eviction)
     BOOST_CHECK(reason.find(kNotByOwner) == 0);
 }
 
-// (11b) A replacement of the pending operation is allowed (same owner
-// input, higher fee), and a disconnected OPEN evicts the holder transfers
+// (11b) NIP025-patch1 rejects replacement of a pending asset operation
+// even with the same owner input and a higher fee. A disconnected OPEN evicts holder transfers
 // that were admitted on the strength of it.
 BOOST_AUTO_TEST_CASE(mempool_replacement_and_reorg_eviction)
 {
@@ -1125,9 +1125,12 @@ BOOST_AUTO_TEST_CASE(mempool_replacement_and_reorg_eviction)
     BOOST_CHECK_EQUAL(StateOpsTracked(), 1U);
 
     CMutableTransaction replacement = feeOp(2, 2 * COIN);
-    BOOST_REQUIRE_MESSAGE(ToMempool(replacement, reason), reason);
-    BOOST_CHECK(!mempool.exists(first.GetHash()));
-    BOOST_CHECK(mempool.exists(replacement.GetHash()));
+    BOOST_CHECK(!ToMempool(replacement, reason, true));
+    BOOST_CHECK_EQUAL(reason, "replacement-involves-assets");
+    BOOST_CHECK(!ToMempool(replacement, reason));
+    BOOST_CHECK_EQUAL(reason, "replacement-involves-assets");
+    BOOST_CHECK(mempool.exists(first.GetHash()));
+    BOOST_CHECK(!mempool.exists(replacement.GetHash()));
     BOOST_CHECK_EQUAL(StateOpsTracked(), 1U);
     mempool.clear();
 

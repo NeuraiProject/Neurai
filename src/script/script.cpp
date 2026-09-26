@@ -3,6 +3,8 @@
 // Copyright (c) 2017-2021 The Neurai developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
+#include <atomic>
+
 #include "streams.h"
 #include "version.h"
 #include "assets/assets.h"
@@ -159,6 +161,9 @@ const char* GetOpName(opcodetype opcode)
     case OP_REFINPUTASSETFIELD     : return "OP_REFINPUTASSETFIELD";
     case OP_REFINPUTCOUNT          : return "OP_REFINPUTCOUNT";
     case OP_OUTPUTAUTHCOMMITMENT   : return "OP_OUTPUTAUTHCOMMITMENT";
+    case OP_OUTPUTAUTHDEST         : return "OP_OUTPUTAUTHDEST";
+    case OP_ZKVERIFY: return "OP_ZKVERIFY";
+    case OP_INPUTFIELD             : return "OP_INPUTFIELD";
     case OP_INPUTVALUE             : return "OP_INPUTVALUE";
     case OP_CHAINCONTEXT           : return "OP_CHAINCONTEXT";
 
@@ -199,7 +204,18 @@ const char* GetOpName(opcodetype opcode)
     }
 }
 
-unsigned int CScript::GetSigOpCount(bool fAccurate) const
+// Static count: pushed bytes are data; inactive branches still consume cost.
+unsigned int CScript::CountZKVerify() const
+{
+    unsigned int count = 0;
+    auto pc = begin();
+    opcodetype opcode;
+    while (pc < end() && GetOp(pc, opcode))
+        if (opcode == OP_ZKVERIFY) ++count;
+    return count;
+}
+
+unsigned int CScript::GetSigOpCount(bool fAccurate, bool countCSFS, bool countCheckSigAdd, bool countEd25519) const
 {
     unsigned int n = 0;
     const_iterator pc = begin();
@@ -209,7 +225,10 @@ unsigned int CScript::GetSigOpCount(bool fAccurate) const
         opcodetype opcode;
         if (!GetOp(pc, opcode))
             break;
-        if (opcode == OP_CHECKSIG || opcode == OP_CHECKSIGVERIFY)
+        if (opcode == OP_CHECKSIG || opcode == OP_CHECKSIGVERIFY ||
+            (countCSFS && opcode == OP_CHECKSIGFROMSTACK) ||
+            (countCheckSigAdd && opcode == OP_CHECKSIGADD) ||
+            (countEd25519 && opcode == OP_CHECKSIG_ED25519))
             n++;
         else if (opcode == OP_CHECKMULTISIG || opcode == OP_CHECKMULTISIGVERIFY)
         {
@@ -223,10 +242,10 @@ unsigned int CScript::GetSigOpCount(bool fAccurate) const
     return n;
 }
 
-unsigned int CScript::GetSigOpCount(const CScript& scriptSig) const
+unsigned int CScript::GetSigOpCount(const CScript& scriptSig, bool countCSFS, bool countCheckSigAdd, bool countEd25519) const
 {
     if (!IsPayToScriptHash())
-        return GetSigOpCount(true);
+        return GetSigOpCount(true, countCSFS, countCheckSigAdd, countEd25519);
 
     // This is a pay-to-script-hash scriptPubKey;
     // get the last item that the scriptSig
@@ -244,7 +263,7 @@ unsigned int CScript::GetSigOpCount(const CScript& scriptSig) const
 
     /// ... and return its opcount:
     CScript subscript(vData.begin(), vData.end());
-    return subscript.GetSigOpCount(true);
+    return subscript.GetSigOpCount(true, countCSFS, countCheckSigAdd, countEd25519);
 }
 
 bool CScript::IsPayToPublicKeyHash() const
@@ -280,6 +299,37 @@ bool CScript::IsAssetScript() const
 // IsAssetScript()'s two shapes (P2PKH+asset, AuthScript+asset) down to the
 // AuthScript case only. Any trailing OP_XNA_ASSET payload is validated by
 // IsAssetScript() itself, so no additional inspection is needed here.
+namespace {
+// Default for code with no block context; kept by validation equal to
+// "active for the block after the current tip".
+std::atomic<bool> g_fStrictAuthScriptActiveDefault{false};
+// Scoped per-thread context: -1 = no scope, 0 = inactive, 1 = active.
+thread_local int t_nStrictAuthScriptContext = -1;
+}
+
+void SetStrictAuthScriptActiveDefault(bool fActive)
+{
+    g_fStrictAuthScriptActiveDefault.store(fActive);
+}
+
+bool IsStrictAuthScriptActiveInContext()
+{
+    if (t_nStrictAuthScriptContext >= 0) {
+        return t_nStrictAuthScriptContext == 1;
+    }
+    return g_fStrictAuthScriptActiveDefault.load();
+}
+
+CStrictAuthScriptContext::CStrictAuthScriptContext(bool fActive) : m_previous(t_nStrictAuthScriptContext)
+{
+    t_nStrictAuthScriptContext = fActive ? 1 : 0;
+}
+
+CStrictAuthScriptContext::~CStrictAuthScriptContext()
+{
+    t_nStrictAuthScriptContext = m_previous;
+}
+
 bool CScript::IsAssetAuthScript() const
 {
     if (this->size() < 34) return false;
@@ -301,6 +351,11 @@ bool CScript::IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex) con
 }
 
 bool CScript::IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex, AssetMarker& marker) const
+{
+    return IsAssetScript(nType, fIsOwner, nStartingIndex, marker, IsStrictAuthScriptActiveInContext());
+}
+
+bool CScript::IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex, AssetMarker& marker, bool fStrictActive) const
 {
     fIsOwner = false;
     marker = AssetMarker::LEGACY_RVN;
@@ -378,10 +433,12 @@ bool CScript::IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex, Ass
         return false;
     }
 
-    // AuthScript-prefixed asset script (OP_1 <32-byte commitment>, byte 34).
-    // New DePIN format with no mainnet history: keep the strict GetOp parser.
+    // AuthScript-prefixed asset script (OP_n <32-byte commitment>, byte 34),
+    // where OP_n is OP_1 (generic AuthScript v1) or OP_2 / OP_3 (strict
+    // AuthScript families). New DePIN format with no mainnet history: keep
+    // the strict GetOp parser.
     if (this->size() > 40 &&
-        (*this)[0] == OP_1 &&
+        ((*this)[0] == OP_1 || (((*this)[0] == OP_2 || (*this)[0] == OP_3) && fStrictActive)) &&
         (*this)[1] == 0x20) {
 
         const int assetOpIndex = 34;
@@ -485,11 +542,18 @@ bool CScript::IsNullAsset() const
 
 bool CScript::IsNullAssetTxDataScript() const
 {
+    return IsNullAssetTxDataScript(IsStrictAuthScriptActiveInContext());
+}
+
+bool CScript::IsNullAssetTxDataScript(bool fStrictActive) const
+{
     // Legacy format: OP_XNA_ASSET 0x14 <20-byte-hash> <asset-data>
     if (this->size() > 23 && (*this)[0] == OP_XNA_ASSET && (*this)[1] == 0x14)
         return true;
-    // AuthScript format: OP_XNA_ASSET OP_1 0x20 <32-byte-commitment> <asset-data>
-    if (this->size() > 36 && (*this)[0] == OP_XNA_ASSET && (*this)[1] == OP_1 && (*this)[2] == 0x20)
+    // AuthScript format: OP_XNA_ASSET OP_n 0x20 <32-byte-commitment> <asset-data>
+    // (OP_1 generic v1, OP_2 / OP_3 strict families)
+    if (this->size() > 36 && (*this)[0] == OP_XNA_ASSET &&
+        ((*this)[1] == OP_1 || (((*this)[1] == OP_2 || (*this)[1] == OP_3) && fStrictActive)) && (*this)[2] == 0x20)
         return true;
     return false;
 }
@@ -756,3 +820,7 @@ bool AmountFromReissueScript(const CScript& scriptPubKey, CAmount& nAmount)
     return true;
 }
 //!--------------------------------------------------------------------------------------------------------------------------!//
+
+namespace { std::atomic<int> g_signatureOpcodeCandidateHeight{0}; }
+void SetSignatureOpcodeCandidateHeight(int height) { g_signatureOpcodeCandidateHeight.store(height); }
+int GetSignatureOpcodeCandidateHeight() { return g_signatureOpcodeCandidateHeight.load(); }

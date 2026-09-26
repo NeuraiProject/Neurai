@@ -82,12 +82,14 @@ StructuralResult ValidateSignature(const unsigned char* sig, size_t len)
     return StructuralResult::OK;
 }
 
-bool VerifyStrict(const unsigned char* pubkey, size_t pubkey_len,
+VerificationResult VerifyStrictDetailed(const unsigned char* pubkey, size_t pubkey_len,
                   const unsigned char* sig,    size_t sig_len,
                   const unsigned char* msg,    size_t msg_len)
 {
-    if (ValidatePubkey(pubkey, pubkey_len)   != StructuralResult::OK) return false;
-    if (ValidateSignature(sig, sig_len)      != StructuralResult::OK) return false;
+    const auto pkCheck = ValidatePubkey(pubkey, pubkey_len);
+    if (pkCheck != StructuralResult::OK) return {pkCheck, false};
+    const auto sigCheck = ValidateSignature(sig, sig_len);
+    if (sigCheck != StructuralResult::OK) return {sigCheck, false};
 
     // Decode A negated for the verify-equation rearrangement
     //     [S]·B - [H]·A = R   <=>   [H]·(-A) + [S]·B = R
@@ -95,7 +97,7 @@ bool VerifyStrict(const unsigned char* pubkey, size_t pubkey_len,
     // already passed ValidatePubkey, but check the return value to
     // satisfy strict-aliasing reviewers.
     ge25519_p3 A_neg;
-    if (ge25519_frombytes_negate_vartime(&A_neg, pubkey) != 0) return false;
+    if (ge25519_frombytes_negate_vartime(&A_neg, pubkey) != 0) return {StructuralResult::OK, false};
 
     unsigned char h[64];
     CSHA512().Write(sig, 32)
@@ -110,7 +112,14 @@ bool VerifyStrict(const unsigned char* pubkey, size_t pubkey_len,
     unsigned char R_prime_bytes[32];
     ge25519_tobytes(R_prime_bytes, &R_prime);
 
-    return std::memcmp(R_prime_bytes, sig, 32) == 0;
+    return {StructuralResult::OK, std::memcmp(R_prime_bytes, sig, 32) == 0};
+}
+
+bool VerifyStrict(const unsigned char* pubkey, size_t pubkey_len,
+                  const unsigned char* sig, size_t sig_len,
+                  const unsigned char* msg, size_t msg_len)
+{
+    return VerifyStrictDetailed(pubkey, pubkey_len, sig, sig_len, msg, msg_len).valid;
 }
 
 } // namespace ed25519

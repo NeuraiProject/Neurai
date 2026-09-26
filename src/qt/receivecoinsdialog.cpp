@@ -212,6 +212,10 @@ void ReceiveCoinsDialog::on_receiveButton_clicked()
         /* Generate new receiving address */
         address = model->getAddressTableModel()->addRow(AddressTableModel::Receive, label, "");
     }
+    if (address.isEmpty()) {
+        QMessageBox::warning(this, tr("Receive"), tr("Could not generate a receiving address. Check that the wallet is available and unlocked."));
+        return;
+    }
     SendCoinsRecipient info(address, label,
         ui->reqAmount->value(), ui->reqMessage->text());
     ReceiveRequestDialog *dialog = new ReceiveRequestDialog(this);

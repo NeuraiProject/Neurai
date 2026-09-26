@@ -109,6 +109,11 @@ BOOST_FIXTURE_TEST_SUITE(base58_tests, BasicTestingSetup)
         {
             return (exp_addrType == "authscript");
         }
+
+        bool operator()(const WitnessStrictAuthScript &id) const
+        {
+            return (exp_addrType == "strict_authscript");
+        }
     };
 
     // Visitor to check address payload
@@ -140,6 +145,11 @@ BOOST_FIXTURE_TEST_SUITE(base58_tests, BasicTestingSetup)
         bool operator()(const WitnessV1AuthScript &id) const
         {
             return uint256(exp_payload) == id;
+        }
+
+        bool operator()(const WitnessStrictAuthScript &id) const
+        {
+            return uint256(exp_payload) == id.commitment;
         }
     };
 

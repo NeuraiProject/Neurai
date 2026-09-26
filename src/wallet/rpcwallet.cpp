@@ -185,19 +185,21 @@ UniValue getnewaddress(const JSONRPCRequest& request)
         return NullUniValue;
     }
 
-    if (request.fHelp || request.params.size() > 1)
+    if (request.fHelp || request.params.size() > 2)
         throw std::runtime_error(
-            "getnewaddress ( \"account\" )\n"
+            "getnewaddress ( \"account\" \"address_type\" )\n"
             "\nReturns a new Neurai address for receiving payments.\n"
             "If 'account' is specified (DEPRECATED), it is added to the address book \n"
             "so payments received with the address will be credited to 'account'.\n"
             "\nArguments:\n"
             "1. \"account\"        (string, optional) DEPRECATED. The account name for the address to be linked to. If not provided, the default account \"\" is used. It can also be set to the empty string \"\" to represent the default account. The account does not need to exist, it will be created if there is no account by the given name.\n"
+            "2. \"address_type\"   (string, optional) The address family: \"legacy\" (Base58, secp256k1), \"pq\" (strict post-quantum, witness v2, pq1.../tpq1...) or \"ecdsa\" (strict ECDSA, witness v3, nq1r.../tnq1r...). If omitted, the wallet's address type (-addresstype when it was created, see getwalletinfo) is used. \"pq\" needs a pq wallet; an ecdsa wallet refuses \"legacy\". Strict addresses are handed out before the network activates them, but payments to them are refused until then. Generic AuthScript v1 (nc1p.../tnc1p...) is a contract family and is never handed out by the wallet.\n"
             "\nResult:\n"
             "\"address\"    (string) The new neurai address\n"
             "\nExamples:\n"
             + HelpExampleCli("getnewaddress", "")
-            + HelpExampleRpc("getnewaddress", "")
+            + HelpExampleCli("getnewaddress", "\"\" \"ecdsa\"")
+            + HelpExampleRpc("getnewaddress", "\"\", \"pq\"")
         );
 
     LOCK2(cs_main, pwallet->cs_wallet);
@@ -207,18 +209,38 @@ UniValue getnewaddress(const JSONRPCRequest& request)
     if (!request.params[0].isNull())
         strAccount = AccountFromValue(request.params[0]);
 
+    std::string addressType;
+    if (request.params.size() > 1 && !request.params[1].isNull())
+        addressType = request.params[1].get_str();
+
     if (!pwallet->IsLocked()) {
         pwallet->TopUpKeyPool();
     }
 
-    // Generate a new key that is added to wallet
-    CPubKey newKey;
-    if (!pwallet->GetKeyFromPool(newKey)) {
-        throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
+    // Without an explicit type, the wallet's own address type (like the GUI).
+    if (addressType.empty() && pwallet->GetAddressType() != WalletAddressType::LEGACY) {
+        addressType = WalletAddressTypeName(pwallet->GetAddressType());
     }
-    CTxDestination dest = newKey.GetID();
-    if (newKey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(newKey, dest)) {
-        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive AuthScript destination for new PQ key");
+
+    CTxDestination dest;
+    if (!addressType.empty()) {
+        std::string error;
+        if (!pwallet->GetNewDestinationOfType(addressType, false, dest, error)) {
+            throw JSONRPCError(RPC_WALLET_ERROR, error);
+        }
+    } else {
+        // Generate a new key that is added to wallet
+        CPubKey newKey;
+        if (!pwallet->GetKeyFromPool(newKey)) {
+            throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
+        }
+        dest = newKey.GetID();
+        if (newKey.IsPQ()) {
+            // Only reachable for a PQ key in a wallet not flagged as PQ.
+            if (!pwallet->GetStrictAuthScriptDestination(newKey, dest)) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive strict PQ destination for new PQ key");
+            }
+        }
     }
 
     pwallet->SetAddressBook(dest, strAccount, "receive");
@@ -234,14 +256,13 @@ CTxDestination GetAccountAddress(CWallet* const pwallet, std::string strAccount,
         throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
     }
 
-    if (pubKey.IsPQ()) {
-        CTxDestination dest;
-        if (!pwallet->GetDefaultAuthScriptDestination(pubKey, dest)) {
-            throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive AuthScript destination for account PQ key");
-        }
-        return dest;
+    // The account address in the form the wallet hands it out (strict v2 for
+    // PQ keys, strict v3 in an ecdsa wallet).
+    CTxDestination dest;
+    if (!pwallet->GetDestinationForOwnKey(pubKey, dest)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive the destination of the account key");
     }
-    return pubKey.GetID();
+    return dest;
 }
 
 UniValue getaccountaddress(const JSONRPCRequest& request)
@@ -285,11 +306,13 @@ UniValue getrawchangeaddress(const JSONRPCRequest& request)
         return NullUniValue;
     }
 
-    if (request.fHelp || request.params.size() > 0)
+    if (request.fHelp || request.params.size() > 1)
         throw std::runtime_error(
-            "getrawchangeaddress\n"
+            "getrawchangeaddress ( \"address_type\" )\n"
             "\nReturns a new Neurai address, for receiving change.\n"
             "This is for use with raw transactions, NOT normal use.\n"
+            "\nArguments:\n"
+            "1. \"address_type\"   (string, optional) \"legacy\", \"pq\" (strict witness v2) or \"ecdsa\" (strict witness v3). Default: the wallet's address type (-addresstype when it was created).\n"
             "\nResult:\n"
             "\"address\"    (string) The address\n"
             "\nExamples:\n"
@@ -303,6 +326,22 @@ UniValue getrawchangeaddress(const JSONRPCRequest& request)
         pwallet->TopUpKeyPool();
     }
 
+    std::string changeType;
+    if (request.params.size() > 0 && !request.params[0].isNull())
+        changeType = request.params[0].get_str();
+    // Without an explicit type, the wallet's own address type, like its receive addresses.
+    if (changeType.empty() && pwallet->GetAddressType() != WalletAddressType::LEGACY) {
+        changeType = WalletAddressTypeName(pwallet->GetAddressType());
+    }
+    if (!changeType.empty()) {
+        CTxDestination typedDest;
+        std::string error;
+        if (!pwallet->GetNewDestinationOfType(changeType, true, typedDest, error)) {
+            throw JSONRPCError(RPC_WALLET_ERROR, error);
+        }
+        return EncodeDestination(typedDest);
+    }
+
     CReserveKey reservekey(pwallet);
     CPubKey vchPubKey;
     if (!reservekey.GetReservedKey(vchPubKey, true))
@@ -311,8 +350,8 @@ UniValue getrawchangeaddress(const JSONRPCRequest& request)
     reservekey.KeepKey();
 
     CTxDestination dest = vchPubKey.GetID();
-    if (vchPubKey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(vchPubKey, dest)) {
-        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive AuthScript destination for PQ change key");
+    if (vchPubKey.IsPQ() && !pwallet->GetStrictAuthScriptDestination(vchPubKey, dest)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive strict PQ destination for PQ change key");
     }
 
     return EncodeDestination(dest);
@@ -782,6 +821,12 @@ UniValue signmessage(const JSONRPCRequest& request)
     } else if (const WitnessV1AuthScript* authScriptDest = boost::get<WitnessV1AuthScript>(&dest)) {
         AuthScriptSpendData spendData;
         if (!pwallet->GetAuthScriptSpendData(uint256(*authScriptDest), spendData)) {
+            throw JSONRPCError(RPC_TYPE_ERROR, "Address does not refer to wallet AuthScript data");
+        }
+        keyID = spendData.key_id;
+    } else if (const WitnessStrictAuthScript* strictDest = boost::get<WitnessStrictAuthScript>(&dest)) {
+        AuthScriptSpendData spendData;
+        if (!pwallet->GetAuthScriptSpendData(strictDest->version, strictDest->commitment, spendData)) {
             throw JSONRPCError(RPC_TYPE_ERROR, "Address does not refer to wallet AuthScript data");
         }
         keyID = spendData.key_id;
@@ -1350,6 +1395,8 @@ public:
 
     bool operator()(const WitnessV1AuthScript &authscript) const { return false; }
 
+    bool operator()(const WitnessStrictAuthScript &strict) const { return false; }
+
     bool operator()(const CKeyID &keyID) {
         if (pwallet) {
             CScript basescript = GetScriptForDestination(keyID);
@@ -1359,7 +1406,8 @@ public:
             // if we were to have the private keys. This is just to make sure that the script is valid and that,
             // if found in a transaction, we would still accept and relay that transaction.
             script_verify_flags verify_flags = MANDATORY_SCRIPT_VERIFY_FLAGS | SCRIPT_VERIFY_WITNESS_PUBKEYTYPE;
-            if (GetParams().GetConsensus().nPQWitnessEnabled) {
+            // AuthScript applies from the network's opt-in height; evaluate the next block.
+            if (GetParams().GetConsensus().IsPQWitnessActive(GetSignatureOpcodeCandidateHeight())) {
                 verify_flags |= SCRIPT_VERIFY_AUTHSCRIPT;
             }
             if (!ProduceSignature(DummySignatureCreator(pwallet), witscript, sigs) ||
@@ -1388,7 +1436,8 @@ public:
             // if we were to have the private keys. This is just to make sure that the script is valid and that,
             // if found in a transaction, we would still accept and relay that transaction.
             script_verify_flags verify_flags = MANDATORY_SCRIPT_VERIFY_FLAGS | SCRIPT_VERIFY_WITNESS_PUBKEYTYPE;
-            if (GetParams().GetConsensus().nPQWitnessEnabled) {
+            // AuthScript applies from the network's opt-in height; evaluate the next block.
+            if (GetParams().GetConsensus().IsPQWitnessActive(GetSignatureOpcodeCandidateHeight())) {
                 verify_flags |= SCRIPT_VERIFY_AUTHSCRIPT;
             }
             if (!ProduceSignature(DummySignatureCreator(pwallet), witscript, sigs) ||
@@ -2823,6 +2872,7 @@ UniValue getwalletinfo(const JSONRPCRequest& request)
             "{\n"
             "  \"walletname\": xxxxx,             (string) the wallet name\n"
             "  \"walletversion\": xxxxx,          (numeric) the wallet version\n"
+            "  \"addresstype\": \"type\",           (string) the address type fixed when the wallet was created (-addresstype): legacy, pq or ecdsa\n"
             "  \"balance\": xxxxxxx,              (numeric) the total confirmed balance of the wallet in " + CURRENCY_UNIT + "\n"
             "  \"unconfirmed_balance\": xxx,      (numeric) the total unconfirmed balance of the wallet in " + CURRENCY_UNIT + "\n"
             "  \"immature_balance\": xxxxxx,      (numeric) the total immature balance of the wallet in " + CURRENCY_UNIT + "\n"
@@ -2848,6 +2898,7 @@ UniValue getwalletinfo(const JSONRPCRequest& request)
     size_t kpExternalSize = pwallet->KeypoolCountExternalKeys();
     obj.push_back(Pair("walletname", pwallet->GetName()));
     obj.push_back(Pair("walletversion", pwallet->GetVersion()));
+    obj.push_back(Pair("addresstype",   WalletAddressTypeName(pwallet->GetAddressType())));
     obj.push_back(Pair("balance",       ValueFromAmount(pwallet->GetBalance())));
     obj.push_back(Pair("unconfirmed_balance", ValueFromAmount(pwallet->GetUnconfirmedBalance())));
     obj.push_back(Pair("immature_balance",    ValueFromAmount(pwallet->GetImmatureBalance())));
@@ -2857,6 +2908,10 @@ UniValue getwalletinfo(const JSONRPCRequest& request)
     CKeyID seed_id = pwallet->GetHDChain().seed_id;
     if (!seed_id.IsNull() && pwallet->CanSupportFeature(FEATURE_HD_SPLIT)) {
         obj.push_back(Pair("keypoolsize_hd_internal",   (int64_t)(pwallet->GetKeyPoolSize() - kpExternalSize)));
+    }
+    if ((IsStrictAuthScriptActiveInContext() || pwallet->GetAddressType() == WalletAddressType::ECDSA) && pwallet->IsBip44Enabled()) {
+        obj.push_back(Pair("keypoolsize_strict_ecdsa", (int64_t)pwallet->GetStrictEcdsaKeyPoolSize(false)));
+        obj.push_back(Pair("keypoolsize_strict_ecdsa_internal", (int64_t)pwallet->GetStrictEcdsaKeyPoolSize(true)));
     }
     if (pwallet->IsCrypted()) {
         obj.push_back(Pair("unlocked_until", pwallet->nRelockTime));
@@ -3449,6 +3504,12 @@ UniValue generate(const JSONRPCRequest& request)
         max_tries = request.params[1].get_int();
     }
 
+    // A pq or ecdsa wallet mines to its own strict family, which must be active.
+    std::string inactive;
+    if (!CWallet::IsAddressTypeActive(WalletAddressTypeName(pwallet->GetAddressType()), inactive)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, inactive);
+    }
+
     std::shared_ptr<CReserveScript> coinbase_script;
     pwallet->GetScriptForMining(coinbase_script);
 
@@ -3553,7 +3614,7 @@ UniValue listpqaddresses(const JSONRPCRequest& request)
             "\nReturns the list of post-quantum (ML-DSA-44) Bech32m addresses in the wallet.\n"
             "\nResult:\n"
             "[                        (json array of strings)\n"
-            "  \"address\"             (string) A post-quantum Bech32m address (nq1...)\n"
+            "  \"address\"             (string) A strict post-quantum (witness v2) address of a PQ key (pq1.../tpq1...)\n"
             "  ...\n"
             "]\n"
             "\nExamples:\n"
@@ -3572,8 +3633,9 @@ UniValue listpqaddresses(const JSONRPCRequest& request)
             continue;
         if (!pubkey.IsPQ())
             continue;
+        // Strict PQ v2 is the wallet's PQ family; generic v1 is for contracts.
         CTxDestination dest;
-        if (pwallet->GetDefaultAuthScriptDestination(pubkey, dest, false)) {
+        if (pwallet->GetStrictAuthScriptDestination(pubkey, dest, false)) {
             ret.push_back(EncodeDestination(dest));
         }
     }
@@ -3699,8 +3761,8 @@ static const CRPCCommand commands[] =
     { "wallet",             "getbalance",               &getbalance,               {"account","minconf","include_watchonly"} },
     { "wallet",             "getmasterkeyinfo",         &getmasterkeyinfo,         {} },
     { "wallet",             "getmywords",               &getmywords,                        {} },
-    { "wallet",             "getnewaddress",            &getnewaddress,            {"account"} },
-    { "wallet",             "getrawchangeaddress",      &getrawchangeaddress,      {} },
+    { "wallet",             "getnewaddress",            &getnewaddress,            {"account","address_type"} },
+    { "wallet",             "getrawchangeaddress",      &getrawchangeaddress,      {"address_type"} },
     { "wallet",             "getreceivedbyaccount",     &getreceivedbyaccount,     {"account","minconf"} },
     { "wallet",             "getreceivedbyaddress",     &getreceivedbyaddress,     {"address","minconf"} },
     { "wallet",             "gettransaction",           &gettransaction,           {"txid","include_watchonly"} },

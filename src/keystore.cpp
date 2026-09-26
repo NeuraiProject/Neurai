@@ -118,17 +118,37 @@ bool CBasicKeyStore::HaveWatchOnly() const
     return (!setWatchOnly.empty());
 }
 
+// The commitment-only overloads are the historical witness v1 API. They
+// forward to this class's versioned implementation with a qualified call:
+// a virtual dispatch would reach CWallet's override, which also persists to
+// the wallet database, and that must never happen while the wallet is being
+// loaded (it would re-enter the database and deadlock).
 bool CBasicKeyStore::AddAuthScriptSpendData(const uint256& commitment, const AuthScriptSpendData& spendData)
 {
-    LOCK(cs_KeyStore);
-    mapAuthScriptSpendData[commitment] = spendData;
-    return true;
+    return CBasicKeyStore::AddAuthScriptSpendData(1, commitment, spendData);
 }
 
 bool CBasicKeyStore::GetAuthScriptSpendData(const uint256& commitment, AuthScriptSpendData& spendData) const
 {
+    return CBasicKeyStore::GetAuthScriptSpendData(1, commitment, spendData);
+}
+
+bool CBasicKeyStore::HaveAuthScriptSpendData(const uint256& commitment) const
+{
+    return CBasicKeyStore::HaveAuthScriptSpendData(1, commitment);
+}
+
+bool CBasicKeyStore::AddAuthScriptSpendData(uint8_t witnessVersion, const uint256& commitment, const AuthScriptSpendData& spendData)
+{
     LOCK(cs_KeyStore);
-    AuthScriptSpendDataMap::const_iterator it = mapAuthScriptSpendData.find(commitment);
+    mapAuthScriptSpendData[AuthScriptSpendDataKey(witnessVersion, commitment)] = spendData;
+    return true;
+}
+
+bool CBasicKeyStore::GetAuthScriptSpendData(uint8_t witnessVersion, const uint256& commitment, AuthScriptSpendData& spendData) const
+{
+    LOCK(cs_KeyStore);
+    AuthScriptSpendDataMap::const_iterator it = mapAuthScriptSpendData.find(AuthScriptSpendDataKey(witnessVersion, commitment));
     if (it == mapAuthScriptSpendData.end()) {
         return false;
     }
@@ -136,10 +156,10 @@ bool CBasicKeyStore::GetAuthScriptSpendData(const uint256& commitment, AuthScrip
     return true;
 }
 
-bool CBasicKeyStore::HaveAuthScriptSpendData(const uint256& commitment) const
+bool CBasicKeyStore::HaveAuthScriptSpendData(uint8_t witnessVersion, const uint256& commitment) const
 {
     LOCK(cs_KeyStore);
-    return mapAuthScriptSpendData.count(commitment) > 0;
+    return mapAuthScriptSpendData.count(AuthScriptSpendDataKey(witnessVersion, commitment)) > 0;
 }
 
 

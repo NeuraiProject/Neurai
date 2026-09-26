@@ -138,19 +138,19 @@ These opcodes allow scripts to inspect properties of the spending transaction it
 |---|---|
 | **Byte Value** | `0xb5` (replaces `OP_NOP6`) |
 | **Activation Flag** | `SCRIPT_VERIFY_TXHASH` (bit 20) |
-| **Consensus Parameter** | `nTXHASHEnabled` |
+| **Consensus Parameter** | `nTxHashHeight` (NIP-042) |
 | **Error Code** | `SCRIPT_ERR_TXHASH` |
 
 **Stack Effect:**
 
 ```
-Before: <1-byte field_selector>
+Before: <2-byte little-endian field_selector>
 After:  <32-byte hash>
 ```
 
 **Description:**
 
-OP_TXHASH computes a double-SHA256 hash over a configurable subset of the spending transaction's fields. The field selector is a single byte where each bit selects a field:
+OP_TXHASH computes `TaggedHash("NeuraiTxHash", mask_le16 || fields)` over a configurable subset of the spending transaction's fields. The field selector is exactly two bytes, interpreted as an unsigned little-endian mask:
 
 | Bit | Mask | Field |
 |-----|------|-------|
@@ -162,14 +162,17 @@ OP_TXHASH computes a double-SHA256 hash over a configurable subset of the spendi
 | 5 | `0x20` | Serialized prevout of current input |
 | 6 | `0x40` | Sequence number of current input |
 | 7 | `0x80` | Index of current input (uint32 LE) |
+| 8 | `0x100` | Double-SHA256 of reference outpoints, without a count prefix |
 
 **Behavior:**
 
 - If the flag is not set, behaves as `OP_NOP6`.
-- The selector must be exactly 1 byte; otherwise, the script fails.
-- Selector `0x00` is invalid (fails).
-- Selected fields are concatenated in bit order and hashed with double-SHA256 (CHash256).
-- Reuses `PrecomputedTransactionData` BIP143 cache for prevouts/sequences/outputs sub-hashes (O(1) vs O(n)).
+- The selector must be exactly two bytes; zero and reserved bits 9–15 fail. There are 511 valid masks.
+- The mask precedes the selected fields in bit order in the tagged-hash preimage.
+- List sub-hashes use double-SHA256; the final tagged hash uses single-SHA256.
+- Non-v3 transactions and empty reference lists contribute `SHA256d("")` for bit 8.
+- Reuses `PrecomputedTransactionData` caches for prevouts, sequences, outputs and references. Without the relevant cache, each opcode execution hashes the selected list again.
+- Activation: reset testnet at block 1, regtest at block 0 by default, mainnet unscheduled. The old composition is removed. See [the full format and examples](covenants.md#op_txhash--flexible-commitments-nip-042).
 
 **Use Cases:**
 

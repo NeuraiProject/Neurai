@@ -137,6 +137,15 @@ void SignVerifyMessageDialog::on_signMessageButton_SM_clicked()
             return;
         }
         keyID = spendData.key_id;
+    } else if (const WitnessStrictAuthScript* strictDest = boost::get<WitnessStrictAuthScript>(&destination)) {
+        AuthScriptSpendData spendData;
+        if (!model->getWallet()->GetAuthScriptSpendData(strictDest->version, strictDest->commitment, spendData)) {
+            ui->addressIn_SM->setValid(false);
+            ui->statusLabel_SM->setStyleSheet("QLabel { color: red; }");
+            ui->statusLabel_SM->setText(tr("The entered address does not refer to wallet AuthScript data.") + QString(" ") + tr("Please check the address and try again."));
+            return;
+        }
+        keyID = spendData.key_id;
     } else {
         ui->addressIn_SM->setValid(false);
         ui->statusLabel_SM->setStyleSheet("QLabel { color: red; }");
@@ -214,7 +223,8 @@ void SignVerifyMessageDialog::on_verifyMessageButton_VM_clicked()
         ui->statusLabel_VM->setText(tr("The entered address is invalid.") + QString(" ") + tr("Please check the address and try again."));
         return;
     }
-    if (!boost::get<CKeyID>(&destination) && !boost::get<WitnessV1AuthScript>(&destination)) {
+    if (!boost::get<CKeyID>(&destination) && !boost::get<WitnessV1AuthScript>(&destination) &&
+        !boost::get<WitnessStrictAuthScript>(&destination)) {
         ui->addressIn_VM->setValid(false);
         ui->statusLabel_VM->setStyleSheet("QLabel { color: red; }");
         ui->statusLabel_VM->setText(tr("The entered address does not refer to a key.") + QString(" ") + tr("Please check the address and try again."));

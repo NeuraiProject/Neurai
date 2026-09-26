@@ -5,6 +5,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "validation.h"
+#include "crypto/backend_error.h"
 
 #include "arith_uint256.h"
 #include "chain.h"
@@ -124,12 +125,34 @@ namespace {
 
 bool ExtractIndexedPubKeyFromInput(const CTxIn& input, const std::vector<unsigned char>& expectedHash, int addressType, CPubKey& pubkey)
 {
+    // Strict AuthScript families (witness v2/v3): stack = [auth_type, sig, pubkey, OP_TRUE]
+    if (addressType == DEST_INDEX_WITNESS_V2_STRICT_PQ || addressType == DEST_INDEX_WITNESS_V3_STRICT_ECDSA) {
+        const auto& stack = input.scriptWitness.stack;
+        if (stack.size() == 4 && stack[0].size() == 1) {
+            const uint8_t authType = stack[0][0];
+            const int version = (addressType == DEST_INDEX_WITNESS_V2_STRICT_PQ) ? STRICT_AUTHSCRIPT_WITNESS_V2_PQ : STRICT_AUTHSCRIPT_WITNESS_V3_ECDSA;
+            if (authType == StrictAuthScriptAuthType(version)) {
+                CPubKey candidate(stack[2]);
+                if (candidate.IsValid()) {
+                    pubkey = candidate;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     // For AuthScript witness v1: stack = [auth_type, sig, pubkey, ...args, witnessScript]
     if (addressType == DEST_INDEX_WITNESS_V1_AUTHSCRIPT) {
         const auto& stack = input.scriptWitness.stack;
         if (stack.size() >= 4 && stack[0].size() == 1) {
             uint8_t authType = stack[0][0];
-            if (authType == 0x01 || authType == 0x02) {
+            size_t treeOffset = 0;
+            const bool treeGlobal = (authType == 0x11 || authType == 0x12) &&
+                ParseAuthScriptTreeWitness(input.scriptWitness, treeOffset);
+            if (authType == 0x01 || authType == 0x02 || treeGlobal) {
+                // MAST 0x10 has no global key; its arguments must not be indexed.
+                // Validated 0x11/0x12 use the same pubkey header position.
                 // stack[2] is the pubkey
                 CPubKey candidate(stack[2]);
                 if (candidate.IsValid()) {
@@ -326,7 +349,7 @@ enum FlushStateMode {
 static bool FlushStateToDisk(const CChainParams& chainParams, CValidationState &state, FlushStateMode mode, int nManualPruneHeight=0);
 static void FindFilesToPruneManual(std::set<int>& setFilesToPrune, int nManualPruneHeight);
 static void FindFilesToPrune(std::set<int>& setFilesToPrune, uint64_t nPruneAfterHeight);
-bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks = nullptr, std::shared_ptr<std::vector<CTxOut>> pRefOutputs = nullptr, ChainContext chainCtx = {}, bool* pfUsesChainContext = nullptr);
+bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks = nullptr, std::shared_ptr<std::vector<CTxOut>> pRefOutputs = nullptr, ChainContext chainCtx = {}, bool* pfUsesChainContext = nullptr, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr, std::shared_ptr<ScriptExecutionStatus> executionStatus = nullptr);
 static FILE* OpenUndoFile(const CDiskBlockPos &pos, bool fReadOnly = false);
 
 bool CheckFinalTx(const CTransaction &tx, int flags)
@@ -500,6 +523,11 @@ static bool IsCurrentForFeeEstimation()
  * and instead just erase from the mempool as needed.
  */
 
+static void MempoolEvictScriptRuleEntries(CTxMemPool& pool);
+// Set (under cs_main) when a tip change flipped the strict AuthScript activation
+// of the mempool's candidate height; consumed by UpdateMempoolForReorg.
+static bool g_fScriptRuleTransitionPending = false;
+
 void UpdateMempoolForReorg(DisconnectedBlockTransactions &disconnectpool, bool fAddToMempool)
 {
     AssertLockHeld(cs_main);
@@ -535,6 +563,17 @@ void UpdateMempoolForReorg(DisconnectedBlockTransactions &disconnectpool, bool f
 
     // We also need to remove any now-immature transactions
     mempool.removeForReorg(pcoinsTip, chainActive.Tip()->nHeight + 1, STANDARD_LOCKTIME_VERIFY_FLAGS);
+    // Height-activated script rules: the per-tip transition sweep in DisconnectTip cannot see
+    // a pending spend whose parent was confirmed in a block that is ALSO being
+    // disconnected (the coin is then neither in the chain nor yet back in the
+    // mempool). Now that disconnected transactions have been re-admitted, sweep
+    // once more - but only if this reorg actually crossed the activation height.
+    // An ordinary reorg entirely below (or above) it never pays for this; on a
+    // chain with no scheduled activation that is every reorg.
+    if (g_fScriptRuleTransitionPending) {
+        g_fScriptRuleTransitionPending = false;
+        MempoolEvictScriptRuleEntries(mempool);
+    }
     // DEPIN: a disconnected OPEN turns pending holder transfers unminable and
     // a disconnected state operation can turn a pending one into an invalid
     // transition; re-judge both against the new tip
@@ -546,7 +585,8 @@ void UpdateMempoolForReorg(DisconnectedBlockTransactions &disconnectpool, bool f
 // Used to avoid mempool polluting consensus critical paths if CCoinsViewMempool
 // were somehow broken and returning the wrong scriptPubKeys
 static bool CheckInputsFromMempoolAndCache(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &view, CTxMemPool& pool,
-                 script_verify_flags flags, bool cacheSigStore, PrecomputedTransactionData& txdata, ChainContext chainCtx = {}) {
+                 script_verify_flags flags, bool cacheSigStore, PrecomputedTransactionData& txdata,
+                 const std::shared_ptr<std::vector<CTxOut>>& pRefOutputs, ChainContext chainCtx = {}, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr, bool* pfUsesChainContext = nullptr) {
     AssertLockHeld(cs_main);
 
     // pool.cs should be locked already, but go ahead and re-take the lock here
@@ -576,7 +616,37 @@ static bool CheckInputsFromMempoolAndCache(const CTransaction& tx, CValidationSt
         }
     }
 
-    return CheckInputs(tx, state, view, true, flags, cacheSigStore, true, txdata, nullptr, nullptr, chainCtx);
+    // Reference outputs were resolved from pcoinsTip under cs_main before the
+    // first script check. Keep the same confirmed context for the consensus/cache
+    // check: reference introspection also needs it on a script-cache miss.
+    return CheckInputs(tx, state, view, true, flags, cacheSigStore, true, txdata, nullptr, pRefOutputs, chainCtx, pfUsesChainContext, poseidonWork);
+}
+
+bool IsInactiveAuthScriptOutput(const CScript& scriptPubKey, const Consensus::Params& consensus, int nHeight)
+{
+    if (!consensus.nPQWitnessEnabled)
+        return false; // the network does not schedule AuthScript: policy unchanged
+    const bool fV1Active = consensus.IsPQWitnessActive(nHeight);
+    const bool fStrictActive = fV1Active && consensus.IsStrictAuthScriptActive(nHeight);
+    if (fStrictActive)
+        return false;
+    int version = -1;
+    std::vector<unsigned char> program;
+    if (!scriptPubKey.IsWitnessProgram(version, program) &&
+        !GetAssetScriptWitnessProgram(scriptPubKey, version, program, nullptr, /*fStrictActive=*/true))
+        return false;
+    if (version == 1)
+        return !fV1Active;
+    return (version == 2 || version == 3);
+}
+
+static bool CreatesInactiveAuthScriptOutput(const CTransaction& tx, const Consensus::Params& consensus, int nHeight)
+{
+    for (const CTxOut& out : tx.vout) {
+        if (IsInactiveAuthScriptOutput(out.scriptPubKey, consensus, nHeight))
+            return true;
+    }
+    return false;
 }
 
 static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool& pool, CValidationState& state, const CTransactionRef& ptx,
@@ -585,6 +655,13 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
 {
     const CTransaction& tx = *ptx;
     const uint256 hash = tx.GetHash();
+
+    // Mempool transactions are validated as candidates for the next block:
+    // that is the strict AuthScript activation context for every asset parser
+    // reached from here (initial acceptance and re-admission after a reorg).
+    const bool fStrictAuthScriptActive = chainparams.GetConsensus().IsStrictAuthScriptActive(chainActive.Height() + 1);
+    const bool fSignatureOpcodesActive = chainparams.GetConsensus().IsSignatureOpcodesActive(chainActive.Height() + 1);
+    CStrictAuthScriptContext strictAuthScriptContext(fStrictAuthScriptActive);
 
     /** XNA START */
     std::vector<std::pair<std::string, uint256>> vReissueAssets;
@@ -596,6 +673,15 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
     bool fCheckMempool = true;
     if (!CheckTransaction(tx, state, fCheckDuplicates, fCheckMempool))
         return false; // state filled in by CheckTransaction
+
+    // Height-dependent half of the OP_XNA_ASSET placement rule, for the next
+    // block. No peer penalty: a peer one block behind may still relay a
+    // transaction that was valid for its own next block.
+    if (chainparams.GetConsensus().IsXnaAssetStrictActive(chainActive.Height() + 1)) {
+        CValidationState placementState;
+        if (!Consensus::CheckXnaAssetStrictPlacement(tx, placementState))
+            return state.DoS(0, false, REJECT_INVALID, placementState.GetRejectReason());
+    }
 
     // Coinbase is only valid in a block, not as a loose transaction
     if (tx.IsCoinBase())
@@ -612,9 +698,15 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
     if (fRequireStandard && !IsStandardTx(tx, reason, witnessEnabled))
         return state.DoS(0, false, REJECT_NONSTANDARD, reason);
 
-    // NIP-014: reject v3 before activation
-    if (tx.nVersion == 3 && !chainparams.GetConsensus().nREFINPUTSEnabled) {
+    // NIP-014: reject v3 before activation (evaluated for the next block)
+    if (tx.nVersion == 3 && !chainparams.GetConsensus().IsRefInputsActive(chainActive.Height() + 1)) {
         return state.DoS(0, false, REJECT_NONSTANDARD, "version-v3-not-active");
+    }
+
+    // Policy only: do not relay outputs to AuthScript families that do not
+    // apply yet to the next block, so funds are not sent there by accident.
+    if (CreatesInactiveAuthScriptOutput(tx, chainparams.GetConsensus(), chainActive.Height() + 1)) {
+        return state.DoS(0, false, REJECT_NONSTANDARD, "authscript-output-not-active");
     }
 
     // Only accept nLockTime-using transactions that can be mined in the next
@@ -766,7 +858,10 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         /** XNA END */
 
         // Check for non-standard pay-to-script-hash in inputs
-        if (fRequireStandard && !AreInputsStandard(tx, view))
+        const int nNextHeight = chainActive.Height() + 1;
+        const auto& optin = chainparams.GetConsensus();
+        if (fRequireStandard && !AreInputsStandard(tx, view, (fSignatureOpcodesActive && optin.IsOptInActive(optin.nCSFSEnabled, nNextHeight)),
+                (fSignatureOpcodesActive && optin.IsOptInActive(optin.nCheckSigAddEnabled, nNextHeight)), (fSignatureOpcodesActive && optin.IsOptInActive(optin.nEd25519Enabled, nNextHeight))))
             return state.Invalid(false, REJECT_NONSTANDARD, "bad-txns-nonstandard-inputs");
 
         // Check for non-standard witness in P2WSH. The wider per-item cap
@@ -778,11 +873,15 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         const auto& consensus = chainparams.GetConsensus();
         if (tx.HasWitness() && fRequireStandard &&
             !IsWitnessStandard(tx, view,
-                               consensus.nCSFSEnabled || consensus.nMerkleInclusionEnabled
-                               || consensus.nEd25519Enabled || consensus.nCheckSigAddEnabled))
+                               consensus.IsOptInActive(consensus.nMerkleInclusionEnabled, nNextHeight) || (fSignatureOpcodesActive &&
+                               (consensus.IsOptInActive(consensus.nCSFSEnabled, nNextHeight) ||
+                                consensus.IsOptInActive(consensus.nEd25519Enabled, nNextHeight) ||
+                                consensus.IsOptInActive(consensus.nCheckSigAddEnabled, nNextHeight))),
+                               ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, fStrictAuthScriptActive, chainActive.Height()+1)))
             return state.DoS(0, false, REJECT_NONSTANDARD, "bad-witness-nonstandard", true);
 
-        int64_t nSigOpsCost = GetTransactionSigOpCost(tx, view, STANDARD_SCRIPT_VERIFY_FLAGS);
+        int64_t nSigOpsCost = GetTransactionSigOpCost(tx, view,
+            ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, fStrictAuthScriptActive, chainActive.Height() + 1));
 
         // nModifiedFees includes any fee deltas from PrioritiseTransaction
         CAmount nModifiedFees = nFees;
@@ -943,6 +1042,15 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
                             maxDescendantsToVisit));
             }
 
+            // NIP025-patch1: resolve the complete bounded eviction set against
+            // live chain + mempool coins. No cached classification can become
+            // stale after reorg/reload, and no removal has happened yet.
+            CCoinsViewMemPool assetViewMemPool(pcoinsTip, pool);
+            CCoinsViewCache assetView(&assetViewMemPool);
+            if (ReplacementInvolvesAssets(tx, allConflicting, assetView)) {
+                return state.Invalid(false, REJECT_NONSTANDARD, "replacement-involves-assets");
+            }
+
             for (unsigned int j = 0; j < tx.vin.size(); j++)
             {
                 // We don't want to accept replacements that require low
@@ -992,7 +1100,7 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
             scriptVerifyFlags = script_verify_flags::from_int(
                 gArgs.GetArg("-promiscuousmempoolflags", scriptVerifyFlags.as_int()));
         }
-        scriptVerifyFlags = ApplyConsensusOptIns(scriptVerifyFlags, chainparams.GetConsensus());
+        scriptVerifyFlags = ApplyConsensusOptIns(scriptVerifyFlags, chainparams.GetConsensus(), fStrictAuthScriptActive, chainActive.Height() + 1);
 
         // Check against previous transactions
         // This is done last to help prevent CPU exhaustion denial-of-service attacks.
@@ -1022,8 +1130,16 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
             true
         };
         bool fUsesChainContext_local = false;
+        const bool poseidonWorkActive = consensus.IsPoseidonWorkActive(chainActive.Height() + 1);
+        std::shared_ptr<PoseidonWorkBudget> txPoseidonWork;
+        if (scriptVerifyFlags & (SCRIPT_VERIFY_POSEIDON | SCRIPT_VERIFY_MERKLE_POSEIDON | SCRIPT_VERIFY_POSEIDON_WORK))
+            txPoseidonWork = std::make_shared<PoseidonWorkBudget>(poseidonWorkActive ?
+                MAX_STANDARD_TX_POSEIDON_WORK : std::numeric_limits<uint64_t>::max());
 
-        if (!CheckInputs(tx, state, view, true, scriptVerifyFlags, true, false, txdata, nullptr, pRefOutputs, chainCtx, &fUsesChainContext_local)) {
+        if (!CheckInputs(tx, state, view, true, scriptVerifyFlags, true, false, txdata, nullptr, pRefOutputs, chainCtx, &fUsesChainContext_local, txPoseidonWork)) {
+            if (state.IsError()) return false;
+            if (txPoseidonWork && txPoseidonWork->Exceeded())
+                return state.Invalid(false, REJECT_NONSTANDARD, "bad-txns-poseidon-work");
             // SCRIPT_VERIFY_CLEANSTACK requires SCRIPT_VERIFY_WITNESS, so we
             // need to turn both off, and compare against just turning off CLEANSTACK
             // to see if the failure is specifically due to witness validation.
@@ -1033,6 +1149,7 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
                 // Only the witness is missing, so the transaction itself may be fine.
                 state.SetCorruptionPossible();
             }
+            if (stateDummy.IsError()) { state = stateDummy; return false; }
             return false; // state filled in by CheckInputs
         }
 
@@ -1052,8 +1169,26 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         // invalid blocks (using TestBlockValidity), however allowing such
         // transactions into the mempool can be exploited as a DoS attack.
         script_verify_flags currentBlockScriptVerifyFlags = GetBlockScriptFlags(chainActive.Tip(), GetParams().GetConsensus());
-        if (!CheckInputsFromMempoolAndCache(tx, state, view, pool, currentBlockScriptVerifyFlags, true, txdata, chainCtx))
+        // The transaction is a candidate for the NEXT block. Every flag that
+        // depends on the network and the height (all consensus opt-ins: strict
+        // AuthScript families, NIP-041, the opt-in switches and the per-feature
+        // heights) takes that block's state, otherwise a spend valid from the
+        // first active block would be refused while the tip is still the last
+        // inactive one, and vice versa after a reorg below an activation.
+        currentBlockScriptVerifyFlags &= ~CONSENSUS_OPT_IN_FLAGS;
+        currentBlockScriptVerifyFlags |= ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, chainparams.GetConsensus(),
+            fStrictAuthScriptActive, chainActive.Height() + 1);
+        // Mine using consensus cost, never the potentially weaker flags from
+        // -promiscuousmempoolflags (which can skip witness execution entirely).
+        std::shared_ptr<PoseidonWorkBudget> consensusPoseidonWork;
+        if (currentBlockScriptVerifyFlags & (SCRIPT_VERIFY_POSEIDON | SCRIPT_VERIFY_MERKLE_POSEIDON | SCRIPT_VERIFY_POSEIDON_WORK))
+            consensusPoseidonWork = std::make_shared<PoseidonWorkBudget>(poseidonWorkActive ?
+                MAX_STANDARD_TX_POSEIDON_WORK : std::numeric_limits<uint64_t>::max());
+        if (!CheckInputsFromMempoolAndCache(tx, state, view, pool, currentBlockScriptVerifyFlags, true, txdata, pRefOutputs, chainCtx, consensusPoseidonWork, &fUsesChainContext_local))
         {
+            if (state.IsError()) return false;
+            if (consensusPoseidonWork && consensusPoseidonWork->Exceeded())
+                return state.Invalid(false, REJECT_NONSTANDARD, "bad-txns-poseidon-work");
             // If we're using promiscuousmempoolflags, we may hit this normally
             // Check if current block has some flags that scriptVerifyFlags
             // does not before printing an ominous warning
@@ -1061,7 +1196,7 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
                 return error("%s: BUG! PLEASE REPORT THIS! ConnectInputs failed against latest-block but not STANDARD flags %s, %s",
                     __func__, hash.ToString(), FormatStateMessage(state));
             } else {
-                if (!CheckInputs(tx, state, view, true, MANDATORY_SCRIPT_VERIFY_FLAGS, true, false, txdata, nullptr, nullptr, chainCtx)) {
+                if (!CheckInputs(tx, state, view, true, MANDATORY_SCRIPT_VERIFY_FLAGS, true, false, txdata, nullptr, pRefOutputs, chainCtx)) {
                     return error("%s: ConnectInputs failed against MANDATORY but not STANDARD flags due to promiscuous mempool %s, %s",
                         __func__, hash.ToString(), FormatStateMessage(state));
                 } else {
@@ -1069,6 +1204,8 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
                 }
             }
         }
+
+        entry.SetPoseidonWork(consensusPoseidonWork ? consensusPoseidonWork->Used() : 0);
 
         // DEPIN: at most one pending transfer state operation per asset in
         // the mempool. Checked here, under pool.cs, after allConflicting is
@@ -1522,7 +1659,7 @@ bool ReadBlockFromDisk(CBlock& block, const CBlockIndex* pindex, const Consensus
 CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
 {
     // NIP-028: at and after the block-time-reduction activation height
-    // (testnet: 23,000), freeze the legacy halving index at the boundary
+    // (reset testnet: block 10), freeze the legacy halving index at the boundary
     // and add post-activation halvings on top, then halve the result.
     // Pre-activation behaviour is byte-identical to the legacy curve.
     const bool fPostReduction =
@@ -1545,7 +1682,7 @@ CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
     };
 
     // Go zero after 383 micro-halvings (10 years) Mined 20993999270 XNA
-    // (mainnet figures; testnet emission diverges past height 23,000 per NIP-028)
+    // (mainnet figures; testnet emission diverges from block 10 per NIP-028)
 
     if (halvings >= 383)
         return 0;
@@ -1802,14 +1939,27 @@ void UpdateCoins(const CTransaction& tx, CCoinsViewCache& inputs, int nHeight)
 }
 
 bool CScriptCheck::operator()() {
+    CachingTransactionSignatureChecker checker(ptxTo, nIn, m_tx_out.nValue, cacheStore, *txdata, m_tx_out.scriptPubKey, m_allPrevouts.get(), m_refOutputs.get(), m_chainContext);
+    checker.poseidonWorkBudget = m_poseidonWork.get();
+    return CheckWith(checker);
+}
+
+bool CScriptCheck::CheckWith(const BaseSignatureChecker& checker) {
     const CScript &scriptSig = ptxTo->vin[nIn].scriptSig;
     const CScriptWitness *witness = &ptxTo->vin[nIn].scriptWitness;
-    CachingTransactionSignatureChecker checker(ptxTo, nIn, m_tx_out.nValue, cacheStore, *txdata, m_tx_out.scriptPubKey, m_allPrevouts.get(), m_refOutputs.get(), m_chainContext);
-    const bool ok = VerifyScript(scriptSig, m_tx_out.scriptPubKey, witness, nFlags, checker, &error);
+    bool ok = false;
+    try {
+        ok = VerifyScript(scriptSig, m_tx_out.scriptPubKey, witness, nFlags, checker, &error);
+    } catch (const CryptoBackendError&) {
+        // Also cover authentication checks outside EvalScript.
+        error = SCRIPT_ERR_BACKEND_FAILURE;
+    }
     // NIP-026: surface whether the script exercised OP_CHAINCONTEXT.
     // Read regardless of success — a failed script may have still touched
     // the opcode before failing, and the mempool wants an honest record.
     fChainContextObserved = checker.fChainContextObserved;
+    if (error == SCRIPT_ERR_BACKEND_FAILURE && m_executionStatus)
+        m_executionStatus->SetLocalFailure();
     return ok;
 }
 
@@ -1859,11 +2009,19 @@ static void MempoolRemoveForNewTip(CTxMemPool& pool,
         GetChainIdForParams(chainparams),
         true
     };
+    const bool fStrictAuthScriptActive = chainparams.GetConsensus().IsStrictAuthScriptActive(tipNew.nHeight + 1);
+    CStrictAuthScriptContext strictAuthScriptContext(fStrictAuthScriptActive);
     const script_verify_flags flags =
-        ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, chainparams.GetConsensus());
+        ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, chainparams.GetConsensus(), fStrictAuthScriptActive, tipNew.nHeight + 1);
 
+    CCoinsViewMemPool viewMempool(pcoinsTip, pool);
     pool.removeForNewTip([&](const CTxMemPoolEntry& entry) -> bool {
         const CTransaction& tx = entry.GetTx();
+        CCoinsViewCache view(&viewMempool);
+        // A tagged contract may spend an unconfirmed parent. Never assert on
+        // a chain-only view or retain an unverified cost when reorgs temporarily
+        // remove that parent: evict it and its descendants for resubmission.
+        if (!view.HaveInputs(tx)) return true;
         CValidationState stateDummy;
         PrecomputedTransactionData txdata(tx);
         std::shared_ptr<std::vector<CTxOut>> pRefOutputs;
@@ -1880,10 +2038,201 @@ static void MempoolRemoveForNewTip(CTxMemPool& pool,
         // return here means the tx's scripts no longer pass — most
         // commonly, a deadline-based covenant whose HEIGHT / MTP
         // constraint flipped when the tip advanced.
-        return !CheckInputs(tx, stateDummy, *pcoinsTip, true, flags,
+        auto work = std::make_shared<PoseidonWorkBudget>((flags & SCRIPT_VERIFY_POSEIDON_WORK) ? MAX_STANDARD_TX_POSEIDON_WORK : std::numeric_limits<uint64_t>::max());
+        const bool valid = CheckInputs(tx, stateDummy, view, true, flags,
                             /*cacheSigStore=*/true,
                             /*cacheFullScriptStore=*/false,
-                            txdata, nullptr, pRefOutputs, newCtx, nullptr);
+                            txdata, nullptr, pRefOutputs, newCtx, nullptr, work);
+        if (stateDummy.IsError()) {
+            LogPrintf("Mempool script revalidation failed locally; retaining transaction\n");
+            return false;
+        }
+        return !valid || work->Used() != entry.GetPoseidonWork();
+    });
+}
+
+// Strict AuthScript (witness v2/v3): run on every tip change, in both
+// directions, independent of the NIP-026 machinery (which only visits entries
+// tagged with OP_CHAINCONTEXT). When the activation state of the mempool's
+// candidate height flips, entries already pending were admitted under the
+// other rule set:
+//  - spends of a witness v2/v3 output (native, asset-wrapped or P2SH-wrapped): below
+//    activation they are discouraged upgradable-witness spends, above it they
+//    must satisfy the strict template;
+//  - outputs carrying an asset under a v2/v3 prefix (or strict null-asset
+//    data): not valid asset scripts below activation.
+// They are evicted with their descendants; still-valid ones can be resubmitted
+// and are re-checked by AcceptToMemoryPool under the new context.
+static bool IsStrictAuthScriptProgram(const CScript& scriptPubKey)
+{
+    int version = 0;
+    std::vector<unsigned char> program;
+    if (scriptPubKey.IsWitnessProgram(version, program)) {
+        return IsStrictAuthScriptWitnessVersion(version) && program.size() == 32;
+    }
+    if (GetAssetScriptWitnessProgram(scriptPubKey, version, program, nullptr, /*fStrictActive=*/true)) {
+        return IsStrictAuthScriptWitnessVersion(version);
+    }
+    return false;
+}
+
+// Same question for a spend: the strict program may be the spent scriptPubKey
+// itself (native, or with an asset wrapper) or, for a P2SH coin, the
+// redeemScript revealed as the last push of the scriptSig. VerifyScript and
+// IsWitnessStandard both honour that P2SH-wrapped form, so the sweep must too.
+static bool SpendsStrictAuthScriptProgram(const CTxIn& txin, const CScript& spentScriptPubKey)
+{
+    if (IsStrictAuthScriptProgram(spentScriptPubKey)) {
+        return true;
+    }
+    if (!spentScriptPubKey.IsPayToScriptHash()) {
+        return false;
+    }
+    // Casual extraction, like IsWitnessStandard: take the last pushed element.
+    // Hash and push-only rules were enforced when the spend was admitted.
+    CScript::const_iterator pc = txin.scriptSig.begin();
+    std::vector<unsigned char> data;
+    std::vector<unsigned char> last;
+    opcodetype opcode;
+    while (pc < txin.scriptSig.end()) {
+        if (!txin.scriptSig.GetOp(pc, opcode, data)) {
+            return false;
+        }
+        last = data;
+    }
+    if (last.empty()) {
+        return false;
+    }
+    return IsStrictAuthScriptProgram(CScript(last.begin(), last.end()));
+}
+
+static void MempoolCheckScriptRuleTransition(CTxMemPool& pool,
+                                                   int nOldCandidateHeight,
+                                                   int nNewCandidateHeight,
+                                                   const Consensus::Params& params)
+{
+    AssertLockHeld(cs_main);
+    if (params.IsStrictAuthScriptActive(nOldCandidateHeight) == params.IsStrictAuthScriptActive(nNewCandidateHeight) &&
+        params.IsSignatureOpcodesActive(nOldCandidateHeight) == params.IsSignatureOpcodesActive(nNewCandidateHeight) &&
+        params.IsAssetMessageActive(nOldCandidateHeight) == params.IsAssetMessageActive(nNewCandidateHeight) &&
+        params.IsInputFieldActive(nOldCandidateHeight) == params.IsInputFieldActive(nNewCandidateHeight) &&
+        params.IsAuthScriptTreeActive(nOldCandidateHeight) == params.IsAuthScriptTreeActive(nNewCandidateHeight) &&
+        params.IsMerklePoseidonActive(nOldCandidateHeight) == params.IsMerklePoseidonActive(nNewCandidateHeight) &&
+        params.IsZKVerifyActive(nOldCandidateHeight) == params.IsZKVerifyActive(nNewCandidateHeight) &&
+        params.IsPoseidonWorkActive(nOldCandidateHeight) == params.IsPoseidonWorkActive(nNewCandidateHeight) &&
+        params.IsAuthScriptBudgetActive(nOldCandidateHeight) == params.IsAuthScriptBudgetActive(nNewCandidateHeight) &&
+        params.IsTxHashActive(nOldCandidateHeight) == params.IsTxHashActive(nNewCandidateHeight) &&
+        // Every opt-in switch (AuthScript, opcodes, tx v3, strict OP_XNA_ASSET
+        // placement) shares nOptInFeaturesHeight.
+        (nOldCandidateHeight >= params.nOptInFeaturesHeight) == (nNewCandidateHeight >= params.nOptInFeaturesHeight))
+        return;
+    // Only a disconnect can leave parents momentarily unavailable, and only a
+    // disconnect is always followed by UpdateMempoolForReorg. When connecting,
+    // every coin is present, so the sweep right here is complete.
+    if (nNewCandidateHeight < nOldCandidateHeight) {
+        g_fScriptRuleTransitionPending = true;
+    }
+    MempoolEvictScriptRuleEntries(pool);
+}
+
+static void MempoolEvictScriptRuleEntries(CTxMemPool& pool)
+{
+    AssertLockHeld(cs_main);
+    LOCK(pool.cs);
+    CCoinsViewMemPool viewMempool(pcoinsTip, pool);
+
+    // Rules of the mempool's candidate block under the NEW tip. Looking for
+    // v2/v3 programs is not enough: NIP-041 shares this activation height and
+    // changes the validity of ANY script that executes OP_OUTPUTAUTHDEST or
+    // selector 0x04 (a generic v1 contract, for instance). So every entry whose
+    // inputs are available is re-validated under the candidate flags. This also
+    // handles signature-opcode activation and changes to cached sigop costs; the
+    // structural checks below only add the cases input scripts cannot reveal.
+    const CBlockIndex* pindexTip = chainActive.Tip();
+    const int nCandidateHeight = pindexTip ? pindexTip->nHeight + 1 : 0;
+    const CChainParams& chainparams = GetParams();
+    const bool fStrictAuthScriptActive = chainparams.GetConsensus().IsStrictAuthScriptActive(nCandidateHeight);
+    CStrictAuthScriptContext strictAuthScriptContext(fStrictAuthScriptActive);
+    const script_verify_flags flags =
+        ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, chainparams.GetConsensus(), fStrictAuthScriptActive, nCandidateHeight);
+    const ChainContext candidateCtx{
+        nCandidateHeight,
+        pindexTip ? pindexTip->GetMedianTimePast() : 0,
+        GetChainIdForParams(chainparams),
+        true
+    };
+
+    const Consensus::Params& consensus = chainparams.GetConsensus();
+    pool.removeForStrictAuthScriptTransition([&](const CTxMemPoolEntry& entry) -> bool {
+        const CTransaction& tx = entry.GetTx();
+        // Structural rules that CheckInputs cannot see: a v3 transaction with
+        // no special opcode, and the strict OP_XNA_ASSET output placement.
+        if (tx.nVersion == 3 && !consensus.IsRefInputsActive(nCandidateHeight)) {
+            return true;
+        }
+        // Policy: outputs to AuthScript families that no longer apply to the
+        // candidate block would be unprotected if mined there.
+        if (CreatesInactiveAuthScriptOutput(tx, consensus, nCandidateHeight)) {
+            return true;
+        }
+        if (consensus.IsXnaAssetStrictActive(nCandidateHeight)) {
+            CValidationState placementState;
+            if (!Consensus::CheckXnaAssetStrictPlacement(tx, placementState)) {
+                return true;
+            }
+        }
+        for (const CTxIn& txin : tx.vin) {
+            Coin coin;
+            if (viewMempool.GetCoin(txin.prevout, coin) && SpendsStrictAuthScriptProgram(txin, coin.out.scriptPubKey)) {
+                return true;
+            }
+        }
+        for (const CTxOut& txout : tx.vout) {
+            int nType = 0, nStartingIndex = 0;
+            bool fIsOwner = false;
+            AssetMarker marker;
+            const bool fAssetWhenActive = txout.scriptPubKey.IsAssetScript(nType, fIsOwner, nStartingIndex, marker, true);
+            const bool fAssetWhenInactive = txout.scriptPubKey.IsAssetScript(nType, fIsOwner, nStartingIndex, marker, false);
+            if (fAssetWhenActive != fAssetWhenInactive) {
+                return true;
+            }
+            if (txout.scriptPubKey.IsNullAssetTxDataScript(true) != txout.scriptPubKey.IsNullAssetTxDataScript(false)) {
+                return true;
+            }
+        }
+
+        // Script re-validation under the candidate rules. An entry whose parent
+        // is momentarily unavailable (confirmed in a block that is also being
+        // disconnected, and not yet re-admitted) cannot be judged here; the
+        // pass at the end of UpdateMempoolForReorg handles it.
+        CCoinsViewCache view(&viewMempool);
+        if (!view.HaveInputs(tx)) {
+            return false;
+        }
+        // Evict affected entries and descendants so stored sigop costs and
+        // ancestor/package sizes cannot survive an activation boundary stale.
+        if (GetTransactionSigOpCost(tx, view, flags) != entry.GetSigOpCost()) return true;
+        std::shared_ptr<std::vector<CTxOut>> pRefOutputs;
+        if (tx.nVersion == 3 && !tx.vrefin.empty()) {
+            pRefOutputs = std::make_shared<std::vector<CTxOut>>();
+            pRefOutputs->reserve(tx.vrefin.size());
+            for (const auto& refout : tx.vrefin) {
+                const Coin& coin = pcoinsTip->AccessCoin(refout);
+                if (coin.IsSpent()) return true; // reference input vanished
+                pRefOutputs->push_back(coin.out);
+            }
+        }
+        CValidationState stateDummy;
+        PrecomputedTransactionData txdata(tx);
+        auto work = std::make_shared<PoseidonWorkBudget>((flags & SCRIPT_VERIFY_POSEIDON_WORK) ? MAX_STANDARD_TX_POSEIDON_WORK : std::numeric_limits<uint64_t>::max());
+        const bool valid = CheckInputs(tx, stateDummy, view, true, flags,
+                            /*cacheSigStore=*/true, /*cacheFullScriptStore=*/false,
+                            txdata, nullptr, pRefOutputs, candidateCtx, nullptr, work);
+        if (stateDummy.IsError()) {
+            LogPrintf("Mempool script revalidation failed locally; retaining transaction\n");
+            return false;
+        }
+        return !valid || work->Used() != entry.GetPoseidonWork();
     });
 }
 
@@ -1920,8 +2269,12 @@ static void MempoolCheckAssetMarkerTransition(CTxMemPool& pool,
  *
  * Non-static (and re-declared) in src/test/txvalidationcache_tests.cpp
  */
-bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks, std::shared_ptr<std::vector<CTxOut>> pRefOutputs, ChainContext chainCtx, bool* pfUsesChainContext)
+bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks, std::shared_ptr<std::vector<CTxOut>> pRefOutputs, ChainContext chainCtx, bool* pfUsesChainContext, std::shared_ptr<PoseidonWorkBudget> poseidonWork, std::shared_ptr<ScriptExecutionStatus> executionStatus)
 {
+    if (!executionStatus) executionStatus = std::make_shared<ScriptExecutionStatus>();
+    if (!executionStatus->Apply(state)) return false;
+    if (!poseidonWork && (flags & SCRIPT_VERIFY_POSEIDON_WORK))
+        poseidonWork = std::make_shared<PoseidonWorkBudget>(MAX_BLOCK_POSEIDON_WORK);
     if (!tx.IsCoinBase())
     {
         if (pvChecks)
@@ -1949,7 +2302,9 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
             static_assert(55 - sizeof(flagsInt) - 32 >= 120/8, "Want at least 120 bits of nonce for script execution cache");
             CSHA256().Write(scriptExecutionCacheNonce.begin(), 55 - sizeof(flagsInt) - 32).Write(tx.GetWitnessHash().begin(), 32).Write((unsigned char*)&flagsInt, sizeof(flagsInt)).Finalize(hashCacheEntry.begin());
             AssertLockHeld(cs_main); //TODO: Remove this requirement by making CuckooCache not require external locks
-            if (scriptExecutionCache.contains(hashCacheEntry, !cacheFullScriptStore)) {
+            // This cache stores validity only, not resource cost. Re-execute
+            // metered scripts; the separate signature cache remains usable.
+            if (!poseidonWork && scriptExecutionCache.contains(hashCacheEntry, !cacheFullScriptStore)) {
                 return true;
             }
 
@@ -1982,7 +2337,7 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                 // spent being checked as a part of CScriptCheck.
 
                 // Verify signature
-                CScriptCheck check(coin.out, tx, i, flags, cacheSigStore, &txdata, pAllPrevouts, pRefOutputs, chainCtx);
+                CScriptCheck check(coin.out, tx, i, flags, cacheSigStore, &txdata, pAllPrevouts, pRefOutputs, chainCtx, poseidonWork, executionStatus);
                 if (pvChecks) {
                     pvChecks->push_back(CScriptCheck());
                     check.swap(pvChecks->back());
@@ -1992,6 +2347,9 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                     // later op; the mempool still wants to re-validate
                     // this entry on tip changes.
                     if (pfUsesChainContext) *pfUsesChainContext |= check.fChainContextObserved;
+                    if (!executionStatus->Apply(state)) return false;
+                    if (check.GetScriptError() == SCRIPT_ERR_POSEIDON_WORK_BUDGET)
+                        return state.Invalid(false, REJECT_INVALID, "bad-txns-poseidon-work");
                     if (flags & STANDARD_NOT_MANDATORY_VERIFY_FLAGS) {
                         // Check whether the failure was caused by a
                         // non-mandatory script verification check, such as
@@ -2000,10 +2358,11 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                         // avoid splitting the network between upgraded and
                         // non-upgraded nodes.
                         CScriptCheck check2(coin.out, tx, i,
-                                flags & ~STANDARD_NOT_MANDATORY_VERIFY_FLAGS, cacheSigStore, &txdata, pAllPrevouts, pRefOutputs, chainCtx);
+                                flags & ~STANDARD_NOT_MANDATORY_VERIFY_FLAGS, cacheSigStore, &txdata, pAllPrevouts, pRefOutputs, chainCtx, nullptr, executionStatus);
                         if (check2())
                             return state.Invalid(false, REJECT_NONSTANDARD, strprintf("non-mandatory-script-verify-flag (%s)", ScriptErrorString(check.GetScriptError())));
                     }
+                    if (!executionStatus->Apply(state)) return false;
                     // Failures of other flags indicate a transaction that is
                     // invalid in new blocks, e.g. an invalid P2SH. We DoS ban
                     // such nodes as they are not following the protocol. That
@@ -2019,7 +2378,7 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                 }
             }
 
-            if (cacheFullScriptStore && !pvChecks) {
+            if (cacheFullScriptStore && !pvChecks && !poseidonWork) {
                 // We executed all of the provided scripts, and were told to
                 // cache the result. Do so now.
                 scriptExecutionCache.insert(hashCacheEntry);
@@ -2170,6 +2529,10 @@ int ApplyTxInUndo(Coin&& undo, CCoinsViewCache& view, const COutPoint& out, CAss
  *  When FAILED is returned, view is left in an indeterminate state. */
 static DisconnectResult DisconnectBlock(const CBlock& block, const CBlockIndex* pindex, CCoinsViewCache& view, CAssetsCache* assetsCache = nullptr, bool ignoreAddressIndex = false, bool databaseMessaging = true)
 {
+    // Undo the block under the activation context it was connected with, so
+    // asset parsing and indexes read its scripts the same way both times.
+    CStrictAuthScriptContext strictAuthScriptContext(GetParams().GetConsensus().IsStrictAuthScriptActive(pindex->nHeight));
+
     bool fClean = true;
 
     CBlockUndo blockUndo;
@@ -2719,7 +3082,9 @@ static script_verify_flags GetBlockScriptFlags(const CBlockIndex* pindex, const 
     		flags |= SCRIPT_VERIFY_NULLDUMMY;
     }
 
-    return ApplyConsensusOptIns(flags, consensusparams);
+    // Strict AuthScript families activate by height: the flag belongs to the
+    // block being validated, not to the chain tip or the network.
+    return ApplyConsensusOptIns(flags, consensusparams, consensusparams.IsStrictAuthScriptActive(pindex->nHeight), pindex->nHeight);
 }
 
 
@@ -2742,6 +3107,10 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
 
     AssertLockHeld(cs_main);
     assert(pindex);
+    // Every asset parser, index write and asset-cache update below interprets
+    // scripts with the activation context of THIS block (also during reindex,
+    // reorgs and VerifyDB), never with the tip's.
+    CStrictAuthScriptContext strictAuthScriptContext(chainparams.GetConsensus().IsStrictAuthScriptActive(pindex->nHeight));
     // pindex->phashBlock can be null if called by CreateNewBlock/TestBlockValidity
     assert((pindex->phashBlock == nullptr) ||
            (*pindex->phashBlock == block.GetHash()));
@@ -2840,9 +3209,15 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
 
     // Get the script flags for this block
     script_verify_flags flags = GetBlockScriptFlags(pindex, chainparams.GetConsensus());
+    std::shared_ptr<PoseidonWorkBudget> blockPoseidonWork;
+    if (flags & SCRIPT_VERIFY_POSEIDON_WORK) {
+        blockPoseidonWork = std::make_shared<PoseidonWorkBudget>(MAX_BLOCK_POSEIDON_WORK);
+        // Dynamic work must be accounted even below assumevalid.
+        fScriptChecks = true;
+    }
 
     // NIP-014: reject v3 transactions before activation
-    if (!chainparams.GetConsensus().nREFINPUTSEnabled) {
+    if (!chainparams.GetConsensus().IsRefInputsActive(pindex->nHeight)) {
         for (const auto& tx : block.vtx) {
             if (tx->nVersion == 3) {
                 return state.DoS(100, false, REJECT_INVALID, "bad-txns-v3-not-active");
@@ -2856,6 +3231,8 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
     CBlockUndo blockundo;
     std::vector<std::pair<std::string, CBlockAssetUndo> > vUndoAssetData;
 
+    auto blockExecutionStatus = std::make_shared<ScriptExecutionStatus>();
+    ScriptExecutionStatusGuard localFailureGuard(blockExecutionStatus, state);
     CCheckQueueControl<CScriptCheck> control(fScriptChecks && nScriptCheckThreads ? &scriptcheckqueue : nullptr);
 
     std::vector<int> prevheights;
@@ -2998,7 +3375,8 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
 
                     // Extract revealed public keys for pubkey index from scriptSig or witness.
                     if (fPubKeyIndex &&
-                        (addressData.type == DEST_INDEX_KEY || addressData.type == DEST_INDEX_WITNESS_V1_AUTHSCRIPT) &&
+                        (addressData.type == DEST_INDEX_KEY || addressData.type == DEST_INDEX_WITNESS_V1_AUTHSCRIPT ||
+                         addressData.type == DEST_INDEX_WITNESS_V2_STRICT_PQ || addressData.type == DEST_INDEX_WITNESS_V3_STRICT_ECDSA) &&
                         !addressData.payload.empty()) {
                         CPubKey pubkey;
                         if (ExtractIndexedPubKeyFromInput(input, addressData.payload, addressData.type, pubkey)) {
@@ -3051,9 +3429,12 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
                 GetChainIdForParams(chainparams),
                 true
             };
-            if (!CheckInputs(tx, state, view, fScriptChecks, flags, fCacheResults, fCacheResults, txdata[i], nScriptCheckThreads ? &vChecks : nullptr, pRefOutputs, chainCtx))
+            if (!CheckInputs(tx, state, view, fScriptChecks, flags, fCacheResults, fCacheResults, txdata[i], nScriptCheckThreads ? &vChecks : nullptr, pRefOutputs, chainCtx, nullptr, blockPoseidonWork, blockExecutionStatus)) {
+                if (blockPoseidonWork && blockPoseidonWork->Exceeded())
+                    return state.DoS(100, false, REJECT_INVALID, "bad-blk-poseidon-work");
                 return error("ConnectBlock(): CheckInputs on %s failed with %s",
                     tx.GetHash().ToString(), FormatStateMessage(state));
+            }
             control.Add(vChecks);
         }
 
@@ -3129,7 +3510,11 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
                                block.vtx[0]->GetValueOut(AreEnforcedValuesDeployed()), blockReward),
                                REJECT_INVALID, "bad-cb-amount");
 
-    if (!control.Wait())
+    const bool scriptsOk = control.Wait();
+    if (!blockExecutionStatus->Apply(state)) return false;
+    if (blockPoseidonWork && blockPoseidonWork->Exceeded())
+        return state.DoS(100, false, REJECT_INVALID, "bad-blk-poseidon-work");
+    if (!scriptsOk)
         return state.DoS(100, error("%s: CheckQueue failed", __func__), REJECT_INVALID, "block-validation-failed");
     int64_t nTime4 = GetTimeMicros(); nTimeVerify += nTime4 - nTime2;
     LogPrint(BCLog::BENCH, "    - Verify %u txins: %.2fms (%.3fms/txin) [%.2fs (%.2fms/blk)]\n", nInputs - 1, MILLI * (nTime4 - nTime2), nInputs <= 1 ? 0 : MILLI * (nTime4 - nTime2) / (nInputs-1), nTimeVerify * MICRO, nTimeVerify * MILLI / nBlocksTotal);
@@ -3455,6 +3840,11 @@ static void DoWarning(const std::string& strWarning)
 void static UpdateTip(CBlockIndex *pindexNew, const CChainParams& chainParams) {
     chainActive.SetTip(pindexNew);
 
+    // Default activation context for code without a block context (wallet,
+    // RPC, address decoding): the block after the new tip.
+    SetSignatureOpcodeCandidateHeight(pindexNew ? pindexNew->nHeight + 1 : 0);
+    SetStrictAuthScriptActiveDefault(chainParams.GetConsensus().IsStrictAuthScriptActive(pindexNew ? pindexNew->nHeight + 1 : 0));
+
     // New best block
     mempool.AddTransactionsUpdated(1);
 
@@ -3566,6 +3956,15 @@ bool static DisconnectTip(CValidationState& state, const CChainParams& chainpara
     MempoolCheckAssetMarkerTransition(mempool, pindexDelete->nHeight + 1,
                                       pindexDelete->nHeight,
                                       chainparams.GetConsensus());
+    MempoolCheckScriptRuleTransition(mempool, pindexDelete->nHeight + 1,
+                                           pindexDelete->nHeight,
+                                           chainparams.GetConsensus());
+    // The pending flag exists for the re-admission pass of UpdateMempoolForReorg.
+    // A disconnect with no disconnectpool (RewindBlockIndex at start-up) has no
+    // such pass afterwards, so it must not leave the flag armed.
+    if (!disconnectpool) {
+        g_fScriptRuleTransitionPending = false;
+    }
     // NIP-026: flush the script-execution cache so that HEIGHT / MTP
     // observations baked into prior hits cannot be re-served at the new
     // tip, then evict mempool entries whose OP_CHAINCONTEXT-dependent
@@ -3761,6 +4160,9 @@ bool static ConnectTip(CValidationState& state, const CChainParams& chainparams,
     MempoolCheckAssetMarkerTransition(mempool, pindexNew->nHeight,
                                       pindexNew->nHeight + 1,
                                       chainparams.GetConsensus());
+    MempoolCheckScriptRuleTransition(mempool, pindexNew->nHeight,
+                                           pindexNew->nHeight + 1,
+                                           chainparams.GetConsensus());
     // NIP-026: see DisconnectTip — flushing here closes the stale-cache
     // window for every tip advance, including the reorg case (which
     // goes DisconnectTip → ConnectTip; both sides must flush).
@@ -4673,6 +5075,15 @@ static bool ContextualCheckBlock(const CBlock& block, CValidationState& state, c
         }
     }
 
+    // Height-dependent transaction rules that the context-free CheckTransaction
+    // cannot apply: strict OP_XNA_ASSET placement (NIP revision 010).
+    if (consensusParams.IsXnaAssetStrictActive(nHeight)) {
+        for (const auto& tx : block.vtx) {
+            if (!Consensus::CheckXnaAssetStrictPlacement(*tx, state))
+                return false;
+        }
+    }
+
     // Enforce rule that the coinbase starts with serialized block height
     CScript expect = CScript() << nHeight;
 
@@ -4826,6 +5237,8 @@ static bool AcceptBlock(const std::shared_ptr<const CBlock>& pblock, CValidation
     if (!AcceptBlockHeader(block, state, chainparams, &pindex))
         return false;
 
+    CStrictAuthScriptContext strictAuthScriptContext(chainparams.GetConsensus().IsStrictAuthScriptActive(pindex->nHeight));
+
     // Try to process all requested blocks that we don't have, but only
     // process an unrequested block if it's new and has enough work to
     // advance our tip, and isn't too many blocks ahead.
@@ -4906,12 +5319,27 @@ static bool AcceptBlock(const std::shared_ptr<const CBlock>& pblock, CValidation
     return true;
 }
 
+bool IsStrictAuthScriptActiveForChildOf(const uint256& hashPrevBlock)
+{
+    LOCK(cs_main);
+    BlockMap::const_iterator mi = mapBlockIndex.find(hashPrevBlock);
+    if (mi != mapBlockIndex.end() && mi->second) {
+        return GetParams().GetConsensus().IsStrictAuthScriptActive(mi->second->nHeight + 1);
+    }
+    return IsStrictAuthScriptActiveInContext();
+}
+
 bool ProcessNewBlock(const CChainParams& chainparams, const std::shared_ptr<const CBlock> pblock, bool fForceProcessing, bool *fNewBlock)
 {
     {
         CBlockIndex *pindex = nullptr;
         if (fNewBlock) *fNewBlock = false;
         CValidationState state;
+
+        // CheckBlock() is context-free but parses asset scripts: give it the
+        // activation context of this block's height when its parent is known.
+        // (With an unknown parent the header is rejected right after anyway.)
+        CStrictAuthScriptContext strictAuthScriptContext(IsStrictAuthScriptActiveForChildOf(pblock->hashPrevBlock));
 
         // Ensure that CheckBlock() passes before calling AcceptBlock, as
         // belt-and-suspenders.
@@ -4947,6 +5375,7 @@ bool TestBlockValidity(CValidationState& state, const CChainParams& chainparams,
     CBlockIndex indexDummy(block);
     indexDummy.pprev = pindexPrev;
     indexDummy.nHeight = pindexPrev->nHeight + 1;
+    CStrictAuthScriptContext strictAuthScriptContext(chainparams.GetConsensus().IsStrictAuthScriptActive(indexDummy.nHeight));
 
     /** XNA START */
     CAssetsCache assetCache = *GetCurrentAssetCache();
@@ -5377,6 +5806,8 @@ bool LoadChainTip(const CChainParams& chainparams)
     if (it == mapBlockIndex.end())
         return false;
     chainActive.SetTip(it->second);
+    SetSignatureOpcodeCandidateHeight(it->second->nHeight + 1);
+    SetStrictAuthScriptActiveDefault(chainparams.GetConsensus().IsStrictAuthScriptActive(it->second->nHeight + 1));
 
     PruneBlockIndexCandidates();
 
@@ -5420,6 +5851,7 @@ bool CVerifyDB::VerifyDB(const CChainParams& chainparams, CCoinsView *coinsview,
     LogPrintf("[0%%]...");
     for (CBlockIndex* pindex = chainActive.Tip(); pindex && pindex->pprev; pindex = pindex->pprev)
     {
+        CStrictAuthScriptContext strictAuthScriptContext(chainparams.GetConsensus().IsStrictAuthScriptActive(pindex->nHeight));
         boost::this_thread::interruption_point();
         int percentageDone = std::max(1, std::min(99, (int)(((double)(chainActive.Height() - pindex->nHeight)) / (double)nCheckDepth * (nCheckLevel >= 4 ? 50 : 100))));
         if (reportDone < percentageDone/10) {
@@ -6295,8 +6727,25 @@ void SetEnforcedCoinbase(bool value)
     fCheckCoinbaseAssetsIsActive = value;
 }
 
+// Fresh test networks run assets, RIP5 and the asset VersionBits deployments
+// from the genesis block as a pure rule (Consensus::Params::
+// nAssetsActiveFromGenesis): the answer never depends on the chain tip, so a
+// reorg down to genesis validates early blocks exactly like a fresh node. The
+// sticky flag is still set because other readers (e.g. the undo record limits)
+// consult it directly, and true is the correct value for the whole chain.
+static bool AssetDeploymentActiveFromGenesis(bool& fStickyFlag)
+{
+    if (!GetParams().GetConsensus().nAssetsActiveFromGenesis)
+        return false;
+    fStickyFlag = true;
+    return true;
+}
+
 bool AreEnforcedValuesDeployed()
 {
+    if (AssetDeploymentActiveFromGenesis(fEnforcedValuesIsActive))
+        return true;
+
     if (fEnforcedValuesIsActive)
         return true;
 
@@ -6309,6 +6758,9 @@ bool AreEnforcedValuesDeployed()
 
 bool AreCoinbaseCheckAssetsDeployed()
 {
+    if (AssetDeploymentActiveFromGenesis(fCheckCoinbaseAssetsIsActive))
+        return true;
+
     if (fCheckCoinbaseAssetsIsActive)
         return true;
 
@@ -6321,6 +6773,9 @@ bool AreCoinbaseCheckAssetsDeployed()
 
 bool AreAssetsDeployed()
 {
+    if (AssetDeploymentActiveFromGenesis(fAssetsIsActive))
+        return true;
+
     if (fAssetsIsActive)
         return true;
 
@@ -6345,6 +6800,9 @@ bool AreAssetsDeployed()
 
 bool IsRip5Active()
 {
+    if (AssetDeploymentActiveFromGenesis(fRip5IsActive))
+        return true;
+
     if (fRip5IsActive)
         return true;
 
@@ -6373,6 +6831,9 @@ bool AreMessagesDeployed() {
 }
 
 bool AreTransferScriptsSizeDeployed() {
+
+    if (AssetDeploymentActiveFromGenesis(fTransferScriptIsActive))
+        return true;
 
     if (fTransferScriptIsActive)
         return true;
@@ -6411,6 +6872,12 @@ int64_t GetEffectivePowTargetSpacing(int nHeight, const Consensus::Params& param
     return IsBlockTimeReductionActive(nHeight, params)
         ? params.nPowTargetSpacingPost
         : params.nPowTargetSpacing;
+}
+
+int64_t GetEffectivePowTargetSpacingOnTip()
+{
+    LOCK(cs_main);
+    return GetEffectivePowTargetSpacing(chainActive.Height(), GetParams().GetConsensus());
 }
 
 int64_t GetEffectivePowTargetTimespan(int nHeight, const Consensus::Params& params)

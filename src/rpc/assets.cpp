@@ -589,6 +589,31 @@ UniValue UpdateGlobalRestrictedAsset(const JSONRPCRequest &request, const int8_t
     return result;
 }
 
+#ifdef ENABLE_WALLET
+// New receive destination of the wallet's own address type (-addresstype).
+// The asset output goes to it right away, so its family must be active.
+static CTxDestination NewWalletReceiveDestination(CWallet* const pwallet)
+{
+    std::string inactive;
+    if (!CWallet::IsAddressTypeActive(WalletAddressTypeName(pwallet->GetAddressType()), inactive)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, inactive);
+    }
+    if (pwallet->GetAddressType() == WalletAddressType::LEGACY) {
+        CPubKey newKey;
+        if (!pwallet->GetKeyFromPool(newKey)) {
+            throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
+        }
+        return newKey.GetID();
+    }
+    CTxDestination dest;
+    std::string error;
+    if (!pwallet->GetNewDestination(false, dest, error)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, error);
+    }
+    return dest;
+}
+#endif
+
 UniValue issue(const JSONRPCRequest& request)
 {
     if (request.fHelp || !AreAssetsDeployed() || request.params.size() < 1 || request.params.size() > 8)
@@ -678,15 +703,8 @@ UniValue issue(const JSONRPCRequest& request)
             pwallet->TopUpKeyPool();
         }
 
-        // Generate a new key that is added to wallet
-        CPubKey newKey;
-        if (!pwallet->GetKeyFromPool(newKey)) {
-            throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
-        }
-        CTxDestination dest = newKey.GetID();
-        if (newKey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(newKey, dest)) {
-            throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive AuthScript destination for new PQ key");
-        }
+        // New address of the wallet's own address type
+        CTxDestination dest = NewWalletReceiveDestination(pwallet);
 
         pwallet->SetAddressBook(dest, strAccount, "receive");
 
@@ -848,15 +866,8 @@ UniValue issueunique(const JSONRPCRequest& request)
             pwallet->TopUpKeyPool();
         }
 
-        // Generate a new key that is added to wallet
-        CPubKey newKey;
-        if (!pwallet->GetKeyFromPool(newKey)) {
-            throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
-        }
-        CTxDestination dest = newKey.GetID();
-        if (newKey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(newKey, dest)) {
-            throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive AuthScript destination for new PQ key");
-        }
+        // New address of the wallet's own address type
+        CTxDestination dest = NewWalletReceiveDestination(pwallet);
 
         pwallet->SetAddressBook(dest, strAccount, "receive");
 
@@ -1405,7 +1416,8 @@ UniValue listdepinaddresses(const JSONRPCRequest &request)
         CTxDestination dest = DecodeDestination(address);
         CDestinationIndexData addressData;
         if (!IsValidDestination(dest) || !GetDestinationIndexData(dest, addressData) ||
-            (addressData.type != DEST_INDEX_KEY && addressData.type != DEST_INDEX_WITNESS_V1_AUTHSCRIPT)) {
+            (addressData.type != DEST_INDEX_KEY && addressData.type != DEST_INDEX_WITNESS_V1_AUTHSCRIPT &&
+             addressData.type != DEST_INDEX_WITNESS_V2_STRICT_PQ && addressData.type != DEST_INDEX_WITNESS_V3_STRICT_ECDSA)) {
             continue;
         }
         CPubKeyIndexValue pubkeyValue;
@@ -2698,15 +2710,8 @@ UniValue issuequalifierasset(const JSONRPCRequest& request)
             pwallet->TopUpKeyPool();
         }
 
-        // Generate a new key that is added to wallet
-        CPubKey newKey;
-        if (!pwallet->GetKeyFromPool(newKey)) {
-            throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
-        }
-        CTxDestination dest = newKey.GetID();
-        if (newKey.IsPQ() && !pwallet->GetDefaultAuthScriptDestination(newKey, dest)) {
-            throw JSONRPCError(RPC_WALLET_ERROR, "Failed to derive AuthScript destination for new PQ key");
-        }
+        // New address of the wallet's own address type
+        CTxDestination dest = NewWalletReceiveDestination(pwallet);
 
         pwallet->SetAddressBook(dest, strAccount, "receive");
 

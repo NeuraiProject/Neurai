@@ -57,6 +57,17 @@ bool HasAssetOpcodeInExpectedPosition(const CScript& scriptPubKey)
         return true;
     }
 
+    // Strict AuthScript asset spendable script: OP_2 / OP_3 <32-byte-commitment>
+    // + OP_XNA_ASSET ... Only once the strict families are active on this
+    // chain: before that these shapes stay rejected exactly as today.
+    if (scriptPubKey.size() > 34 &&
+        (scriptPubKey[0] == OP_2 || scriptPubKey[0] == OP_3) &&
+        scriptPubKey[1] == 0x20 &&
+        scriptPubKey[34] == OP_XNA_ASSET &&
+        IsStrictAuthScriptActiveInContext()) {
+        return true;
+    }
+
     return false;
 }
 
@@ -84,6 +95,31 @@ XnaAssetPlacement CheckXnaAssetOutputPlacement(const CScript& scriptPubKey, bool
     if (scriptPubKey.empty() || scriptPubKey[0] != OP_XNA_ASSET)
         return XnaAssetPlacement::NotInRightLocation;
     return XnaAssetPlacement::Ok;
+}
+
+bool Consensus::CheckXnaAssetStrictPlacement(const CTransaction& tx, CValidationState& state)
+{
+    // CheckTransaction applies the placement rule only to transactions that
+    // are not asset issuances; issuances are verified by their own rules.
+    if (tx.IsNewAsset() || tx.IsReissueAsset() || tx.IsNewUniqueAsset() ||
+        tx.IsNewMsgChannelAsset() || tx.IsNewQualifierAsset() || tx.IsNewRestrictedAsset())
+        return true;
+
+    for (const auto& out : tx.vout) {
+        int nType;
+        bool fIsOwner;
+        if (out.scriptPubKey.IsAssetScript(nType, fIsOwner) || out.scriptPubKey.IsNullAsset())
+            continue;
+        switch (CheckXnaAssetOutputPlacement(out.scriptPubKey, /*strict=*/true)) {
+            case XnaAssetPlacement::NotInRightLocation:
+                return state.DoS(100, false, REJECT_INVALID, "bad-txns-op-xna-asset-not-in-right-script-location");
+            case XnaAssetPlacement::BadAssetScript:
+                return state.DoS(100, false, REJECT_INVALID, "bad-txns-bad-asset-script");
+            case XnaAssetPlacement::Ok:
+                break;
+        }
+    }
+    return true;
 }
 
 namespace {
@@ -244,21 +280,21 @@ bool SequenceLocks(const CTransaction &tx, int flags, std::vector<int>* prevHeig
     return EvaluateSequenceLocks(block, CalculateSequenceLocks(tx, flags, prevHeights, block));
 }
 
-unsigned int GetLegacySigOpCount(const CTransaction& tx)
+unsigned int GetLegacySigOpCount(const CTransaction& tx, bool countCSFS, bool countCheckSigAdd, bool countEd25519)
 {
     unsigned int nSigOps = 0;
     for (const auto& txin : tx.vin)
     {
-        nSigOps += txin.scriptSig.GetSigOpCount(false);
+        nSigOps += txin.scriptSig.GetSigOpCount(false, countCSFS, countCheckSigAdd, countEd25519);
     }
     for (const auto& txout : tx.vout)
     {
-        nSigOps += txout.scriptPubKey.GetSigOpCount(false);
+        nSigOps += txout.scriptPubKey.GetSigOpCount(false, countCSFS, countCheckSigAdd, countEd25519);
     }
     return nSigOps;
 }
 
-unsigned int GetP2SHSigOpCount(const CTransaction& tx, const CCoinsViewCache& inputs)
+unsigned int GetP2SHSigOpCount(const CTransaction& tx, const CCoinsViewCache& inputs, bool countCSFS, bool countCheckSigAdd, bool countEd25519)
 {
     if (tx.IsCoinBase())
         return 0;
@@ -270,20 +306,23 @@ unsigned int GetP2SHSigOpCount(const CTransaction& tx, const CCoinsViewCache& in
         assert(!coin.IsSpent());
         const CTxOut &prevout = coin.out;
         if (prevout.scriptPubKey.IsPayToScriptHash())
-            nSigOps += prevout.scriptPubKey.GetSigOpCount(tx.vin[i].scriptSig);
+            nSigOps += prevout.scriptPubKey.GetSigOpCount(tx.vin[i].scriptSig, countCSFS, countCheckSigAdd, countEd25519);
     }
     return nSigOps;
 }
 
 int64_t GetTransactionSigOpCost(const CTransaction& tx, const CCoinsViewCache& inputs, script_verify_flags flags)
 {
-    int64_t nSigOps = GetLegacySigOpCount(tx) * WITNESS_SCALE_FACTOR;
+    const bool countCSFS = (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) != 0;
+    const bool countCheckSigAdd = (flags & SCRIPT_VERIFY_CHECKSIGADD) != 0;
+    const bool countEd25519 = (flags & SCRIPT_VERIFY_ED25519) != 0;
+    int64_t nSigOps = GetLegacySigOpCount(tx, countCSFS, countCheckSigAdd, countEd25519) * WITNESS_SCALE_FACTOR;
 
     if (tx.IsCoinBase())
         return nSigOps;
 
     if (flags & SCRIPT_VERIFY_P2SH) {
-        nSigOps += GetP2SHSigOpCount(tx, inputs) * WITNESS_SCALE_FACTOR;
+        nSigOps += GetP2SHSigOpCount(tx, inputs, countCSFS, countCheckSigAdd, countEd25519) * WITNESS_SCALE_FACTOR;
     }
 
     for (unsigned int i = 0; i < tx.vin.size(); i++)
@@ -291,6 +330,15 @@ int64_t GetTransactionSigOpCost(const CTransaction& tx, const CCoinsViewCache& i
         const Coin& coin = inputs.AccessCoin(tx.vin[i].prevout);
         assert(!coin.IsSpent());
         const CTxOut &prevout = coin.out;
+        if (countCSFS || countCheckSigAdd || countEd25519) {
+            // A bare output may predate activation of these signature opcodes.
+            // Charge its top-level optional signature instructions when spent as well; the
+            // creation-time legacy scan alone cannot bound this block's work.
+            // P2SH/witness programs contain no top-level optional signature instructions;
+            // their revealed scripts are counted by their respective paths.
+            nSigOps += (prevout.scriptPubKey.GetSigOpCount(true, countCSFS, countCheckSigAdd, countEd25519) -
+                        prevout.scriptPubKey.GetSigOpCount(true, false)) * WITNESS_SCALE_FACTOR;
+        }
         nSigOps += CountWitnessSigOps(tx.vin[i].scriptSig, prevout.scriptPubKey, &tx.vin[i].scriptWitness, flags);
     }
     return nSigOps;
@@ -726,9 +774,10 @@ bool CheckTransaction(const CTransaction& tx, CValidationState &state, bool fChe
                 // OP_XNA_ASSET metadata outputs that are validated separately.
                 continue;
             } else {
-                // OP_XNA_ASSET placement rule, gated by network (NIP revision 010).
-                switch (CheckXnaAssetOutputPlacement(out.scriptPubKey,
-                                                     GetParams().GetConsensus().nXNAAssetStrictEnabled)) {
+                // OP_XNA_ASSET placement rule (NIP revision 010). This check has
+                // no height, so it applies the legacy rule; the strict rule is
+                // height-dependent and applied by CheckXnaAssetStrictPlacement.
+                switch (CheckXnaAssetOutputPlacement(out.scriptPubKey, /*strict=*/false)) {
                     case XnaAssetPlacement::NotInRightLocation:
                         return state.DoS(100, false, REJECT_INVALID,
                                          "bad-txns-op-xna-asset-not-in-right-script-location");
@@ -784,33 +833,8 @@ bool Consensus::CheckTxInputs(const CTransaction& tx, CValidationState& state, c
         }
     }
 
-    // NIP-025: if any input of this tx references an asset-wrapped AuthScript v1
-    // UTXO (DEX covenant or PQ asset UTXO — consensus cannot tell them apart),
-    // require every input of the tx to have nSequence >= 0xfffffffe. Closes the
-    // BIP125 orphan-attack surface on chained mempool fills. See NIP-025 §2.3
-    // for why a per-input check is insufficient and §3.3 for the two-pass rationale.
-    if (GetParams().GetConsensus().nASSETRBFBlockEnabled) {
-        bool spends_asset_authscript = false;
-        for (unsigned int i = 0; i < tx.vin.size(); ++i) {
-            const Coin& coin = inputs.AccessCoin(tx.vin[i].prevout);
-            if (coin.out.scriptPubKey.IsAssetAuthScript()) {
-                spends_asset_authscript = true;
-                break;
-            }
-        }
-        if (spends_asset_authscript) {
-            for (unsigned int i = 0; i < tx.vin.size(); ++i) {
-                if (tx.vin[i].nSequence < 0xfffffffeU) {
-                    return state.DoS(100, false, REJECT_INVALID,
-                        "bad-txns-asset-authscript-input-rbf", false,
-                        strprintf("tx spends an asset-wrapped AuthScript UTXO "
-                                  "but input %u signals RBF (nSequence=0x%08x)",
-                                  i, tx.vin[i].nSequence),
-                        tx.GetHash());
-                }
-            }
-        }
-    }
+    // NIP025-patch1: sequence numbers retain their normal BIP68/CSV meaning.
+    // Protection of asset operations against replacement is mempool policy.
 
     const CAmount value_out = tx.GetValueOut(AreEnforcedValuesDeployed());
     if (nValueIn < value_out) {
@@ -941,10 +965,14 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
             fIsAsset = true;
 
         if (fIsAsset) {
+            // The marker rule depends on the height. In the mempool a peer one
+            // block away from the activation height may relay a transaction
+            // that is valid for its own next block, so it is not penalised.
+            const int nMarkerDoS = fCheckMempool ? 0 : 100;
             if (!fNip040Active && marker == AssetMarker::NEURAI_XNA)
-                return state.DoS(100, false, REJECT_INVALID, "bad-txns-asset-marker-before-nip040", false, "", tx.GetHash());
+                return state.DoS(nMarkerDoS, false, REJECT_INVALID, "bad-txns-asset-marker-before-nip040", false, "", tx.GetHash());
             if (fNip040Active && marker == AssetMarker::LEGACY_RVN)
-                return state.DoS(100, false, REJECT_INVALID, "bad-txns-legacy-asset-marker-after-nip040", false, "", tx.GetHash());
+                return state.DoS(nMarkerDoS, false, REJECT_INVALID, "bad-txns-legacy-asset-marker-after-nip040", false, "", tx.GetHash());
         }
 
         if (assetCache) {
@@ -1187,10 +1215,10 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
                 } else {
                     if (out.scriptPubKey.Find(OP_XNA_ASSET)) {
                         if (AreRestrictedAssetsDeployed()) {
-                            // Same placement rule as CheckTransaction, gated by
-                            // network (NIP revision 010).
+                            // Same placement rule as CheckTransaction, with the
+                            // strict rule from its activation height (NIP revision 010).
                             switch (CheckXnaAssetOutputPlacement(out.scriptPubKey,
-                                                                 GetParams().GetConsensus().nXNAAssetStrictEnabled)) {
+                                                                 GetParams().GetConsensus().IsXnaAssetStrictActive(nCandidateHeight))) {
                                 case XnaAssetPlacement::NotInRightLocation:
                                     return state.DoS(100, false, REJECT_INVALID,
                                                      "bad-txns-op-xna-asset-not-in-right-script-location", false, "", tx.GetHash());

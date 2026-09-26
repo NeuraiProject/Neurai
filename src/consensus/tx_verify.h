@@ -49,6 +49,18 @@ enum class XnaAssetPlacement {
  */
 XnaAssetPlacement CheckXnaAssetOutputPlacement(const CScript& scriptPubKey, bool strict);
 
+namespace Consensus {
+/**
+ * Height-dependent half of the OP_XNA_ASSET placement rule (NIP revision 010).
+ * CheckTransaction has no context and always applies the legacy rule; callers
+ * that know the height of the block (ContextualCheckBlock, mempool acceptance
+ * for the next block, mempool re-validation) call this when
+ * Consensus::Params::IsXnaAssetStrictActive(height). It inspects exactly the
+ * outputs CheckTransaction inspects, with the strict rule.
+ */
+bool CheckXnaAssetStrictPlacement(const CTransaction& tx, CValidationState& state);
+} // namespace Consensus
+
 /** Context-independent validity checks */
 bool CheckTransaction(const CTransaction& tx, CValidationState& state, bool fCheckDuplicateInputs=true, bool fMempoolCheck = false, bool fBlockCheck = false);
 
@@ -78,7 +90,7 @@ bool CheckTxAssets(const CTransaction& tx, CValidationState& state, const CCoins
  * @return number of sigops this transaction's outputs will produce when spent
  * @see CTransaction::FetchInputs
  */
-unsigned int GetLegacySigOpCount(const CTransaction& tx);
+unsigned int GetLegacySigOpCount(const CTransaction& tx, bool countCSFS = false, bool countCheckSigAdd = false, bool countEd25519 = false);
 
 /**
  * Count ECDSA signature operations in pay-to-script-hash inputs.
@@ -87,7 +99,7 @@ unsigned int GetLegacySigOpCount(const CTransaction& tx);
  * @return maximum number of sigops required to validate this transaction's inputs
  * @see CTransaction::FetchInputs
  */
-unsigned int GetP2SHSigOpCount(const CTransaction& tx, const CCoinsViewCache& mapInputs);
+unsigned int GetP2SHSigOpCount(const CTransaction& tx, const CCoinsViewCache& mapInputs, bool countCSFS = false, bool countCheckSigAdd = false, bool countEd25519 = false);
 
 /**
  * Compute total signature operation cost of a transaction.

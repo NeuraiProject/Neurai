@@ -5,6 +5,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "consensus/validation.h"
+#include "assets/assetdb.h"
 #include "chainparams.h"
 #include "key.h"
 #include "validation.h"
@@ -24,7 +25,10 @@
 
 #include "util.h"
 
-bool CheckInputs(const CTransaction &tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData &txdata, std::vector<CScriptCheck> *pvChecks, std::shared_ptr<std::vector<CTxOut>> pRefOutputs = nullptr, ChainContext chainCtx = {}, bool* pfUsesChainContext = nullptr);
+bool CheckInputs(const CTransaction &tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData &txdata, std::vector<CScriptCheck> *pvChecks, std::shared_ptr<std::vector<CTxOut>> pRefOutputs = nullptr, ChainContext chainCtx = {}, bool* pfUsesChainContext = nullptr, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr, std::shared_ptr<ScriptExecutionStatus> executionStatus = nullptr);
+
+// Internal entry point exercised by the startup-rewind sentinel below.
+void UpdateMempoolForReorg(DisconnectedBlockTransactions&, bool);
 
 BOOST_AUTO_TEST_SUITE(tx_validationcache_tests)
 
@@ -396,4 +400,160 @@ BOOST_AUTO_TEST_SUITE(tx_validationcache_tests)
         }
     }
 
+BOOST_AUTO_TEST_SUITE_END()
+
+// Exercise the real startup rewind route: unlike invalidateblock it passes no
+// disconnected-transaction pool to DisconnectTip.
+BOOST_FIXTURE_TEST_SUITE(authdest_rewind_review_tests, TestChain100Setup)
+
+BOOST_AUTO_TEST_CASE(rewind_without_readmission_crosses_strict_height)
+{
+    auto& consensus = const_cast<Consensus::Params&>(GetParams().GetConsensus());
+    struct RestoreHeight {
+        Consensus::Params& params;
+        int height;
+        ~RestoreHeight() { params.nStrictAuthScriptHeight = height; }
+    } restore{consensus, consensus.nStrictAuthScriptHeight};
+    // TestChain100Setup does not create the asset undo DB used by DisconnectBlock.
+    struct AssetUndoDB {
+        CAssetsDB* previous;
+        AssetUndoDB() : previous(passetsdb) { passetsdb = new CAssetsDB(1 << 20, true, true); }
+        ~AssetUndoDB() { delete passetsdb; passetsdb = previous; }
+    } assetUndoDB;
+    consensus.nStrictAuthScriptHeight = 120;
+    const CScript reward = CScript() << ToByteVector(coinbaseKey.GetPubKey()) << OP_CHECKSIG;
+    for (int i = 0; i < 21; ++i) CreateAndProcessBlock({}, reward);
+    BOOST_REQUIRE_EQUAL(chainActive.Height(), 121);
+    BOOST_REQUIRE(IsWitnessEnabled(chainActive[118], consensus));
+    BOOST_REQUIRE(IsStrictAuthScriptActiveForChildOf(chainActive.Tip()->GetBlockHash()));
+    const uint256 target = chainActive[118]->GetBlockHash();
+    // Emulate the on-disk status left by a node that had not validated witness.
+    // Only this disposable fixture's index is modified.
+    // All descendants belong to the same old-validation segment.
+    for (int height = 119; height <= 121; ++height)
+        chainActive[height]->nStatus &= ~BLOCK_OPT_WITNESS;
+    BOOST_REQUIRE(RewindBlockIndex(GetParams()));
+    BOOST_CHECK_EQUAL(chainActive.Height(), 118);
+    BOOST_CHECK(chainActive.Tip()->GetBlockHash() == target);
+    BOOST_CHECK(!IsStrictAuthScriptActiveForChildOf(target));
+    BOOST_CHECK_EQUAL(mempool.size(), 0U);
+    // A fresh candidate is constructed under the restored inactive context.
+    std::unique_ptr<CBlockTemplate> candidate = BlockAssembler(GetParams()).CreateNewBlock(reward);
+    BOOST_REQUIRE(candidate);
+    BOOST_CHECK(candidate->block.hashPrevBlock == target);
+    // A repeated rewind with no insufficiently-validated active blocks is inert.
+    BOOST_REQUIRE(RewindBlockIndex(GetParams()));
+    BOOST_CHECK_EQUAL(chainActive.Height(), 118);
+}
+BOOST_AUTO_TEST_CASE(rewind_without_readmission_crosses_budget_height)
+{
+    auto& consensus = const_cast<Consensus::Params&>(GetParams().GetConsensus());
+    struct RestoreHeight {
+        Consensus::Params& params;
+        int height;
+        ~RestoreHeight() { params.nAuthScriptBudgetHeight = height; }
+    } restore{consensus, consensus.nAuthScriptBudgetHeight};
+    // TestChain100Setup does not create the asset undo DB used by DisconnectBlock.
+    struct AssetUndoDB {
+        CAssetsDB* previous;
+        AssetUndoDB() : previous(passetsdb) { passetsdb = new CAssetsDB(1 << 20, true, true); }
+        ~AssetUndoDB() { delete passetsdb; passetsdb = previous; }
+    } assetUndoDB;
+    consensus.nAuthScriptBudgetHeight = 120;
+    const CScript reward = CScript() << ToByteVector(coinbaseKey.GetPubKey()) << OP_CHECKSIG;
+    for (int i = 0; i < 21; ++i) CreateAndProcessBlock({}, reward);
+    BOOST_REQUIRE_EQUAL(chainActive.Height(), 121);
+    BOOST_REQUIRE(IsWitnessEnabled(chainActive[118], consensus));
+    BOOST_REQUIRE(ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, true, chainActive.Height()+1) & SCRIPT_VERIFY_AUTHSCRIPT_BUDGET);
+    const uint256 target = chainActive[118]->GetBlockHash();
+    // Emulate the on-disk status left by a node that had not validated witness.
+    // Only this disposable fixture's index is modified.
+    // All descendants belong to the same old-validation segment.
+    for (int height = 119; height <= 121; ++height)
+        chainActive[height]->nStatus &= ~BLOCK_OPT_WITNESS;
+    BOOST_REQUIRE(RewindBlockIndex(GetParams()));
+    BOOST_CHECK_EQUAL(chainActive.Height(), 118);
+    BOOST_CHECK(chainActive.Tip()->GetBlockHash() == target);
+    BOOST_CHECK(!(ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, true, chainActive.Height()+1) & SCRIPT_VERIFY_AUTHSCRIPT_BUDGET));
+    BOOST_CHECK_EQUAL(mempool.size(), 0U);
+    // Observable sentinel for a stale pending sweep: deliberately insert a
+    // script-invalid but mature/final legacy spend without admission. An empty
+    // reorg must not run a leftover full script sweep after startup rewind.
+    CMutableTransaction sentinel;
+    sentinel.vin.emplace_back(COutPoint(coinbaseTxns[0].GetHash(), 0));
+    sentinel.vin[0].scriptSig = CScript() << OP_0;
+    sentinel.vout.emplace_back(coinbaseTxns[0].vout[0].nValue - 1000, reward);
+    const auto sentinelId = sentinel.GetHash();
+    {
+        LOCK(cs_main);
+        mempool.addUnchecked(sentinelId, TestMemPoolEntryHelper().Time(GetTime()).Fee(1000).FromTx(sentinel));
+        DisconnectedBlockTransactions empty;
+        UpdateMempoolForReorg(empty, true);
+        BOOST_CHECK(mempool.exists(sentinelId));
+        mempool.clear();
+    }
+    // A fresh candidate is constructed under the restored inactive context.
+    std::unique_ptr<CBlockTemplate> candidate = BlockAssembler(GetParams()).CreateNewBlock(reward);
+    BOOST_REQUIRE(candidate);
+    BOOST_CHECK(candidate->block.hashPrevBlock == target);
+    // A repeated rewind with no insufficiently-validated active blocks is inert.
+    BOOST_REQUIRE(RewindBlockIndex(GetParams()));
+    BOOST_CHECK_EQUAL(chainActive.Height(), 118);
+}
+BOOST_AUTO_TEST_SUITE_END()
+
+BOOST_FIXTURE_TEST_SUITE(poseidon_work_cache_tests, TestChain100Setup)
+BOOST_AUTO_TEST_CASE(cached_execution_cannot_skip_work_and_workers_share_budget)
+{
+    LOCK(cs_main);
+    CCoinsView dummy;
+    CCoinsViewCache view(&dummy);
+    const CScript leaf = CScript() << OP_0 << OP_POSEIDON << OP_DROP << OP_TRUE;
+    const auto commitment = GetAuthScriptCommitment(0, nullptr, leaf);
+    const CScript spk = CScript() << OP_1 << ToByteVector(commitment);
+    CMutableTransaction mtx;
+    mtx.nVersion = 2;
+    for (int i = 0; i < 2; ++i) {
+        COutPoint prev(GetRandHash(), 0);
+        view.AddCoin(prev, Coin(CTxOut(COIN, spk), 1, false), false);
+        mtx.vin.emplace_back(prev);
+        mtx.vin.back().scriptWitness.stack = {{0}, std::vector<unsigned char>(leaf.begin(), leaf.end())};
+    }
+    mtx.vout.emplace_back(COIN, CScript() << OP_TRUE);
+    const CTransaction tx(mtx);
+    PrecomputedTransactionData data(tx);
+    auto flags = GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());
+    flags &= ~SCRIPT_VERIFY_POSEIDON_WORK;
+    CValidationState warm;
+    BOOST_REQUIRE(CheckInputs(tx, warm, view, true, flags, true, true, data, nullptr));
+    std::vector<CScriptCheck> cached;
+    CValidationState hit;
+    BOOST_REQUIRE(CheckInputs(tx, hit, view, true, flags, true, true, data, &cached));
+    BOOST_CHECK(cached.empty());
+    // Same flags and warm cache: explicit meter MUST still execute scripts.
+    auto zero = std::make_shared<PoseidonWorkBudget>(0);
+    CValidationState reject;
+    BOOST_CHECK(!CheckInputs(tx, reject, view, true, flags, true, true, data, nullptr, nullptr, {}, nullptr, zero));
+    BOOST_CHECK(zero->Exceeded());
+    BOOST_CHECK_EQUAL(reject.GetRejectReason(), "bad-txns-poseidon-work");
+    // Charge the full amount on repeated validation under the active flag.
+    flags |= SCRIPT_VERIFY_POSEIDON_WORK;
+    for (int repeat = 0; repeat < 2; ++repeat) {
+        auto exact = std::make_shared<PoseidonWorkBudget>(2);
+        CValidationState state;
+        BOOST_REQUIRE(CheckInputs(tx, state, view, true, flags, true, true, data, nullptr, nullptr, {}, nullptr, exact));
+        BOOST_CHECK_EQUAL(exact->Used(), 2);
+    }
+    for (uint64_t limit : {uint64_t{1}, uint64_t{2}}) {
+        auto work = std::make_shared<PoseidonWorkBudget>(limit);
+        std::vector<CScriptCheck> checks;
+        CValidationState state;
+        BOOST_REQUIRE(CheckInputs(tx, state, view, true, flags, true, true, data, &checks, nullptr, {}, nullptr, work));
+        BOOST_REQUIRE_EQUAL(checks.size(), 2);
+        BOOST_CHECK(checks[0]());
+        BOOST_CHECK_EQUAL(checks[1](), limit == 2);
+        BOOST_CHECK_EQUAL(work->Used(), limit);
+        BOOST_CHECK_EQUAL(work->Exceeded(), limit == 1);
+    }
+}
 BOOST_AUTO_TEST_SUITE_END()

@@ -83,6 +83,8 @@ enum txnouttype
     TX_RESTRICTED_ASSET_DATA = 11, //!< unspendable OP_NEURAI_ASSET script that carries data
     /** XNA END */
     TX_WITNESS_V1_AUTHSCRIPT = 12, //!< AuthScript pay-to-witness-v1-commitment (Bech32m)
+    TX_WITNESS_V2_STRICT_PQ = 13,    //!< Strict AuthScript, witness v2: ML-DSA-44 key + OP_TRUE template
+    TX_WITNESS_V3_STRICT_ECDSA = 14, //!< Strict AuthScript, witness v3: compressed secp256k1 key + OP_TRUE template
 };
 
 class CNoDestination {
@@ -93,7 +95,7 @@ public:
 
 /**
  * WitnessV1AuthScript: a 32-byte AuthScript commitment.
- * Encoded as a Bech32m address with HRP "nq" (mainnet), "tnq" (testnet/regtest).
+ * Encoded as a Bech32m address with HRP "nc" (mainnet), "tnc" (testnet/regtest).
  * scriptPubKey: OP_1 <32-byte-commitment>
  */
 class WitnessV1AuthScript : public uint256
@@ -104,14 +106,49 @@ public:
 };
 
 /**
+ * WitnessStrictAuthScript: a strict AuthScript destination, i.e. a versioned
+ * 32-byte commitment under one of the strict families:
+ *   version 2: post-quantum (ML-DSA-44) key, HRP "pq" / "tpq"
+ *   version 3: classical compressed secp256k1 key, HRP "nq" / "tnq"
+ * Both commit to the fixed template witnessScript = OP_TRUE and use the
+ * commitment preimage lead byte equal to the witness version.
+ * scriptPubKey: OP_<version> <32-byte-commitment>
+ *
+ * The version is part of the identity: the same 32 bytes under a different
+ * version are a different destination (wallet, indexes and covenants must
+ * always key on (version, commitment)).
+ */
+class WitnessStrictAuthScript
+{
+public:
+    uint8_t version;
+    uint256 commitment;
+
+    WitnessStrictAuthScript() : version(0), commitment() {}
+    WitnessStrictAuthScript(uint8_t versionIn, const uint256& commitmentIn) : version(versionIn), commitment(commitmentIn) {}
+
+    bool IsPQ() const { return version == STRICT_AUTHSCRIPT_WITNESS_V2_PQ; }
+    bool IsECDSA() const { return version == STRICT_AUTHSCRIPT_WITNESS_V3_ECDSA; }
+    bool IsValid() const { return IsStrictAuthScriptWitnessVersion(version) && !commitment.IsNull(); }
+
+    friend bool operator==(const WitnessStrictAuthScript& a, const WitnessStrictAuthScript& b) { return a.version == b.version && a.commitment == b.commitment; }
+    friend bool operator!=(const WitnessStrictAuthScript& a, const WitnessStrictAuthScript& b) { return !(a == b); }
+    friend bool operator<(const WitnessStrictAuthScript& a, const WitnessStrictAuthScript& b) {
+        if (a.version != b.version) return a.version < b.version;
+        return a.commitment < b.commitment;
+    }
+};
+
+/**
  * A txout script template with a specific destination. It is either:
  *  * CNoDestination: no destination set
  *  * CKeyID: TX_PUBKEYHASH destination (Base58, secp256k1)
  *  * CScriptID: TX_SCRIPTHASH destination (Base58, P2SH)
- *  * WitnessV1AuthScript: TX_WITNESS_V1_AUTHSCRIPT destination (Bech32m, AuthScript)
+ *  * WitnessV1AuthScript: TX_WITNESS_V1_AUTHSCRIPT destination (Bech32m, generic AuthScript)
+ *  * WitnessStrictAuthScript: TX_WITNESS_V2_STRICT_PQ / TX_WITNESS_V3_STRICT_ECDSA destination (Bech32m, strict AuthScript)
  *  A CTxDestination is the internal data type encoded in a neurai address
  */
-typedef boost::variant<CNoDestination, CKeyID, CScriptID, WitnessV1AuthScript> CTxDestination;
+typedef boost::variant<CNoDestination, CKeyID, CScriptID, WitnessV1AuthScript, WitnessStrictAuthScript> CTxDestination;
 
 enum DestinationIndexType
 {
@@ -119,7 +156,24 @@ enum DestinationIndexType
     DEST_INDEX_KEY = 1,
     DEST_INDEX_SCRIPT = 2,
     DEST_INDEX_WITNESS_V1_AUTHSCRIPT = 3,
+    DEST_INDEX_WITNESS_V2_STRICT_PQ = 4,    //!< never renumber: on-disk index type
+    DEST_INDEX_WITNESS_V3_STRICT_ECDSA = 5, //!< never renumber: on-disk index type
 };
+
+/** Map a strict witness version to its txnouttype (TX_NONSTANDARD if not strict). */
+txnouttype StrictAuthScriptTxnOutType(int witnessVersion);
+
+/** Map a strict witness version to its destination index type (DEST_INDEX_NONE if not strict). */
+int StrictAuthScriptDestIndexType(int witnessVersion);
+
+/** The fixed witnessScript of the strict families: exactly OP_TRUE. */
+CScript GetStrictAuthScriptTemplate();
+
+/**
+ * Build the strict destination for a public key: version 2 for a PQ key,
+ * version 3 for a compressed secp256k1 key. Returns false for any other key.
+ */
+bool GetStrictAuthScriptDestinationForPubKey(const CPubKey& pubkey, WitnessStrictAuthScript& dest);
 
 struct CDestinationIndexData
 {
@@ -200,11 +254,22 @@ bool ExtractAssetDestination(const CScript& scriptPubKey, CTxDestination& addres
 /** Detect asset scripts that use a witness destination and extract the witness commitment and asset data suffix. */
 bool GetAssetScriptWitnessProgram(const CScript& scriptPubKey, int& witnessversion, std::vector<unsigned char>& witnessprogram, std::vector<unsigned char>* assetData = nullptr);
 
+/** Explicit-context variant for the script interpreter, which runs on worker
+ *  threads without an activation scope and derives fStrictActive from its
+ *  flags (SCRIPT_VERIFY_AUTHSCRIPT_STRICT). */
+bool GetAssetScriptWitnessProgram(const CScript& scriptPubKey, int& witnessversion, std::vector<unsigned char>& witnessprogram, std::vector<unsigned char>* assetData, bool fStrictActive);
+
 /** Derive the AuthScript descriptor bytes for a given auth type and pubkey payload. */
 bool GetAuthScriptDescriptor(uint8_t authType, const CPubKey* pubkey, std::vector<unsigned char>& authDescriptor);
 
-/** Compute the tagged 32-byte commitment for an AuthScript witness v1 destination. */
-uint256 GetAuthScriptCommitment(uint8_t authType, const CPubKey* pubkey, const CScript& witnessScript);
+/**
+ * Compute the tagged 32-byte AuthScript commitment.
+ * commitmentVersion is the preimage lead byte: 0x01 for generic witness v1
+ * (the historical value), 0x02 / 0x03 for the strict witness v2 / v3 families.
+ * Returns a null hash for an invalid authType/pubkey combination or an
+ * unknown commitmentVersion.
+ */
+uint256 GetAuthScriptCommitment(uint8_t authType, const CPubKey* pubkey, const CScript& witnessScript, uint8_t commitmentVersion = 0x01);
 
 /** Convert a destination into the hash/type pair used by address and pubkey indexes. */
 bool GetDestinationIndexKey(const CTxDestination& dest, uint160& hashBytes, int& type);

@@ -97,4 +97,37 @@ BOOST_AUTO_TEST_CASE(mainnet_activation_heights_unchanged)
     BOOST_CHECK_EQUAL(GetParams().MessagingActivationBlock(), 10u);
 }
 
+// Testnet reset plan (2026-09-26 v2): on the reset testnet the asset
+// deployments are a pure rule from genesis. They must answer true with no
+// chain loaded (tip at or below genesis) and right after the sticky flags are
+// reset, so a reorg down to genesis validates early blocks like a fresh node.
+// Mainnet keeps VersionBits, and regtest its tip-based shortcut, so both
+// answer false without a chain.
+BOOST_AUTO_TEST_CASE(asset_deployments_active_from_genesis_on_test_networks)
+{
+    {
+        NetworkGuard g(CBaseChainParams::TESTNET);
+        BOOST_CHECK(GetParams().GetConsensus().nAssetsActiveFromGenesis);
+        UnloadBlockIndex(); // resets every sticky flag; no chain tip
+        BOOST_CHECK(AreAssetsDeployed());
+        BOOST_CHECK(IsRip5Active());
+        BOOST_CHECK(AreMessagesDeployed());
+        BOOST_CHECK(AreRestrictedAssetsDeployed());
+        BOOST_CHECK(AreTransferScriptsSizeDeployed());
+        BOOST_CHECK(AreEnforcedValuesDeployed());
+        BOOST_CHECK(AreCoinbaseCheckAssetsDeployed());
+        UnloadBlockIndex(); // do not leak the flags into later cases
+    }
+    for (const auto& net : {CBaseChainParams::MAIN, CBaseChainParams::REGTEST}) {
+        NetworkGuard g(net);
+        BOOST_CHECK(!GetParams().GetConsensus().nAssetsActiveFromGenesis);
+        UnloadBlockIndex();
+        BOOST_CHECK(!AreAssetsDeployed());
+        BOOST_CHECK(!IsRip5Active());
+        BOOST_CHECK(!AreTransferScriptsSizeDeployed());
+        BOOST_CHECK(!AreEnforcedValuesDeployed());
+        BOOST_CHECK(!AreCoinbaseCheckAssetsDeployed());
+    }
+}
+
 BOOST_AUTO_TEST_SUITE_END()

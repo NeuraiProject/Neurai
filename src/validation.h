@@ -18,6 +18,7 @@
 #include "policy/feerate.h"
 #include "script/interpreter.h" // ChainContext (NIP-026)
 #include "script/script_error.h"
+#include "script/execution_status.h"
 #include "script/verify_flags.h"
 #include "sync.h"
 #include "versionbits.h"
@@ -419,6 +420,8 @@ private:
     // m_allPrevouts must extend that guard (NIP revision 008).
     std::shared_ptr<std::vector<CTxOut>> m_allPrevouts;
     std::shared_ptr<std::vector<CTxOut>> m_refOutputs;   // NIP-014
+    std::shared_ptr<PoseidonWorkBudget> m_poseidonWork;
+    std::shared_ptr<ScriptExecutionStatus> m_executionStatus;
     ChainContext m_chainContext{};                       // NIP-026
 
 public:
@@ -429,10 +432,12 @@ public:
     bool fChainContextObserved{false};
 
     CScriptCheck(): ptxTo(nullptr), nIn(0), nFlags(SCRIPT_VERIFY_NONE), cacheStore(false), error(SCRIPT_ERR_UNKNOWN_ERROR), txdata(nullptr) {}
-    CScriptCheck(const CTxOut& outIn, const CTransaction& txToIn, unsigned int nInIn, script_verify_flags nFlagsIn, bool cacheIn, PrecomputedTransactionData* txdataIn, std::shared_ptr<std::vector<CTxOut>> allPrevoutsIn = nullptr, std::shared_ptr<std::vector<CTxOut>> refOutputsIn = nullptr, ChainContext chainCtxIn = {}) :
-        m_tx_out(outIn), ptxTo(&txToIn), nIn(nInIn), nFlags(nFlagsIn), cacheStore(cacheIn), error(SCRIPT_ERR_UNKNOWN_ERROR), txdata(txdataIn), m_allPrevouts(std::move(allPrevoutsIn)), m_refOutputs(std::move(refOutputsIn)), m_chainContext(chainCtxIn) { }
+    CScriptCheck(const CTxOut& outIn, const CTransaction& txToIn, unsigned int nInIn, script_verify_flags nFlagsIn, bool cacheIn, PrecomputedTransactionData* txdataIn, std::shared_ptr<std::vector<CTxOut>> allPrevoutsIn = nullptr, std::shared_ptr<std::vector<CTxOut>> refOutputsIn = nullptr, ChainContext chainCtxIn = {}, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr, std::shared_ptr<ScriptExecutionStatus> executionStatus = nullptr) :
+        m_tx_out(outIn), ptxTo(&txToIn), nIn(nInIn), nFlags(nFlagsIn), cacheStore(cacheIn), error(SCRIPT_ERR_UNKNOWN_ERROR), txdata(txdataIn), m_allPrevouts(std::move(allPrevoutsIn)), m_refOutputs(std::move(refOutputsIn)), m_poseidonWork(std::move(poseidonWork)), m_executionStatus(std::move(executionStatus)), m_chainContext(chainCtxIn) { }
 
     bool operator()();
+    // Execute through the same validation/error path with a supplied checker.
+    bool CheckWith(const BaseSignatureChecker& checker);
 
     void swap(CScriptCheck &check) {
         std::swap(ptxTo, check.ptxTo);
@@ -445,6 +450,8 @@ public:
         std::swap(m_allPrevouts, check.m_allPrevouts);
         std::swap(m_refOutputs, check.m_refOutputs);
         std::swap(m_chainContext, check.m_chainContext);
+        std::swap(m_poseidonWork, check.m_poseidonWork);
+        std::swap(m_executionStatus, check.m_executionStatus);
         std::swap(fChainContextObserved, check.fChainContextObserved);
     }
 
@@ -475,6 +482,12 @@ bool ReadBlockFromDisk(CBlock& block, const CBlockIndex* pindex, const Consensus
 /** Functions for validating blocks and updating the block tree */
 
 /** Context-independent validity checks */
+/** Strict AuthScript (witness v2/v3) activation for a block whose parent is
+ *  hashPrevBlock: the height-based rule when the parent is known, otherwise the
+ *  current activation context. For context-free block checks (CheckBlock) that
+ *  still need to parse asset scripts with the right rule set. */
+bool IsStrictAuthScriptActiveForChildOf(const uint256& hashPrevBlock);
+
 bool CheckBlock(const CBlock& block, CValidationState& state, const Consensus::Params& consensusParams, bool fCheckPOW = true, bool fCheckMerkleRoot = true, bool fDBCheck = false);
 
 /** Consensus rule: once nKAWPOWHeaderHeightCheckActivation is reached, a KAWPOW
@@ -629,6 +642,14 @@ bool DumpMempool();
 bool LoadMempool();
 
 /** XNA START */
+/**
+ * Policy helper. On a network that schedules AuthScript, witness v1 and the
+ * strict v2/v3 families are unknown witness versions to consensus until they
+ * apply, so an output created for them before that height is not protected.
+ * Returns true when `scriptPubKey` is such an output for a block at `nHeight`.
+ */
+bool IsInactiveAuthScriptOutput(const CScript& scriptPubKey, const Consensus::Params& consensus, int nHeight);
+
 bool AreAssetsDeployed();
 
 bool AreMessagesDeployed();
@@ -665,6 +686,10 @@ bool IsBlockTimeReductionActiveOnTip();
  *  chain. Returns nPowTargetSpacingPost at and after activation,
  *  otherwise the legacy nPowTargetSpacing. */
 int64_t GetEffectivePowTargetSpacing(int nHeight, const Consensus::Params& params);
+
+/** NIP-028: effective PoW target spacing at the current chainActive tip.
+ *  Takes cs_main. For estimates shown to the user (GUI). */
+int64_t GetEffectivePowTargetSpacingOnTip();
 
 /** NIP-028: effective PoW target timespan at nHeight on the given
  *  chain. */

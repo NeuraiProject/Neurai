@@ -14,6 +14,8 @@
 #include "utilstrencodings.h"
 
 #include <vector>
+#include <cstdlib>
+#include <fstream>
 #include <stdint.h>
 
 #include <boost/test/unit_test.hpp>
@@ -557,6 +559,66 @@ BOOST_AUTO_TEST_CASE(csfs_pq_no_hashtype_strict)
     ScriptError err;
     BOOST_CHECK(!RunBareScript(script, CSFS_FLAGS_STRICT, tx, &err));
     BOOST_CHECK_EQUAL(err, SCRIPT_ERR_SIG_DER);
+}
+
+BOOST_AUTO_TEST_CASE(csfs_authscript_real_signatures_and_accounting)
+{
+    const script_verify_flags flags = CSFS_FLAGS_STRICT | SCRIPT_VERIFY_AUTHSCRIPT;
+    const char* fixturePath = std::getenv("NEURAI_CSFS_REVIEW_VECTORS");
+    std::ofstream fixture;
+    if (fixturePath) { fixture.open(fixturePath); BOOST_REQUIRE(fixture.good()); fixture << "["; }
+    for (bool pq : {false, true}) {
+        const std::vector<unsigned char> seed(32, 0x42);
+        CKey key;
+        if (pq) key.MakeNewKeyPQ(seed);
+        else key.Set(seed.begin(), seed.end(), true);
+        const CPubKey pubkey = key.GetPubKey();
+        const std::vector<unsigned char> pub(pubkey.begin(), pubkey.end());
+        for (size_t length : {size_t(0), size_t(32), size_t(3072)}) {
+            std::vector<unsigned char> message(length);
+            for (size_t i = 0; i < length; ++i) message[i] = i & 255;
+            const auto signature = SignForCsfs(key, message);
+            const CScript script = CScript() << pub << OP_CHECKSIGFROMSTACK;
+            const uint256 commitment = GetAuthScriptCommitment(0, nullptr, script);
+            const CScript spk = CScript() << OP_1 << ToByteVector(commitment);
+            for (int mutation : {0, 1, 2, 3, 5, 6, 7}) {
+                BOOST_TEST_CONTEXT("PQ=" << pq << " length=" << length << " mutation=" << mutation) {
+                    auto msg = message, sig = signature;
+                    if (mutation == 1) { if (msg.empty()) msg.push_back(1); else msg[0] ^= 1; }
+                    if (mutation == 2) sig[10] ^= 1;
+                    if (mutation == 3) sig.clear();
+                    if (mutation == 5) sig.pop_back();
+                    if (mutation == 6) sig.back() = SIGHASH_NONE;
+                    if (mutation == 7) sig.back() = 0;
+                    CMutableTransaction mtx = BuildCsfsTestTx();
+                    mtx.vin[0].scriptWitness.stack = {{0}, sig, msg, std::vector<unsigned char>(script.begin(), script.end())};
+                    const CTransaction tx(mtx);
+                    const PrecomputedTransactionData data(tx);
+                    const TransactionSignatureChecker checker(&tx, 0, COIN, data);
+                    ScriptError error;
+                    const bool valid = VerifyScript(CScript(), spk, &tx.vin[0].scriptWitness, flags, checker, &error);
+                    const bool expected = mutation == 0 || mutation == 6;
+                    BOOST_CHECK_EQUAL(valid, expected);
+                    ScriptError expectedError = SCRIPT_ERR_OK;
+                    if (mutation == 1 || mutation == 2) expectedError = SCRIPT_ERR_SIG_NULLFAIL;
+                    if (mutation == 3) expectedError = SCRIPT_ERR_EVAL_FALSE;
+                    if (mutation == 5) expectedError = SCRIPT_ERR_SIG_DER;
+                    if (mutation == 7) expectedError = SCRIPT_ERR_SIG_HASHTYPE;
+                    BOOST_CHECK_EQUAL(error, expectedError);
+                    if (mutation == 0) {
+                        // One active CSFS contributes one witness sigop for either algorithm.
+                        BOOST_CHECK_EQUAL(CountWitnessSigOps(CScript(), spk, &tx.vin[0].scriptWitness, flags), 1U);
+                    }
+                }
+            }
+            if (fixturePath && length == 32) {
+                if (pq) fixture << ",";
+                fixture << "{\"algorithm\":\"" << (pq ? "pq" : "ecdsa") << "\",\"pubkey\":\"" << HexStr(pub)
+                        << "\",\"message\":\"" << HexStr(message) << "\",\"signature\":\"" << HexStr(signature) << "\"}";
+            }
+        }
+    }
+    if (fixturePath) { fixture << "]\n"; fixture.flush(); BOOST_REQUIRE(fixture.good()); }
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -66,5 +66,12 @@ static const int MESSAGING_RESTRICTED_ASSETS_VERSION = 70026;
 //! tick thereafter).
 static const int BLOCK_TIME_REDUCTION_VERSION = 70029;
 
+//! Protocol version announced on the reset testnet and on regtest (mainnet
+//! keeps PROTOCOL_VERSION for now). The reset testnet refuses peers below it
+//! from the first handshake: nodes of the previous testnet share its message
+//! start and announce 70029. No message format depends on it, so the version
+//! negotiated with a peer stays capped at PROTOCOL_VERSION.
+static const int RESET_TESTNET_VERSION = 70030;
+
 
 #endif // NEURAI_VERSION_H

@@ -62,17 +62,21 @@ StructuralResult ValidatePubkey(const unsigned char* pubkey, size_t len);
  *  on S. Returns OK only when every NIP-035 §4.4 rule passes. */
 StructuralResult ValidateSignature(const unsigned char* sig, size_t len);
 
-/** Strict-profile PureEd25519 verification.
- *
- *  Returns true iff every structural check above passes AND the
- *  non-cofactored verification equation [S]B == R + [H(R||A||msg)]A
- *  holds, where H is SHA-512 per RFC 8032.
- *
- *  Returns false for any failure mode (structural or cryptographic).
- *  Callers needing to distinguish "malformed" (consensus error) from
- *  "well-formed but invalid" (push 0) MUST call ValidatePubkey() and
- *  ValidateSignature() first; this is exactly what the
- *  OP_CHECKSIG_ED25519 handler does.
+/** Complete strict verification with the first structural error, if any.
+ * Public-key checks precede signature checks. A well-formed but invalid
+ * signature returns {OK, false}; no unchecked verification API is exposed.
+ */
+struct VerificationResult {
+    StructuralResult structural;
+    bool valid;
+};
+VerificationResult VerifyStrictDetailed(const unsigned char* pubkey, size_t pubkey_len,
+                                       const unsigned char* sig, size_t sig_len,
+                                       const unsigned char* msg, size_t msg_len);
+
+/** Strict-profile PureEd25519 verification. Returns true only if all
+ * structural checks and the non-cofactored verification equation pass.
+ * Callers needing precise structural errors should use VerifyStrictDetailed.
  */
 bool VerifyStrict(const unsigned char* pubkey, size_t pubkey_len,
                   const unsigned char* sig,    size_t sig_len,

@@ -611,4 +611,46 @@ BOOST_AUTO_TEST_CASE(pq_signature_2421B_pushed_inline_accepted_under_checksigadd
     BOOST_CHECK(RunBareScriptAndCheckTrue(script, FLAGS_CSA, CTransaction(BuildShellTx())));
 }
 
+// Real signatures must contribute to the global witness sigop budget.
+BOOST_AUTO_TEST_CASE(real_signatures_witness_sigop_cost)
+{
+    for (bool pq : {false, true}) for (bool authscript : {false, true}) {
+        CKey key;
+        if (pq) key.MakeNewKeyPQ(std::vector<unsigned char>(32, 42));
+        else key.MakeNewKey(true);
+        const CScript script = CScript() << OP_0 << ToByteVector(key.GetPubKey())
+            << OP_CHECKSIGADD << OP_1 << OP_NUMEQUAL;
+        auto pair = BuildP2WSHCtx(script);
+        auto& credit = pair.first;
+        auto& spending = pair.second;
+        if (authscript) {
+            credit.vout[0].scriptPubKey = CScript() << OP_1
+                << ToByteVector(GetAuthScriptCommitment(0, nullptr, script));
+            spending.vin[0].prevout.hash = credit.GetHash();
+        }
+        const SigVersion version = authscript ? SIGVERSION_AUTHSCRIPT : SIGVERSION_WITNESS_V0;
+        std::vector<unsigned char> sig;
+        BOOST_REQUIRE(key.Sign(SignatureHash(script, spending, 0, SIGHASH_ALL,
+            credit.vout[0].nValue, version), sig));
+        sig.push_back(SIGHASH_ALL);
+        CScriptWitness witness;
+        if (authscript) witness.stack.push_back({0});
+        witness.stack.push_back(sig);
+        witness.stack.push_back(std::vector<unsigned char>(script.begin(), script.end()));
+        const auto flags = FLAGS_CSA_NULLFAIL | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_AUTHSCRIPT;
+        ScriptError err;
+        BOOST_REQUIRE(VerifyScript(CScript(), credit.vout[0].scriptPubKey, &witness, flags,
+            MutableTransactionSignatureChecker(&spending, 0, credit.vout[0].nValue,
+                credit.vout[0].scriptPubKey), &err));
+        BOOST_CHECK_EQUAL(err, SCRIPT_ERR_OK);
+        BOOST_CHECK_EQUAL(CountWitnessSigOps(CScript(), credit.vout[0].scriptPubKey, &witness, flags), 1U);
+        // Changing an output invalidates the transaction-bound signature.
+        spending.vout[0].nValue--;
+        BOOST_CHECK(!VerifyScript(CScript(), credit.vout[0].scriptPubKey, &witness, flags,
+            MutableTransactionSignatureChecker(&spending, 0, credit.vout[0].nValue,
+                credit.vout[0].scriptPubKey), &err));
+        BOOST_CHECK_EQUAL(err, SCRIPT_ERR_SIG_NULLFAIL);
+    }
+}
+
 BOOST_AUTO_TEST_SUITE_END()

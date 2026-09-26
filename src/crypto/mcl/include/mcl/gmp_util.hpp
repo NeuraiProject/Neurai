@@ -1,0 +1,1153 @@
+#pragma once
+/**
+	@file
+	@brief util function for gmp
+	@author MITSUNARI Shigeo(@herumi)
+	@license modified new BSD license
+	http://opensource.org/licenses/BSD-3-Clause
+*/
+#include <mcl/config.hpp>
+#include <assert.h>
+#include <cybozu/bit_operation.hpp>
+#ifndef CYBOZU_DONT_USE_EXCEPTION
+#include <cybozu/exception.hpp>
+#endif
+#include <mcl/randgen.hpp>
+#include <mcl/conversion.hpp>
+
+#ifdef _MSC_VER
+	#pragma warning(push)
+	#pragma warning(disable : 4616)
+	#pragma warning(disable : 4800)
+	#pragma warning(disable : 4244)
+	#pragma warning(disable : 4127)
+	#pragma warning(disable : 4512)
+	#pragma warning(disable : 4146)
+#endif
+#if defined(__EMSCRIPTEN__) || defined(__wasm__)
+	#define MCL_USE_VINT
+#endif
+#ifdef MCL_USE_VINT
+#include <mcl/vint.hpp>
+typedef mcl::Vint mpz_class;
+#else
+#include <gmpxx.h>
+#include <mcl/bint.hpp>
+#include <mcl/util.hpp>
+#ifdef _MSC_VER
+	#pragma warning(pop)
+	#include <cybozu/link_mpir.hpp>
+#endif
+#if MCL_SIZEOF_UNIT == 8 && (defined(_LONG_LONG_LIMB) || defined(__APPLE__))
+	#define MCL_GMP_CANT_USE_UINT
+#endif
+#endif
+
+namespace mcl {
+
+namespace gmp {
+
+typedef mpz_class ImplType;
+
+// z = [buf[n-1]:..:buf[1]:buf[0]]
+// eg. buf[] = {0x12345678, 0xaabbccdd}; => z = 0xaabbccdd12345678;
+template<class T>
+void setArray(bool *pb, mpz_class& z, const T *buf, size_t n)
+{
+#ifdef MCL_USE_VINT
+	z.setArray(pb, buf, n);
+#else
+	mpz_import(z.get_mpz_t(), n, -1, sizeof(*buf), 0, 0, buf);
+	*pb = true;
+#endif
+}
+/*
+	buf[0, size) = x
+	buf[size, maxSize) with zero
+*/
+template<class T>
+void getArray(bool *pb, T *buf, size_t maxSize, const mpz_class& x)
+{
+#ifdef MCL_USE_VINT
+	if (x.isNegative()) {
+		*pb = false;
+		return;
+	}
+	const Unit *src = x.getUnit();
+	const size_t n = x.getUnitSize();
+#else
+	int n = x.get_mpz_t()->_mp_size;
+	if (n < 0) {
+		*pb = false;
+		return;
+	}
+	const Unit *src = (const Unit*)x.get_mpz_t()->_mp_d;
+#endif
+	*pb = fp::convertArrayAsLE(buf, maxSize, src, n);
+}
+inline void set(mpz_class& z, uint64_t x)
+{
+	bool b;
+	setArray(&b, z, &x, 1);
+	assert(b);
+	(void)b;
+}
+// z = x
+inline void setUnit(mpz_class& z, Unit x)
+{
+#ifdef MCL_GMP_CANT_USE_UINT
+	set(z, x);
+#else
+	z = x;
+#endif
+}
+
+// z += x
+inline void addUnit(mpz_class& z, Unit x)
+{
+#ifdef MCL_GMP_CANT_USE_UINT
+	mpz_class t;
+	setUnit(t, x);
+	z += t;
+#else
+	z += x;
+#endif
+}
+
+inline void setStr(bool *pb, mpz_class& z, const char *str, int base = 0)
+{
+#ifdef MCL_USE_VINT
+	z.setStr(pb, str, base);
+#else
+	*pb = z.set_str(str, base) == 0;
+#endif
+}
+
+/*
+	set buf with string terminated by '\0'
+	return strlen(buf) if success else 0
+*/
+inline size_t getStr(char *buf, size_t bufSize, const mpz_class& z, int base = 10)
+{
+#ifdef MCL_USE_VINT
+	return z.getStr(buf, bufSize, base);
+#else
+	__gmp_alloc_cstring tmp(mpz_get_str(0, base, z.get_mpz_t()));
+	size_t n = strlen(tmp.str);
+	if (n + 1 > bufSize) return 0;
+	memcpy(buf, tmp.str, n + 1);
+	return n;
+#endif
+}
+
+#ifndef CYBOZU_DONT_USE_STRING
+inline void getStr(std::string& str, const mpz_class& z, int base = 10)
+{
+#ifdef MCL_USE_VINT
+	z.getStr(str, base);
+#else
+	str = z.get_str(base);
+#endif
+}
+inline std::string getStr(const mpz_class& z, int base = 10)
+{
+	std::string s;
+	gmp::getStr(s, z, base);
+	return s;
+}
+#endif
+
+inline void add(mpz_class& z, const mpz_class& x, const mpz_class& y)
+{
+#ifdef MCL_USE_VINT
+	Vint::add(z, x, y);
+#else
+	mpz_add(z.get_mpz_t(), x.get_mpz_t(), y.get_mpz_t());
+#endif
+}
+#ifndef MCL_USE_VINT
+inline void add(mpz_class& z, const mpz_class& x, unsigned int y)
+{
+	mpz_add_ui(z.get_mpz_t(), x.get_mpz_t(), y);
+}
+inline void sub(mpz_class& z, const mpz_class& x, unsigned int y)
+{
+	mpz_sub_ui(z.get_mpz_t(), x.get_mpz_t(), y);
+}
+inline void mul(mpz_class& z, const mpz_class& x, unsigned int y)
+{
+	mpz_mul_ui(z.get_mpz_t(), x.get_mpz_t(), y);
+}
+inline void div(mpz_class& q, const mpz_class& x, unsigned int y)
+{
+	mpz_div_ui(q.get_mpz_t(), x.get_mpz_t(), y);
+}
+inline void mod(mpz_class& r, const mpz_class& x, unsigned int m)
+{
+	mpz_mod_ui(r.get_mpz_t(), x.get_mpz_t(), m);
+}
+inline int compare(const mpz_class& x, int y)
+{
+	return mpz_cmp_si(x.get_mpz_t(), y);
+}
+#endif
+inline void sub(mpz_class& z, const mpz_class& x, const mpz_class& y)
+{
+#ifdef MCL_USE_VINT
+	Vint::sub(z, x, y);
+#else
+	mpz_sub(z.get_mpz_t(), x.get_mpz_t(), y.get_mpz_t());
+#endif
+}
+inline void mul(mpz_class& z, const mpz_class& x, const mpz_class& y)
+{
+#ifdef MCL_USE_VINT
+	Vint::mul(z, x, y);
+#else
+	mpz_mul(z.get_mpz_t(), x.get_mpz_t(), y.get_mpz_t());
+#endif
+}
+inline void sqr(mpz_class& z, const mpz_class& x)
+{
+#ifdef MCL_USE_VINT
+	Vint::mul(z, x, x);
+#else
+	mpz_mul(z.get_mpz_t(), x.get_mpz_t(), x.get_mpz_t());
+#endif
+}
+inline void divmod(mpz_class& q, mpz_class& r, const mpz_class& x, const mpz_class& y)
+{
+#ifdef MCL_USE_VINT
+	Vint::divMod(&q, r, x, y);
+#else
+	mpz_divmod(q.get_mpz_t(), r.get_mpz_t(), x.get_mpz_t(), y.get_mpz_t());
+#endif
+}
+inline void div(mpz_class& q, const mpz_class& x, const mpz_class& y)
+{
+#ifdef MCL_USE_VINT
+	Vint::div(q, x, y);
+#else
+	mpz_div(q.get_mpz_t(), x.get_mpz_t(), y.get_mpz_t());
+#endif
+}
+inline void mod(mpz_class& r, const mpz_class& x, const mpz_class& m)
+{
+#ifdef MCL_USE_VINT
+	Vint::mod(r, x, m);
+#else
+	mpz_mod(r.get_mpz_t(), x.get_mpz_t(), m.get_mpz_t());
+#endif
+}
+inline void clear(mpz_class& z)
+{
+#ifdef MCL_USE_VINT
+	z.clear();
+#else
+	mpz_set_ui(z.get_mpz_t(), 0);
+#endif
+}
+inline bool isZero(const mpz_class& z)
+{
+#ifdef MCL_USE_VINT
+	return z.isZero();
+#else
+	return mpz_sgn(z.get_mpz_t()) == 0;
+#endif
+}
+inline bool isNegative(const mpz_class& z)
+{
+#ifdef MCL_USE_VINT
+	return z.isNegative();
+#else
+	return mpz_sgn(z.get_mpz_t()) < 0;
+#endif
+}
+inline void neg(mpz_class& z, const mpz_class& x)
+{
+#ifdef MCL_USE_VINT
+	Vint::neg(z, x);
+#else
+	mpz_neg(z.get_mpz_t(), x.get_mpz_t());
+#endif
+}
+inline int compare(const mpz_class& x, const mpz_class & y)
+{
+#ifdef MCL_USE_VINT
+	return Vint::compare(x, y);
+#else
+	return mpz_cmp(x.get_mpz_t(), y.get_mpz_t());
+#endif
+}
+template<class T>
+void addMod(mpz_class& z, const mpz_class& x, const T& y, const mpz_class& m)
+{
+	add(z, x, y);
+	if (compare(z, m) >= 0) {
+		sub(z, z, m);
+	}
+}
+template<class T>
+void subMod(mpz_class& z, const mpz_class& x, const T& y, const mpz_class& m)
+{
+	sub(z, x, y);
+	if (!isNegative(z)) return;
+	add(z, z, m);
+}
+template<class T>
+void mulMod(mpz_class& z, const mpz_class& x, const T& y, const mpz_class& m)
+{
+	mul(z, x, y);
+	mod(z, z, m);
+}
+inline void sqrMod(mpz_class& z, const mpz_class& x, const mpz_class& m)
+{
+	sqr(z, x);
+	mod(z, z, m);
+}
+// z = x^y (y >= 0)
+inline void pow(mpz_class& z, const mpz_class& x, unsigned int y)
+{
+#ifdef MCL_USE_VINT
+	Vint::pow(z, x, y);
+#else
+	mpz_pow_ui(z.get_mpz_t(), x.get_mpz_t(), y);
+#endif
+}
+// z = x^y mod m (y >=0)
+inline void powMod(mpz_class& z, const mpz_class& x, const mpz_class& y, const mpz_class& m)
+{
+#ifdef MCL_USE_VINT
+	Vint::powMod(z, x, y, m);
+#else
+	mpz_powm(z.get_mpz_t(), x.get_mpz_t(), y.get_mpz_t(), m.get_mpz_t());
+#endif
+}
+// z = 1/x mod m
+inline void invMod(mpz_class& z, const mpz_class& x, const mpz_class& m)
+{
+#ifdef MCL_USE_VINT
+	Vint::invMod(z, x, m);
+#else
+	mpz_invert(z.get_mpz_t(), x.get_mpz_t(), m.get_mpz_t());
+#endif
+}
+// z = lcm(x, y)
+inline void lcm(mpz_class& z, const mpz_class& x, const mpz_class& y)
+{
+#ifdef MCL_USE_VINT
+	Vint::lcm(z, x, y);
+#else
+	mpz_lcm(z.get_mpz_t(), x.get_mpz_t(), y.get_mpz_t());
+#endif
+}
+inline mpz_class lcm(const mpz_class& x, const mpz_class& y)
+{
+	mpz_class z;
+	lcm(z, x, y);
+	return z;
+}
+// z = gcd(x, y)
+inline void gcd(mpz_class& z, const mpz_class& x, const mpz_class& y)
+{
+#ifdef MCL_USE_VINT
+	Vint::gcd(z, x, y);
+#else
+	mpz_gcd(z.get_mpz_t(), x.get_mpz_t(), y.get_mpz_t());
+#endif
+}
+inline mpz_class gcd(const mpz_class& x, const mpz_class& y)
+{
+	mpz_class z;
+	gcd(z, x, y);
+	return z;
+}
+/*
+	assume p : odd prime
+	return  1 if x^2 = a mod p for some x
+	return -1 if x^2 != a mod p for any x
+*/
+inline int legendre(const mpz_class& a, const mpz_class& p)
+{
+#ifdef MCL_USE_VINT
+	return Vint::jacobi(a, p);
+#else
+	return mpz_legendre(a.get_mpz_t(), p.get_mpz_t());
+#endif
+}
+inline bool isPrime(bool *pb, const mpz_class& x)
+{
+#ifdef MCL_USE_VINT
+	return x.isPrime(pb, 32);
+#else
+	*pb = true;
+	return mpz_probab_prime_p(x.get_mpz_t(), 32) != 0;
+#endif
+}
+inline size_t getBitSize(const mpz_class& x)
+{
+#ifdef MCL_USE_VINT
+	return x.getBitSize();
+#else
+	return mpz_sizeinbase(x.get_mpz_t(), 2);
+#endif
+}
+inline bool testBit(const mpz_class& x, size_t pos)
+{
+#ifdef MCL_USE_VINT
+	return x.testBit(pos);
+#else
+	return mpz_tstbit(x.get_mpz_t(), pos) != 0;
+#endif
+}
+inline void resetBit(mpz_class& x, size_t pos)
+{
+#ifdef MCL_USE_VINT
+	x.setBit(pos, false);
+#else
+	mpz_clrbit(x.get_mpz_t(), pos);
+#endif
+}
+inline void setBit(mpz_class& x, size_t pos, bool v = true)
+{
+#ifdef MCL_USE_VINT
+	x.setBit(pos, v);
+#else
+	if (v) {
+		mpz_setbit(x.get_mpz_t(), pos);
+	} else {
+		resetBit(x, pos);
+	}
+#endif
+}
+inline const Unit *getUnit(const mpz_class& x)
+{
+#ifdef MCL_USE_VINT
+	return x.getUnit();
+#else
+	return reinterpret_cast<const Unit*>(x.get_mpz_t()->_mp_d);
+#endif
+}
+inline size_t getUnitSize(const mpz_class& x)
+{
+#ifdef MCL_USE_VINT
+	return x.getUnitSize();
+#else
+	return std::abs(x.get_mpz_t()->_mp_size);
+#endif
+}
+inline Unit getUnit(const mpz_class& x, size_t i)
+{
+	return i < getUnitSize(x) ? getUnit(x)[i] : 0;
+}
+
+/*
+	get the number of lower zeros
+*/
+template<class T>
+size_t getLowerZeroBitNum(const T *x, size_t n)
+{
+	size_t ret = 0;
+	for (size_t i = 0; i < n; i++) {
+		T v = x[i];
+		if (v == 0) {
+			ret += sizeof(T) * 8;
+		} else {
+			ret += cybozu::bsf<T>(v);
+			break;
+		}
+	}
+	return ret;
+}
+
+/*
+	get the number of lower zero
+	@note x != 0
+*/
+inline size_t getLowerZeroBitNum(const mpz_class& x)
+{
+	assert(!isZero(x));
+	return getLowerZeroBitNum(getUnit(x), getUnitSize(x));
+}
+
+inline mpz_class abs(const mpz_class& x)
+{
+#ifdef MCL_USE_VINT
+	return Vint::abs(x);
+#else
+	return ::abs(x);
+#endif
+}
+
+inline void getRand(bool *pb, mpz_class& z, size_t bitSize, fp::RandGen rg = fp::RandGen())
+{
+	if (rg.isZero()) rg = fp::RandGen::get();
+	assert(bitSize > 1);
+	const size_t rem = bitSize & 31;
+	const size_t n = (bitSize + 31) / 32;
+	uint32_t buf[128];
+	assert(n <= CYBOZU_NUM_OF_ARRAY(buf));
+	if (n > CYBOZU_NUM_OF_ARRAY(buf)) {
+		*pb = false;
+		return;
+	}
+	rg.read(pb, buf, n * sizeof(buf[0]));
+	if (!*pb) return;
+	uint32_t v = buf[n - 1];
+	if (rem == 0) {
+		v |= 1U << 31;
+	} else {
+		v &= (1U << rem) - 1;
+		v |= 1U << (rem - 1);
+	}
+	buf[n - 1] = v;
+	setArray(pb, z, buf, n);
+}
+
+inline void getRandPrime(bool *pb, mpz_class& z, size_t bitSize, fp::RandGen rg = fp::RandGen(), bool setSecondBit = false, bool mustBe3mod4 = false)
+{
+	if (rg.isZero()) rg = fp::RandGen::get();
+	assert(bitSize > 2);
+	for (;;) {
+		getRand(pb, z, bitSize, rg);
+		if (!*pb) return;
+		z |= 1; // odd
+		if (setSecondBit) {
+			z |= mpz_class(1) << (bitSize - 2);
+		}
+		if (mustBe3mod4) {
+			z |= 3;
+		}
+		bool ret = isPrime(pb, z);
+		if (!*pb) return;
+		if (ret) return;
+	}
+}
+inline mpz_class getQuadraticNonResidue(const mpz_class& p)
+{
+	mpz_class g = 2;
+	while (legendre(g, p) > 0) {
+		++g;
+	}
+	return g;
+}
+
+namespace impl {
+
+template<class Vec>
+void convertToBinary(Vec& v, const mpz_class& x)
+{
+	const size_t len = gmp::getBitSize(x);
+	v.resize(len);
+	for (size_t i = 0; i < len; i++) {
+		v[i] = gmp::testBit(x, len - 1 - i) ? 1 : 0;
+	}
+}
+
+template<class Vec>
+size_t getContinuousVal(const Vec& v, size_t pos, int val)
+{
+	while (pos >= 2) {
+		if (v[pos] != val) break;
+		pos--;
+	}
+	return pos;
+}
+
+template<class Vec>
+void convertToNAF(Vec& v, const Vec& in)
+{
+	assert(in.size() > 0);
+	v.copy(in);
+	size_t pos = v.size() - 1;
+	if (pos == 0) return;
+	for (;;) {
+		size_t p = getContinuousVal(v, pos, 0);
+		if (p == 1) return;
+		assert(v[p] == 1);
+		size_t q = getContinuousVal(v, p, 1);
+		if (q == 1) return;
+		assert(v[q] == 0);
+		if (p - q <= 1) {
+			pos = p - 1;
+			continue;
+		}
+		v[q] = 1;
+		for (size_t i = q + 1; i < p; i++) {
+			v[i] = 0;
+		}
+		v[p] = -1;
+		pos = q;
+	}
+}
+
+template<class Vec>
+size_t getNumOfNonZeroElement(const Vec& v)
+{
+	size_t w = 0;
+	for (size_t i = 0; i < v.size(); i++) {
+		if (v[i]) w++;
+	}
+	return w;
+}
+
+} // impl
+
+/*
+	compute a repl of x which has smaller Hamming weights.
+	return true if naf is selected
+*/
+template<class Vec>
+bool getNAF(Vec& v, const mpz_class& x)
+{
+	Vec bin;
+	impl::convertToBinary(bin, x);
+	Vec naf;
+	impl::convertToNAF(naf, bin);
+	const size_t binW = impl::getNumOfNonZeroElement(bin);
+	const size_t nafW = impl::getNumOfNonZeroElement(naf);
+	if (nafW < binW) {
+		v.swap(naf);
+		return true;
+	} else {
+		v.swap(bin);
+		return false;
+	}
+}
+
+/*
+	v = naf[i]
+	v = 0 or (|v| <= 2^(w-1) - 1 and odd)
+*/
+template<class Vec>
+void getNAFwidth(bool *pb, Vec& naf, mpz_class x, size_t w)
+{
+	assert(w > 0);
+	*pb = true;
+	naf.clear();
+	bool negative = false;
+	if (x < 0) {
+		negative = true;
+		x = -x;
+	}
+	size_t zeroNum = 0;
+	const int signedMaxW = 1 << (w - 1);
+	const int maxW = signedMaxW * 2;
+	const int maskW = maxW - 1;
+	while (!isZero(x)) {
+		size_t z = gmp::getLowerZeroBitNum(x);
+		if (z) {
+			x >>= z;
+			zeroNum += z;
+		}
+		for (size_t i = 0; i < zeroNum; i++) {
+			naf.push(pb, 0);
+			if (!*pb) return;
+		}
+		assert(!isZero(x));
+#if (defined(__GNUC__) && !defined(__clang__))  && !defined(__EMSCRIPTEN__)
+	// avoid gcc wrong detection
+	#pragma GCC diagnostic push
+	#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
+		int v = getUnit(x)[0] & maskW;
+#if (defined(__GNUC__) && !defined(__clang__)) && !defined(__EMSCRIPTEN__)
+	#pragma GCC diagnostic pop
+#endif
+		x >>= w;
+		if (v & signedMaxW) {
+			x++;
+			v -= maxW;
+		}
+		naf.push(pb, typename Vec::value_type(v));
+		if (!*pb) return;
+		zeroNum = w - 1;
+	}
+	if (negative) {
+		for (size_t i = 0; i < naf.size(); i++) {
+			naf[i] = -naf[i];
+		}
+	}
+}
+
+#ifndef CYBOZU_DONT_USE_EXCEPTION
+#ifndef CYBOZU_DONT_USE_STRING
+inline void setStr(mpz_class& z, const std::string& str, int base = 0)
+{
+	bool b;
+	setStr(&b, z, str.c_str(), base);
+	if (!b) throw cybozu::Exception("gmp:setStr");
+}
+#endif
+template<class T>
+void setArray(mpz_class& z, const T *buf, size_t n)
+{
+	bool b;
+	setArray(&b, z, buf, n);
+	if (!b) throw cybozu::Exception("gmp:setArray");
+}
+template<class T>
+void getArray(T *buf, size_t maxSize, const mpz_class& x)
+{
+	bool b;
+	getArray(&b, buf, maxSize, x);
+	if (!b) throw cybozu::Exception("gmp:getArray");
+}
+inline bool isPrime(const mpz_class& x)
+{
+	bool b;
+	bool ret = isPrime(&b, x);
+	if (!b) throw cybozu::Exception("gmp:isPrime");
+	return ret;
+}
+inline void getRand(mpz_class& z, size_t bitSize, fp::RandGen rg = fp::RandGen())
+{
+	bool b;
+	getRand(&b, z, bitSize, rg);
+	if (!b) throw cybozu::Exception("gmp:getRand");
+}
+inline void getRandPrime(mpz_class& z, size_t bitSize, fp::RandGen rg = fp::RandGen(), bool setSecondBit = false, bool mustBe3mod4 = false)
+{
+	bool b;
+	getRandPrime(&b, z, bitSize, rg, setSecondBit, mustBe3mod4);
+	if (!b) throw cybozu::Exception("gmp:getRandPrime");
+}
+#endif
+
+
+} // mcl::gmp
+
+/*
+	Tonelli-Shanks
+*/
+class SquareRoot {
+	bool isPrecomputed_;
+	bool isPrime;
+	mpz_class p;
+	mpz_class g;
+	int r;
+	mpz_class q; // p - 1 = 2^r q
+	mpz_class s; // s = g^q
+	mpz_class q_add_1_div_2;
+	struct Tbl {
+		const char *p;
+		const char *g;
+		int r;
+		const char *q;
+		const char *s;
+		const char *q_add_1_div_2;
+	};
+	bool setIfPrecomputed(const mpz_class& p_)
+	{
+		static const Tbl tbl[] = {
+			{ // BN254.p
+				"2523648240000001ba344d80000000086121000000000013a700000000000013",
+				"2",
+				1,
+				"1291b24120000000dd1a26c0000000043090800000000009d380000000000009",
+				"2523648240000001ba344d80000000086121000000000013a700000000000012",
+				"948d920900000006e8d1360000000021848400000000004e9c0000000000005",
+			},
+			{ // BN254.r
+				"2523648240000001ba344d8000000007ff9f800000000010a10000000000000d",
+				"2",
+				2,
+				"948d920900000006e8d136000000001ffe7e000000000042840000000000003",
+				"9366c4800000000555150000000000122400000000000015",
+				"4a46c9048000000374689b000000000fff3f000000000021420000000000002",
+			},
+			{ // BLS12_381,p
+				"1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaab",
+				"2",
+				1,
+				"d0088f51cbff34d258dd3db21a5d66bb23ba5c279c2895fb39869507b587b120f55ffff58a9ffffdcff7fffffffd555",
+				"1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaaa",
+				"680447a8e5ff9a692c6e9ed90d2eb35d91dd2e13ce144afd9cc34a83dac3d8907aaffffac54ffffee7fbfffffffeaab",
+			},
+			{ // BLS12_381.r
+				"73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001",
+				"5",
+				32,
+				"73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff",
+				"212d79e5b416b6f0fd56dc8d168d6c0c4024ff270b3e0941b788f500b912f1f",
+				"39f6d3a994cebea4199cec0404d0ec02a9ded2017fff2dff80000000",
+			},
+		};
+		for (size_t i = 0; i < CYBOZU_NUM_OF_ARRAY(tbl); i++) {
+			mpz_class targetPrime;
+			bool b;
+			mcl::gmp::setStr(&b, targetPrime, tbl[i].p, 16);
+			if (!b) continue;
+			if (targetPrime != p_) continue;
+			isPrime = true;
+			p = p_;
+			mcl::gmp::setStr(&b, g, tbl[i].g, 16);
+			if (!b) continue;
+			r = tbl[i].r;
+			mcl::gmp::setStr(&b, q, tbl[i].q, 16);
+			if (!b) continue;
+			mcl::gmp::setStr(&b, s, tbl[i].s, 16);
+			if (!b) continue;
+			mcl::gmp::setStr(&b, q_add_1_div_2, tbl[i].q_add_1_div_2, 16);
+			if (!b) continue;
+			isPrecomputed_ = true;
+			return true;
+		}
+		return false;
+	}
+	/*
+		solve x^2 = a in Fp
+	*/
+	template<class Fp>
+	bool getCandidate(Fp& x, const Fp& a) const
+	{
+		assert(Fp::getOp().mp == p);
+		if (a.isZero() || a.isOne()) {
+			x = a;
+			return true;
+		}
+		if (r == 1) {
+			// (p + 1) / 4 = (q + 1) / 2
+			Fp::pow(x, a, q_add_1_div_2);
+			return true;
+		}
+		Fp c, d;
+		{
+			bool b;
+			c.setMpz(&b, s);
+			assert(b);
+		}
+		int e = r;
+		Fp::pow(d, a, q);
+		Fp::pow(x, a, q_add_1_div_2); // destroy a if &x == &a
+		Fp dd;
+		Fp b;
+		while (!d.isOne()) {
+			int i = 1;
+			Fp::sqr(dd, d);
+			while (!dd.isOne()) {
+				Fp::sqr(dd, dd);
+				i++;
+				if (i >= e) return false;
+			}
+			assert(e > i);
+			int t = e - i - 1;
+			const int tMax = 30; // int32_t max
+			if (t < tMax) {
+				b = int(1 << t);
+			} else {
+				b = 1 << tMax;
+				t -= tMax;
+				for (int j = 0; j < t; j++) {
+					b += b;
+				}
+			}
+			Fp::pow(b, c, b);
+			x *= b;
+			Fp::sqr(c, b);
+			d *= c;
+			e = i;
+		}
+		return true;
+	}
+public:
+	SquareRoot() { clear(); }
+	bool isPrecomputed() const { return isPrecomputed_; }
+	void clear()
+	{
+		isPrecomputed_ = false;
+		isPrime = false;
+		p = 0;
+		g = 0;
+		r = 0;
+		q = 0;
+		s = 0;
+		q_add_1_div_2 = 0;
+	}
+#if !defined(CYBOZU_DONT_USE_STRING) && !defined(CYBOZU_DONT_USE_EXCEPTION)
+	void dump() const
+	{
+		printf("\"%s\",\n", mcl::gmp::getStr(p, 16).c_str());
+		printf("\"%s\",\n", mcl::gmp::getStr(g, 16).c_str());
+		printf("%d,\n", r);
+		printf("\"%s\",\n", mcl::gmp::getStr(q, 16).c_str());
+		printf("\"%s\",\n", mcl::gmp::getStr(s, 16).c_str());
+		printf("\"%s\",\n", mcl::gmp::getStr(q_add_1_div_2, 16).c_str());
+	}
+#endif
+	void set(bool *pb, const mpz_class& _p, bool usePrecomputedTable = true)
+	{
+		if (usePrecomputedTable && setIfPrecomputed(_p)) {
+			*pb = true;
+			return;
+		}
+		p = _p;
+		if (p <= 2) {
+			*pb = false;
+			return;
+		}
+		isPrime = gmp::isPrime(pb, p);
+		if (!*pb) return;
+		if (!isPrime) {
+			*pb = false;
+			return;
+		}
+		g = gmp::getQuadraticNonResidue(p);
+		// p - 1 = 2^r q, q is odd
+		r = 0;
+		q = p - 1;
+		while ((q & 1) == 0) {
+			r++;
+			q /= 2;
+		}
+		gmp::powMod(s, g, q, p);
+		q_add_1_div_2 = (q + 1) / 2;
+		*pb = true;
+	}
+	template<class T>
+	bool get(T& x, const T& a) const
+	{
+		T t, t2;
+		if (getCandidate(t, a)) {
+			T::sqr(t2, t);
+			if (t2 == a) {
+				x = t;
+				return true;
+			}
+		}
+		return false;
+	}
+	bool operator==(const SquareRoot& rhs) const
+	{
+		return isPrime == rhs.isPrime && p == rhs.p && g == rhs.g && r == rhs.r
+			&& q == rhs.q && s == rhs.s && q_add_1_div_2 == rhs.q_add_1_div_2;
+	}
+	bool operator!=(const SquareRoot& rhs) const { return !operator==(rhs); }
+#ifndef CYBOZU_DONT_USE_EXCEPTION
+	void set(const mpz_class& _p)
+	{
+		bool b;
+		set(&b, _p);
+		if (!b) throw cybozu::Exception("gmp:SquareRoot:set");
+	}
+#endif
+};
+
+// generated modp functions (dst[N] = src[srcN] mod p, para = &Modp::q0)
+#if MCL_BINT_ASM_X64 == 1
+#define MCL_MODP_ASM 1
+extern "C" int mclb_modp256_x64(Unit *dst, const Unit *src, size_t srcN, const Unit *para);
+extern "C" int mclb_modp384_x64(Unit *dst, const Unit *src, size_t srcN, const Unit *para);
+#elif defined(MCL_USE_LLVM)
+#define MCL_MODP_ASM 1
+extern "C" int mclb_modp256(Unit *dst, const Unit *src, size_t srcN, const Unit *para);
+extern "C" int mclb_modp384(Unit *dst, const Unit *src, size_t srcN, const Unit *para);
+#else
+#define MCL_MODP_ASM 0
+#endif
+
+/*
+	x mod p (word-serial Barrett reduction with a two-unit reciprocal, see
+	src/common.py); the generated modp functions handle x of up to 64 bytes and
+	modp_generic() handles any length. The layout q0, q1, np[] is the parameter
+	block read by the generated functions, so keep it first.
+*/
+struct Modp {
+	Unit q0;
+	Unit q1;
+	Unit np[maxUnitSize];
+	int (*modp_asm)(Unit *, const Unit *, size_t, const Unit*);
+	size_t N; // number of units of p
+	size_t L; // bit length of p
+	Unit p[maxUnitSize];
+	static const size_t smallD = 16; // bit length of the approximate reciprocal p0
+	static const size_t smallMaxE = smallD - 2; // modpSmall accepts xx < p 2^smallMaxE
+	uint32_t p0; // floor(2^(smallD + L - 1) / p) < 2^smallD
+	Modp() : q0(0), q1(0), np(), modp_asm(0), N(0), L(0), p(), p0(0) {}
+	bool init(const mpz_class& _p) {
+		const size_t BIT = sizeof(Unit) * 8;
+		L = gmp::getBitSize(_p);
+		modp_asm = 0;
+		N = roundUp(L, BIT);
+		if (N == 0 || N > maxUnitSize || L < (N - 1) * BIT + 2) {
+			N = 0; // not initialized
+			return false;
+		}
+		// leading zero bits of p in N words
+		const size_t s = N * BIT - L;
+		// Q = floor(2^(BIT+1+L)/p), BIT+2 bits
+		mpz_class Q = (mpz_class(1) << (BIT + 1 + L)) / _p;
+		mpz_class Qt = Q << s; // Qt = Q 2^s < 2^(2 * BIT)
+		mpz_class notp = (mpz_class(1) << (N * BIT)) - _p; // notp = 2^(N * BIT) - p
+		q0 = gmp::getUnit(Qt, 0);
+		q1 = gmp::getUnit(Qt, 1);
+		for (size_t i = 0; i < N; i++) {
+			np[i] = gmp::getUnit(notp, i);
+			p[i] = gmp::getUnit(_p, i);
+		}
+		p0 = uint32_t(gmp::getUnit((mpz_class(1) << (smallD + L - 1)) / _p, 0));
+#if MCL_BINT_ASM_X64 == 1
+		// src/gen_bint_x64.py requires p < 2^(N * BIT - 1) (r < 2p in N units)
+		if (s >= 1) {
+			switch (N * BIT) {
+			case 256: modp_asm = mclb_modp256_x64; break;
+			case 384: modp_asm = mclb_modp384_x64; break;
+			}
+		}
+#elif defined(MCL_USE_LLVM)
+		// src/gen.py (base{32,64}.ll)
+		switch (N * BIT) {
+		case 256: modp_asm = mclb_modp256; break;
+		case 384: modp_asm = mclb_modp384; break;
+		}
+#endif
+		return true;
+	}
+	// y[N] = x[xN] % p ; return false if init() failed
+	// the generated function accepts xN * sizeof(Unit) <= 64
+	bool modp(Unit *y, const Unit *x, size_t xN) const
+	{
+		if (N == 0) return false;
+#if MCL_MODP_ASM == 1
+		if (modp_asm && xN * sizeof(Unit) <= 64) return modp_asm(y, x, xN, &q0);
+#endif
+		return modp_generic(y, x, xN);
+	}
+	/*
+		word-serial Barrett reduction with the two-unit reciprocal Qt = [q1:q0]
+		Keep r < p and fold the units of x from the top one by one:
+		  xx = r 2^BIT + w (< p 2^BIT),
+		  q = floor(W Qt / 2^(2 BIT + 1)) where W = the top two units of xx,
+		  r = xx - q p, then r -= p once if r >= p.
+		q is at most 1 less than floor(xx / p), so one conditional subtraction suffices.
+		xx - q p is computed as xx + q np - q 2^(N BIT) (mod 2^((N+1) BIT)) with
+		np = 2^(N BIT) - p, and r >= p is the carry of r + np into bit N BIT.
+	*/
+	bool modp_generic(Unit *y, const Unit *x, size_t xN) const
+	{
+		if (xN < N) {
+			// init() guarantees N <= maxUnitSize; the check lets gcc see xN < maxUnitSize (avoid -Warray-bounds)
+			if (N > maxUnitSize) return false;
+			// x < 2^((N-1) BIT) < p because (N-1) BIT + 2 <= bitLen(p)
+			bint::copyN(y, x, xN);
+			bint::clearN(y + xN, N - xN);
+			return true;
+		}
+		// xx[N+1] = r 2^BIT + w ; r is kept in xx[1..N] ; two buffers because modp1 does not accept overlap
+		Unit buf[2][maxUnitSize + 1];
+		Unit *xx = buf[0];
+		Unit *r = buf[1];
+		// r = the top N-1 units of x (< p)
+		bint::copyN(xx + 1, x + xN - (N - 1), N - 1);
+		xx[N] = 0;
+		for (size_t k = xN - N + 1; k > 0; k--) {
+			xx[0] = x[k - 1];
+			modp1(r + 1, xx); // r[1..N] = xx mod p
+			fp::swap_(xx, r);
+		}
+		bint::copyN(y, xx + 1, N);
+		return true;
+	}
+	/*
+		The following functions have a template parameter NT for the number of units of p.
+		NT = 0 means the runtime N (modp_generic, tests), NT = N gives faster code
+		(the loops are unrolled) and is used by fp_mulUnit set in setOp<N>.
+	*/
+	template<size_t NT>
+	CYBOZU_FORCE_INLINE void modp1T(Unit *y, const Unit *xx) const
+	{
+		const size_t n = NT ? NT : N;
+		const size_t BIT = sizeof(Unit) * 8;
+		const Unit Qt[2] = { q0, q1 };
+		// q = floor(W Qt / 2^(2 BIT + 1)), W = [xx[n]:xx[n-1]]
+		Unit P[4];
+		bint::mulT<2>(P, xx + n - 1, Qt);
+		const Unit q = (P[2] >> 1) | (P[3] << (BIT - 1));
+		subQpT<NT>(y, xx, q);
+	}
+	void modp1(Unit *y, const Unit *xx) const { modp1T<0>(y, xx); }
+	/*
+		y[N] = xx[N+1] - q p, then y -= p once if y >= p
+		requires 0 <= xx - q p < 2p (i.e. q is floor(xx / p) or floor(xx / p) - 1)
+		y must not overlap xx
+		remark : write y directly by the asm functions (no copy of a buffer written by asm,
+		which causes a store-forwarding stall when the copy is vectorized)
+	*/
+	template<size_t NT>
+	CYBOZU_FORCE_INLINE void subQpT(Unit *y, const Unit *xx, Unit q) const
+	{
+		const size_t n = NT ? NT : N;
+		Unit u[(NT ? NT : maxUnitSize) + 1];
+		u[n] = bint::mulUnitN(u, p, q, n); // u = q p
+		const Unit b = bint::subN(y, xx, u, n); // y = xx - u (low n units)
+		const Unit top = xx[n] - u[n] - b; // 0 or 1 because 0 <= xx - q p < 2p < 2^(n BIT + 1)
+		if (top || bint::cmpGeN(y, p, n)) {
+			bint::subN(y, y, p, n);
+		}
+	}
+	/*
+		y[N] = xx[N+1] % p for xx < p 2^smallMaxE (e.g. xx = x y with x < p and y < 2^(smallMaxE - 1))
+		The quotient is estimated by one 32-bit multiplication of the top smallD bits of xx and p0,
+		which is cheaper than the two-unit multiplication in modp1.
+		return false if xx is too large (then use modp1)
+		Let a = bitLen(xx), x0 = floor(xx / 2^(a - smallD)) < 2^smallD, s = 2 smallD + L - 1 - a.
+		q = floor(x0 p0 / 2^s) <= floor(xx / p) and > xx / p - 2 2^(e - smallD) - 1 >= xx / p - 3/2 (e = a - L + 1 <= smallMaxE),
+		so q >= floor(xx / p) - 1 and one conditional subtraction suffices.
+		y must not overlap xx
+	*/
+	template<size_t NT>
+	CYBOZU_FORCE_INLINE bool modpSmallT(Unit *y, const Unit *xx) const
+	{
+		const size_t n = NT ? NT : N;
+		const size_t a = fp::getBitSize(xx, n + 1);
+		if (a < L) {
+			bint::copyN(y, xx, n); // xx < 2^(L-1) <= p
+			return true;
+		}
+		const size_t e = a - L + 1;
+		if (e > smallMaxE) return false;
+		const Unit x0 = fp::getUnitAt(xx, n + 1, a - smallD);
+		const uint32_t t = uint32_t(x0) * p0;
+		const Unit q = t >> (2 * smallD + L - 1 - a); // the shift is in [smallD + 2, 2 smallD - 1]
+		if (q == 0) {
+			/*
+				q == 0 implies a == L : if a > L then x0 >= 2^(smallD-1), p0 >= 2^(smallD-1) and
+				the shift 31 + L - a <= 30 give q >= 1. So xx < 2^L (xx[n] == 0) and xx < 2p.
+			*/
+			if (bint::cmpGeN(xx, p, n)) { // fast because the branch is usually determined at xx[n-1] (xx and p have L bits)
+				bint::subN(y, xx, p, n);
+			} else {
+				bint::copyN(y, xx, n);
+			}
+			return true;
+		}
+		subQpT<NT>(y, xx, q);
+		return true;
+	}
+	bool modpSmall(Unit *y, const Unit *xx) const { return modpSmallT<0>(y, xx); }
+	/*
+		z[N] = (x[N] * y) % p ; requires x < p (then x y < p 2^BIT and one step suffices) and init() succeeded
+		modpSmall for a small y, otherwise modp1
+		remark : the generated modp_asm is not used here because it is not faster than modp1T<N> for one step
+		(Fr : 3 clk faster, Fp : 6 clk slower on x64)
+	*/
+	template<size_t NT>
+	void mulUnitModT(Unit *z, const Unit *x, Unit y) const
+	{
+		assert(N > 0);
+		const size_t n = NT ? NT : N;
+		Unit xy[(NT ? NT : maxUnitSize) + 1];
+		xy[n] = bint::mulUnitN(xy, x, y, n);
+		if (modpSmallT<NT>(z, xy)) return;
+		modp1T<NT>(z, xy);
+	}
+	// return false if init() failed
+	bool mulUnitMod(Unit *z, const Unit *x, Unit y) const
+	{
+		if (N == 0) return false;
+		mulUnitModT<0>(z, x, y);
+		return true;
+	}
+};
+
+} // mcl

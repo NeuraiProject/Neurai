@@ -353,13 +353,13 @@ void PushNodeVersion(CNode *pnode, CConnman* connman, int64_t nTime)
     CAddress addrYou = (addr.IsRoutable() && !IsProxy(addr) ? addr : CAddress(CService(), addr.nServices));
     CAddress addrMe = CAddress(CService(), nLocalNodeServices);
 
-    connman->PushMessage(pnode, CNetMsgMaker(INIT_PROTO_VERSION).Make(NetMsgType::VERSION, PROTOCOL_VERSION, (uint64_t)nLocalNodeServices, nTime, addrYou, addrMe,
+    connman->PushMessage(pnode, CNetMsgMaker(INIT_PROTO_VERSION).Make(NetMsgType::VERSION, GetParams().ProtocolVersion(), (uint64_t)nLocalNodeServices, nTime, addrYou, addrMe,
             nonce, strSubVersion, nNodeStartingHeight, ::fRelayTxes));
 
     if (fLogIPs) {
-        LogPrint(BCLog::NET, "send version message: version %d, blocks=%d, us=%s, them=%s, peer=%d\n", PROTOCOL_VERSION, nNodeStartingHeight, addrMe.ToString(), addrYou.ToString(), nodeid);
+        LogPrint(BCLog::NET, "send version message: version %d, blocks=%d, us=%s, them=%s, peer=%d\n", GetParams().ProtocolVersion(), nNodeStartingHeight, addrMe.ToString(), addrYou.ToString(), nodeid);
     } else {
-        LogPrint(BCLog::NET, "send version message: version %d, blocks=%d, us=%s, peer=%d\n", PROTOCOL_VERSION, nNodeStartingHeight, addrMe.ToString(), nodeid);
+        LogPrint(BCLog::NET, "send version message: version %d, blocks=%d, us=%s, peer=%d\n", GetParams().ProtocolVersion(), nNodeStartingHeight, addrMe.ToString(), nodeid);
     }
 }
 
@@ -1681,12 +1681,13 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
             }
         }
 
-        if (nVersion < MIN_PEER_PROTO_VERSION)
+        if (nVersion < chainparams.MinPeerProtocolVersion())
         {
-            // disconnect from peers older than this proto version
+            // disconnect from peers older than this network's minimum proto
+            // version (the reset testnet refuses the previous testnet's nodes)
             LogPrintf("peer=%d using obsolete version %i; disconnecting\n", pfrom->GetId(), nVersion);
             connman->PushMessage(pfrom, CNetMsgMaker(INIT_PROTO_VERSION).Make(NetMsgType::REJECT, strCommand, REJECT_OBSOLETE,
-                               strprintf("Version must be %d or greater", MIN_PEER_PROTO_VERSION)));
+                               strprintf("Version must be %d or greater", chainparams.MinPeerProtocolVersion())));
             pfrom->fDisconnect = true;
             return false;
         }
@@ -1708,10 +1709,10 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
         }
 
         // NIP-028: once the local tip has reached the block-time-reduction
-        // activation height (testnet: 23,000), peers below
+        // activation height (reset testnet: block 10), peers below
         // BLOCK_TIME_REDUCTION_VERSION are dropped at handshake. Inert on
-        // mainnet (nBlockTimeReductionHeight = INT_MAX) and on testnet
-        // pre-23,000.
+        // mainnet (nBlockTimeReductionHeight = INT_MAX) and before the
+        // activation height.
         if (IsBlockTimeReductionActiveOnTip() && nVersion < BLOCK_TIME_REDUCTION_VERSION) {
             LogPrintf("peer=%d using obsolete version %i; disconnecting because peer isn't signalling protocol version for NIP-028 (block-time reduction)\n", pfrom->GetId(), nVersion);
             connman->PushMessage(pfrom, CNetMsgMaker(INIT_PROTO_VERSION).Make(NetMsgType::REJECT, strCommand, REJECT_OBSOLETE,
@@ -2345,7 +2346,7 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
                         }
                         vEraseQueue.push_back(orphanHash);
                     }
-                    else if (!fMissingInputs2)
+                    else if (!fMissingInputs2 && !stateDummy.IsError())
                     {
                         int nDos = 0;
                         if (stateDummy.IsInvalid(nDos) && nDos > 0)
@@ -2373,6 +2374,11 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
 
             for (uint256 hash : vEraseQueue)
                 EraseOrphanTx(hash);
+        }
+        else if (state.IsError())
+        {
+            // Local failure: do not poison recentRejects or relay an unverified tx.
+            LogPrint(BCLog::MEMPOOL, "Transaction validation failed locally: %s\n", FormatStateMessage(state));
         }
         else if (fMissingInputs)
         {

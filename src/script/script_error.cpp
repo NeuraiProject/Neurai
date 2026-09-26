@@ -11,6 +11,17 @@ const char* ScriptErrorString(const ScriptError serror)
 {
     switch (serror)
     {
+        case SCRIPT_ERR_BACKEND_FAILURE:
+            return "Local cryptographic backend failure";
+        case SCRIPT_ERR_ZK_STACK_SIZE: return "ZKVERIFY STACK_SIZE";
+        case SCRIPT_ERR_ZK_BAD_SIGVERSION: return "ZKVERIFY BAD_SIGVERSION";
+        case SCRIPT_ERR_ZK_BAD_PROFILE: return "ZKVERIFY BAD_PROFILE";
+        case SCRIPT_ERR_ZK_INPUT_COUNT: return "ZKVERIFY INPUT_COUNT";
+        case SCRIPT_ERR_ZK_PUBLIC_INPUT_SIZE: return "ZKVERIFY PUBLIC_INPUT_SIZE";
+        case SCRIPT_ERR_ZK_PUBLIC_INPUT_RANGE: return "ZKVERIFY PUBLIC_INPUT_RANGE";
+        case SCRIPT_ERR_ZK_VK_ENCODING: return "ZKVERIFY VK_ENCODING";
+        case SCRIPT_ERR_ZK_PROOF_ENCODING: return "ZKVERIFY PROOF_ENCODING";
+        case SCRIPT_ERR_ZK_VERIFY_FAILED: return "ZKVERIFY VERIFY_FAILED";
         case SCRIPT_ERR_OK:
             return "No error";
         case SCRIPT_ERR_EVAL_FALSE:
@@ -29,6 +40,8 @@ const char* ScriptErrorString(const ScriptError serror)
             return "Script is too big";
         case SCRIPT_ERR_PUSH_SIZE:
             return "Push value size limit exceeded";
+        case SCRIPT_ERR_AUTHSCRIPT_HASH_BUDGET:
+            return "AuthScript hash budget exceeded";
         case SCRIPT_ERR_OP_COUNT:
             return "Operation limit exceeded";
         case SCRIPT_ERR_STACK_SIZE:
@@ -81,6 +94,10 @@ const char* ScriptErrorString(const ScriptError serror)
             return "Witness program has incorrect length";
         case SCRIPT_ERR_WITNESS_PROGRAM_WITNESS_EMPTY:
             return "Witness program was passed an empty witness";
+        case SCRIPT_ERR_AUTHSCRIPT_TREE_CONTROL:
+            return "Invalid AuthScript tree control block";
+        case SCRIPT_ERR_AUTHSCRIPT_TREE_LEAF_VERSION:
+            return "Unknown AuthScript tree leaf version";
         case SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH:
             return "Witness program hash mismatch";
         case SCRIPT_ERR_WITNESS_MALLEATED:
@@ -111,6 +128,10 @@ const char* ScriptErrorString(const ScriptError serror)
             return "OP_INPUTASSETFIELD failed (invalid input, missing asset, or invalid selector)";
         case SCRIPT_ERR_OUTPUTAUTHCOMMITMENT:
             return "OP_OUTPUTAUTHCOMMITMENT failed (invalid output index or output does not carry an AuthScript v1 commitment)";
+        case SCRIPT_ERR_INPUTFIELD:
+            return "OP_INPUTFIELD failed (invalid input index, selector or field)";
+        case SCRIPT_ERR_OUTPUTAUTHDEST:
+            return "OP_OUTPUTAUTHDEST failed (invalid output index or output is not a well-formed AuthScript destination)";
         case SCRIPT_ERR_INPUTVALUE:
             return "OP_INPUTVALUE failed (invalid input index or checker missing prevouts)";
         case SCRIPT_ERR_CHAINCONTEXT:
@@ -143,6 +164,8 @@ const char* ScriptErrorString(const ScriptError serror)
             return "OP_REFINPUTASSETFIELD failed (invalid ref index, invalid selector, or unavailable asset field)";
         case SCRIPT_ERR_REFINPUTCOUNT:
             return "OP_REFINPUTCOUNT failed (reference outputs not available)";
+        case SCRIPT_ERR_POSEIDON_WORK_BUDGET:
+            return "Poseidon work budget exceeded";
         case SCRIPT_ERR_POSEIDON_BUDGET:
             return "OP_POSEIDON per-script input-byte budget exceeded (NIP-036 §3.7)";
         case SCRIPT_ERR_ED25519_SIG_SIZE:

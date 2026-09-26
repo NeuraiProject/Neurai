@@ -65,6 +65,9 @@ class CHDChain
 public:
     uint32_t nExternalChainCounter;
     uint32_t nInternalChainCounter;
+    //! Strict ECDSA branch (witness v3): m/84'/coin'/0'/{0,1}/index counters.
+    uint32_t nStrictEcdsaExternalCounter;
+    uint32_t nStrictEcdsaInternalCounter;
     CKeyID seed_id; //!< seed hash160
 
     bool bUse_bip44;
@@ -77,7 +80,8 @@ public:
     static const int VERSION_HD_CHAIN_SPLIT = 2;
     static const int VERSION_HD_BIP44_BIP39 = 3;
     static const int VERSION_HD_PQ          = 4; //!< added bUsePQ flag
-    static const int CURRENT_VERSION        = VERSION_HD_PQ;
+    static const int VERSION_HD_STRICT_ECDSA = 5; //!< added strict ECDSA (witness v3) branch counters
+    static const int CURRENT_VERSION        = VERSION_HD_STRICT_ECDSA;
     int nVersion;
 
     CWallet* pwallet;
@@ -100,6 +104,10 @@ public:
         if (this->nVersion >= VERSION_HD_PQ) {
             READWRITE(bUsePQ);
         }
+        if (this->nVersion >= VERSION_HD_STRICT_ECDSA) {
+            READWRITE(nStrictEcdsaExternalCounter);
+            READWRITE(nStrictEcdsaInternalCounter);
+        }
     }
 
     void SetSeedFromSeedId();
@@ -109,6 +117,8 @@ public:
         nVersion = CHDChain::CURRENT_VERSION;
         nExternalChainCounter = 0;
         nInternalChainCounter = 0;
+        nStrictEcdsaExternalCounter = 0;
+        nStrictEcdsaInternalCounter = 0;
         seed_id.SetNull();
         bUse_bip44 = false;
         bUsePQ = false;
@@ -224,6 +234,9 @@ public:
     bool WriteWatchOnly(const CScript &script, const CKeyMetadata &keymeta);
     bool EraseWatchOnly(const CScript &script);
     bool WriteAuthScriptSpendData(const uint256& commitment, const AuthScriptSpendData& spendData);
+    //! Version-aware record: version 1 goes to the historical "authscript" record,
+    //! strict versions 2/3 go to "authscriptv" keyed by (version, commitment).
+    bool WriteAuthScriptSpendData(uint8_t witnessVersion, const uint256& commitment, const AuthScriptSpendData& spendData);
 
     bool WriteBestBlock(const CBlockLocator& locator);
     bool ReadBestBlock(CBlockLocator& locator);
@@ -233,6 +246,12 @@ public:
     bool ReadPool(int64_t nPool, CKeyPool& keypool);
     bool WritePool(int64_t nPool, const CKeyPool& keypool);
     bool ErasePool(int64_t nPool);
+
+    //! Keypool of the strict ECDSA branch (witness v3, m/84'/...). Separate record
+    //! type so the historical "pool" entries and their format stay untouched.
+    bool ReadStrictPool(int64_t nPool, CKeyPool& keypool);
+    bool WriteStrictPool(int64_t nPool, const CKeyPool& keypool);
+    bool EraseStrictPool(int64_t nPool);
 
     bool WriteMinVersion(int nVersion);
 
@@ -269,6 +288,9 @@ public:
 
     //! write the hdchain model (external chain child index counter)
     bool WriteHDChain(const CHDChain& chain);
+
+    //! write the wallet address family (WalletAddressType)
+    bool WriteAddressType(uint8_t nType);
 
     //! Begin a new transaction
     bool TxnBegin();

@@ -29,6 +29,8 @@ public:
     virtual const BaseSignatureChecker& Checker() const =0;
 
     /** Create a singular (non-script) signature. */
+    virtual bool CreateTreeSig(std::vector<unsigned char>& signature, const CKeyID& keyid,
+                               const CScript& script, const AuthScriptTreeContext& context, uint8_t role) const { return false; }
     virtual bool CreateSig(std::vector<unsigned char>& vchSig, const CKeyID& keyid, const CScript& scriptCode, SigVersion sigversion, uint8_t authType = 0x00) const =0;
 };
 
@@ -43,6 +45,8 @@ class TransactionSignatureCreator : public BaseSignatureCreator {
 public:
     TransactionSignatureCreator(const CKeyStore* keystoreIn, const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, int nHashTypeIn=SIGHASH_ALL);
     const BaseSignatureChecker& Checker() const override { return checker; }
+    bool CreateTreeSig(std::vector<unsigned char>& signature, const CKeyID& keyid,
+                       const CScript& script, const AuthScriptTreeContext& context, uint8_t role) const override;
     bool CreateSig(std::vector<unsigned char>& vchSig, const CKeyID& keyid, const CScript& scriptCode, SigVersion sigversion, uint8_t authType = 0x00) const override;
 };
 
@@ -58,6 +62,8 @@ class DummySignatureCreator : public BaseSignatureCreator {
 public:
     explicit DummySignatureCreator(const CKeyStore* keystoreIn) : BaseSignatureCreator(keystoreIn) {}
     const BaseSignatureChecker& Checker() const override;
+    bool CreateTreeSig(std::vector<unsigned char>& signature, const CKeyID& keyid,
+                       const CScript& script, const AuthScriptTreeContext& context, uint8_t role) const override { return false; }
     bool CreateSig(std::vector<unsigned char>& vchSig, const CKeyID& keyid, const CScript& scriptCode, SigVersion sigversion, uint8_t authType = 0x00) const override;
 };
 

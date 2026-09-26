@@ -18,6 +18,7 @@
 #include "compat/sanity.h"
 #include "consensus/validation.h"
 #include "crypto/pq_sanity.h"
+#include "crypto/mcl_backend.h"
 #include "fs.h"
 #include "httpserver.h"
 #include "httprpc.h"
@@ -627,6 +628,18 @@ std::string HelpMessage(HelpMessageMode mode)
         strUsage += HelpMessageOpt("-limitdescendantsize=<n>", strprintf("Do not accept transactions if any ancestor would have more than <n> kilobytes of in-mempool descendants (default: %u).", DEFAULT_DESCENDANT_SIZE_LIMIT));
         strUsage += HelpMessageOpt("-vbparams=deployment:start:end", "Use given start/end times for specified version bits deployment (regtest-only)");
         strUsage += HelpMessageOpt("-nip040height=<n>", "Override the NIP-040 asset marker fork height (regtest-only)");
+        strUsage += HelpMessageOpt("-zkverifyheight=<n>", "Override ZKVERIFY activation (regtest-only, -1 disables)");
+        strUsage += HelpMessageOpt("-poseidonworkheight=<n>", "Override Poseidon work activation (regtest-only, -1 disables)");
+        strUsage += HelpMessageOpt("-authscriptbudgetheight=<n>", "Override NIP-046 activation height (regtest-only, -1 disables)");
+        strUsage += HelpMessageOpt("-assetmessageheight=<n>", "Override NIP-043 AssetMessage activation height (regtest-only)");
+        strUsage += HelpMessageOpt("-inputfieldheight=<n>", "Override NIP-043 InputField activation height (regtest-only)");
+        strUsage += HelpMessageOpt("-authscripttreeheight=<n>", "Override NIP-044 activation height (regtest-only)");
+        strUsage += HelpMessageOpt("-merkleposeidonheight=<n>", "Override NIP-043 MerklePoseidon activation height (regtest-only)");
+        strUsage += HelpMessageOpt("-txhashheight=<n>", "Override NIP-042 TXHASH activation height (regtest-only)");
+        strUsage += HelpMessageOpt("-signatureopcodesheight=<n>", "Override CSFS/Ed25519/CHECKSIGADD activation height (regtest-only)");
+        strUsage += HelpMessageOpt("-optinfeaturesheight=<n>", "Override the activation height of the opt-in feature switches (regtest-only)");
+        strUsage += HelpMessageOpt("-blocktimereductionheight=<n>", "Schedule the NIP-028 block-time reduction (60s -> 30s, halved subsidy) at this height (regtest-only)");
+        strUsage += HelpMessageOpt("-strictauthscriptheight=<n>", "Override the strict AuthScript (witness v2/v3) activation height (regtest-only)");
         strUsage += HelpMessageOpt("-depinstateheight=<n>", "Override the DEPIN transfer state (open/close/seal) activation height (regtest-only)");
     }
     strUsage += HelpMessageOpt("-debug=<category>", strprintf(_("Output debugging information (default: %u, supplying <category> is optional)"), 0) + ". " +
@@ -887,6 +900,11 @@ bool InitSanityCheck(void)
 
     if (!Random_SanityCheck()) {
         InitError("OS cryptographic RNG sanity check failure. Aborting.");
+        return false;
+    }
+
+    if (!MCL_InitSanityCheck()) {
+        InitError("BN254 cryptography sanity check failure. Aborting.");
         return false;
     }
 
@@ -1350,6 +1368,107 @@ bool AppInitParameterInteraction()
         }
         UpdateAssetMarkerNip040Height(static_cast<int>(nHeight));
         LogPrintf("Setting NIP-040 asset marker fork height to %ld\n", nHeight);
+    }
+
+    if (gArgs.IsArgSet("-assetmessageheight")) {
+        if (!chainparams.MineBlocksOnDemand()) return InitError("AssetMessage height may only be overridden on regtest.");
+        int64_t height;
+        if (!ParseInt64(gArgs.GetArg("-assetmessageheight", ""), &height) || height < 0 || height > std::numeric_limits<int>::max())
+            return InitError("Invalid -assetmessageheight");
+        UpdateAssetMessageHeight(static_cast<int>(height));
+    }
+
+    if (gArgs.IsArgSet("-inputfieldheight")) {
+        if (!chainparams.MineBlocksOnDemand()) return InitError("InputField height may only be overridden on regtest.");
+        int64_t height;
+        if (!ParseInt64(gArgs.GetArg("-inputfieldheight", ""), &height) || height < 0 || height > std::numeric_limits<int>::max())
+            return InitError("Invalid -inputfieldheight");
+        UpdateInputFieldHeight(static_cast<int>(height));
+    }
+
+    if (gArgs.IsArgSet("-authscripttreeheight")) {
+        if (!chainparams.MineBlocksOnDemand()) return InitError("AuthScript tree height may only be overridden on regtest.");
+        int64_t height;
+        if (!ParseInt64(gArgs.GetArg("-authscripttreeheight", ""), &height) || height < 0 || height > std::numeric_limits<int>::max())
+            return InitError("Invalid -authscripttreeheight");
+        UpdateAuthScriptTreeHeight(static_cast<int>(height));
+    }
+    if (gArgs.IsArgSet("-zkverifyheight")) {
+        if (!chainparams.MineBlocksOnDemand()) return InitError("ZKVERIFY height may only be overridden on regtest.");
+        int64_t height;
+        if (!ParseInt64(gArgs.GetArg("-zkverifyheight", ""), &height) || height < -1 || height > std::numeric_limits<int>::max())
+            return InitError("Invalid -zkverifyheight");
+        UpdateZKVerifyHeight(height == -1 ? std::numeric_limits<int>::max() : static_cast<int>(height));
+    }
+    if (gArgs.IsArgSet("-poseidonworkheight")) {
+        if (!chainparams.MineBlocksOnDemand()) return InitError("Poseidon work height may only be overridden on regtest.");
+        int64_t height;
+        if (!ParseInt64(gArgs.GetArg("-poseidonworkheight", ""), &height) || height < -1 || height > std::numeric_limits<int>::max())
+            return InitError("Invalid -poseidonworkheight");
+        UpdatePoseidonWorkHeight(height == -1 ? std::numeric_limits<int>::max() : static_cast<int>(height));
+    }
+    if (gArgs.IsArgSet("-authscriptbudgetheight")) {
+        if (!chainparams.MineBlocksOnDemand()) return InitError("AuthScript budget height may only be overridden on regtest.");
+        int64_t height;
+        if (!ParseInt64(gArgs.GetArg("-authscriptbudgetheight", ""), &height) || height < -1 || height > std::numeric_limits<int>::max())
+            return InitError("Invalid -authscriptbudgetheight");
+        UpdateAuthScriptBudgetHeight(height == -1 ? std::numeric_limits<int>::max() : static_cast<int>(height));
+    }
+    if (gArgs.IsArgSet("-merkleposeidonheight")) {
+        if (!chainparams.MineBlocksOnDemand()) return InitError("MerklePoseidon height may only be overridden on regtest.");
+        int64_t height;
+        if (!ParseInt64(gArgs.GetArg("-merkleposeidonheight", ""), &height) || height < 0 || height > std::numeric_limits<int>::max())
+            return InitError("Invalid -merkleposeidonheight");
+        UpdateMerklePoseidonHeight(static_cast<int>(height));
+    }
+
+    if (gArgs.IsArgSet("-txhashheight")) {
+        if (!chainparams.MineBlocksOnDemand()) return InitError("TXHASH height may only be overridden on regtest.");
+        int64_t height;
+        if (!ParseInt64(gArgs.GetArg("-txhashheight", ""), &height) || height < 0 || height > std::numeric_limits<int>::max())
+            return InitError("Invalid -txhashheight");
+        UpdateTxHashHeight(static_cast<int>(height));
+        LogPrintf("Setting TXHASH activation height to %ld\n", height);
+    }
+
+    if (gArgs.IsArgSet("-signatureopcodesheight")) {
+        if (!chainparams.MineBlocksOnDemand()) return InitError("Signature opcode height may only be overridden on regtest.");
+        int64_t height;
+        if (!ParseInt64(gArgs.GetArg("-signatureopcodesheight", ""), &height) || height < 0 || height > std::numeric_limits<int>::max())
+            return InitError("Invalid -signatureopcodesheight");
+        UpdateSignatureOpcodesHeight(static_cast<int>(height));
+        LogPrintf("Setting signature opcode activation height to %ld\n", height);
+    }
+
+    if (gArgs.IsArgSet("-optinfeaturesheight")) {
+        if (!chainparams.MineBlocksOnDemand()) return InitError("Opt-in feature height may only be overridden on regtest.");
+        int64_t height;
+        if (!ParseInt64(gArgs.GetArg("-optinfeaturesheight", ""), &height) || height < 0 || height > std::numeric_limits<int>::max())
+            return InitError("Invalid -optinfeaturesheight");
+        UpdateOptInFeaturesHeight(static_cast<int>(height));
+        LogPrintf("Setting opt-in feature activation height to %ld\n", height);
+    }
+
+    if (gArgs.IsArgSet("-blocktimereductionheight")) {
+        if (!chainparams.MineBlocksOnDemand()) return InitError("The block-time reduction height may only be overridden on regtest.");
+        int64_t height;
+        if (!ParseInt64(gArgs.GetArg("-blocktimereductionheight", ""), &height) || height < 0 || height > std::numeric_limits<int>::max())
+            return InitError("Invalid -blocktimereductionheight");
+        UpdateBlockTimeReductionHeight(static_cast<int>(height));
+        LogPrintf("Setting NIP-028 block-time reduction height to %ld\n", height);
+    }
+
+    if (gArgs.IsArgSet("-strictauthscriptheight")) {
+        // Strict AuthScript families (witness v2/v3): allow overriding the activation height for testing
+        if (!chainparams.MineBlocksOnDemand()) {
+            return InitError("Strict AuthScript activation height may only be overridden on regtest.");
+        }
+        int64_t nHeight;
+        if (!ParseInt64(gArgs.GetArg("-strictauthscriptheight", ""), &nHeight) || nHeight < 0 || nHeight > std::numeric_limits<int>::max()) {
+            return InitError(strprintf("Invalid -strictauthscriptheight (%s)", gArgs.GetArg("-strictauthscriptheight", "")));
+        }
+        UpdateStrictAuthScriptHeight(static_cast<int>(nHeight));
+        LogPrintf("Setting strict AuthScript activation height to %ld\n", nHeight);
     }
 
     if (gArgs.IsArgSet("-depinstateheight")) {

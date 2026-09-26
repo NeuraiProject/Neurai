@@ -30,7 +30,7 @@ LIBNEURAI_COMMON=libneurai_common.a
 LIBNEURAI_CONSENSUS=libneurai_consensus.a
 LIBNEURAI_CLI=libneurai_cli.a
 LIBNEURAI_UTIL=libneurai_util.a
-LIBNEURAI_CRYPTO=crypto/libneurai_crypto.a
+LIBNEURAI_CRYPTO=crypto/libneurai_crypto.a crypto/libneurai_mcl.a
 LIBNEURAIQT=qt/libneuraiqt.a
 LIBSECP256K1=secp256k1/libsecp256k1.la
 
@@ -358,6 +358,8 @@ crypto_libneurai_crypto_a_CPPFLAGS = $(AM_CPPFLAGS) \
     -DBLAKE3_USE_NEON=0
 crypto_libneurai_crypto_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 crypto_libneurai_crypto_a_SOURCES = \
+  script/execution_status.h \
+  crypto/backend_error.h \
   crypto/aes.cpp \
   crypto/aes.h \
   crypto/chacha20.h \
@@ -618,7 +620,7 @@ if GLIBC_BACK_COMPAT
 endif
 
 libneuraiconsensus_la_LDFLAGS = $(AM_LDFLAGS) -no-undefined $(RELDFLAGS)
-libneuraiconsensus_la_LIBADD = $(LIBSECP256K1) $(BOOST_LIBS)
+libneuraiconsensus_la_LIBADD = crypto/libneurai_mcl.a $(LIBSECP256K1) $(BOOST_LIBS)
 libneuraiconsensus_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/obj -I$(srcdir)/secp256k1/include -DBUILD_NEURAI_INTERNAL
 libneuraiconsensus_la_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 
@@ -704,3 +706,5 @@ endif
 if ENABLE_QT_TESTS
 include Makefile.qttest.include
 endif
+
+include Makefile.mcl.include

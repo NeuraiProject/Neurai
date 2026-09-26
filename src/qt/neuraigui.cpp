@@ -1320,7 +1320,8 @@ void NeuraiGUI::updateHeadersSyncProgressLabel()
 {
     int64_t headersTipTime = clientModel->getHeaderTipTime();
     int headersTipHeight = clientModel->getHeaderTipHeight();
-    int estHeadersLeft = (GetTime() - headersTipTime) / GetParams().GetConsensus().nPowTargetSpacing;
+    // NIP-028: the spacing in force at the header tip (30 s from its activation).
+    int estHeadersLeft = (GetTime() - headersTipTime) / GetEffectivePowTargetSpacing(headersTipHeight, GetParams().GetConsensus());
     if (estHeadersLeft > HEADER_HEIGHT_DELTA_SYNC)
         progressBarLabel->setText(tr("Syncing Headers (%1%)...").arg(QString::number(100.0 / (headersTipHeight+estHeadersLeft)*headersTipHeight, 'f', 1)));
 }

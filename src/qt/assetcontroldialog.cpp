@@ -9,6 +9,7 @@
 #include "addresstablemodel.h"
 #include "neuraiunits.h"
 #include "guiutil.h"
+#include "witnessestimate.h"
 #include "optionsmodel.h"
 #include "platformstyle.h"
 #include "pubkey.h"
@@ -38,31 +39,12 @@
 #include <QSortFilterProxyModel>
 #include <QCompleter>
 #include <QLineEdit>
+#include <QSignalBlocker>
 
 QList<CAmount> AssetControlDialog::payAmounts;
 CCoinControl* AssetControlDialog::assetControl = new CCoinControl();
 bool AssetControlDialog::fSubtractFeeFromAmount = false;
 
-static unsigned int EstimateWitnessInputVBytes(int witnessversion, const std::vector<unsigned char>& witnessprogram)
-{
-    // Native segwit v0 keyhash input, kept as the historical UI estimate.
-    if (witnessversion == 0) {
-        return (32 + 4 + 1 + (107 / WITNESS_SCALE_FACTOR) + 4);
-    }
-
-    // PQ witness v1 uses a much larger witness stack:
-    //   [ signature_with_hashtype, serialized_pq_pubkey ]
-    if (witnessversion == 1 && witnessprogram.size() == 20) {
-        const unsigned int base_bytes = 32 + 4 + 1 + 4;
-        const unsigned int witness_bytes =
-                GetSizeOfCompactSize(ML_DSA_44_SIG_SIZE + 1) + (ML_DSA_44_SIG_SIZE + 1) +
-                GetSizeOfCompactSize(1 + ML_DSA_44_PUBKEY_SIZE) + (1 + ML_DSA_44_PUBKEY_SIZE);
-
-        return base_bytes + (witness_bytes / WITNESS_SCALE_FACTOR);
-    }
-
-    return (32 + 4 + 1 + (107 / WITNESS_SCALE_FACTOR) + 4);
-}
 
 bool CAssetControlWidgetItem::operator<(const QTreeWidgetItem &other) const {
     int column = treeWidget()->sortColumn();
@@ -177,7 +159,8 @@ AssetControlDialog::AssetControlDialog(const PlatformStyle *_platformStyle, QWid
 
     // Add the assets into the dropdown menu
     connect(ui->viewAdministrator, SIGNAL(clicked()), this, SLOT(viewAdministratorClicked()));
-    connect(ui->assetList, SIGNAL(currentIndexChanged(QString)), this, SLOT(onAssetSelected(QString)));
+    connect(ui->assetList, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
+            this, [this](int) { onAssetSelected(ui->assetList->currentText()); });
 
     /** Setup the asset list combobox */
     stringModel = new QStringListModel;
@@ -496,9 +479,9 @@ void AssetControlDialog::updateLabels(WalletModel *model, QDialog* dialog)
     CAmount nAfterFee           = 0;
     CAmount nChange             = 0;
     unsigned int nBytes         = 0;
-    unsigned int nBytesInputs   = 0;
+    size_t nInputWeight = 0;
     unsigned int nQuantity      = 0;
-    bool fWitness               = false;
+    size_t nWitnessInputs = 0;
 
     std::vector<COutPoint> vCoinControl;
     std::vector<COutput>   vOutputs;
@@ -531,8 +514,8 @@ void AssetControlDialog::updateLabels(WalletModel *model, QDialog* dialog)
         if (out.tx->tx->vout[out.i].scriptPubKey.IsWitnessProgram(witnessversion, witnessprogram) ||
             GetAssetScriptWitnessProgram(out.tx->tx->vout[out.i].scriptPubKey, witnessversion, witnessprogram))
         {
-            nBytesInputs += EstimateWitnessInputVBytes(witnessversion, witnessprogram);
-            fWitness = true;
+            nInputWeight += GUIUtil::EstimateWitnessInputWeight(witnessversion, witnessprogram);
+            ++nWitnessInputs;
         }
         else if(ExtractDestination(out.tx->tx->vout[out.i].scriptPubKey, address))
         {
@@ -540,27 +523,20 @@ void AssetControlDialog::updateLabels(WalletModel *model, QDialog* dialog)
             CKeyID *keyid = boost::get<CKeyID>(&address);
             if (keyid && model->getPubKey(*keyid, pubkey))
             {
-                nBytesInputs += (pubkey.IsCompressed() ? 148 : 180);
+                nInputWeight += WITNESS_SCALE_FACTOR * (pubkey.IsCompressed() ? 148 : 180);
             }
             else
-                nBytesInputs += 148; // in all error cases, simply assume 148 here
+                nInputWeight += WITNESS_SCALE_FACTOR * 148; // in all error cases, simply assume 148 here
         }
-        else nBytesInputs += 148;
+        else nInputWeight += WITNESS_SCALE_FACTOR * 148;
     }
 
     // calculation
     if (nQuantity > 0)
     {
         // Bytes
-        nBytes = nBytesInputs + ((AssetControlDialog::payAmounts.size() > 0 ? AssetControlDialog::payAmounts.size() + 1 : 2) * 34) + 10; // always assume +1 output for change here
-        if (fWitness)
-        {
-            // there is some fudging in these numbers related to the actual virtual transaction size calculation that will keep this estimate from being exact.
-            // usually, the result will be an overestimate within a couple of satoshis so that the confirmation dialog ends up displaying a slightly smaller fee.
-            // also, the witness stack size value is a variable sized integer. usually, the number of stack items will be well under the single byte var int limit.
-            nBytes += 2; // account for the serialized marker and flag bytes
-            nBytes += nQuantity; // account for the witness byte that holds the number of stack items for each input.
-        }
+        nBytes = GUIUtil::EstimateControlVBytes(nInputWeight, nQuantity, nWitnessInputs,
+            AssetControlDialog::payAmounts.empty() ? 2 : AssetControlDialog::payAmounts.size() + 1);
 
         // in the subtract fee from amount case, we can tell if zero change already and subtract the bytes, so that fee calculation afterwards is accurate
         if (AssetControlDialog::fSubtractFeeFromAmount)
@@ -827,12 +803,15 @@ void AssetControlDialog::updateAssetList(bool fSetOnStart)
         list << QString::fromStdString(name);
     }
 
-    stringModel->setStringList(list);
-
-    int index = ui->assetList->findText(QString::fromStdString(assetControl->strAssetSelected));
-    if (index != -1 ) { // -1 for not found
-        fOnStartUp = fSetOnStart;
-        ui->assetList->setCurrentIndex(index);
+    {
+        // Rebuilding/restoring the list is not a user change of asset. Model
+        // resets may emit multiple index changes, or none when restoring index 0.
+        const QSignalBlocker blocker(ui->assetList);
+        stringModel->setStringList(list);
+        int index = ui->assetList->findText(QString::fromStdString(assetControl->strAssetSelected));
+        if (index != -1) {
+            ui->assetList->setCurrentIndex(index);
+        }
     }
 
     updateView();
@@ -840,11 +819,7 @@ void AssetControlDialog::updateAssetList(bool fSetOnStart)
 
 void AssetControlDialog::onAssetSelected(QString name)
 {
-    if (fOnStartUp) {
-        fOnStartUp = false;
-    } else {
-        assetControl->UnSelectAll();
-    }
+    assetControl->UnSelectAll();
 
     AssetControlDialog::updateLabels(model, this);
     updateView();

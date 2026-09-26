@@ -16,11 +16,19 @@
 std::string GetWalletHelpString(bool showDebug)
 {
     std::string strUsage = HelpMessageGroup(_("Wallet options:"));
+    strUsage += HelpMessageOpt("-addresstype=<type>", strprintf(_("Address type of a wallet created on this run: legacy (Base58), pq (strict post-quantum, witness v2) "
+                                                                  "or ecdsa (strict ECDSA, witness v3) (default: %s). The wallet then hands out only that type by default "
+                                                                  "(receive, change, mining); an ecdsa wallet never hands out legacy addresses. The type is stored in the "
+                                                                  "wallet file: opening an existing wallet with a different -addresstype is an error. pq and ecdsa require "
+                                                                  "-bip44=1; their addresses are handed out at any time, but payments to them (including change and "
+                                                                  "mining) are refused until the network activates them. In the GUI, the "
+                                                                  "first-run wallet dialog offers the three types, preset to this value"),
+                                                                  WalletAddressTypeName(DEFAULT_WALLET_ADDRESS_TYPE)));
     strUsage += HelpMessageOpt("-bip44=<n>", strprintf(_("Sets the wallet to use/not use bip44 12-words, non-bip44=0 or bip44=1 (default: 1). "
                                                                  "Note: By default 12-words will automatically be generated for you (random word selection). See -mnemonic and -mnemonicpassphrase "
                                                                  "below to create a wallet using a specific word list (use an existing bip-44 wallet word-list), or use the RPC/CLI getmywords or "
                                                                  "dumpwallet to retrieve the auto-generated word-list. This flag is ignored if there is already an existing non-bip44 wallet. "
-                                                                 "-bip44=0 is incompatible with -pqwallet: PQ keys derive from the BIP44 mnemonic seed.")));
+                                                                 "-bip44=0 is incompatible with -addresstype=pq and -addresstype=ecdsa: their keys derive from the BIP44 mnemonic seed.")));
     strUsage += HelpMessageOpt("-discardfee=<amt>", strprintf(_("The fee rate (in %s/kB) that indicates your tolerance for discarding change by adding it to the fee (default: %s). "
                                                                             "Note: An output is discarded if it is dust at this rate, but we will always discard up to the dust relay fee and a discard "
                                                                             "fee above that is limited by the fee estimate for the longest target"),
@@ -32,7 +40,6 @@ std::string GetWalletHelpString(bool showDebug)
     strUsage += HelpMessageOpt("-mnemonic=<word-list>", strprintf(_("A space separated list of 12-words used to import a bip44 wallet")));
     strUsage += HelpMessageOpt("-mnemonicpassphrase=<passphrase>", strprintf(_("Passphrase securing your 12-word mnemonic word-list")));
     strUsage += HelpMessageOpt("-paytxfee=<amt>", strprintf(_("Fee (in %s/kB) to add to transactions you send (default: %s)"), CURRENCY_UNIT, FormatMoney(payTxFee.GetFeePerK())));
-    strUsage += HelpMessageOpt("-pqwallet=<n>", _("Create a post-quantum (ML-DSA-44) wallet on first run (default: 0). Requires -bip44=1: PQ keys derive from the BIP44 mnemonic seed"));
     strUsage += HelpMessageOpt("-rescan", _("Rescan the block chain for missing wallet transactions on startup"));
     strUsage += HelpMessageOpt("-salvagewallet", _("Attempt to recover private keys from a corrupt wallet on startup"));
     strUsage += HelpMessageOpt("-spendzeroconfchange", strprintf(_("Spend unconfirmed change when sending transactions (default: %u)"), DEFAULT_SPEND_ZEROCONF_CHANGE));
@@ -69,6 +76,16 @@ bool WalletParameterInteraction()
 
     if (gArgs.GetBoolArg("-disablewallet", DEFAULT_DISABLE_WALLET))
         return true;
+
+    if (gArgs.IsArgSet("-pqwallet")) {
+        return InitError(_("-pqwallet has been removed: use -addresstype=pq to create a post-quantum wallet"));
+    }
+    if (gArgs.IsArgSet("-addresstype")) {
+        WalletAddressType type;
+        if (!ParseWalletAddressType(gArgs.GetArg("-addresstype", ""), type)) {
+            return InitError(strprintf(_("Unknown -addresstype: '%s' (expected legacy, pq or ecdsa)"), gArgs.GetArg("-addresstype", "")));
+        }
+    }
 
     if (gArgs.GetBoolArg("-blocksonly", DEFAULT_BLOCKSONLY) && gArgs.SoftSetBoolArg("-walletbroadcast", false)) {
         LogPrintf("%s: parameter interaction: -blocksonly=1 -> setting -walletbroadcast=0\n", __func__);

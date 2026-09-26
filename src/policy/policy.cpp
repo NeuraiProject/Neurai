@@ -25,14 +25,34 @@ static size_t EstimateWitnessInputVBytes(int witnessversion, const std::vector<u
         return (32 + 4 + 1 + (107 / WITNESS_SCALE_FACTOR) + 4);
     }
 
-    // PQ witness v1 spends carry a much larger witness stack:
-    //   [ signature_with_hashtype, serialized_pq_pubkey ]
-    if (witnessversion == 1 && witnessprogram.size() == 20) {
+    // AuthScript: generic witness v1 and the strict families (v2 PQ, v3 ECDSA),
+    // all with a 32-byte program and a witness of the shape
+    //   [authType, signature, pubkey, ..., witnessScript].
+    //
+    // The strict families reveal their spend type through the version. Generic
+    // v1 does not: its 32 bytes hide whether the spend will be PQ, ECDSA or a
+    // contract. As a documented POLICY CHOICE (not an upper bound: a v1
+    // contract with several arguments or signatures can cost more) a v1 output
+    // is estimated as the wallet's default template, a PQ key with OP_TRUE.
+    // Before this, v1 outputs fell through to the 107-byte ECDSA estimate and
+    // PQ dust thresholds came out roughly nine times too low.
+    if ((witnessversion == 1 || IsStrictAuthScriptWitnessVersion(witnessversion)) && witnessprogram.size() == 32) {
         const size_t base_bytes = 32 + 4 + 1 + 4;
+        size_t sig_bytes = 0;
+        size_t pubkey_bytes = 0;
+        if (witnessversion == 1 || witnessversion == STRICT_AUTHSCRIPT_WITNESS_V2_PQ) {
+            sig_bytes = ML_DSA_44_SIG_SIZE + 1;
+            pubkey_bytes = 1 + ML_DSA_44_PUBKEY_SIZE;
+        } else {
+            sig_bytes = 72 + 1;   // max DER signature + sighash byte
+            pubkey_bytes = 33;    // compressed secp256k1
+        }
         const size_t witness_bytes =
-                GetSizeOfCompactSize(ML_DSA_44_SIG_SIZE + 1) + (ML_DSA_44_SIG_SIZE + 1) +
-                GetSizeOfCompactSize(1 + ML_DSA_44_PUBKEY_SIZE) + (1 + ML_DSA_44_PUBKEY_SIZE);
-
+                1 /* stack item count */ +
+                GetSizeOfCompactSize(1) + 1 +                       // authType
+                GetSizeOfCompactSize(sig_bytes) + sig_bytes +       // signature
+                GetSizeOfCompactSize(pubkey_bytes) + pubkey_bytes + // pubkey
+                GetSizeOfCompactSize(1) + 1;                        // OP_TRUE
         return base_bytes + (witness_bytes / WITNESS_SCALE_FACTOR);
     }
 
@@ -208,7 +228,7 @@ bool IsStandardTx(const CTransaction& tx, std::string& reason, const bool witnes
  * expensive-to-check-upon-redemption script like:
  *   DUP CHECKSIG DROP ... repeated 100 times... OP_1
  */
-bool AreInputsStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs)
+bool AreInputsStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs, bool countCSFS, bool countCheckSigAdd, bool countEd25519)
 {
     if (tx.IsCoinBase())
         return true; // Coinbases don't use vin normally
@@ -233,7 +253,7 @@ bool AreInputsStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs)
             if (stack.empty())
                 return false;
             CScript subscript(stack.back().begin(), stack.back().end());
-            if (subscript.GetSigOpCount(true) > MAX_P2SH_SIGOPS) {
+            if (subscript.GetSigOpCount(true, countCSFS, countCheckSigAdd, countEd25519) > MAX_P2SH_SIGOPS) {
                 return false;
             }
         }
@@ -243,11 +263,12 @@ bool AreInputsStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs)
 }
 
 bool IsWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs,
-                        bool largeWitnessItemsActive)
+                        bool largeWitnessItemsActive, script_verify_flags treeFlags)
 {
     if (tx.IsCoinBase())
         return true; // Coinbases are skipped
 
+    unsigned int zkOps = 0;
     for (unsigned int i = 0; i < tx.vin.size(); i++)
     {
         // We don't care if witness for this input is empty, since it must not be bloated.
@@ -279,6 +300,48 @@ bool IsWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs,
         if (!prevScript.IsWitnessProgram(witnessversion, witnessprogram) &&
             !GetAssetScriptWitnessProgram(prevScript, witnessversion, witnessprogram))
             return false;
+
+        if (witnessversion == 1 && witnessprogram.size() == 32 &&
+            (treeFlags & SCRIPT_VERIFY_ZKVERIFY)) {
+            const auto& witness = tx.vin[i].scriptWitness;
+            size_t scriptIndex = witness.stack.size()-1;
+            if ((treeFlags & SCRIPT_VERIFY_AUTHSCRIPT_TREE) && witness.stack[0].size()==1 &&
+                witness.stack[0][0]>=0x10 && witness.stack[0][0]<=0x12) {
+                size_t offset;
+                if (!ParseAuthScriptTreeWitness(witness, offset)) return false;
+                --scriptIndex;
+            }
+            const auto& bytes = witness.stack[scriptIndex];
+            zkOps += CScript(bytes.begin(), bytes.end()).CountZKVerify();
+            if (zkOps > 4) return false;
+        }
+
+        // Strict AuthScript families: the witness is a fixed 4-item template.
+        // Consensus enforces the exact shape; policy additionally bounds the
+        // item sizes so oversized junk never reaches script verification.
+        if (IsStrictAuthScriptWitnessVersion(witnessversion) && witnessprogram.size() == 32) {
+            const auto& stack = tx.vin[i].scriptWitness.stack;
+            if (stack.size() != 4)
+                return false;
+            const size_t maxSig = (witnessversion == STRICT_AUTHSCRIPT_WITNESS_V2_PQ) ? ML_DSA_44_SIG_SIZE + 1 : 73;
+            const size_t maxPubKey = (witnessversion == STRICT_AUTHSCRIPT_WITNESS_V2_PQ) ? 1 + ML_DSA_44_PUBKEY_SIZE : 33;
+            if (stack[0].size() != 1 || stack[1].size() > maxSig || stack[2].size() > maxPubKey || stack[3].size() != 1)
+                return false;
+            continue;
+        }
+
+        if (witnessversion == 1 && witnessprogram.size() == 32 &&
+            (treeFlags & SCRIPT_VERIFY_AUTHSCRIPT_TREE)) {
+            const auto& witness = tx.vin[i].scriptWitness;
+            if (!witness.stack.empty() && witness.stack[0].size() == 1 &&
+                witness.stack[0][0] >= 0x10 && witness.stack[0][0] <= 0x12) {
+                size_t offset;
+                if (!ParseAuthScriptTreeWitness(witness, offset) ||
+                    witness.stack.size()-offset-2 > MAX_STACK_SIZE) return false;
+                for (size_t j=offset; j+2<witness.stack.size(); ++j)
+                    if (witness.stack[j].size() > EffectiveMaxScriptElementSize(treeFlags)) return false;
+            }
+        }
 
         // Check P2WSH standard limits
         if (witnessversion == 0 && witnessprogram.size() == 32) {

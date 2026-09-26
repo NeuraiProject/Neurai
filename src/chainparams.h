@@ -77,6 +77,10 @@ public:
     const std::vector<CDNSSeedData>& DNSSeeds() const { return vSeeds; }
     const std::vector<unsigned char>& Base58Prefix(Base58Type type) const { return base58Prefixes[type]; }
     const std::string& Bech32HRP() const { return strBech32HRP; }
+    /** Canonical HRP for generic AuthScript v1 contracts. */
+    const std::string& Bech32HRPAuthScript() const { return strBech32HRPAuthScript; }
+    /** HRP of the strict PQ family (witness v2). Witness v3 uses Bech32HRP(). */
+    const std::string& Bech32HRPStrictPQ() const { return strBech32HRPStrictPQ; }
     int ExtCoinType() const { return nExtCoinType; }
     const std::vector<SeedSpec6>& FixedSeeds() const { return vFixedSeeds; }
     const CCheckpointData& Checkpoints() const { return checkpointData; }
@@ -84,6 +88,18 @@ public:
     void UpdateVersionBitsParameters(Consensus::DeploymentPos d, int64_t nStartTime, int64_t nTimeout);
     void UpdateAssetMarkerNip040Height(int nHeight);
     void UpdateDepinTransferStateHeight(int nHeight);
+    void UpdateStrictAuthScriptHeight(int nHeight);
+    void UpdateZKVerifyHeight(int nHeight) { consensus.nZKVerifyHeight = nHeight; }
+    void UpdatePoseidonWorkHeight(int nHeight) { consensus.nPoseidonWorkHeight = nHeight; }
+    void UpdateAuthScriptBudgetHeight(int nHeight) { consensus.nAuthScriptBudgetHeight = nHeight; }
+    void UpdateAssetMessageHeight(int nHeight) { consensus.nAssetMessageHeight = nHeight; }
+    void UpdateInputFieldHeight(int nHeight) { consensus.nInputFieldHeight = nHeight; }
+    void UpdateAuthScriptTreeHeight(int nHeight) { consensus.nAuthScriptTreeHeight = nHeight; }
+    void UpdateMerklePoseidonHeight(int nHeight) { consensus.nMerklePoseidonHeight = nHeight; }
+    void UpdateTxHashHeight(int nHeight) { consensus.nTxHashHeight = nHeight; }
+    void UpdateSignatureOpcodesHeight(int nHeight) { consensus.nSignatureOpcodesHeight = nHeight; }
+    void UpdateOptInFeaturesHeight(int nHeight) { consensus.nOptInFeaturesHeight = nHeight; }
+    void UpdateBlockTimeReductionHeight(int nHeight) { consensus.nBlockTimeReductionHeight = nHeight; }
     void TurnOffSegwit();
     void TurnOffCSV();
     void TurnOffBIP34();
@@ -151,6 +167,10 @@ public:
             : nMaxReorganizationDepth;
     }
     int MinReorganizationPeers() const { return nMinReorganizationPeers; }
+    /** Protocol version announced in the version handshake. */
+    int ProtocolVersion() const { return nProtocolVersion; }
+    /** Peers announcing a lower protocol version are refused at handshake. */
+    int MinPeerProtocolVersion() const { return nMinPeerProtocolVersion; }
     int MinReorganizationAge() const { return nMinReorganizationAge; }
 
     int GetAssetActivationHeight() const { return nAssetActivationHeight; }
@@ -166,6 +186,8 @@ protected:
     std::vector<CDNSSeedData> vSeeds;
     std::vector<unsigned char> base58Prefixes[MAX_BASE58_TYPES];
     std::string strBech32HRP;
+    std::string strBech32HRPStrictPQ;
+    std::string strBech32HRPAuthScript;
     int nExtCoinType;
     std::string strNetworkID;
     CBlock genesis;
@@ -212,6 +234,9 @@ protected:
     int nMinReorganizationPeers;
     int nMinReorganizationAge;
 
+    int nProtocolVersion;
+    int nMinPeerProtocolVersion;
+
     int nAssetActivationHeight;
 
     uint32_t nKAAAWWWPOWActivationTime;
@@ -257,6 +282,21 @@ void UpdateAssetMarkerNip040Height(int nHeight);
  * call this directly.
  */
 void UpdateDepinTransferStateHeight(int nHeight);
+
+/** Regtest only: move the strict AuthScript (witness v2/v3) activation height. */
+void UpdateStrictAuthScriptHeight(int nHeight);
+void UpdateSignatureOpcodesHeight(int nHeight);
+void UpdateOptInFeaturesHeight(int nHeight);
+/** Regtest only: schedule NIP-028 (block-time reduction) at this height. */
+void UpdateBlockTimeReductionHeight(int nHeight);
+void UpdateAuthScriptBudgetHeight(int nHeight);
+void UpdateZKVerifyHeight(int nHeight);
+void UpdatePoseidonWorkHeight(int nHeight);
+void UpdateAssetMessageHeight(int nHeight);
+void UpdateInputFieldHeight(int nHeight);
+void UpdateAuthScriptTreeHeight(int nHeight);
+void UpdateMerklePoseidonHeight(int nHeight);
+void UpdateTxHashHeight(int nHeight);
 
 void TurnOffSegwit();
 

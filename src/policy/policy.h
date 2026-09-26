@@ -28,6 +28,8 @@ static const unsigned int DEFAULT_BLOCK_MIN_TX_FEE = 1000;
 static const unsigned int MAX_STANDARD_TX_WEIGHT = 400000;
 /** Maximum number of signature check operations in an IsStandard() P2SH script */
 static const unsigned int MAX_P2SH_SIGOPS = 15;
+/** Maximum Poseidon work relayed in a single transaction after activation. */
+static constexpr uint64_t MAX_STANDARD_TX_POSEIDON_WORK = 20000;
 /** The maximum number of sigops we're willing to relay/mine in a single tx */
 static const unsigned int MAX_STANDARD_TX_SIGOPS_COST = MAX_BLOCK_SIGOPS_COST/5;
 /** Default for -maxmempool, maximum megabytes of mempool memory usage */
@@ -83,53 +85,89 @@ static constexpr script_verify_flags STANDARD_NOT_MANDATORY_VERIFY_FLAGS = STAND
  * the result.  Used directly by validation.cpp (AcceptToMemoryPool,
  * GetBlockScriptFlags) and indirectly through
  * GetStandardScriptVerifyFlagsWithConsensusOptIns by non-consensus paths.
+ * Every opt-in switch is applied only from consensus.nOptInFeaturesHeight on,
+ * so `nHeight` must be the height of the block being validated (or of the
+ * next block for mempool, mining and wallet).
  */
 inline script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
-                                                const Consensus::Params& consensus)
+                                                const Consensus::Params& consensus,
+                                                bool fStrictAuthScriptActive, int nHeight)
 {
-    if (consensus.nPQWitnessEnabled)        base |= SCRIPT_VERIFY_AUTHSCRIPT;
-    if (consensus.nCATEnabled)              base |= SCRIPT_VERIFY_CAT;
-    if (consensus.nCTVEnabled)              base |= SCRIPT_VERIFY_CHECKTEMPLATEVERIFY;
-    if (consensus.nCSFSEnabled)             base |= SCRIPT_VERIFY_CHECKSIGFROMSTACK;
-    if (consensus.nTXHASHEnabled)           base |= SCRIPT_VERIFY_TXHASH;
-    if (consensus.nTXFIELDEnabled)          base |= SCRIPT_VERIFY_TXFIELD;
-    if (consensus.nSPLITEnabled)            base |= SCRIPT_VERIFY_SPLIT;
-    if (consensus.nREVERSEBYTESEnabled)     base |= SCRIPT_VERIFY_REVERSEBYTES;
-    if (consensus.nOUTPUTVALUEEnabled)      base |= SCRIPT_VERIFY_OUTPUTVALUE;
-    if (consensus.nOUTPUTSCRIPTEnabled)     base |= SCRIPT_VERIFY_OUTPUTSCRIPT;
-    if (consensus.nOUTPUTASSETFIELDEnabled) base |= SCRIPT_VERIFY_OUTPUTASSETFIELD;
-    if (consensus.nINPUTASSETFIELDEnabled)  base |= SCRIPT_VERIFY_INPUTASSETFIELD;
-    if (consensus.n64BitIntegersEnabled)    base |= SCRIPT_VERIFY_64BIT_INTEGERS;
-    if (consensus.nTXLOCKTIMEEnabled)       base |= SCRIPT_VERIFY_TXLOCKTIME;
-    if (consensus.nINPUTOUTPUTCOUNTEnabled) base |= SCRIPT_VERIFY_INPUTOUTPUTCOUNT;
-    if (consensus.nREFINPUTSEnabled)        base |= SCRIPT_VERIFY_REFINPUTS;
-    if (consensus.nOUTPUTAUTHCOMMITMENTEnabled) base |= SCRIPT_VERIFY_OUTPUTAUTHCOMMITMENT;
-    if (consensus.nINPUTVALUEEnabled)        base |= SCRIPT_VERIFY_INPUTVALUE;
+    if (consensus.IsOptInActive(consensus.nPQWitnessEnabled, nHeight))        base |= SCRIPT_VERIFY_AUTHSCRIPT;
+    // Height-activated: the caller states whether the strict AuthScript
+    // families are active for the block (or next block) it is validating.
+    if (fStrictAuthScriptActive)            base |= SCRIPT_VERIFY_AUTHSCRIPT_STRICT;
+    // NIP-041: destination introspection shares that activation height.
+    if (fStrictAuthScriptActive)            base |= SCRIPT_VERIFY_AUTHDEST;
+    if (consensus.IsOptInActive(consensus.nCATEnabled, nHeight))              base |= SCRIPT_VERIFY_CAT;
+    if (consensus.IsOptInActive(consensus.nCTVEnabled, nHeight))              base |= SCRIPT_VERIFY_CHECKTEMPLATEVERIFY;
+    if (consensus.IsOptInActive(consensus.nCSFSEnabled, nHeight) && consensus.IsSignatureOpcodesActive(nHeight))             base |= SCRIPT_VERIFY_CHECKSIGFROMSTACK;
+    if (consensus.IsTxHashActive(nHeight))           base |= SCRIPT_VERIFY_TXHASH;
+    if (consensus.IsAssetMessageActive(nHeight)) base |= SCRIPT_VERIFY_ASSETMESSAGEFIELD;
+    if (consensus.IsInputFieldActive(nHeight)) base |= SCRIPT_VERIFY_INPUTFIELD;
+    if (consensus.IsOptInActive(consensus.nPQWitnessEnabled, nHeight) && consensus.IsAuthScriptTreeActive(nHeight)) base |= SCRIPT_VERIFY_AUTHSCRIPT_TREE;
+    if (consensus.IsZKVerifyActive(nHeight)) base |= SCRIPT_VERIFY_ZKVERIFY;
+    if (consensus.IsPoseidonWorkActive(nHeight)) base |= SCRIPT_VERIFY_POSEIDON_WORK;
+    if (consensus.IsAuthScriptBudgetActive(nHeight)) base |= SCRIPT_VERIFY_AUTHSCRIPT_BUDGET;
+    if (consensus.IsMerklePoseidonActive(nHeight)) base |= SCRIPT_VERIFY_MERKLE_POSEIDON;
+    if (consensus.IsOptInActive(consensus.nTXFIELDEnabled, nHeight))          base |= SCRIPT_VERIFY_TXFIELD;
+    if (consensus.IsOptInActive(consensus.nSPLITEnabled, nHeight))            base |= SCRIPT_VERIFY_SPLIT;
+    if (consensus.IsOptInActive(consensus.nREVERSEBYTESEnabled, nHeight))     base |= SCRIPT_VERIFY_REVERSEBYTES;
+    if (consensus.IsOptInActive(consensus.nOUTPUTVALUEEnabled, nHeight))      base |= SCRIPT_VERIFY_OUTPUTVALUE;
+    if (consensus.IsOptInActive(consensus.nOUTPUTSCRIPTEnabled, nHeight))     base |= SCRIPT_VERIFY_OUTPUTSCRIPT;
+    if (consensus.IsOptInActive(consensus.nOUTPUTASSETFIELDEnabled, nHeight)) base |= SCRIPT_VERIFY_OUTPUTASSETFIELD;
+    if (consensus.IsOptInActive(consensus.nINPUTASSETFIELDEnabled, nHeight))  base |= SCRIPT_VERIFY_INPUTASSETFIELD;
+    if (consensus.IsOptInActive(consensus.n64BitIntegersEnabled, nHeight))    base |= SCRIPT_VERIFY_64BIT_INTEGERS;
+    if (consensus.IsOptInActive(consensus.nTXLOCKTIMEEnabled, nHeight))       base |= SCRIPT_VERIFY_TXLOCKTIME;
+    if (consensus.IsOptInActive(consensus.nINPUTOUTPUTCOUNTEnabled, nHeight)) base |= SCRIPT_VERIFY_INPUTOUTPUTCOUNT;
+    if (consensus.IsOptInActive(consensus.nREFINPUTSEnabled, nHeight))        base |= SCRIPT_VERIFY_REFINPUTS;
+    if (consensus.IsOptInActive(consensus.nOUTPUTAUTHCOMMITMENTEnabled, nHeight)) base |= SCRIPT_VERIFY_OUTPUTAUTHCOMMITMENT;
+    if (consensus.IsOptInActive(consensus.nINPUTVALUEEnabled, nHeight))        base |= SCRIPT_VERIFY_INPUTVALUE;
     // NIP-026: OP_CHAINCONTEXT pushes up to 8-byte values (MTP exceeds
     // 4 bytes after 2038), so it must be co-set with 64BIT_INTEGERS.
     // The handler re-checks this at runtime as belt-and-braces (§3.7).
-    if (consensus.nCHAINCONTEXTEnabled)      base |= SCRIPT_VERIFY_CHAINCONTEXT
+    if (consensus.IsOptInActive(consensus.nCHAINCONTEXTEnabled, nHeight))      base |= SCRIPT_VERIFY_CHAINCONTEXT
                                                    | SCRIPT_VERIFY_64BIT_INTEGERS;
     // NIP-030: OP_KECCAK256 and OP_BLAKE2B hash opcodes.
-    if (consensus.nKeccakBlake2bEnabled)     base |= SCRIPT_VERIFY_KECCAK_BLAKE2B;
+    if (consensus.IsOptInActive(consensus.nKeccakBlake2bEnabled, nHeight))     base |= SCRIPT_VERIFY_KECCAK_BLAKE2B;
     // NIP-031: OP_CHECKMERKLEINCLUSION (native Merkle proof verifier).
-    if (consensus.nMerkleInclusionEnabled)   base |= SCRIPT_VERIFY_MERKLE_INCLUSION;
+    if (consensus.IsOptInActive(consensus.nMerkleInclusionEnabled, nHeight))   base |= SCRIPT_VERIFY_MERKLE_INCLUSION;
     // NIP-034a: OP_BLAKE3 / OP_SHA3_256 / OP_SHA512.
-    if (consensus.nModernHashesEnabled)      base |= SCRIPT_VERIFY_MODERN_HASHES;
+    if (consensus.IsOptInActive(consensus.nModernHashesEnabled, nHeight))      base |= SCRIPT_VERIFY_MODERN_HASHES;
     // NIP-036: OP_POSEIDON (SNARK-friendly Poseidon over BN254 Fr).
-    if (consensus.nPoseidonEnabled)          base |= SCRIPT_VERIFY_POSEIDON;
+    if (consensus.IsOptInActive(consensus.nPoseidonEnabled, nHeight))          base |= SCRIPT_VERIFY_POSEIDON;
     // NIP-035: OP_CHECKSIG_ED25519 (strict-profile Ed25519 verifier).
-    if (consensus.nEd25519Enabled)           base |= SCRIPT_VERIFY_ED25519;
+    if (consensus.IsOptInActive(consensus.nEd25519Enabled, nHeight) && consensus.IsSignatureOpcodesActive(nHeight))           base |= SCRIPT_VERIFY_ED25519;
     // NIP-039: OP_CHECKSIGADD (generic legacy/PQ signature accumulator).
-    if (consensus.nCheckSigAddEnabled)       base |= SCRIPT_VERIFY_CHECKSIGADD;
+    if (consensus.IsOptInActive(consensus.nCheckSigAddEnabled, nHeight) && consensus.IsSignatureOpcodesActive(nHeight))       base |= SCRIPT_VERIFY_CHECKSIGADD;
     return base;
 }
+
+/** Every flag ApplyConsensusOptIns may set: the part of the script flags that
+ *  depends on the network and on the block height. Code that validates a
+ *  mempool candidate against the flags of the current tip must take these
+ *  from the next block instead (see AcceptToMemoryPoolWorker). */
+static constexpr script_verify_flags CONSENSUS_OPT_IN_FLAGS =
+    SCRIPT_VERIFY_AUTHSCRIPT | SCRIPT_VERIFY_AUTHSCRIPT_STRICT | SCRIPT_VERIFY_AUTHDEST |
+    SCRIPT_VERIFY_CAT | SCRIPT_VERIFY_CHECKTEMPLATEVERIFY | SCRIPT_VERIFY_CHECKSIGFROMSTACK |
+    SCRIPT_VERIFY_TXHASH | SCRIPT_VERIFY_ASSETMESSAGEFIELD | SCRIPT_VERIFY_INPUTFIELD |
+    SCRIPT_VERIFY_AUTHSCRIPT_TREE | SCRIPT_VERIFY_ZKVERIFY | SCRIPT_VERIFY_POSEIDON_WORK |
+    SCRIPT_VERIFY_AUTHSCRIPT_BUDGET | SCRIPT_VERIFY_MERKLE_POSEIDON | SCRIPT_VERIFY_TXFIELD |
+    SCRIPT_VERIFY_SPLIT | SCRIPT_VERIFY_REVERSEBYTES | SCRIPT_VERIFY_OUTPUTVALUE |
+    SCRIPT_VERIFY_OUTPUTSCRIPT | SCRIPT_VERIFY_OUTPUTASSETFIELD | SCRIPT_VERIFY_INPUTASSETFIELD |
+    SCRIPT_VERIFY_64BIT_INTEGERS | SCRIPT_VERIFY_TXLOCKTIME | SCRIPT_VERIFY_INPUTOUTPUTCOUNT |
+    SCRIPT_VERIFY_REFINPUTS | SCRIPT_VERIFY_OUTPUTAUTHCOMMITMENT | SCRIPT_VERIFY_INPUTVALUE |
+    SCRIPT_VERIFY_CHAINCONTEXT | SCRIPT_VERIFY_KECCAK_BLAKE2B | SCRIPT_VERIFY_MERKLE_INCLUSION |
+    SCRIPT_VERIFY_MODERN_HASHES | SCRIPT_VERIFY_POSEIDON | SCRIPT_VERIFY_ED25519 |
+    SCRIPT_VERIFY_CHECKSIGADD;
 
 /** NIP-020: convenience wrapper — STANDARD_SCRIPT_VERIFY_FLAGS | opt-ins. */
 inline script_verify_flags GetStandardScriptVerifyFlagsWithConsensusOptIns(
     const Consensus::Params& consensus)
 {
-    return ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus);
+    // Non-consensus callers (signing, RPC, tools): activation context of the
+    // block after the current tip.
+    return ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, IsStrictAuthScriptActiveInContext(), GetSignatureOpcodeCandidateHeight());
 }
 
 /** Used as the flags parameter to sequence and nLocktime checks in non-consensus code. */
@@ -151,7 +189,7 @@ bool IsStandardTx(const CTransaction& tx, std::string& reason, const bool witnes
      * @param[in] mapInputs    Map of previous transactions that have outputs we're spending
      * @return True if all inputs (scriptSigs) use only standard transaction forms
      */
-bool AreInputsStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs);
+bool AreInputsStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs, bool countCSFS = false, bool countCheckSigAdd = false, bool countEd25519 = false);
     /**
      * Check if the transaction is over standard P2WSH resources limit:
      * 3600bytes witnessScript size, 100 witness stack elements.
@@ -167,7 +205,7 @@ bool AreInputsStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs)
      * These limits are adequate for multi-signature up to n-of-100 using OP_CHECKSIG, OP_ADD, and OP_EQUAL,
      */
 bool IsWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs,
-                        bool largeWitnessItemsActive);
+                        bool largeWitnessItemsActive, script_verify_flags treeFlags = SCRIPT_VERIFY_NONE);
 
 extern CFeeRate incrementalRelayFee;
 extern CFeeRate dustRelayFee;

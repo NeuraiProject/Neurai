@@ -11,6 +11,18 @@
 
 static const uint32_t MAX_BIP125_RBF_SEQUENCE = 0xfffffffd;
 
+class CCoinsViewCache;
+
+// NIP025-patch1: classify inputs and outputs, including administrative assets.
+// Missing prevouts conservatively prevent replacement. Read-only references
+// do not count. Call under the candidate block's asset activation context.
+bool InvolvesAssets(const CTransaction& tx, const CCoinsViewCache& view);
+
+// Checks the entire bounded eviction set, not just directly conflicting txs.
+bool ReplacementInvolvesAssets(const CTransaction& candidate,
+                              const CTxMemPool::setEntries& evicted,
+                              const CCoinsViewCache& view);
+
 enum RBFTransactionState {
     RBF_TRANSACTIONSTATE_UNKNOWN,
     RBF_TRANSACTIONSTATE_REPLACEABLE_BIP125,

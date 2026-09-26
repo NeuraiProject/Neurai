@@ -119,6 +119,14 @@ bool CWalletDB::WriteAuthScriptSpendData(const uint256& commitment, const AuthSc
     return WriteIC(std::make_pair(std::string("authscript"), commitment), spendData);
 }
 
+bool CWalletDB::WriteAuthScriptSpendData(uint8_t witnessVersion, const uint256& commitment, const AuthScriptSpendData& spendData)
+{
+    if (witnessVersion == 1) {
+        return WriteAuthScriptSpendData(commitment, spendData);
+    }
+    return WriteIC(std::make_pair(std::string("authscriptv"), std::make_pair(witnessVersion, commitment)), spendData);
+}
+
 bool CWalletDB::WriteBestBlock(const CBlockLocator& locator)
 {
     WriteIC(std::string("bestblock"), CBlockLocator()); // Write empty block locator so versions that require a merkle branch automatically rescan
@@ -149,6 +157,21 @@ bool CWalletDB::WritePool(int64_t nPool, const CKeyPool& keypool)
 bool CWalletDB::ErasePool(int64_t nPool)
 {
     return EraseIC(std::make_pair(std::string("pool"), nPool));
+}
+
+bool CWalletDB::ReadStrictPool(int64_t nPool, CKeyPool& keypool)
+{
+    return batch.Read(std::make_pair(std::string("strictpool"), nPool), keypool);
+}
+
+bool CWalletDB::WriteStrictPool(int64_t nPool, const CKeyPool& keypool)
+{
+    return WriteIC(std::make_pair(std::string("strictpool"), nPool), keypool);
+}
+
+bool CWalletDB::EraseStrictPool(int64_t nPool)
+{
+    return EraseIC(std::make_pair(std::string("strictpool"), nPool));
 }
 
 bool CWalletDB::WriteMinVersion(int nVersion)
@@ -258,13 +281,22 @@ bool ReadKeyValue(CWallet* pwallet, CDataStream& ssKey, CDataStream& ssValue,
         {
             std::string strAddress;
             ssKey >> strAddress;
-            ssValue >> pwallet->mapAddressBook[DecodeDestination(strAddress)].name;
+            std::string name;
+            ssValue >> name;
+            // Loading metadata must not depend on the current activation tip.
+            CStrictAuthScriptContext context(true);
+            const auto dest = DecodeDestination(strAddress);
+            if (IsValidDestination(dest)) pwallet->mapAddressBook[dest].name = name;
         }
         else if (strType == "purpose")
         {
             std::string strAddress;
             ssKey >> strAddress;
-            ssValue >> pwallet->mapAddressBook[DecodeDestination(strAddress)].purpose;
+            std::string purpose;
+            ssValue >> purpose;
+            CStrictAuthScriptContext context(true);
+            const auto dest = DecodeDestination(strAddress);
+            if (IsValidDestination(dest)) pwallet->mapAddressBook[dest].purpose = purpose;
         }
         else if (strType == "tx")
         {
@@ -338,13 +370,27 @@ bool ReadKeyValue(CWallet* pwallet, CDataStream& ssKey, CDataStream& ssValue,
         }
         else if (strType == "authscript")
         {
+            // Generic AuthScript v1 spend data from older wallets. v1 is a
+            // contract family the wallet never manages, so the record is read
+            // (to keep the database walk intact) and discarded.
             uint256 commitment;
             ssKey >> commitment;
             AuthScriptSpendData spendData;
             ssValue >> spendData;
-            if (!pwallet->LoadAuthScriptSpendData(commitment, spendData))
+        }
+        else if (strType == "authscriptv")
+        {
+            uint8_t witnessVersion = 0;
+            uint256 commitment;
+            ssKey >> witnessVersion;
+            ssKey >> commitment;
+            AuthScriptSpendData spendData;
+            ssValue >> spendData;
+            if (witnessVersion == 1) {
+                // Generic AuthScript v1: never managed by the wallet (see "authscript").
+            } else if (!pwallet->LoadAuthScriptSpendData(witnessVersion, commitment, spendData))
             {
-                strErr = "Error reading wallet database: LoadAuthScriptSpendData failed";
+                strErr = "Error reading wallet database: LoadAuthScriptSpendData (versioned) failed";
                 return false;
             }
         }
@@ -489,6 +535,15 @@ bool ReadKeyValue(CWallet* pwallet, CDataStream& ssKey, CDataStream& ssValue,
 
             pwallet->LoadKeyPool(nIndex, keypool);
         }
+        else if (strType == "strictpool")
+        {
+            int64_t nIndex;
+            ssKey >> nIndex;
+            CKeyPool keypool;
+            ssValue >> keypool;
+
+            pwallet->LoadStrictEcdsaKeyPool(nIndex, keypool);
+        }
         else if (strType == "version")
         {
             ssValue >> wss.nFileVersion;
@@ -517,7 +572,11 @@ bool ReadKeyValue(CWallet* pwallet, CDataStream& ssKey, CDataStream& ssValue,
             ssKey >> strAddress;
             ssKey >> strKey;
             ssValue >> strValue;
-            if (!pwallet->LoadDestData(DecodeDestination(strAddress), strKey, strValue))
+            CStrictAuthScriptContext context(true);
+            const auto dest = DecodeDestination(strAddress);
+            // Retired or malformed address strings are discarded, not migrated.
+            if (!IsValidDestination(dest)) return true;
+            if (!pwallet->LoadDestData(dest, strKey, strValue))
             {
                 strErr = "Error reading wallet database: LoadDestData failed";
                 return false;
@@ -532,6 +591,12 @@ bool ReadKeyValue(CWallet* pwallet, CDataStream& ssKey, CDataStream& ssValue,
                 strErr = "Error reading wallet database: SetHDChain failed";
                 return false;
             }
+        }
+        else if (strType == "addresstype")
+        {
+            uint8_t nType = 0;
+            ssValue >> nType;
+            pwallet->LoadAddressType(nType);
         }
         else if (strType == "cbip39words")
         {
@@ -895,7 +960,9 @@ bool CWalletDB::RecoverKeysOnlyFilter(void *callbackData, CDataStream ssKey, CDa
         fReadOK = ReadKeyValue(dummyWallet, ssKey, ssValue,
                                dummyWss, strType, strErr);
     }
-    if (!IsKeyType(strType) && strType != "hdchain")
+    // The address family decides which keys the wallet hands out: a salvaged
+    // wallet must keep it.
+    if (!IsKeyType(strType) && strType != "hdchain" && strType != "addresstype")
         return false;
     if (!fReadOK)
     {
@@ -998,6 +1065,11 @@ bool CWalletDB::EraseDestData(const std::string &address, const std::string &key
 bool CWalletDB::WriteHDChain(const CHDChain& chain)
 {
     return WriteIC(std::string("hdchain"), chain);
+}
+
+bool CWalletDB::WriteAddressType(uint8_t nType)
+{
+    return WriteIC(std::string("addresstype"), nType);
 }
 
 bool CWalletDB::TxnBegin()

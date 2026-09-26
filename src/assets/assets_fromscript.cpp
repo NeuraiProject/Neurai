@@ -701,7 +701,9 @@ bool AssetNullDataFromScript(const CScript& scriptPubKey, CNullAssetTxData& asse
     int dataOffset = -1;
     if (scriptPubKey.size() > 23 && scriptPubKey[0] == OP_XNA_ASSET && scriptPubKey[1] == 0x14) {
         dataOffset = 23;
-    } else if (scriptPubKey.size() > 36 && scriptPubKey[0] == OP_XNA_ASSET && scriptPubKey[1] == OP_1 && scriptPubKey[2] == 0x20) {
+    } else if (scriptPubKey.size() > 36 && scriptPubKey[0] == OP_XNA_ASSET &&
+               (scriptPubKey[1] == OP_1 || ((scriptPubKey[1] == OP_2 || scriptPubKey[1] == OP_3) && IsStrictAuthScriptActiveInContext())) && scriptPubKey[2] == 0x20) {
+        // AuthScript prefix: generic v1 (OP_1) or strict families (OP_2 / OP_3)
         dataOffset = 36;
     } else {
         return false;

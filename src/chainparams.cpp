@@ -10,6 +10,7 @@
 #include "tinyformat.h"
 #include "util.h"
 #include "utilstrencodings.h"
+#include "version.h"
 #include "arith_uint256.h"
 
 #include <assert.h>
@@ -58,6 +59,11 @@ void CChainParams::UpdateVersionBitsParameters(Consensus::DeploymentPos d, int64
 void CChainParams::UpdateAssetMarkerNip040Height(int nHeight)
 {
     consensus.nAssetMarkerNip040Height = nHeight;
+}
+
+void CChainParams::UpdateStrictAuthScriptHeight(int nHeight)
+{
+    consensus.nStrictAuthScriptHeight = nHeight;
 }
 
 void CChainParams::UpdateDepinTransferStateHeight(int nHeight)
@@ -124,10 +130,12 @@ public:
         consensus.nSegwitEnabled = true;
         consensus.nCSVEnabled = true;
         consensus.nPQWitnessEnabled = false; // PQ not yet active on mainnet
+        consensus.nStrictAuthScriptHeight = std::numeric_limits<int>::max(); // strict AuthScript families (witness v2/v3): not scheduled on mainnet
         consensus.nCATEnabled = false;  // OP_CAT (BIP 347) not yet active on mainnet
         consensus.nCTVEnabled = false;  // OP_CTV (BIP 119) not yet active on mainnet
-        consensus.nCSFSEnabled = false; // OP_CHECKSIGFROMSTACK not yet active on mainnet
-        consensus.nTXHASHEnabled = false;  // OP_TXHASH not yet active on mainnet
+        consensus.nSignatureOpcodesHeight = std::numeric_limits<int>::max(); // not scheduled on mainnet
+        consensus.nCSFSEnabled = true; // gated by nSignatureOpcodesHeight
+        consensus.nTxHashHeight = std::numeric_limits<int>::max(); // NIP-042: unscheduled on mainnet
         consensus.nTXFIELDEnabled = false; // OP_TXFIELD (NOP7) not yet active on mainnet
         consensus.nSPLITEnabled = false;   // OP_SPLIT (NOP8) not yet active on mainnet
         consensus.nREVERSEBYTESEnabled = false; // OP_REVERSEBYTES not yet active on mainnet
@@ -142,7 +150,6 @@ public:
         consensus.nOUTPUTAUTHCOMMITMENTEnabled = false; // NIP-023: OP_OUTPUTAUTHCOMMITMENT not yet active on mainnet
         consensus.nINPUTVALUEEnabled = false; // NIP-024: OP_INPUTVALUE not yet active on mainnet
         consensus.nCHAINCONTEXTEnabled = false; // NIP-026: OP_CHAINCONTEXT not yet active on mainnet
-        consensus.nASSETRBFBlockEnabled = false; // NIP-025: asset-AuthScript RBF ban not yet active on mainnet
         consensus.nXNAAssetStrictEnabled = false; // NIP revision 010: keep origin/main OP_XNA_ASSET rule on mainnet until the unified fork
         consensus.nAssetMarkerNip040Height = std::numeric_limits<int>::max(); // NIP-040: H_main is set in the second release, after testnet validation
         consensus.nDepinTransferStateHeight = std::numeric_limits<int>::max(); // DEPIN transfer state: not scheduled on mainnet (DEPIN assets are testnet/regtest only until the unified fork)
@@ -156,8 +163,8 @@ public:
         consensus.nMerkleInclusionEnabled     = false;        // NIP-031: not active on mainnet
         consensus.nModernHashesEnabled        = false;        // NIP-034a: not active on mainnet
         consensus.nPoseidonEnabled            = false;        // NIP-036: not active on mainnet
-        consensus.nEd25519Enabled             = false;        // NIP-035: not active on mainnet
-        consensus.nCheckSigAddEnabled         = false;        // NIP-039: not active on mainnet
+        consensus.nEd25519Enabled             = true;        // NIP-035: gated by nSignatureOpcodesHeight
+        consensus.nCheckSigAddEnabled         = true;        // NIP-039: gated by nSignatureOpcodesHeight
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days
@@ -242,6 +249,8 @@ public:
         base58Prefixes[EXT_SECRET_KEY]    = {0x04, 0x88, 0xAD, 0xE4};
         base58Prefixes[EXT_PQ_SECRET_KEY] = {0x04, 0x88, 0xAC, 0x24}; // xpqp... (mainnet)
         strBech32HRP = "nq";
+        strBech32HRPAuthScript = "nc";
+        strBech32HRPStrictPQ = "pq";
 
         // Neurai BIP44 cointype in mainnet is '0'
         nExtCoinType = 0;
@@ -322,6 +331,8 @@ public:
         nMaxReorganizationDepthPost = 60; // mainnet: NIP-028 inactive; mirror legacy
         nMinReorganizationPeers = 6;
         nMinReorganizationAge = 60 * 60 * 12; // 12 hours
+        nProtocolVersion = PROTOCOL_VERSION;
+        nMinPeerProtocolVersion = MIN_PEER_PROTO_VERSION;
 
         nAssetActivationHeight = 10; // Asset activated block height
         nMessagingActivationBlock = 10; // Messaging activated block height
@@ -354,11 +365,26 @@ public:
         consensus.nBIP66Enabled = true;
         consensus.nSegwitEnabled = true;
         consensus.nCSVEnabled = true;
-        consensus.nPQWitnessEnabled = true; // PQ (ML-DSA-44) active on testnet
+        // Testnet reset (plan 2026-09-26 v2): blocks 1-9 run the rules that
+        // predate the new NIPs and block 10 is the first block that applies
+        // all of them. Assets/RIP5 and the v1.0.6 fixes are not part of that
+        // set: they are active from genesis.
+        static constexpr int TESTNET_FEATURES_HEIGHT = 10;
+        consensus.nOptInFeaturesHeight = TESTNET_FEATURES_HEIGHT; // every opt-in switch below applies from this height
+        consensus.nPQWitnessEnabled = true; // PQ (ML-DSA-44) AuthScript, from nOptInFeaturesHeight
+        consensus.nStrictAuthScriptHeight = TESTNET_FEATURES_HEIGHT; // strict AuthScript families (witness v2/v3) and NIP-041
         consensus.nCATEnabled = true;  // OP_CAT (BIP 347) active on testnet
         consensus.nCTVEnabled = true;  // OP_CTV (BIP 119) active on testnet
-        consensus.nCSFSEnabled = true;  // OP_CHECKSIGFROMSTACK active on testnet
-        consensus.nTXHASHEnabled = true;  // OP_TXHASH active on testnet
+        consensus.nCSFSEnabled = true;  // OP_CHECKSIGFROMSTACK
+        consensus.nSignatureOpcodesHeight = TESTNET_FEATURES_HEIGHT; // CSFS, Ed25519, CHECKSIGADD
+        consensus.nZKVerifyHeight = TESTNET_FEATURES_HEIGHT;
+        consensus.nPoseidonWorkHeight = TESTNET_FEATURES_HEIGHT;
+        consensus.nAuthScriptBudgetHeight = TESTNET_FEATURES_HEIGHT; // NIP-046
+        consensus.nAssetMessageHeight = TESTNET_FEATURES_HEIGHT; // NIP-043
+        consensus.nInputFieldHeight = TESTNET_FEATURES_HEIGHT; // NIP-043
+        consensus.nAuthScriptTreeHeight = TESTNET_FEATURES_HEIGHT; // NIP-044
+        consensus.nMerklePoseidonHeight = TESTNET_FEATURES_HEIGHT; // NIP-043
+        consensus.nTxHashHeight = TESTNET_FEATURES_HEIGHT; // NIP-042
         consensus.nTXFIELDEnabled = true; // OP_TXFIELD (NOP7) active on testnet
         consensus.nSPLITEnabled = true;   // OP_SPLIT (NOP8) active on testnet
         consensus.nREVERSEBYTESEnabled = true; // OP_REVERSEBYTES active on testnet
@@ -373,25 +399,25 @@ public:
         consensus.nOUTPUTAUTHCOMMITMENTEnabled = true; // NIP-023: OP_OUTPUTAUTHCOMMITMENT active on testnet
         consensus.nINPUTVALUEEnabled = true; // NIP-024: OP_INPUTVALUE active on testnet
         consensus.nCHAINCONTEXTEnabled = true; // NIP-026: OP_CHAINCONTEXT active on testnet
-        consensus.nASSETRBFBlockEnabled = true; // NIP-025: asset-AuthScript RBF ban active on testnet
         consensus.nXNAAssetStrictEnabled = true; // NIP revision 010: strict OP_XNA_ASSET rule is de-facto consensus on testnet
-        consensus.nAssetMarkerNip040Height = 303000; // NIP-040: rvn->xna migration fork on the live testnet chain — legacy history below H stays valid and rvn UTXOs migrate on spend. Every testnet node must run this binary before H. Goes back to 1 when testnet resets from genesis.
-        consensus.nDepinTransferStateHeight = 300000; // DEPIN transfer state (OPEN/CLOSE/SEAL) on the live testnet chain. Below the tip at the time of the release, which is safe: no state operation exists in testnet history, so history validates identically on reindex. Every testnet node must run this binary. Goes back to 1 when testnet resets from genesis.
+        consensus.nAssetMarkerNip040Height = TESTNET_FEATURES_HEIGHT; // NIP-040: rvn->xna marker migration; blocks 1-9 carry rvn and rvn UTXOs migrate on spend, which rehearses the future mainnet migration
+        consensus.nDepinTransferStateHeight = TESTNET_FEATURES_HEIGHT; // DEPIN transfer state (OPEN/CLOSE/SEAL)
         consensus.nAssetRip5ActivationByHeightEnabled = true; // NIP revision 004: testnet activates assets/RIP5 by height (1)
-        // NIP-028: block-time reduction (60s -> 30s) and coupled subsidy halving
-        // activate at testnet height 22,700. Halving interval doubled so the
-        // wall-clock micro-halving cadence (~10 days) is preserved across the
-        // spacing change.
-        consensus.nBlockTimeReductionHeight   = 22700;
+        consensus.nAssetsActiveFromGenesis = true; // assets, RIP5 and asset VersionBits deployments: pure rule from genesis, no tip-based latch
+        // NIP-028: block-time reduction (60s -> 30s) and coupled subsidy
+        // halving, from the same height as every other new rule. The halving
+        // interval is doubled so the wall-clock micro-halving cadence
+        // (~10 days) is preserved across the spacing change.
+        consensus.nBlockTimeReductionHeight   = TESTNET_FEATURES_HEIGHT;
         consensus.nPowTargetSpacingPost       = 30;
         consensus.nPowTargetTimespanPost      = 2016 * 30;
         consensus.nSubsidyHalvingIntervalPost = 28800;
-        consensus.nKeccakBlake2bEnabled       = true;         // NIP-030: active on testnet from genesis
-        consensus.nMerkleInclusionEnabled     = true;         // NIP-031: active on testnet from genesis
-        consensus.nModernHashesEnabled        = true;         // NIP-034a: active on testnet from genesis
-        consensus.nPoseidonEnabled            = true;         // NIP-036: active on testnet from genesis
-        consensus.nEd25519Enabled             = true;         // NIP-035: active on testnet from genesis
-        consensus.nCheckSigAddEnabled         = true;         // NIP-039: active on testnet from genesis
+        consensus.nKeccakBlake2bEnabled       = true;         // NIP-030: from nOptInFeaturesHeight
+        consensus.nMerkleInclusionEnabled     = true;         // NIP-031: from nOptInFeaturesHeight
+        consensus.nModernHashesEnabled        = true;         // NIP-034a: from nOptInFeaturesHeight
+        consensus.nPoseidonEnabled            = true;         // NIP-036: from nOptInFeaturesHeight
+        consensus.nEd25519Enabled             = true;         // NIP-035: from nOptInFeaturesHeight
+        consensus.nCheckSigAddEnabled         = true;         // NIP-039: from nOptInFeaturesHeight
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days
@@ -446,33 +472,36 @@ public:
         nPruneAfterHeight = 1000;
 
         // SHA256 testnet: KAWPOW never activates — keeps Bitcoin-style 4-byte nNonce format
-        // Must be set BEFORE genesis mining so GetHash() uses the SHA256d path
+        // Must be set BEFORE the genesis hash below is computed
         nKAAAWWWPOWActivationTime = 0xFFFFFFFF;
         nKAWPOWActivationTime = nKAAAWWWPOWActivationTime;
 
-        // Testnet has a fixed, stable genesis: no automatic epoch reset, no dependency on any
-        // local file. The genesis time is a code constant and the block is auto-mined
-        // deterministically at startup (same inputs -> same nonce -> same hash), so every node
-        // converges on the same genesis. This is the epoch-0 genesis the network has always run
-        // (the old auto-reset never fired, so no epoch was ever incremented).
-        static const uint32_t TESTNET_BASE_TIME = 1774828800; // 2026-03-30 00:00:00 UTC
+        // Genesis of the reset testnet (2026-09-26): fixed time, nonce and hash,
+        // same coinbase as before. Every node starts from this block.
+        static const uint32_t TESTNET_GENESIS_TIME = 1790380800; // 2026-09-26 00:00:00 UTC
+        static const uint32_t TESTNET_GENESIS_NONCE = 3409810;
+        static const char* TESTNET_GENESIS_HASH = "0000008b384aeffecdab182575dc4e86c9f07f90318c65088532660ed9a8a021";
 
-        uint32_t nGenesisTime = TESTNET_BASE_TIME;
-
-        // Auto-mine genesis (deterministic). TODO(NIP-hardening): hardcode nonce+hash behind an
-        // assert once the genesis hash no longer depends on bNetwork (see finding #17).
-        genesis = CreateGenesisBlock(nGenesisTime, 0, 0x1e00ffff, 2, 50000 * COIN);
-        {
+        uint32_t nGenesisTime = TESTNET_GENESIS_TIME;
+        genesis = CreateGenesisBlock(nGenesisTime, TESTNET_GENESIS_NONCE, 0x1e00ffff, 2, 50000 * COIN);
+        // Block hashes follow the process-wide block network (bNetwork, see
+        // finding #17): SHA256d in a process running as testnet (neuraid and
+        // neurai-qt select it) or regtest, which is the network's hash and is
+        // pinned here. Processes that build these params without selecting a
+        // block network (unit-test fixtures, neurai-tx) hash with the X16R
+        // family; they mine a nonce valid under their own hashing so the
+        // genesis stays self-consistent there.
+        if (bNetwork.fSHA256Mining) {
+            consensus.hashGenesisBlock = genesis.GetHash();
+            assert(consensus.hashGenesisBlock == uint256S(TESTNET_GENESIS_HASH));
+        } else {
             arith_uint256 hashTarget = arith_uint256().SetCompact(genesis.nBits);
+            genesis.nNonce = 0;
             while (UintToArith256(genesis.GetHash()) > hashTarget) {
                 ++genesis.nNonce;
             }
+            consensus.hashGenesisBlock = genesis.GetHash();
         }
-        consensus.hashGenesisBlock = genesis.GetHash();
-
-        LogPrintf("Testnet genesis — time: %u  nonce: %u  hash: %s\n",
-            nGenesisTime, genesis.nNonce,
-            consensus.hashGenesisBlock.ToString());
 
         assert(genesis.hashMerkleRoot == uint256S("4b28bf93d960cd83d1889757381d5a587208464e9075bdc0739151fbe15f5951"));
 
@@ -492,6 +521,8 @@ public:
         base58Prefixes[EXT_SECRET_KEY]    = {0x04, 0x35, 0x83, 0x94};
         base58Prefixes[EXT_PQ_SECRET_KEY] = {0x04, 0x35, 0x81, 0xD5}; // tpqp... (testnet)
         strBech32HRP = "tnq";
+        strBech32HRPAuthScript = "tnc";
+        strBech32HRPStrictPQ = "tpq";
 
         // Neurai BIP44 cointype in testnet
         nExtCoinType = 1;
@@ -545,12 +576,16 @@ public:
         // DGW Activation
         nDGWActivationBlock = 1;
 
-        // NIP-028: pre-22700  60 blocks × 60s = 60 min;
-        //          post-22700 120 blocks × 30s = 60 min.
+        // NIP-028: 60 blocks x 60s before the block-time reduction and
+        // 120 blocks x 30s from it on: 60 minutes either way.
         nMaxReorganizationDepth     = 60;
         nMaxReorganizationDepthPost = 120;
         nMinReorganizationPeers = 6;
         nMinReorganizationAge = 60 * 60 * 12; // 12 hours
+        // Separates the reset testnet from nodes of the previous one, which
+        // share the "RUEN" message start and announce protocol 70029.
+        nProtocolVersion = RESET_TESTNET_VERSION;
+        nMinPeerProtocolVersion = RESET_TESTNET_VERSION;
 
         nAssetActivationHeight = 1; // Asset activated block height
         nMessagingActivationBlock = 1; // Messaging activated block height
@@ -587,11 +622,20 @@ public:
         consensus.nBIP66Enabled = true;
         consensus.nSegwitEnabled = true;
         consensus.nCSVEnabled = true;
+        consensus.nOptInFeaturesHeight = 0; // opt-in switches active from genesis; activation tests move it via -optinfeaturesheight
         consensus.nPQWitnessEnabled = true; // PQ (ML-DSA-44) active on regtest
+        consensus.nStrictAuthScriptHeight = 0; // strict AuthScript families (witness v2/v3) active from genesis on regtest; activation tests move it via -strictauthscriptheight
         consensus.nCATEnabled = true;  // OP_CAT (BIP 347) active on regtest
         consensus.nCTVEnabled = true;  // OP_CTV (BIP 119) active on regtest
         consensus.nCSFSEnabled = true;  // OP_CHECKSIGFROMSTACK active on regtest
-        consensus.nTXHASHEnabled = true;  // OP_TXHASH active on regtest
+        consensus.nZKVerifyHeight = 0;
+        consensus.nPoseidonWorkHeight = 0;
+        consensus.nAuthScriptBudgetHeight = 0; // NIP-046: regtest
+        consensus.nAssetMessageHeight = 0; // NIP-043: regtest
+        consensus.nInputFieldHeight = 0; // NIP-043: regtest
+        consensus.nAuthScriptTreeHeight = 0; // NIP-044: reset testnet / regtest only
+        consensus.nMerklePoseidonHeight = 0; // NIP-043: regtest
+        consensus.nTxHashHeight = 0; // NIP-042: active by default on regtest
         consensus.nTXFIELDEnabled = true; // OP_TXFIELD (NOP7) active on regtest
         consensus.nSPLITEnabled = true;   // OP_SPLIT (NOP8) active on regtest
         consensus.nREVERSEBYTESEnabled = true; // OP_REVERSEBYTES active on regtest
@@ -606,17 +650,20 @@ public:
         consensus.nOUTPUTAUTHCOMMITMENTEnabled = true; // NIP-023: OP_OUTPUTAUTHCOMMITMENT active on regtest
         consensus.nINPUTVALUEEnabled = true; // NIP-024: OP_INPUTVALUE active on regtest
         consensus.nCHAINCONTEXTEnabled = true; // NIP-026: OP_CHAINCONTEXT active on regtest
-        consensus.nASSETRBFBlockEnabled = true; // NIP-025: asset-AuthScript RBF ban active on regtest
         consensus.nXNAAssetStrictEnabled = true; // NIP revision 010: strict OP_XNA_ASSET rule active on regtest
         consensus.nAssetMarkerNip040Height = 1; // NIP-040: active from block 1 so functional tests run xna-native; frontier tests move it via -nip040height / UpdateAssetMarkerNip040Height
         consensus.nDepinTransferStateHeight = 1; // DEPIN transfer state active from block 1; frontier tests move it via -depinstateheight / UpdateDepinTransferStateHeight
         consensus.nAssetRip5ActivationByHeightEnabled = true; // regtest activates assets/RIP5 by height (1), parity with testnet
-        // NIP-028: not active on regtest by default; tests can override via
-        // CChainParams::UpdateBlockTimeReduction... if a future opt-in is added.
+        // nAssetsActiveFromGenesis stays false: unit tests exercise the paths
+        // before asset/messaging activation on regtest. The reorg-to-genesis
+        // rehearsal of the reset testnet runs with the real -testnet params.
+        // NIP-028: not active on regtest by default; -blocktimereductionheight
+        // schedules it. The Post values match testnet so that rehearsal
+        // crosses the same transition.
         consensus.nBlockTimeReductionHeight   = std::numeric_limits<int>::max();
-        consensus.nPowTargetSpacingPost       = 1 * 60;
-        consensus.nPowTargetTimespanPost      = 2016 * 60;
-        consensus.nSubsidyHalvingIntervalPost = 14400;
+        consensus.nPowTargetSpacingPost       = 30;
+        consensus.nPowTargetTimespanPost      = 2016 * 30;
+        consensus.nSubsidyHalvingIntervalPost = 28800;
         consensus.nKeccakBlake2bEnabled       = true;         // NIP-030: active on regtest from genesis
         consensus.nMerkleInclusionEnabled     = true;         // NIP-031: active on regtest from genesis
         consensus.nModernHashesEnabled        = true;         // NIP-034a: active on regtest from genesis
@@ -689,7 +736,7 @@ public:
         nPruneAfterHeight = 1000;
 
         // SHA256 regtest: KAWPOW never activates — keeps Bitcoin-style 4-byte nNonce format
-        // Must be set BEFORE genesis mining so GetHash() uses the SHA256d path
+        // Must be set BEFORE the genesis hash below is computed
         nKAAAWWWPOWActivationTime = 0xFFFFFFFF;
         nKAWPOWActivationTime = nKAAAWWWPOWActivationTime;
 
@@ -732,6 +779,8 @@ public:
         base58Prefixes[EXT_SECRET_KEY]    = {0x04, 0x35, 0x83, 0x94};
         base58Prefixes[EXT_PQ_SECRET_KEY] = {0x04, 0x35, 0x81, 0xD5}; // tpqp... (regtest)
         strBech32HRP = "tnq";
+        strBech32HRPAuthScript = "tnc";
+        strBech32HRPStrictPQ = "tpq";
 
         // Neurai BIP44 cointype in regtest
         nExtCoinType = 1;
@@ -766,9 +815,13 @@ public:
         nDGWActivationBlock = 200;
 
         nMaxReorganizationDepth = 60;
-        nMaxReorganizationDepthPost = 60; // regtest: NIP-028 inactive; mirror legacy
+        nMaxReorganizationDepthPost = 120; // NIP-028 (only with -blocktimereductionheight), as testnet
         nMinReorganizationPeers = 4;
         nMinReorganizationAge = 60 * 60 * 12;
+        // Announces the testnet protocol version; the minimum stays low so
+        // the functional test framework's P2P node (70025) still connects.
+        nProtocolVersion = RESET_TESTNET_VERSION;
+        nMinPeerProtocolVersion = MIN_PEER_PROTO_VERSION;
 
         nAssetActivationHeight = 1; // Asset activated block height (parity with testnet)
         nMessagingActivationBlock = 1; // Messaging activated block height
@@ -811,6 +864,11 @@ void SelectParams(const std::string& network, bool fForceBlockNetwork)
         bNetwork.SetNetwork(network);
     }
     globalChainParams = CreateChainParams(network);
+    // Process-wide default of the strict AuthScript activation context, used
+    // by code with no block context (wallet, RPC). Validation refreshes it on
+    // every tip change; until a chain is loaded it reflects the first block.
+    SetSignatureOpcodeCandidateHeight(0);
+    SetStrictAuthScriptActiveDefault(globalChainParams->GetConsensus().IsStrictAuthScriptActive(0));
 }
 
 void UpdateVersionBitsParameters(Consensus::DeploymentPos d, int64_t nStartTime, int64_t nTimeout)
@@ -821,6 +879,12 @@ void UpdateVersionBitsParameters(Consensus::DeploymentPos d, int64_t nStartTime,
 void UpdateAssetMarkerNip040Height(int nHeight)
 {
     globalChainParams->UpdateAssetMarkerNip040Height(nHeight);
+}
+
+void UpdateStrictAuthScriptHeight(int nHeight)
+{
+    globalChainParams->UpdateStrictAuthScriptHeight(nHeight);
+    SetStrictAuthScriptActiveDefault(globalChainParams->GetConsensus().IsStrictAuthScriptActive(0));
 }
 
 void UpdateDepinTransferStateHeight(int nHeight)
@@ -846,4 +910,59 @@ void TurnOffBIP65() {
 
 void TurnOffBIP66() {
 	globalChainParams->TurnOffBIP66();
+}
+
+void UpdateSignatureOpcodesHeight(int nHeight)
+{
+    globalChainParams->UpdateSignatureOpcodesHeight(nHeight);
+}
+
+void UpdateOptInFeaturesHeight(int nHeight)
+{
+    globalChainParams->UpdateOptInFeaturesHeight(nHeight);
+}
+
+void UpdateBlockTimeReductionHeight(int nHeight)
+{
+    globalChainParams->UpdateBlockTimeReductionHeight(nHeight);
+}
+
+void UpdateAssetMessageHeight(int nHeight)
+{
+    globalChainParams->UpdateAssetMessageHeight(nHeight);
+}
+
+void UpdateInputFieldHeight(int nHeight)
+{
+    globalChainParams->UpdateInputFieldHeight(nHeight);
+}
+
+void UpdateMerklePoseidonHeight(int nHeight)
+{
+    globalChainParams->UpdateMerklePoseidonHeight(nHeight);
+}
+
+void UpdateTxHashHeight(int nHeight)
+{
+    globalChainParams->UpdateTxHashHeight(nHeight);
+}
+
+void UpdateAuthScriptTreeHeight(int nHeight)
+{
+    globalChainParams->UpdateAuthScriptTreeHeight(nHeight);
+}
+
+void UpdateAuthScriptBudgetHeight(int nHeight)
+{
+    globalChainParams->UpdateAuthScriptBudgetHeight(nHeight);
+}
+
+void UpdateZKVerifyHeight(int nHeight)
+{
+    globalChainParams->UpdateZKVerifyHeight(nHeight);
+}
+
+void UpdatePoseidonWorkHeight(int nHeight)
+{
+    globalChainParams->UpdatePoseidonWorkHeight(nHeight);
 }

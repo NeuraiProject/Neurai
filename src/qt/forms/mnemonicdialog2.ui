@@ -238,13 +238,55 @@
     </spacer>
    </item>
    <item>
-    <widget class="QCheckBox" name="pqWalletCheckBox">
-     <property name="toolTip">
-      <string>Enable post-quantum addresses using ML-DSA-44 (FIPS 204). Provides quantum-resistant signatures in addition to standard addresses.</string>
+    <widget class="QGroupBox" name="addressTypeGroup">
+     <property name="title">
+      <string>Address type</string>
      </property>
-     <property name="text">
-      <string>Enable Post-Quantum addresses (ML-DSA-44 / FIPS 204)</string>
-     </property>
+     <layout class="QVBoxLayout" name="addressTypeLayout">
+      <item>
+       <widget class="QRadioButton" name="addressTypeLegacyRadio">
+        <property name="toolTip">
+         <string>Classic Base58 addresses, available from the start of the chain.</string>
+        </property>
+        <property name="text">
+         <string>Legacy (secp256k1, Base58) - default</string>
+        </property>
+        <property name="checked">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QRadioButton" name="addressTypePQRadio">
+        <property name="toolTip">
+         <string>Quantum-resistant signatures with ML-DSA-44 (FIPS 204): strict post-quantum witness v2 addresses.</string>
+        </property>
+        <property name="text">
+         <string>Post-Quantum (ML-DSA-44 / FIPS 204)</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QRadioButton" name="addressTypeEcdsaRadio">
+        <property name="toolTip">
+         <string>Standard secp256k1 signatures with strict ECDSA witness v3 addresses. This wallet never hands out Legacy addresses.</string>
+        </property>
+        <property name="text">
+         <string>ECDSA (secp256k1, witness v3)</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="addressTypeNote">
+        <property name="text">
+         <string>The address type is stored in the wallet when it is created and cannot be changed later. Post-Quantum and ECDSA addresses can only be used once the network activates them.</string>
+        </property>
+        <property name="wordWrap">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+     </layout>
     </widget>
    </item>
    <item>

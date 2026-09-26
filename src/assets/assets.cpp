@@ -4348,6 +4348,7 @@ bool CreateTransferAssetTransaction(CWallet* pwallet, const CCoinControl& coinCo
         return false;
     }
 
+    CCoinControl transferCoinControl = coinControl;
     std::vector<std::pair<CAssetTransfer, std::string>> transfers = vTransfers;
     std::set<std::string> depinOwnerTransfersAdded;
 
@@ -4408,6 +4409,36 @@ bool CreateTransferAssetTransaction(CWallet* pwallet, const CCoinControl& coinCo
             }
             error = std::make_pair(RPC_INVALID_REQUEST, strprintf("Wallet doesn't have owner token for DEPIN asset: %s", transfer.first.strName));
             return false;
+        }
+
+        // Address-filtered transfers select only the requested asset coins.
+        // If we add an owner escort, select its input too, without allowing
+        // unrelated asset inputs or changing the caller's source selection.
+        if (transferCoinControl.HasAssetSelected() && !transferCoinControl.fAllowOtherInputs) {
+            std::map<std::string, std::vector<COutput>> ownerCoins;
+            pwallet->AvailableAssets(ownerCoins, true, nullptr, 1, MAX_MONEY, MAX_MONEY, 0, 0);
+            bool selected = false;
+            const auto it = ownerCoins.find(ownerTokenName);
+            if (it != ownerCoins.end()) {
+                for (const auto& output : it->second) {
+                    if (!output.fSpendable || !output.tx || !output.tx->tx ||
+                        output.i >= output.tx->tx->vout.size()) {
+                        continue;
+                    }
+                    CTxDestination destination;
+                    if (ExtractDestination(output.tx->tx->vout[output.i].scriptPubKey, destination) &&
+                        EncodeDestination(destination) == ownerAddress) {
+                        transferCoinControl.SelectAsset(COutPoint(output.tx->GetHash(), output.i));
+                        selected = true;
+                        break;
+                    }
+                }
+            }
+            if (!selected) {
+                error = std::make_pair(RPC_WALLET_INSUFFICIENT_FUNDS,
+                    strprintf("No spendable owner token for DEPIN asset: %s", transfer.first.strName));
+                return false;
+            }
         }
 
         transfers.emplace_back(std::make_pair(CAssetTransfer(ownerTokenName, OWNER_ASSET_AMOUNT), ownerAddress));
@@ -4568,7 +4599,7 @@ bool CreateTransferAssetTransaction(CWallet* pwallet, const CCoinControl& coinCo
     }
 
     // Create and send the transaction
-    if (!pwallet->CreateTransactionWithTransferAsset(vecSend, wtxNew, reservekey, nFeeRequired, nChangePosRet, strTxError, coinControl, assetMarker)) {
+    if (!pwallet->CreateTransactionWithTransferAsset(vecSend, wtxNew, reservekey, nFeeRequired, nChangePosRet, strTxError, transferCoinControl, assetMarker)) {
         if (!fSubtractFeeFromAmount && nFeeRequired > curBalance) {
             error = std::make_pair(RPC_WALLET_ERROR, strprintf("Error: This transaction requires a transaction fee of at least %s", FormatMoney(nFeeRequired)));
             return false;
@@ -4717,6 +4748,10 @@ bool ParseAssetScript(CScript scriptPubKey, uint160 &hashBytes, std::string &ass
         }
         if (const WitnessV1AuthScript* authScriptDest = boost::get<WitnessV1AuthScript>(&destination)) {
             hashBytes = Hash160(authScriptDest->begin(), authScriptDest->end());
+            return true;
+        }
+        if (const WitnessStrictAuthScript* strictDest = boost::get<WitnessStrictAuthScript>(&destination)) {
+            hashBytes = Hash160(strictDest->commitment.begin(), strictDest->commitment.end());
             return true;
         }
     }

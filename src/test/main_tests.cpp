@@ -11,6 +11,7 @@
 #include "test/test_neurai.h"
 
 #include <cmath>
+#include <limits>
 
 #include <boost/signals2/signal.hpp>
 #include <boost/test/unit_test.hpp>
@@ -96,6 +97,35 @@ BOOST_FIXTURE_TEST_SUITE(main_tests, TestingSetup)
         // Exact sampled sum (step = 1000 blocks) under Neurai's custom schedule.
         // Computed offline; regenerate if the schedule ever changes.
         BOOST_CHECK_EQUAL(nSum, (int64_t)2112755667238737000ULL);
+    }
+
+    BOOST_AUTO_TEST_CASE(nip028_testnet_schedule)
+    {
+        // The reset testnet applies NIP-028 at the common activation height
+        // (block 10): 30 s spacing, halved subsidy with a doubled halving
+        // interval, and a 120-block reorg cap (60 minutes either way).
+        const auto chainParams = CreateChainParams(CBaseChainParams::TESTNET);
+        const Consensus::Params& params = chainParams->GetConsensus();
+        const int H = params.nOptInFeaturesHeight;
+        BOOST_REQUIRE_EQUAL(H, 10);
+        BOOST_REQUIRE_EQUAL(params.nBlockTimeReductionHeight, H);
+        BOOST_CHECK(!IsBlockTimeReductionActive(H - 1, params));
+        BOOST_CHECK(IsBlockTimeReductionActive(H, params));
+        BOOST_CHECK_EQUAL(GetEffectivePowTargetSpacing(H - 1, params), 60);
+        BOOST_CHECK_EQUAL(GetEffectivePowTargetSpacing(H, params), 30);
+        BOOST_CHECK_EQUAL(GetEffectivePowTargetTimespan(H - 1, params), 2016 * 60);
+        BOOST_CHECK_EQUAL(GetEffectivePowTargetTimespan(H, params), 2016 * 30);
+        BOOST_CHECK_EQUAL(GetBlockSubsidy(H, params) * 2, GetBlockSubsidy(H - 1, params));
+        // The next micro-halving comes 28,800 blocks later (~10 days at 30 s).
+        BOOST_CHECK_EQUAL(GetBlockSubsidy(H + 28800 - 1, params), GetBlockSubsidy(H, params));
+        BOOST_CHECK(GetBlockSubsidy(H + 28800, params) < GetBlockSubsidy(H, params));
+        BOOST_CHECK_EQUAL(chainParams->MaxReorganizationDepth(H - 1), 60);
+        BOOST_CHECK_EQUAL(chainParams->MaxReorganizationDepth(H), 120);
+        // Mainnet and regtest do not schedule it.
+        for (const auto& network : {CBaseChainParams::MAIN, CBaseChainParams::REGTEST}) {
+            BOOST_CHECK_EQUAL(CreateChainParams(network)->GetConsensus().nBlockTimeReductionHeight,
+                              std::numeric_limits<int>::max());
+        }
     }
 
     bool ReturnFalse()

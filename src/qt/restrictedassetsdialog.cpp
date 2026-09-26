@@ -570,7 +570,7 @@ void RestrictedAssetsDialog::createDepinCreateTab()
         settings.setValue("nConfTarget", model ? model->getDefaultConfirmTarget() : confTargets.front());
 
     for (const int &n : confTargets) {
-        depinCreateConfTargetSelector->addItem(tr("%1 (%2 blocks)").arg(GUIUtil::formatNiceTimeOffset(n * GetParams().GetConsensus().nPowTargetSpacing)).arg(n));
+        depinCreateConfTargetSelector->addItem(tr("%1 (%2 blocks)").arg(GUIUtil::formatNiceTimeOffset(n * GetEffectivePowTargetSpacingOnTip())).arg(n));
     }
 
     if (settings.value("nFeeRadio").toInt() == 1) {

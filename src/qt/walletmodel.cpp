@@ -24,6 +24,7 @@
 #include "net.h" // for g_connman
 #include "policy/fees.h"
 #include "policy/rbf.h"
+#include "script/script.h"
 #include "sync.h"
 #include "ui_interface.h"
 #include "util.h" // for GetBoolArg
@@ -740,7 +741,13 @@ void WalletModel::loadReceiveRequests(std::vector<std::string>& vReceiveRequests
 
 bool WalletModel::saveReceiveRequest(const std::string &sAddress, const int64_t nId, const std::string &sRequest)
 {
-    CTxDestination dest = DecodeDestination(sAddress);
+    CTxDestination dest;
+    {
+        // A request for one of the wallet's own addresses, which may be
+        // handed out before its family is active.
+        CStrictAuthScriptContext bookkeeping(true);
+        dest = DecodeDestination(sAddress);
+    }
 
     std::stringstream ss;
     ss << nId;
