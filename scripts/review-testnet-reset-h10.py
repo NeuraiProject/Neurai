@@ -6,12 +6,15 @@ Runs isolated nodes with the real -testnet parameters of the current binary
 activation height H:
   * legacy spends, tx v3, an OP_CAT P2SH spend and the NIP-040 asset marker;
   * strict wallet addresses handed out before H but not payable until H;
+  * NIP-028 from H: version flag, halved subsidy, blocks without the flag refused;
   * -addresstype (legacy, pq, ecdsa): default family on each side of H, the
     ecdsa wallet never handing out Legacy, and the error when an existing
     wallet is opened with a different -addresstype;
   * mempool eviction and continued mining after a reorg from above H back to H-2;
   * a reorg down to the genesis block (assets are a pure rule from genesis);
-  * P2P separation from a node of the previous testnet (optional old binary).
+  * separation from a node of the previous testnet (optional old binary): both
+    keep the "RUEN" magic; the reset testnet announces protocol 70030 and
+    refuses 70029 peers at handshake, and the new genesis keeps the chains apart.
 
 Each check prints PASS/FAIL; a JSON report is written next to the data.
 Usage: review-testnet-reset-h10.py [--bindir DIR] [--old-bindir DIR]
@@ -32,6 +35,7 @@ from pathlib import Path
 GENESIS = '0000008b384aeffecdab182575dc4e86c9f07f90318c65088532660ed9a8a021'  # reset testnet, 2026-09-26
 H = 10                       # opt-in activation height of the reset testnet
 MATURITY = 5                 # COINBASE_MATURITY_TESTNET
+NIP028_FLAG = 0x40000000     # NIP-028 block version flag, required from H
 MARKER_RVN = '72766e'        # "rvn" asset marker
 MARKER_XNA = '786e61'        # "xna" asset marker
 ASSET = 'RVNPROBE'
@@ -236,6 +240,8 @@ def main():
 
         info = a.rpc('getblockchaininfo')
         check('network is testnet', info['chain'] == 'test', info['chain'])
+        check('reset testnet announces protocol 70030', a.rpc('getnetworkinfo')['protocolversion'] == 70030,
+              a.rpc('getnetworkinfo')['protocolversion'])
         check('chain starts at the reset-testnet genesis', a.rpc('getblockhash', 0) == GENESIS, a.rpc('getblockhash', 0))
 
 
@@ -380,6 +386,33 @@ def main():
         mine(1)                                          # block 11
         check('tip is H+1', tip() == H + 1, tip())
 
+        # ---- NIP-028 (30 s blocks, halved subsidy) from H ---------------------
+        def block_at(height, verbose=True):
+            return a.rpc('getblock', a.rpc('getblockhash', height), verbose)
+
+        def subsidy(height):
+            """Coinbase value minus the fees of the block's transactions."""
+            txids = block_at(height)['tx']
+            total = sum(sats(o['value']) for o in a.rpc('getrawtransaction', txids[0], True)['vout'])
+            for txid in txids[1:]:
+                tx = a.rpc('getrawtransaction', txid, True)
+                spent = sum(sats(a.rpc('getrawtransaction', i['txid'], True)['vout'][i['vout']]['value']) for i in tx['vin'])
+                total -= spent - sum(sats(o['value']) for o in tx['vout'])
+            return total
+
+        versions = {n: int(block_at(n)['versionHex'], 16) for n in (H - 1, H, H + 1)}
+        check('NIP-028 version flag absent at H-1 and present from H',
+              not versions[H - 1] & NIP028_FLAG and all(versions[n] & NIP028_FLAG for n in (H, H + 1)),
+              {n: hex(v) for n, v in versions.items()})
+        rewards = {n: subsidy(n) for n in (H - 1, H, H + 1)}
+        check('NIP-028 halves the block subsidy from H',
+              rewards[H] * 2 == rewards[H - 1] and rewards[H + 1] == rewards[H], rewards)
+        raw = block_at(H + 1, False)
+        unflagged = struct.unpack('<i', bytes.fromhex(raw[:8]))[0] & ~NIP028_FLAG
+        result = a.rpc('submitblock', struct.pack('<i', unflagged).hex() + raw[8:])
+        check('block without the NIP-028 flag refused from H', 'bad-version-nip028' in str(result), result)
+        check('tip unchanged after the refused block', tip() == H + 1, tip())
+
         # ---- reorg back to H-2: new-rule transactions must leave the mempool --
         cat_coin2 = fund_p2sh(CAT_REDEEM)
         mine(1)                                          # block 12
@@ -470,18 +503,31 @@ def main():
         code, output = init_error(args.bindir, directory / 'fresh-nobip44', ['-addresstype=ecdsa', '-bip44=0'])
         check('-addresstype=ecdsa requires -bip44=1', code != 0 and 'requires -bip44=1' in output, output[-400:])
 
-        # ---- P2P separation from the previous testnet ---------------------------
+        # ---- separation from the previous testnet --------------------------------
+        # Same "RUEN" magic: the reset testnet refuses the old node's protocol
+        # (70029) at handshake, even on a manual connection, and the new
+        # genesis keeps the chains apart.
         if args.old_bindir:
             old = TestnetNode(args.old_bindir, directory / 'old')
             nodes.append(old)
             old.ready()
+            old.rpc('generatetoaddress', 3, old.rpc('getnewaddress'))
+            new_tip, old_tip = a.rpc('getbestblockhash'), old.rpc('getbestblockhash')
             a.rpc('addnode', f'127.0.0.1:{old.p2p_port}', 'onetry')
-            time.sleep(5)
-            peers = [p['addr'] for p in a.rpc('getpeerinfo')]
-            check('new node keeps no peer from the previous testnet', f'127.0.0.1:{old.p2p_port}' not in peers, peers)
-            check('previous-testnet node has no peers', old.rpc('getpeerinfo') == [], old.rpc('getpeerinfo'))
-            check('previous-testnet node logged the foreign message start',
-                  'MESSAGESTART' in old.debug_log().upper(), 'see old/*/debug.log')
+            old.rpc('addnode', f'127.0.0.1:{a.p2p_port}', 'onetry')
+            time.sleep(10)
+            log = a.debug_log()
+            check('previous-testnet node refused at handshake (protocol 70029)',
+                  'using obsolete version 70029; disconnecting' in log and
+                  all(p.get('version') != 70029 for p in a.rpc('getpeerinfo')), a.rpc('getpeerinfo'))
+            check('no misbehaviour loop with the previous-testnet node', 'Misbehaving' not in log,
+                  log.count('Misbehaving'))
+            check('previous-testnet node has another genesis', old.rpc('getblockhash', 0) != GENESIS,
+                  old.rpc('getblockhash', 0))
+            check('new node keeps its chain next to a previous-testnet node',
+                  a.rpc('getbestblockhash') == new_tip and a.rpc('getblockhash', 0) == GENESIS, a.rpc('getbestblockhash'))
+            check('previous-testnet node keeps its own chain', old.rpc('getbestblockhash') == old_tip,
+                  old.rpc('getbestblockhash'))
     finally:
         for node in nodes:
             node.stop()

@@ -1659,7 +1659,7 @@ bool ReadBlockFromDisk(CBlock& block, const CBlockIndex* pindex, const Consensus
 CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
 {
     // NIP-028: at and after the block-time-reduction activation height
-    // (testnet: 23,000), freeze the legacy halving index at the boundary
+    // (reset testnet: block 10), freeze the legacy halving index at the boundary
     // and add post-activation halvings on top, then halve the result.
     // Pre-activation behaviour is byte-identical to the legacy curve.
     const bool fPostReduction =
@@ -1682,7 +1682,7 @@ CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
     };
 
     // Go zero after 383 micro-halvings (10 years) Mined 20993999270 XNA
-    // (mainnet figures; testnet emission diverges past height 23,000 per NIP-028)
+    // (mainnet figures; testnet emission diverges from block 10 per NIP-028)
 
     if (halvings >= 383)
         return 0;
@@ -6872,6 +6872,12 @@ int64_t GetEffectivePowTargetSpacing(int nHeight, const Consensus::Params& param
     return IsBlockTimeReductionActive(nHeight, params)
         ? params.nPowTargetSpacingPost
         : params.nPowTargetSpacing;
+}
+
+int64_t GetEffectivePowTargetSpacingOnTip()
+{
+    LOCK(cs_main);
+    return GetEffectivePowTargetSpacing(chainActive.Height(), GetParams().GetConsensus());
 }
 
 int64_t GetEffectivePowTargetTimespan(int nHeight, const Consensus::Params& params)

@@ -10,6 +10,7 @@
 #include "tinyformat.h"
 #include "util.h"
 #include "utilstrencodings.h"
+#include "version.h"
 #include "arith_uint256.h"
 
 #include <assert.h>
@@ -330,6 +331,8 @@ public:
         nMaxReorganizationDepthPost = 60; // mainnet: NIP-028 inactive; mirror legacy
         nMinReorganizationPeers = 6;
         nMinReorganizationAge = 60 * 60 * 12; // 12 hours
+        nProtocolVersion = PROTOCOL_VERSION;
+        nMinPeerProtocolVersion = MIN_PEER_PROTO_VERSION;
 
         nAssetActivationHeight = 10; // Asset activated block height
         nMessagingActivationBlock = 10; // Messaging activated block height
@@ -401,12 +404,11 @@ public:
         consensus.nDepinTransferStateHeight = TESTNET_FEATURES_HEIGHT; // DEPIN transfer state (OPEN/CLOSE/SEAL)
         consensus.nAssetRip5ActivationByHeightEnabled = true; // NIP revision 004: testnet activates assets/RIP5 by height (1)
         consensus.nAssetsActiveFromGenesis = true; // assets, RIP5 and asset VersionBits deployments: pure rule from genesis, no tip-based latch
-        // NIP-028: block-time reduction (60s -> 30s) and coupled subsidy halving
-        // are not scheduled on the reset testnet; the Post values below only
-        // apply if a height is set. Their halving interval is doubled so the
-        // wall-clock micro-halving cadence (~10 days) is preserved across the
-        // spacing change.
-        consensus.nBlockTimeReductionHeight   = std::numeric_limits<int>::max();
+        // NIP-028: block-time reduction (60s -> 30s) and coupled subsidy
+        // halving, from the same height as every other new rule. The halving
+        // interval is doubled so the wall-clock micro-halving cadence
+        // (~10 days) is preserved across the spacing change.
+        consensus.nBlockTimeReductionHeight   = TESTNET_FEATURES_HEIGHT;
         consensus.nPowTargetSpacingPost       = 30;
         consensus.nPowTargetTimespanPost      = 2016 * 30;
         consensus.nSubsidyHalvingIntervalPost = 28800;
@@ -462,14 +464,10 @@ public:
         consensus.defaultAssumeValid = uint256S("0x00");
 
 
-        // PROVISIONAL magic for the reset testnet ("TNR2"). It must differ from
-        // mainnet ("NEUR") and from "RUEN", used by the previous testnet and by
-        // regtest, so nodes of the previous testnet are dropped on their first
-        // message. The P2P port is kept. Final value fixed with the new genesis.
-        pchMessageStart[0] = 0x54; // T
-        pchMessageStart[1] = 0x4e; // N
-        pchMessageStart[2] = 0x52; // R
-        pchMessageStart[3] = 0x32; // 2
+        pchMessageStart[0] = 0x52; // R
+        pchMessageStart[1] = 0x55; // U
+        pchMessageStart[2] = 0x45; // E
+        pchMessageStart[3] = 0x4e; // N
         nDefaultPort = 19100;
         nPruneAfterHeight = 1000;
 
@@ -578,13 +576,16 @@ public:
         // DGW Activation
         nDGWActivationBlock = 1;
 
-        // NIP-028 is not scheduled on the reset testnet, so the pre-reduction
-        // depth applies (60 blocks x 60s = 60 min); the Post value would only
-        // apply if nBlockTimeReductionHeight were scheduled (120 x 30s).
+        // NIP-028: 60 blocks x 60s before the block-time reduction and
+        // 120 blocks x 30s from it on: 60 minutes either way.
         nMaxReorganizationDepth     = 60;
         nMaxReorganizationDepthPost = 120;
         nMinReorganizationPeers = 6;
         nMinReorganizationAge = 60 * 60 * 12; // 12 hours
+        // Separates the reset testnet from nodes of the previous one, which
+        // share the "RUEN" message start and announce protocol 70029.
+        nProtocolVersion = RESET_TESTNET_VERSION;
+        nMinPeerProtocolVersion = RESET_TESTNET_VERSION;
 
         nAssetActivationHeight = 1; // Asset activated block height
         nMessagingActivationBlock = 1; // Messaging activated block height
@@ -656,12 +657,13 @@ public:
         // nAssetsActiveFromGenesis stays false: unit tests exercise the paths
         // before asset/messaging activation on regtest. The reorg-to-genesis
         // rehearsal of the reset testnet runs with the real -testnet params.
-        // NIP-028: not active on regtest by default; tests can override via
-        // CChainParams::UpdateBlockTimeReduction... if a future opt-in is added.
+        // NIP-028: not active on regtest by default; -blocktimereductionheight
+        // schedules it. The Post values match testnet so that rehearsal
+        // crosses the same transition.
         consensus.nBlockTimeReductionHeight   = std::numeric_limits<int>::max();
-        consensus.nPowTargetSpacingPost       = 1 * 60;
-        consensus.nPowTargetTimespanPost      = 2016 * 60;
-        consensus.nSubsidyHalvingIntervalPost = 14400;
+        consensus.nPowTargetSpacingPost       = 30;
+        consensus.nPowTargetTimespanPost      = 2016 * 30;
+        consensus.nSubsidyHalvingIntervalPost = 28800;
         consensus.nKeccakBlake2bEnabled       = true;         // NIP-030: active on regtest from genesis
         consensus.nMerkleInclusionEnabled     = true;         // NIP-031: active on regtest from genesis
         consensus.nModernHashesEnabled        = true;         // NIP-034a: active on regtest from genesis
@@ -813,9 +815,13 @@ public:
         nDGWActivationBlock = 200;
 
         nMaxReorganizationDepth = 60;
-        nMaxReorganizationDepthPost = 60; // regtest: NIP-028 inactive; mirror legacy
+        nMaxReorganizationDepthPost = 120; // NIP-028 (only with -blocktimereductionheight), as testnet
         nMinReorganizationPeers = 4;
         nMinReorganizationAge = 60 * 60 * 12;
+        // Announces the testnet protocol version; the minimum stays low so
+        // the functional test framework's P2P node (70025) still connects.
+        nProtocolVersion = RESET_TESTNET_VERSION;
+        nMinPeerProtocolVersion = MIN_PEER_PROTO_VERSION;
 
         nAssetActivationHeight = 1; // Asset activated block height (parity with testnet)
         nMessagingActivationBlock = 1; // Messaging activated block height
@@ -914,6 +920,11 @@ void UpdateSignatureOpcodesHeight(int nHeight)
 void UpdateOptInFeaturesHeight(int nHeight)
 {
     globalChainParams->UpdateOptInFeaturesHeight(nHeight);
+}
+
+void UpdateBlockTimeReductionHeight(int nHeight)
+{
+    globalChainParams->UpdateBlockTimeReductionHeight(nHeight);
 }
 
 void UpdateAssetMessageHeight(int nHeight)

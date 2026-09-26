@@ -60,18 +60,28 @@ and **block 10** is the first block that applies all of them:
 - CSFS, Ed25519 and CHECKSIGADD (`nSignatureOpcodesHeight`);
 - TXHASH, NIP-043 primitives, MAST, NIP-046 budgets, ZKVERIFY and Poseidon work;
 - the NIP-040 asset marker (`rvn` outputs before block 10, `xna` from block 10;
-  legacy `rvn` UTXOs stay spendable) and the DEPIN transfer state.
+  legacy `rvn` UTXOs stay spendable) and the DEPIN transfer state;
+- NIP-028: 30-second blocks, the subsidy halved (and its halving interval
+  doubled to 28,800 blocks, ~10 days as before), a 120-block reorg cap (60
+  minutes, as before), the block version flag `0x40000000` required on every
+  block and peers below protocol 70029 dropped.
+
+The reset testnet keeps the `RUEN` message start and port 19100. It announces
+protocol 70030 and refuses peers below it from the first handshake, which keeps
+nodes of the previous testnet (same message start, protocol 70029) out; its new
+genesis keeps the chains apart. Regtest also announces 70030; mainnet keeps
+70029 for now.
 
 Assets, RIP5 and the asset VersionBits deployments are active from genesis as a
 pure rule (`nAssetsActiveFromGenesis`), and the v1.0.6 consensus fixes apply
-from genesis. NIP-028 (30-second blocks) is not scheduled. Block validation uses
+from genesis. Block validation uses
 the height of the block; wallet and mempool admission use the next block's
 height, so new-rule transactions are accepted with the tip at block 9.
 
 Mainnet remains unscheduled. Regtest applies everything from height 0 by
-default; `-optinfeaturesheight`, `-strictauthscriptheight`,
-`-signatureopcodesheight` and the per-feature overrides move the heights for
-activation tests.
+default except NIP-028, which only `-blocktimereductionheight` schedules;
+`-optinfeaturesheight`, `-strictauthscriptheight`, `-signatureopcodesheight`
+and the per-feature overrides move the heights for activation tests.
 
 ### Strict AuthScript activation schedule
 

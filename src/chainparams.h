@@ -99,6 +99,7 @@ public:
     void UpdateTxHashHeight(int nHeight) { consensus.nTxHashHeight = nHeight; }
     void UpdateSignatureOpcodesHeight(int nHeight) { consensus.nSignatureOpcodesHeight = nHeight; }
     void UpdateOptInFeaturesHeight(int nHeight) { consensus.nOptInFeaturesHeight = nHeight; }
+    void UpdateBlockTimeReductionHeight(int nHeight) { consensus.nBlockTimeReductionHeight = nHeight; }
     void TurnOffSegwit();
     void TurnOffCSV();
     void TurnOffBIP34();
@@ -166,6 +167,10 @@ public:
             : nMaxReorganizationDepth;
     }
     int MinReorganizationPeers() const { return nMinReorganizationPeers; }
+    /** Protocol version announced in the version handshake. */
+    int ProtocolVersion() const { return nProtocolVersion; }
+    /** Peers announcing a lower protocol version are refused at handshake. */
+    int MinPeerProtocolVersion() const { return nMinPeerProtocolVersion; }
     int MinReorganizationAge() const { return nMinReorganizationAge; }
 
     int GetAssetActivationHeight() const { return nAssetActivationHeight; }
@@ -229,6 +234,9 @@ protected:
     int nMinReorganizationPeers;
     int nMinReorganizationAge;
 
+    int nProtocolVersion;
+    int nMinPeerProtocolVersion;
+
     int nAssetActivationHeight;
 
     uint32_t nKAAAWWWPOWActivationTime;
@@ -279,6 +287,8 @@ void UpdateDepinTransferStateHeight(int nHeight);
 void UpdateStrictAuthScriptHeight(int nHeight);
 void UpdateSignatureOpcodesHeight(int nHeight);
 void UpdateOptInFeaturesHeight(int nHeight);
+/** Regtest only: schedule NIP-028 (block-time reduction) at this height. */
+void UpdateBlockTimeReductionHeight(int nHeight);
 void UpdateAuthScriptBudgetHeight(int nHeight);
 void UpdateZKVerifyHeight(int nHeight);
 void UpdatePoseidonWorkHeight(int nHeight);

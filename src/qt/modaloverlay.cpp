@@ -10,6 +10,7 @@
 #include "guiutil.h"
 
 #include "chainparams.h"
+#include "validation.h"
 
 #include <QResizeEvent>
 #include <QPropertyAnimation>
@@ -131,9 +132,10 @@ void ModalOverlay::tipUpdate(int count, const QDateTime& blockDate, double nVeri
         // not syncing
         return;
 
-    // estimate the number of headers left based on nPowTargetSpacing
+    // estimate the number of headers left based on the target spacing in
+    // force at the best header (NIP-028: 30 s from its activation)
     // and check if the gui is not aware of the best header (happens rarely)
-    int estimateNumHeadersLeft = bestHeaderDate.secsTo(currentDate) / GetParams().GetConsensus().nPowTargetSpacing;
+    int estimateNumHeadersLeft = bestHeaderDate.secsTo(currentDate) / GetEffectivePowTargetSpacing(bestHeaderHeight, GetParams().GetConsensus());
     bool hasBestHeader = bestHeaderHeight >= count;
 
     // show remaining number of blocks

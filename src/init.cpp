@@ -638,6 +638,7 @@ std::string HelpMessage(HelpMessageMode mode)
         strUsage += HelpMessageOpt("-txhashheight=<n>", "Override NIP-042 TXHASH activation height (regtest-only)");
         strUsage += HelpMessageOpt("-signatureopcodesheight=<n>", "Override CSFS/Ed25519/CHECKSIGADD activation height (regtest-only)");
         strUsage += HelpMessageOpt("-optinfeaturesheight=<n>", "Override the activation height of the opt-in feature switches (regtest-only)");
+        strUsage += HelpMessageOpt("-blocktimereductionheight=<n>", "Schedule the NIP-028 block-time reduction (60s -> 30s, halved subsidy) at this height (regtest-only)");
         strUsage += HelpMessageOpt("-strictauthscriptheight=<n>", "Override the strict AuthScript (witness v2/v3) activation height (regtest-only)");
         strUsage += HelpMessageOpt("-depinstateheight=<n>", "Override the DEPIN transfer state (open/close/seal) activation height (regtest-only)");
     }
@@ -1446,6 +1447,15 @@ bool AppInitParameterInteraction()
             return InitError("Invalid -optinfeaturesheight");
         UpdateOptInFeaturesHeight(static_cast<int>(height));
         LogPrintf("Setting opt-in feature activation height to %ld\n", height);
+    }
+
+    if (gArgs.IsArgSet("-blocktimereductionheight")) {
+        if (!chainparams.MineBlocksOnDemand()) return InitError("The block-time reduction height may only be overridden on regtest.");
+        int64_t height;
+        if (!ParseInt64(gArgs.GetArg("-blocktimereductionheight", ""), &height) || height < 0 || height > std::numeric_limits<int>::max())
+            return InitError("Invalid -blocktimereductionheight");
+        UpdateBlockTimeReductionHeight(static_cast<int>(height));
+        LogPrintf("Setting NIP-028 block-time reduction height to %ld\n", height);
     }
 
     if (gArgs.IsArgSet("-strictauthscriptheight")) {

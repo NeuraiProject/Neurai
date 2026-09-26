@@ -687,6 +687,10 @@ bool IsBlockTimeReductionActiveOnTip();
  *  otherwise the legacy nPowTargetSpacing. */
 int64_t GetEffectivePowTargetSpacing(int nHeight, const Consensus::Params& params);
 
+/** NIP-028: effective PoW target spacing at the current chainActive tip.
+ *  Takes cs_main. For estimates shown to the user (GUI). */
+int64_t GetEffectivePowTargetSpacingOnTip();
+
 /** NIP-028: effective PoW target timespan at nHeight on the given
  *  chain. */
 int64_t GetEffectivePowTargetTimespan(int nHeight, const Consensus::Params& params);
