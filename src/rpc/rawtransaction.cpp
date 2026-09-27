@@ -365,6 +365,22 @@ static bool IsAmountValue(const UniValue& value)
     return value.isNum() || value.isStr();
 }
 
+// Units of a raw reissue: -1 (the default) keeps the asset's current units,
+// as the wallet's reissue RPCs do. A CReissueAsset starts at 0 units, which
+// refused reissuing any asset issued with decimals.
+static int8_t ParseReissueUnits(const UniValue& reissueData)
+{
+    const UniValue& units = find_value(reissueData, "units");
+    if (units.isNull())
+        return -1;
+    if (!units.isNum())
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, missing reissue metadata for key: units");
+    const int nUnits = units.get_int();
+    if (nUnits < -1 || nUnits > MAX_UNIT)
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, units must be between -1 and 8, -1 means don't change the current units");
+    return int8_t(nUnits);
+}
+
 UniValue createrawtransaction(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() < 2 || request.params.size() > 4)
@@ -497,6 +513,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
             "               \"asset_name\":\"asset-name\", (string, required) name of asset to be reissued\n"
             "               \"asset_quantity\":n,          (number or string, required) the number of raw units to issue\n"
             "               \"reissuable\":[0-1],          (number, optional) default is 1, 1=reissuable asset\n"
+            "               \"units\":[-1-8],             (number, optional) default is -1: keep the current units; 0-8 sets new units (never fewer than now)\n"
             "               \"ipfs_hash\":\"hash\",        (string, optional) An ipfs hash for discovering asset metadata, \n"
             "                                                Overrides the current ipfs hash if given\n"
             "               \"owner_change_address\"       (string, optional) the address where the owner token will be sent to. \n"
@@ -526,6 +543,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
             "               \"asset_name\":\"asset-name\", (string, required) name of asset to be reissued\n"
             "               \"asset_quantity\":n,          (number or string, required) the number of raw units to issue\n"
             "               \"reissuable\":[0-1],          (number, optional) default is 1, 1=reissuable asset\n"
+            "               \"units\":[-1-8],             (number, optional) default is -1: keep the current units; 0-8 sets new units (never fewer than now)\n"
             "               \"verifier_string\":\"text\",  (string, optional) the verifier string to be used for a restricted asset \n"
             "                                                transfer verification\n"
             "               \"ipfs_hash\":\"hash\",        (string, optional) An ipfs hash for discovering asset metadata, \n"
@@ -976,6 +994,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
 
                         reissueObj.nReissuable = int8_t(nReissuable);
                     }
+                    reissueObj.nUnits = ParseReissueUnits(reissueData);
 
                     const UniValue& ipfs_hash = find_value(reissueData, "ipfs_hash");
                     if (!ipfs_hash.isNull()) {
@@ -1258,6 +1277,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
 
                         reissueObj.nReissuable = int8_t(nReissuable);
                     }
+                    reissueObj.nUnits = ParseReissueUnits(reissueData);
 
                     bool fHasVerifier = false;
                     const UniValue &verifier = find_value(reissueData, "verifier_string");
