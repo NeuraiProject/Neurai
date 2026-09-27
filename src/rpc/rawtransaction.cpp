@@ -357,6 +357,14 @@ UniValue verifytxoutproof(const JSONRPCRequest& request)
     return res;
 }
 
+// Asset quantities, like XNA amounts, may be JSON numbers or decimal text:
+// text keeps every digit for clients whose numbers are doubles (JavaScript).
+// AmountFromValue() validates both forms the same way.
+static bool IsAmountValue(const UniValue& value)
+{
+    return value.isNum() || value.isStr();
+}
+
 UniValue createrawtransaction(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() < 2 || request.params.size() > 4)
@@ -442,7 +450,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
             "           \"transfer\":\n"
             "             {\n"
             "               \"asset-name\":               (string, required) asset name\n"
-            "               asset-quantity              (number, required) the number of raw units to transfer\n"
+            "               asset-quantity              (number or string, required) the number of raw units to transfer\n"
             "               ,...\n"
             "             }\n"
             "         }\n"
@@ -452,7 +460,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
             "           \"transferwithmessage\":\n"
             "             {\n"
             "               \"asset-name\":              (string, required) asset name\n"
-            "               asset-quantity,            (number, required) the number of raw units to transfer\n"
+            "               asset-quantity,            (number or string, required) the number of raw units to transfer\n"
             "               \"message\":\"hash\",          (string, required) ipfs hash or a txid hash\n"
             "               \"expire_time\": n           (number, required) utc time in seconds to expire the message\n"
             "             }\n"
@@ -462,7 +470,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
             "           \"issue\":\n"
             "             {\n"
             "               \"asset_name\":\"asset-name\",  (string, required) new asset name\n"
-            "               \"asset_quantity\":n,         (number, required) the number of raw units to issue\n"
+            "               \"asset_quantity\":n,         (number or string, required) the number of raw units to issue\n"
             "               \"units\":[1-8],              (number, required) display units, between 1 (integral) to 8 (max precision)\n"
             "               \"reissuable\":[0-1],         (number, required) 1=reissuable asset\n"
             "               \"has_ipfs\":[0-1],           (number, required) 1=passing ipfs_hash\n"
@@ -487,7 +495,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
             "           \"reissue\":\n"
             "             {\n"
             "               \"asset_name\":\"asset-name\", (string, required) name of asset to be reissued\n"
-            "               \"asset_quantity\":n,          (number, required) the number of raw units to issue\n"
+            "               \"asset_quantity\":n,          (number or string, required) the number of raw units to issue\n"
             "               \"reissuable\":[0-1],          (number, optional) default is 1, 1=reissuable asset\n"
             "               \"ipfs_hash\":\"hash\",        (string, optional) An ipfs hash for discovering asset metadata, \n"
             "                                                Overrides the current ipfs hash if given\n"
@@ -500,7 +508,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
             "           \"issue_restricted\":\n"
             "             {\n"
             "               \"asset_name\":\"asset-name\",(string, required) new asset name\n"
-            "               \"asset_quantity\":n,         (number, required) the number of raw units to issue\n"
+            "               \"asset_quantity\":n,         (number or string, required) the number of raw units to issue\n"
             "               \"verifier_string\":\"text\", (string, required) the verifier string to be used for a restricted \n"
             "                                               asset transfer verification\n"
             "               \"units\":[0-8],              (number, required) display units, between 0 (integral) and 8 (max precision)\n"
@@ -516,7 +524,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
             "           \"reissue_restricted\":\n"
             "             {\n"
             "               \"asset_name\":\"asset-name\", (string, required) name of asset to be reissued\n"
-            "               \"asset_quantity\":n,          (number, required) the number of raw units to issue\n"
+            "               \"asset_quantity\":n,          (number or string, required) the number of raw units to issue\n"
             "               \"reissuable\":[0-1],          (number, optional) default is 1, 1=reissuable asset\n"
             "               \"verifier_string\":\"text\",  (string, optional) the verifier string to be used for a restricted asset \n"
             "                                                transfer verification\n"
@@ -531,7 +539,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
             "           \"issue_qualifier\":\n"
             "             {\n"
             "               \"asset_name\":\"asset_name\", (string, required) a qualifier name (starts with '#')\n"
-            "               \"asset_quantity\":n,          (numeric, optional, default=1) the number of units to be issued (1 to 10)\n"
+            "               \"asset_quantity\":n,          (number or string, optional, default=1) the number of units to be issued (1 to 10)\n"
             "               \"has_ipfs\":[0-1],            (boolean, optional, default=false), whether ifps hash is going \n"
             "                                                to be added to the asset\n"
             "               \"ipfs_hash\":\"hash\",        (string, optional but required if has_ipfs = 1), an ipfs hash or a \n"
@@ -539,7 +547,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
             "               \"root_change_address\"        (string, optional) Only applies when issuing subqualifiers.\n"
             "                                                The address where the root qualifier will be sent.\n"
             "                                                If not specified, it will be sent to the output address.\n"
-            "               \"change_quantity\":\"qty\"    (numeric, optional) the asset change amount (defaults to 1)\n"
+            "               \"change_quantity\":\"qty\"    (number or string, optional) the asset change amount (defaults to 1)\n"
             "             }\n"
             "         }\n"
             "           or\n"
@@ -549,7 +557,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
             "             {\n"
             "               \"qualifier\":\"qualifier\",          (string, required) a qualifier name (starts with '#')\n"
             "               \"addresses\":[\"addr\", ...],        (array, required) the addresses to be tagged (up to 10)\n"
-            "               \"change_quantity\":\"qty\",          (numeric, optional) the asset change amount (defaults to 1)\n"
+            "               \"change_quantity\":\"qty\",          (number or string, optional) the asset change amount (defaults to 1)\n"
             "             }\n"
             "         }\n"
             "           or\n"
@@ -559,7 +567,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
             "             {\n"
             "               \"qualifier\":\"qualifier\",          (string, required) a qualifier name (starts with '#')\n"
             "               \"addresses\":[\"addr\", ...],        (array, required) the addresses to be untagged (up to 10)\n"
-            "               \"change_quantity\":\"qty\",          (numeric, optional) the asset change amount (defaults to 1)\n"
+            "               \"change_quantity\":\"qty\",          (number or string, optional) the asset change amount (defaults to 1)\n"
             "             }\n"
             "         }\n"
             "           or\n"
@@ -803,7 +811,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
                         throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, missing asset data for key: asset_name");
 
                     const UniValue& asset_quantity = find_value(assetData, "asset_quantity");
-                    if (!asset_quantity.isNum())
+                    if (!IsAmountValue(asset_quantity))
                         throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, missing asset data for key: asset_quantity");
 
                     const UniValue& units = find_value(assetData, "units");
@@ -952,7 +960,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
                         throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, missing reissue data for key: asset_name");
 
                     const UniValue& asset_quantity = find_value(reissueData, "asset_quantity");
-                    if (!asset_quantity.isNum())
+                    if (!IsAmountValue(asset_quantity))
                         throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, missing reissue data for key: asset_quantity");
 
                     const UniValue& reissuable = find_value(reissueData, "reissuable");
@@ -1038,7 +1046,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
                     for (auto asset_name : keys) {
                         asset_quantity = find_value(transferData, asset_name);
 
-                        if (!asset_quantity.isNum())
+                        if (!IsAmountValue(asset_quantity))
                             throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, missing or invalid quantity");
 
                         CAmount nAmount = AmountFromValue(asset_quantity);
@@ -1079,7 +1087,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
                                            "Invalid parameter, missing valid asset name to transferwithmessage");
 
                     const UniValue &asset_quantity = find_value(transferData, asset_name);
-                    if (!asset_quantity.isNum())
+                    if (!IsAmountValue(asset_quantity))
                         throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, missing or invalid quantity");
 
                     const UniValue &message = find_value(transferData, "message");
@@ -1125,7 +1133,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
                         throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, missing asset data for key: asset_name");
 
                     const UniValue& asset_quantity = find_value(assetData, "asset_quantity");
-                    if (!asset_quantity.isNum())
+                    if (!IsAmountValue(asset_quantity))
                         throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, missing asset data for key: asset_quantity");
 
                     const UniValue& verifier_string = find_value(assetData, "verifier_string");
@@ -1233,7 +1241,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
                                            "Invalid parameter, missing reissue data for key: asset_name");
 
                     const UniValue &asset_quantity = find_value(reissueData, "asset_quantity");
-                    if (!asset_quantity.isNum())
+                    if (!IsAmountValue(asset_quantity))
                         throw JSONRPCError(RPC_INVALID_PARAMETER,
                                            "Invalid parameter, missing reissue data for key: asset_quantity");
 
@@ -1358,7 +1366,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
                         throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, missing asset data for key: asset_name");
 
                     const UniValue& asset_quantity = find_value(assetData, "asset_quantity");
-                    if (!asset_quantity.isNum())
+                    if (!IsAmountValue(asset_quantity))
                         throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, missing asset data for key: asset_quantity");
 
                     const UniValue& has_ipfs = find_value(assetData, "has_ipfs");
@@ -1400,7 +1408,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
                     CAmount changeQty = COIN;
                     const UniValue& change_qty = find_value(assetData, "change_quantity");
                     if (!change_qty.isNull()) {
-                        if (!change_qty.isNum() || AmountFromValue(change_qty) < COIN)
+                        if (!IsAmountValue(change_qty) || AmountFromValue(change_qty) < COIN)
                             throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, change_amount must be a positive number");
                         changeQty = AmountFromValue(change_qty);
                     }
@@ -1470,7 +1478,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
                     CAmount changeQty = COIN;
                     const UniValue& change_qty = find_value(assetData, "change_quantity");
                     if (!change_qty.isNull()) {
-                        if (!change_qty.isNum() || AmountFromValue(change_qty) < COIN)
+                        if (!IsAmountValue(change_qty) || AmountFromValue(change_qty) < COIN)
                             throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, change_amount must be a positive number");
                         changeQty = AmountFromValue(change_qty);
                     }
