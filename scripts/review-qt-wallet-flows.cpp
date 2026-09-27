@@ -21,6 +21,7 @@
 #include "qt/sendcoinsdialog.h"
 #include "qt/sendcoinsentry.h"
 #include "qt/neuraiamountfield.h"
+#include "qt/neuraiunits.h"
 #include "qt/coincontroldialog.h"
 #include "qt/assetcontroldialog.h"
 #include "qt/assetsdialog.h"
@@ -142,6 +143,18 @@ int main(int argc, char** argv) {
             Check(receiveModel.getAddressTableModel()->labelForAddress(early) == "inactive",
                   "receive/pq-before-activation-in-address-book");
             Check(!receiveModel.validateAddress(early), "receive/pq-before-activation-not-payable");
+        }
+        {
+            // Amounts up to MAX_MONEY (21 billion) with all 8 decimals.
+            CAmount parsed = 0;
+            Check(NeuraiUnits::parse(NeuraiUnits::XNA, "20999999999.99999999", &parsed) && parsed == MAX_MONEY - 1,
+                  "amount/parse-21-billion-8-decimals");
+            Check(NeuraiUnits::parse(NeuraiUnits::XNA, "21000000000", &parsed) && parsed == MAX_MONEY, "amount/parse-max-money");
+            Check(!NeuraiUnits::parse(NeuraiUnits::XNA, "99999999999.99999999", &parsed), "amount/parse-63-bit-overflow-refused");
+            NeuraiAmountField field;
+            field.setValue(MAX_MONEY - 1);
+            bool valid = false;
+            Check(field.value(&valid) == MAX_MONEY - 1 && valid, "amount/field-21-billion-8-decimals");
         }
         {
             // First-run wallet dialog: three address types, Legacy preselected,

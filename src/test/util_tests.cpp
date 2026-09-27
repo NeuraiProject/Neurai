@@ -252,8 +252,18 @@ BOOST_FIXTURE_TEST_SUITE(util_tests, BasicTestingSetup)
         BOOST_CHECK(ParseMoney("0.00000001", ret));
         BOOST_CHECK_EQUAL(ret, COIN / 100000000);
 
+        // Neurai: 21 billion coins with 8 decimals (11 whole digits)
+        BOOST_CHECK(ParseMoney("21000000000.00000000", ret));
+        BOOST_CHECK_EQUAL(ret, 21000000000LL * COIN);
+        BOOST_CHECK(ParseMoney("20999999999.99999999", ret));
+        BOOST_CHECK_EQUAL(ret, 21000000000LL * COIN - 1);
+        BOOST_CHECK(ParseMoney("10000000000", ret));
+        BOOST_CHECK_EQUAL(ret, 10000000000LL * COIN);
+
         // Attempted 63 bit overflow should fail
         BOOST_CHECK(!ParseMoney("92233720368.54775808", ret));
+        BOOST_CHECK(!ParseMoney("99999999999", ret));
+        BOOST_CHECK(!ParseMoney("100000000000", ret));
 
         // Parsing negative amounts must fail
         BOOST_CHECK(!ParseMoney("-1", ret));
@@ -650,12 +660,6 @@ BOOST_FIXTURE_TEST_SUITE(util_tests, BasicTestingSetup)
         BOOST_CHECK(!ParseFixedPoint("0.000000001", 8, &amount));
         BOOST_CHECK(!ParseFixedPoint("-0.000000001", 8, &amount));
         BOOST_CHECK(!ParseFixedPoint("0.00000001000000001", 8, &amount));
-        BOOST_CHECK(!ParseFixedPoint("-10000000000.00000000", 8, &amount));
-        BOOST_CHECK(!ParseFixedPoint("10000000000.00000000", 8, &amount));
-        BOOST_CHECK(!ParseFixedPoint("-10000000000.00000001", 8, &amount));
-        BOOST_CHECK(!ParseFixedPoint("10000000000.00000001", 8, &amount));
-        BOOST_CHECK(!ParseFixedPoint("-10000000000.00000009", 8, &amount));
-        BOOST_CHECK(!ParseFixedPoint("10000000000.00000009", 8, &amount));
         BOOST_CHECK(!ParseFixedPoint("-99999999999.99999999", 8, &amount));
         BOOST_CHECK(!ParseFixedPoint("99999909999.09999999", 8, &amount));
         BOOST_CHECK(!ParseFixedPoint("92233720368.54775807", 8, &amount));
@@ -666,9 +670,38 @@ BOOST_FIXTURE_TEST_SUITE(util_tests, BasicTestingSetup)
         BOOST_CHECK(!ParseFixedPoint("1.1e-", 8, &amount));
         BOOST_CHECK(!ParseFixedPoint("1.", 8, &amount));
 
+        // Neurai: amounts up to twice MAX_MONEY (21 billion coins), with all
+        // 8 decimals, however they are written; callers apply MoneyRange.
         BOOST_CHECK(ParseFixedPoint("21000000000", 8, &amount));
+        BOOST_CHECK_EQUAL(amount, 2100000000000000000LL);
         BOOST_CHECK(ParseFixedPoint("42000000000", 8, &amount));
+        BOOST_CHECK_EQUAL(amount, 4200000000000000000LL);
         BOOST_CHECK(!ParseFixedPoint("42000000001", 8, &amount));
+        BOOST_CHECK(!ParseFixedPoint("42000000000.00000001", 8, &amount));
+        BOOST_CHECK(!ParseFixedPoint("-42000000000.00000001", 8, &amount));
+        BOOST_CHECK(ParseFixedPoint("10000000000", 8, &amount));
+        BOOST_CHECK_EQUAL(amount, 1000000000000000000LL);
+        BOOST_CHECK(ParseFixedPoint("10000000000.00000000", 8, &amount));
+        BOOST_CHECK_EQUAL(amount, 1000000000000000000LL);
+        BOOST_CHECK(ParseFixedPoint("-10000000000.00000000", 8, &amount));
+        BOOST_CHECK_EQUAL(amount, -1000000000000000000LL);
+        BOOST_CHECK(ParseFixedPoint("10000000000.00000001", 8, &amount));
+        BOOST_CHECK_EQUAL(amount, 1000000000000000001LL);
+        BOOST_CHECK(ParseFixedPoint("-10000000000.00000009", 8, &amount));
+        BOOST_CHECK_EQUAL(amount, -1000000000000000009LL);
+        BOOST_CHECK(ParseFixedPoint("20000000000", 8, &amount));
+        BOOST_CHECK_EQUAL(amount, 2000000000000000000LL);
+        BOOST_CHECK(ParseFixedPoint("2e10", 8, &amount));
+        BOOST_CHECK_EQUAL(amount, 2000000000000000000LL);
+        BOOST_CHECK(ParseFixedPoint("20999999999.99999999", 8, &amount));
+        BOOST_CHECK_EQUAL(amount, 2099999999999999999LL);
+        BOOST_CHECK(ParseFixedPoint("21000000000.00000000", 8, &amount));
+        BOOST_CHECK_EQUAL(amount, 2100000000000000000LL);
+        BOOST_CHECK(ParseFixedPoint("21000000000.00000001", 8, &amount));
+        BOOST_CHECK_EQUAL(amount, 2100000000000000001LL);
+        BOOST_CHECK(ParseFixedPoint("41999999999.99999999", 8, &amount));
+        BOOST_CHECK_EQUAL(amount, 4199999999999999999LL);
+        BOOST_CHECK(!ParseFixedPoint("1e11", 8, &amount));
     }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -195,9 +195,9 @@ bool NeuraiUnits::parse(int unit, const QString &value, CAmount *val_out)
     bool ok = false;
     QString str = whole + decimals.leftJustified(num_decimals, '0');
 
-    if(str.size() > 18)
+    if(str.size() > 19)
     {
-        return false; // Longer numbers will exceed 63 bits
+        return false; // 19 digits hold 21 billion with 8 decimals; toLongLong() rejects values past 63 bits
     }
     CAmount retvalue(str.toLongLong(&ok));
     if(val_out)
@@ -234,9 +234,9 @@ bool NeuraiUnits::assetParse(int assetUnit, const QString &value, CAmount *val_o
     bool ok = false;
     QString str = whole + decimals.leftJustified(num_decimals, '0');
 
-    if(str.size() > 18)
+    if(str.size() > 19)
     {
-        return false; // Longer numbers will exceed 63 bits
+        return false; // 19 digits hold 21 billion with 8 decimals; toLongLong() rejects values past 63 bits
     }
     CAmount retvalue(str.toLongLong(&ok));
     if(val_out)

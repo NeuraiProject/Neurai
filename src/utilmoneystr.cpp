@@ -11,6 +11,8 @@
 #include "tinyformat.h"
 #include "utilstrencodings.h"
 
+#include <limits>
+
 std::string FormatMoney(const CAmount& n)
 {
     // Note: not using straight sprintf here because we do NOT want
@@ -67,11 +69,14 @@ bool ParseMoney(const char* pszIn, CAmount& nRet)
     for (; *p; p++)
         if (!isspace(*p))
             return false;
-    if (strWhole.size() > 10) // guard against 63 bit overflow
+    if (strWhole.size() > 11) // 21 billion coins has 11 digits
         return false;
     if (nUnits < 0 || nUnits > COIN)
         return false;
     int64_t nWhole = atoi64(strWhole);
+    // guard against 63 bit overflow once scaled to base units
+    if (nWhole > (std::numeric_limits<int64_t>::max() - COIN) / COIN)
+        return false;
     CAmount nValue = nWhole*COIN + nUnits;
 
     nRet = nValue;

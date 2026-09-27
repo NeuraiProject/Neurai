@@ -625,6 +625,12 @@ int atoi(const std::string& str)
  */
 static const int64_t UPPER_BOUND = 1000000000000000000LL - 1LL;
 
+/** Largest magnitude ParseFixedPoint returns: 42 billion with 8 decimals,
+ *  twice MAX_MONEY (21 billion coins) in base units, well inside int64_t.
+ *  The significant digits may exceed UPPER_BOUND (21 billion with all 8
+ *  decimals has 19 digits); callers apply their own range (MoneyRange). */
+static const int64_t FIXED_POINT_BOUND = 4200000000000000000LL;
+
 /** Helper function for ParseFixedPoint */
 static inline bool ProcessMantissaDigit(char ch, int64_t &mantissa, int &mantissa_tzeros)
 {
@@ -632,7 +638,7 @@ static inline bool ProcessMantissaDigit(char ch, int64_t &mantissa, int &mantiss
         ++mantissa_tzeros;
     else {
         for (int i=0; i<=mantissa_tzeros; ++i) {
-            if (mantissa > (UPPER_BOUND / 10LL))
+            if (mantissa > (FIXED_POINT_BOUND / 10LL))
                 return false; /* overflow */
             mantissa *= 10;
         }
@@ -717,15 +723,15 @@ bool ParseFixedPoint(const std::string &val, int decimals, int64_t *amount_out)
     exponent += decimals;
     if (exponent < 0)
         return false; /* cannot represent values smaller than 10^-decimals */
-    if (exponent >= 18)
-        return false; /* cannot represent values larger than or equal to 10^(18-decimals) */
+    if (exponent >= 19)
+        return false; /* 10^19 base units are beyond FIXED_POINT_BOUND */
 
     for (int i=0; i < exponent; ++i) {
-        if (mantissa > (420000000000000000LL) || mantissa < -(UPPER_BOUND / 10LL))
+        if (mantissa > (FIXED_POINT_BOUND / 10LL) || mantissa < -(FIXED_POINT_BOUND / 10LL))
             return false; /* overflow */
         mantissa *= 10;
     }
-    if (mantissa > 4200000000000000000LL || mantissa < -UPPER_BOUND)
+    if (mantissa > FIXED_POINT_BOUND || mantissa < -FIXED_POINT_BOUND)
         return false; /* overflow */
 
     if (amount_out)

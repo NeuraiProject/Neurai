@@ -2,6 +2,8 @@ buildspecs
 Jenkinsfile
 *.tar.gz
 
+contrib/nip045_wallet
+
 *.exe
 src/neurai
 src/neuraid
