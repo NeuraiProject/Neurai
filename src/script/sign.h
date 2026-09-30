@@ -44,6 +44,7 @@ class TransactionSignatureCreator : public BaseSignatureCreator {
 
 public:
     TransactionSignatureCreator(const CKeyStore* keystoreIn, const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, int nHashTypeIn=SIGHASH_ALL);
+    TransactionSignatureCreator(const CKeyStore* keystoreIn, const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, int nHashTypeIn, const TransactionSignatureChecker& checkerIn);
     const BaseSignatureChecker& Checker() const override { return checker; }
     bool CreateTreeSig(std::vector<unsigned char>& signature, const CKeyID& keyid,
                        const CScript& script, const AuthScriptTreeContext& context, uint8_t role) const override;

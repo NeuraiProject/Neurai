@@ -33,6 +33,7 @@
 #endif
 
 #include <stdint.h>
+#include <set>
 #include "assets/assets.h"
 
 #include <univalue.h>
@@ -1858,6 +1859,63 @@ static void TxInErrorToJSON(const CTxIn& txin, UniValue& vErrorsRet, const std::
     vErrorsRet.push_back(entry);
 }
 
+namespace {
+/** Own the immutable data used by all signing/checking stages of one RPC call.
+ * Incomplete input views stay unavailable: never expose default CTxOut entries
+ * or omitted offline amounts as real zero-valued inputs to introspection.
+ */
+struct RPCSigningContext {
+    PrecomputedTransactionData txdata;
+    std::vector<CTxOut> prevouts;
+    std::vector<CTxOut> refs;
+    ChainContext chain;
+    script_verify_flags flags = script_verify_flags::from_int(0);
+
+    RPCSigningContext(const CTransaction& tx, const CCoinsViewCache& view,
+                      const std::set<COutPoint>& missingAmounts = {}) : txdata(tx)
+    {
+        AssertLockHeld(cs_main);
+        const auto& consensus = GetParams().GetConsensus();
+        const CBlockIndex* tip = chainActive.Tip();
+        if (tip) chain = {tip->nHeight + 1, tip->GetMedianTimePast(), GetChainIdForParams(GetParams()), true};
+        const int height = chainActive.Height() + 1;
+        flags = ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus,
+                                    consensus.IsStrictAuthScriptActive(height), height);
+        prevouts.reserve(tx.vin.size());
+        for (const auto& input : tx.vin) {
+            const Coin& coin = view.AccessCoin(input.prevout);
+            if (coin.IsSpent() || missingAmounts.count(input.prevout)) {
+                prevouts.clear();
+                break;
+            }
+            prevouts.push_back(coin.out);
+        }
+        // References are confirmed, read-only UTXOs, not offline assertions
+        // supplied through prevtxs or outputs of unconfirmed parents.
+        LOCK(mempool.cs);
+        if (tx.nVersion == 3) {
+            refs.reserve(tx.vrefin.size());
+            for (const auto& outpoint : tx.vrefin) {
+                const Coin& coin = pcoinsTip->AccessCoin(outpoint);
+                if (coin.IsSpent() || mempool.isSpent(outpoint)) {
+                    refs.clear();
+                    break;
+                }
+                refs.push_back(coin.out);
+            }
+        }
+    }
+
+    TransactionSignatureChecker Checker(const CTransaction& tx, unsigned int input,
+                                        const CTxOut& spent) const
+    {
+        return TransactionSignatureChecker(&tx, input, spent.nValue, txdata, spent.scriptPubKey,
+            prevouts.size() == tx.vin.size() ? &prevouts : nullptr,
+            !tx.vrefin.empty() && refs.size() == tx.vrefin.size() ? &refs : nullptr, chain);
+    }
+};
+} // namespace
+
 UniValue combinerawtransaction(const JSONRPCRequest& request)
 {
 
@@ -1900,11 +1958,12 @@ UniValue combinerawtransaction(const JSONRPCRequest& request)
     // starts as a clone of the rawtx:
     CMutableTransaction mergedTx(txVariants[0]);
 
+    LOCK(cs_main);
+
     // Fetch previous transactions (inputs):
     CCoinsView viewDummy;
     CCoinsViewCache view(&viewDummy);
     {
-        LOCK(cs_main);
         LOCK(mempool.cs);
         CCoinsViewCache &viewChain = *pcoinsTip;
         CCoinsViewMemPool viewMempool(&viewChain, mempool);
@@ -1920,6 +1979,7 @@ UniValue combinerawtransaction(const JSONRPCRequest& request)
     // Use CTransaction for the constant parts of the
     // transaction to avoid rehashing.
     const CTransaction txConst(mergedTx);
+    const RPCSigningContext context(txConst, view);
     // Sign what we can:
     for (unsigned int i = 0; i < mergedTx.vin.size(); i++) {
         CTxIn& txin = mergedTx.vin[i];
@@ -1928,14 +1988,13 @@ UniValue combinerawtransaction(const JSONRPCRequest& request)
             throw JSONRPCError(RPC_VERIFY_ERROR, "Input not found or already spent");
         }
         const CScript& prevPubKey = coin.out.scriptPubKey;
-        const CAmount& amount = coin.out.nValue;
 
         SignatureData sigdata;
 
         // ... and merge in other signatures:
         for (const CMutableTransaction& txv : txVariants) {
             if (txv.vin.size() > i) {
-                sigdata = CombineSignatures(prevPubKey, TransactionSignatureChecker(&txConst, i, amount, prevPubKey), sigdata, DataFromTransaction(txv, i));
+                sigdata = CombineSignatures(prevPubKey, context.Checker(txConst, i, coin.out), sigdata, DataFromTransaction(txv, i));
             }
         }
 
@@ -2061,6 +2120,8 @@ UniValue signrawtransaction(const JSONRPCRequest& request)
     }
 #endif
 
+    std::set<COutPoint> missingAmounts;
+
     // Add previous txouts given in the RPC call:
     if (!request.params[1].isNull()) {
         UniValue prevTxs = request.params[1].get_array();
@@ -2096,13 +2157,23 @@ UniValue signrawtransaction(const JSONRPCRequest& request)
                         ScriptToAsmStr(scriptPubKey);
                     throw JSONRPCError(RPC_DESERIALIZATION_ERROR, err);
                 }
-                Coin newcoin;
+                // A script-only hint must not erase a known chain amount.
+                // Preserve legacy offline signing, but keep an unknown amount
+                // out of the introspection view until it is supplied explicitly.
+                Coin newcoin = coin;
                 newcoin.out.scriptPubKey = scriptPubKey;
-                newcoin.out.nValue = 0;
-                if (prevOut.exists("amount")) {
-                    newcoin.out.nValue = AmountFromValue(find_value(prevOut, "amount"));
+                if (coin.IsSpent()) {
+                    newcoin.out.nValue = 0;
+                    newcoin.nHeight = 1;
+                    missingAmounts.insert(out);
                 }
-                newcoin.nHeight = 1;
+                if (prevOut.exists("amount")) {
+                    const CAmount supplied = AmountFromValue(find_value(prevOut, "amount"));
+                    if (!missingAmounts.count(out) && !coin.IsSpent() && supplied != coin.out.nValue)
+                        throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Previous output amount mismatch");
+                    newcoin.out.nValue = supplied;
+                    missingAmounts.erase(out);
+                }
                 view.AddCoin(out, std::move(newcoin), true);
             }
 
@@ -2157,6 +2228,7 @@ UniValue signrawtransaction(const JSONRPCRequest& request)
     // Use CTransaction for the constant parts of the
     // transaction to avoid rehashing.
     const CTransaction txConst(mtx);
+    const RPCSigningContext context(txConst, view, missingAmounts);
     // Sign what we can:
     for (unsigned int i = 0; i < mtx.vin.size(); i++) {
         CTxIn& txin = mtx.vin[i];
@@ -2168,20 +2240,26 @@ UniValue signrawtransaction(const JSONRPCRequest& request)
         const CScript& prevPubKey = coin.out.scriptPubKey;
         const CAmount& amount = coin.out.nValue;
 
+        const auto checker = context.Checker(txConst, i, coin.out);
         SignatureData sigdata;
         // Only sign SIGHASH_SINGLE if there's a corresponding output:
         if (!fHashSingle || (i < mtx.vout.size()))
-            ProduceSignature(MutableTransactionSignatureCreator(&keystore, &mtx, i, amount, nHashType), prevPubKey, sigdata);
-        sigdata = CombineSignatures(prevPubKey, TransactionSignatureChecker(&txConst, i, amount, prevPubKey), sigdata, DataFromTransaction(mtx, i));
+            ProduceSignature(TransactionSignatureCreator(&keystore, &txConst, i, amount, nHashType, checker), prevPubKey, sigdata);
+        sigdata = CombineSignatures(prevPubKey, checker, sigdata, DataFromTransaction(mtx, i));
 
         UpdateTransaction(mtx, i, sigdata);
 
+        // Witness signatures commit to the input amount. Unknown offline
+        // amounts may still be used for legacy signing, never for a claim
+        // that a witness input is completely verified.
+        if (missingAmounts.count(txin.prevout) && !txin.scriptWitness.IsNull()) {
+            TxInErrorToJSON(txin, vErrors, "Missing amount for witness previous output");
+            continue;
+        }
         ScriptError serror = SCRIPT_ERR_OK;
-        // NIP-020: include every consensus opt-in the chain has active so the
-        // post-sign verify matches consensus (previously only AUTHSCRIPT).
-        script_verify_flags verify_flags =
-            GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());
-        if (!VerifyScript(txin.scriptSig, prevPubKey, &txin.scriptWitness, verify_flags, TransactionSignatureChecker(&txConst, i, amount, prevPubKey), &serror)) {
+        // Use the same next-block context for combination and final checking.
+        const script_verify_flags verify_flags = context.flags;
+        if (!VerifyScript(txin.scriptSig, prevPubKey, &txin.scriptWitness, verify_flags, checker, &serror)) {
             if (serror == SCRIPT_ERR_INVALID_STACK_OPERATION) {
                 // Unable to sign input and verification failed (possible attempt to partially sign).
                 TxInErrorToJSON(txin, vErrors, "Unable to sign input, invalid stack size (possibly missing key)");

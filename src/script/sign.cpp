@@ -28,6 +28,8 @@ static script_verify_flags LocalScriptVerifyFlags()
 
 TransactionSignatureCreator::TransactionSignatureCreator(const CKeyStore* keystoreIn, const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, int nHashTypeIn) : BaseSignatureCreator(keystoreIn), txTo(txToIn), nIn(nInIn), nHashType(nHashTypeIn), amount(amountIn), checker(txTo, nIn, amountIn) {}
 
+TransactionSignatureCreator::TransactionSignatureCreator(const CKeyStore* keystoreIn, const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, int nHashTypeIn, const TransactionSignatureChecker& checkerIn) : BaseSignatureCreator(keystoreIn), txTo(txToIn), nIn(nInIn), nHashType(nHashTypeIn), amount(amountIn), checker(checkerIn) {}
+
 bool TransactionSignatureCreator::CreateSig(std::vector<unsigned char>& vchSig, const CKeyID& address, const CScript& scriptCode, SigVersion sigversion, uint8_t authType) const
 {
     CKey key;
@@ -485,6 +487,19 @@ static Stacks CombineSignatures(const CScript& scriptPubKey, const BaseSignature
     std::vector<unsigned char> assetWitnessProgram;
     const bool assetUsesWitness = GetAssetScriptWitnessProgram(scriptPubKey, assetWitnessVersion, assetWitnessProgram);
 
+    // Native and asset-wrapped MAST must use the same verified selection.
+    // Never retain an invalid first witness merely because it is nonempty.
+    if ((txType == TX_WITNESS_V1_AUTHSCRIPT || (assetUsesWitness && assetWitnessVersion == 1)) &&
+        ((!sigs1.witness.empty() && sigs1.witness[0].size() == 1 && sigs1.witness[0][0] >= 0x10) ||
+         (!sigs2.witness.empty() && sigs2.witness[0].size() == 1 && sigs2.witness[0][0] >= 0x10))) {
+        for (const auto* candidate : {&sigs1, &sigs2}) {
+            const auto data = candidate->Output();
+            if (VerifyScript(data.scriptSig, scriptPubKey, &data.scriptWitness, LocalScriptVerifyFlags(), checker))
+                return *candidate;
+        }
+        return Stacks();
+    }
+
     switch (txType)
     {
     case TX_NONSTANDARD:
@@ -510,18 +525,6 @@ static Stacks CombineSignatures(const CScript& scriptPubKey, const BaseSignature
             return sigs2;
         return sigs1;
     case TX_WITNESS_V1_AUTHSCRIPT:
-        // Arbitrary MAST leaves have no generic partial-signature combiner.
-        // Select only a completely verified candidate; never reuse historical
-        // CHECKSIG domains or mix witnesses from different leaves.
-        if ((!sigs1.witness.empty() && sigs1.witness[0].size() == 1 && sigs1.witness[0][0] >= 0x10) ||
-            (!sigs2.witness.empty() && sigs2.witness[0].size() == 1 && sigs2.witness[0][0] >= 0x10)) {
-            for (const auto* candidate : {&sigs1, &sigs2}) {
-                const auto data = candidate->Output();
-                if (VerifyScript(data.scriptSig, scriptPubKey, &data.scriptWitness, LocalScriptVerifyFlags(), checker))
-                    return *candidate;
-            }
-            return Stacks();
-        }
         // Historical AuthScript selection is unchanged.
         // fall through
     case TX_WITNESS_V2_STRICT_PQ:

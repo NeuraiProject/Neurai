@@ -1,6 +1,7 @@
 // Copyright (c) 2026 The Neurai developers
 // Distributed under the MIT software license; see COPYING.
 #include "chainparams.h"
+#include "assets/assets.h"
 #include "crypto/sha256.h"
 #include "key.h"
 #include "keystore.h"
@@ -456,6 +457,33 @@ BOOST_AUTO_TEST_CASE(cold_leaf_global_header_and_combiner)
     w.stack={Bytes{0x11},sig,pk,Bytes(leaf.begin(),leaf.end()),Bytes{1}};
     BOOST_CHECK(Verify(Program(global.program),w,checker,narrow));
     w.stack[2][0]^=1;BOOST_CHECK(!Verify(Program(global.program),w,checker));
+}
+
+BOOST_AUTO_TEST_CASE(asset_tree_combiner_uses_full_input_context)
+{
+    const CScript leaf = CScript() << OP_0 << OP_INPUTVALUE << 10000 << OP_NUMEQUAL;
+    const auto commitment = AuthScriptTreeCommitment(Bytes{0}, AuthScriptLeafHash(leaf));
+    CMutableTransaction mut;
+    mut.vin.emplace_back(COutPoint(uint256S("abcd"), 0));
+    const CTransaction tx(mut);
+    const PrecomputedTransactionData cache(tx);
+    SignatureData valid;
+    valid.scriptWitness.stack = {Bytes{0x10}, Bytes(leaf.begin(), leaf.end()), Bytes{1}};
+    SignatureData invalid = valid;
+    invalid.scriptWitness.stack.back() = Bytes{2};
+    for (int kind = 0; kind < 4; ++kind) {
+        CScript script = Program(commitment);
+        if (kind == 1) CAssetTransfer("COMBINER", COIN).ConstructTransaction(script, AssetMarker::NEURAI_XNA);
+        if (kind == 2) CNewAsset("COMBINER", COIN, 0, 1, 0, "").ConstructTransaction(script, AssetMarker::NEURAI_XNA);
+        if (kind == 3) CReissueAsset("COMBINER", COIN, -1, 1, "").ConstructTransaction(script, AssetMarker::NEURAI_XNA);
+        const std::vector<CTxOut> prevouts{CTxOut(10000, script)};
+        const TransactionSignatureChecker complete(&tx, 0, 10000, cache, script, &prevouts);
+        const TransactionSignatureChecker incomplete(&tx, 0, 10000, script);
+        BOOST_CHECK(CombineSignatures(script, complete, invalid, valid).scriptWitness.stack == valid.scriptWitness.stack);
+        BOOST_CHECK(CombineSignatures(script, complete, valid, invalid).scriptWitness.stack == valid.scriptWitness.stack);
+        BOOST_CHECK(CombineSignatures(script, complete, invalid, invalid).scriptWitness.IsNull());
+        BOOST_CHECK(CombineSignatures(script, incomplete, valid, valid).scriptWitness.IsNull());
+    }
 }
 
 BOOST_AUTO_TEST_CASE(duplicate_leaves_path_order_and_budgets)

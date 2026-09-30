@@ -1,7 +1,7 @@
 buildspecs
 Jenkinsfile
 *.tar.gz
-
+scripts
 contrib/nip045_wallet
 
 *.exe
