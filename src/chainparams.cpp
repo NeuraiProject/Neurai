@@ -378,6 +378,7 @@ public:
         consensus.nCSFSEnabled = true;  // OP_CHECKSIGFROMSTACK
         consensus.nSignatureOpcodesHeight = TESTNET_FEATURES_HEIGHT; // CSFS, Ed25519, CHECKSIGADD
         consensus.nZKVerifyHeight = TESTNET_FEATURES_HEIGHT;
+        consensus.nZKPublicTreeHeight = TESTNET_FEATURES_HEIGHT; // C5 profile-2 public transitions; TEST nodes must upgrade before spending C5
         consensus.nPoseidonWorkHeight = TESTNET_FEATURES_HEIGHT;
         consensus.nAuthScriptBudgetHeight = TESTNET_FEATURES_HEIGHT; // NIP-046
         consensus.nAssetMessageHeight = TESTNET_FEATURES_HEIGHT; // NIP-043
@@ -629,6 +630,7 @@ public:
         consensus.nCTVEnabled = true;  // OP_CTV (BIP 119) active on regtest
         consensus.nCSFSEnabled = true;  // OP_CHECKSIGFROMSTACK active on regtest
         consensus.nZKVerifyHeight = 0;
+        consensus.nZKPublicTreeHeight = 0;
         consensus.nPoseidonWorkHeight = 0;
         consensus.nAuthScriptBudgetHeight = 0; // NIP-046: regtest
         consensus.nAssetMessageHeight = 0; // NIP-043: regtest
@@ -960,6 +962,11 @@ void UpdateAuthScriptBudgetHeight(int nHeight)
 void UpdateZKVerifyHeight(int nHeight)
 {
     globalChainParams->UpdateZKVerifyHeight(nHeight);
+}
+
+void UpdateZKPublicTreeHeight(int nHeight)
+{
+    globalChainParams->UpdateZKPublicTreeHeight(nHeight);
 }
 
 void UpdatePoseidonWorkHeight(int nHeight)

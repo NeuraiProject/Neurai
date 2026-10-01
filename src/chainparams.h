@@ -90,6 +90,7 @@ public:
     void UpdateDepinTransferStateHeight(int nHeight);
     void UpdateStrictAuthScriptHeight(int nHeight);
     void UpdateZKVerifyHeight(int nHeight) { consensus.nZKVerifyHeight = nHeight; }
+    void UpdateZKPublicTreeHeight(int nHeight) { consensus.nZKPublicTreeHeight = nHeight; }
     void UpdatePoseidonWorkHeight(int nHeight) { consensus.nPoseidonWorkHeight = nHeight; }
     void UpdateAuthScriptBudgetHeight(int nHeight) { consensus.nAuthScriptBudgetHeight = nHeight; }
     void UpdateAssetMessageHeight(int nHeight) { consensus.nAssetMessageHeight = nHeight; }
@@ -291,6 +292,7 @@ void UpdateOptInFeaturesHeight(int nHeight);
 void UpdateBlockTimeReductionHeight(int nHeight);
 void UpdateAuthScriptBudgetHeight(int nHeight);
 void UpdateZKVerifyHeight(int nHeight);
+void UpdateZKPublicTreeHeight(int nHeight);
 void UpdatePoseidonWorkHeight(int nHeight);
 void UpdateAssetMessageHeight(int nHeight);
 void UpdateInputFieldHeight(int nHeight);

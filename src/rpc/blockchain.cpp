@@ -42,6 +42,7 @@
 
 #include <mutex>
 #include <condition_variable>
+#include <limits>
 
 struct CUpdatedBlock
 {
@@ -1438,6 +1439,11 @@ UniValue getblockchaininfo(const JSONRPCRequest& request)
             "  \"chainwork\": \"xxxx\"     (string) total amount of work in active chain, in hexadecimal\n"
             "  \"size_on_disk\": xxxxxx,   (numeric) the estimated size of the block and undo files on disk\n"
             "  \"pruned\": xx,             (boolean) if the blocks are subject to pruning\n"
+            "  \"zk_public_tree\": {       (object) profile-2 public-transition activation\n"
+            "    \"activation_height\": n, (numeric or null) scheduled height, null when unscheduled\n"
+            "    \"active_at_tip\": b,     (boolean) whether the current block uses profile 2\n"
+            "    \"active_for_next_block\": b (boolean) whether a candidate block uses profile 2\n"
+            "  },\n"
             "  \"pruneheight\": xxxxxx,    (numeric) lowest-height complete block stored (only present if pruning is enabled)\n"
             "  \"automatic_pruning\": xx,  (boolean) whether automatic pruning is enabled (only present if pruning is enabled)\n"
             "  \"prune_target_size\": xxxxxx,  (numeric) the target size used by pruning (only present if automatic pruning is enabled)\n"
@@ -1482,6 +1488,20 @@ UniValue getblockchaininfo(const JSONRPCRequest& request)
     // Asset transactions enter the mempool for the next block, so expose the
     // marker required at that candidate height rather than that of the tip.
     obj.push_back(Pair("asset_marker", IsAssetMarkerNip040Active(chainActive.Height() + 1, consensusParams) ? "xna" : "rvn"));
+    // Wallets must distinguish an upgraded node from an older node and use
+    // the candidate block's rules before constructing profile-2 spends.
+    UniValue publicTree(UniValue::VOBJ);
+    if (consensusParams.nZKPublicTreeHeight == std::numeric_limits<int>::max())
+        publicTree.push_back(Pair("activation_height", UniValue()));
+    else
+        publicTree.push_back(Pair("activation_height", consensusParams.nZKPublicTreeHeight));
+    const auto publicTreeActive = [&](int height) {
+        return bool(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, consensusParams,
+            consensusParams.IsStrictAuthScriptActive(height), height) & SCRIPT_VERIFY_ZK_PUBLIC_TREE);
+    };
+    publicTree.push_back(Pair("active_at_tip", publicTreeActive(chainActive.Height())));
+    publicTree.push_back(Pair("active_for_next_block", publicTreeActive(chainActive.Height() + 1)));
+    obj.push_back(Pair("zk_public_tree", publicTree));
     obj.push_back(Pair("headers",               pindexBestHeader ? pindexBestHeader->nHeight : -1));
     obj.push_back(Pair("bestblockhash",         chainActive.Tip()->GetBlockHash().GetHex()));
     obj.push_back(Pair("difficulty",            (double)GetDifficulty()));

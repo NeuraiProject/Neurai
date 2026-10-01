@@ -7,6 +7,7 @@
 #include "interpreter.h"
 #include "crypto/backend_error.h"
 #include "crypto/groth16_bn254.h"
+#include "crypto/public_tree_transition.h"
 
 #include "assets/assets.h"
 #include "assets/assettypes.h"
@@ -627,6 +628,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
     // NIP-036 §3.7: per-script Poseidon-input-byte budget. Accumulated by
     // OP_POSEIDON; rejection on overflow returns SCRIPT_ERR_POSEIDON_BUDGET.
     size_t nPoseidonInputBytes = 0;
+    size_t nPublicTreeWork = 0;
     bool fRequireMinimal = (flags & SCRIPT_VERIFY_MINIMALDATA) != 0;
 
     try
@@ -1251,15 +1253,21 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         if (sigversion != SIGVERSION_AUTHSCRIPT)
                             return set_error(serror, SCRIPT_ERR_ZK_BAD_SIGVERSION);
                         if (stack.empty()) return set_error(serror, SCRIPT_ERR_ZK_STACK_SIZE);
-                        if (stack.back() != valtype{1}) return set_error(serror, SCRIPT_ERR_ZK_BAD_PROFILE);
+                        const bool publicTree = stack.back() == valtype{2};
+                        if (stack.back() != valtype{1} && !publicTree)
+                            return set_error(serror, SCRIPT_ERR_ZK_BAD_PROFILE);
+                        if (publicTree && (!(flags & SCRIPT_VERIFY_ZK_PUBLIC_TREE) || !(flags & SCRIPT_VERIFY_POSEIDON_WORK)))
+                            return set_error(serror, SCRIPT_ERR_ZK_BAD_PROFILE);
                         if (stack.size() < 2) return set_error(serror, SCRIPT_ERR_ZK_STACK_SIZE);
                         int64_t k;
                         try { k = CScriptNum(stack[stack.size()-2], true, 4).getint(); }
                         catch (const scriptnum_error&) { return set_error(serror, SCRIPT_ERR_ZK_INPUT_COUNT); }
                         if (k < 1 || k > 16) return set_error(serror, SCRIPT_ERR_ZK_INPUT_COUNT);
-                        if (stack.size() < static_cast<size_t>(k)+4)
+                        const size_t prefix = publicTree ? neurai::public_tree::CHUNKS + 1 : 0;
+                        if (stack.size() < static_cast<size_t>(k)+4+prefix)
                             return set_error(serror, SCRIPT_ERR_ZK_STACK_SIZE);
                         const size_t first = stack.size()-k-4;
+                        const size_t consumedFirst = first-prefix;
                         // Canonical BN254 Fr, big endian. Check even for empty proof.
                         static const unsigned char modulus[32] = {
                             0x30,0x64,0x4e,0x72,0xe1,0x31,0xa0,0x29,0xb8,0x50,0x45,0xb6,0x81,0x81,0x58,0x5d,
@@ -1275,6 +1283,35 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         }
                         const auto& proof = stack[first];
                         const auto& vk = stack[first+1];
+                        if (publicTree) {
+                            int64_t form;
+                            try { form = CScriptNum(stack[first-1], true, 4).getint(); }
+                            catch (const scriptnum_error&) { return set_error(serror, SCRIPT_ERR_ZK_PUBLIC_TREE); }
+                            if (form < 0 || form >= 8) return set_error(serror, SCRIPT_ERR_ZK_PUBLIC_TREE);
+                            valtype transcript;
+                            bool ended = false;
+                            for (size_t i = 0; i < neurai::public_tree::CHUNKS; ++i) {
+                                const auto& chunk = stack[consumedFirst+i];
+                                if (chunk.size() > neurai::public_tree::CHUNK_BYTES || (ended && !chunk.empty()))
+                                    return set_error(serror, SCRIPT_ERR_ZK_PUBLIC_TREE);
+                                if (chunk.size() < neurai::public_tree::CHUNK_BYTES) ended = true;
+                                transcript.insert(transcript.end(), chunk.begin(), chunk.end());
+                            }
+                            size_t cost;
+                            if (!neurai::public_tree::TransitionCost(transcript, form, cost))
+                                return set_error(serror, SCRIPT_ERR_ZK_PUBLIC_TREE);
+                            // This profile has its own bounded per-leaf work allowance.
+                            // It still consumes the shared transaction/block budget,
+                            // before hashing, including invalid cryptographic paths.
+                            if (cost > neurai::public_tree::MAX_WORK_PER_SCRIPT - nPublicTreeWork)
+                                return set_error(serror, SCRIPT_ERR_ZK_PUBLIC_TREE_BUDGET);
+                            if (checker.poseidonWorkBudget && !checker.poseidonWorkBudget->Charge(cost))
+                                return set_error(serror, SCRIPT_ERR_POSEIDON_WORK_BUDGET);
+                            nPublicTreeWork += cost;
+                            if (execution_cost) execution_cost->poseidon_permutations += cost;
+                            if (!neurai::public_tree::VerifyTransition(transcript, form, inputs))
+                                return set_error(serror, SCRIPT_ERR_ZK_PUBLIC_TREE);
+                        }
                         bool valid = false;
                         if (!proof.empty()) {
                             switch (neurai::zk::VerifyChecked(vk, proof, inputs)) {
@@ -1287,7 +1324,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             case neurai::zk::Result::INTERNAL: throw CryptoBackendError();
                             }
                         }
-                        stack.resize(first);
+                        stack.resize(consumedFirst);
                         stack.push_back(valid ? valtype{1} : valtype{});
                         break;
                     }

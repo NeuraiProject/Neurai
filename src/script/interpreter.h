@@ -303,6 +303,7 @@ enum class script_verify_flag_name : uint8_t {
     SCRIPT_VERIFY_MERKLE_POSEIDON = 47,
     SCRIPT_VERIFY_AUTHSCRIPT_BUDGET = 48,
     SCRIPT_VERIFY_POSEIDON_WORK = 49,
+    SCRIPT_VERIFY_ZK_PUBLIC_TREE = 50, // Experimental C5 profile 2
 
     // End marker — must always be last.
     SCRIPT_VERIFY_END_MARKER

@@ -22,6 +22,8 @@ const char* ScriptErrorString(const ScriptError serror)
         case SCRIPT_ERR_ZK_VK_ENCODING: return "ZKVERIFY VK_ENCODING";
         case SCRIPT_ERR_ZK_PROOF_ENCODING: return "ZKVERIFY PROOF_ENCODING";
         case SCRIPT_ERR_ZK_VERIFY_FAILED: return "ZKVERIFY VERIFY_FAILED";
+        case SCRIPT_ERR_ZK_PUBLIC_TREE: return "ZKVERIFY PUBLIC_TREE";
+        case SCRIPT_ERR_ZK_PUBLIC_TREE_BUDGET: return "ZKVERIFY PUBLIC_TREE_BUDGET";
         case SCRIPT_ERR_OK:
             return "No error";
         case SCRIPT_ERR_EVAL_FALSE:

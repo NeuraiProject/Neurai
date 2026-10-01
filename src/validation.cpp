@@ -2119,6 +2119,7 @@ static void MempoolCheckScriptRuleTransition(CTxMemPool& pool,
         params.IsAuthScriptTreeActive(nOldCandidateHeight) == params.IsAuthScriptTreeActive(nNewCandidateHeight) &&
         params.IsMerklePoseidonActive(nOldCandidateHeight) == params.IsMerklePoseidonActive(nNewCandidateHeight) &&
         params.IsZKVerifyActive(nOldCandidateHeight) == params.IsZKVerifyActive(nNewCandidateHeight) &&
+        params.IsZKPublicTreeActive(nOldCandidateHeight) == params.IsZKPublicTreeActive(nNewCandidateHeight) &&
         params.IsPoseidonWorkActive(nOldCandidateHeight) == params.IsPoseidonWorkActive(nNewCandidateHeight) &&
         params.IsAuthScriptBudgetActive(nOldCandidateHeight) == params.IsAuthScriptBudgetActive(nNewCandidateHeight) &&
         params.IsTxHashActive(nOldCandidateHeight) == params.IsTxHashActive(nNewCandidateHeight) &&

@@ -139,6 +139,9 @@ struct Params {
     // NIP-043: independent activation, unscheduled unless set for the network.
     int nZKVerifyHeight{std::numeric_limits<int>::max()};
     bool IsZKVerifyActive(int height) const { return height >= nZKVerifyHeight; }
+    // C5 profile 2 remains unscheduled on public networks during review.
+    int nZKPublicTreeHeight{std::numeric_limits<int>::max()};
+    bool IsZKPublicTreeActive(int height) const { return height >= nZKPublicTreeHeight; }
     int nPoseidonWorkHeight{std::numeric_limits<int>::max()};
     bool IsPoseidonWorkActive(int height) const { return height >= nPoseidonWorkHeight; }
     int nAuthScriptBudgetHeight{std::numeric_limits<int>::max()};
