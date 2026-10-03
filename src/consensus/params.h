@@ -116,8 +116,9 @@ struct Params {
      *  template). Blocks at or above this height enforce the strict spending
      *  rules and recognise OP_2/OP_3-prefixed asset scripts; below it every
      *  rule behaves exactly as before these versions existed.
-     *  0 on regtest (override with -strictauthscriptheight); INT_MAX (never)
-     *  on testnet and mainnet until their activation is decided. */
+     *  0 on regtest (override with -strictauthscriptheight); block 10 on the
+     *  reset testnet; INT_MAX (never) on mainnet until its activation is
+     *  decided. */
     int nStrictAuthScriptHeight;
     bool IsStrictAuthScriptActive(int nHeight) const { return nHeight >= nStrictAuthScriptHeight; }
     /** Enable OP_CAT (BIP 347) - stack element concatenation.
@@ -126,20 +127,23 @@ struct Params {
     /** Enable OP_CHECKTEMPLATEVERIFY (BIP 119) - transaction template verification.
      *  true on testnet/regtest; false on mainnet until future activation. */
     bool nCTVEnabled;
-    /** Enable OP_CHECKSIGFROMSTACK - verify signature against arbitrary message.
-     *  true on testnet/regtest; false on mainnet until future activation. */
     // Common height gate for CSFS, Ed25519 and CHECKSIGADD. Individual
     // capability switches remain available; validation always supplies height.
     int nSignatureOpcodesHeight{0};
     bool IsSignatureOpcodesActive(int height) const { return height >= nSignatureOpcodesHeight; }
+    /** Enable OP_CHECKSIGFROMSTACK - verify signature against arbitrary message.
+     *  true on every network; it applies only from nOptInFeaturesHeight and
+     *  nSignatureOpcodesHeight, both unscheduled (INT_MAX) on mainnet. */
     bool nCSFSEnabled;
     /** NIP-042: independent activation of the tagged TXHASH format. */
     int nTxHashHeight{std::numeric_limits<int>::max()};
     bool IsTxHashActive(int height) const { return height >= nTxHashHeight; }
-    // NIP-043: independent activation, unscheduled unless set for the network.
+    // NIP-016 (OP_ZKVERIFY): independent activation, unscheduled unless set
+    // for the network.
     int nZKVerifyHeight{std::numeric_limits<int>::max()};
     bool IsZKVerifyActive(int height) const { return height >= nZKVerifyHeight; }
-    // C5 profile 2 remains unscheduled on public networks during review.
+    // C5 profile 2: block 10 on the reset testnet, 0 on regtest
+    // (-zkpublictreeheight), unscheduled on mainnet during review.
     int nZKPublicTreeHeight{std::numeric_limits<int>::max()};
     bool IsZKPublicTreeActive(int height) const { return height >= nZKPublicTreeHeight; }
     int nPoseidonWorkHeight{std::numeric_limits<int>::max()};
@@ -264,9 +268,10 @@ struct Params {
     /** NIP-030: enable OP_KECCAK256 (0xba) and OP_BLAKE2B (0xbb)
      *  hash opcodes. Both occupy previously unassigned slots
      *  (`bad-opcode` pre-NIP-030); activation is a hard-fork
-     *  relative to the pre-NIP-030 rules. true on testnet/regtest
-     *  from genesis; false on mainnet until a future activation
-     *  NIP. */
+     *  relative to the pre-NIP-030 rules. true on testnet/regtest,
+     *  applied from nOptInFeaturesHeight (block 10 of the reset
+     *  testnet, genesis on regtest); false on mainnet until a future
+     *  activation NIP. */
     bool nKeccakBlake2bEnabled;
     /** NIP-031: enable OP_CHECKMERKLEINCLUSION (0xc1) — native
      *  Merkle inclusion verification with a tree-scheme selector
@@ -274,40 +279,47 @@ struct Params {
      *  BLAKE2B_PLAIN). Slot 0xc1 was previously unassigned
      *  (`bad-opcode`); activation is a hard-fork. Co-extends the
      *  per-element stack cap to MAX_PQ_SCRIPT_ELEMENT_SIZE (3072 B)
-     *  and the MAX_STACK_BYTES gate. true on testnet/regtest from
-     *  genesis; false on mainnet until a future activation NIP. */
+     *  and the MAX_STACK_BYTES gate. true on testnet/regtest,
+     *  applied from nOptInFeaturesHeight (block 10 of the reset
+     *  testnet, genesis on regtest); false on mainnet until a future
+     *  activation NIP. */
     bool nMerkleInclusionEnabled;
     /** NIP-034a: enable OP_BLAKE3 (0xc8), OP_SHA3_256 (0xca) and
      *  OP_SHA512 (0xcb) hash opcodes. All three slots were
      *  previously unassigned (`bad-opcode`); activation is a
      *  hard-fork. OP_POSEIDON (0xc9) is intentionally NOT covered
-     *  by this flag and stays bad-opcode pending its own NIP.
-     *  true on testnet/regtest from genesis; false on mainnet
-     *  until a future activation NIP. */
+     *  by this flag; it has its own switch (NIP-036, below).
+     *  true on testnet/regtest, applied from nOptInFeaturesHeight
+     *  (block 10 of the reset testnet, genesis on regtest); false on
+     *  mainnet until a future activation NIP. */
     bool nModernHashesEnabled;
 
     /** NIP-036: enable OP_POSEIDON (0xc9), the SNARK-friendly
      *  Poseidon hash over the BN254 scalar field. Slot was
      *  previously unassigned (`bad-opcode`); activation is a
-     *  hard-fork. true on testnet/regtest from genesis; false
-     *  on mainnet until a future activation NIP. */
+     *  hard-fork. true on testnet/regtest, applied from
+     *  nOptInFeaturesHeight (block 10 of the reset testnet, genesis
+     *  on regtest); false on mainnet until a future activation NIP. */
     bool nPoseidonEnabled;
 
     /** NIP-035: enable OP_CHECKSIG_ED25519 (0xdd), the strict-profile
      *  RFC 8032 PureEd25519 signature verifier. Slot was previously
      *  unassigned (`bad-opcode`); activation is a hard-fork. true on
-     *  testnet/regtest from genesis; false on mainnet until a future
-     *  activation NIP. Activation also widens the large-witness
-     *  standardness gate so messages > 80 B can be relayed. */
+     *  every network; it applies only from nOptInFeaturesHeight and
+     *  nSignatureOpcodesHeight (block 10 of the reset testnet, genesis on
+     *  regtest, unscheduled on mainnet). Activation also widens the
+     *  large-witness standardness gate so messages > 80 B can be relayed. */
     bool nEd25519Enabled;
 
     /** NIP-039: enable OP_CHECKSIGADD (0xde), a generic signature
      *  accumulator compatible with legacy and PQ CPubKey encodings.
      *  Slot was previously unassigned (`bad-opcode`); activation is
-     *  a hard-fork. true on testnet/regtest from genesis; false on
-     *  mainnet until a future activation NIP. Activation also widens
-     *  the per-element script cap and the large-witness standardness
-     *  gate so PQ-sized signatures and pubkeys can flow through. */
+     *  a hard-fork. true on every network; it applies only from
+     *  nOptInFeaturesHeight and nSignatureOpcodesHeight (block 10 of the
+     *  reset testnet, genesis on regtest, unscheduled on mainnet).
+     *  Activation also widens the per-element script cap and the
+     *  large-witness standardness gate so PQ-sized signatures and pubkeys
+     *  can flow through. */
     bool nCheckSigAddEnabled;
 };
 } // namespace Consensus

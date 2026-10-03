@@ -4,41 +4,61 @@
 
 Neurai integrates a full covenant system into its Script engine, enabling spending conditions that go far beyond traditional signature-based authorization. A **covenant** is a script that constrains *how* funds (or assets) may be spent — not just *who* can spend them. This allows the creation of self-enforcing smart contracts directly at the consensus layer, without relying on external virtual machines or trusted third parties.
 
-The covenant system is built on a set of cooperating opcodes organized in five categories:
+The covenant system is built on a set of cooperating opcodes. The table below
+lists them by category; [New OP_Codes Reference](new-opcodes-depin-branch.md)
+gives the byte values, flags and error codes of the original set.
 
 | Category | Opcodes |
 |----------|---------|
-| Covenant primitives | `OP_CHECKTEMPLATEVERIFY`, `OP_CHECKSIGFROMSTACK` |
-| Transaction introspection | `OP_TXHASH`, `OP_TXFIELD`, `OP_TXLOCKTIME`, `OP_OUTPUTVALUE`, `OP_OUTPUTSCRIPT`, `OP_INPUTCOUNT`, `OP_OUTPUTCOUNT` |
-| Asset introspection | `OP_OUTPUTASSETFIELD`, `OP_INPUTASSETFIELD` |
+| Covenant primitives | `OP_CHECKTEMPLATEVERIFY`, `OP_CHECKSIGFROMSTACK`, `OP_TXHASH` |
+| Spent input introspection | `OP_TXFIELD`, `OP_INPUTFIELD`, `OP_INPUTVALUE`, `OP_INPUTCOUNT` |
+| Output introspection | `OP_OUTPUTVALUE`, `OP_OUTPUTSCRIPT`, `OP_OUTPUTAUTHCOMMITMENT`, `OP_OUTPUTAUTHDEST`, `OP_OUTPUTCOUNT` |
+| Transaction and chain context | `OP_TXLOCKTIME`, `OP_CHAINCONTEXT` |
+| Reference inputs (tx v3, NIP-014) | `OP_REFINPUTCOUNT`, `OP_REFINPUTFIELD`, `OP_REFINPUTASSETFIELD` |
+| Asset introspection | `OP_OUTPUTASSETFIELD`, `OP_INPUTASSETFIELD`, `OP_REFINPUTASSETFIELD` |
 | Byte manipulation | `OP_CAT`, `OP_SPLIT`, `OP_REVERSEBYTES` |
-| 64-bit arithmetic | `OP_MUL`, `OP_DIV`, `OP_MOD` (plus upgraded `OP_ADD`/`OP_SUB`) |
+| 64-bit arithmetic | `OP_MUL`, `OP_DIV`, `OP_MOD` (plus the existing numeric opcodes widened to 8 bytes) |
+| Hashes | `OP_KECCAK256`, `OP_BLAKE2B`, `OP_BLAKE3`, `OP_SHA3_256`, `OP_SHA512`, `OP_POSEIDON` |
+| Additional signatures | `OP_CHECKSIGADD`, `OP_CHECKSIG_ED25519` |
+| Proof verification | `OP_CHECKMERKLEINCLUSION`, `OP_ZKVERIFY` |
 
-These opcodes execute inside **AuthScript** (witness version 1), a new script execution environment that extends SegWit with post-quantum signature support and a tagged commitment scheme.
+Each opcode is gated by its own consensus flag, not by the script version.
+Once active, they also evaluate in Legacy, P2SH and witness v0 scripts; only
+`OP_ZKVERIFY` is restricted to AuthScript. **AuthScript** (witness version 1)
+is the intended environment: it extends SegWit with post-quantum signature
+support, a tagged commitment scheme and larger execution budgets (NIP-046).
 
 ---
 
 ## AuthScript: The Covenant Execution Environment
 
-All covenants run inside AuthScript programs. An AuthScript output has the form:
+Covenants are designed to run inside AuthScript programs. An AuthScript output has the form:
 
 ```
 OP_1 <32-byte commitment>
 ```
 
-The 32-byte commitment is computed as:
+The program may also be wrapped in P2SH, and an asset-carrying output appends
+the asset suffix (`OP_1 <32 bytes> OP_XNA_ASSET <payload> OP_DROP`). The
+32-byte commitment is computed as:
 
 ```
-TaggedHash("NeuraiAuthScript", authType || [pubkey] || witnessScript)
+TaggedHash("NeuraiAuthScript", 0x01 || authType || [HASH160(pubkey)] || SHA256(witnessScript))
+TaggedHash(tag, m) = SHA256(SHA256(tag) || SHA256(tag) || m)
 ```
 
-There are three authentication types:
+The leading `0x01` is the commitment version of generic witness v1 (the strict
+families use `0x02`/`0x03`, and NIP-044 script trees use `0x04`). The 20-byte
+key hash is present only for authType `0x01` and `0x02`.
+
+There are three authentication types for a single script (NIP-044 adds
+`0x10`–`0x12` for script trees, see below):
 
 | AuthType | Byte | Description |
 |----------|------|-------------|
 | Script-only | `0x00` | No key authorization. The witness script alone determines spending conditions. Ideal for pure covenants. |
-| Post-quantum | `0x01` | Requires an ML-DSA-44 signature from a committed public key, then evaluates the witness script. |
-| Classical | `0x02` | Requires an ECDSA/secp256k1 signature from a committed compressed public key, then evaluates the witness script. |
+| Post-quantum | `0x01` | Requires an ML-DSA-44 signature from the public key whose hash is committed, then evaluates the witness script. |
+| Classical | `0x02` | Requires an ECDSA/secp256k1 signature from the public key whose hash is committed, then evaluates the witness script. Standard policy requires a compressed key. |
 
 The witness stack for spending is structured as:
 
@@ -46,7 +66,56 @@ The witness stack for spending is structured as:
 <authType> [<signature> <pubkey>] <arg1> <arg2> ... <witnessScript>
 ```
 
+The witness script starts with only `<arg1> ... <argN>` on its stack (`argN`
+on top), and must finish with exactly one true element. The envelope signature
+is checked before the script runs; it uses the AuthScript sighash
+(`SIGVERSION_AUTHSCRIPT`, BIP143-style, with the authType committed and, for v3
+transactions, the reference inputs). Signatures checked inside the script
+(`OP_CHECKSIG`, `OP_CHECKMULTISIG`, `OP_CHECKSIGADD`) commit authType `0x00`,
+which keeps them in a separate domain from the envelope signature.
+
 This design separates authentication (who) from authorization logic (what and how), allowing covenants to be written as pure script logic while optionally requiring key-holder approval.
+
+### AuthScript contract address encoding
+
+Generic witness v1 uses Bech32m HRP `nc` on mainnet and `tnc` on
+testnet/regtest: `nc1p…` / `tnc1p…`. The former `nq1p…` / `tnq1p…`
+representations are rejected; no legacy-prefix alias or address migration is
+provided. This changes address encoding only, not commitments or consensus.
+Strict PQ v2 keeps `pq1z…` / `tpq1z…`; strict ECDSA v3 keeps
+`nq1r…` / `tnq1r…`.
+
+The wallet address type is chosen with `-addresstype=legacy|pq|ecdsa` when the
+wallet file is created (default `legacy`) and stored in it; opening an existing
+wallet with a different `-addresstype` is an init error, and without the option
+the stored type is used (`getwalletinfo` reports it). In the GUI, the
+first-run wallet dialog (create or restore from seed words) offers the three
+types, preset to `-addresstype`; when restoring, the type must be the one the
+wallet was created with, since each type derives its own keys. The type is what the
+wallet hands out by default, in Qt and over RPC (`getnewaddress`,
+`getaccountaddress`, `getrawchangeaddress`, change outputs, the asset RPCs and
+mining):
+
+| `-addresstype` | Default | Also on request |
+|---|---|---|
+| `legacy` | Legacy (Base58) | strict v3 (`"ecdsa"`) |
+| `pq` | strict v2 | strict v3 (`"ecdsa"`) |
+| `ecdsa` | strict v3 | none: it never hands out Legacy |
+
+`pq` and `ecdsa` require `-bip44=1` (their keys derive from the mnemonic seed:
+`m_pq` and `m/84'` branches). Their addresses are handed out at any time, even
+with no network or no scheduled activation, but nothing pays to them until
+AuthScript and the strict families apply to the next block: before that, a
+strict address does not decode for paying (sends to it are refused), policy
+rejects outputs to it, and the wallet refuses change to its family, mining to
+it and asset operations that would create such an output. There is no Legacy
+fallback. `-pqwallet` was replaced by `-addresstype=pq` and is refused at startup.
+Generic v1 is a contract family: contracts are built and signed by
+contract tooling, and the wallet never manages v1. It does not hand out v1
+addresses, does not count v1 outputs as its own (whatever spend data an older
+wallet file holds), does not sign messages for them and does not store v1
+spend data. Old testnet address-book strings and external integrations must be
+updated; this is intentionally incompatible.
 
 ### Reset testnet activation schedule
 
@@ -58,7 +127,9 @@ and **block 10** is the first block that applies all of them:
   (NIP-014) and the strict OP_XNA_ASSET placement rule;
 - strict AuthScript families and NIP-041 (`nStrictAuthScriptHeight`);
 - CSFS, Ed25519 and CHECKSIGADD (`nSignatureOpcodesHeight`);
-- TXHASH, NIP-043 primitives, MAST, NIP-046 budgets, ZKVERIFY and Poseidon work;
+- TXHASH (NIP-042), the NIP-043 primitives, NIP-044 script trees, NIP-046
+  budgets, `OP_ZKVERIFY` with its public-tree profile, and the Poseidon work
+  budget;
 - the NIP-040 asset marker (`rvn` outputs before block 10, `xna` from block 10;
   legacy `rvn` UTXOs stay spendable) and the DEPIN transfer state;
 - NIP-028: 30-second blocks, the subsidy halved (and its halving interval
@@ -79,9 +150,14 @@ the height of the block; wallet and mempool admission use the next block's
 height, so new-rule transactions are accepted with the tip at block 9.
 
 Mainnet remains unscheduled. Regtest applies everything from height 0 by
-default except NIP-028, which only `-blocktimereductionheight` schedules;
-`-optinfeaturesheight`, `-strictauthscriptheight`, `-signatureopcodesheight`
-and the per-feature overrides move the heights for activation tests.
+default, except the NIP-040 marker and the DEPIN transfer state (height 1) and
+NIP-028, which only `-blocktimereductionheight` schedules. The regtest-only
+options `-optinfeaturesheight`, `-strictauthscriptheight`,
+`-signatureopcodesheight` and the per-feature overrides (`-txhashheight`,
+`-assetmessageheight`, `-inputfieldheight`, `-merkleposeidonheight`,
+`-authscripttreeheight`, `-authscriptbudgetheight`, `-zkverifyheight`,
+`-zkpublictreeheight`, `-poseidonworkheight`, `-nip040height`,
+`-depinstateheight`) move the heights for activation tests.
 
 ### Strict AuthScript activation schedule
 
@@ -106,12 +182,15 @@ A signature skips candidate keys of the other family without consuming the
 signature. It must still verify against a matching key in script order. Thus
 `1 <ECDSA pubkey> <PQ pubkey> 2 CHECKMULTISIG` can be satisfied by either key.
 This is alternative authorization, not a requirement for both algorithms;
-use a 2-of-2 threshold when both signatures are required.
+use a 2-of-2 threshold when both signatures are required. ML-DSA-44 keys
+(1313 bytes) and signatures (2421 bytes) only fit under the 3072-byte element
+cap, which CSFS, CHECKSIGADD, OP_CHECKMERKLEINCLUSION or OP_ZKVERIFY enable
+(all active from block 10 of the reset testnet).
 
 Before this height, signature encoding is checked against each candidate key,
 preserving historical validation, including mixed-family failures. This is a
 consensus change that enables previously rejected spends, and must be included
-in the activation release. Mainnet/testnet heights remain unscheduled. The
+in the activation release. Mainnet remains unscheduled. The
 change applies only to witness v1 script execution (native or P2SH-wrapped);
 it does not change CHECKSIG, Legacy/v0 multisig, or the fixed v2/v3 templates.
 
@@ -134,6 +213,9 @@ CTV (BIP 119) is the simplest and most restrictive covenant primitive. It verifi
 - The template fixes the fields listed above, including complete output scripts and asset suffixes.
 - It does not commit to ordinary input prevouts or witness data. Reference outpoints in v3 are committed separately, so changing or reordering them changes the template.
 - Uses single-SHA256 with precomputed sub-hashes to prevent quadratic hashing.
+- Like the NOP it replaces, the opcode leaves its argument on the stack; a final
+  32-byte hash counts as true. An argument of any other size makes it a NOP,
+  discouraged by standard policy.
 
 **Example: Batched Payout**
 
@@ -149,17 +231,23 @@ CSFS verifies a signature against an arbitrary message (not the transaction hash
 
 **Stack:** `<sig> <msg> <pubkey> → <true|false>`
 
-The message is hashed with single-SHA256 before verification. Both ECDSA and ML-DSA-44 (post-quantum) public keys are supported.
+The message is hashed with single-SHA256 before verification. Both ECDSA and ML-DSA-44 (post-quantum) public keys are supported. There is no `OP_CHECKSIGFROMSTACKVERIFY`; follow the opcode with `OP_VERIFY`.
 
 **Example: Price Oracle**
 
 A covenant that only releases funds if an oracle attests that the XNA/USD price exceeds a threshold:
 
 ```
-<oracle_pubkey> OP_CHECKSIGFROMSTACK
+// Witness arguments: <oracle_sig> <price>, where <price> is a script number
+OP_DUP <threshold> OP_GREATERTHAN OP_VERIFY   // the attested price is high enough
+<oracle_pubkey> OP_CHECKSIGFROMSTACK          // the oracle signed SHA256(<price>)
 OP_VERIFY
 // ... remaining spending conditions
 ```
+
+As written, any earlier attestation above the threshold can be replayed. A
+real oracle message also carries a timestamp, or is bound to the spending
+transaction with `OP_TXHASH` (see below).
 
 ### OP_TXHASH — Flexible Commitments (NIP-042)
 
@@ -232,22 +320,54 @@ block's height and revalidate entries when a reorg crosses activation.
 
 ### Transaction Introspection Opcodes
 
-These opcodes push raw transaction data onto the stack for arithmetic comparison and script construction:
+These opcodes push transaction data onto the stack for comparison, arithmetic
+and script construction. Indices are script numbers; selectors are single
+bytes.
 
 | Opcode | Stack Effect | Description |
 |--------|-------------|-------------|
-| `OP_TXFIELD` | `<selector> → <raw bytes>` | Returns fields from the spent UTXO (value, AuthScript commitment, or full scriptPubKey) |
-| `OP_TXLOCKTIME` | `→ <4 bytes>` | Pushes the transaction's nLockTime |
-| `OP_OUTPUTVALUE` | `<index> → <amount>` | Pushes the satoshi amount of an output |
-| `OP_OUTPUTSCRIPT` | `<index> → <scriptPubKey>` | Pushes the raw scriptPubKey of an output |
-| `OP_INPUTCOUNT` | `→ <count>` | Pushes the number of inputs |
-| `OP_OUTPUTCOUNT` | `→ <count>` | Pushes the number of outputs |
-| `OP_OUTPUTAUTHDEST` | `<index> → <33 bytes>` | NIP-041: pushes the AuthScript destination of an output as `version || commitment` |
+| `OP_TXFIELD` | `<selector> → <field>` | Field of the spent UTXO: `01` value, `02` v1 commitment (32 bytes), `03` full scriptPubKey, `04` destination (NIP-041) |
+| `OP_INPUTFIELD` | `<index> <selector> → <field>` | Same selectors for any spent input (NIP-043) |
+| `OP_INPUTVALUE` | `<index> → <amount>` | Value of an input's prevout (NIP-024) |
+| `OP_INPUTCOUNT` | `→ <count>` | Number of inputs |
+| `OP_OUTPUTVALUE` | `<index> → <amount>` | Value of an output |
+| `OP_OUTPUTSCRIPT` | `<index> → <scriptPubKey>` | Full scriptPubKey of an output, including any asset suffix |
+| `OP_OUTPUTAUTHCOMMITMENT` | `<index> → <32 bytes>` | v1 commitment of an output (NIP-023) |
+| `OP_OUTPUTAUTHDEST` | `<index> → <33 bytes>` | Destination of an output as `version \|\| program` (NIP-041) |
+| `OP_OUTPUTCOUNT` | `→ <count>` | Number of outputs |
+| `OP_TXLOCKTIME` | `→ <4 bytes>` | The transaction's nLockTime |
+| `OP_CHAINCONTEXT` | `<selector> → <number>` | `01` height, `02` median time past, `03` chain id (NIP-026) |
+| `OP_REFINPUTCOUNT` | `→ <count>` | Number of reference inputs (tx v3) |
+| `OP_REFINPUTFIELD` | `<index> <selector> → <field>` | `OP_INPUTFIELD` selectors for a reference input |
+
+There is no opcode that returns the index of the input being evaluated. A
+covenant that needs its own value can require a single input
+(`OP_INPUTCOUNT 1 OP_NUMEQUALVERIFY`) and read `0 OP_INPUTVALUE`.
+
+#### Value encodings
+
+Some fields are script numbers, ready for arithmetic; others are raw
+little-endian bytes. With `SCRIPT_VERIFY_64BIT_INTEGERS` active:
+
+| Returns a script number | Returns raw bytes |
+|-------------------------|-------------------|
+| `OP_OUTPUTVALUE`, `OP_INPUTVALUE` | `OP_TXFIELD 01`, `OP_INPUTFIELD 01` (8 bytes LE) |
+| `OP_REFINPUTFIELD 01` | `OP_TXLOCKTIME` (4 bytes LE) |
+| Asset amounts (selector `02`) | Asset units, flags and type (1 byte each) |
+| `OP_INPUTCOUNT`, `OP_OUTPUTCOUNT`, `OP_REFINPUTCOUNT`, `OP_CHAINCONTEXT` | |
+
+Without 64-bit integers, values and asset amounts are also raw 8-byte fields.
+Standard policy enforces `SCRIPT_VERIFY_MINIMALDATA`, under which numeric
+opcodes reject non-minimal encodings. A raw field therefore cannot be used reliably
+in arithmetic in a relayable transaction: compare it with `OP_EQUAL` against bytes
+of the same length instead. For example, a reissuable flag is checked with
+`<01> OP_EQUAL`, and a value with `0x01 OP_TXFIELD <8-byte LE> OP_EQUAL`.
 
 #### AuthScript destination introspection (NIP-041)
 
-`OP_OUTPUTAUTHDEST` (`0xc2`) and selector `0x04` of `OP_TXFIELD` (spent input) and
-`OP_REFINPUTFIELD` (reference input) return the destination of a script as exactly
+`OP_OUTPUTAUTHDEST` (`0xc2`) and selector `0x04` of `OP_TXFIELD` (spent input),
+`OP_INPUTFIELD` (any spent input, NIP-043) and `OP_REFINPUTFIELD` (reference
+input) return the destination of a script as exactly
 33 bytes: the witness version (`01` generic AuthScript, `02` strict post-quantum,
 `03` strict ECDSA) followed by the 32-byte program in its original byte order.
 They activate at the same height as the strict AuthScript families.
@@ -268,7 +388,7 @@ must be 0 or 1; flag 1 requires the hash. Transfers and reissues may omit the ha
 a transfer with a hash may additionally carry exactly eight expiration bytes.
 Unknown tags, truncated hashes, different lengths and trailing bytes fail.
 Historical asset field parsers retain their existing behavior; this validation
-is specific to the three NIP-041 destination queries.
+is specific to the NIP-041 destination queries.
 
 This identifies the destination only. A covenant that cares about which asset is
 paid, and how much, must still check them with `OP_OUTPUTASSETFIELD`. The NIP-023
@@ -287,18 +407,24 @@ Unique to Neurai, these opcodes allow covenants to reason about the native asset
 |--------|-------------|-------------|
 | `OP_OUTPUTASSETFIELD` | `<index> <selector> → <value>` | Reads a field from an output's asset payload |
 | `OP_INPUTASSETFIELD` | `<index> <selector> → <value>` | Reads a field from an input's prevout asset payload |
+| `OP_REFINPUTASSETFIELD` | `<index> <selector> → <value>` | Reads a field from a reference input's asset payload |
 
 **Asset field selectors:**
 
-| Selector | Field | Available On |
-|----------|-------|-------------|
-| `0x01` | Asset name | All types |
-| `0x02` | Amount | All types |
-| `0x03` | Units (decimals) | New, Reissue |
-| `0x04` | Reissuable flag | New, Reissue |
-| `0x05` | Has IPFS flag | New |
-| `0x06` | IPFS hash | New, Reissue |
-| `0x07` | Asset type | All types |
+| Selector | Field | Encoding | Available On |
+|----------|-------|----------|-------------|
+| `0x01` | Asset name | Raw string | All types |
+| `0x02` | Amount (1.0 unit = 100000000) | Script number with 64-bit integers, else 8 bytes LE | All types |
+| `0x03` | Units (decimals) | 1 byte (`ff` = unchanged on reissue) | New, Reissue |
+| `0x04` | Reissuable flag | 1 byte | New, Reissue |
+| `0x05` | Has IPFS flag | 1 byte | New |
+| `0x06` | IPFS hash | Raw bytes | New, Reissue (when present) |
+| `0x07` | Asset type | 1 byte | All types |
+| `0x08` | Transfer message (NIP-043) | 32 bytes, or a 34-byte IPFS multihash | Transfer |
+
+"New" covers new, message-channel, qualifier and restricted issuances. On a
+reissue output, the amount is the quantity being added. The operation fails
+when the output carries no asset or the selector does not apply to its type.
 
 ### Byte Manipulation Opcodes
 
@@ -306,139 +432,160 @@ These opcodes provide the glue logic needed to construct and parse data on the s
 
 | Opcode | Stack Effect | Description |
 |--------|-------------|-------------|
-| `OP_CAT` | `<a> <b> → <a\|\|b>` | Concatenate two byte strings (max 520 bytes) |
-| `OP_SPLIT` | `<data> <n> → <left> <right>` | Split a byte string at position n |
-| `OP_REVERSEBYTES` | `<data> → <reversed>` | Reverse byte order in place |
+| `OP_CAT` | `<a> <b> → <a\|\|b>` | Concatenate two byte strings (result limited to the effective element size: 520 bytes, or 3072 with the PQ cap) |
+| `OP_SPLIT` | `<data> <n> → <left> <right>` | Split a byte string at position n (0 ≤ n ≤ length); `<right>` ends on top |
+| `OP_REVERSEBYTES` | `<data> → <reversed>` | Reverse byte order (little-endian ↔ big-endian) |
 
 ### 64-Bit Arithmetic
 
-All arithmetic opcodes operate on 8-byte signed integers with overflow protection. The re-enabled opcodes `OP_MUL`, `OP_DIV`, and `OP_MOD` complement the upgraded `OP_ADD` and `OP_SUB`. Results that would overflow int64 or equal `INT64_MIN` are rejected.
+With `SCRIPT_VERIFY_64BIT_INTEGERS`, numeric operands may be up to 8 bytes
+(signed int64) instead of 4. This covers the arithmetic, comparison and
+boolean opcodes (`OP_ADD`, `OP_SUB`, `OP_1ADD`, `OP_NUMEQUAL`,
+`OP_LESSTHAN`, `OP_WITHIN`, `OP_MIN`, …) and the re-enabled `OP_MUL`,
+`OP_DIV` and `OP_MOD`. Results that would overflow int64 or equal `INT64_MIN`
+are rejected, as are division and modulo by zero. Stack indices
+(`OP_PICK`, `OP_ROLL`), `OP_SPLIT` positions, introspection indices and
+multisig counts stay at 4 bytes; `OP_CHECKLOCKTIMEVERIFY` and
+`OP_CHECKSEQUENCEVERIFY` keep 5.
 
 ---
 
 ## Covenant Patterns
 
-The following patterns illustrate how the opcodes compose to build practical smart contracts.
+The following patterns illustrate how the opcodes compose to build practical
+smart contracts. They assume the reset-testnet rule set, where 64-bit integers
+are active, so `OP_OUTPUTVALUE`, `OP_INPUTVALUE` and asset amounts are script
+numbers (see [Value encodings](#value-encodings)). Script numbers such as
+`<max_fee>` are constants written into the script when it is created; the
+patterns check every output and value that matters, as a real contract must
+(see [Covenant pitfalls](#covenant-pitfalls)).
 
-### 1. Vault with Time-Locked Recovery
+### 1. Rate-Limited Vault with Recovery Path
 
-A vault that allows immediate spending to a hot wallet (with a limit) or delayed spending to a cold wallet after a timelock.
+A vault that lets a hot key withdraw at most 1 XNA per block, while a recovery
+key can move the whole balance, but only to a cold wallet.
 
 ```
-// Witness script (AuthType 0x02 — classical key required)
-//
-// Branch 1: Spend to hot wallet, max 1 XNA per tx
+// Witness script (AuthType 0x00 — each branch checks its own key)
+// Witness arguments: <hot_sig> 1   or   <recovery_sig> 0 (empty)
+
+// The fee is paid from the vault itself, so the spend has exactly one input,
+// and "0 OP_INPUTVALUE" is the value of this vault UTXO.
+OP_INPUTCOUNT 1 OP_NUMEQUALVERIFY
+
 OP_IF
-    // Verify output 0 goes to the hot wallet
-    0 OP_OUTPUTSCRIPT
-    <hot_wallet_script> OP_EQUAL OP_VERIFY
+    // Branch 1: hot key, at most 1 XNA per block
+    <hot_pubkey> OP_CHECKSIGVERIFY
+    1 OP_CHECKSEQUENCEVERIFY OP_DROP     // the vault UTXO must be confirmed
 
-    // Verify output 0 value <= 100000000 (1 XNA)
-    0 OP_OUTPUTVALUE
-    100000000 OP_LESSTHANOREQUAL OP_VERIFY
-
-    // Verify output 1 returns change to this same covenant
-    1 OP_OUTPUTSCRIPT
-    0x03 OP_TXFIELD    // Get own scriptPubKey
-    OP_EQUAL OP_VERIFY
-
-    // Exactly 2 outputs
     OP_OUTPUTCOUNT 2 OP_NUMEQUALVERIFY
 
-    OP_TRUE
+    // Output 0: at most 1 XNA to the hot wallet
+    0 OP_OUTPUTSCRIPT <hot_wallet_script> OP_EQUALVERIFY
+    0 OP_OUTPUTVALUE 100000000 OP_LESSTHANOREQUAL OP_VERIFY
 
-// Branch 2: Cold recovery after 144 blocks
+    // Output 1: the change returns to this same covenant...
+    1 OP_OUTPUTSCRIPT
+    0x03 OP_TXFIELD                      // own scriptPubKey
+    OP_EQUALVERIFY
+
+    // ...keeping everything except the payment and at most <max_fee>
+    0 OP_INPUTVALUE 0 OP_OUTPUTVALUE OP_SUB
+    <max_fee> OP_SUB
+    1 OP_OUTPUTVALUE
+    OP_LESSTHANOREQUAL
+
 OP_ELSE
-    // Require 144-block relative timelock
-    <144> OP_CHECKSEQUENCEVERIFY OP_DROP
-
-    // Verify output goes to cold wallet
-    0 OP_OUTPUTSCRIPT
-    <cold_wallet_script> OP_EQUAL
-
+    // Branch 2: recovery key, everything to the cold wallet
+    <recovery_pubkey> OP_CHECKSIGVERIFY
+    OP_OUTPUTCOUNT 1 OP_NUMEQUALVERIFY
+    0 OP_OUTPUTSCRIPT <cold_wallet_script> OP_EQUAL
 OP_ENDIF
 ```
 
 **How it works:**
-- The key holder can spend up to 1 XNA at a time to the hot wallet. The remaining balance must return to the same covenant (recursive covenant via `OP_TXFIELD` + `OP_OUTPUTSCRIPT`).
-- After 144 blocks of inactivity, the full balance can be swept to the cold wallet.
-- An attacker who compromises the key can only drain 1 XNA per block.
+- The hot key can pay up to 1 XNA per spend to the hot wallet. The rest must
+  return to the same covenant (recursive covenant via `OP_TXFIELD` +
+  `OP_OUTPUTSCRIPT`), and at most `<max_fee>` can go to fees.
+- `1 OP_CHECKSEQUENCEVERIFY` requires the vault UTXO to be confirmed, so
+  withdrawals cannot be chained inside one block. An attacker who steals the
+  hot key gets at most 1 XNA per block.
+- The owner reacts with the recovery key, which can only pay the cold wallet.
+  A leaked recovery key cannot redirect the funds either.
 
 ### 2. On-Chain DEX (Asset Swap Covenant)
 
-A trustless limit order that exchanges an exact amount of one Neurai asset for another.
+A trustless limit order: anyone can take the locked asset by paying a fixed
+amount of another asset to the seller in the same transaction.
 
 ```
-// Seller locks ASSET_A in this covenant. Buyer must provide ASSET_B.
-//
-// AuthType 0x00 — no key, pure covenant
+// The seller locks ASSET_A in this covenant.
+// AuthType 0x00 — no envelope key; the cancel branch checks the seller's key.
+// <seller_dest> is the 33-byte AuthScript destination (version || program)
+// of an address the seller uses for this order only.
+// Witness arguments: 1 (fill)   or   <seller_sig> 0 (cancel)
 
-// Verify exactly 3 outputs
-OP_OUTPUTCOUNT 3 OP_NUMEQUALVERIFY
-
-// Output 0: ASSET_B to the seller
-0 0x01 OP_OUTPUTASSETFIELD        // asset name of output 0
-<ASSET_B_name> OP_EQUALVERIFY
-
-0 0x02 OP_OUTPUTASSETFIELD        // amount of ASSET_B in output 0
-<required_amount_B> OP_NUMEQUALVERIFY
-
-0 OP_OUTPUTSCRIPT
-<seller_address_script> OP_EQUALVERIFY
-
-// Output 1: ASSET_A to the buyer
-1 0x01 OP_OUTPUTASSETFIELD
-<ASSET_A_name> OP_EQUALVERIFY
-
-1 0x02 OP_OUTPUTASSETFIELD
-<offered_amount_A> OP_NUMEQUALVERIFY
-
-// Output 2: XNA change (fee handling)
-OP_OUTPUTCOUNT 3 OP_NUMEQUALVERIFY
-
-OP_TRUE
+OP_IF
+    // Fill: output 0 pays exactly <price_B> of ASSET_B to the seller
+    0 0x01 OP_OUTPUTASSETFIELD <ASSET_B_name> OP_EQUALVERIFY
+    0 0x02 OP_OUTPUTASSETFIELD <price_B> OP_NUMEQUALVERIFY
+    0 OP_OUTPUTAUTHDEST <seller_dest> OP_EQUAL
+OP_ELSE
+    // Cancel: the seller takes the order back
+    <seller_pubkey> OP_CHECKSIG
+OP_ENDIF
 ```
 
 **How it works:**
-- The seller creates a UTXO locked by this covenant containing `ASSET_A`.
-- Anyone can spend it, but ONLY if they produce a transaction that sends `required_amount_B` of `ASSET_B` to the seller's address and sends `ASSET_A` to themselves.
-- No intermediary, no escrow, no counterparty risk. The swap is atomic by consensus.
+- The taker spends the order UTXO together with their own `ASSET_B` and XNA
+  inputs. Output 0 pays `ASSET_B` to the seller, and `ASSET_A` goes wherever
+  the taker chooses; consensus asset rules already prevent creating or losing
+  assets in a transfer.
+- Amounts are raw transaction amounts (1.0 asset unit = 100000000).
+- The destination is checked with `OP_OUTPUTAUTHDEST`, not `OP_OUTPUTSCRIPT`.
+  `OP_OUTPUTSCRIPT` returns the full scriptPubKey, including the
+  `OP_XNA_ASSET <payload> OP_DROP` suffix of an asset output, so comparing it
+  with a bare address script never matches.
+- A fresh seller destination per order prevents double satisfaction: otherwise
+  two identical orders spent in one transaction could both be satisfied by a
+  single payment output.
+- The swap is atomic: either the whole transaction is valid, or nothing moves.
 
 ### 3. Recurring Payment Stream
 
-A covenant that releases a fixed amount of XNA per time period, enforcing a payment schedule.
+A covenant that releases a fixed amount of XNA per period to a fixed recipient.
 
 ```
-// AuthType 0x00 — pure covenant, anyone can trigger the payment
+// AuthType 0x00 — pure covenant, anyone can trigger the payment.
+// The fee is paid from the covenant balance: one input, two outputs.
+OP_INPUTCOUNT 1 OP_NUMEQUALVERIFY
+OP_OUTPUTCOUNT 2 OP_NUMEQUALVERIFY
 
-// Enforce minimum timelock (e.g., 1 day = 1440 blocks)
-OP_TXLOCKTIME
-<start_time + (period * N)> OP_GREATERTHANOREQUAL OP_VERIFY
+// One payment per period: the covenant UTXO must be <period> blocks old
+// (e.g. 1440 blocks ≈ 1 day at 60-second blocks). The remainder output is a
+// new UTXO, so the next payment waits another full period.
+<period> OP_CHECKSEQUENCEVERIFY OP_DROP
 
-// Payment output (output 0)
-0 OP_OUTPUTVALUE
-<payment_amount> OP_NUMEQUALVERIFY
+// Output 0: the payment
+0 OP_OUTPUTVALUE <payment_amount> OP_NUMEQUALVERIFY
+0 OP_OUTPUTSCRIPT <recipient_script> OP_EQUALVERIFY
 
-0 OP_OUTPUTSCRIPT
-<recipient_script> OP_EQUALVERIFY
-
-// Remainder returns to this covenant (output 1)
+// Output 1: the remainder returns to this covenant...
 1 OP_OUTPUTSCRIPT
 0x03 OP_TXFIELD
 OP_EQUALVERIFY
 
-// Verify remaining balance is correct
-0x01 OP_TXFIELD                   // spent UTXO value (8 bytes)
-OP_REVERSEBYTES                    // to CScriptNum format if needed
-<payment_amount> OP_SUB
+// ...minus the payment and at most <max_fee>
+0 OP_INPUTVALUE <payment_amount + max_fee> OP_SUB
 1 OP_OUTPUTVALUE
-OP_NUMEQUALVERIFY
-
-// Exactly 2 outputs
-OP_OUTPUTCOUNT 2 OP_NUMEQUALVERIFY
-
-OP_TRUE
+OP_LESSTHANOREQUAL
 ```
+
+A relative timelock (`OP_CHECKSEQUENCEVERIFY`) is used instead of comparing
+`OP_TXLOCKTIME` with a constant: the spender chooses `nLockTime`, and a fixed
+absolute threshold would allow every remaining payment as soon as it passes.
+When the balance falls below `payment_amount + max_fee`, the remainder can no
+longer be paid out; a real contract adds a final branch for it.
 
 ### 4. Congestion Control (CTV Tree)
 
@@ -455,110 +602,115 @@ Level 1 (4 UTXOs, each with a CTV):
   <hash_D> OP_CHECKTEMPLATEVERIFY
 
 Level 2 (16 final payments):
-  Standard P2PKH/P2WPKH outputs
+  Ordinary recipient outputs (Legacy, strict v2/v3 or AuthScript)
 ```
 
 **How it works:**
 - A service (e.g., mining pool, exchange) creates a single on-chain transaction committing to a payout tree.
 - Each recipient can unilaterally claim their payment by broadcasting the branch of the tree that leads to their output.
 - Only the paths that are actually claimed consume block space.
+- Each template fixes its outputs, and therefore its fee, when the tree is built.
 
-### 5. Asset Issuance Gate
+### 5. Asset Reissuance Gate
 
-A covenant that controls asset reissuance, requiring multi-party approval and enforcing metadata constraints.
+A covenant that holds an owner token and lets a governance key reissue the
+asset only within limits and with an oracle's approval of the exact outputs.
 
 ```
-// AuthType 0x01 — post-quantum key required (governance key)
+// The covenant holds the owner token GOVERNED_ASSET!.
+// AuthType 0x01 — post-quantum governance key required.
+// Witness arguments: <oracle_sig>
 
-// Verify the reissue output has the correct asset name
-0 0x01 OP_OUTPUTASSETFIELD
-<GOVERNED_ASSET_name> OP_EQUALVERIFY
+// Consensus places the reissue output last, so index it from the output count.
+OP_OUTPUTCOUNT 1 OP_SUB
 
-// Cap the reissue amount
-0 0x02 OP_OUTPUTASSETFIELD
-<max_reissue_amount> OP_LESSTHANOREQUAL OP_VERIFY
+OP_DUP 0x01 OP_OUTPUTASSETFIELD <GOVERNED_ASSET_name> OP_EQUALVERIFY
 
-// Ensure the asset remains reissuable
-0 0x04 OP_OUTPUTASSETFIELD
-1 OP_NUMEQUALVERIFY
+// Cap the amount added by this reissue
+OP_DUP 0x02 OP_OUTPUTASSETFIELD <max_reissue_amount> OP_LESSTHANOREQUAL OP_VERIFY
 
-// Require oracle attestation of off-chain approval
-<governance_oracle_pubkey> OP_CHECKSIGFROMSTACK OP_VERIFY
+// The asset must stay reissuable
+0x04 OP_OUTPUTASSETFIELD <01> OP_EQUALVERIFY
 
-// Return the owner token to this covenant
-1 OP_OUTPUTSCRIPT
+// The oracle signs the digest of all outputs (mask 0x0010), so its approval
+// covers this exact reissue and cannot be replayed
+<10 00> OP_TXHASH <governance_oracle_pubkey> OP_CHECKSIGFROMSTACK OP_VERIFY
+
+// Output 0 returns the owner token to this covenant
+0 OP_OUTPUTSCRIPT
 0x03 OP_TXFIELD
-OP_EQUALVERIFY
-
-OP_TRUE
+OP_EQUAL
 ```
 
-### 6. Trustless Escrow with Timeout
+Flags such as the reissuable byte are compared as bytes (`<01> OP_EQUALVERIFY`):
+the field is a single raw byte, and `00` is not a minimally encoded number.
 
-A two-of-three escrow that automatically refunds after a deadline, with no trusted party needed to release funds.
+### 6. Escrow with Timeout
+
+A 2-of-3 escrow between buyer, seller and arbitrator that refunds the buyer
+after a deadline.
 
 ```
-// AuthType 0x00 — pure covenant
+// AuthType 0x00 — the keys are checked inside the script.
+// Witness arguments: <> <sig_1> <sig_2> 1   or   0 (empty) for the refund
 
 OP_IF
-    // Happy path: buyer and seller agree
-    // Both must sign (provide CSFS signatures on agreed message)
-    <buyer_pubkey> OP_CHECKSIGFROMSTACK OP_VERIFY
-    <seller_pubkey> OP_CHECKSIGFROMSTACK OP_VERIFY
-
-    // Verify the payout structure
-    0 OP_OUTPUTVALUE
-    <agreed_amount> OP_NUMEQUALVERIFY
-
-    OP_TRUE
+    // Release: any two of the three parties sign the transaction itself.
+    // With SIGHASH_ALL their signatures commit to the outputs and fix the payout.
+    2 <buyer_pubkey> <seller_pubkey> <arbitrator_pubkey> 3 OP_CHECKMULTISIG
 
 OP_ELSE
-    OP_IF
-        // Dispute: arbitrator + one party
-        <arbitrator_pubkey> OP_CHECKSIGFROMSTACK OP_VERIFY
+    // Timeout: after 2016 blocks (~1.4 days at 60-second blocks) anyone may
+    // return the whole balance to the buyer, minus at most <max_fee>
+    <2016> OP_CHECKSEQUENCEVERIFY OP_DROP
+    OP_INPUTCOUNT 1 OP_NUMEQUALVERIFY
+    OP_OUTPUTCOUNT 1 OP_NUMEQUALVERIFY
+    0 OP_OUTPUTSCRIPT <buyer_refund_script> OP_EQUALVERIFY
+    0 OP_INPUTVALUE 0 OP_OUTPUTVALUE OP_SUB
+    <max_fee> OP_LESSTHANOREQUAL
 
-        OP_TRUE
-
-    OP_ELSE
-        // Timeout: refund to buyer after 2016 blocks (~1.4 days)
-        <2016> OP_CHECKSEQUENCEVERIFY OP_DROP
-
-        0 OP_OUTPUTSCRIPT
-        <buyer_refund_script> OP_EQUALVERIFY
-
-        OP_TRUE
-
-    OP_ENDIF
 OP_ENDIF
 ```
 
+The keys may mix ECDSA and ML-DSA-44 (see
+[Mixed ECDSA/PQ multisig in witness v1](#mixed-ecdsapq-multisig-in-witness-v1)).
+Without the output and value checks, the keyless timeout branch would let
+anyone send a dust amount to the buyer and the rest elsewhere.
+
 ### 7. DePIN Device Payment Channel
 
-A covenant designed for IoT/DePIN devices that can receive micropayments for services, with periodic on-chain settlement.
+A covenant designed for IoT/DePIN devices: a service balance pays the device
+operator according to usage reported by an oracle.
 
 ```
 // AuthType 0x02 — device key (classical ECDSA)
+// Witness arguments: <usage> <oracle_sig>
+// <usage> is a minimally encoded script number. The oracle signs
+// SHA256(usage || txhash(current outpoint)), so a report is valid for this
+// UTXO only and cannot be replayed after settlement.
 
-// The device accumulates signed payment attestations off-chain.
-// Settlement covenant verifies the total and distributes funds.
-
-// Verify oracle-signed usage report
+OP_OVER                              // copy <usage>
+<20 00> OP_TXHASH OP_CAT             // message = usage || outpoint digest
 <network_oracle_pubkey> OP_CHECKSIGFROMSTACK OP_VERIFY
 
-// Output 0: payment to device operator
-0 OP_OUTPUTVALUE
-// Amount is calculated from the usage data on the stack
-OP_DUP <rate_per_unit> OP_MUL
-OP_NUMEQUALVERIFY
+// Output 0: usage × rate to the device operator
+<rate_per_unit> OP_MUL
+0 OP_OUTPUTVALUE OP_NUMEQUALVERIFY
+0 OP_OUTPUTSCRIPT <operator_script> OP_EQUALVERIFY
 
-// Output 1: remaining balance to service covenant
+// Output 1: the remaining balance returns to this covenant
 1 OP_OUTPUTSCRIPT
 0x03 OP_TXFIELD
 OP_EQUALVERIFY
 
+OP_INPUTCOUNT 1 OP_NUMEQUALVERIFY
 OP_OUTPUTCOUNT 2 OP_NUMEQUALVERIFY
 
-OP_TRUE
+// Nothing but the payment and at most <max_fee> leaves the covenant
+0 OP_INPUTVALUE 0 OP_OUTPUTVALUE OP_SUB
+<max_fee> OP_SUB
+1 OP_OUTPUTVALUE
+OP_LESSTHANOREQUAL
 ```
 
 ---
@@ -580,26 +732,45 @@ OP_EQUALVERIFY
 
 This pattern makes a covenant that persists across transactions — the output must contain the same spending conditions, creating a state machine that lives on-chain.
 
+Both scripts include any asset suffix, so for an asset-carrying covenant the
+output must also carry the same asset payload, including the same amount. When
+the amount may change, compare only the destination and check the amount
+separately:
+
+```
+0x04 OP_TXFIELD                      // own version || program (33 bytes)
+<n> OP_OUTPUTAUTHDEST
+OP_EQUALVERIFY
+<n> 0x02 OP_OUTPUTASSETFIELD <new_amount> OP_NUMEQUALVERIFY
+```
+
 ### Value Conservation Check
 
 ```
-// Total input value
-0x01 OP_TXFIELD          // value of spent UTXO (8 bytes LE)
+// Single-input spend: input 0 is this covenant
+OP_INPUTCOUNT 1 OP_NUMEQUALVERIFY
 
-// Sum output values
+// Input value minus the sum of outputs 0 and 1 is the fee
+0 OP_INPUTVALUE
 0 OP_OUTPUTVALUE
 1 OP_OUTPUTVALUE
 OP_ADD
-
-// Difference is the fee
 OP_SUB
 <max_fee> OP_LESSTHANOREQUAL OP_VERIFY
 ```
 
-### Asset Amount Conservation
+`0x01 OP_TXFIELD` also returns the spent value, but as raw 8-byte
+little-endian bytes even with 64-bit integers active, which arithmetic rejects
+under standard policy (see [Value encodings](#value-encodings)).
+
+### Asset Amount Distribution
+
+Consensus already forbids creating or destroying assets in a transfer. A
+covenant uses the amount fields to decide how the input amount is split among
+outputs:
 
 ```
-// Input asset amount
+// Input asset amount (input 0 holds the asset)
 0 0x02 OP_INPUTASSETFIELD
 
 // Output asset amounts
@@ -607,34 +778,43 @@ OP_SUB
 1 0x02 OP_OUTPUTASSETFIELD
 OP_ADD
 
-// Must be equal (no asset inflation)
+// Outputs 0 and 1 together carry the whole input amount
 OP_NUMEQUALVERIFY
 ```
 
 ### Constructing a Script on the Stack
 
 ```
-// Build a P2WPKH scriptPubKey: OP_0 <20-byte-hash>
-0x00          // OP_0
-<pubkey_hash> // 20 bytes
+// Build an AuthScript v1 scriptPubKey: OP_1 0x20 <32-byte commitment>
+<51 20>        // OP_1, then a 32-byte push opcode
+<commitment>   // 32 bytes
 OP_CAT
 
-// Verify output 0 pays to this constructed script
+// Verify output 0 pays to this constructed script (an XNA-only output)
 0 OP_OUTPUTSCRIPT
 OP_EQUALVERIFY
 ```
 
-### Endianness Conversion for Comparison
+The prefix bytes are pushed as data: `OP_0` or `OP_1` on their own would push
+an empty vector or the number 1, not the opcode byte.
+
+### Byte-Order Conversion
+
+`OP_REVERSEBYTES` converts between the little-endian fields returned by raw
+introspection and big-endian data from outside Neurai, such as an oracle
+message in network byte order:
 
 ```
-// OP_OUTPUTVALUE returns little-endian int64
-0 OP_OUTPUTVALUE
-
-// Convert to big-endian for comparison with external data
-OP_REVERSEBYTES
-
-<big_endian_threshold> OP_GREATERTHANOREQUAL
+// <amount_be> is an 8-byte big-endian amount from an authenticated message
+0x01 OP_TXFIELD          // spent value, raw 8-byte little-endian
+OP_REVERSEBYTES          // now big-endian
+<amount_be> OP_EQUALVERIFY
 ```
+
+Use the result for byte comparison or hashing only. Numeric opcodes read
+little-endian script numbers, so a reversed value cannot be used in arithmetic,
+and values that are already script numbers (such as `OP_OUTPUTVALUE` with
+64-bit integers active) need no conversion.
 
 ### Parsing Structured Data
 
@@ -643,12 +823,14 @@ OP_REVERSEBYTES
 <serialized_data>
 
 // First 4 bytes: version
-4 OP_SPLIT       // stack: <version_4bytes> <rest>
-OP_SWAP
+4 OP_SPLIT       // stack: <version> <rest>
 
 // Next 32 bytes: hash
-32 OP_SPLIT      // stack: <version> <hash_32bytes> <remainder>
+32 OP_SPLIT      // stack: <version> <hash> <remainder>
 ```
+
+`OP_SPLIT` leaves the right-hand part on top, so each call continues with the
+rest of the data.
 
 ---
 
@@ -660,15 +842,30 @@ Covenants enforce rules at the consensus layer. No multisig committee, no oracle
 
 ### Composability
 
-Each opcode does one thing well. Complex behavior emerges from composition rather than from monolithic opcodes. `OP_CAT` + `OP_OUTPUTSCRIPT` builds script verification. `OP_OUTPUTVALUE` + `OP_MUL` builds price calculations. `OP_INPUTASSETFIELD` + `OP_OUTPUTASSETFIELD` builds conservation rules.
+Each opcode does one thing well. Complex behavior emerges from composition rather than from monolithic opcodes. `OP_CAT` + `OP_OUTPUTSCRIPT` builds script verification. `OP_OUTPUTVALUE` + `OP_MUL` builds price calculations. `OP_INPUTASSETFIELD` + `OP_OUTPUTASSETFIELD` builds distribution rules.
 
 ### Graceful Degradation
 
-Every opcode introduced via NOP replacement (`OP_CHECKTEMPLATEVERIFY`, `OP_CHECKSIGFROMSTACK`, `OP_TXHASH`, `OP_TXFIELD`, `OP_SPLIT`) falls back to NOP behavior when its activation flag is not set. Re-enabled opcodes (`OP_CAT`, `OP_MUL`, `OP_DIV`, `OP_MOD`) return `SCRIPT_ERR_DISABLED_OPCODE` when their flag is not set. These rules define pre-activation evaluation; activating stack-changing opcodes still requires the network's coordinated consensus upgrade.
+Before its flag is set, each new opcode behaves as the byte did on older nodes:
+
+- Opcodes that replace a NOP (`OP_CHECKTEMPLATEVERIFY`, `OP_CHECKSIGFROMSTACK`,
+  `OP_TXHASH`, `OP_TXFIELD`, `OP_SPLIT`) act as that NOP. Standard policy
+  rejects them through `DISCOURAGE_UPGRADABLE_NOPS`.
+- Re-enabled opcodes (`OP_CAT`, `OP_MUL`, `OP_DIV`, `OP_MOD`) return
+  `SCRIPT_ERR_DISABLED_OPCODE`, even inside an unexecuted branch.
+- Opcodes in previously unassigned bytes (`OP_REVERSEBYTES` and every other
+  new opcode) return `SCRIPT_ERR_BAD_OPCODE` when executed. They are not NOPs,
+  so a node with the flag off never accepts a script that an older node
+  rejects.
+
+`OP_SUBSTR`, `OP_LEFT`, `OP_RIGHT`, `OP_INVERT`, `OP_AND`, `OP_OR`, `OP_XOR`,
+`OP_2MUL`, `OP_2DIV`, `OP_LSHIFT` and `OP_RSHIFT` remain disabled. Activating
+any of the new opcodes still requires the network's coordinated consensus
+upgrade.
 
 ### Post-Quantum Readiness
 
-AuthScript supports ML-DSA-44 (FIPS 204) signatures natively. Covenants that use AuthType `0x01` are protected against quantum attacks on the authentication layer, while the covenant logic itself (hash-based commitments, script evaluation) is inherently quantum-resistant.
+AuthScript supports ML-DSA-44 (FIPS 204) signatures natively. Covenants that use AuthType `0x01` are protected against quantum attacks on the authentication layer, while the covenant logic itself (hash-based commitments, script evaluation) is inherently quantum-resistant. This holds only if every key checked inside the script (`OP_CHECKSIG`, multisig, CSFS oracles) is also ML-DSA-44; an ECDSA or Ed25519 key anywhere in the script is a classical point of failure.
 
 ### Asset-Native
 
@@ -680,11 +877,24 @@ Unlike overlay protocols or token standards built on top of generic scripting, N
 
 ### Stack Element Size Limit
 
-All data pushed onto the stack is bounded by the effective per-element cap: `MAX_SCRIPT_ELEMENT_SIZE` (520 bytes) by default, or `MAX_PQ_SCRIPT_ELEMENT_SIZE` (3072 bytes) when `SCRIPT_VERIFY_CHECKSIGFROMSTACK` is active (NIP-018). This applies to `OP_CAT` results, `OP_OUTPUTSCRIPT` returns, `OP_REFINPUTFIELD` returns, and `OP_TXFIELD` outputs. Scripts that exceed the effective limit fail cleanly. Under CSFS, an additional `MAX_STACK_BYTES` (256 KiB) cap bounds the total bytes held on `stack + altstack`.
+All data pushed onto the stack is bounded by the effective per-element cap:
+`MAX_SCRIPT_ELEMENT_SIZE` (520 bytes) by default, or
+`MAX_PQ_SCRIPT_ELEMENT_SIZE` (3072 bytes, NIP-018) when any of
+`SCRIPT_VERIFY_CHECKSIGFROMSTACK`, `SCRIPT_VERIFY_CHECKSIGADD`,
+`SCRIPT_VERIFY_MERKLE_INCLUSION` or `SCRIPT_VERIFY_ZKVERIFY` is active. This
+applies to pushes, witness arguments, `OP_CAT` results and the fields returned
+by `OP_OUTPUTSCRIPT`, `OP_TXFIELD`, `OP_INPUTFIELD` and `OP_REFINPUTFIELD`.
+Scripts that exceed the effective limit fail cleanly. Under the same flags (and
+under the NIP-046 budget in AuthScript), `MAX_STACK_BYTES` (256 KiB) bounds the
+total bytes held on `stack + altstack`.
 
 ### Quadratic Hashing Prevention
 
-CTV and TXHASH use precomputed sub-hashes (`PrecomputedTransactionData`) for O(1) evaluation per opcode after the cache is populated. Without a populated cache, each execution that selects a list hashes that list again in O(n) time.
+CTV and TXHASH use precomputed sub-hashes (`PrecomputedTransactionData`) for
+O(1) evaluation per opcode. The CTV sub-hashes are computed for every
+transaction. TXHASH reuses the BIP143 lists, which are only computed for
+transactions with witness data; in a transaction without witness data, each
+execution that selects a list hashes it again in O(n) time.
 
 ### Arithmetic Overflow Protection
 
@@ -719,14 +929,11 @@ including outputs created before opcode activation. P2SH policy includes these
 operations in its per-input limit. Mempool and contextual block validation use
 the activated counters, as does the reported coinbase template cost.
 
-CHECKSIGADD's existing dynamic surcharge of eight against MAX_OPS_PER_SCRIPT
-is unchanged and separate from the global sigop budget. One global sigop per
+CHECKSIGADD's existing dynamic surcharge of eight against the per-script
+operation limit (201, or 512 in AuthScript under NIP-046) is unchanged and
+separate from the global sigop budget. One global sigop per
 signature is consistent with CSFS and AuthScript authentication; it is not a
 claim that ECDSA, ML-DSA and Ed25519 have equal CPU costs.
-
-This tightens consensus on networks where these opcodes are already enabled
-(testnet and regtest). It does not set a new activation schedule or establish
-compatibility with every historical testnet block; deployment needs coordination.
 
 ### Height activation of signature opcodes
 
@@ -753,7 +960,45 @@ This does not introduce a separate historical accounting schedule on testnet.
 
 ### Signature Malleability
 
-CSFS follows the same `NULLFAIL` semantics as `OP_CHECKSIG`: under `SCRIPT_VERIFY_NULLFAIL`, a non-empty signature that fails verification causes the entire script to fail (rather than pushing false). This prevents signature grinding attacks.
+CSFS follows the same `NULLFAIL` semantics as `OP_CHECKSIG`: under
+`SCRIPT_VERIFY_NULLFAIL`, a non-empty signature that fails verification causes
+the entire script to fail (rather than pushing false). NULLFAIL is a standard
+policy rule (BIP146), not consensus: in a block, a failing signature pushes
+false.
+
+The trailing signature-type byte of a CSFS signature is removed before
+verification and is not part of the signed message, so a third party can
+change it without invalidating the signature. Covenants must not depend on the
+exact bytes of a CSFS signature (for example, by hashing them).
+
+### Covenant Pitfalls
+
+Introspection makes it easy to write a covenant that checks less than it seems
+to. Common mistakes:
+
+- **Unchecked outputs and values.** Constraining one output says nothing about
+  the others. Fix the output count, and bound the fee with the input value
+  (`0 OP_INPUTVALUE` in a single-input spend). Otherwise a keyless branch lets
+  anyone send dust to the intended recipient and the rest elsewhere.
+- **Asset suffixes.** `OP_OUTPUTSCRIPT` and `OP_TXFIELD 03` return the whole
+  scriptPubKey, including `OP_XNA_ASSET <payload> OP_DROP`. To check where an
+  asset goes, compare `OP_OUTPUTAUTHDEST` and check name and amount with
+  `OP_OUTPUTASSETFIELD`.
+- **Double satisfaction.** Checks indexed by output position do not know which
+  input they belong to. Two identical covenants spent in one transaction can
+  both be satisfied by a single output. Make each instance unique (for example,
+  a fresh destination per order) or limit the number of inputs.
+- **Locktime.** `OP_TXLOCKTIME` returns the field the spender chose. `nLockTime`
+  is only enforced when an input has a non-final sequence, so a script that
+  compares it with a constant does not enforce a time. Use
+  `OP_CHECKLOCKTIMEVERIFY` or `OP_CHECKSEQUENCEVERIFY`; for the chain height
+  or median time past, use `OP_CHAINCONTEXT`.
+- **Replayable attestations.** A CSFS message that does not depend on the
+  spending transaction can be reused. Bind it with `OP_TXHASH` (outputs or the
+  current outpoint), or include a timestamp or nonce that the script checks.
+- **Raw fields in arithmetic.** See [Value encodings](#value-encodings).
+- **Reissue position.** Consensus puts the reissue output last; index it with
+  `OP_OUTPUTCOUNT 1 OP_SUB`, not with a fixed position.
 
 ---
 
@@ -764,35 +1009,40 @@ CSFS follows the same `NULLFAIL` semantics as `OP_CHECKSIG`: under `SCRIPT_VERIF
 | CTV (BIP 119) | Integrated | Proposed (not activated) | N/A (Turing-complete) |
 | CSFS | Integrated | Proposed (not activated) | Native (ecrecover) |
 | OP_CAT | Integrated | Proposed (not activated) | Native (bytes.concat) |
-| Transaction introspection | 7 opcodes | Not available | Native (msg.value, etc.) |
-| Native asset introspection | 2 opcodes | N/A (no native assets) | ERC-20 calls |
+| Transaction introspection | `OP_TXHASH` and 13 field opcodes | Not available | Native (msg.value, etc.) |
+| Native asset introspection | 3 opcodes | N/A (no native assets) | ERC-20 calls |
 | Post-quantum auth | ML-DSA-44 AuthScript | Not available | Not available |
 | Execution model | Non-Turing-complete Script | Non-Turing-complete Script | Turing-complete EVM |
-| Gas/fee model | Counted sigops, bounded script | Counted sigops, bounded script | Metered gas |
+| Gas/fee model | Counted sigops, op and hash budgets (NIP-046) | Counted sigops, bounded script | Metered gas |
 
 ---
 
 ## Policy-layer signing verification (NIP-020)
 
-Post-signing verification in `signrawtransactionwithkey`, `neurai-tx`, and
-the internal `SignSignature` path goes through a single helper
-`GetStandardScriptVerifyFlagsWithConsensusOptIns(consensus)` that augments
-`STANDARD_SCRIPT_VERIFY_FLAGS` with every consensus opt-in the chain has
-active (`AUTHSCRIPT`, `CAT`, `CTV`, `CSFS`, `TXHASH`, `TXFIELD`, `SPLIT`,
-`REVERSEBYTES`, `OUTPUTVALUE`, `OUTPUTSCRIPT`, `OUTPUTASSETFIELD`,
-`INPUTASSETFIELD`, `64BIT_INTEGERS`, `TXLOCKTIME`, `INPUTOUTPUTCOUNT`,
-`REFINPUTS`). Signing on testnet/regtest therefore honors the wider PQ
-element cap and the other opt-ins, completing the sign-and-relay round-
-trip for P2WSH with PQ-sized witnessScripts.
+Post-signing verification applies `STANDARD_SCRIPT_VERIFY_FLAGS` plus every
+consensus opt-in active at the next block height (AuthScript and its strict
+families, the covenant, introspection, hash, signature and proof opcodes,
+64-bit integers, reference inputs and the NIP-043/044/046 rules). `neurai-tx`
+and the internal `SignSignature`/`ProduceSignature` path use the helper
+`GetStandardScriptVerifyFlagsWithConsensusOptIns(consensus)`; the
+`signrawtransaction` RPC computes the same set for the tip height plus one.
+Signing on testnet/regtest therefore honors the wider PQ element cap and the
+other opt-ins, completing the sign-and-relay round-trip for witness scripts
+with PQ-sized items. `neurai-tx` has no chain tip and uses height 0, so on the
+reset testnet (activation at block 10) its post-signing check applies none of
+the opt-ins.
 
-NIP-021 ties the P2WSH per-stack-item relay cap in `IsWitnessStandard`
-to CSFS activation: the effective cap is `MAX_CSFS_STANDARD_P2WSH_STACK_ITEM_SIZE`
-(3072 B, `MAX_PQ_SCRIPT_ELEMENT_SIZE`) when `csfsActive` is true, and
+NIP-021 ties the P2WSH per-stack-item relay cap in `IsWitnessStandard` to the
+opcodes that need large items: the cap is
+`MAX_CSFS_STANDARD_P2WSH_STACK_ITEM_SIZE` (3072 B, `MAX_PQ_SCRIPT_ELEMENT_SIZE`)
+when `OP_CHECKMERKLEINCLUSION` is active for the next block, or when the
+signature opcodes are (CSFS, Ed25519 or CHECKSIGADD), and
 `MAX_STANDARD_P2WSH_STACK_ITEM_SIZE` (80 B) otherwise. On testnet/regtest
-(`nCSFSEnabled = true`) PQ-sized witness items relay normally; on mainnet
-(`nCSFSEnabled = false`) the 80-byte cap remains in effect and oversize
-items are rejected with reason `bad-witness-nonstandard` until CSFS
-is activated on mainnet.
+PQ-sized witness items relay normally once these rules are active; on mainnet,
+where their heights are unscheduled, the 80-byte cap remains in effect and
+oversize items are rejected with reason `bad-witness-nonstandard`.
+`IsWitnessStandard` also limits a standard transaction to four `OP_ZKVERIFY`
+operations.
 
 ## SNARK-friendly hashing: `OP_POSEIDON` (NIP-036)
 
@@ -809,9 +1059,7 @@ the prover side and want the verifier to match the same hash on-chain.
 <data> OP_POSEIDON → <32-byte BE Fr element>
 ```
 
-Output is always 32 bytes (one BN254 Fr element, big-endian). Fits under
-`MAX_STANDARD_P2WSH_STACK_ITEM_SIZE = 80` so it never trips the
-standardness cap for downstream items.
+Output is always 32 bytes (one BN254 Fr element, big-endian).
 
 ### Activation and flag-off behaviour
 
@@ -857,67 +1105,36 @@ NIP-018 specifically widened `EffectiveMaxScriptElementSize` to 3072 B
 for PQ pushes, and we keep that capability available to `OP_POSEIDON`
 callers.
 
+### Poseidon work budget
+
+`SCRIPT_VERIFY_POSEIDON_WORK` (bit 49, `nPoseidonWorkHeight`: block 10 of the
+reset testnet, regtest height 0 with `-poseidonworkheight`, mainnet
+unscheduled) adds a second, independent budget counted in Poseidon
+permutations. It does not replace the per-script byte budget, which is still
+checked first.
+
+- `OP_POSEIDON` costs `n / 62 + 1` permutations for an `n`-byte input.
+- Merkle scheme `05` costs its depth.
+- `OP_ZKVERIFY` profile `02` costs its public-tree transition cost.
+
+A block may contain at most `MAX_BLOCK_POSEIDON_WORK` = 200000 permutations
+(`bad-blk-poseidon-work`), and a standard transaction at most
+`MAX_STANDARD_TX_POSEIDON_WORK` = 20000 (`bad-txns-poseidon-work`). A script
+that exceeds the budget fails with `Poseidon work budget exceeded`.
+
 ### Worked example: ZK + PQ commitment
 
 ```
-<sig_pq> <pubkey_pq> OP_VERIFY_PQSIG_SOMETHING       // ML-DSA verify
-<pubkey_pq> OP_POSEIDON <commitment> OP_EQUALVERIFY  // 1312 B → 32 B → equality
+// Witness arguments: <sig_pq> <pubkey_pq>
+OP_DUP OP_POSEIDON <commitment> OP_EQUALVERIFY   // 1313 B key → 32 B → equality
+OP_CHECKSIG                                      // ML-DSA-44 signature over the transaction
 ```
 
-This single-call Poseidon on a 1312 B input only costs ~960 µs on CI
-hardware and consumes 1312 B of the 30 720 B budget — comfortable
-headroom for additional commitments inside the same script.
+This single-call Poseidon on a 1313-byte serialized key costs about 1 ms on
+CI hardware and consumes 1313 B of the 30 720 B budget — comfortable headroom
+for additional commitments inside the same script.
 
 ---
-
-## Further Reading
-
-- [New OP_Codes Reference](new-opcodes-depin-branch.md) — Detailed specification of each opcode (byte values, flags, stack effects, error codes)
-- [Atomic Swaps](atomicswaps.md) — Cross-chain atomic swap protocol
-- [DePIN Client Protocol](depinreceivemsg.md) — DePIN messaging layer documentation
-- [NIP-036 v2](../NIP/Pendiente/036-OP_POSEIDON-v2.md) — Full Poseidon-on-BN254 specification, byte sponge, DoS analysis
-
-### AuthScript contract address encoding
-
-Generic witness v1 uses Bech32m HRP `nc` on mainnet and `tnc` on
-testnet/regtest: `nc1p…` / `tnc1p…`. The former `nq1p…` / `tnq1p…`
-representations are rejected; no legacy-prefix alias or address migration is
-provided. This changes address encoding only, not commitments or consensus.
-Strict PQ v2 keeps `pq1z…` / `tpq1z…`; strict ECDSA v3 keeps
-`nq1r…` / `tnq1r…`.
-
-The wallet address type is chosen with `-addresstype=legacy|pq|ecdsa` when the
-wallet file is created (default `legacy`) and stored in it; opening an existing
-wallet with a different `-addresstype` is an init error, and without the option
-the stored type is used (`getwalletinfo` reports it). In the GUI, the
-first-run wallet dialog (create or restore from seed words) offers the three
-types, preset to `-addresstype`; when restoring, the type must be the one the
-wallet was created with, since each type derives its own keys. The type is what the
-wallet hands out by default, in Qt and over RPC (`getnewaddress`,
-`getaccountaddress`, `getrawchangeaddress`, change outputs, the asset RPCs and
-mining):
-
-| `-addresstype` | Default | Also on request |
-|---|---|---|
-| `legacy` | Legacy (Base58) | strict v3 (`"ecdsa"`) |
-| `pq` | strict v2 | strict v3 (`"ecdsa"`) |
-| `ecdsa` | strict v3 | none: it never hands out Legacy |
-
-`pq` and `ecdsa` require `-bip44=1` (their keys derive from the mnemonic seed:
-`m_pq` and `m/84'` branches). Their addresses are handed out at any time, even
-with no network or no scheduled activation, but nothing pays to them until
-AuthScript and the strict families apply to the next block: before that, a
-strict address does not decode for paying (sends to it are refused), policy
-rejects outputs to it, and the wallet refuses change to its family, mining to
-it and asset operations that would create such an output. There is no Legacy
-fallback. `-pqwallet` was replaced by `-addresstype=pq` and is refused at startup.
-Generic v1 is a contract family: contracts are built and signed by
-contract tooling, and the wallet never manages v1. It does not hand out v1
-addresses, does not count v1 outputs as its own (whatever spend data an older
-wallet file holds), does not sign messages for them and does not store v1
-spend data. Old testnet address-book strings and external integrations must be
-updated; this is intentionally incompatible.
-
 
 ## NIP-043: state-thread primitives
 
@@ -987,10 +1204,9 @@ import, backup and automatic leaf selection are not implemented. Manual contract
 signing uses the explicit tree context API; arbitrary partial-signature merging
 is unsupported and does not fall back to the historical domain.
 
-See [NIP-044 v2](../NIP/Pendiente/044-AuthScript-Arbol-de-Scripts-MAST-v2.md)
-and [validation evidence](../NIP/bench/nip044-integracion.md).
+The design is specified in NIP-044 v2.
 
-### Asset replacement policy (NIP025-patch1)
+## Asset replacement policy (NIP025-patch1)
 
 Asset operations may use ordinary BIP68/CSV sequence numbers. The former
 consensus requirement that every input use a sequence of at least `0xfffffffe`
@@ -1054,15 +1270,16 @@ These are consensus rules, not only relay policy. Testnet activation is for
 experimentation; resource benchmarks and mainnet deployment review remain
 separate from functional correctness tests.
 
-### NIP-018: `OP_ZKVERIFY` integration (experimental)
+## NIP-016: `OP_ZKVERIFY` integration (experimental)
 
 `OP_ZKVERIFY` (`0xc3`, verification flag bit 43) executes only in
 `SIGVERSION_AUTHSCRIPT`, including NIP-044 leaves. Its stack is
-`proof vk input_1 ... input_k k profile -> bool`. Profile is the exact byte
-`01`; `k` is a minimal Script number of at most four bytes, in `[1,16]`.
+`proof vk input_1 ... input_k k profile -> bool`. Profile is the byte `01`
+(Groth16 over BN254) or, with the public-tree rule below, `02`; `k` is a
+minimal Script number of at most four bytes, in `[1,16]`.
 Public inputs are canonical 32-byte big-endian BN254 scalars. Verification
 keys and proofs use the strict compressed arkworks encoding described in
-NIP-018. The script must authenticate the verification key and bind the
+NIP-016. The script must authenticate the verification key and bind the
 public inputs to its intended statement.
 
 An empty proof produces false after checking profile, count and inputs,
@@ -1082,5 +1299,37 @@ sets the cost to 280: the largest measured uncached invalid-equation sample
 was 214.52 times the ECDSA median; a 25% margin rounded upward gives 280.
 Exact policy/block boundaries and cold blocks with 285 distinct VKs pass.
 This is evidence for the measured x86-64 build, not a universal time bound.
-The remaining NIP-018 checklist is still required before deployment. The legacy 32-bit `libneuraiconsensus` ABI does not expose
-this flag.
+The remaining NIP-016 checklist is still required before deployment. The
+legacy 32-bit `libneuraiconsensus` ABI does not expose this flag.
+
+### Profile 02: public-tree transitions (experimental C5)
+
+`SCRIPT_VERIFY_ZK_PUBLIC_TREE` (bit 50) enables profile `02`, which verifies a
+Poseidon public-tree state transition (a commitment tree plus indexed
+nullifier and commitment trees, with depth-32 paths) bound to the public
+inputs, and then the Groth16 proof. It requires `SCRIPT_VERIFY_ZKVERIFY` and
+`SCRIPT_VERIFY_POSEIDON_WORK`; without them, profile `02` fails with a bad
+profile error. The stack is:
+
+```
+chunk_1 ... chunk_5 form proof vk input_1 ... input_k k 02 -> bool
+```
+
+The five chunks carry the transition transcript, each at most 3072 bytes;
+after the first short chunk, the remaining ones must be empty. `form` is a
+script number in `[0,8)`. The transition cost is charged before any hashing,
+against a per-script allowance of 1024 permutations and against the shared
+Poseidon work budget.
+
+Activation: reset testnet height 10, regtest 0 (`-zkpublictreeheight`, `-1`
+disables), mainnet unscheduled. `getblockchaininfo` reports the state under
+`zk_public_tree`. Testnet nodes must upgrade before spending C5 outputs.
+
+---
+
+## Further Reading
+
+- [New OP_Codes Reference](new-opcodes-depin-branch.md) — Detailed specification of the original covenant opcodes (byte values, flags, stack effects, error codes)
+- [Atomic Swaps](atomicswaps.md) — Cross-chain atomic swap protocol
+- [DePIN Client Protocol](depinreceivemsg.md) — DePIN messaging layer documentation
+- `scripts/review-contract-thread-regtest.py` — Reproducible NIP-043 state-thread example on regtest

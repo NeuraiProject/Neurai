@@ -46,6 +46,7 @@ doc/depin
 doc/docker/bin
 NIP
 artifacts
+doc/docker/test
 
 neurai-qt-out
 src/qt/*.moc

@@ -151,8 +151,8 @@ enum class script_verify_flag_name : uint8_t {
     SCRIPT_VERIFY_SPLIT,                                    // bit 22
 
     // Enable OP_REVERSEBYTES - reverse the top stack element in place.
-    // When set, OP_REVERSEBYTES is executed instead of being treated as an
-    // upgradable opcode.
+    // 0xbc was unassigned before activation, so with the flag off the opcode
+    // fails with SCRIPT_ERR_BAD_OPCODE (fail-closed), never as a NOP.
     //
     SCRIPT_VERIFY_REVERSEBYTES,                             // bit 23
 
