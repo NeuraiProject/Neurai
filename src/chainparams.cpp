@@ -379,6 +379,7 @@ public:
         consensus.nSignatureOpcodesHeight = TESTNET_FEATURES_HEIGHT; // CSFS, Ed25519, CHECKSIGADD
         consensus.nZKVerifyHeight = TESTNET_FEATURES_HEIGHT;
         consensus.nZKPublicTreeHeight = TESTNET_FEATURES_HEIGHT; // C5 profile-2 public transitions; TEST nodes must upgrade before spending C5
+        consensus.nZKPortableTreeHeight = 100; // C6 profile-3 portable transitions; testnet nodes must upgrade before spending C6
         consensus.nPoseidonWorkHeight = TESTNET_FEATURES_HEIGHT;
         consensus.nAuthScriptBudgetHeight = TESTNET_FEATURES_HEIGHT; // NIP-046
         consensus.nAssetMessageHeight = TESTNET_FEATURES_HEIGHT; // NIP-043

@@ -129,10 +129,27 @@ BOOST_AUTO_TEST_CASE(independent_height_gate)
     BOOST_CHECK(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, params, false, 120) & SCRIPT_VERIFY_ZK_PORTABLE_TREE);
     params.nPoseidonWorkHeight = 121;
     BOOST_CHECK(!(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, params, false, 120) & SCRIPT_VERIFY_ZK_PORTABLE_TREE));
-    BOOST_CHECK(!CreateChainParams(CBaseChainParams::MAIN)->GetConsensus().IsZKPortableTreeActive(1000000));
-    BOOST_CHECK(!CreateChainParams(CBaseChainParams::TESTNET)->GetConsensus().IsZKPortableTreeActive(1000000));
-    BOOST_CHECK(CreateChainParams(CBaseChainParams::REGTEST)->GetConsensus().IsZKPortableTreeActive(0));
     BOOST_CHECK(CONSENSUS_OPT_IN_FLAGS & SCRIPT_VERIFY_ZK_PORTABLE_TREE);
+}
+
+BOOST_AUTO_TEST_CASE(network_activation_schedule)
+{
+    const auto testnet = CreateChainParams(CBaseChainParams::TESTNET);
+    const auto& params = testnet->GetConsensus();
+    BOOST_CHECK_EQUAL(params.nZKPortableTreeHeight, 100);
+    BOOST_CHECK(!params.IsZKPortableTreeActive(99));
+    BOOST_CHECK(params.IsZKPortableTreeActive(100));
+    for (const int height : {99, 100, 101}) {
+        const auto flags = ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, params,
+            params.IsStrictAuthScriptActive(height), height);
+        BOOST_CHECK_EQUAL(bool(flags & SCRIPT_VERIFY_ZK_PORTABLE_TREE), height >= 100);
+        // C6 activation must not move the existing C5 height gate.
+        BOOST_CHECK(flags & SCRIPT_VERIFY_ZK_PUBLIC_TREE);
+    }
+    const auto mainnet = CreateChainParams(CBaseChainParams::MAIN);
+    BOOST_CHECK(!mainnet->GetConsensus().IsZKPortableTreeActive(1000000));
+    const auto regtest = CreateChainParams(CBaseChainParams::REGTEST);
+    BOOST_CHECK(regtest->GetConsensus().IsZKPortableTreeActive(0));
 }
 
 BOOST_AUTO_TEST_CASE(join_sequential_budget_and_profile_boundary)
