@@ -16,5 +16,13 @@ bool TransitionCost(const Bytes& transcript, unsigned form, size_t& cost);
 // Public tree predicate only. Caller MUST also verify the Groth16 proof and
 // enforce the custody transaction. No cache bypass or implicit authorization.
 bool VerifyTransition(const Bytes& transcript, unsigned form, const Bytes& inputs);
+// Experimental profile 3: independent transaction-authenticated old/new digests,
+// a historical note-root witness, and portable Groth16 public inputs. A valid
+// public predicate alone NEVER authorizes a spend. The contract must obtain
+// both digests by introspection and jointly require this predicate and Groth16.
+bool PortableTransitionCost(const Bytes& transcript, unsigned form, size_t& cost);
+bool VerifyPortableTransition(const Bytes& transcript, unsigned form,
+                              const Bytes& oldDigest, const Bytes& newDigest,
+                              const Bytes& inputs);
 }
 #endif

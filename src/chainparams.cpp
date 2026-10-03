@@ -631,6 +631,7 @@ public:
         consensus.nCSFSEnabled = true;  // OP_CHECKSIGFROMSTACK active on regtest
         consensus.nZKVerifyHeight = 0;
         consensus.nZKPublicTreeHeight = 0;
+        consensus.nZKPortableTreeHeight = 0;
         consensus.nPoseidonWorkHeight = 0;
         consensus.nAuthScriptBudgetHeight = 0; // NIP-046: regtest
         consensus.nAssetMessageHeight = 0; // NIP-043: regtest
@@ -967,6 +968,11 @@ void UpdateZKVerifyHeight(int nHeight)
 void UpdateZKPublicTreeHeight(int nHeight)
 {
     globalChainParams->UpdateZKPublicTreeHeight(nHeight);
+}
+
+void UpdateZKPortableTreeHeight(int nHeight)
+{
+    globalChainParams->UpdateZKPortableTreeHeight(nHeight);
 }
 
 void UpdatePoseidonWorkHeight(int nHeight)

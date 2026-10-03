@@ -396,6 +396,7 @@ crypto_libneurai_crypto_a_SOURCES = \
   crypto/poseidon_bn254_constants.h \
   crypto/public_tree_transition.h \
   crypto/public_tree_transition.cpp \
+  crypto/portable_tree_transition.cpp \
   crypto/ed25519.h \
   crypto/ed25519.cpp \
   crypto/ed25519/compat.h \

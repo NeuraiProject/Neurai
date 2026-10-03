@@ -25,7 +25,7 @@
 
 #include "util.h"
 
-bool CheckInputs(const CTransaction &tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData &txdata, std::vector<CScriptCheck> *pvChecks, std::shared_ptr<std::vector<CTxOut>> pRefOutputs = nullptr, ChainContext chainCtx = {}, bool* pfUsesChainContext = nullptr, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr, std::shared_ptr<ScriptExecutionStatus> executionStatus = nullptr);
+bool CheckInputs(const CTransaction &tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData &txdata, std::vector<CScriptCheck> *pvChecks, std::shared_ptr<std::vector<CTxOut>> pRefOutputs = nullptr, ChainContext chainCtx = {}, bool* pfUsesChainContext = nullptr, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr, std::shared_ptr<ScriptExecutionStatus> executionStatus = nullptr, bool fBlockValidation = false);
 
 // Internal entry point exercised by the startup-rewind sentinel below.
 void UpdateMempoolForReorg(DisconnectedBlockTransactions&, bool);
@@ -399,6 +399,110 @@ BOOST_AUTO_TEST_SUITE(tx_validationcache_tests)
             BOOST_CHECK_EQUAL(scriptchecks.size(), (uint64_t)2);
         }
     }
+
+BOOST_AUTO_TEST_SUITE_END()
+
+struct BlockScriptRejectionSetup : TestingSetup {
+    BlockScriptRejectionSetup() : TestingSetup(CBaseChainParams::REGTEST) {}
+};
+
+BOOST_FIXTURE_TEST_SUITE(block_script_rejection_tests, BlockScriptRejectionSetup)
+
+BOOST_AUTO_TEST_CASE(consensus_failure_is_not_downgraded_to_policy)
+{
+    LOCK(cs_main);
+    auto consensus = GetParams().GetConsensus();
+    consensus.nPQWitnessEnabled = true;
+    consensus.nOptInFeaturesHeight = 120;
+    consensus.nStrictAuthScriptHeight = 120;
+    const script_verify_flags base = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS;
+    const auto before = ApplyConsensusOptIns(base, consensus, false, 119);
+    const auto after = ApplyConsensusOptIns(base, consensus, true, 120);
+
+    // v1 executes a failing NoAuth script; v2/v3 execute genuine signatures
+    // invalidated by changing a committed output. Each program remains
+    // upgradable before its own activation, including on a cached retry.
+    for (unsigned int version : {1U, 2U, 3U}) {
+        CCoinsView dummy;
+        CCoinsViewCache view(&dummy);
+        CMutableTransaction valid;
+        valid.nVersion = 2;
+        const COutPoint prev(GetRandHash(), 0);
+        valid.vin.emplace_back(prev);
+        valid.vout.emplace_back(COIN / 2, CScript() << OP_TRUE);
+        CScript spk;
+        CBasicKeyStore keystore;
+        if (version == 1) {
+            const CScript leaf = CScript() << OP_FALSE;
+            spk = CScript() << OP_1 << ToByteVector(GetAuthScriptCommitment(0, nullptr, leaf));
+            valid.vin[0].scriptWitness.stack = {{0}, std::vector<unsigned char>(leaf.begin(), leaf.end())};
+        } else {
+            CKey key;
+            if (version == 2) key.MakeNewKeyPQ(); else key.MakeNewKey(true);
+            const auto pubkey = key.GetPubKey();
+            WitnessStrictAuthScript destination;
+            BOOST_REQUIRE(GetStrictAuthScriptDestinationForPubKey(pubkey, destination));
+            spk = GetScriptForDestination(destination);
+            keystore.AddKeyPubKey(key, pubkey);
+            AuthScriptSpendData spend;
+            spend.auth_type = StrictAuthScriptAuthType(destination.version);
+            spend.witnessScript = GetStrictAuthScriptTemplate();
+            spend.pubkey = pubkey;
+            spend.key_id = pubkey.GetID();
+            spend.is_default_template = true;
+            keystore.AddAuthScriptSpendData(destination.version, destination.commitment, spend);
+            SignatureData signatures;
+            BOOST_REQUIRE(ProduceSignature(MutableTransactionSignatureCreator(&keystore, &valid, 0, COIN, SIGHASH_ALL), spk, signatures));
+            UpdateTransaction(valid, 0, signatures);
+        }
+        view.AddCoin(prev, Coin(CTxOut(COIN, spk), 1, false), false);
+        if (version != 1) {
+            const CTransaction good(valid);
+            PrecomputedTransactionData data(good);
+            CValidationState state;
+            BOOST_REQUIRE(CheckInputs(good, state, view, true, after, true, true, data,
+                                      nullptr, nullptr, {}, nullptr, nullptr, nullptr, true));
+            --valid.vout[0].nValue;
+        }
+        const CTransaction tx(valid);
+        PrecomputedTransactionData data(tx);
+        CValidationState inactive;
+        BOOST_REQUIRE(CheckInputs(tx, inactive, view, true, before, true, true, data,
+                                  nullptr, nullptr, {}, nullptr, nullptr, nullptr, true));
+        CValidationState policy;
+        BOOST_CHECK(!CheckInputs(tx, policy, view, true, after, true, true, data, nullptr));
+        int policyScore = -1;
+        BOOST_REQUIRE(policy.IsInvalid(policyScore));
+        BOOST_CHECK_EQUAL(policyScore, 0);
+        BOOST_CHECK_EQUAL(policy.GetRejectCode(), REJECT_NONSTANDARD);
+        CValidationState block;
+        BOOST_CHECK(!CheckInputs(tx, block, view, true, after, true, true, data,
+                                nullptr, nullptr, {}, nullptr, nullptr, nullptr, true));
+        int blockScore = -1;
+        BOOST_REQUIRE(block.IsInvalid(blockScore));
+        BOOST_CHECK_EQUAL(blockScore, 100);
+        BOOST_CHECK_EQUAL(block.GetRejectCode(), REJECT_INVALID);
+        std::vector<CScriptCheck> checks;
+        CValidationState queued;
+        BOOST_REQUIRE(CheckInputs(tx, queued, view, true, after, true, true, data,
+                                  &checks, nullptr, {}, nullptr, nullptr, nullptr, true));
+        BOOST_REQUIRE_EQUAL(checks.size(), 1U);
+        BOOST_CHECK(!checks.front()());
+        // Returning to the old flags must still accept the same unknown
+        // witness version; rejection under the new flags cannot poison it.
+        CValidationState historical;
+        BOOST_REQUIRE(CheckInputs(tx, historical, view, true, before, true, true, data,
+                                  nullptr, nullptr, {}, nullptr, nullptr, nullptr, true));
+        CValidationState discouraged;
+        BOOST_CHECK(!CheckInputs(tx, discouraged, view, true,
+                                before | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM,
+                                true, true, data, nullptr));
+        int discouragedScore = -1;
+        BOOST_REQUIRE(discouraged.IsInvalid(discouragedScore));
+        BOOST_CHECK_EQUAL(discouragedScore, 0);
+        BOOST_CHECK_EQUAL(discouraged.GetRejectCode(), REJECT_NONSTANDARD);
+    }
+}
 
 BOOST_AUTO_TEST_SUITE_END()
 

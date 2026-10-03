@@ -630,6 +630,7 @@ std::string HelpMessage(HelpMessageMode mode)
         strUsage += HelpMessageOpt("-nip040height=<n>", "Override the NIP-040 asset marker fork height (regtest-only)");
         strUsage += HelpMessageOpt("-zkverifyheight=<n>", "Override ZKVERIFY activation (regtest-only, -1 disables)");
         strUsage += HelpMessageOpt("-zkpublictreeheight=<n>", "Override experimental ZK public-tree activation (regtest-only, -1 disables)");
+        strUsage += HelpMessageOpt("-zkportabletreeheight=<n>", "Override experimental C6 portable-tree activation (regtest-only, -1 disables)");
         strUsage += HelpMessageOpt("-poseidonworkheight=<n>", "Override Poseidon work activation (regtest-only, -1 disables)");
         strUsage += HelpMessageOpt("-authscriptbudgetheight=<n>", "Override NIP-046 activation height (regtest-only, -1 disables)");
         strUsage += HelpMessageOpt("-assetmessageheight=<n>", "Override NIP-043 AssetMessage activation height (regtest-only)");
@@ -1407,6 +1408,13 @@ bool AppInitParameterInteraction()
         if (!ParseInt64(gArgs.GetArg("-zkpublictreeheight", ""), &height) || height < -1 || height > std::numeric_limits<int>::max())
             return InitError("Invalid -zkpublictreeheight");
         UpdateZKPublicTreeHeight(height == -1 ? std::numeric_limits<int>::max() : static_cast<int>(height));
+    }
+    if (gArgs.IsArgSet("-zkportabletreeheight")) {
+        if (!chainparams.MineBlocksOnDemand()) return InitError("ZK portable-tree height may only be overridden on regtest.");
+        int64_t height;
+        if (!ParseInt64(gArgs.GetArg("-zkportabletreeheight", ""), &height) || height < -1 || height > std::numeric_limits<int>::max())
+            return InitError("Invalid -zkportabletreeheight");
+        UpdateZKPortableTreeHeight(height == -1 ? std::numeric_limits<int>::max() : static_cast<int>(height));
     }
     if (gArgs.IsArgSet("-poseidonworkheight")) {
         if (!chainparams.MineBlocksOnDemand()) return InitError("Poseidon work height may only be overridden on regtest.");

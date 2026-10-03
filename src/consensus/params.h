@@ -146,6 +146,9 @@ struct Params {
     // (-zkpublictreeheight), unscheduled on mainnet during review.
     int nZKPublicTreeHeight{std::numeric_limits<int>::max()};
     bool IsZKPublicTreeActive(int height) const { return height >= nZKPublicTreeHeight; }
+    // C6 profile 3 has an independent gate, initially regtest only.
+    int nZKPortableTreeHeight{std::numeric_limits<int>::max()};
+    bool IsZKPortableTreeActive(int height) const { return height >= nZKPortableTreeHeight; }
     int nPoseidonWorkHeight{std::numeric_limits<int>::max()};
     bool IsPoseidonWorkActive(int height) const { return height >= nPoseidonWorkHeight; }
     int nAuthScriptBudgetHeight{std::numeric_limits<int>::max()};

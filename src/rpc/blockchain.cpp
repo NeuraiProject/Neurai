@@ -1502,6 +1502,18 @@ UniValue getblockchaininfo(const JSONRPCRequest& request)
     publicTree.push_back(Pair("active_at_tip", publicTreeActive(chainActive.Height())));
     publicTree.push_back(Pair("active_for_next_block", publicTreeActive(chainActive.Height() + 1)));
     obj.push_back(Pair("zk_public_tree", publicTree));
+    UniValue portableTree(UniValue::VOBJ);
+    if (consensusParams.nZKPortableTreeHeight == std::numeric_limits<int>::max())
+        portableTree.push_back(Pair("activation_height", UniValue()));
+    else
+        portableTree.push_back(Pair("activation_height", consensusParams.nZKPortableTreeHeight));
+    const auto portableActive = [&](int height) {
+        return bool(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, consensusParams,
+            consensusParams.IsStrictAuthScriptActive(height), height) & SCRIPT_VERIFY_ZK_PORTABLE_TREE);
+    };
+    portableTree.push_back(Pair("active_at_tip", portableActive(chainActive.Height())));
+    portableTree.push_back(Pair("active_for_next_block", portableActive(chainActive.Height() + 1)));
+    obj.push_back(Pair("zk_portable_tree", portableTree));
     obj.push_back(Pair("headers",               pindexBestHeader ? pindexBestHeader->nHeight : -1));
     obj.push_back(Pair("bestblockhash",         chainActive.Tip()->GetBlockHash().GetHex()));
     obj.push_back(Pair("difficulty",            (double)GetDifficulty()));

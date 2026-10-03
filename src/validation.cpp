@@ -349,7 +349,7 @@ enum FlushStateMode {
 static bool FlushStateToDisk(const CChainParams& chainParams, CValidationState &state, FlushStateMode mode, int nManualPruneHeight=0);
 static void FindFilesToPruneManual(std::set<int>& setFilesToPrune, int nManualPruneHeight);
 static void FindFilesToPrune(std::set<int>& setFilesToPrune, uint64_t nPruneAfterHeight);
-bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks = nullptr, std::shared_ptr<std::vector<CTxOut>> pRefOutputs = nullptr, ChainContext chainCtx = {}, bool* pfUsesChainContext = nullptr, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr, std::shared_ptr<ScriptExecutionStatus> executionStatus = nullptr);
+bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks = nullptr, std::shared_ptr<std::vector<CTxOut>> pRefOutputs = nullptr, ChainContext chainCtx = {}, bool* pfUsesChainContext = nullptr, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr, std::shared_ptr<ScriptExecutionStatus> executionStatus = nullptr, bool fBlockValidation = false);
 static FILE* OpenUndoFile(const CDiskBlockPos &pos, bool fReadOnly = false);
 
 bool CheckFinalTx(const CTransaction &tx, int flags)
@@ -2120,6 +2120,7 @@ static void MempoolCheckScriptRuleTransition(CTxMemPool& pool,
         params.IsMerklePoseidonActive(nOldCandidateHeight) == params.IsMerklePoseidonActive(nNewCandidateHeight) &&
         params.IsZKVerifyActive(nOldCandidateHeight) == params.IsZKVerifyActive(nNewCandidateHeight) &&
         params.IsZKPublicTreeActive(nOldCandidateHeight) == params.IsZKPublicTreeActive(nNewCandidateHeight) &&
+        params.IsZKPortableTreeActive(nOldCandidateHeight) == params.IsZKPortableTreeActive(nNewCandidateHeight) &&
         params.IsPoseidonWorkActive(nOldCandidateHeight) == params.IsPoseidonWorkActive(nNewCandidateHeight) &&
         params.IsAuthScriptBudgetActive(nOldCandidateHeight) == params.IsAuthScriptBudgetActive(nNewCandidateHeight) &&
         params.IsTxHashActive(nOldCandidateHeight) == params.IsTxHashActive(nNewCandidateHeight) &&
@@ -2268,9 +2269,13 @@ static void MempoolCheckAssetMarkerTransition(CTxMemPool& pool,
  * which are matched. This is useful for checking blocks where we will likely never need the cache
  * entry again.
  *
+ * Block callers pass fBlockValidation=true: every supplied flag is a consensus
+ * rule for that block's height. Only policy callers may retry without standard
+ * flags to classify a rejection as non-standard rather than invalid.
+ *
  * Non-static (and re-declared) in src/test/txvalidationcache_tests.cpp
  */
-bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks, std::shared_ptr<std::vector<CTxOut>> pRefOutputs, ChainContext chainCtx, bool* pfUsesChainContext, std::shared_ptr<PoseidonWorkBudget> poseidonWork, std::shared_ptr<ScriptExecutionStatus> executionStatus)
+bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks, std::shared_ptr<std::vector<CTxOut>> pRefOutputs, ChainContext chainCtx, bool* pfUsesChainContext, std::shared_ptr<PoseidonWorkBudget> poseidonWork, std::shared_ptr<ScriptExecutionStatus> executionStatus, bool fBlockValidation)
 {
     if (!executionStatus) executionStatus = std::make_shared<ScriptExecutionStatus>();
     if (!executionStatus->Apply(state)) return false;
@@ -2351,7 +2356,7 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                     if (!executionStatus->Apply(state)) return false;
                     if (check.GetScriptError() == SCRIPT_ERR_POSEIDON_WORK_BUDGET)
                         return state.Invalid(false, REJECT_INVALID, "bad-txns-poseidon-work");
-                    if (flags & STANDARD_NOT_MANDATORY_VERIFY_FLAGS) {
+                    if (!fBlockValidation && (flags & STANDARD_NOT_MANDATORY_VERIFY_FLAGS)) {
                         // Check whether the failure was caused by a
                         // non-mandatory script verification check, such as
                         // non-standard DER encodings or non-null dummy
@@ -3430,7 +3435,7 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
                 GetChainIdForParams(chainparams),
                 true
             };
-            if (!CheckInputs(tx, state, view, fScriptChecks, flags, fCacheResults, fCacheResults, txdata[i], nScriptCheckThreads ? &vChecks : nullptr, pRefOutputs, chainCtx, nullptr, blockPoseidonWork, blockExecutionStatus)) {
+            if (!CheckInputs(tx, state, view, fScriptChecks, flags, fCacheResults, fCacheResults, txdata[i], nScriptCheckThreads ? &vChecks : nullptr, pRefOutputs, chainCtx, nullptr, blockPoseidonWork, blockExecutionStatus, /*fBlockValidation=*/true)) {
                 if (blockPoseidonWork && blockPoseidonWork->Exceeded())
                     return state.DoS(100, false, REJECT_INVALID, "bad-blk-poseidon-work");
                 return error("ConnectBlock(): CheckInputs on %s failed with %s",

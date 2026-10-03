@@ -1253,17 +1253,18 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         if (sigversion != SIGVERSION_AUTHSCRIPT)
                             return set_error(serror, SCRIPT_ERR_ZK_BAD_SIGVERSION);
                         if (stack.empty()) return set_error(serror, SCRIPT_ERR_ZK_STACK_SIZE);
-                        const bool publicTree = stack.back() == valtype{2};
+                        const bool portableTree = stack.back() == valtype{3};
+                        const bool publicTree = stack.back() == valtype{2} || portableTree;
                         if (stack.back() != valtype{1} && !publicTree)
                             return set_error(serror, SCRIPT_ERR_ZK_BAD_PROFILE);
-                        if (publicTree && (!(flags & SCRIPT_VERIFY_ZK_PUBLIC_TREE) || !(flags & SCRIPT_VERIFY_POSEIDON_WORK)))
+                        if (publicTree && (!(flags & (portableTree ? SCRIPT_VERIFY_ZK_PORTABLE_TREE : SCRIPT_VERIFY_ZK_PUBLIC_TREE)) || !(flags & SCRIPT_VERIFY_POSEIDON_WORK)))
                             return set_error(serror, SCRIPT_ERR_ZK_BAD_PROFILE);
                         if (stack.size() < 2) return set_error(serror, SCRIPT_ERR_ZK_STACK_SIZE);
                         int64_t k;
                         try { k = CScriptNum(stack[stack.size()-2], true, 4).getint(); }
                         catch (const scriptnum_error&) { return set_error(serror, SCRIPT_ERR_ZK_INPUT_COUNT); }
                         if (k < 1 || k > 16) return set_error(serror, SCRIPT_ERR_ZK_INPUT_COUNT);
-                        const size_t prefix = publicTree ? neurai::public_tree::CHUNKS + 1 : 0;
+                        const size_t prefix = publicTree ? neurai::public_tree::CHUNKS + 1 + (portableTree ? 2 : 0) : 0;
                         if (stack.size() < static_cast<size_t>(k)+4+prefix)
                             return set_error(serror, SCRIPT_ERR_ZK_STACK_SIZE);
                         const size_t first = stack.size()-k-4;
@@ -1287,18 +1288,19 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             int64_t form;
                             try { form = CScriptNum(stack[first-1], true, 4).getint(); }
                             catch (const scriptnum_error&) { return set_error(serror, SCRIPT_ERR_ZK_PUBLIC_TREE); }
-                            if (form < 0 || form >= 8) return set_error(serror, SCRIPT_ERR_ZK_PUBLIC_TREE);
+                            if (form < 0 || form >= (portableTree ? 9 : 8)) return set_error(serror, SCRIPT_ERR_ZK_PUBLIC_TREE);
                             valtype transcript;
                             bool ended = false;
                             for (size_t i = 0; i < neurai::public_tree::CHUNKS; ++i) {
-                                const auto& chunk = stack[consumedFirst+i];
+                                const auto& chunk = stack[consumedFirst+(portableTree ? 2 : 0)+i];
                                 if (chunk.size() > neurai::public_tree::CHUNK_BYTES || (ended && !chunk.empty()))
                                     return set_error(serror, SCRIPT_ERR_ZK_PUBLIC_TREE);
                                 if (chunk.size() < neurai::public_tree::CHUNK_BYTES) ended = true;
                                 transcript.insert(transcript.end(), chunk.begin(), chunk.end());
                             }
                             size_t cost;
-                            if (!neurai::public_tree::TransitionCost(transcript, form, cost))
+                            if (!(portableTree ? neurai::public_tree::PortableTransitionCost(transcript, form, cost)
+                                               : neurai::public_tree::TransitionCost(transcript, form, cost)))
                                 return set_error(serror, SCRIPT_ERR_ZK_PUBLIC_TREE);
                             // This profile has its own bounded per-leaf work allowance.
                             // It still consumes the shared transaction/block budget,
@@ -1309,7 +1311,9 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                                 return set_error(serror, SCRIPT_ERR_POSEIDON_WORK_BUDGET);
                             nPublicTreeWork += cost;
                             if (execution_cost) execution_cost->poseidon_permutations += cost;
-                            if (!neurai::public_tree::VerifyTransition(transcript, form, inputs))
+                            if (!(portableTree ? neurai::public_tree::VerifyPortableTransition(transcript, form,
+                                    stack[consumedFirst], stack[consumedFirst+1], inputs)
+                                               : neurai::public_tree::VerifyTransition(transcript, form, inputs)))
                                 return set_error(serror, SCRIPT_ERR_ZK_PUBLIC_TREE);
                         }
                         bool valid = false;

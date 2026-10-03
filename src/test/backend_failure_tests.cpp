@@ -15,7 +15,7 @@ bool CheckInputs(const CTransaction&, CValidationState&, const CCoinsViewCache&,
                  script_verify_flags, bool, bool, PrecomputedTransactionData&,
                  std::vector<CScriptCheck>* = nullptr, std::shared_ptr<std::vector<CTxOut>> = nullptr,
                  ChainContext = {}, bool* = nullptr, std::shared_ptr<PoseidonWorkBudget> = nullptr,
-                 std::shared_ptr<ScriptExecutionStatus> = nullptr);
+                 std::shared_ptr<ScriptExecutionStatus> = nullptr, bool fBlockValidation = false);
 namespace {
 struct BackendChecker : BaseSignatureChecker {
     bool fail;
