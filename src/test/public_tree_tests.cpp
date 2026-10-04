@@ -112,6 +112,25 @@ BOOST_AUTO_TEST_CASE(canonical_chunking_form_and_precharge)
     }
 }
 
+BOOST_AUTO_TEST_CASE(c6_activation_preserves_existing_c5_proofs)
+{
+    // Enabling portable proofs must not invalidate historical profile-2
+    // spends or change the work charged for their public transitions.
+    const auto fixtures = Fixtures();
+    for (const auto& fixture : fixtures.getValues()) {
+        const auto stack = Arguments(fixture);
+        uint64_t before = 0, after = 0;
+        BOOST_CHECK(Run(stack, FLAGS, 20000, &before) == SCRIPT_ERR_OK);
+        BOOST_CHECK(Run(stack, FLAGS | SCRIPT_VERIFY_ZK_PORTABLE_TREE,
+                        20000, &after) == SCRIPT_ERR_OK);
+        BOOST_CHECK_EQUAL(before, after);
+        auto bad = stack;
+        bad[0][300] ^= 1;
+        BOOST_CHECK(Run(bad, FLAGS | SCRIPT_VERIFY_ZK_PORTABLE_TREE)
+                    == SCRIPT_ERR_ZK_PUBLIC_TREE);
+    }
+}
+
 BOOST_AUTO_TEST_CASE(activation_and_profile_one_are_separate)
 {
     const auto fixtures = Fixtures();
