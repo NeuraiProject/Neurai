@@ -3644,13 +3644,13 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
 }
 
 /**
- * Chainstate best block whose asset state the asset and restricted-asset
- * databases hold, as of the last full flush (null until one completes).
- * It is the coins view's best block, not chainActive's tip: ConnectTip and
- * DisconnectTip flush after applying a block but before UpdateTip.
+ * Coins view best block as of the last full flush (null until one completes):
+ * the coins, asset and restricted-asset databases all hold the state at that
+ * block. It is the coins view's best block, not chainActive's tip: ConnectTip
+ * and DisconnectTip flush after applying a block but before UpdateTip.
  * Guarded by cs_main.
  */
-static uint256 hashAssetDbBestBlock;
+static uint256 hashFlushedBestBlock;
 
 std::atomic<uint64_t> nFullStateFlushes{0};
 
@@ -3822,8 +3822,8 @@ bool static FlushStateToDisk(const CChainParams& chainparams, CValidationState &
                         return AbortNode(state, "Failed to Flush the message channel database");
                 }
             }
-            // Every asset change up to this block is now on disk.
-            hashAssetDbBestBlock = pcoinsTip->GetBestBlock();
+            // Every coin and asset change up to this block is now on disk.
+            hashFlushedBestBlock = pcoinsTip->GetBestBlock();
             nFullStateFlushes++;
             /** XNA END */
 
@@ -3847,14 +3847,14 @@ void FlushStateToDisk() {
     FlushStateToDisk(chainparams, state, FLUSH_STATE_ALWAYS);
 }
 
-bool FlushStateForAssetReads() {
+bool FlushStateForDatabaseReads() {
     LOCK(cs_main);
-    // Asset state only changes together with the coins view's best block, so
-    // a full flush at this block already put every asset row on disk. Public
-    // RPCs used to force a FLUSH_STATE_ALWAYS (fsync, block index and UTXO
-    // writes) on every call. Without pcoinsTip, keep FlushStateToDisk()'s
+    // Coin and asset state only change together with the coins view's best
+    // block, so a full flush at this block already put all of it on disk.
+    // Public RPCs used to force a FLUSH_STATE_ALWAYS (fsync, block index and
+    // UTXO writes) on every call. Without pcoinsTip, keep FlushStateToDisk()'s
     // behaviour.
-    if (pcoinsTip && !hashAssetDbBestBlock.IsNull() && pcoinsTip->GetBestBlock() == hashAssetDbBestBlock)
+    if (pcoinsTip && !hashFlushedBestBlock.IsNull() && pcoinsTip->GetBestBlock() == hashFlushedBestBlock)
         return false;
     FlushStateToDisk();
     return true;
@@ -6213,7 +6213,7 @@ void UnloadBlockIndex()
     fHavePruned = false;
     // The databases are about to be reopened or rebuilt: a block they matched
     // before says nothing about them now.
-    hashAssetDbBestBlock.SetNull();
+    hashFlushedBestBlock.SetNull();
 }
 
 bool LoadBlockIndex(const CChainParams& chainparams)

@@ -2,14 +2,14 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-// Direct reads of the asset and restricted-asset databases: listassets,
-// listaddressesbyasset, listassetbalancesbyaddress, listdepinholders,
-// listdepinaddresses, listtagsforaddress, listaddressesfortag,
+// Direct reads of the coins, asset and restricted-asset databases:
+// gettxoutsetinfo, listassets, listaddressesbyasset, listassetbalancesbyaddress,
+// listdepinholders, listdepinaddresses, listtagsforaddress, listaddressesfortag,
 // listaddressrestrictions and listglobalrestrictions, all public through RPC
 // proxies.
 //
 // Each reader used to force a FLUSH_STATE_ALWAYS (fsync, block index and UTXO
-// writes, under cs_main) on every call. FlushStateForAssetReads() flushes once
+// writes, under cs_main) on every call. FlushStateForDatabaseReads() flushes once
 // per chainstate instead, which is only correct if the databases then answer
 // exactly what a flush would have made them answer: the reorg case below mines
 // real issuances and freezes and checks every read against them. The
@@ -17,7 +17,7 @@
 // a negative start skips back from the end instead of returning nothing.
 //
 // Flushes are counted with nFullStateFlushes, not inferred from
-// FlushStateForAssetReads()'s return value: after an unconditional flush the
+// FlushStateForDatabaseReads()'s return value: after an unconditional flush the
 // marker would say "nothing to do" just as well.
 
 #include "amount.h"
@@ -39,6 +39,7 @@
 #include "script/sign.h"
 #include "script/standard.h"
 #include "test/test_neurai.h"
+#include "txdb.h"
 #include "txmempool.h"
 #include "util.h"
 #include "utilstrencodings.h"
@@ -115,6 +116,9 @@ struct AssetReadSetup : public TestChain100Setup {
         passetsRestrictionCache = new CLRUCache<std::string, int8_t>(100);
         passetsGlobalRestrictionCache = new CLRUCache<std::string, int8_t>(100);
         passetsDepinTransferStateCache = new CLRUCache<std::string, int8_t>(100);
+        // TestingSetup keeps the coins database in a member that hides the
+        // global, which gettxoutsetinfo reads; point the global at it.
+        ::pcoinsdbview = pcoinsdbview;
 
         // &DEVICE exists as far as the metadata lookups are concerned; its
         // owner token is seeded into the UTXO set by the tests that freeze.
@@ -132,6 +136,7 @@ struct AssetReadSetup : public TestChain100Setup {
 
     ~AssetReadSetup()
     {
+        ::pcoinsdbview = nullptr;
         delete passetsDepinTransferStateCache; passetsDepinTransferStateCache = nullptr;
         delete passetsGlobalRestrictionCache; passetsGlobalRestrictionCache = nullptr;
         delete passetsRestrictionCache; passetsRestrictionCache = nullptr;
@@ -396,24 +401,24 @@ BOOST_AUTO_TEST_CASE(one_flush_per_chainstate)
     // A full flush from anywhere leaves nothing for the readers to flush.
     FlushStateToDisk();
     uint64_t flushes = nFullStateFlushes;
-    BOOST_CHECK(!FlushStateForAssetReads());
-    BOOST_CHECK(!FlushStateForAssetReads());
+    BOOST_CHECK(!FlushStateForDatabaseReads());
+    BOOST_CHECK(!FlushStateForDatabaseReads());
     BOOST_CHECK_EQUAL(nFullStateFlushes - flushes, 0U);
 
     // A new block: one flush, however many reads follow.
     BOOST_REQUIRE(Mine({}));
     flushes = nFullStateFlushes;
-    BOOST_CHECK(FlushStateForAssetReads());
-    BOOST_CHECK(!FlushStateForAssetReads());
-    BOOST_CHECK(!FlushStateForAssetReads());
+    BOOST_CHECK(FlushStateForDatabaseReads());
+    BOOST_CHECK(!FlushStateForDatabaseReads());
+    BOOST_CHECK(!FlushStateForDatabaseReads());
     BOOST_CHECK_EQUAL(nFullStateFlushes - flushes, 1U);
 
     // Reorg after that flush: the databases hold the disconnected block, so
     // the previous block needs a flush although it was flushed before.
     UndoTip();
     flushes = nFullStateFlushes;
-    BOOST_CHECK(FlushStateForAssetReads());
-    BOOST_CHECK(!FlushStateForAssetReads());
+    BOOST_CHECK(FlushStateForDatabaseReads());
+    BOOST_CHECK(!FlushStateForDatabaseReads());
     BOOST_CHECK_EQUAL(nFullStateFlushes - flushes, 1U);
 
     // A block connected and disconnected with no read in between never
@@ -421,11 +426,11 @@ BOOST_AUTO_TEST_CASE(one_flush_per_chainstate)
     BOOST_REQUIRE(Mine({}));
     UndoTip();
     flushes = nFullStateFlushes;
-    BOOST_CHECK(!FlushStateForAssetReads());
+    BOOST_CHECK(!FlushStateForDatabaseReads());
     BOOST_CHECK_EQUAL(nFullStateFlushes - flushes, 0U);
 }
 
-// Every reader goes through FlushStateForAssetReads(). With the former
+// Every reader goes through FlushStateForDatabaseReads(). With the former
 // unconditional FlushStateToDisk() this loop made 16 full flushes.
 BOOST_AUTO_TEST_CASE(repeated_reads_flush_once)
 {
@@ -659,15 +664,85 @@ BOOST_AUTO_TEST_CASE(listing_rpcs_after_real_blocks)
     BOOST_CHECK_EQUAL(assets["NEWTOKEN"]["units"].get_int(), 0);
 }
 
+// gettxoutsetinfo reads the coins database like the asset readers read theirs:
+// at most one full flush per chainstate, and the marker is shared with them.
+BOOST_AUTO_TEST_CASE(gettxoutsetinfo_flushes_at_most_once_per_chainstate)
+{
+    // A block not flushed yet: the first call flushes it, the others do not
+    BOOST_REQUIRE(Mine({}));
+    uint64_t flushes = nFullStateFlushes;
+    for (int i = 0; i < 3; i++) CallRPC("gettxoutsetinfo");
+    BOOST_CHECK_EQUAL(nFullStateFlushes - flushes, 1U);
+
+    // A block someone else already flushed: no flush at all
+    BOOST_REQUIRE(Mine({}));
+    FlushStateToDisk();
+    flushes = nFullStateFlushes;
+    CallRPC("gettxoutsetinfo");
+    BOOST_CHECK_EQUAL(nFullStateFlushes - flushes, 0U);
+
+    // Asset readers and gettxoutsetinfo share the marker, in either order
+    BOOST_REQUIRE(Mine({}));
+    flushes = nFullStateFlushes;
+    AssetNames("*");
+    CallRPC("gettxoutsetinfo");
+    BOOST_CHECK_EQUAL(nFullStateFlushes - flushes, 1U);
+    BOOST_REQUIRE(Mine({}));
+    flushes = nFullStateFlushes;
+    CallRPC("gettxoutsetinfo");
+    AssetNames("*");
+    BOOST_CHECK_EQUAL(nFullStateFlushes - flushes, 1U);
+}
+
+BOOST_AUTO_TEST_CASE(gettxoutsetinfo_answers_the_current_chainstate)
+{
+    const UniValue before = CallRPC("gettxoutsetinfo");
+    BOOST_CHECK_EQUAL(before["height"].get_int(), chainActive.Height());
+    BOOST_CHECK_EQUAL(before["bestblock"].get_str(), chainActive.Tip()->GetBlockHash().GetHex());
+
+    // A new block adds its coinbase
+    BOOST_REQUIRE(Mine({}));
+    const UniValue mined = CallRPC("gettxoutsetinfo");
+    BOOST_CHECK_EQUAL(mined["height"].get_int(), before["height"].get_int() + 1);
+    BOOST_CHECK_EQUAL(mined["bestblock"].get_str(), chainActive.Tip()->GetBlockHash().GetHex());
+    BOOST_CHECK(mined["total_amount"].get_real() > before["total_amount"].get_real());
+
+    // Undoing it gives back exactly the set from before
+    UndoTip();
+    const UniValue undone = CallRPC("gettxoutsetinfo");
+    BOOST_CHECK_EQUAL(undone["height"].get_int(), before["height"].get_int());
+    BOOST_CHECK_EQUAL(undone["bestblock"].get_str(), before["bestblock"].get_str());
+    BOOST_CHECK_EQUAL(undone["total_amount"].getValStr(), before["total_amount"].getValStr());
+    BOOST_CHECK_EQUAL(undone["hash_serialized_2"].get_str(), before["hash_serialized_2"].get_str());
+}
+
+// A best block the index does not know -- what a cursor opened between the
+// batches of a flush would read -- is an error, not a dereference of
+// mapBlockIndex.end(). With the marker current, gettxoutsetinfo does not flush
+// first, so the coins database is read as it is. (That the cursor is opened
+// under cs_main, which keeps it off a half-written flush, is checked by the
+// AssertLockHeld in CCoinsViewDB::Cursor() when built with DEBUG_LOCKORDER.)
+BOOST_AUTO_TEST_CASE(gettxoutsetinfo_unknown_best_block_is_an_error)
+{
+    FlushStateToDisk();
+    CCoinsMap noCoins;
+    BOOST_REQUIRE(pcoinsdbview->BatchWrite(noCoins, uint256S("0x1234")));
+    BOOST_CHECK_THROW(CallRPC("gettxoutsetinfo"), std::runtime_error);
+
+    // A full flush writes the real best block back
+    FlushStateToDisk();
+    BOOST_CHECK_NO_THROW(CallRPC("gettxoutsetinfo"));
+}
+
 // UnloadBlockIndex() precedes reopening or rebuilding the databases: the
 // block they matched before must not exempt the next read from flushing.
 BOOST_AUTO_TEST_CASE(unload_forgets_the_flushed_block)
 {
     FlushStateToDisk();
-    BOOST_CHECK(!FlushStateForAssetReads());
+    BOOST_CHECK(!FlushStateForDatabaseReads());
     UnloadBlockIndex();
     const uint64_t flushes = nFullStateFlushes;
-    BOOST_CHECK(FlushStateForAssetReads());
+    BOOST_CHECK(FlushStateForDatabaseReads());
     BOOST_CHECK_EQUAL(nFullStateFlushes - flushes, 1U);
 }
 

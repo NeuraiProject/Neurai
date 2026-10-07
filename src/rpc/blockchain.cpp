@@ -1114,15 +1114,25 @@ static void ApplyStats(CCoinsStats &stats, CHashWriter& ss, const uint256& hash,
 //! Calculate statistics about the unspent transaction output set
 static bool GetUTXOStats(CCoinsView *view, CCoinsStats &stats)
 {
-    std::unique_ptr<CCoinsViewCursor> pcursor(view->Cursor());
-    assert(pcursor);
+    std::unique_ptr<CCoinsViewCursor> pcursor;
+    {
+        // Flush (at most once per chainstate), open the cursor and read its
+        // best block under one cs_main. A full flush holds cs_main throughout
+        // and writes the coins database in batches, with no best block until
+        // the last one: a cursor opened in between would read half a flush and
+        // a null best block. The scan below then reads a fixed snapshot.
+        LOCK(cs_main);
+        FlushStateForDatabaseReads();
+        pcursor.reset(view->Cursor());
+        assert(pcursor);
+        stats.hashBlock = pcursor->GetBestBlock();
+        BlockMap::const_iterator it = mapBlockIndex.find(stats.hashBlock);
+        if (it == mapBlockIndex.end())
+            return error("%s: best block %s of the UTXO set is not in the block index", __func__, stats.hashBlock.ToString());
+        stats.nHeight = it->second->nHeight;
+    }
 
     CHashWriter ss(SER_GETHASH, PROTOCOL_VERSION);
-    stats.hashBlock = pcursor->GetBestBlock();
-    {
-        LOCK(cs_main);
-        stats.nHeight = mapBlockIndex.find(stats.hashBlock)->second->nHeight;
-    }
     ss << stats.hashBlock;
     uint256 prevkey;
     std::map<uint32_t, Coin> outputs;
@@ -1225,7 +1235,6 @@ UniValue gettxoutsetinfo(const JSONRPCRequest& request)
     UniValue ret(UniValue::VOBJ);
 
     CCoinsStats stats;
-    FlushStateToDisk();
     if (GetUTXOStats(pcoinsdbview, stats)) {
         ret.push_back(Pair("height", (int64_t)stats.nHeight));
         ret.push_back(Pair("bestblock", stats.hashBlock.GetHex()));

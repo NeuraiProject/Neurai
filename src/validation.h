@@ -344,16 +344,17 @@ CBlockIndex * InsertBlockIndex(uint256 hash);
 /** Flush all state, indexes and buffers to disk. */
 void FlushStateToDisk();
 /**
- * Make the asset and restricted-asset databases current before reading them
- * directly (listassets, listaddressesbyasset, the restriction lookups...).
- * Their rows only reach disk with a full flush, but one flush per chain state
- * is enough: until a block connects or disconnects, the databases already hold
- * every asset change. Flushes, as FlushStateToDisk() does, only when no full
- * flush has completed since the chainstate moved, and returns whether it
- * flushed. Takes cs_main; open the database iterator before releasing it, so
- * that no flush can come in between (the iterator then reads a fixed snapshot).
+ * Make the coins, asset and restricted-asset databases current before reading
+ * them directly (gettxoutsetinfo, listassets, listaddressesbyasset, the
+ * restriction lookups...). What they hold only reaches disk with a full flush,
+ * but one flush per chain state is enough: until a block connects or
+ * disconnects, the databases already hold every change. Flushes, as
+ * FlushStateToDisk() does, only when no full flush has completed since the
+ * chainstate moved, and returns whether it flushed. Takes cs_main; open the
+ * database iterator before releasing it, so that no flush can come in between
+ * (the iterator then reads a fixed snapshot).
  */
-bool FlushStateForAssetReads();
+bool FlushStateForDatabaseReads();
 /** Full flushes of the chainstate completed so far; lets tests count them. */
 extern std::atomic<uint64_t> nFullStateFlushes;
 /**

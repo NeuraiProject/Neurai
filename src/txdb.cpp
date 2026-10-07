@@ -180,6 +180,10 @@ bool CBlockTreeDB::ReadLastBlockFile(int &nFile) {
 
 CCoinsViewCursor *CCoinsViewDB::Cursor() const
 {
+    // BatchWrite() writes in batches and leaves no best block until the last
+    // one; flushes do it under cs_main. Holding cs_main here keeps the cursor,
+    // and the best block read next to it, off a half-written flush.
+    AssertLockHeld(cs_main);
     CCoinsViewDBCursor *i = new CCoinsViewDBCursor(const_cast<CDBWrapper&>(db).NewIterator(), GetBestBlock());
     /* It seems that there are no "const iterators" for LevelDB.  Since we
        only need read operations on it, use a const-cast to get around

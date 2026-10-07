@@ -99,7 +99,7 @@ public:
      * Exists so a caller that needs N assets at once (an ancestor chain, for
      * example) pays for one flush instead of N: unlike AssetAddressDir() this
      * function deliberately does NOT flush. The caller must call
-     * FlushStateForAssetReads() once beforehand, under cs_main, and keep that
+     * FlushStateForDatabaseReads() once beforehand, under cs_main, and keep that
      * lock while reading so every asset resolves against the same chain state.
      *
      * Each name is matched with exact equality (key.second.first == assetName),

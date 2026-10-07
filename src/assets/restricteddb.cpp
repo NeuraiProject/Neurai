@@ -150,7 +150,7 @@ bool CRestrictedDB::GetQualifierAddresses(std::string& qualifier, std::vector<st
     std::unique_ptr<CDBIterator> pcursor;
     {
         LOCK(cs_main);
-        FlushStateForAssetReads();
+        FlushStateForDatabaseReads();
         pcursor.reset(NewIterator());
     }
 
@@ -202,7 +202,7 @@ bool CRestrictedDB::GetAddressQualifiers(std::string& address, std::vector<std::
     std::unique_ptr<CDBIterator> pcursor;
     {
         LOCK(cs_main);
-        FlushStateForAssetReads();
+        FlushStateForDatabaseReads();
         pcursor.reset(NewIterator());
     }
 
@@ -231,7 +231,7 @@ bool CRestrictedDB::GetAddressRestrictions(std::string& address, std::vector<std
     std::unique_ptr<CDBIterator> pcursor;
     {
         LOCK(cs_main);
-        FlushStateForAssetReads();
+        FlushStateForDatabaseReads();
         pcursor.reset(NewIterator());
     }
 
@@ -260,7 +260,7 @@ bool CRestrictedDB::GetGlobalRestrictions(std::vector<std::string>& restrictions
     std::unique_ptr<CDBIterator> pcursor;
     {
         LOCK(cs_main);
-        FlushStateForAssetReads();
+        FlushStateForDatabaseReads();
         pcursor.reset(NewIterator());
     }
 

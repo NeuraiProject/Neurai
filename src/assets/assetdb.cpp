@@ -185,7 +185,7 @@ bool CAssetsDB::AssetDir(std::vector<CDatabasedAssetData>& assets, const std::st
     std::unique_ptr<CDBIterator> pcursor;
     {
         LOCK(cs_main);
-        FlushStateForAssetReads();
+        FlushStateForDatabaseReads();
         pcursor.reset(NewIterator());
     }
     pcursor->Seek(std::make_pair(ASSET_FLAG, std::string()));
@@ -267,7 +267,7 @@ bool CAssetsDB::AddressDir(std::vector<std::pair<std::string, CAmount> >& vecAss
     std::unique_ptr<CDBIterator> pcursor;
     {
         LOCK(cs_main);
-        FlushStateForAssetReads();
+        FlushStateForDatabaseReads();
         pcursor.reset(NewIterator());
     }
     pcursor->Seek(std::make_pair(ADDRESS_ASSET_QUANTITY_FLAG, std::make_pair(address, std::string())));
@@ -354,7 +354,7 @@ bool CAssetsDB::AssetAddressDir(std::vector<std::pair<std::string, CAmount> >& v
     std::unique_ptr<CDBIterator> pcursor;
     {
         LOCK(cs_main);
-        FlushStateForAssetReads();
+        FlushStateForDatabaseReads();
         pcursor.reset(NewIterator());
     }
     pcursor->Seek(std::make_pair(ASSET_ADDRESS_QUANTITY_FLAG, std::make_pair(assetName, std::string())));
