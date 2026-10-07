@@ -281,38 +281,6 @@ bool CRestrictedDB::GetGlobalRestrictions(std::vector<std::string>& restrictions
     return true;
 }
 
-bool CRestrictedDB::GetDepinTransferStates(std::vector<std::pair<std::string, int8_t> >& states)
-{
-    // Flush and open the iterator under one cs_main: no full flush can be
-    // halfway through writing these rows, and the iterator reads a fixed
-    // snapshot from then on, so the scan below needs no lock.
-    std::unique_ptr<CDBIterator> pcursor;
-    {
-        LOCK(cs_main);
-        FlushStateForAssetReads();
-        pcursor.reset(NewIterator());
-    }
-
-    pcursor->Seek(std::make_pair(DEPIN_TRANSFER_STATE_FLAG, std::string()));
-
-    // Load every DEPIN asset with a non-default (non-CLOSED) transfer state
-    while (pcursor->Valid()) {
-        boost::this_thread::interruption_point();
-        std::pair<char, std::string> key;
-        if (pcursor->GetKey(key) && key.first == DEPIN_TRANSFER_STATE_FLAG) {
-            int8_t state = 0;
-            if (pcursor->GetValue(state)) {
-                states.emplace_back(key.second, state);
-            }
-            pcursor->Next();
-        } else {
-            break;
-        }
-    }
-
-    return true;
-}
-
 namespace {
 
 // Collect the second half of every (flag, (address, assetName)) key that belongs

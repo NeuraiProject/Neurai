@@ -426,7 +426,7 @@ BOOST_AUTO_TEST_CASE(one_flush_per_chainstate)
 }
 
 // Every reader goes through FlushStateForAssetReads(). With the former
-// unconditional FlushStateToDisk() this loop made 18 full flushes.
+// unconditional FlushStateToDisk() this loop made 16 full flushes.
 BOOST_AUTO_TEST_CASE(repeated_reads_flush_once)
 {
     Hold("TOKEN", {"addr1"});
@@ -443,12 +443,10 @@ BOOST_AUTO_TEST_CASE(repeated_reads_flush_once)
 
         std::string qualifier = "#TAG", address = "addr1";
         std::vector<std::string> names;
-        std::vector<std::pair<std::string, int8_t> > states;
         BOOST_CHECK(prestricteddb->GetQualifierAddresses(qualifier, names));
         BOOST_CHECK(prestricteddb->GetAddressQualifiers(address, names));
         BOOST_CHECK(prestricteddb->GetAddressRestrictions(address, names));
         BOOST_CHECK(prestricteddb->GetGlobalRestrictions(names));
-        BOOST_CHECK(prestricteddb->GetDepinTransferStates(states));
     }
     BOOST_CHECK_EQUAL(nFullStateFlushes - flushes, 1U);
 }

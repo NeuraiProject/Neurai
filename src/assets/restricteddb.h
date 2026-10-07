@@ -63,7 +63,6 @@ public:
     bool GetAddressQualifiers(std::string& address, std::vector<std::string>& qualifiers);
     bool GetAddressRestrictions(std::string& address, std::vector<std::string>& restrictions);
     bool GetGlobalRestrictions(std::vector<std::string>& restrictions);
-    bool GetDepinTransferStates(std::vector<std::pair<std::string, int8_t> >& states);
 
     /**
      * Both ways a DEPIN asset can be blocked for one address, in a single call:

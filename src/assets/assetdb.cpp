@@ -491,8 +491,3 @@ bool CAssetsDB::AssetAddressDirMulti(const std::vector<std::string>& assetNames,
 
     return true;
 }
-
-bool CAssetsDB::AssetDir(std::vector<CDatabasedAssetData>& assets)
-{
-    return CAssetsDB::AssetDir(assets, "*", MAX_SIZE, 0);
-}
