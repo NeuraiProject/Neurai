@@ -5,16 +5,18 @@ name: Debug tests (DEBUG_LOCKORDER)
 # the test binary and fails the run. Built at -O0 and slow, so it runs by hand
 # and once a week rather than on every push.
 #
-# `schedule` (and the "Run workflow" button) only use the copy of this file on
-# the repository's default branch; that copy checks out the branch to test.
+# Both triggers need this file on the repository's default branch. The weekly
+# run tests the default branch; a manual run tests the branch picked in "Use
+# workflow from", or the ref typed in below. No branch name is written here,
+# so the file keeps working when a development branch becomes the default.
 
 on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Branch, tag or commit to test
-        required: true
-        default: DePIN-Test
+        description: Tag or commit to test instead (empty = the branch picked above)
+        required: false
+        default: ''
   schedule:
     # Mondays, 03:00 UTC
     - cron: '0 3 * * 1'
@@ -28,7 +30,8 @@ jobs:
     - name: Checkout the code
       uses: actions/checkout@v4
       with:
-        ref: ${{ github.event.inputs.ref || 'DePIN-Test' }}
+        # Empty: the ref that triggered the run (default branch for schedule)
+        ref: ${{ inputs.ref }}
         fetch-depth: 0
 
     - name: Install build tools

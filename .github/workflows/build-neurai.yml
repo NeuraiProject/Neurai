@@ -6,7 +6,8 @@ on:
       - release*
   pull_request:
     branches:
-      - master
+      # The repository's main branch is `main`; there is no `master`.
+      - main
       - develop
       - release*
   # Manual runs on any branch (listed once this file is on the default branch).
