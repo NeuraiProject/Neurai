@@ -179,7 +179,7 @@ bool CAssetsDB::LoadAssets()
 
 bool CAssetsDB::AssetDir(std::vector<CDatabasedAssetData>& assets, const std::string filter, const size_t count, const long start)
 {
-    FlushStateToDisk();
+    FlushStateForAssetReads();
 
     std::unique_ptr<CDBIterator> pcursor(NewIterator());
     pcursor->Seek(std::make_pair(ASSET_FLAG, std::string()));
@@ -206,11 +206,16 @@ bool CAssetsDB::AssetDir(std::vector<CDatabasedAssetData>& assets, const std::st
                     (!wildcard && key.second == prefix)) {
                     table_size += 1;
                 }
+            } else {
+                // Past the last asset row: stop, as the load loop below does.
+                break;
             }
             pcursor->Next();
         }
-        skip = table_size + start;
-        pcursor->SeekToFirst();
+        skip = std::max<long>(table_size + start, 0);
+        // Back to the first asset row. SeekToFirst() landed on the first key of
+        // the whole database, so a negative start always returned nothing.
+        pcursor->Seek(std::make_pair(ASSET_FLAG, std::string()));
     }
 
 
@@ -250,7 +255,7 @@ bool CAssetsDB::AssetDir(std::vector<CDatabasedAssetData>& assets, const std::st
 
 bool CAssetsDB::AddressDir(std::vector<std::pair<std::string, CAmount> >& vecAssetAmount, int& totalEntries, const bool& fGetTotal, const std::string& address, const size_t count, const long start)
 {
-    FlushStateToDisk();
+    FlushStateForAssetReads();
 
     std::unique_ptr<CDBIterator> pcursor(NewIterator());
     pcursor->Seek(std::make_pair(ADDRESS_ASSET_QUANTITY_FLAG, std::make_pair(address, std::string())));
@@ -263,6 +268,10 @@ bool CAssetsDB::AddressDir(std::vector<std::pair<std::string, CAmount> >& vecAss
             std::pair<char, std::pair<std::string, std::string> > key;
             if (pcursor->GetKey(key) && key.first == ADDRESS_ASSET_QUANTITY_FLAG && key.second.first == address) {
                 totalEntries++;
+            } else {
+                // The address's rows are contiguous: past the last one, stop
+                // instead of walking the rest of the database.
+                break;
             }
             pcursor->Next();
         }
@@ -282,11 +291,15 @@ bool CAssetsDB::AddressDir(std::vector<std::pair<std::string, CAmount> >& vecAss
             std::pair<char, std::pair<std::string, std::string> > key;
             if (pcursor->GetKey(key) && key.first == ADDRESS_ASSET_QUANTITY_FLAG && key.second.first == address) {
                 table_size += 1;
+            } else {
+                break;
             }
             pcursor->Next();
         }
-        skip = table_size + start;
-        pcursor->SeekToFirst();
+        skip = std::max<long>(table_size + start, 0);
+        // Back to the address's first row. SeekToFirst() landed on the first
+        // key of the whole database, so a negative start always returned nothing.
+        pcursor->Seek(std::make_pair(ADDRESS_ASSET_QUANTITY_FLAG, std::make_pair(address, std::string())));
     }
 
 
@@ -323,7 +336,7 @@ bool CAssetsDB::AddressDir(std::vector<std::pair<std::string, CAmount> >& vecAss
 // Can get to total count of addresses that belong to a certain asset_name, or get you the list of all address that belong to a certain asset_name
 bool CAssetsDB::AssetAddressDir(std::vector<std::pair<std::string, CAmount> >& vecAddressAmount, int& totalEntries, const bool& fGetTotal, const std::string& assetName, const size_t count, const long start)
 {
-    FlushStateToDisk();
+    FlushStateForAssetReads();
 
     std::unique_ptr<CDBIterator> pcursor(NewIterator());
     pcursor->Seek(std::make_pair(ASSET_ADDRESS_QUANTITY_FLAG, std::make_pair(assetName, std::string())));
@@ -336,6 +349,10 @@ bool CAssetsDB::AssetAddressDir(std::vector<std::pair<std::string, CAmount> >& v
             std::pair<char, std::pair<std::string, std::string> > key;
             if (pcursor->GetKey(key) && key.first == ASSET_ADDRESS_QUANTITY_FLAG && key.second.first == assetName) {
                 totalEntries += 1;
+            } else {
+                // The asset's rows are contiguous: past the last one, stop
+                // instead of walking the rest of the database.
+                break;
             }
             pcursor->Next();
         }
@@ -355,11 +372,15 @@ bool CAssetsDB::AssetAddressDir(std::vector<std::pair<std::string, CAmount> >& v
             std::pair<char, std::pair<std::string, std::string> > key;
             if (pcursor->GetKey(key) && key.first == ASSET_ADDRESS_QUANTITY_FLAG && key.second.first == assetName) {
                 table_size += 1;
+            } else {
+                break;
             }
             pcursor->Next();
         }
-        skip = table_size + start;
-        pcursor->SeekToFirst();
+        skip = std::max<long>(table_size + start, 0);
+        // Back to the asset's first row. SeekToFirst() landed on the first key
+        // of the whole database, so a negative start always returned nothing.
+        pcursor->Seek(std::make_pair(ASSET_ADDRESS_QUANTITY_FLAG, std::make_pair(assetName, std::string())));
     }
 
     size_t loaded = 0;
@@ -394,7 +415,7 @@ bool CAssetsDB::AssetAddressDir(std::vector<std::pair<std::string, CAmount> >& v
 
 // Holders of several assets in one pass. See assetdb.h for the contract; the
 // two things worth repeating at the implementation site are that this function
-// must never call FlushStateToDisk() (that is the whole reason it exists rather
+// must never flush (that is the whole reason it exists rather
 // than N calls to AssetAddressDir above), and that names are matched by exact
 // equality rather than by prefix.
 bool CAssetsDB::AssetAddressDirMulti(const std::vector<std::string>& assetNames,

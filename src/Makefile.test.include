@@ -40,6 +40,7 @@ NEURAI_TESTS =\
   test/portable_tree_tests.cpp \
   test/backend_failure_tests.cpp \
   test/data/groth16_vectors.h \
+  test/asset_read_flush_tests.cpp \
   test/assets/asset_tests.cpp \
   test/assets/serialization_tests.cpp \
   test/assets/asset_tx_tests.cpp \

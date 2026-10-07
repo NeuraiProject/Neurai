@@ -9,6 +9,7 @@
 #include "util.h"
 #include "utilstrencodings.h"
 
+#include <set>
 #include <stdio.h>
 
 #include <boost/thread.hpp>

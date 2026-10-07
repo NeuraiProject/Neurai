@@ -144,7 +144,7 @@ bool CRestrictedDB::ReadFlag(const std::string &name, bool &fValue)
 
 bool CRestrictedDB::GetQualifierAddresses(std::string& qualifier, std::vector<std::string>& addresses)
 {
-    FlushStateToDisk();
+    FlushStateForAssetReads();
 
     std::unique_ptr<CDBIterator> pcursor(NewIterator());
 
@@ -190,7 +190,7 @@ bool CRestrictedDB::CheckForAddressRootQualifier(const std::string& address, con
 
 bool CRestrictedDB::GetAddressQualifiers(std::string& address, std::vector<std::string>& qualifiers)
 {
-    FlushStateToDisk();
+    FlushStateForAssetReads();
 
     std::unique_ptr<CDBIterator> pcursor(NewIterator());
 
@@ -213,7 +213,7 @@ bool CRestrictedDB::GetAddressQualifiers(std::string& address, std::vector<std::
 
 bool CRestrictedDB::GetAddressRestrictions(std::string& address, std::vector<std::string>& restrictions)
 {
-    FlushStateToDisk();
+    FlushStateForAssetReads();
 
     std::unique_ptr<CDBIterator> pcursor(NewIterator());
 
@@ -236,7 +236,7 @@ bool CRestrictedDB::GetAddressRestrictions(std::string& address, std::vector<std
 
 bool CRestrictedDB::GetGlobalRestrictions(std::vector<std::string>& restrictions)
 {
-    FlushStateToDisk();
+    FlushStateForAssetReads();
 
     std::unique_ptr<CDBIterator> pcursor(NewIterator());
 
@@ -259,7 +259,7 @@ bool CRestrictedDB::GetGlobalRestrictions(std::vector<std::string>& restrictions
 
 bool CRestrictedDB::GetDepinTransferStates(std::vector<std::pair<std::string, int8_t> >& states)
 {
-    FlushStateToDisk();
+    FlushStateForAssetReads();
 
     std::unique_ptr<CDBIterator> pcursor(NewIterator());
 
@@ -308,7 +308,7 @@ void SeekAddressFlag(CDBIterator& cursor, char flag, const std::string& address,
 } // namespace
 
 // See restricteddb.h for the contract. Two points bear repeating here: there is
-// no FlushStateToDisk() on purpose (GetAddressRestrictions above has one, and
+// no flush on purpose (GetAddressRestrictions above has one, and
 // copying its body would reintroduce a global flush per address), and the two
 // flags are separate ranges -- the flag is the first component of the key, so
 // 'R' and 'S' are never contiguous with one another.

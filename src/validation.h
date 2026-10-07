@@ -342,6 +342,18 @@ void UnlinkPrunedFiles(const std::set<int>& setFilesToPrune);
 CBlockIndex * InsertBlockIndex(uint256 hash);
 /** Flush all state, indexes and buffers to disk. */
 void FlushStateToDisk();
+/**
+ * Make the asset and restricted-asset databases current before reading them
+ * directly (listassets, listaddressesbyasset, the restriction lookups...).
+ * Their rows only reach disk with a full flush, but one flush per chain state
+ * is enough: until a block connects or disconnects, the databases already hold
+ * every asset change. Flushes, as FlushStateToDisk() does, only when no full
+ * flush has completed since the chainstate moved, and returns whether it
+ * flushed. Takes cs_main; hold it while reading so the state cannot move.
+ */
+bool FlushStateForAssetReads();
+/** Full flushes of the chainstate completed so far; lets tests count them. */
+extern std::atomic<uint64_t> nFullStateFlushes;
 /** Prune block files and flush state to disk. */
 void PruneAndFlush();
 /** Prune block files up to a given height */

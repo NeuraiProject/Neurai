@@ -79,10 +79,10 @@ public:
      *
      * It cannot be expressed as two calls to GetAddressRestrictions(): that one
      * only scans RESTRICTED_ADDRESS_FLAG (there is no ranged read of
-     * SELF_RESTRICTED_FLAG anywhere else), and it starts with an unconditional
-     * FlushStateToDisk(). This function deliberately does NOT flush -- a caller
-     * looping over addresses would otherwise trigger one global flush per
-     * address. Flush once beforehand, under cs_main, and hold that lock.
+     * SELF_RESTRICTED_FLAG anywhere else), and it starts with
+     * FlushStateForAssetReads(). This function deliberately does NOT flush --
+     * not even that cheap check belongs in a per-address loop. Call
+     * FlushStateForAssetReads() once beforehand, under cs_main, and hold that lock.
      *
      * Note this reads the database only. Restrictions added by the current
      * block and not yet dumped live in CAssetsCache's pending sets; flushing

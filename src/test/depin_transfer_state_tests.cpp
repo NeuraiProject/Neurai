@@ -336,7 +336,12 @@ struct DepinStateChainSetup : public TestChain100Setup {
     {
         const CBlock block = BuildBlock(txns);
         CValidationState state;
-        const bool ok = TestBlockValidity(state, GetParams(), block, chainActive.Tip(), false, true);
+        bool ok;
+        {
+            // TestBlockValidity() requires cs_main.
+            LOCK(cs_main);
+            ok = TestBlockValidity(state, GetParams(), block, chainActive.Tip(), false, true);
+        }
         reason = state.GetRejectReason();
         return ok;
     }
@@ -347,7 +352,11 @@ struct DepinStateChainSetup : public TestChain100Setup {
     void UndoTip()
     {
         CValidationState state;
-        BOOST_REQUIRE(InvalidateBlock(state, GetParams(), chainActive.Tip()));
+        {
+            // InvalidateBlock() requires cs_main, as the invalidateblock RPC holds it.
+            LOCK(cs_main);
+            BOOST_REQUIRE(InvalidateBlock(state, GetParams(), chainActive.Tip()));
+        }
         BOOST_REQUIRE(state.IsValid());
     }
 
@@ -359,8 +368,13 @@ struct DepinStateChainSetup : public TestChain100Setup {
     bool ToMempool(const CMutableTransaction& mut, std::string& reason, bool test_accept = false)
     {
         CValidationState state;
-        const bool ok = AcceptToMemoryPool(mempool, state, MakeTransactionRef(mut), nullptr, nullptr,
-                                           true /* bypass_limits */, 0, test_accept);
+        bool ok;
+        {
+            // AcceptToMemoryPool() requires cs_main.
+            LOCK(cs_main);
+            ok = AcceptToMemoryPool(mempool, state, MakeTransactionRef(mut), nullptr, nullptr,
+                                    true /* bypass_limits */, 0, test_accept);
+        }
         reason = state.GetRejectReason();
         return ok;
     }

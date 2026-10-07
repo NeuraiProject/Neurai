@@ -892,11 +892,12 @@ const char DEPIN_SECTION_DELIMITER = '/';
 
 // The single flush point of an ancestor query, wrapped only so the tests can
 // count it. See CDepinAncestorRecipientsStats for what the counter does and
-// does not catch.
+// does not catch. The counter sees every call; FlushStateForAssetReads()
+// itself only flushes once per chain state.
 void DepinAncestorFlushOnce()
 {
     gDepinAncestorRecipientsStats.flushCalls++;
-    FlushStateToDisk();
+    FlushStateForAssetReads();
 }
 
 } // namespace

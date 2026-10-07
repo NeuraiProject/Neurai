@@ -3644,6 +3644,17 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
 }
 
 /**
+ * Chainstate best block whose asset state the asset and restricted-asset
+ * databases hold, as of the last full flush (null until one completes).
+ * It is the coins view's best block, not chainActive's tip: ConnectTip and
+ * DisconnectTip flush after applying a block but before UpdateTip.
+ * Guarded by cs_main.
+ */
+static uint256 hashAssetDbBestBlock;
+
+std::atomic<uint64_t> nFullStateFlushes{0};
+
+/**
  * Update the on-disk chain state.
  * The caches and indexes are flushed depending on the mode we're called with
  * if they're too large, if it's been a while since the last write,
@@ -3803,6 +3814,9 @@ bool static FlushStateToDisk(const CChainParams& chainparams, CValidationState &
                         return AbortNode(state, "Failed to Flush the message channel database");
                 }
             }
+            // Every asset change up to this block is now on disk.
+            hashAssetDbBestBlock = pcoinsTip->GetBestBlock();
+            nFullStateFlushes++;
             /** XNA END */
 
             nLastFlush = nNow;
@@ -3823,6 +3837,19 @@ void FlushStateToDisk() {
     CValidationState state;
     const CChainParams& chainparams = GetParams();
     FlushStateToDisk(chainparams, state, FLUSH_STATE_ALWAYS);
+}
+
+bool FlushStateForAssetReads() {
+    LOCK(cs_main);
+    // Asset state only changes together with the coins view's best block, so
+    // a full flush at this block already put every asset row on disk. Public
+    // RPCs used to force a FLUSH_STATE_ALWAYS (fsync, block index and UTXO
+    // writes) on every call. Without pcoinsTip, keep FlushStateToDisk()'s
+    // behaviour.
+    if (pcoinsTip && !hashAssetDbBestBlock.IsNull() && pcoinsTip->GetBestBlock() == hashAssetDbBestBlock)
+        return false;
+    FlushStateToDisk();
+    return true;
 }
 
 void PruneAndFlush() {
@@ -6153,6 +6180,9 @@ void UnloadBlockIndex()
     }
     mapBlockIndex.clear();
     fHavePruned = false;
+    // The databases are about to be reopened or rebuilt: a block they matched
+    // before says nothing about them now.
+    hashAssetDbBestBlock.SetNull();
 }
 
 bool LoadBlockIndex(const CChainParams& chainparams)
