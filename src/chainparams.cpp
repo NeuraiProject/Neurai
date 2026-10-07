@@ -15,6 +15,8 @@
 
 #include <assert.h>
 #include <limits>
+#include <map>
+#include <mutex>
 #include "chainparamsseeds.h"
 
 //TODO: Take these out
@@ -497,10 +499,27 @@ public:
             consensus.hashGenesisBlock = genesis.GetHash();
             assert(consensus.hashGenesisBlock == uint256S(TESTNET_GENESIS_HASH));
         } else {
+            // Mining from nonce 0 takes about 2^24 hashes, and these params are
+            // built again on every SelectParams(TESTNET): unit tests do it
+            // dozens of times. The nonce found is remembered per hashing setup,
+            // told apart by the hash of the header at nonce 0, so the result
+            // is the same as mining again.
+            static std::mutex cs_mined_nonces;
+            static std::map<uint256, uint32_t> mined_nonces;
             arith_uint256 hashTarget = arith_uint256().SetCompact(genesis.nBits);
             genesis.nNonce = 0;
-            while (UintToArith256(genesis.GetHash()) > hashTarget) {
-                ++genesis.nNonce;
+            const uint256 hashAtNonceZero = genesis.GetHash();
+            {
+                std::lock_guard<std::mutex> lock(cs_mined_nonces);
+                auto mined = mined_nonces.find(hashAtNonceZero);
+                if (mined != mined_nonces.end()) {
+                    genesis.nNonce = mined->second;
+                } else {
+                    while (UintToArith256(genesis.GetHash()) > hashTarget) {
+                        ++genesis.nNonce;
+                    }
+                    mined_nonces.emplace(hashAtNonceZero, genesis.nNonce);
+                }
             }
             consensus.hashGenesisBlock = genesis.GetHash();
         }

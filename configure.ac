@@ -1270,8 +1270,16 @@ AC_CHECK_HEADER([oqs/oqs.h],
   [],
   [AC_MSG_ERROR([liboqs header oqs/oqs.h not found. Install liboqs 0.16.0 or build via depends/.])]
 )
+dnl What liboqs links besides itself. MinGW has no libdl: liboqs only uses it
+dnl on POSIX systems, and on Windows its random source is advapi32, which the
+dnl Windows build links anyway.
+if test x$TARGET_OS = xwindows; then
+  OQS_EXTRA_LIBS="-lm -lpthread"
+else
+  OQS_EXTRA_LIBS="-lm -ldl -lpthread"
+fi
 AC_CHECK_LIB([oqs], [OQS_SIG_new],
-  [OQS_LIBS="-loqs -lm -ldl -lpthread"],
+  [OQS_LIBS="-loqs $OQS_EXTRA_LIBS"],
   [AC_MSG_ERROR([liboqs not found. Install liboqs 0.16.0 or build via depends/.])]
 )
 dnl Seeded wallet key generation requires this internal mldsa-native entry point.
@@ -1279,7 +1287,7 @@ dnl Check it at configure time instead of failing during the final node link.
 AC_CHECK_LIB([oqs], [PQCP_MLDSA_NATIVE_MLDSA44_C_keypair_internal],
   [:],
   [AC_MSG_ERROR([liboqs seeded ML-DSA-44 key generation is unavailable. Install liboqs 0.16.0 or build via depends/.])],
-  [-lm -ldl -lpthread]
+  [$OQS_EXTRA_LIBS]
 )
 AC_SUBST(OQS_LIBS)
 

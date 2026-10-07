@@ -12,11 +12,16 @@ $(package)_cmake_opts+=-DOQS_BUILD_ONLY_LIB=ON
 $(package)_cmake_opts+=-DOQS_MINIMAL_BUILD="SIG_ml_dsa_44;SIG_ml_dsa_65;SIG_ml_dsa_87"
 $(package)_cmake_opts+=-DOQS_USE_OPENSSL=OFF
 $(package)_cmake_opts+=-DOQS_DIST_BUILD=ON
-$(package)_cmake_opts+=-DCMAKE_INSTALL_PREFIX=$(host_prefix)
+# Cross builds (which the macro below makes of every host build) leave it
+# empty, and liboqs refuses an unknown processor.
+$(package)_cmake_opts+=-DCMAKE_SYSTEM_PROCESSOR=$(host_arch)
 endef
 
+# $($(package)_cmake) passes the host compilers and flags, the install prefix
+# and, when cross-compiling, CMAKE_SYSTEM_NAME. A bare `cmake` built the
+# x86_64-w64-mingw32 library with the build machine's compiler (ELF objects).
 define $(package)_config_cmds
-  cmake -G "Unix Makefiles" \
+  $($(package)_cmake) -G "Unix Makefiles" \
     $($(package)_cmake_opts) \
     .
 endef

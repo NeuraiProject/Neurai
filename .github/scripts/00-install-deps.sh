@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
+# A package that fails to install fails the step.
+set -euo pipefail
+# Never stop at a debconf question (pbuilder asks for a mirror): with no
+# terminal it repeats the prompt until the job times out. Set here because
+# sudo drops the caller's environment.
+export DEBIAN_FRONTEND=noninteractive
 
-OS=${1}
+OS=${1:-}
 
 if [[ ! ${OS} ]]; then
     echo "Error: Invalid options"
@@ -15,11 +21,13 @@ echo "----------------------------------------"
 apt-get update
 
 if [[ ${OS} == "windows" ]]; then
+    # depends builds liboqs and Qt with cmake, Qt through ninja.
     apt-get install -y \
     automake \
     autotools-dev \
     bsdmainutils \
     build-essential \
+    cmake \
     curl \
     mingw-w64 \
     mingw-w64-x86-64-dev \
@@ -29,6 +37,7 @@ if [[ ${OS} == "windows" ]]; then
     libtool \
     osslsigncode \
     nsis \
+    ninja-build \
     pkg-config \
     python3 \
     rename \
@@ -70,7 +79,41 @@ elif [[ ${OS} == "osx" ]]; then
 
     pip3 install ds-store
     
-elif [[ ${OS} == "linux" || ${OS} == "linux-disable-wallet" || ${OS} == "aarch64" || ${OS} == "aarch64-disable-wallet" ]]; then
+elif [[ ${OS} == "linux" || ${OS} == "linux-disable-wallet" ]]; then
+    # x86-64 build on ubuntu-24.04. The aarch64 cross toolchain and the GCC 9
+    # packages this list used to share with the aarch64 entries do not exist
+    # on 24.04. depends builds liboqs and Qt with cmake, Qt through ninja, and
+    # the Wayland and xkbcommon libraries Qt uses with meson.
+    apt-get -y install \
+    apt-file \
+    autoconf \
+    automake \
+    autotools-dev \
+    binutils \
+    bsdmainutils \
+    build-essential \
+    ca-certificates \
+    cmake \
+    curl \
+    git \
+    gnupg \
+    libtool \
+    meson \
+    ninja-build \
+    nsis \
+    pbuilder \
+    pkg-config \
+    python3 \
+    rename \
+    ubuntu-dev-tools \
+    xkb-data \
+    zip \
+    bison
+
+elif [[ ${OS} == "aarch64" || ${OS} == "aarch64-disable-wallet" ]]; then
+    # Out of the CI matrix: configure refuses non-x86-64 hosts for the NIP-018
+    # mcl backend. The GCC 9 packages below no longer exist on ubuntu-24.04;
+    # update this list before enabling these entries again.
     apt -y install \
     apt-file \
     autoconf \
@@ -129,5 +172,8 @@ else
     echo "you must pass the OS to build for"
     exit 1
 fi
-    update-alternatives --install /usr/bin/python python /usr/bin/python2 1
+    # python2 is gone from ubuntu-24.04
+    if [[ -x /usr/bin/python2 ]]; then
+        update-alternatives --install /usr/bin/python python /usr/bin/python2 1
+    fi
     update-alternatives --install /usr/bin/python python /usr/bin/python3 2

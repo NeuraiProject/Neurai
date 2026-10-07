@@ -4,6 +4,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include "arith_uint256.h"
 #include "chainparams.h"
 #include "validation.h"
 #include "net.h"
@@ -125,6 +126,29 @@ BOOST_FIXTURE_TEST_SUITE(main_tests, TestingSetup)
         for (const auto& network : {CBaseChainParams::MAIN, CBaseChainParams::REGTEST}) {
             BOOST_CHECK_EQUAL(CreateChainParams(network)->GetConsensus().nBlockTimeReductionHeight,
                               std::numeric_limits<int>::max());
+        }
+    }
+
+    BOOST_AUTO_TEST_CASE(testnet_genesis_nonce_reused)
+    {
+        // Without a selected block network, as here, the testnet params mine
+        // their genesis nonce under X16R-family hashing. Building them again
+        // reuses that nonce: the same block, and still the first nonce from 0
+        // that meets the target, which is what mining again would find.
+        const auto first = CreateChainParams(CBaseChainParams::TESTNET);
+        const auto second = CreateChainParams(CBaseChainParams::TESTNET);
+        const CBlock& genesis = first->GenesisBlock();
+        BOOST_CHECK_EQUAL(second->GenesisBlock().nNonce, genesis.nNonce);
+        BOOST_CHECK(second->GetConsensus().hashGenesisBlock == first->GetConsensus().hashGenesisBlock);
+        BOOST_CHECK(first->GetConsensus().hashGenesisBlock == genesis.GetHash());
+        const arith_uint256 target = arith_uint256().SetCompact(genesis.nBits);
+        BOOST_CHECK(UintToArith256(genesis.GetHash()) <= target);
+        CBlockHeader header = genesis.GetBlockHeader();
+        for (header.nNonce = 0; header.nNonce < genesis.nNonce; ++header.nNonce) {
+            if (UintToArith256(header.GetHash()) <= target) {
+                BOOST_ERROR("nonce " << header.nNonce << " already meets the target");
+                break;
+            }
         }
     }
 

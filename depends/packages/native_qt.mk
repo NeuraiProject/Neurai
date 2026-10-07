@@ -63,6 +63,7 @@ define $(package)_config_cmds
     -DQT_FEATURE_kms=OFF \
     -DQT_FEATURE_linuxfb=OFF \
     -DQT_FEATURE_libudev=OFF \
+    -DINPUT_opengl=no \
     -DQT_FEATURE_opengl=OFF \
     -DQT_FEATURE_sql=OFF \
     -DQT_FEATURE_vulkan=OFF \
@@ -109,6 +110,14 @@ define $(package)_stage_cmds
   cmake --install qttools/build --prefix $($(package)_staging_prefix_dir)
 endef
 
+# lib/cmake stays: the cross build finds Qt6HostInfo and the tools there
+# through QT_HOST_PATH. moc, rcc and uic install to libexec/; the links put
+# them in native/bin, next to lrelease and lupdate, where config.site points
+# the node's configure (with_qt_bindir).
 define $(package)_postprocess_cmds
-  rm -rf lib/cmake/ lib/pkgconfig/
+  rm -rf lib/pkgconfig/ && \
+  mkdir -p bin && \
+  ln -sf ../libexec/moc bin/moc && \
+  ln -sf ../libexec/rcc bin/rcc && \
+  ln -sf ../libexec/uic bin/uic
 endef

@@ -47,8 +47,11 @@ processing the entire blockchain.
 Compatibility
 ==============
 
-Neurai is extensively tested on multiple operating systems using
-the Linux kernel, macOS 10.8+, and Windows Vista and later. Windows XP is not supported.
+Neurai runs on operating systems using the Linux kernel, on Windows 10
+(version 1809 or later) and Windows 11, and on macOS 12 or later. The Windows
+and macOS minimums come from Qt 6.8, which the wallet GUI is built with
+([Qt 6.8 supported platforms](https://doc.qt.io/qt-6.8/supported-platforms.html));
+earlier Windows releases (Vista, 7, 8) and macOS releases are not supported.
 
 Neurai should also work on most other Unix-like systems but is not
 frequently tested on them.

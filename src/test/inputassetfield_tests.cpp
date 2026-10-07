@@ -435,7 +435,12 @@ BOOST_AUTO_TEST_CASE(inputassetfield_checkinputs_enqueued_path_integration)
     CValidationState state;
     std::vector<CScriptCheck> checks;
 
-    BOOST_CHECK(CheckInputs(tx, state, coins, true, INPUTASSETFIELD_FLAGS, true, false, txdata, &checks));
+    {
+        // CheckInputs asserts cs_main; the enqueued checks run without it,
+        // as they do on the script-check worker threads.
+        LOCK(cs_main);
+        BOOST_CHECK(CheckInputs(tx, state, coins, true, INPUTASSETFIELD_FLAGS, true, false, txdata, &checks));
+    }
     BOOST_REQUIRE_EQUAL(checks.size(), tx.vin.size());
     BOOST_CHECK(checks[0]());
     BOOST_CHECK_EQUAL(checks[0].GetScriptError(), SCRIPT_ERR_OK);

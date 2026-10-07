@@ -123,7 +123,8 @@ def get_PE_dll_characteristics(executable):
     Returns a tuple (arch,bits) where arch is 'i386:x86-64' or 'i386'
     and bits is the DllCharacteristics value.
     '''
-    p = subprocess.Popen([OBJDUMP_CMD, '-x',  executable], stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
+    # Text, not bytes: the parsing below compares against str (Python 3).
+    p = subprocess.Popen([OBJDUMP_CMD, '-x',  executable], stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE, universal_newlines=True)
     (stdout, stderr) = p.communicate()
     if p.returncode:
         raise IOError('Error opening file')

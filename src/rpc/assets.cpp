@@ -66,6 +66,8 @@ void CheckRestrictedAssetTransferInputs(const CWalletTx& transaction, const std:
     }
 }
 
+#ifdef ENABLE_WALLET
+// Wallet-backed helpers of the DePIN RPCs, registered only with the wallet.
 namespace {
 UniValue UpdateDEPINAddressRestriction(const JSONRPCRequest &request, const int8_t &flag)
 {
@@ -240,6 +242,7 @@ UniValue UpdateDepinTransferState(const JSONRPCRequest &request, const int8_t &f
     return result;
 }
 }
+#endif // ENABLE_WALLET
 
 std::string AssetActivationWarning()
 {

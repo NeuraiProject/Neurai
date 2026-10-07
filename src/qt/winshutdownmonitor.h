@@ -20,7 +20,11 @@ class WinShutdownMonitor : public QAbstractNativeEventFilter
 {
 public:
     /** Implements QAbstractNativeEventFilter interface for processing Windows messages */
-    bool nativeEventFilter(const QByteArray &eventType, void *pMessage, long *pnResult);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    bool nativeEventFilter(const QByteArray &eventType, void *pMessage, qintptr *pnResult) override;
+#else
+    bool nativeEventFilter(const QByteArray &eventType, void *pMessage, long *pnResult) override;
+#endif
 
     /** Register the reason for blocking shutdown on Windows to allow clean client exit */
     static void registerShutdownBlockReason(const QString& strReason, const HWND& mainWinId);

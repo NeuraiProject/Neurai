@@ -19,8 +19,10 @@
 #include <chrono>
 #include <fstream>
 
+#ifdef ENABLE_WALLET
 // External declarations
 extern std::vector<CWalletRef> vpwallets;
+#endif
 
 // Global instance
 std::unique_ptr<CDepinMCPWorker> g_depinMCPWorker = nullptr;
@@ -428,7 +430,12 @@ bool CDepinMCPWorker::ExtractCommand(const std::string& message, std::string& co
 bool CDepinMCPWorker::SendPooledMessage(const std::string& text, const std::vector<std::string>& holders,
                                         const std::string& msgToken)
 {
-    if (vpwallets.empty() || !vpwallets[0]) {
+#ifdef ENABLE_WALLET
+    const bool walletAvailable = !vpwallets.empty() && vpwallets[0];
+#else
+    const bool walletAvailable = false; // built with --disable-wallet
+#endif
+    if (!walletAvailable) {
         LogPrintf("MCPWorker: No wallet available\n");
         return false;
     }

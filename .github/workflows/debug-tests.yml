@@ -1,0 +1,70 @@
+name: Debug tests (DEBUG_LOCKORDER)
+
+# Unit tests built with --enable-debug, which turns on DEBUG_LOCKORDER: a lock
+# taken in an inconsistent order, or code run without a lock it asserts, aborts
+# the test binary and fails the run. Built at -O0 and slow, so it runs by hand
+# and once a week rather than on every push.
+#
+# `schedule` (and the "Run workflow" button) only use the copy of this file on
+# the repository's default branch; that copy checks out the branch to test.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to test
+        required: true
+        default: DePIN-Test
+  schedule:
+    # Mondays, 03:00 UTC
+    - cron: '0 3 * * 1'
+
+jobs:
+  debug-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+    - name: Checkout the code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.inputs.ref || 'DePIN-Test' }}
+        fetch-depth: 0
+
+    - name: Install build tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y autoconf automake autotools-dev binutils bsdmainutils \
+          build-essential ca-certificates cmake curl git libtool pkg-config python3 bison
+
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          depends/built
+          depends/sources
+          depends/work
+        # Everything that decides how depends builds; a miss restores the
+        # latest cache and depends rebuilds only what changed.
+        key: ubuntu-24.04-debug-${{ hashFiles('depends/Makefile', 'depends/funcs.mk', 'depends/config.site.in', 'depends/hosts/**', 'depends/builders/**', 'depends/packages/**', 'depends/patches/**') }}
+        restore-keys: |
+          ubuntu-24.04-debug-
+
+    - name: Build dependencies
+      run: make -C depends HOST=x86_64-linux-gnu NO_QT=1 -j"$(nproc)"
+
+    - name: Configure with --enable-debug
+      run: |
+        ./autogen.sh
+        CONFIG_SITE="$PWD/depends/x86_64-linux-gnu/share/config.site" ./configure --prefix=/ \
+          --disable-ccache --disable-maintainer-mode --disable-bench --without-gui --enable-debug
+        # Fail early if the lock-order checks did not make it into the build
+        grep -q -- '-DDEBUG_LOCKORDER' src/Makefile
+
+    - name: Build
+      run: make -j"$(nproc)"
+
+    - name: Unit tests
+      # test_neurai plus the util, secp256k1 and univalue checks; VERBOSE=1
+      # prints the log of whatever fails.
+      run: make check VERBOSE=1

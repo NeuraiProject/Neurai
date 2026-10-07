@@ -379,9 +379,10 @@ AC_DEFUN([_NEURAI_QT_CHECK_STATIC_LIBS], [
     QT_LIBS="-lQt6XcbQpa -lQt6FbSupport -lQt6InputSupport -lQt6DeviceDiscoverySupport $QT_LIBS"
   elif test "x$TARGET_OS" = xdarwin; then
     QT_LIBS="-lQt6CocoaIntegration $QT_LIBS"
-  elif test "x$TARGET_OS" = xwindows; then
-    QT_LIBS="-lQt6WindowsIntegration $QT_LIBS"
   fi
+  dnl Windows: Qt6 has no separate integration library (Qt5's
+  dnl Qt5WindowsUIAutomationSupport and friends are gone); the qwindows
+  dnl platform plugin, checked below with -lqwindows, carries it.
 ])
 
 dnl Internal. Find Qt libraries using pkg-config.

@@ -67,13 +67,16 @@ public:
         m_value ^= vf.m_value; return *this;
     }
 
-    // Tests.
+    // Tests. == and != are hidden friends so that a flag name converts on
+    // either side (SCRIPT_VERIFY_P2SH != flags). As members, the name could
+    // not be on the left of !=, and since C++20 (P2468R2, applied from GCC 13)
+    // a member == next to a member != is not rewritten for it either.
     constexpr explicit operator bool() const { return m_value != 0; }
-    constexpr bool operator==(script_verify_flags other) const {
-        return m_value == other.m_value;
+    friend constexpr bool operator==(script_verify_flags a, script_verify_flags b) {
+        return a.m_value == b.m_value;
     }
-    constexpr bool operator!=(script_verify_flags other) const {
-        return m_value != other.m_value;
+    friend constexpr bool operator!=(script_verify_flags a, script_verify_flags b) {
+        return a.m_value != b.m_value;
     }
     friend constexpr bool operator<(
         const script_verify_flags& a, const script_verify_flags& b) noexcept {

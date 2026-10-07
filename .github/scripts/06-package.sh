@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
+# Any failing command fails the step: without this, a failed `make deploy` or
+# `make install` went unnoticed and the step passed with no installer.
+set -euo pipefail
 
-OS=${1}
-GITHUB_WORKSPACE=${2}
-GITHUB_BASE_REF=${3}
+OS=${1:-}
+GITHUB_WORKSPACE=${2:-}
+GITHUB_BASE_REF=${3:-}
 
 echo "----------------------------------------"
 env
@@ -59,7 +62,8 @@ if [[ ${OS} == "windows" ]]; then
     make install DESTDIR=${STAGE_DIR}/${DISTNAME}
 
     cd ${STAGE_DIR}
-    mv ${DISTNAME}/bin/*.dll ${DISTNAME}/lib/
+    # Only a shared build has DLLs (the CI configures --enable-shared=no)
+    find ${DISTNAME}/bin -maxdepth 1 -name "*.dll" -exec mv {} ${DISTNAME}/lib/ \;
     find . -name "lib*.la" -delete
     find . -name "lib*.a" -delete
     rm -rf ${DISTNAME}/lib/pkgconfig
@@ -80,6 +84,15 @@ if [[ ${OS} == "windows" ]]; then
     fi
 
     cd ${RELEASE_LOCATION}/
+    # What the release needs from this step; a command that "succeeded"
+    # without leaving its file fails here. The signed installer below is
+    # optional: only the release signing produces it.
+    for required in ${DISTNAME}-win64.zip ${DISTNAME}-win64-setup-unsigned.exe ${DISTNAME}-win64-unsigned.tar.gz; do
+        if [[ ! -s ${required} ]]; then
+            echo "${required} was not produced"
+            exit 1
+        fi
+    done
     for i in ${DISTNAME}-win64.zip ${DISTNAME}-win64-setup.exe ${DISTNAME}-win64-setup-unsigned.exe; do
         if [[ -e ${i} ]]; then
             md5sum ${i} >> ${i}.md5sum

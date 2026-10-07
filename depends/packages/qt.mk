@@ -8,8 +8,11 @@ $(package)_dependencies=openssl
 $(package)_linux_dependencies=freetype fontconfig libxcb libxkbcommon libxcb_util libxcb_util_cursor libxcb_util_render libxcb_util_keysyms libxcb_util_image libxcb_util_wm libwayland wayland_protocols
 
 # When cross-compiling, native_qt provides moc/rcc/uic/lrelease for the build
-# host.  For native Linux x86_64→x86_64 builds this is not needed.
-ifneq ($(host),$(build))
+# host (QT_HOST_PATH below).  Not for x86_64 Linux → x86_64 Linux, whatever
+# the triplet (the CI's x86_64-linux-gnu is not the builder's
+# x86_64-pc-linux-gnu): the target tools run on the build machine.
+# packages.mk lists native_qt under the same condition.
+ifneq ($(host_arch)_$(host_os),$(build_arch)_$(build_os))
 $(package)_dependencies += native_qt
 endif
 
@@ -25,6 +28,31 @@ $(package)_qtwayland_sha256_hash=20fe385887d21190165a3180c17dcfc8b9a0e1da4ec7686
 $(package)_extra_sources  = $($(package)_qttranslations_file_name)
 $(package)_extra_sources += $($(package)_qttools_file_name)
 $(package)_extra_sources += $($(package)_qtwayland_file_name)
+
+# Windows target and toolchain for every Qt module built here (qtbase, qttools,
+# qttranslations), not only qtbase: a module configured without them builds
+# with the build machine's compiler against the Windows headers. Empty for
+# other hosts, so their module builds are unchanged.
+$(package)_toolchain_opts_mingw32 = -DCMAKE_SYSTEM_NAME=Windows \
+  -DCMAKE_C_COMPILER=$(host)-gcc -DCMAKE_CXX_COMPILER=$(host)-g++ -DCMAKE_RC_COMPILER=$(host)-windres \
+  -DCMAKE_FIND_ROOT_PATH=$(host_prefix) -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
+  -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \
+  -DQT_HOST_PATH=$(build_prefix)
+
+# Libraries in the .pc files written by postprocess below. The defaults are the
+# Linux ones. Windows takes Qt's own lists from its .prl files (static MinGW
+# build): Win32 system libraries instead of xcb and -ldl; the qwindows platform
+# plugin is linked by configure (-lqwindows), so its system libraries go here.
+$(package)_pc_core_libs = -lQt6Core -lQt6BundledPcre2 -lQt6BundledZLIB -ldl -lpthread
+$(package)_pc_gui_libs = -lqxcb -lQt6XcbQpa -lQt6FbSupport -lQt6InputSupport -lQt6DeviceDiscoverySupport -lQt6Gui -lQt6BundledHarfbuzz -lQt6BundledLibpng -lxcb -lxcb-icccm -lxcb-image -lxcb-keysyms -lxcb-randr -lxcb-render -lxcb-render-util -lxcb-shape -lxcb-shm -lxcb-sync -lxcb-xfixes -lxcb-xkb -lxcb-xinput -lxcb-cursor -lxcb-ewmh -lxcb-util -lxkbcommon -lxkbcommon-x11 -lfontconfig -lfreetype -lexpat -lXau
+$(package)_pc_network_libs = -lQt6Network -lssl -lcrypto
+$(package)_pc_core_libs_mingw32 = -lQt6Core -lQt6BundledPcre2 -lQt6BundledZLIB -lsynchronization -lmpr -luserenv -ladvapi32 -lauthz -lkernel32 -lnetapi32 -lole32 -lshell32 -luser32 -luuid -lversion -lwinmm -lws2_32
+$(package)_pc_gui_libs_mingw32 = -lQt6Gui -lQt6BundledHarfbuzz -lQt6BundledFreetype -lQt6BundledLibpng -ld3d11 -ldxgi -ldxguid -ld3d12 -ld3d9 -ld2d1 -ldwrite -lgdi32 -luxtheme -ldwmapi -limm32 -loleaut32 -lsetupapi -lshlwapi -lwinspool -lwtsapi32 -lshcore -lcomdlg32 -lruntimeobject
+$(package)_pc_network_libs_mingw32 = -lQt6Network -ldnsapi -liphlpapi -lsecur32 -lwinhttp -lssl -lcrypto -lcrypt32 -lws2_32
+
+# native/bin links to this Qt's own tools (see postprocess), for builds that
+# run them on the build machine; same condition as native_qt in packages.mk.
+$(package)_native_tool_links = $(if $(filter $(host_arch)_$(host_os),$(build_arch)_$(build_os)),mkdir -p native/bin && ln -sf ../../libexec/moc native/bin/moc && ln -sf ../../libexec/rcc native/bin/rcc && ln -sf ../../libexec/uic native/bin/uic && ln -sf ../../bin/lrelease native/bin/lrelease && ln -sf ../../bin/lupdate native/bin/lupdate &&)
 
 # Qt 6.8.7 is commercial-only; 6.8.3 is the latest open-source LTS (March 2025).
 # Qt6 uses CMake instead of qmake.  All qmake -no-feature-* flags are replaced
@@ -136,15 +164,12 @@ endif
 # --- Windows (MinGW cross-compilation) ---
 $(package)_config_opts_mingw32 += -DQT_FEATURE_dbus=OFF
 $(package)_config_opts_mingw32 += -DQT_FEATURE_opengl=OFF
-$(package)_config_opts_mingw32 += -DCMAKE_SYSTEM_NAME=Windows
-$(package)_config_opts_mingw32 += -DCMAKE_C_COMPILER=$(host)-gcc
-$(package)_config_opts_mingw32 += -DCMAKE_CXX_COMPILER=$(host)-g++
-$(package)_config_opts_mingw32 += -DCMAKE_RC_COMPILER=$(host)-windres
-$(package)_config_opts_mingw32 += -DCMAKE_FIND_ROOT_PATH=$(host_prefix)
-$(package)_config_opts_mingw32 += -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER
-$(package)_config_opts_mingw32 += -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY
-$(package)_config_opts_mingw32 += -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY
-$(package)_config_opts_mingw32 += -DQT_HOST_PATH=$(build_prefix)
+# The wallet does not print. -DQT_FEATURE_printer=OFF above sets Qt's internal
+# result without evaluating the feature, so PrintSupport still builds its
+# Windows backend, which needs QPrint, and fails. FEATURE_xxx is the variable
+# Qt reads from the user: drop the whole module.
+$(package)_config_opts_mingw32 += -DFEATURE_printsupport=OFF
+$(package)_config_opts_mingw32 += $($(package)_toolchain_opts_mingw32)
 
 $(package)_build_env  = QT_RCC_TEST=1
 $(package)_build_env += QT_RCC_SOURCE_DATE_OVERRIDE=1
@@ -211,6 +236,7 @@ define $(package)_build_cmds
   cmake --install qtbase/build --prefix $($(package)_extract_dir)/qt_install && \
   cmake -B qttools/build -S qttools \
     -GNinja \
+    $($(package)_toolchain_opts_$(host_os)) \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_PREFIX_PATH=$($(package)_extract_dir)/qt_install \
     -DCMAKE_INSTALL_PREFIX=$($(package)_extract_dir)/qt_install \
@@ -255,6 +281,7 @@ define $(package)_build_cmds
   fi && \
   cmake -B qttranslations/build -S qttranslations \
     -GNinja \
+    $($(package)_toolchain_opts_$(host_os)) \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_PREFIX_PATH=$($(package)_extract_dir)/qt_install \
     -DCMAKE_INSTALL_PREFIX=$($(package)_extract_dir)/qt_install && \
@@ -284,28 +311,27 @@ endef
 #   - native/bin/ : where depends's config.site points $with_qt_bindir, so
 #                   the top-level configure (AC_PATH_PROGS) finds the tools
 #                   in native (host==build) Linux builds without
-#                   --with-qt-bindir.
+#                   --with-qt-bindir. Only there: a cross build's tools
+#                   come from native_qt, which links them in native/bin
+#                   itself, and these links would overwrite them.
 #
 # .pc files use $$$${pcfiledir} so they are relocatable: pkg-config resolves
 # the prefix relative to the .pc file's own directory at lookup time.
 # Four dollars are required because make expands the recipe twice: once via
 # $(call ...) and again as a recipe line.
 #
-# Qt6Gui.pc Libs intentionally omits BundledFreetype (Qt links system
-# freetype per QT_FEATURE_system_freetype=ON) and the xcb-glx/xinerama/xinput
-# libs (not built by depends and not needed by our XCB plugin).
+# The Libs lists are $(package)_pc_*_libs at the top of this file. On Linux,
+# Qt6Gui.pc intentionally omits BundledFreetype (Qt links system freetype per
+# QT_FEATURE_system_freetype=ON) and the xcb-glx/xinerama/xinput libs (not
+# built by depends and not needed by our XCB plugin).
 define $(package)_postprocess_cmds
   rm -rf lib/cmake/ && \
   rm -f lib/lib*.la lib/*.prl plugins/*/*.prl && \
-  mkdir -p bin native/bin && \
+  mkdir -p bin && \
   ln -sf ../libexec/moc bin/moc && \
   ln -sf ../libexec/rcc bin/rcc && \
   ln -sf ../libexec/uic bin/uic && \
-  ln -sf ../../libexec/moc native/bin/moc && \
-  ln -sf ../../libexec/rcc native/bin/rcc && \
-  ln -sf ../../libexec/uic native/bin/uic && \
-  ln -sf ../../bin/lrelease native/bin/lrelease && \
-  ln -sf ../../bin/lupdate native/bin/lupdate && \
+  $($(package)_native_tool_links) \
   mkdir -p lib/pkgconfig && \
   printf '%s\n' \
     'prefix=$$$${pcfiledir}/../..' \
@@ -318,7 +344,7 @@ define $(package)_postprocess_cmds
     'Name: Qt6Core' \
     'Description: Qt6 Core module (static, generated by depends)' \
     'Version: $($(package)_version)' \
-    'Libs: -L$$$${libdir} -lQt6Core -lQt6BundledPcre2 -lQt6BundledZLIB -ldl -lpthread' \
+    'Libs: -L$$$${libdir} $(or $($(package)_pc_core_libs_$(host_os)),$($(package)_pc_core_libs))' \
     'Cflags: -I$$$${includedir} -I$$$${includedir}/QtCore -DQT_STATIC' \
     > lib/pkgconfig/Qt6Core.pc && \
   printf '%s\n' \
@@ -332,7 +358,7 @@ define $(package)_postprocess_cmds
     'Description: Qt6 Gui module (static, generated by depends)' \
     'Version: $($(package)_version)' \
     'Requires: Qt6Core' \
-    'Libs: -L$$$${libdir} -L$$$${plugindir}/platforms -lqxcb -lQt6XcbQpa -lQt6FbSupport -lQt6InputSupport -lQt6DeviceDiscoverySupport -lQt6Gui -lQt6BundledHarfbuzz -lQt6BundledLibpng -lxcb -lxcb-icccm -lxcb-image -lxcb-keysyms -lxcb-randr -lxcb-render -lxcb-render-util -lxcb-shape -lxcb-shm -lxcb-sync -lxcb-xfixes -lxcb-xkb -lxcb-xinput -lxcb-cursor -lxcb-ewmh -lxcb-util -lxkbcommon -lxkbcommon-x11 -lfontconfig -lfreetype -lexpat -lXau' \
+    'Libs: -L$$$${libdir} -L$$$${plugindir}/platforms $(or $($(package)_pc_gui_libs_$(host_os)),$($(package)_pc_gui_libs))' \
     'Cflags: -I$$$${includedir} -I$$$${includedir}/QtGui -DQT_STATIC' \
     > lib/pkgconfig/Qt6Gui.pc && \
   printf '%s\n' \
@@ -358,7 +384,7 @@ define $(package)_postprocess_cmds
     'Description: Qt6 Network module (static, generated by depends)' \
     'Version: $($(package)_version)' \
     'Requires: Qt6Core' \
-    'Libs: -L$$$${libdir} -lQt6Network -lssl -lcrypto' \
+    'Libs: -L$$$${libdir} $(or $($(package)_pc_network_libs_$(host_os)),$($(package)_pc_network_libs))' \
     'Cflags: -I$$$${includedir} -I$$$${includedir}/QtNetwork -DQT_STATIC' \
     > lib/pkgconfig/Qt6Network.pc && \
   printf '%s\n' \
