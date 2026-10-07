@@ -35,11 +35,13 @@
 #include "policy/policy.h"
 #include "pow.h"
 #include "primitives/transaction.h"
+#include "rpc/server.h"
 #include "script/sign.h"
 #include "script/standard.h"
 #include "test/test_neurai.h"
 #include "txmempool.h"
 #include "util.h"
+#include "utilstrencodings.h"
 #include "validation.h"
 
 #include <boost/test/unit_test.hpp>
@@ -47,8 +49,12 @@
 #include <algorithm>
 #include <climits>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
+
+// test/rpc_tests.cpp
+extern UniValue CallRPC(std::string args);
 
 namespace {
 
@@ -191,6 +197,16 @@ struct AssetReadSetup : public TestChain100Setup {
         CScript assetScript = GetScriptForDestination(DecodeDestination(to));
         asset.ConstructTransaction(assetScript, MARKER);
         mut.vout.emplace_back(0, assetScript);
+        Sign(mut);
+        return mut;
+    }
+
+    // Spend a coin of `address`: its scriptSig reveals the address's pubkey.
+    CMutableTransaction Spend(const COutPoint& out, const std::string& address)
+    {
+        CMutableTransaction mut;
+        mut.vin.emplace_back(out);
+        mut.vout.emplace_back(0, GetScriptForDestination(DecodeDestination(address)));
         Sign(mut);
         return mut;
     }
@@ -351,6 +367,25 @@ bool Contains(const Names& names, const std::string& name)
 {
     return std::find(names.begin(), names.end(), name) != names.end();
 }
+
+// Whether this thread holds cs_main, asked from another thread: TRY_LOCK
+// there fails only if the lock is taken.
+bool HoldsCsMain()
+{
+    bool fTaken = false;
+    std::thread probe([&fTaken]() {
+        TRY_LOCK(cs_main, lockMain);
+        fTaken = !lockMain;
+    });
+    probe.join();
+    return fTaken;
+}
+
+struct PubKeyIndexGuard {
+    const bool fPrevious;
+    PubKeyIndexGuard() : fPrevious(fPubKeyIndex) { fPubKeyIndex = true; }
+    ~PubKeyIndexGuard() { fPubKeyIndex = fPrevious; }
+};
 
 } // namespace
 
@@ -522,6 +557,108 @@ BOOST_AUTO_TEST_CASE(flushes_inside_connect_and_disconnect_tip)
     BOOST_REQUIRE(chainActive.Tip()->GetBlockHash() == hashIssued);
     BOOST_CHECK(AssetNames("NEWTOKEN") == Names({"NEWTOKEN"}));
     BOOST_CHECK(HolderRows("NEWTOKEN") == Rows({{holderAddr, 5 * COIN}}));
+}
+
+// The listing RPCs scan without cs_main and take it only for the asset cache.
+// A block arriving during the scan sends it round again, so the answer never
+// pairs rows of one chainstate with cache data of another; after two retries
+// the scan runs under cs_main.
+BOOST_AUTO_TEST_CASE(read_at_one_chainstate_retries_when_a_block_arrives)
+{
+    for (int blocksDuringScan = 0; blocksDuringScan <= 2; blocksDuringScan++) {
+        int scans = 0, finishes = 0;
+        std::vector<bool> scanHeldLock;
+        uint256 hashScanned, hashFinished;
+        ReadAtOneChainstate(
+            [&]() {
+                scans++;
+                scanHeldLock.push_back(HoldsCsMain());
+                if (scans <= blocksDuringScan) BOOST_REQUIRE(Mine({}));
+                LOCK(cs_main);
+                hashScanned = pcoinsTip->GetBestBlock();
+            },
+            [&]() {
+                finishes++;
+                BOOST_CHECK(HoldsCsMain());
+                hashFinished = pcoinsTip->GetBestBlock();
+            });
+        BOOST_CHECK_EQUAL(scans, blocksDuringScan + 1);
+        BOOST_CHECK_EQUAL(finishes, 1);
+        BOOST_CHECK(hashScanned == hashFinished);
+        // Only the last resort holds the lock through the scan
+        for (int i = 0; i < scans; i++) {
+            BOOST_CHECK_EQUAL(scanHeldLock[i], i == 2);
+        }
+    }
+
+    // A reorg that leaves and comes back during the scan (A -> B -> A) ends
+    // on the same tip, but the scan may have read B: it still runs again.
+    Hold("TOKEN", {"addr1"});
+    int scans = 0;
+    ReadAtOneChainstate(
+        [&]() {
+            scans++;
+            if (scans == 1) {
+                BOOST_REQUIRE(Mine({}));
+                HoldersOf("TOKEN", 10, 0);
+                UndoTip();
+            }
+        },
+        [&]() {});
+    BOOST_CHECK_EQUAL(scans, 2);
+}
+
+// The four listings rewritten around ReadAtOneChainstate, and listassets,
+// after real blocks.
+BOOST_AUTO_TEST_CASE(listing_rpcs_after_real_blocks)
+{
+    AssetIndexGuard assetIndex;
+    PubKeyIndexGuard pubKeyIndex;
+    Hold(DEVICE, {holderAddr}); // a holder of &DEVICE, straight into the index
+    const COutPoint ownerOut = Seed(TransferScript(DEVICE_OWNER, OWNER_ASSET_AMOUNT, ownerAddr));
+    const COutPoint holderCoin = Seed(GetScriptForDestination(DecodeDestination(holderAddr)));
+    const CPubKey holderKeyPub = holderKey.GetPubKey();
+    const std::string holderPubKey = HexStr(holderKeyPub.begin(), holderKeyPub.end());
+
+    // NEWTOKEN is issued to holderAddr, which also spends a coin and so
+    // reveals its pubkey: listdepinaddresses lists it, valid
+    BOOST_REQUIRE_MESSAGE(Mine({Issue("NEWTOKEN", 5 * COIN, holderAddr), Spend(holderCoin, holderAddr)}), strLastReject);
+    UniValue revealed = CallRPC("listdepinaddresses " + DEVICE);
+    BOOST_REQUIRE_EQUAL(revealed.size(), 1U);
+    BOOST_CHECK_EQUAL(revealed[0]["address"].get_str(), holderAddr);
+    BOOST_CHECK_EQUAL(revealed[0]["pubkey"].get_str(), holderPubKey);
+    BOOST_CHECK_EQUAL(revealed[0]["valid"].get_int(), 1);
+
+    BOOST_REQUIRE_MESSAGE(Mine({Freeze(ownerOut, holderAddr)}), strLastReject);
+
+    const UniValue holders = CallRPC("listaddressesbyasset NEWTOKEN");
+    BOOST_CHECK_EQUAL(holders.size(), 1U);
+    BOOST_CHECK_EQUAL(holders[holderAddr].get_real(), 5);
+    BOOST_CHECK_EQUAL(CallRPC("listaddressesbyasset NEWTOKEN true").get_int(), 1);
+
+    const UniValue balances = CallRPC("listassetbalancesbyaddress " + holderAddr);
+    BOOST_CHECK_EQUAL(balances.size(), 3U);
+    BOOST_CHECK_EQUAL(balances["NEWTOKEN"].get_real(), 5);
+    BOOST_CHECK_EQUAL(balances["NEWTOKEN!"].get_real(), 1);
+    BOOST_CHECK_EQUAL(balances[DEVICE].get_real(), 1);
+    BOOST_CHECK_EQUAL(CallRPC("listassetbalancesbyaddress " + holderAddr + " true").get_int(), 3);
+
+    // holderAddr is frozen for &DEVICE: listed, but not valid
+    const UniValue depinHolders = CallRPC("listdepinholders " + DEVICE);
+    BOOST_REQUIRE_EQUAL(depinHolders.size(), 1U);
+    BOOST_CHECK_EQUAL(depinHolders[0]["address"].get_str(), holderAddr);
+    BOOST_CHECK_EQUAL(depinHolders[0]["valid"].get_int(), 0);
+
+    // ... and listdepinaddresses still lists it, no longer valid
+    revealed = CallRPC("listdepinaddresses " + DEVICE);
+    BOOST_REQUIRE_EQUAL(revealed.size(), 1U);
+    BOOST_CHECK_EQUAL(revealed[0]["pubkey"].get_str(), holderPubKey);
+    BOOST_CHECK_EQUAL(revealed[0]["valid"].get_int(), 0);
+
+    // listassets verbose formats with the units read in its own scan
+    const UniValue assets = CallRPC("listassets NEWTOKEN true");
+    BOOST_CHECK_EQUAL(assets["NEWTOKEN"]["amount"].get_real(), 5);
+    BOOST_CHECK_EQUAL(assets["NEWTOKEN"]["units"].get_int(), 0);
 }
 
 // UnloadBlockIndex() precedes reopening or rebuilding the databases: the

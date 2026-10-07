@@ -270,9 +270,10 @@ std::string AssetTypeToString(AssetType& assetType)
     }
 }
 
-UniValue UnitValueFromAmount(const CAmount& amount, const std::string asset_name)
+// Decimal places an amount of `asset_name` is shown with. Reads the asset
+// cache: the caller holds cs_main.
+static uint8_t AssetDisplayUnits(const std::string& asset_name)
 {
-
     auto currentActiveAssetCache = GetCurrentAssetCache();
     if (!currentActiveAssetCache)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "Asset cache isn't available.");
@@ -286,8 +287,12 @@ UniValue UnitValueFromAmount(const CAmount& amount, const std::string asset_name
         else
             units = assetData.units;
     }
+    return units;
+}
 
-    return ValueFromAmount(amount, units);
+UniValue UnitValueFromAmount(const CAmount& amount, const std::string asset_name)
+{
+    return ValueFromAmount(amount, AssetDisplayUnits(asset_name));
 }
 
 #ifdef ENABLE_WALLET
@@ -991,11 +996,22 @@ UniValue listassetbalancesbyaddress(const JSONRPCRequest& request)
     if (!passetsdb)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "asset db unavailable.");
 
-    LOCK(cs_main);
+    // The directory scan runs without cs_main; only the units, read from the
+    // asset cache, need it (see ReadAtOneChainstate).
     std::vector<std::pair<std::string, CAmount> > vecAssetAmounts;
+    std::vector<uint8_t> vecUnits;
     int nTotalEntries = 0;
-    if (!passetsdb->AddressDir(vecAssetAmounts, nTotalEntries, fOnlyTotal, address, count, start))
-        throw JSONRPCError(RPC_INTERNAL_ERROR, "couldn't retrieve address asset directory.");
+    ReadAtOneChainstate(
+        [&]() {
+            vecAssetAmounts.clear();
+            if (!passetsdb->AddressDir(vecAssetAmounts, nTotalEntries, fOnlyTotal, address, count, start))
+                throw JSONRPCError(RPC_INTERNAL_ERROR, "couldn't retrieve address asset directory.");
+        },
+        [&]() {
+            vecUnits.clear();
+            for (const auto& pair : vecAssetAmounts)
+                vecUnits.push_back(AssetDisplayUnits(pair.first));
+        });
 
     // If only the number of addresses is wanted return it
     if (fOnlyTotal) {
@@ -1003,8 +1019,8 @@ UniValue listassetbalancesbyaddress(const JSONRPCRequest& request)
     }
 
     UniValue result(UniValue::VOBJ);
-    for (auto& pair : vecAssetAmounts) {
-        result.push_back(Pair(pair.first, UnitValueFromAmount(pair.second, pair.first)));
+    for (size_t i = 0; i < vecAssetAmounts.size(); i++) {
+        result.push_back(Pair(vecAssetAmounts[i].first, ValueFromAmount(vecAssetAmounts[i].second, vecUnits[i])));
     }
 
     return result;
@@ -1301,8 +1317,6 @@ UniValue listaddressesbyasset(const JSONRPCRequest &request)
                 + HelpExampleCli("listaddressesbyasset", "\"ASSET_NAME\"")
         );
 
-    LOCK(cs_main);
-
     std::string asset_name = request.params[0].get_str();
     bool fOnlyTotal = false;
     if (request.params.size() > 1)
@@ -1323,11 +1337,18 @@ UniValue listaddressesbyasset(const JSONRPCRequest &request)
     if (!IsAssetNameValid(asset_name))
         return "_Not a valid asset name";
 
-    LOCK(cs_main);
+    // The directory scan runs without cs_main; only the asset's units, read
+    // from the asset cache, need it (see ReadAtOneChainstate).
     std::vector<std::pair<std::string, CAmount> > vecAddressAmounts;
     int nTotalEntries = 0;
-    if (!passetsdb->AssetAddressDir(vecAddressAmounts, nTotalEntries, fOnlyTotal, asset_name, count, start))
-        throw JSONRPCError(RPC_INTERNAL_ERROR, "couldn't retrieve address asset directory.");
+    uint8_t units = 0;
+    ReadAtOneChainstate(
+        [&]() {
+            vecAddressAmounts.clear();
+            if (!passetsdb->AssetAddressDir(vecAddressAmounts, nTotalEntries, fOnlyTotal, asset_name, count, start))
+                throw JSONRPCError(RPC_INTERNAL_ERROR, "couldn't retrieve address asset directory.");
+        },
+        [&]() { units = AssetDisplayUnits(asset_name); });
 
     // If only the number of addresses is wanted return it
     if (fOnlyTotal) {
@@ -1336,7 +1357,7 @@ UniValue listaddressesbyasset(const JSONRPCRequest &request)
 
     UniValue result(UniValue::VOBJ);
     for (auto& pair : vecAddressAmounts) {
-        result.push_back(Pair(pair.first, UnitValueFromAmount(pair.second, asset_name)));
+        result.push_back(Pair(pair.first, ValueFromAmount(pair.second, units)));
     }
 
 
@@ -1382,8 +1403,6 @@ UniValue listdepinaddresses(const JSONRPCRequest &request)
                 + HelpExampleRpc("listdepinaddresses", "\"ASSET_NAME\"")
         );
 
-    LOCK(cs_main);
-
     std::string asset_name = request.params[0].get_str();
 
     size_t count = INT_MAX;
@@ -1401,39 +1420,49 @@ UniValue listdepinaddresses(const JSONRPCRequest &request)
     if (!IsAssetNameValid(asset_name))
         return "_Not a valid asset name";
 
-    // Get all addresses that own this asset
-    std::vector<std::pair<std::string, CAmount> > vecAddressAmounts;
-    int nTotalEntries = 0;
-    if (!passetsdb->AssetAddressDir(vecAddressAmounts, nTotalEntries, false, asset_name, count, start))
-        throw JSONRPCError(RPC_INTERNAL_ERROR, "couldn't retrieve address asset directory.");
+    // Holders and their revealed pubkeys are read without cs_main; only the
+    // restriction check, against the asset cache, needs it (see
+    // ReadAtOneChainstate).
+    std::vector<std::pair<std::string, CPubKeyIndexValue> > vecRevealed;
+    std::vector<bool> vecBlocked;
+    ReadAtOneChainstate(
+        [&]() {
+            // Get all addresses that own this asset
+            std::vector<std::pair<std::string, CAmount> > vecAddressAmounts;
+            int nTotalEntries = 0;
+            if (!passetsdb->AssetAddressDir(vecAddressAmounts, nTotalEntries, false, asset_name, count, start))
+                throw JSONRPCError(RPC_INTERNAL_ERROR, "couldn't retrieve address asset directory.");
 
-    // Filter addresses that have a revealed pubkey
-    UniValue result(UniValue::VARR);
-
-    for (const auto& pair : vecAddressAmounts) {
-        const std::string& address = pair.first;
-
-        CTxDestination dest = DecodeDestination(address);
-        CDestinationIndexData addressData;
-        if (!IsValidDestination(dest) || !GetDestinationIndexData(dest, addressData) ||
-            (addressData.type != DEST_INDEX_KEY && addressData.type != DEST_INDEX_WITNESS_V1_AUTHSCRIPT &&
-             addressData.type != DEST_INDEX_WITNESS_V2_STRICT_PQ && addressData.type != DEST_INDEX_WITNESS_V3_STRICT_ECDSA)) {
-            continue;
-        }
-        CPubKeyIndexValue pubkeyValue;
-
-        // Check if this address has a revealed pubkey
-        if (pblocktree->ReadPubKeyIndex(addressData, pubkeyValue)) {
+            // Keep the addresses that have a revealed pubkey
+            vecRevealed.clear();
+            for (const auto& pair : vecAddressAmounts) {
+                CTxDestination dest = DecodeDestination(pair.first);
+                CDestinationIndexData addressData;
+                if (!IsValidDestination(dest) || !GetDestinationIndexData(dest, addressData) ||
+                    (addressData.type != DEST_INDEX_KEY && addressData.type != DEST_INDEX_WITNESS_V1_AUTHSCRIPT &&
+                     addressData.type != DEST_INDEX_WITNESS_V2_STRICT_PQ && addressData.type != DEST_INDEX_WITNESS_V3_STRICT_ECDSA)) {
+                    continue;
+                }
+                CPubKeyIndexValue pubkeyValue;
+                if (pblocktree->ReadPubKeyIndex(addressData, pubkeyValue))
+                    vecRevealed.emplace_back(pair.first, pubkeyValue);
+            }
+        },
+        [&]() {
             // Blocked (owner freeze OR self-revoke); no-op for non-DEPIN assets
-            bool isBlocked = passets->CheckForDEPINRestriction(asset_name, address);
+            vecBlocked.clear();
+            for (const auto& revealed : vecRevealed)
+                vecBlocked.push_back(passets->CheckForDEPINRestriction(asset_name, revealed.first));
+        });
 
-            UniValue entry(UniValue::VOBJ);
-            entry.pushKV("address", address);
-            entry.pushKV("pubkey", HexStr(pubkeyValue.pubkey.begin(), pubkeyValue.pubkey.end()));
-            entry.pushKV("valid", isBlocked ? 0 : 1);  // 1 = active, 0 = blocked
-
-            result.push_back(entry);
-        }
+    UniValue result(UniValue::VARR);
+    for (size_t i = 0; i < vecRevealed.size(); i++) {
+        const CPubKeyIndexValue& pubkeyValue = vecRevealed[i].second;
+        UniValue entry(UniValue::VOBJ);
+        entry.pushKV("address", vecRevealed[i].first);
+        entry.pushKV("pubkey", HexStr(pubkeyValue.pubkey.begin(), pubkeyValue.pubkey.end()));
+        entry.pushKV("valid", vecBlocked[i] ? 0 : 1);  // 1 = active, 0 = blocked
+        result.push_back(entry);
     }
 
     return result;
@@ -2047,7 +2076,11 @@ UniValue listassets(const JSONRPCRequest& request)
         if (verbose) {
             UniValue detail(UniValue::VOBJ);
             detail.push_back(Pair("name", asset.strName));
-            detail.push_back(Pair("amount", UnitValueFromAmount(asset.nAmount, asset.strName)));
+            // Units from the same snapshot as the amount: AssetDir runs without
+            // cs_main, and the asset cache would need it (and could be at
+            // another chainstate).
+            const int8_t units = IsAssetNameAnOwner(asset.strName) ? OWNER_UNITS : asset.units;
+            detail.push_back(Pair("amount", ValueFromAmount(asset.nAmount, units)));
             detail.push_back(Pair("units", asset.units));
             detail.push_back(Pair("reissuable", asset.nReissuable));
             detail.push_back(Pair("has_ipfs", asset.nHasIPFS));
@@ -3359,8 +3392,6 @@ UniValue listdepinholders(const JSONRPCRequest& request)
             + HelpExampleRpc("listdepinholders", "\"&FRANCE\"")
         );
 
-    LOCK(cs_main);
-
     std::string assetName = request.params[0].get_str();
 
     // Verify it's a DEPIN asset
@@ -3369,25 +3400,31 @@ UniValue listdepinholders(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Not a valid DEPIN asset (must start with &)");
     }
 
-    // Get all holders
+    // The holder scan runs without cs_main; only the restriction check,
+    // against the asset cache, needs it (see ReadAtOneChainstate).
     std::vector<std::pair<std::string, CAmount>> vecAddressAmounts;
-    int nTotalEntries = 0;
-    if (!passetsdb->AssetAddressDir(vecAddressAmounts, nTotalEntries, false, assetName, INT_MAX, 0))
-        throw JSONRPCError(RPC_DATABASE_ERROR, "couldn't retrieve asset holders.");
+    std::vector<bool> vecBlocked;
+    ReadAtOneChainstate(
+        [&]() {
+            vecAddressAmounts.clear();
+            int nTotalEntries = 0;
+            if (!passetsdb->AssetAddressDir(vecAddressAmounts, nTotalEntries, false, assetName, INT_MAX, 0))
+                throw JSONRPCError(RPC_DATABASE_ERROR, "couldn't retrieve asset holders.");
+        },
+        [&]() {
+            // Blocked: owner freeze OR self-revoke
+            vecBlocked.clear();
+            for (const auto& pair : vecAddressAmounts)
+                vecBlocked.push_back(passets->CheckForDEPINRestriction(assetName, pair.first));
+        });
 
     UniValue result(UniValue::VARR);
 
-    for (const auto& pair : vecAddressAmounts) {
-        std::string address = pair.first;
-        CAmount amount = pair.second;
-
-        // Check if blocked (owner freeze OR self-revoke)
-        bool isBlocked = passets->CheckForDEPINRestriction(assetName, address);
-
+    for (size_t i = 0; i < vecAddressAmounts.size(); i++) {
         UniValue obj(UniValue::VOBJ);
-        obj.push_back(Pair("address", address));
-        obj.push_back(Pair("amount", ValueFromAmount(amount)));
-        obj.push_back(Pair("valid", isBlocked ? 0 : 1));  // 1 = active, 0 = blocked
+        obj.push_back(Pair("address", vecAddressAmounts[i].first));
+        obj.push_back(Pair("amount", ValueFromAmount(vecAddressAmounts[i].second)));
+        obj.push_back(Pair("valid", vecBlocked[i] ? 0 : 1));  // 1 = active, 0 = blocked
 
         result.push_back(obj);
     }

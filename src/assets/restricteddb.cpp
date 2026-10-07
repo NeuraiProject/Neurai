@@ -144,9 +144,15 @@ bool CRestrictedDB::ReadFlag(const std::string &name, bool &fValue)
 
 bool CRestrictedDB::GetQualifierAddresses(std::string& qualifier, std::vector<std::string>& addresses)
 {
-    FlushStateForAssetReads();
-
-    std::unique_ptr<CDBIterator> pcursor(NewIterator());
+    // Flush and open the iterator under one cs_main: no full flush can be
+    // halfway through writing these rows, and the iterator reads a fixed
+    // snapshot from then on, so the scan below needs no lock.
+    std::unique_ptr<CDBIterator> pcursor;
+    {
+        LOCK(cs_main);
+        FlushStateForAssetReads();
+        pcursor.reset(NewIterator());
+    }
 
     pcursor->Seek(std::make_pair(QULAIFIER_ADDRESS_FLAG, std::make_pair(qualifier, std::string())));
 
@@ -190,9 +196,15 @@ bool CRestrictedDB::CheckForAddressRootQualifier(const std::string& address, con
 
 bool CRestrictedDB::GetAddressQualifiers(std::string& address, std::vector<std::string>& qualifiers)
 {
-    FlushStateForAssetReads();
-
-    std::unique_ptr<CDBIterator> pcursor(NewIterator());
+    // Flush and open the iterator under one cs_main: no full flush can be
+    // halfway through writing these rows, and the iterator reads a fixed
+    // snapshot from then on, so the scan below needs no lock.
+    std::unique_ptr<CDBIterator> pcursor;
+    {
+        LOCK(cs_main);
+        FlushStateForAssetReads();
+        pcursor.reset(NewIterator());
+    }
 
     pcursor->Seek(std::make_pair(ADDRESS_QULAIFIER_FLAG, std::make_pair(address, std::string())));
 
@@ -213,9 +225,15 @@ bool CRestrictedDB::GetAddressQualifiers(std::string& address, std::vector<std::
 
 bool CRestrictedDB::GetAddressRestrictions(std::string& address, std::vector<std::string>& restrictions)
 {
-    FlushStateForAssetReads();
-
-    std::unique_ptr<CDBIterator> pcursor(NewIterator());
+    // Flush and open the iterator under one cs_main: no full flush can be
+    // halfway through writing these rows, and the iterator reads a fixed
+    // snapshot from then on, so the scan below needs no lock.
+    std::unique_ptr<CDBIterator> pcursor;
+    {
+        LOCK(cs_main);
+        FlushStateForAssetReads();
+        pcursor.reset(NewIterator());
+    }
 
     pcursor->Seek(std::make_pair(RESTRICTED_ADDRESS_FLAG, std::make_pair(address, std::string())));
 
@@ -236,9 +254,15 @@ bool CRestrictedDB::GetAddressRestrictions(std::string& address, std::vector<std
 
 bool CRestrictedDB::GetGlobalRestrictions(std::vector<std::string>& restrictions)
 {
-    FlushStateForAssetReads();
-
-    std::unique_ptr<CDBIterator> pcursor(NewIterator());
+    // Flush and open the iterator under one cs_main: no full flush can be
+    // halfway through writing these rows, and the iterator reads a fixed
+    // snapshot from then on, so the scan below needs no lock.
+    std::unique_ptr<CDBIterator> pcursor;
+    {
+        LOCK(cs_main);
+        FlushStateForAssetReads();
+        pcursor.reset(NewIterator());
+    }
 
     pcursor->Seek(std::make_pair(GLOBAL_RESTRICTION_FLAG, std::string()));
 
@@ -259,9 +283,15 @@ bool CRestrictedDB::GetGlobalRestrictions(std::vector<std::string>& restrictions
 
 bool CRestrictedDB::GetDepinTransferStates(std::vector<std::pair<std::string, int8_t> >& states)
 {
-    FlushStateForAssetReads();
-
-    std::unique_ptr<CDBIterator> pcursor(NewIterator());
+    // Flush and open the iterator under one cs_main: no full flush can be
+    // halfway through writing these rows, and the iterator reads a fixed
+    // snapshot from then on, so the scan below needs no lock.
+    std::unique_ptr<CDBIterator> pcursor;
+    {
+        LOCK(cs_main);
+        FlushStateForAssetReads();
+        pcursor.reset(NewIterator());
+    }
 
     pcursor->Seek(std::make_pair(DEPIN_TRANSFER_STATE_FLAG, std::string()));
 

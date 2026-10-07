@@ -179,9 +179,15 @@ bool CAssetsDB::LoadAssets()
 
 bool CAssetsDB::AssetDir(std::vector<CDatabasedAssetData>& assets, const std::string filter, const size_t count, const long start)
 {
-    FlushStateForAssetReads();
-
-    std::unique_ptr<CDBIterator> pcursor(NewIterator());
+    // Flush and open the iterator under one cs_main: no full flush can be
+    // halfway through writing these rows, and the iterator reads a fixed
+    // snapshot from then on, so the scan below needs no lock.
+    std::unique_ptr<CDBIterator> pcursor;
+    {
+        LOCK(cs_main);
+        FlushStateForAssetReads();
+        pcursor.reset(NewIterator());
+    }
     pcursor->Seek(std::make_pair(ASSET_FLAG, std::string()));
 
     auto prefix = filter;
@@ -255,9 +261,15 @@ bool CAssetsDB::AssetDir(std::vector<CDatabasedAssetData>& assets, const std::st
 
 bool CAssetsDB::AddressDir(std::vector<std::pair<std::string, CAmount> >& vecAssetAmount, int& totalEntries, const bool& fGetTotal, const std::string& address, const size_t count, const long start)
 {
-    FlushStateForAssetReads();
-
-    std::unique_ptr<CDBIterator> pcursor(NewIterator());
+    // Flush and open the iterator under one cs_main: no full flush can be
+    // halfway through writing these rows, and the iterator reads a fixed
+    // snapshot from then on, so the scan below needs no lock.
+    std::unique_ptr<CDBIterator> pcursor;
+    {
+        LOCK(cs_main);
+        FlushStateForAssetReads();
+        pcursor.reset(NewIterator());
+    }
     pcursor->Seek(std::make_pair(ADDRESS_ASSET_QUANTITY_FLAG, std::make_pair(address, std::string())));
 
     if (fGetTotal) {
@@ -336,9 +348,15 @@ bool CAssetsDB::AddressDir(std::vector<std::pair<std::string, CAmount> >& vecAss
 // Can get to total count of addresses that belong to a certain asset_name, or get you the list of all address that belong to a certain asset_name
 bool CAssetsDB::AssetAddressDir(std::vector<std::pair<std::string, CAmount> >& vecAddressAmount, int& totalEntries, const bool& fGetTotal, const std::string& assetName, const size_t count, const long start)
 {
-    FlushStateForAssetReads();
-
-    std::unique_ptr<CDBIterator> pcursor(NewIterator());
+    // Flush and open the iterator under one cs_main: no full flush can be
+    // halfway through writing these rows, and the iterator reads a fixed
+    // snapshot from then on, so the scan below needs no lock.
+    std::unique_ptr<CDBIterator> pcursor;
+    {
+        LOCK(cs_main);
+        FlushStateForAssetReads();
+        pcursor.reset(NewIterator());
+    }
     pcursor->Seek(std::make_pair(ASSET_ADDRESS_QUANTITY_FLAG, std::make_pair(assetName, std::string())));
 
     if (fGetTotal) {

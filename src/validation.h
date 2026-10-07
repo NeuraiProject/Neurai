@@ -39,6 +39,7 @@
 #include <vector>
 
 #include <atomic>
+#include <functional>
 #include <assets/assets.h>
 #include <assets/assetdb.h>
 #include <assets/messages.h>
@@ -349,11 +350,24 @@ void FlushStateToDisk();
  * is enough: until a block connects or disconnects, the databases already hold
  * every asset change. Flushes, as FlushStateToDisk() does, only when no full
  * flush has completed since the chainstate moved, and returns whether it
- * flushed. Takes cs_main; hold it while reading so the state cannot move.
+ * flushed. Takes cs_main; open the database iterator before releasing it, so
+ * that no flush can come in between (the iterator then reads a fixed snapshot).
  */
 bool FlushStateForAssetReads();
 /** Full flushes of the chainstate completed so far; lets tests count them. */
 extern std::atomic<uint64_t> nFullStateFlushes;
+/**
+ * Run `scan` without cs_main, then `finish` under cs_main, both describing one
+ * chainstate. `scan` reads the asset or restricted-asset databases through
+ * their readers, which take cs_main only to flush and open an iterator;
+ * `finish` reads what needs the lock, such as the in-memory asset cache. When
+ * any block connects or disconnects in between -- even a reorg that comes
+ * back to the same tip -- `scan` runs again (it must reset what it fills);
+ * after two such retries, `scan` runs with cs_main held too. This shortens how
+ * long block validation waits rather than removing the wait: cs_main is still
+ * held for `finish`, and for the whole read on that last attempt.
+ */
+void ReadAtOneChainstate(const std::function<void()>& scan, const std::function<void()>& finish);
 /** Prune block files and flush state to disk. */
 void PruneAndFlush();
 /** Prune block files up to a given height */

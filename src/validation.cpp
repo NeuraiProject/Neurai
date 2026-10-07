@@ -3655,6 +3655,14 @@ static uint256 hashAssetDbBestBlock;
 std::atomic<uint64_t> nFullStateFlushes{0};
 
 /**
+ * Blocks connected or disconnected so far. Two reads of it under cs_main
+ * that agree bracket a stretch with no chainstate change, which the best
+ * block alone cannot tell: a reorg can leave and come back (A -> B -> A).
+ * Guarded by cs_main.
+ */
+static uint64_t nChainstateChanges = 0;
+
+/**
  * Update the on-disk chain state.
  * The caches and indexes are flushed depending on the mode we're called with
  * if they're too large, if it's been a while since the last write,
@@ -3852,6 +3860,27 @@ bool FlushStateForAssetReads() {
     return true;
 }
 
+void ReadAtOneChainstate(const std::function<void()>& scan, const std::function<void()>& finish) {
+    for (int attempt = 0; attempt < 2; attempt++) {
+        uint64_t nChangesBefore;
+        {
+            LOCK(cs_main);
+            nChangesBefore = nChainstateChanges;
+        }
+        scan();
+        LOCK(cs_main);
+        // No block connected or disconnected meanwhile: the snapshot the scan
+        // read and the state `finish` reads are the same one.
+        if (nChainstateChanges == nChangesBefore) {
+            finish();
+            return;
+        }
+    }
+    LOCK(cs_main);
+    scan();
+    finish();
+}
+
 void PruneAndFlush() {
     CValidationState state;
     fCheckForPruning = true;
@@ -3962,6 +3991,7 @@ bool static DisconnectTip(CValidationState& state, const CChainParams& chainpara
 
         bool assetsFlushed = assetCache.Flush();
         assert(assetsFlushed);
+        nChainstateChanges++;
     }
     LogPrint(BCLog::BENCH, "- Disconnect block: %.2fms\n", (GetTimeMicros() - nStart) * MILLI);
     // Write the chain state to disk, if necessary.
@@ -4172,6 +4202,7 @@ bool static ConnectTip(CValidationState& state, const CChainParams& chainparams,
         nTimeAssetsFlush = GetTimeMicros();
         bool assetFlushed = assetCache.Flush();
         assert(assetFlushed);
+        nChainstateChanges++;
         int64_t nTimeAssetFlushFinished = GetTimeMicros(); nTimeAssetFlush += nTimeAssetFlushFinished - nTimeAssetsFlush;
         LogPrint(BCLog::BENCH, "  - Flush Assets: %.2fms [%.2fs (%.2fms/blk)]\n", (nTimeAssetFlushFinished - nTimeAssetsFlush) * MILLI, nTimeAssetFlush * MICRO, nTimeAssetFlush * MILLI / nBlocksTotal);
         /** XNA END */
