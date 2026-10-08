@@ -143,6 +143,7 @@ NEURAI_TESTS =\
   test/sighash_tests.cpp \
   test/sigopcount_tests.cpp \
   test/skiplist_tests.cpp \
+  test/spentindex_reorg_tests.cpp \
   test/streams_tests.cpp \
   test/test_neurai.cpp \
   test/test_neurai.h \

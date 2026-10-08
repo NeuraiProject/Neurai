@@ -2533,8 +2533,11 @@ int ApplyTxInUndo(Coin&& undo, CCoinsViewCache& view, const COutPoint& out, CAss
 }
 
 /** Undo the effects of this block (with given index) on the UTXO set represented by coins.
- *  When FAILED is returned, view is left in an indeterminate state. */
-static DisconnectResult DisconnectBlock(const CBlock& block, const CBlockIndex* pindex, CCoinsViewCache& view, CAssetsCache* assetsCache = nullptr, bool ignoreAddressIndex = false, bool databaseMessaging = true)
+ *  When FAILED is returned, view is left in an indeterminate state.
+ *  updateSpentIndex erases the block's spent index entries. Only DisconnectTip sets it:
+ *  VerifyDB works on a scratch view, and ReplayBlocks must not erase entries that the
+ *  new branch already rewrote before the interrupted flush. */
+static DisconnectResult DisconnectBlock(const CBlock& block, const CBlockIndex* pindex, CCoinsViewCache& view, CAssetsCache* assetsCache = nullptr, bool ignoreAddressIndex = false, bool databaseMessaging = true, bool updateSpentIndex = false)
 {
     // Undo the block under the activation context it was connected with, so
     // asset parsing and indexes read its scripts the same way both times.
@@ -2962,6 +2965,13 @@ static DisconnectResult DisconnectBlock(const CBlock& block, const CBlockIndex* 
         }
         if (!pblocktree->UpdateAddressUnspentIndex(addressUnspentIndex)) {
             error("Failed to write address unspent index");
+            return DISCONNECT_FAILED;
+        }
+    }
+
+    if (updateSpentIndex && !ignoreAddressIndex && fSpentIndex) {
+        if (!pblocktree->UpdateSpentIndex(spentIndex)) {
+            error("Failed to delete spent index");
             return DISCONNECT_FAILED;
         }
     }
@@ -3985,7 +3995,7 @@ bool static DisconnectTip(CValidationState& state, const CChainParams& chainpara
         CAssetsCache assetCache;
 
         assert(view.GetBestBlock() == pindexDelete->GetBlockHash());
-        if (DisconnectBlock(block, pindexDelete, view, &assetCache) != DISCONNECT_OK)
+        if (DisconnectBlock(block, pindexDelete, view, &assetCache, /*ignoreAddressIndex=*/false, /*databaseMessaging=*/true, /*updateSpentIndex=*/true) != DISCONNECT_OK)
             return error("DisconnectTip(): DisconnectBlock %s failed", pindexDelete->GetBlockHash().ToString());
         bool flushed = view.Flush();
         assert(flushed);
