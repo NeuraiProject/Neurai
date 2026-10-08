@@ -127,6 +127,7 @@ BASE_SCRIPTS= [
     'mempool_reorg.py',
     'rpc_txoutproof.py',
     'feature_reindex.py',
+    'feature_regtest.py',
     'rpc_decodescript.py',
     'wallet_keypool.py',
     'rpc_setban.py',

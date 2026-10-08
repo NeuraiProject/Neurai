@@ -66,6 +66,39 @@ how many jobs to run, append `--jobs=n`
 The individual tests and the test_runner harness have many command-line
 options. Run `test_runner.py -h` to see them all.
 
+#### Regtest checks when integrating DePIN
+
+The baseline address, serialization, subsidy and versionbits fixtures share the
+fixes from DePIN commits `8685a17` and `a56f93f`. Keep DePIN's additional tests
+and APIs when resolving conflicts; the Base58 JSON values are the same even
+where whitespace differs.
+
+The branches intentionally have different regtest genesis blocks and PoW
+algorithms. Keep the receiving branch's genesis and algorithm. Both branches
+use minimum difficulty and deployment timeouts that permit activation in 2026.
+Use a fresh regtest directory when testing changes to these parameters.
+
+`miner_tests/createnewblock_validity_test` now mines its inputs with
+`GetHashFull` instead of using fixed nonces, and uses the mined subsidy. Keep
+this test enabled: DePIN's old `#if 0` wrapper can merge without a text conflict
+and silently disable it again. Run the case explicitly after integration:
+
+```sh
+src/test/test_neurai --run_test=miner_tests/createnewblock_validity_test
+make check VERBOSE=1
+python3 test/functional/test_runner.py feature_regtest.py
+```
+
+`feature_regtest.py` covers mining past the difficulty transition, deployment
+activation, wallet and asset transactions, invalidation/reconsideration, restart,
+reindex and chainstate rebuild. It mines through RPC and has no fixed genesis
+hash or nonce, so its PoW setup can be reused on either branch. The full merged
+DePIN suite must still run to check its additional consensus features.
+
+Also retain the `cs_main` before `cs_messaging` lock order in
+`ScanForMessageChannels`. Run functional tests with `--enable-debug` as well:
+unit tests alone did not exercise the startup/shutdown lock inversion.
+
 #### Troubleshooting and debugging test failures
 
 ##### Resource contention

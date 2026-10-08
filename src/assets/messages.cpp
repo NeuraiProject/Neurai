@@ -189,7 +189,8 @@ void OrphanMessage(const CMessage& message)
 #ifdef ENABLE_WALLET
 bool ScanForMessageChannels(std::string& strError)
 {
-    LOCK2(cs_messaging, cs_main);
+    // Match validation/flush: always acquire the chain lock before messaging.
+    LOCK2(cs_main, cs_messaging);
 
     LogPrintf("%s : Start Scanning For Message Channels\n", __func__);
 
