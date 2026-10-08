@@ -122,6 +122,7 @@ NEURAI_TESTS =\
   test/kawpow_tests.cpp \
   test/kawpow_admission_tests.cpp \
   test/kawpow_index_tests.cpp \
+  test/mining_concurrency_tests.cpp \
   test/epoch_context_cache_tests.cpp \
   test/epoch_context_cache_test_access.h \
   test/epoch_context_integration_tests.cpp \

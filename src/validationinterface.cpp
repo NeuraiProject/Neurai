@@ -130,6 +130,10 @@ void CMainSignals::Broadcast(int64_t nBestBlockTime, CConnman* connman) {
     m_internals->Broadcast(nBestBlockTime, connman);
 }
 
+boost::signals2::connection CMainSignals::ConnectBlockChecked(std::function<void(const CBlock&, const CValidationState&)> callback) {
+    return m_internals->BlockChecked.connect(std::move(callback));
+}
+
 void CMainSignals::BlockChecked(const CBlock& block, const CValidationState& state) {
     m_internals->BlockChecked(block, state);
 }

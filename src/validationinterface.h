@@ -8,7 +8,9 @@
 #ifndef NEURAI_VALIDATIONINTERFACE_H
 #define NEURAI_VALIDATIONINTERFACE_H
 
+#include <functional>
 #include <memory>
+#include <boost/signals2/connection.hpp>
 
 #include "primitives/transaction.h" // CTransaction(Ref)
 
@@ -102,6 +104,10 @@ public:
     void BlockDisconnected(const std::shared_ptr<const CBlock> &);
     void SetBestChain(const CBlockLocator &);
     void Broadcast(int64_t nBestBlockTime, CConnman* connman);
+    /** Thread-safe, scoped subscription for temporary block-result listeners.
+     * A disconnected slot may still be executing; the callback must own its state.
+     */
+    boost::signals2::connection ConnectBlockChecked(std::function<void(const CBlock&, const CValidationState&)> callback);
     void BlockChecked(const CBlock&, const CValidationState&);
     void NewPoWValidBlock(const CBlockIndex *, const std::shared_ptr<const CBlock>&);
     void BlockFound(const uint256 &);

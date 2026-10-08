@@ -27,7 +27,9 @@
 #include "validationinterface.h"
 #include "warnings.h"
 
+#include <deque>
 #include <memory>
+#include <mutex>
 #include <stdint.h>
 
 #include <univalue.h>
@@ -38,7 +40,17 @@
 
 extern uint64_t nHashesPerSec;
 
-std::map<std::string, CBlock> mapXNAKAWBlockTemplates;
+std::map<std::string, CBlock> mapXNAKAWBlockTemplates GUARDED_BY(cs_main);
+
+// The caller owns cs_main until the independent block copy is complete.
+static std::shared_ptr<CBlock> CopyKawpowBlockTemplate(const std::string& header_hash)
+{
+    AssertLockHeld(cs_main);
+    const auto it = mapXNAKAWBlockTemplates.find(header_hash);
+    if (it == mapXNAKAWBlockTemplates.end())
+        throw JSONRPCError(RPC_INVALID_PARAMS, "Block header hash not found in block data");
+    return std::make_shared<CBlock>(it->second);
+}
 
 unsigned int ParseConfirmTarget(const UniValue& value)
 {
@@ -537,6 +549,8 @@ UniValue getblocktemplate(const JSONRPCRequest& request)
     static CBlockIndex* pindexPrev;
     static int64_t nStart;
     static std::unique_ptr<CBlockTemplate> pblocktemplate;
+    static std::deque<std::string> templateOrder;
+    static std::string lastheader;
     // Cache whether the last invocation was with segwit support, to avoid returning
     // a segwit-block to a non-segwit caller.
     static bool fLastTemplateSupportsSegwit = true;
@@ -544,9 +558,14 @@ UniValue getblocktemplate(const JSONRPCRequest& request)
         (mempool.GetTransactionsUpdated() != nTransactionsUpdatedLast && GetTime() - nStart > 5) ||
         fLastTemplateSupportsSegwit != fSupportsSegwit)
     {
+        // A mempool refresh must not discard work already issued on this tip.
+        if (pindexPrev != chainActive.Tip()) {
+            mapXNAKAWBlockTemplates.clear();
+            templateOrder.clear();
+        }
+        lastheader.clear(); // The refreshed template must include the new work.
         // Clear pindexPrev so future calls make a new block, despite any failures from here on
         pindexPrev = nullptr;
-        mapXNAKAWBlockTemplates.clear();
 
         // Store the pindexBest used before CreateNewBlock, to avoid races
         nTransactionsUpdatedLast = mempool.GetTransactionsUpdated();
@@ -728,7 +747,6 @@ UniValue getblocktemplate(const JSONRPCRequest& request)
     if (pblock->nTime >= nKAWPOWActivationTime) {
         std::string address = gArgs.GetArg("-miningaddress", "");
         if (IsValidDestinationString(address)) {
-            static std::string lastheader = "";
             if (mapXNAKAWBlockTemplates.count(lastheader)) {
                 if (pblock->nTime - 30 < mapXNAKAWBlockTemplates.at(lastheader).nTime) {
                     result.pushKV("pprpcheader", lastheader);
@@ -740,29 +758,46 @@ UniValue getblocktemplate(const JSONRPCRequest& request)
             pblock->hashMerkleRoot = BlockMerkleRoot(*pblock);
             result.pushKV("pprpcheader", pblock->GetKAWPOWHeaderHash().GetHex());
             result.pushKV("pprpcepoch", ethash::get_epoch_number(pblock->nHeight));
-            mapXNAKAWBlockTemplates[pblock->GetKAWPOWHeaderHash().GetHex()] = *pblock;
             lastheader = pblock->GetKAWPOWHeaderHash().GetHex();
+            const auto inserted = mapXNAKAWBlockTemplates.emplace(lastheader, *pblock);
+            if (inserted.second) templateOrder.push_back(lastheader);
+            while (templateOrder.size() > MAX_KAWPOW_BLOCK_TEMPLATES) {
+                mapXNAKAWBlockTemplates.erase(templateOrder.front());
+                templateOrder.pop_front();
+            }
         }
     }
 
     return result;
 }
 
-class submitblock_StateCatcher : public CValidationInterface
+class submitblock_StateCatcher
 {
+    struct ResultState {
+        std::mutex mutex;
+        bool found{false};
+        CValidationState state;
+    };
+    // Signal invocations already in progress may outlive disconnection. Each
+    // invocation owns this state, rather than referring to an RPC stack object.
+    const std::shared_ptr<ResultState> m_result{std::make_shared<ResultState>()};
+    boost::signals2::scoped_connection m_connection;
+
 public:
-    uint256 hash;
-    bool found;
-    CValidationState state;
+    explicit submitblock_StateCatcher(const uint256& hash)
+        : m_connection(GetMainSignals().ConnectBlockChecked(
+            [hash, result = m_result](const CBlock& block, const CValidationState& state) {
+                if (block.GetHash() != hash) return;
+                std::lock_guard<std::mutex> lock(result->mutex);
+                result->found = true;
+                result->state = state;
+            })) {}
 
-    explicit submitblock_StateCatcher(const uint256 &hashIn) : hash(hashIn), found(false), state() {}
-
-protected:
-    void BlockChecked(const CBlock& block, const CValidationState& stateIn) override {
-        if (block.GetHash() != hash)
-            return;
-        found = true;
-        state = stateIn;
+    std::pair<bool, CValidationState> Result()
+    {
+        m_connection.disconnect();
+        std::lock_guard<std::mutex> lock(m_result->mutex);
+        return {m_result->found, m_result->state};
     }
 };
 
@@ -872,11 +907,12 @@ static UniValue pprpcsb(const JSONRPCRequest& request) {
     if (!ParseUInt64(str_nonce, &nonce, 16))
         throw JSONRPCError(RPC_INVALID_PARAMS, "Invalid hex nonce");
 
-    if (!mapXNAKAWBlockTemplates.count(header_hash))
-        throw JSONRPCError(RPC_INVALID_PARAMS, "Block header hash not found in block data");
-
-    std::shared_ptr<CBlock> blockptr = std::make_shared<CBlock>();
-    *blockptr = mapXNAKAWBlockTemplates.at(header_hash);
+    std::shared_ptr<CBlock> blockptr;
+    {
+        LOCK(cs_main);
+        blockptr = CopyKawpowBlockTemplate(header_hash);
+    }
+    // Hash and validate outside cs_main; template refreshes cannot alter this copy.
 
     blockptr->nNonce64 = nonce;
     blockptr->mix_hash = uint256S(mix_hash);
@@ -925,19 +961,18 @@ static UniValue pprpcsb(const JSONRPCRequest& request) {
     }
 
     submitblock_StateCatcher sc(blockptr->GetHash());
-    RegisterValidationInterface(&sc);
     bool fAccepted = ProcessNewBlock(GetParams(), blockptr, true, nullptr);
-    UnregisterValidationInterface(&sc);
+    const auto checked = sc.Result();
     if (fBlockPresent) {
-        if (fAccepted && !sc.found) {
+        if (fAccepted && !checked.first) {
             return "duplicate-inconclusive";
         }
         return "duplicate";
     }
-    if (!sc.found) {
+    if (!checked.first) {
         return "inconclusive";
     }
-    UniValue ret = BIP22ValidationResult(sc.state);
+    UniValue ret = BIP22ValidationResult(checked.second);
 
     // BIP22ValidationResult set the return to null when the state is valid
     if (ret.isNull()) {
@@ -1007,19 +1042,18 @@ UniValue submitblock(const JSONRPCRequest& request)
     }
 
     submitblock_StateCatcher sc(block.GetHash());
-    RegisterValidationInterface(&sc);
     bool fAccepted = ProcessNewBlock(GetParams(), blockptr, true, nullptr);
-    UnregisterValidationInterface(&sc);
+    const auto checked = sc.Result();
     if (fBlockPresent) {
-        if (fAccepted && !sc.found) {
+        if (fAccepted && !checked.first) {
             return "duplicate-inconclusive";
         }
         return "duplicate";
     }
-    if (!sc.found) {
+    if (!checked.first) {
         return "inconclusive";
     }
-    return BIP22ValidationResult(sc.state);
+    return BIP22ValidationResult(checked.second);
 }
 
 UniValue estimatefee(const JSONRPCRequest& request)
