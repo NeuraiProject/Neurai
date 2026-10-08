@@ -11,6 +11,8 @@
 #include "util.h"
 
 #include <crypto/ethash/include/ethash/progpow.hpp>
+#include <new>
+#include <stdexcept>
 
 //TODO remove these
 double algoHashTotal[16];
@@ -257,6 +259,8 @@ uint64_t SipHashUint256Extra(uint64_t k0, uint64_t k1, const uint256& val, uint3
 
 uint256 KAWPOWHash(const CBlockHeader& blockHeader, uint256& mix_hash)
 {
+    if (!ethash::is_valid_block_number(blockHeader.nHeight))
+        throw std::out_of_range("KAWPOW height exceeds the context resource limit");
     static ethash::epoch_context_ptr context{nullptr, nullptr};
 
     // Get the context from the block height
@@ -264,6 +268,7 @@ uint256 KAWPOWHash(const CBlockHeader& blockHeader, uint256& mix_hash)
 
     if (!context || context->epoch_number != epoch_number)
         context = ethash::create_epoch_context(epoch_number);
+    if (!context) throw std::bad_alloc();
 
     // Build the header_hash
     uint256 nHeaderHash = blockHeader.GetKAWPOWHeaderHash();

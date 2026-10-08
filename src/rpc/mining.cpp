@@ -783,8 +783,11 @@ static UniValue getkawpowhash(const JSONRPCRequest& request) {
     if (!ParseUInt64(hex_nonce, &nNonce, 16))
         throw JSONRPCError(RPC_INVALID_PARAMS, "Invalid nonce hex string");
 
-    if (nHeight > (uint32_t)chainActive.Height() + 10)
-        throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Block height is to large");
+    {
+        LOCK(cs_main);
+        if (!ethash::is_valid_block_number(nHeight) || int64_t(nHeight) > int64_t(chainActive.Height()) + 10)
+            throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Block height is too large");
+    }
 
     const auto header_hash = to_hash256(str_header_hash);
 
@@ -801,6 +804,7 @@ static UniValue getkawpowhash(const JSONRPCRequest& request) {
     const auto epoch_number = ethash::get_epoch_number(nHeight);
     if (!context || context->epoch_number != epoch_number)
         context = ethash::create_epoch_context(epoch_number);
+    if (!context) throw JSONRPCError(RPC_INTERNAL_ERROR, "KAWPOW context unavailable");
 
     // ProgPow hash
     const auto result = progpow::hash(*context, nHeight, header_hash, nNonce);
@@ -871,9 +875,16 @@ static UniValue pprpcsb(const JSONRPCRequest& request) {
         throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Block does not start with a coinbase");
     }
 
+    CValidationState admission;
+    if (!CheckKAWPOWHeaderAdmission(*blockptr, admission, GetParams().GetConsensus()))
+        throw JSONRPCError(admission.IsError() ? RPC_INTERNAL_ERROR : RPC_DESERIALIZATION_ERROR, admission.GetRejectReason());
     uint256 retMixHash;
-    if (!CheckProofOfWork(blockptr->GetHashFull(retMixHash), blockptr->nBits, GetParams().GetConsensus()))
-        throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Block does not solve the boundary");
+    try {
+        if (!CheckProofOfWork(blockptr->GetHashFull(retMixHash), blockptr->nBits, GetParams().GetConsensus()))
+            throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Block does not solve the boundary");
+    } catch (const std::bad_alloc&) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "KAWPOW context unavailable");
+    }
 
 
     uint256 hash = blockptr->GetHash();

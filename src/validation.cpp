@@ -44,6 +44,8 @@
 #include "warnings.h"
 #include "net.h"
 
+#include <crypto/ethash/include/ethash/ethash.hpp>
+#include <new>
 #include <atomic>
 #include <sstream>
 
@@ -3976,10 +3978,39 @@ static bool FindUndoPos(CValidationState &state, int nFile, CDiskBlockPos &pos, 
     return true;
 }
 
+// KAWPOW admission must precede context construction, including CheckBlock's
+// callers outside AcceptBlockHeader. Preserve the separately activated equality rule.
+bool CheckKAWPOWHeaderAdmission(const CBlockHeader& block, CValidationState& state,
+                                const Consensus::Params& consensusParams)
+{
+    if (block.nTime < nKAWPOWActivationTime) return true;
+    LOCK(cs_main);
+    const auto previous = mapBlockIndex.find(block.hashPrevBlock);
+    if (previous != mapBlockIndex.end()) {
+        const int64_t height = int64_t(previous->second->nHeight) + 1;
+        if (!ethash::is_valid_block_number(block.nHeight) ||
+            int64_t(block.nHeight) > height + ETHASH_EPOCH_LENGTH) {
+            return state.DoS(100, false, REJECT_INVALID, "bad-kawpow-height-range");
+        }
+        if (!CheckKAWPOWHeaderHeight(block, height, consensusParams))
+            return state.DoS(100, false, REJECT_INVALID, "bad-blk-height");
+        return true;
+    }
+    // Without a parent this is temporary resource admission, not proof of
+    // consensus invalidity. An advancing header chain can make a retry admissible.
+    const int64_t height = pindexBestHeader ? pindexBestHeader->nHeight : 0;
+    if (!ethash::is_valid_block_number(block.nHeight) ||
+        int64_t(block.nHeight) > height + ETHASH_EPOCH_LENGTH)
+        return state.Error("kawpow-height-unavailable");
+    return true;
+}
+
 static bool CheckBlockHeader(const CBlockHeader& block, CValidationState& state, const Consensus::Params& consensusParams, bool fCheckPOW = true)
 {
+    if (fCheckPOW && !CheckKAWPOWHeaderAdmission(block, state, consensusParams)) return false;
     // If we are checking a KAWPOW block below a know checkpoint height. We can validate the proof of work using the mix_hash
     if (fCheckPOW && block.nTime >= nKAWPOWActivationTime) {
+        LOCK(cs_main);
         CBlockIndex* pcheckpoint = Checkpoints::GetLastCheckpoint(GetParams().Checkpoints());
         if (fCheckPOW && pcheckpoint && block.nHeight <= (uint32_t)pcheckpoint->nHeight) {
            if (!CheckProofOfWork(block.GetHash(), block.nBits, consensusParams)) {
@@ -3992,7 +4023,13 @@ static bool CheckBlockHeader(const CBlockHeader& block, CValidationState& state,
 
     uint256 mix_hash;
     // Check proof of work matches claimed amount
-    if (fCheckPOW && !CheckProofOfWork(block.GetHashFull(mix_hash), block.nBits, consensusParams)) {
+    uint256 full_hash;
+    try {
+        if (fCheckPOW) full_hash = block.GetHashFull(mix_hash);
+    } catch (const std::bad_alloc&) {
+        return state.Error("KAWPOW context unavailable");
+    }
+    if (fCheckPOW && !CheckProofOfWork(full_hash, block.nBits, consensusParams)) {
         return state.DoS(50, false, REJECT_INVALID, "high-hash", false, "proof of work failed");
     }
 
@@ -4348,9 +4385,6 @@ static bool AcceptBlockHeader(const CBlockHeader& block, CValidationState& state
             return true;
         }
 
-        if (!CheckBlockHeader(block, state, chainparams.GetConsensus()))
-            return error("%s: Consensus::CheckBlockHeader: %s, %s", __func__, hash.ToString(), FormatStateMessage(state));
-
         // Get prev block index
         CBlockIndex* pindexPrev = nullptr;
         BlockMap::iterator mi = mapBlockIndex.find(block.hashPrevBlock);
@@ -4359,6 +4393,9 @@ static bool AcceptBlockHeader(const CBlockHeader& block, CValidationState& state
         pindexPrev = (*mi).second;
         if (pindexPrev->nStatus & BLOCK_FAILED_MASK)
             return state.DoS(100, error("%s: prev block invalid", __func__), REJECT_INVALID, "bad-prevblk");
+        if (!CheckKAWPOWHeaderAdmission(block, state, chainparams.GetConsensus())) return false;
+        if (!CheckBlockHeader(block, state, chainparams.GetConsensus()))
+            return error("%s: Consensus::CheckBlockHeader: %s, %s", __func__, hash.ToString(), FormatStateMessage(state));
         if (!ContextualCheckBlockHeader(block, state, chainparams, pindexPrev, GetAdjustedTime()))
             return error("%s: Consensus::ContextualCheckBlockHeader: %s, %s", __func__, hash.ToString(), FormatStateMessage(state));
 

@@ -74,7 +74,22 @@ static constexpr auto calculate_epoch_seed = ethash_calculate_epoch_seed;
 /// Calculates the epoch number out of the block number.
 inline constexpr int get_epoch_number(int block_number) noexcept
 {
-    return block_number ? block_number / epoch_length : 0;
+    return block_number < 0 ? -1 : block_number / epoch_length;
+}
+
+inline constexpr int get_epoch_number(uint32_t block_number) noexcept
+{
+    return block_number / uint32_t(epoch_length);
+}
+
+inline constexpr bool is_valid_epoch_number(int epoch) noexcept
+{
+    return epoch >= 0 && epoch <= ETHASH_MAX_EPOCH_NUMBER;
+}
+
+inline constexpr bool is_valid_block_number(uint32_t height) noexcept
+{
+    return is_valid_epoch_number(get_epoch_number(height));
 }
 
 /**

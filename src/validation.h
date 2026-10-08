@@ -459,6 +459,10 @@ bool CheckBlock(const CBlock& block, CValidationState& state, const Consensus::P
  *  activation height, or a pre-KAWPOW header). Exposed for unit testing. */
 bool CheckKAWPOWHeaderHeight(const CBlockHeader& block, int nHeight, const Consensus::Params& consensusParams);
 
+/** Bound external KAWPOW heights before allocating an epoch context.
+ * Unknown-parent resource rejection is local/retryable, never cached as invalid. */
+bool CheckKAWPOWHeaderAdmission(const CBlockHeader& block, CValidationState& state, const Consensus::Params& consensusParams);
+
 /** Remove block index entries left unusable after loading: placeholder entries
  *  (nBits == 0, created for a parent that was never loaded) and every entry that
  *  descends from one. Unlinks and frees them; returns the number removed. Exposed

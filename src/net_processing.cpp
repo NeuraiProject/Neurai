@@ -2392,8 +2392,9 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
                     Misbehaving(pfrom->GetId(), nDoS);
                 }
                 LogPrintf("Peer %d sent us invalid header via cmpctblock\n", pfrom->GetId());
-                return true;
             }
+            // Local failures also leave pindex unset; do not continue or punish the peer.
+            return true;
         }
 
         // When we succeed in decoding a block's txids from a cmpctblock
@@ -2575,12 +2576,7 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
                 // process from some other peer.  We do this after calling
                 // ProcessNewBlock so that a malleated cmpctblock announcement
                 // can't be used to interfere with block relay.
-                if (pblock->fChecked) {
-                    MarkBlockAsReceived(pblock->GetHash());
-                } else {
-                    uint256 mix_hash;
-                    MarkBlockAsReceived(pblock->GetHashFull(mix_hash));
-                }
+                MarkBlockAsReceived(pblock->GetHash());
             }
         }
 
@@ -2656,12 +2652,7 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
                 pfrom->nLastBlockTime = GetTime();
             } else {
                 LOCK(cs_main);
-                if (pblock->fChecked) {
-                    mapBlockSource.erase(pblock->GetHash());
-                } else {
-                    uint256 mix_hash;
-                    mapBlockSource.erase(pblock->GetHashFull(mix_hash));
-                }
+                mapBlockSource.erase(pblock->GetHash());
             }
         }
     }
