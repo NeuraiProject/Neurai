@@ -290,7 +290,7 @@ public:
                 { 1330000, uint256S("0x00000000000e22514b7645a6901c97cf91e227fc9615a536f69ae4e1e53a9785")},
                 // Consensus decision (v1.0.6, KAWPOW header-height fix): upgraded nodes
                 // reject any fork below this block that does not connect to it. Must be
-                // coordinated and announced. Aligned with nKAWPOWHeaderHeightCheckActivation.
+                // coordinated and announced. Historical checkpoint; header-height equality has a separate activation.
                 { 1733712, uint256S("0x000000000065bd9be24a1328484cc1904c5d6f8bc8986088bb1f84c26bed6897")}
             }
         };

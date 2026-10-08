@@ -488,7 +488,7 @@ bool CBlockTreeDB::LoadBlockIndexGuts(const Consensus::Params& consensusParams, 
             CDiskBlockIndex diskindex;
             if (pcursor->GetValue(diskindex)) {
                 // Reconstruct the block hash from the stored header fields and verify
-                // it still satisfies PoW before trusting this entry. A mismatch means
+                // its identity matches the database key and it still satisfies PoW. A mismatch means
                 // the on-disk index is inconsistent, e.g. an entry contaminated by the
                 // KAWPOW header-height issue: its hash was produced with a declared
                 // height that differs from the height stored in the index, so the
@@ -496,12 +496,12 @@ bool CBlockTreeDB::LoadBlockIndexGuts(const Consensus::Params& consensusParams, 
                 // instead of aborting the whole node; the affected subtree is pruned
                 // later in LoadBlockIndexDB and the node can rebuild.
                 uint256 blockHash = diskindex.GetBlockHash();
-                if (!CheckProofOfWork(blockHash, diskindex.nBits, consensusParams)) {
+                if (blockHash != key.second || !CheckProofOfWork(blockHash, diskindex.nBits, consensusParams)) {
                     // Log the first entries individually (capped, so a heavily
                     // contaminated index cannot bloat debug.log); the total is reported
                     // once the loop finishes.
                     if (nSkipped < 32)
-                        LogPrintf("%s: WARNING: skipping inconsistent block index entry (PoW mismatch) hash=%s height=%d\n",
+                        LogPrintf("%s: WARNING: skipping inconsistent block index entry (identity or PoW mismatch) hash=%s height=%d\n",
                                   __func__, blockHash.ToString(), diskindex.nHeight);
                     else if (nSkipped == 32)
                         LogPrintf("%s: WARNING: further inconsistent block index entries suppressed (total reported below)\n", __func__);

@@ -36,13 +36,13 @@ struct MiningModeGuard {
 
 BOOST_FIXTURE_TEST_SUITE(epoch_context_integration_tests, TestingSetup)
 
-BOOST_AUTO_TEST_CASE(candidate_selection_preserves_sha_legacy_and_checkpoint_paths)
+BOOST_AUTO_TEST_CASE(candidate_selection_keeps_sha_and_legacy_but_not_checkpoint_siblings)
 {
     MiningModeGuard mode;
     LOCK(cs_main);
     nKAWPOWActivationTime = 100;
     CBlockHeader header;
-    header.nHeight = 1; // Height zero is already covered by the genesis checkpoint.
+    header.nHeight = 1;
     header.nTime = 99;
     BOOST_CHECK(!NeedsFullKAWPOWCheck(header));
     header.nTime = 100;
@@ -56,7 +56,8 @@ BOOST_AUTO_TEST_CASE(candidate_selection_preserves_sha_legacy_and_checkpoint_pat
     const auto inserted = mapBlockIndex.emplace(checkpoint.second, &index);
     BOOST_REQUIRE(inserted.second);
     header.nHeight = checkpoint.first;
-    BOOST_CHECK(!NeedsFullKAWPOWCheck(header));
+    // Matching the checkpoint height does not authenticate this different hash.
+    BOOST_CHECK(NeedsFullKAWPOWCheck(header));
     ++header.nHeight;
     BOOST_CHECK(NeedsFullKAWPOWCheck(header));
     mapBlockIndex.erase(inserted.first);

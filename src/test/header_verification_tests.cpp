@@ -271,35 +271,28 @@ BOOST_AUTO_TEST_CASE(failure_at_epoch_boundary_never_constructs_the_next_epoch)
     BOOST_CHECK_LE(GetFullKawpowCheckCount() - before, 5U);
 }
 
-BOOST_AUTO_TEST_CASE(cheap_prefix_failure_and_false_height_preserve_the_old_check)
+BOOST_AUTO_TEST_CASE(checkpoint_sibling_requires_full_pow_and_false_height_is_rejected)
 {
-    auto headers = Batch(20, false);
+    auto headers = Batch(1);
     auto checkpoint = headers.front();
-    ++checkpoint.nVersion; // Keep it distinct while the candidate searches nonces.
+    ++checkpoint.nVersion;
     TemporaryCheckpoint anchor(checkpoint, 1);
-    while (CheckProofOfWork(headers.front().GetHash(), headers.front().nBits, GetParams().GetConsensus()))
-        ++headers.front().nNonce64;
-    Relink(headers);
+    // Cheap validity is irrelevant for a distinct, unauthenticated header.
+    do { ++headers.front().mix_hash.begin()[0]; }
+    while (!CheckProofOfWork(headers.front().GetHash(), headers.front().nBits, GetParams().GetConsensus()));
     int constructions = 0;
     EpochContextCacheTestAccess::FactoryOverride factory(KawpowValidationCache(), [&](int epoch) {
         ++constructions; return RealContext(epoch);
     });
     const auto before = GetFullKawpowCheckCount();
     for (const bool false_height : {false, true}) {
-        if (false_height) {
-            // This fixture activates equality from genesis. Reject the height
-            // mismatch before either the cheap or the full PoW check.
-            headers.front().hashPrevBlock = anchor.index.hash;
-            while (CheckProofOfWork(headers.front().GetHash(), headers.front().nBits, GetParams().GetConsensus()))
-                ++headers.front().nNonce64;
-            Relink(headers);
-        }
+        if (false_height) headers.front().hashPrevBlock = anchor.index.hash;
         CValidationState state;
         BOOST_CHECK(!ProcessHeadersWithParallelPoW(headers, state, GetParams(), nullptr, nullptr));
-        BOOST_CHECK_EQUAL(state.GetRejectReason(), false_height ? "bad-blk-height" : "high-hash");
+        BOOST_CHECK_EQUAL(state.GetRejectReason(), false_height ? "bad-blk-height" : "invalid-mix-hash");
     }
-    BOOST_CHECK_EQUAL(constructions, 0);
-    BOOST_CHECK_EQUAL(GetFullKawpowCheckCount(), before);
+    BOOST_CHECK_EQUAL(constructions, 1);
+    BOOST_CHECK_EQUAL(GetFullKawpowCheckCount() - before, 1U);
 }
 
 BOOST_AUTO_TEST_CASE(false_height_stops_parallel_work_before_later_epochs)
@@ -444,13 +437,11 @@ BOOST_AUTO_TEST_CASE(checkpoint_race_acceptance_is_authoritative)
         TemporaryCheckpoint checkpoint(other, checkpoint_height);
         const CBlockIndex* last = nullptr;
         const bool accepted = AcceptHeaderWindow(window, GetParams(), state, &last, nullptr);
-        BOOST_CHECK_EQUAL(accepted, checkpoint_height == 1);
-        if (accepted) {
-            BOOST_REQUIRE(last);
-            BOOST_CHECK_EQUAL(last->nHeight, 1);
-        } else {
-            BOOST_CHECK_EQUAL(state.GetRejectReason(), "bad-fork-prior-to-checkpoint");
-        }
+        // A sibling is not authenticated at either height. Full PoW fails
+        // before contextual fork rejection, just as in serial acceptance.
+        BOOST_CHECK(!accepted);
+        BOOST_CHECK(last == nullptr);
+        BOOST_CHECK_EQUAL(state.GetRejectReason(), "invalid-mix-hash");
     }
 }
 
@@ -499,7 +490,7 @@ BOOST_AUTO_TEST_CASE(context_allocation_failure_is_local_before_any_worker)
     BOOST_CHECK_EQUAL(GetFullKawpowCheckCount(), before);
 }
 
-BOOST_AUTO_TEST_CASE(coordinator_processes_the_suffix_after_checkpoint_race)
+BOOST_AUTO_TEST_CASE(coordinator_processes_suffix_after_authenticated_checkpoint_race)
 {
     auto headers = Batch(20);
     do { ++headers.front().mix_hash.begin()[0]; }
@@ -510,9 +501,9 @@ BOOST_AUTO_TEST_CASE(coordinator_processes_the_suffix_after_checkpoint_race)
     EpochContextCacheTestAccess::FactoryOverride factory(KawpowValidationCache(), [&](int epoch) {
         AssertLockNotHeld(cs_main);
         ++constructions;
-        auto other = headers.front();
-        ++other.nNonce64;
-        checkpoint.reset(new TemporaryCheckpoint(other, 1));
+        // Inject the fixed commitment to this header, not an unrelated sibling.
+        // The test supplies trust explicitly; real anchor hashes are compiled in.
+        checkpoint.reset(new TemporaryCheckpoint(headers.front(), 1));
         return RealContext(epoch);
     });
     CValidationState state;
