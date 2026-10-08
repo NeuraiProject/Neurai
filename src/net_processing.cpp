@@ -1723,9 +1723,13 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
                   pfrom->nStartingHeight, addrMe.ToString(), pfrom->GetId(),
                   remoteAddr);
 
-        int64_t nTimeOffset = nTime - GetTime();
+        const int64_t nTimeOffset = GetTimeOffsetSample(nTime, GetTime());
         pfrom->nTimeOffset = nTimeOffset;
-        AddTimeData(pfrom->addr, nTimeOffset);
+        // Only persistent outbound peers may influence adjusted time. Inbound
+        // connections and short-lived address/feeler probes still report their
+        // offset in getpeerinfo, but do not contribute samples.
+        if (!pfrom->fInbound && !pfrom->fFeeler && !pfrom->fOneShot)
+            AddTimeData(pfrom->addr, nTimeOffset);
 
         // If the peer is old enough to have the old alert system, send it the final alert.
         if (pfrom->nVersion <= 70012) {
