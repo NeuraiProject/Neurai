@@ -19,6 +19,7 @@ namespace {
 bool CoherentKawpow(const CBlockHeader& header, int64_t height)
 {
     return !bNetwork.fSHA256Mining && header.nTime >= nKAWPOWActivationTime &&
+           ethash::is_valid_block_number(header.nHeight) &&
            height >= 0 && int64_t(header.nHeight) == height;
 }
 

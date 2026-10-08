@@ -39,6 +39,7 @@ size_t EpochContextCache::PendingReservations() const
 
 EpochContextCache::Context EpochContextCache::Acquire(int epoch, bool pin)
 {
+    if (!ethash::is_valid_epoch_number(epoch)) throw std::out_of_range("KAWPOW epoch exceeds the context resource limit");
     std::shared_ptr<Pending> pending;
     std::list<Ready> retired;
     bool build = false;

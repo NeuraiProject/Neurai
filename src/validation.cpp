@@ -46,6 +46,8 @@
 #include "warnings.h"
 #include "net.h"
 
+#include <crypto/ethash/include/ethash/ethash.hpp>
+#include <new>
 #include <atomic>
 #include <deque>
 #include <sstream>
@@ -4862,6 +4864,8 @@ uint64_t GetFullKawpowCheckCount()
 bool CheckBlockHeaderPoWFull(const CBlockHeader& block, CValidationState& state,
                            const Consensus::Params& consensusParams, const ethash::epoch_context& context)
 {
+    if (!ethash::is_valid_block_number(block.nHeight))
+        return state.DoS(100, false, REJECT_INVALID, "bad-kawpow-height-range");
     nFullKawpowChecks.fetch_add(1, std::memory_order_relaxed);
     uint256 mix_hash;
     if (!CheckProofOfWork(KAWPOWHash(block, mix_hash, context), block.nBits, consensusParams)) {
@@ -4876,6 +4880,8 @@ bool CheckBlockHeaderPoWFull(const CBlockHeader& block, CValidationState& state,
 bool CheckBlockHeaderPoWFull(const CBlockHeader& block, CValidationState& state,
                            const Consensus::Params& consensusParams)
 {
+    if (!ethash::is_valid_block_number(block.nHeight))
+        return state.DoS(100, false, REJECT_INVALID, "bad-kawpow-height-range");
     EpochContextCache::Context context;
     try {
         context = KawpowValidationCache().Get(ethash::get_epoch_number(block.nHeight));
@@ -4886,8 +4892,36 @@ bool CheckBlockHeaderPoWFull(const CBlockHeader& block, CValidationState& state,
     return CheckBlockHeaderPoWFull(block, state, consensusParams, *context);
 }
 
+// KAWPOW admission must precede context construction, including CheckBlock's
+// callers outside AcceptBlockHeader. Preserve the separately activated equality rule.
+bool CheckKAWPOWHeaderAdmission(const CBlockHeader& block, CValidationState& state,
+                                const Consensus::Params& consensusParams)
+{
+    if (bNetwork.fSHA256Mining || block.nTime < nKAWPOWActivationTime) return true;
+    LOCK(cs_main);
+    const auto previous = mapBlockIndex.find(block.hashPrevBlock);
+    if (previous != mapBlockIndex.end()) {
+        const int64_t height = int64_t(previous->second->nHeight) + 1;
+        if (!ethash::is_valid_block_number(block.nHeight) ||
+            int64_t(block.nHeight) > height + ETHASH_EPOCH_LENGTH) {
+            return state.DoS(100, false, REJECT_INVALID, "bad-kawpow-height-range");
+        }
+        if (!CheckKAWPOWHeaderHeight(block, height, consensusParams))
+            return state.DoS(100, false, REJECT_INVALID, "bad-blk-height");
+        return true;
+    }
+    // Without a parent this is temporary resource admission, not proof of
+    // consensus invalidity. An advancing header chain can make a retry admissible.
+    const int64_t height = pindexBestHeader ? pindexBestHeader->nHeight : 0;
+    if (!ethash::is_valid_block_number(block.nHeight) ||
+        int64_t(block.nHeight) > height + ETHASH_EPOCH_LENGTH)
+        return state.Error("kawpow-height-unavailable");
+    return true;
+}
+
 static bool CheckBlockHeader(const CBlockHeader& block, CValidationState& state, const Consensus::Params& consensusParams, bool fCheckPOW = true)
 {
+    if (fCheckPOW && !CheckKAWPOWHeaderAdmission(block, state, consensusParams)) return false;
     if (!fCheckPOW) return true;
     // CheckBlock also runs without cs_main. Only the checkpoint lookup needs it;
     // the retained context and hashing are independent of mutable chain state.
@@ -5294,10 +5328,6 @@ static bool AcceptBlockHeader(const CBlockHeader& block, CValidationState& state
             return true;
         }
 
-        if (!CheckBlockHeader(block, state, chainparams.GetConsensus(), fCheckPoW))
-            return error("%s: Consensus::CheckBlockHeader: %s, %s", __func__, hash.ToString(), FormatStateMessage(state));
-        if (checkedPoW) *checkedPoW = fCheckPoW;
-
         // Get prev block index
         CBlockIndex* pindexPrev = nullptr;
         BlockMap::iterator mi = mapBlockIndex.find(block.hashPrevBlock);
@@ -5306,6 +5336,10 @@ static bool AcceptBlockHeader(const CBlockHeader& block, CValidationState& state
         pindexPrev = (*mi).second;
         if (pindexPrev->nStatus & BLOCK_FAILED_MASK)
             return state.DoS(100, error("%s: prev block invalid", __func__), REJECT_INVALID, "bad-prevblk");
+        if (!CheckKAWPOWHeaderAdmission(block, state, chainparams.GetConsensus())) return false;
+        if (!CheckBlockHeader(block, state, chainparams.GetConsensus(), fCheckPoW))
+            return error("%s: Consensus::CheckBlockHeader: %s, %s", __func__, hash.ToString(), FormatStateMessage(state));
+        if (checkedPoW) *checkedPoW = fCheckPoW;
         if (!ContextualCheckBlockHeader(block, state, chainparams, pindexPrev, GetAdjustedTime()))
             return error("%s: Consensus::ContextualCheckBlockHeader: %s, %s", __func__, hash.ToString(), FormatStateMessage(state));
 

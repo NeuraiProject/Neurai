@@ -287,8 +287,8 @@ BOOST_AUTO_TEST_CASE(cheap_prefix_failure_and_false_height_preserve_the_old_chec
     const auto before = GetFullKawpowCheckCount();
     for (const bool false_height : {false, true}) {
         if (false_height) {
-            // Real height two but declared height one: still run the cheap PoW
-            // check, even before contextual height enforcement activates.
+            // This fixture activates equality from genesis. Reject the height
+            // mismatch before either the cheap or the full PoW check.
             headers.front().hashPrevBlock = anchor.index.hash;
             while (CheckProofOfWork(headers.front().GetHash(), headers.front().nBits, GetParams().GetConsensus()))
                 ++headers.front().nNonce64;
@@ -296,7 +296,7 @@ BOOST_AUTO_TEST_CASE(cheap_prefix_failure_and_false_height_preserve_the_old_chec
         }
         CValidationState state;
         BOOST_CHECK(!ProcessHeadersWithParallelPoW(headers, state, GetParams(), nullptr, nullptr));
-        BOOST_CHECK_EQUAL(state.GetRejectReason(), "high-hash");
+        BOOST_CHECK_EQUAL(state.GetRejectReason(), false_height ? "bad-blk-height" : "high-hash");
     }
     BOOST_CHECK_EQUAL(constructions, 0);
     BOOST_CHECK_EQUAL(GetFullKawpowCheckCount(), before);
@@ -324,7 +324,7 @@ BOOST_AUTO_TEST_CASE(false_height_stops_parallel_work_before_later_epochs)
     BOOST_CHECK(invalid.GetHash() == mismatch.GetHash());
     BOOST_REQUIRE(last);
     BOOST_CHECK_EQUAL(last->nHeight, 20);
-    BOOST_CHECK_EQUAL(GetFullKawpowCheckCount() - before, 21U);
+    BOOST_CHECK_EQUAL(GetFullKawpowCheckCount() - before, 20U);
     BOOST_REQUIRE_EQUAL(epochs.size(), 1U);
     BOOST_CHECK_EQUAL(epochs.front(), 0);
     CValidationState serial;

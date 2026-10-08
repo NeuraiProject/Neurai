@@ -11,6 +11,8 @@
 #include "util.h"
 
 #include <crypto/ethash/include/ethash/progpow.hpp>
+#include <new>
+#include <stdexcept>
 #include <crypto/epoch_context_cache.h>
 
 uint256 TaggedHash(const std::string& tag, const std::vector<unsigned char>& msg)
@@ -272,12 +274,16 @@ uint64_t SipHashUint256Extra(uint64_t k0, uint64_t k1, const uint256& val, uint3
 
 uint256 KAWPOWHash(const CBlockHeader& blockHeader, uint256& mix_hash)
 {
+    if (!ethash::is_valid_block_number(blockHeader.nHeight))
+        throw std::out_of_range("KAWPOW height exceeds the context resource limit");
     const auto context = KawpowValidationCache().Get(ethash::get_epoch_number(blockHeader.nHeight));
     return KAWPOWHash(blockHeader, mix_hash, *context);
 }
 
 uint256 KAWPOWHash(const CBlockHeader& blockHeader, uint256& mix_hash, const ethash::epoch_context& context)
 {
+    if (!ethash::is_valid_block_number(blockHeader.nHeight))
+        throw std::out_of_range("KAWPOW height exceeds the context resource limit");
     assert(context.epoch_number == ethash::get_epoch_number(blockHeader.nHeight));
 
     // Build the header_hash
