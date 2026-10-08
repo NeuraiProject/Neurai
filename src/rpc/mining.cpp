@@ -801,18 +801,32 @@ public:
     }
 };
 
+// GPU miners may include the documented 0x prefix, but not signs, whitespace
+// or more than 64 bits of hex digits (even if the extra digits are zero).
+static bool ParseKawpowNonce(const std::string& text, uint64_t& nonce)
+{
+    const size_t start = text.size() >= 2 && text[0] == '0' &&
+        (text[1] == 'x' || text[1] == 'X') ? 2 : 0;
+    const size_t digits = text.size() - start;
+    if (digits == 0 || digits > 16) return false;
+    for (size_t i = start; i < text.size(); ++i) {
+        if (HexDigit(text[i]) < 0) return false;
+    }
+    return ParseUInt64(text, &nonce, 16);
+}
+
 static UniValue getkawpowhash(const JSONRPCRequest& request) {
-    if (request.fHelp || request.params.size() < 4) {
+    if (request.fHelp || request.params.size() < 4 || request.params.size() > 5) {
         throw std::runtime_error(
                 "getkawpowhash \"header_hash\" \"mix_hash\" nonce, height, \"target\"\n"
                 "\nGet the kawpow hash for a block given its block data\n"
 
                 "\nArguments\n"
-                "1. \"header_hash\"        (string, required) the prow_pow header hash that was given to the gpu miner from this rpc client\n"
-                "2. \"mix_hash\"           (string, required) the mix hash that was mined by the gpu miner via rpc\n"
-                "3. \"nonce\"              (string, required) the hex nonce of the block that hashed the valid block\n"
+                "1. \"header_hash\"        (string, required) the header hash given to the GPU miner (exactly 64 hex digits)\n"
+                "2. \"mix_hash\"           (string, required) the mix hash mined by the GPU miner (exactly 64 hex digits)\n"
+                "3. \"nonce\"              (string, required) 1 to 16 hex digits, optionally prefixed with 0x\n"
                 "4. \"height\"             (number, required) the height of the block data that is being hashed\n"
-                "5. \"target\"             (string, optional) the target of the block that is hash is trying to meet\n"
+                "5. \"target\"             (string, optional) the target to meet (exactly 64 hex digits)\n"
                 "\nResult:\n"
                 "\nExamples:\n"
                 + HelpExampleCli("getkawpowhash", "\"header_hash\" \"mix_hash\" \"0x100000\" 2456")
@@ -820,28 +834,26 @@ static UniValue getkawpowhash(const JSONRPCRequest& request) {
         );
     }
 
-    std::string str_header_hash = request.params[0].get_str();
-    std::string mix_hash = request.params[1].get_str();
-    std::string hex_nonce = request.params[2].get_str();
-    uint32_t nHeight = request.params[3].get_uint();
+    RPCTypeCheck(request.params, {UniValue::VSTR, UniValue::VSTR, UniValue::VSTR,
+                                 UniValue::VNUM, UniValue::VSTR});
+    // ParseHashV validates length and digits. GetHex preserves display order;
+    // copying the uint256's internal bytes would reverse the ethash header.
+    const auto header_hash = to_hash256(ParseHashV(request.params[0], "header_hash").GetHex());
+    const uint256 mix_hash = ParseHashV(request.params[1], "mix_hash");
+    const bool fCheckTarget = request.params.size() == 5;
+    const uint256 target = fCheckTarget ? ParseHashV(request.params[4], "target") : uint256();
 
     uint64_t nNonce;
-    if (!ParseUInt64(hex_nonce, &nNonce, 16))
+    if (!ParseKawpowNonce(request.params[2].get_str(), nNonce))
         throw JSONRPCError(RPC_INVALID_PARAMS, "Invalid nonce hex string");
+    uint32_t nHeight;
+    if (!ParseUInt32(request.params[3].getValStr(), &nHeight))
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "height must be an unsigned 32-bit integer");
 
     {
         LOCK(cs_main);
         if (!ethash::is_valid_block_number(nHeight) || int64_t(nHeight) > int64_t(chainActive.Height()) + 10)
             throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Block height is too large");
-    }
-
-    const auto header_hash = to_hash256(str_header_hash);
-
-    uint256 target;
-    bool fCheckTarget = false;
-    if (request.params.size() == 5) {
-        target = uint256S(request.params[4].get_str());
-        fCheckTarget = true;
     }
 
     EpochContextCache::Context context;
@@ -860,7 +872,7 @@ static UniValue getkawpowhash(const JSONRPCRequest& request) {
     bool mix_hash_match = false;
     bool final_hash_meets_target = false;
 
-    if (mined_mix_hash == uint256S(mix_hash))
+    if (mined_mix_hash == mix_hash)
         mix_hash_match = true;
 
     if (fCheckTarget) {
@@ -889,22 +901,22 @@ static UniValue pprpcsb(const JSONRPCRequest& request) {
                 "\nAttempts to submit new block to network mined by kawpow gpu miner via rpc.\n"
 
                 "\nArguments\n"
-                "1. \"header_hash\"        (string, required) the prow_pow header hash that was given to the gpu miner from this rpc client\n"
-                "2. \"mix_hash\"           (string, required) the mix hash that was mined by the gpu miner via rpc\n"
-                "3. \"nonce\"              (string, required) the nonce of the block that hashed the valid block\n"
+                "1. \"header_hash\"        (string, required) the header hash given to the GPU miner (exactly 64 hex digits)\n"
+                "2. \"mix_hash\"           (string, required) the mix hash mined by the GPU miner (exactly 64 hex digits)\n"
+                "3. \"nonce\"              (string, required) 1 to 16 hex digits, optionally prefixed with 0x\n"
                 "\nResult:\n"
                 "\nExamples:\n"
-                + HelpExampleCli("pprpcsb", "\"header_hash\" \"mix_hash\" 100000")
-                + HelpExampleRpc("pprpcsb", "\"header_hash\" \"mix_hash\" 100000")
+                + HelpExampleCli("pprpcsb", "\"header_hash\" \"mix_hash\" \"0x100000\"")
+                + HelpExampleRpc("pprpcsb", "\"header_hash\" \"mix_hash\" \"0x100000\"")
         );
     }
 
-    std::string header_hash = request.params[0].get_str();
-    std::string mix_hash = request.params[1].get_str();
-    std::string str_nonce = request.params[2].get_str();
+    RPCTypeCheck(request.params, {UniValue::VSTR, UniValue::VSTR, UniValue::VSTR});
+    const std::string header_hash = ParseHashV(request.params[0], "header_hash").GetHex();
+    const uint256 mix_hash = ParseHashV(request.params[1], "mix_hash");
 
     uint64_t nonce;
-    if (!ParseUInt64(str_nonce, &nonce, 16))
+    if (!ParseKawpowNonce(request.params[2].get_str(), nonce))
         throw JSONRPCError(RPC_INVALID_PARAMS, "Invalid hex nonce");
 
     std::shared_ptr<CBlock> blockptr;
@@ -915,7 +927,7 @@ static UniValue pprpcsb(const JSONRPCRequest& request) {
     // Hash and validate outside cs_main; template refreshes cannot alter this copy.
 
     blockptr->nNonce64 = nonce;
-    blockptr->mix_hash = uint256S(mix_hash);
+    blockptr->mix_hash = mix_hash;
 
     if (blockptr->vtx.empty() || !blockptr->vtx[0]->IsCoinBase()) {
         throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Block does not start with a coinbase");
@@ -1333,7 +1345,7 @@ static const CRPCCommand commands[] =
     { "mining",             "getblocktemplate",       &getblocktemplate,       {"template_request"} },
     { "mining",             "submitblock",            &submitblock,            {"hexdata","dummy"} },
     { "mining",             "pprpcsb",                &pprpcsb,                {"header_hash","mix_hash", "nonce"} },
-    { "mining",             "getkawpowhash",          &getkawpowhash,          {"header_hash", "mix_hash", "nonce", "height"} },
+    { "mining",             "getkawpowhash",          &getkawpowhash,          {"header_hash", "mix_hash", "nonce", "height", "target"} },
 
     /* Coin generation */
     { "generating",         "getgenerate",            &getgenerate,            {}  },
