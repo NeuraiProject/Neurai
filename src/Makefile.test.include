@@ -126,6 +126,7 @@ NEURAI_TESTS =\
   test/header_anchors_tests.cpp \
   test/header_anchor_data_tests.cpp \
   test/header_verification_tests.cpp \
+  test/block_import_tests.cpp \
   test/raii_event_tests.cpp \
   test/random_tests.cpp \
   test/reverselock_tests.cpp \

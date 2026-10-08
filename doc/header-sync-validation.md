@@ -106,6 +106,8 @@ preserved in `/home/docker-test/header-sync-20261007` on the authorized Docker
 host and `tmp/header-sync-independent-20261007` locally. Runtime data is ignored
 by Git and must be retained separately if the review is moved elsewhere.
 
-The optional phase 3 (`-reindex`/`-loadblock`) is not implemented. It requires a
-separate change and complete before/after reindex measurements; these pruned
-header-synchronization trials do not establish its end-to-end benefit.
+Phase 3 (`-reindex`/`-loadblock`) is a separate change based on the completed
+phases above. Its implementation, tests and complete before/after reindex
+measurements are recorded in [reindex-validation.md](reindex-validation.md).
+These pruned header-synchronization trials do not establish its end-to-end
+benefit.

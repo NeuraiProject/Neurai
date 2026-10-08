@@ -5262,9 +5262,12 @@ static bool ContextualCheckBlock(const CBlock& block, CValidationState& state, c
     return true;
 }
 
-static bool AcceptBlockHeader(const CBlockHeader& block, CValidationState& state, const CChainParams& chainparams, CBlockIndex** ppindex, bool fCheckPoW = true)
+static bool AcceptBlockHeader(const CBlockHeader& block, CValidationState& state, const CChainParams& chainparams, CBlockIndex** ppindex, bool fCheckPoW = true, bool* checkedPoW = nullptr)
 {
     AssertLockHeld(cs_main);
+    // Only attest to a check performed in this call. A known header may have
+    // entered the index through an anchor, and genesis bypasses this check.
+    if (checkedPoW) *checkedPoW = false;
     // Check for duplicate
     uint256 hash = block.GetHash();
     BlockMap::iterator miSelf = mapBlockIndex.find(hash);
@@ -5283,6 +5286,7 @@ static bool AcceptBlockHeader(const CBlockHeader& block, CValidationState& state
 
         if (!CheckBlockHeader(block, state, chainparams.GetConsensus(), fCheckPoW))
             return error("%s: Consensus::CheckBlockHeader: %s, %s", __func__, hash.ToString(), FormatStateMessage(state));
+        if (checkedPoW) *checkedPoW = fCheckPoW;
 
         // Get prev block index
         CBlockIndex* pindexPrev = nullptr;
@@ -5362,7 +5366,8 @@ static bool AcceptBlock(const std::shared_ptr<const CBlock>& pblock, CValidation
     CBlockIndex *pindexDummy = nullptr;
     CBlockIndex *&pindex = ppindex ? *ppindex : pindexDummy;
 
-    if (!AcceptBlockHeader(block, state, chainparams, &pindex))
+    bool checkedHeaderPoW = false;
+    if (!AcceptBlockHeader(block, state, chainparams, &pindex, true, &checkedHeaderPoW))
         return false;
 
     CStrictAuthScriptContext strictAuthScriptContext(chainparams.GetConsensus().IsStrictAuthScriptActive(pindex->nHeight));
@@ -5401,8 +5406,14 @@ static bool AcceptBlock(const std::shared_ptr<const CBlock>& pblock, CValidation
     if (fNewBlock) *fNewBlock = true;
 
     auto currentActiveAssetCache = GetCurrentAssetCache();
+    // cs_main has remained held since AcceptBlockHeader. Reuse only its fresh
+    // PoW check, never acceptance of an already-known (possibly anchored) header.
+    const bool checkedBlock = CheckBlock(block, state, chainparams.GetConsensus(), !checkedHeaderPoW, true);
+    // CheckBlock deliberately does not set fChecked when fCheckPOW is false.
+    // Here both the header and the remaining checks have succeeded, as before.
+    if (checkedBlock && checkedHeaderPoW) block.fChecked = true;
     // Dont force the CheckBlock asset duplciates when checking from this state
-    if (!CheckBlock(block, state, chainparams.GetConsensus(), true, true) ||
+    if (!checkedBlock ||
         !ContextualCheckBlock(block, state, chainparams.GetConsensus(), pindex->pprev, currentActiveAssetCache)) {
         if (fFromLoad && state.GetRejectReason() == "bad-txns-transfer-asset-bad-deserialize") {
             // keep going, we are only loading blocks from database
