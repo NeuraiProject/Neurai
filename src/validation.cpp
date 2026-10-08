@@ -4005,21 +4005,226 @@ bool CheckKAWPOWHeaderAdmission(const CBlockHeader& block, CValidationState& sta
     return true;
 }
 
+bool CheckBlockHeaderPoWFull(const CBlockHeader& block, CValidationState& state,
+                           const Consensus::Params& params)
+{
+    if (!ethash::is_valid_block_number(block.nHeight))
+        return state.DoS(100, false, REJECT_INVALID, "bad-kawpow-height-range");
+    uint256 mix;
+    uint256 hash;
+    try { hash = block.GetHashFull(mix); }
+    catch (const std::bad_alloc&) { return state.Error("KAWPOW context unavailable"); }
+    if (!CheckProofOfWork(hash, block.nBits, params))
+        return state.DoS(50, false, REJECT_INVALID, "high-hash", false, "proof of work failed");
+    if (mix != block.mix_hash)
+        return state.DoS(50, false, REJECT_INVALID, "invalid-mix-hash", false, "mix_hash validity failed");
+    return true;
+}
+
+// Pending failures are collected before chainstate is available. Nothing is
+// marked invalid until recovery can disconnect the active chain safely.
+static std::vector<CBlockIndex*> pendingPoWFailures;
+
+static CBlockIndex* LastPoWCheckpoint(const CChainParams& params)
+{
+    AssertLockHeld(cs_main);
+    for (auto it = params.Checkpoints().mapCheckpoints.rbegin();
+         it != params.Checkpoints().mapCheckpoints.rend(); ++it) {
+        const auto found = mapBlockIndex.find(it->second);
+        if (found != mapBlockIndex.end() && found->second->nHeight == it->first &&
+            !(found->second->nStatus & BLOCK_FAILED_MASK)) return found->second;
+    }
+    return nullptr;
+}
+
+static CBlockIndex* LastPoWAnchor(const CChainParams& params)
+{
+    AssertLockHeld(cs_main);
+    CBlockIndex* anchor = LastPoWCheckpoint(params);
+    return anchor;
+}
+
+static bool IsPoWAncestor(const CBlockIndex* index, const CBlockIndex* anchor)
+{
+    return anchor && index->nHeight <= anchor->nHeight &&
+           anchor->GetAncestor(index->nHeight) == index;
+}
+
+static bool UsesCheckpointPoWShortcut(const CBlockHeader& block)
+{
+    AssertLockHeld(cs_main);
+    if (!fCheckpointsEnabled || block.nTime < nKAWPOWActivationTime) return false;
+    const auto found = mapBlockIndex.find(block.GetHash());
+    return found != mapBlockIndex.end() &&
+           !(found->second->nStatus & BLOCK_FAILED_MASK) &&
+           IsPoWAncestor(found->second, LastPoWAnchor(GetParams()));
+}
+
+static std::vector<CBlockIndex*> BlockIndexesByHeight()
+{
+    std::vector<CBlockIndex*> indexes;
+    indexes.reserve(mapBlockIndex.size());
+    for (const auto& entry : mapBlockIndex) indexes.push_back(entry.second);
+    std::sort(indexes.begin(), indexes.end(), [](const CBlockIndex* a, const CBlockIndex* b) {
+        return a->nHeight < b->nHeight;
+    });
+    return indexes;
+}
+
+static bool RevalidateBlockIndexPoW(const CChainParams& params, CValidationState& state)
+{
+    AssertLockHeld(cs_main);
+    pendingPoWFailures.clear();
+    const auto& checkpoints = params.Checkpoints().mapCheckpoints;
+    if (checkpoints.empty()) return true;
+    const auto checkpoint = LastPoWCheckpoint(params);
+    const auto anchor = LastPoWAnchor(params);
+    const auto started = GetTimeMillis();
+    size_t checked = 0;
+    std::set<CBlockIndex*> failed;
+    for (auto index : BlockIndexesByHeight()) {
+        boost::this_thread::interruption_point();
+        if (index->pprev && failed.count(index->pprev)) {
+            failed.insert(index);
+            continue;
+        }
+        // The old shortcut required a checkpoint already present in the index.
+        // Do not repeat PoW above that checkpoint on every partial-IBD restart.
+        // Without one, audit siblings at the configured checkpoint heights.
+        const bool eligible = checkpoint ? index->nHeight <= checkpoint->nHeight :
+                                           checkpoints.count(index->nHeight) != 0;
+        if ((index->nStatus & BLOCK_FAILED_MASK) || !eligible ||
+            index->nTime < nKAWPOWActivationTime || IsPoWAncestor(index, anchor)) continue;
+        CValidationState checkedState;
+        ++checked;
+        const auto header = index->GetBlockHeader();
+        if (!CheckKAWPOWHeaderAdmission(header, checkedState, params.GetConsensus()) ||
+            !CheckBlockHeaderPoWFull(header, checkedState, params.GetConsensus())) {
+            if (checkedState.IsError()) {
+                pendingPoWFailures.clear();
+                pindexBestHeader = nullptr;
+                setBlockIndexCandidates.clear();
+                return state.Error("Cannot revalidate block index PoW: " + checkedState.GetRejectReason() +
+                                   ". Free memory and restart; the index has not been invalidated.");
+            }
+            failed.insert(index);
+            pendingPoWFailures.push_back(index);
+        }
+    }
+    LogPrintf("Block index PoW audit: checked=%u invalid_roots=%u descendants=%u elapsed_ms=%d\n",
+              checked, pendingPoWFailures.size(), failed.size() - pendingPoWFailures.size(),
+              GetTimeMillis() - started);
+    return true;
+}
+
+static bool IsDefinitivePoWFailure(const CValidationState& state)
+{
+    return state.IsInvalid() && !state.CorruptionPossible() &&
+           (state.GetRejectReason() == "high-hash" || state.GetRejectReason() == "invalid-mix-hash");
+}
+
+static bool RecoverPoWFailures(const CChainParams& params,
+                               const std::vector<CBlockIndex*>& roots, CValidationState& state)
+{
+    AssertLockHeld(cs_main);
+    if (roots.empty()) return true;
+    CBlockIndex* first = nullptr;
+    for (auto index : roots)
+        if (chainActive.Contains(index) && (!first || index->nHeight < first->nHeight)) first = index;
+    const std::string recoveryError =
+        "Cannot rewind an invalid PoW chain: block/undo data unavailable or inconsistent. "
+        "Restore the data and restart, or use -reindex (redownload the blockchain if pruned).";
+
+    // Preflight the entire suffix BEFORE disconnecting or changing failure flags.
+    // ReadBlockFromDisk checks the stored identity/cheap hash; full PoW cannot be
+    // required here because these are precisely the legacy blocks being removed.
+    for (auto walk = chainActive.Tip(); first && walk->nHeight >= first->nHeight; walk = walk->pprev) {
+        CBlock block;
+        CBlockUndo undo;
+        if (!walk->pprev || !(walk->nStatus & BLOCK_HAVE_DATA) || !(walk->nStatus & BLOCK_HAVE_UNDO) ||
+            !ReadBlockFromDisk(block, walk, params.GetConsensus()) ||
+            !UndoReadFromDisk(undo, walk->GetUndoPos(), walk->pprev->GetBlockHash()))
+            return state.Error(recoveryError);
+    }
+    while (first && chainActive.Height() >= first->nHeight) {
+        if (!DisconnectTip(state, params, nullptr)) return state.Error(recoveryError);
+    }
+    for (auto index : roots) {
+        index->nStatus |= BLOCK_FAILED_VALID;
+        setDirtyBlockIndex.insert(index);
+        g_failed_blocks.insert(index);
+    }
+    pindexBestHeader = nullptr;
+    pindexBestInvalid = nullptr;
+    setBlockIndexCandidates.clear();
+    for (auto index : BlockIndexesByHeight()) {
+        if (index->pprev && (index->pprev->nStatus & BLOCK_FAILED_MASK) &&
+            !(index->nStatus & BLOCK_FAILED_MASK)) {
+            index->nStatus |= BLOCK_FAILED_CHILD;
+            setDirtyBlockIndex.insert(index);
+        }
+        if (index->nStatus & BLOCK_FAILED_MASK) {
+            if (!pindexBestInvalid || index->nChainWork > pindexBestInvalid->nChainWork)
+                pindexBestInvalid = index;
+            continue;
+        }
+        if (index->IsValid(BLOCK_VALID_TREE) &&
+            (!pindexBestHeader || CBlockIndexWorkComparator()(pindexBestHeader, index)))
+            pindexBestHeader = index;
+        if (index->IsValid(BLOCK_VALID_TRANSACTIONS) && (index->nChainTx || !index->pprev) &&
+            (!chainActive.Tip() || !CBlockIndexWorkComparator()(index, chainActive.Tip())))
+            setBlockIndexCandidates.insert(index);
+    }
+    for (auto it = mapBlocksUnlinked.begin(); it != mapBlocksUnlinked.end();) {
+        if (it->second->nStatus & BLOCK_FAILED_MASK) it = mapBlocksUnlinked.erase(it);
+        else ++it;
+    }
+    // Remove transactions made invalid by rewinding; the active suffix is not
+    // re-admitted from a chain whose PoW was never valid.
+    DisconnectedBlockTransactions empty;
+    if (chainActive.Tip()) UpdateMempoolForReorg(empty, false);
+    return FlushStateToDisk(params, state, FLUSH_STATE_ALWAYS);
+}
+
+bool RecoverBlockIndexPoW(const CChainParams& params, CValidationState& state)
+{
+    LOCK(cs_main);
+    if (!RecoverPoWFailures(params, pendingPoWFailures, state)) return false;
+    pendingPoWFailures.clear();
+    return true;
+}
+
+static bool RecoverKnownInvalidPoW(const CBlockHeader& header, const CValidationState& invalid,
+                                  const CChainParams& params)
+{
+    AssertLockHeld(cs_main);
+    if (!IsDefinitivePoWFailure(invalid)) return false;
+    const auto found = mapBlockIndex.find(header.GetHash());
+    if (found == mapBlockIndex.end() || (found->second->nStatus & BLOCK_FAILED_MASK)) return false;
+    CValidationState recovery;
+    if (!RecoverPoWFailures(params, {found->second}, recovery)) {
+        AbortNode(recovery, recovery.GetRejectReason());
+        return false;
+    }
+    return true;
+}
+
 static bool CheckBlockHeader(const CBlockHeader& block, CValidationState& state, const Consensus::Params& consensusParams, bool fCheckPOW = true)
 {
     if (fCheckPOW && !CheckKAWPOWHeaderAdmission(block, state, consensusParams)) return false;
-    // If we are checking a KAWPOW block below a know checkpoint height. We can validate the proof of work using the mix_hash
-    if (fCheckPOW && block.nTime >= nKAWPOWActivationTime) {
+    if (!fCheckPOW) return true;
+    bool shortcut = false;
+    {
         LOCK(cs_main);
-        CBlockIndex* pcheckpoint = Checkpoints::GetLastCheckpoint(GetParams().Checkpoints());
-        if (fCheckPOW && pcheckpoint && block.nHeight <= (uint32_t)pcheckpoint->nHeight) {
-           if (!CheckProofOfWork(block.GetHash(), block.nBits, consensusParams)) {
-               return state.DoS(50, false, REJECT_INVALID, "high-hash", false, "proof of work failed with mix_hash only check");
-           }
-
-           return true;
-        }
+        shortcut = UsesCheckpointPoWShortcut(block);
     }
+    if (shortcut) {
+        if (!CheckProofOfWork(block.GetHash(), block.nBits, consensusParams))
+            return state.DoS(50, false, REJECT_INVALID, "high-hash", false, "proof of work failed");
+        return true;
+    }
+    if (block.nTime >= nKAWPOWActivationTime)
+        return CheckBlockHeaderPoWFull(block, state, consensusParams);
 
     uint256 mix_hash;
     // Check proof of work matches claimed amount
@@ -4502,7 +4707,9 @@ static bool AcceptBlock(const std::shared_ptr<const CBlock>& pblock, CValidation
             CValidationState new_state;
             state = new_state;
         } else {
-            if (state.IsInvalid() && !state.CorruptionPossible()) {
+            if (IsDefinitivePoWFailure(state)) {
+                RecoverKnownInvalidPoW(block, state, chainparams);
+            } else if (state.IsInvalid() && !state.CorruptionPossible()) {
                 pindex->nStatus |= BLOCK_FAILED_VALID;
                 setDirtyBlockIndex.insert(pindex);
             }
@@ -4542,34 +4749,31 @@ static bool AcceptBlock(const std::shared_ptr<const CBlock>& pblock, CValidation
 
 bool ProcessNewBlock(const CChainParams& chainparams, const std::shared_ptr<const CBlock> pblock, bool fForceProcessing, bool *fNewBlock)
 {
+    if (fNewBlock) *fNewBlock = false;
+    CValidationState state;
+    bool ret;
+    bool recovered = false;
     {
-        CBlockIndex *pindex = nullptr;
-        if (fNewBlock) *fNewBlock = false;
-        CValidationState state;
-
-        // Ensure that CheckBlock() passes before calling AcceptBlock, as
-        // belt-and-suspenders.
-        bool ret = CheckBlock(*pblock, state, chainparams.GetConsensus(), true, true);
-
+        ret = CheckBlock(*pblock, state, chainparams.GetConsensus(), true, true);
         LOCK(cs_main);
-
-        if (ret) {
-            // Store to disk
-            ret = AcceptBlock(pblock, state, chainparams, &pindex, fForceProcessing, nullptr, fNewBlock);
-        }
-
+        CBlockIndex* index = nullptr;
+        if (ret) ret = AcceptBlock(pblock, state, chainparams, &index, fForceProcessing, nullptr, fNewBlock);
+        else recovered = RecoverKnownInvalidPoW(*pblock, state, chainparams);
         CheckBlockIndex(chainparams.GetConsensus());
-        if (!ret) {
-            GetMainSignals().BlockChecked(*pblock, state);
-            return error("%s: AcceptBlock FAILED (%s)", __func__, state.GetDebugMessage());
+    }
+    if (!ret) {
+        GetMainSignals().BlockChecked(*pblock, state);
+        if (recovered) {
+            NotifyHeaderTip();
+            CValidationState activation;
+            if (!ActivateBestChain(activation, chainparams)) return false;
         }
+        return error("%s: AcceptBlock FAILED (%s)", __func__, FormatStateMessage(state));
     }
     NotifyHeaderTip();
-
-    CValidationState state; // Only used to report errors, not invalidity - ignore it
-    if (!ActivateBestChain(state, chainparams, pblock))
+    CValidationState activation;
+    if (!ActivateBestChain(activation, chainparams, pblock))
         return error("%s: ActivateBestChain failed", __func__);
-
     return true;
 }
 
@@ -5305,6 +5509,7 @@ bool RewindBlockIndex(const CChainParams& params)
 void UnloadBlockIndex()
 {
     LOCK(cs_main);
+    pendingPoWFailures.clear();
     setBlockIndexCandidates.clear();
     chainActive.SetTip(nullptr);
     pindexBestInvalid = nullptr;
@@ -5329,13 +5534,20 @@ void UnloadBlockIndex()
     fHavePruned = false;
 }
 
-bool LoadBlockIndex(const CChainParams& chainparams)
+bool LoadBlockIndex(const CChainParams& chainparams, std::string* powError)
 {
+    LOCK(cs_main);
+    if (powError) powError->clear();
     // Load block index from databases
     bool needs_init = fReindex;
     if (!fReindex) {
         bool ret = LoadBlockIndexDB(chainparams);
         if (!ret) return false;
+        CValidationState powState;
+        if (!RevalidateBlockIndexPoW(chainparams, powState)) {
+            if (powError) *powError = powState.GetRejectReason();
+            return false;
+        }
         needs_init = mapBlockIndex.empty();
     }
 

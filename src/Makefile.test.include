@@ -74,6 +74,7 @@ NEURAI_TESTS =\
   test/prevector_tests.cpp \
   test/kawpow_tests.cpp \
   test/kawpow_admission_tests.cpp \
+  test/kawpow_index_tests.cpp \
   test/raii_event_tests.cpp \
   test/random_tests.cpp \
   test/reverselock_tests.cpp \

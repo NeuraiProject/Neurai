@@ -298,7 +298,12 @@ bool LoadExternalBlockFile(const CChainParams& chainparams, FILE* fileIn, CDiskB
 bool LoadGenesisBlock(const CChainParams& chainparams);
 /** Load the block tree and coins database from disk,
  * initializing state if we're running with -reindex. */
-bool LoadBlockIndex(const CChainParams& chainparams);
+bool LoadBlockIndex(const CChainParams& chainparams, std::string* powError = nullptr);
+/** Apply the load-time PoW audit after LoadChainTip, before RewindBlockIndex.
+ * Missing rewind data is a recoverable startup error and leaves failure flags alone. */
+bool CheckBlockHeaderPoWFull(const CBlockHeader& header, CValidationState& state,
+                           const Consensus::Params& params);
+bool RecoverBlockIndexPoW(const CChainParams& chainparams, CValidationState& state);
 /** Update the chain tip based on database information. */
 bool LoadChainTip(const CChainParams& chainparams);
 /** Unload database information */

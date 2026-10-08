@@ -1649,7 +1649,9 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
                 // ever removed a block file from disk.
                 // Note that it also sets fReindex based on the disk flag!
                 // From here on out fReindex and fReset mean something different!
-                if (!LoadBlockIndex(chainparams)) {
+                std::string powLoadError;
+                if (!LoadBlockIndex(chainparams, &powLoadError)) {
+                    if (!powLoadError.empty()) return InitError(powLoadError);
                     strLoadError = _("Error loading block database");
                     break;
                 }
@@ -1751,6 +1753,10 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
                     }
                     assert(chainActive.Tip() != nullptr);
                 }
+
+                CValidationState powRecovery;
+                if (!RecoverBlockIndexPoW(chainparams, powRecovery))
+                    return InitError(powRecovery.GetRejectReason());
 
                 if (!fReset) {
                     // Note that RewindBlockIndex MUST run even if we're about to -reindex-chainstate.

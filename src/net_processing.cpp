@@ -2515,7 +2515,9 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
                 }
                 std::vector<CTransactionRef> dummy;
                 status = tempBlock.FillBlock(*pblock, dummy);
-                if (status == READ_STATUS_OK) {
+                // Legacy indexed headers may still fail full PoW. Route that
+                // result through ProcessNewBlock so their index is invalidated.
+                if (status == READ_STATUS_OK || status == READ_STATUS_CHECKBLOCK_FAILED) {
                     fBlockReconstructed = true;
                 }
             }
