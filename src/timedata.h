@@ -7,14 +7,15 @@
 #ifndef NEURAI_TIMEDATA_H
 #define NEURAI_TIMEDATA_H
 
+#include "netaddress.h"
+
 #include <algorithm>
 #include <assert.h>
 #include <stdint.h>
+#include <set>
 #include <vector>
 
-static const int64_t DEFAULT_MAX_TIME_ADJUSTMENT = 70 * 60;
-
-class CNetAddr;
+static const int64_t DEFAULT_MAX_TIME_ADJUSTMENT = 5 * 60;
 
 /** 
  * Median filter over a stream of values.
@@ -71,6 +72,24 @@ public:
         return vSorted;
     }
 };
+
+/** Peer time samples. Callers must serialize access to an instance. */
+class TimeOffsetData
+{
+    static constexpr unsigned int MAX_SAMPLES = 200;
+    std::set<CNetAddr> m_known;
+    CMedianFilter<int64_t> m_samples{MAX_SAMPLES, 0};
+    int64_t m_offset{0};
+    bool m_warned{false};
+
+public:
+    int64_t Offset() const { return m_offset; }
+    /** Return true once if the caller should warn about the local clock. */
+    bool AddSample(const CNetAddr& ip, int64_t sample, int64_t max_adjustment);
+};
+
+/** Subtract peer and local timestamps, saturating unrepresentable differences. */
+int64_t GetTimeOffsetSample(int64_t peer_time, int64_t local_time);
 
 /** Functions to keep track of adjusted P2P time */
 int64_t GetTimeOffset();

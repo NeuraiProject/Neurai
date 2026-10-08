@@ -185,3 +185,20 @@ Use the `-v` option for verbose output.
 You are encouraged to write functional tests for new or existing features.
 Further information about the functional test framework and individual 
 tests is found in [test/functional](/test/functional).
+
+## Standalone peer clock policy tests
+
+The clock-policy regression script uses only Python's standard library and runs
+isolated nodes with simulated inbound and outbound peers on loopback. Run one
+invocation at a time, using a fresh data directory:
+
+```sh
+python3 test/functional/standalone/p2p_timeadjustment.py --neuraid src/neuraid --network main --tmpdir /tmp/neurai-clock-main
+python3 test/functional/standalone/p2p_timeadjustment.py --neuraid src/neuraid --network test --tmpdir /tmp/neurai-clock-test
+```
+
+It checks default and custom adjustment limits, disabled adjustment, duplicate
+addresses, inbound exclusion, extreme timestamps and mining-template time.
+It does not connect to external peers. This standalone mainnet/testnet test is
+separate from the legacy regtest runner. Its unit counterpart, `timedata_tests`,
+is included in `make check`.

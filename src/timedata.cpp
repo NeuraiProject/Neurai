@@ -17,9 +17,11 @@
 #include "utilstrencodings.h"
 #include "warnings.h"
 
+#include <limits>
+
 
 static CCriticalSection cs_nTimeOffset;
-static int64_t nTimeOffset = 0;
+static TimeOffsetData g_time_data GUARDED_BY(cs_nTimeOffset);
 
 /**
  * "Never go to sea with two chronometers; take one or three."
@@ -31,7 +33,7 @@ static int64_t nTimeOffset = 0;
 int64_t GetTimeOffset()
 {
     LOCK(cs_nTimeOffset);
-    return nTimeOffset;
+    return g_time_data.Offset();
 }
 
 int64_t GetAdjustedTime()
@@ -39,36 +41,36 @@ int64_t GetAdjustedTime()
     return GetTime() + GetTimeOffset();
 }
 
-static int64_t abs64(int64_t n)
+int64_t GetTimeOffsetSample(int64_t peer_time, int64_t local_time)
 {
-    return (n >= 0 ? n : -n);
+    if (local_time > 0 && peer_time < std::numeric_limits<int64_t>::min() + local_time)
+        return std::numeric_limits<int64_t>::min();
+    if (local_time < 0 && peer_time > std::numeric_limits<int64_t>::max() + local_time)
+        return std::numeric_limits<int64_t>::max();
+    return peer_time - local_time;
 }
 
-#define NEURAI_TIMEDATA_MAX_SAMPLES 200
-
-void AddTimeData(const CNetAddr& ip, int64_t nOffsetSample)
+bool TimeOffsetData::AddSample(const CNetAddr& ip, int64_t nOffsetSample, int64_t max_adjustment)
 {
-    LOCK(cs_nTimeOffset);
+    bool warn = false;
     // Ignore duplicates
-    static std::set<CNetAddr> setKnown;
-    if (setKnown.size() == NEURAI_TIMEDATA_MAX_SAMPLES)
-        return;
-    if (!setKnown.insert(ip).second)
-        return;
+    if (m_known.size() == MAX_SAMPLES)
+        return false;
+    if (!m_known.insert(ip).second)
+        return false;
 
     // Add data
-    static CMedianFilter<int64_t> vTimeOffsets(NEURAI_TIMEDATA_MAX_SAMPLES, 0);
-    vTimeOffsets.input(nOffsetSample);
-    LogPrint(BCLog::NET,"added time data, samples %d, offset %+d (%+d minutes)\n", vTimeOffsets.size(), nOffsetSample, nOffsetSample/60);
+    m_samples.input(nOffsetSample);
+    LogPrint(BCLog::NET,"added time data, samples %d, offset %+d (%+d minutes)\n", m_samples.size(), nOffsetSample, nOffsetSample/60);
 
     // There is a known issue here (see issue #4521):
     //
-    // - The structure vTimeOffsets contains up to 200 elements, after which
+    // - The structure m_samples contains up to 200 elements, after which
     // any new element added to it will not increase its size, replacing the
     // oldest element.
     //
-    // - The condition to update nTimeOffset includes checking whether the
-    // number of elements in vTimeOffsets is odd, which will never happen after
+    // - The condition to update m_offset includes checking whether the
+    // number of elements in m_samples is odd, which will never happen after
     // there are 200 elements.
     //
     // But in this case the 'bug' is protective against some attacks, and may
@@ -78,34 +80,32 @@ void AddTimeData(const CNetAddr& ip, int64_t nOffsetSample)
     // So we should hold off on fixing this and clean it up as part of
     // a timing cleanup that strengthens it in a number of other ways.
     //
-    if (vTimeOffsets.size() >= 5 && vTimeOffsets.size() % 2 == 1)
+    if (m_samples.size() >= 5 && m_samples.size() % 2 == 1)
     {
-        int64_t nMedian = vTimeOffsets.median();
-        std::vector<int64_t> vSorted = vTimeOffsets.sorted();
+        int64_t nMedian = m_samples.median();
+        std::vector<int64_t> vSorted = m_samples.sorted();
         // Only let other nodes change our time by so much
-        if (abs64(nMedian) <= std::max<int64_t>(0, gArgs.GetArg("-maxtimeadjustment", DEFAULT_MAX_TIME_ADJUSTMENT)))
+        const int64_t limit = std::max<int64_t>(0, max_adjustment);
+        if (nMedian >= -limit && nMedian <= limit)
         {
-            nTimeOffset = nMedian;
+            m_offset = nMedian;
         }
         else
         {
-            nTimeOffset = 0;
+            m_offset = 0;
 
-            static bool fDone;
-            if (!fDone)
+            if (!m_warned)
             {
                 // If nobody has a time different than ours but within 5 minutes of ours, give a warning
                 bool fMatch = false;
                 for (int64_t nOffset : vSorted)
-                    if (nOffset != 0 && abs64(nOffset) < 5 * 60)
+                    if (nOffset != 0 && nOffset > -5 * 60 && nOffset < 5 * 60)
                         fMatch = true;
 
                 if (!fMatch)
                 {
-                    fDone = true;
-                    std::string strMessage = strprintf(_("Please check that your computer's date and time are correct! If your clock is wrong, %s will not work properly."), _(PACKAGE_NAME));
-                    SetMiscWarning(strMessage);
-                    uiInterface.ThreadSafeMessageBox(strMessage, "", CClientUIInterface::MSG_WARNING);
+                    m_warned = true;
+                    warn = true;
                 }
             }
         }
@@ -116,7 +116,18 @@ void AddTimeData(const CNetAddr& ip, int64_t nOffsetSample)
             }
             LogPrint(BCLog::NET, "|  ");
 
-            LogPrint(BCLog::NET, "nTimeOffset = %+d  (%+d minutes)\n", nTimeOffset, nTimeOffset/60);
+            LogPrint(BCLog::NET, "nTimeOffset = %+d  (%+d minutes)\n", m_offset, m_offset/60);
         }
+    }
+    return warn;
+}
+
+void AddTimeData(const CNetAddr& ip, int64_t sample)
+{
+    LOCK(cs_nTimeOffset);
+    if (g_time_data.AddSample(ip, sample, gArgs.GetArg("-maxtimeadjustment", DEFAULT_MAX_TIME_ADJUSTMENT))) {
+        const std::string message = strprintf(_("Please check that your computer's date and time are correct! If your clock is wrong, %s will not work properly."), _(PACKAGE_NAME));
+        SetMiscWarning(message);
+        uiInterface.ThreadSafeMessageBox(message, "", CClientUIInterface::MSG_WARNING);
     }
 }
