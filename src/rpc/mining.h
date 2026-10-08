@@ -11,6 +11,9 @@
 
 #include <univalue.h>
 
+// Retain recent work on the current tip without unbounded block storage.
+static constexpr size_t MAX_KAWPOW_BLOCK_TEMPLATES = 16;
+
 static const bool DEFAULT_GENERATE = false;
 static const int DEFAULT_GENERATE_THREADS = 1;
 

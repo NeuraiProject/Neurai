@@ -347,6 +347,8 @@ crypto_libneurai_crypto_a_SOURCES = \
   crypto/sha256.h \
   crypto/sha512.h \
   crypto/sha512.cpp \
+  crypto/epoch_context_cache.cpp \
+  crypto/epoch_context_cache.h \
   crypto/ethash/include/ethash/ethash.h \
   crypto/ethash/include/ethash/ethash.hpp \
   crypto/ethash/include/ethash/hash_types.h \
