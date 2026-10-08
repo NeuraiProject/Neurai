@@ -11,6 +11,7 @@
 #include "util.h"
 
 #include <crypto/ethash/include/ethash/progpow.hpp>
+#include <crypto/epoch_context_cache.h>
 
 uint256 TaggedHash(const std::string& tag, const std::vector<unsigned char>& msg)
 {
@@ -271,20 +272,20 @@ uint64_t SipHashUint256Extra(uint64_t k0, uint64_t k1, const uint256& val, uint3
 
 uint256 KAWPOWHash(const CBlockHeader& blockHeader, uint256& mix_hash)
 {
-    static ethash::epoch_context_ptr context{nullptr, nullptr};
+    const auto context = KawpowValidationCache().Get(ethash::get_epoch_number(blockHeader.nHeight));
+    return KAWPOWHash(blockHeader, mix_hash, *context);
+}
 
-    // Get the context from the block height
-    const auto epoch_number = ethash::get_epoch_number(blockHeader.nHeight);
-
-    if (!context || context->epoch_number != epoch_number)
-        context = ethash::create_epoch_context(epoch_number);
+uint256 KAWPOWHash(const CBlockHeader& blockHeader, uint256& mix_hash, const ethash::epoch_context& context)
+{
+    assert(context.epoch_number == ethash::get_epoch_number(blockHeader.nHeight));
 
     // Build the header_hash
     uint256 nHeaderHash = blockHeader.GetKAWPOWHeaderHash();
     const auto header_hash = to_hash256(nHeaderHash.GetHex());
 
     // ProgPow hash
-    const auto result = progpow::hash(*context, blockHeader.nHeight, header_hash, blockHeader.nNonce64);
+    const auto result = progpow::hash(context, blockHeader.nHeight, header_hash, blockHeader.nNonce64);
 
     mix_hash = uint256S(to_hex(result.mix_hash));
     return uint256S(to_hex(result.final_hash));
@@ -302,6 +303,5 @@ uint256 KAWPOWHash_OnlyMix(const CBlockHeader& blockHeader)
 
     return uint256S(to_hex(result));
 }
-
 
 

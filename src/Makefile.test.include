@@ -120,6 +120,12 @@ NEURAI_TESTS =\
   test/pow_tests.cpp \
   test/prevector_tests.cpp \
   test/kawpow_tests.cpp \
+  test/epoch_context_cache_tests.cpp \
+  test/epoch_context_cache_test_access.h \
+  test/epoch_context_integration_tests.cpp \
+  test/header_anchors_tests.cpp \
+  test/header_anchor_data_tests.cpp \
+  test/header_verification_tests.cpp \
   test/raii_event_tests.cpp \
   test/random_tests.cpp \
   test/reverselock_tests.cpp \

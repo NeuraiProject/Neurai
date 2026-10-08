@@ -84,6 +84,7 @@ public:
     int ExtCoinType() const { return nExtCoinType; }
     const std::vector<SeedSpec6>& FixedSeeds() const { return vFixedSeeds; }
     const CCheckpointData& Checkpoints() const { return checkpointData; }
+    const std::vector<uint256>& HeaderAnchors() const { return headerAnchors; }
     const ChainTxData& TxData() const { return chainTxData; }
     void UpdateVersionBitsParameters(Consensus::DeploymentPos d, int64_t nStartTime, int64_t nTimeout);
     void UpdateAssetMarkerNip040Height(int nHeight);
@@ -199,6 +200,7 @@ protected:
     bool fMineBlocksOnDemand;
     bool fMiningRequiresPeers;
     CCheckpointData checkpointData;
+    std::vector<uint256> headerAnchors;
     ChainTxData chainTxData;
 
     /** XNA Start **/

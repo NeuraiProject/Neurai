@@ -6,6 +6,7 @@
 
 #include "validation.h"
 #include "crypto/backend_error.h"
+#include <crypto/epoch_context_cache.h>
 
 #include "arith_uint256.h"
 #include "chain.h"
@@ -4827,18 +4828,72 @@ static bool FindUndoPos(CValidationState &state, int nFile, CDiskBlockPos &pos, 
     return true;
 }
 
+static bool UsesCheckpointPoWShortcut(const CBlockHeader& block)
+{
+    AssertLockHeld(cs_main);
+    if (block.nTime < nKAWPOWActivationTime) return false;
+    const CBlockIndex* checkpoint = Checkpoints::GetLastCheckpoint(GetParams().Checkpoints());
+    return checkpoint && block.nHeight <= (uint32_t)checkpoint->nHeight;
+}
+
+bool NeedsFullKAWPOWCheck(const CBlockHeader& block)
+{
+    AssertLockHeld(cs_main);
+    return !bNetwork.fSHA256Mining && block.nTime >= nKAWPOWActivationTime && !UsesCheckpointPoWShortcut(block);
+}
+
+static std::atomic<uint64_t> nFullKawpowChecks{0};
+
+uint64_t GetFullKawpowCheckCount()
+{
+    return nFullKawpowChecks.load(std::memory_order_relaxed);
+}
+
+bool CheckBlockHeaderPoWFull(const CBlockHeader& block, CValidationState& state,
+                           const Consensus::Params& consensusParams, const ethash::epoch_context& context)
+{
+    nFullKawpowChecks.fetch_add(1, std::memory_order_relaxed);
+    uint256 mix_hash;
+    if (!CheckProofOfWork(KAWPOWHash(block, mix_hash, context), block.nBits, consensusParams)) {
+        return state.DoS(50, false, REJECT_INVALID, "high-hash", false, "proof of work failed");
+    }
+    if (mix_hash != block.mix_hash) {
+        return state.DoS(50, false, REJECT_INVALID, "invalid-mix-hash", false, "mix_hash validity failed");
+    }
+    return true;
+}
+
+bool CheckBlockHeaderPoWFull(const CBlockHeader& block, CValidationState& state,
+                           const Consensus::Params& consensusParams)
+{
+    EpochContextCache::Context context;
+    try {
+        context = KawpowValidationCache().Get(ethash::get_epoch_number(block.nHeight));
+    } catch (const std::exception& e) {
+        LogPrintf("KAWPOW context construction failed: %s\n", e.what());
+        return state.Error("KAWPOW context unavailable");
+    }
+    return CheckBlockHeaderPoWFull(block, state, consensusParams, *context);
+}
+
 static bool CheckBlockHeader(const CBlockHeader& block, CValidationState& state, const Consensus::Params& consensusParams, bool fCheckPOW = true)
 {
-    // If we are checking a KAWPOW block below a know checkpoint height. We can validate the proof of work using the mix_hash
-    if (fCheckPOW && block.nTime >= nKAWPOWActivationTime) {
-        CBlockIndex* pcheckpoint = Checkpoints::GetLastCheckpoint(GetParams().Checkpoints());
-        if (fCheckPOW && pcheckpoint && block.nHeight <= (uint32_t)pcheckpoint->nHeight) {
-           if (!CheckProofOfWork(block.GetHash(), block.nBits, consensusParams)) {
-               return state.DoS(50, false, REJECT_INVALID, "high-hash", false, "proof of work failed with mix_hash only check");
-           }
-
-           return true;
+    if (!fCheckPOW) return true;
+    // CheckBlock also runs without cs_main. Only the checkpoint lookup needs it;
+    // the retained context and hashing are independent of mutable chain state.
+    bool shortcut = false;
+    if (block.nTime >= nKAWPOWActivationTime) {
+        LOCK(cs_main);
+        shortcut = UsesCheckpointPoWShortcut(block);
+    }
+    if (shortcut) {
+        if (!CheckProofOfWork(block.GetHash(), block.nBits, consensusParams)) {
+            return state.DoS(50, false, REJECT_INVALID, "high-hash", false, "proof of work failed with mix_hash only check");
         }
+        return true;
+    }
+    if (!bNetwork.fSHA256Mining && block.nTime >= nKAWPOWActivationTime) {
+        return CheckBlockHeaderPoWFull(block, state, consensusParams);
     }
 
     uint256 mix_hash;
@@ -5207,7 +5262,7 @@ static bool ContextualCheckBlock(const CBlock& block, CValidationState& state, c
     return true;
 }
 
-static bool AcceptBlockHeader(const CBlockHeader& block, CValidationState& state, const CChainParams& chainparams, CBlockIndex** ppindex)
+static bool AcceptBlockHeader(const CBlockHeader& block, CValidationState& state, const CChainParams& chainparams, CBlockIndex** ppindex, bool fCheckPoW = true)
 {
     AssertLockHeld(cs_main);
     // Check for duplicate
@@ -5226,7 +5281,7 @@ static bool AcceptBlockHeader(const CBlockHeader& block, CValidationState& state
             return true;
         }
 
-        if (!CheckBlockHeader(block, state, chainparams.GetConsensus()))
+        if (!CheckBlockHeader(block, state, chainparams.GetConsensus(), fCheckPoW))
             return error("%s: Consensus::CheckBlockHeader: %s, %s", __func__, hash.ToString(), FormatStateMessage(state));
 
         // Get prev block index
@@ -5266,22 +5321,31 @@ static bool AcceptBlockHeader(const CBlockHeader& block, CValidationState& state
     return true;
 }
 
-// Exposed wrapper for AcceptBlockHeader
-bool ProcessNewBlockHeaders(const std::vector<CBlockHeader>& headers, CValidationState& state, const CChainParams& chainparams, const CBlockIndex** ppindex, CBlockHeader *first_invalid)
+bool AcceptBlockHeaders(const std::vector<CBlockHeader>& headers, CValidationState& state,
+    const CChainParams& chainparams, const CBlockIndex** ppindex,
+    CBlockHeader* first_invalid, const std::vector<uint8_t>* pow_checked)
 {
+    AssertLockHeld(cs_main);
     if (first_invalid != nullptr) first_invalid->SetNull();
+    const bool have_checks = pow_checked && pow_checked->size() == headers.size();
+    for (size_t i = 0; i < headers.size(); ++i) {
+        const CBlockHeader& header = headers[i];
+        CBlockIndex *pindex = nullptr; // Avoid a const_cast of ppindex.
+        if (!AcceptBlockHeader(header, state, chainparams, &pindex, !have_checks || (*pow_checked)[i] == 0)) {
+            if (first_invalid) *first_invalid = header;
+            return false;
+        }
+        if (ppindex) *ppindex = pindex;
+    }
+    return true;
+}
+
+// Exposed wrapper for AcceptBlockHeader; notifications run without cs_main.
+bool ProcessNewBlockHeaders(const std::vector<CBlockHeader>& headers, CValidationState& state, const CChainParams& chainparams, const CBlockIndex** ppindex, CBlockHeader *first_invalid, const std::vector<uint8_t>* pow_checked)
+{
     {
         LOCK(cs_main);
-        for (const CBlockHeader& header : headers) {
-            CBlockIndex *pindex = nullptr; // Use a temp pindex instead of ppindex to avoid a const_cast
-            if (!AcceptBlockHeader(header, state, chainparams, &pindex)) {
-                if (first_invalid) *first_invalid = header;
-                return false;
-            }
-            if (ppindex) {
-                *ppindex = pindex;
-            }
-        }
+        if (!AcceptBlockHeaders(headers, state, chainparams, ppindex, first_invalid, pow_checked)) return false;
     }
     NotifyHeaderTip();
     return true;

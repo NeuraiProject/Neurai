@@ -718,6 +718,12 @@ void static NeuraiMiner(const CChainParams& chainparams)
         LogPrintf("NeuraiMiner -- runtime error: %s\n", e.what());
         return;
     }
+    catch (const std::exception &e)
+    {
+        // In particular, a context allocation failure must not escape the thread.
+        LogPrintf("NeuraiMiner -- local error: %s\n", e.what());
+        return;
+    }
 }
 
 int GenerateNeurais(bool fGenerate, int nThreads, const CChainParams& chainparams)

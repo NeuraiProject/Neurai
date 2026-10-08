@@ -1,0 +1,33 @@
+{
+  "archive_sha256": "93e898a2718001c9fa8a5c82557d5d24adc3e1217b6eeb707381aa8e001191ae",
+  "base_commit": "eebd0cfdc43d134a91147233574804ef9a09665d",
+  "files": {
+    "contrib/devtools/gen-header-anchors.py": "6e252789da9eb6b4c2d809ac393a080ae4c3c98a68d6c14cfbeddc2f6a20d3e6",
+    "contrib/devtools/header-anchors.md": "5ce61a4648f4930869d54191420f0bab191b8598258efc7873954c8ce9d9ece6",
+    "contrib/devtools/test_gen_header_anchors.py": "8cd7765490dcb6a786e7757ac67a5cd5078b4db0c2eca9df9350c28c3bd8d005",
+    "src/Makefile.am": "801cd1728e9329486b476826720e04e964f254da6d06dbdadcfd00489028348d",
+    "src/Makefile.test.include": "5af2910cfdc13e0de642bcfaff39ef1d2a219a3a40bdc1a1d38b9b22f09d7bfc",
+    "src/chainparams.h": "5f368809e8d57864d6218ecf4ff5263aecf77060db1f31178f97239f42da7c63",
+    "src/crypto/epoch_context_cache.cpp": "f2bdb8ab9219d6d59ca0ec4bb79436b215d8d1676375d38da8e1cccecb314f84",
+    "src/crypto/epoch_context_cache.h": "f8289db76933e5d93a353c839962696f2fa2c98e0db670edff7697579c122cba",
+    "src/hash.cpp": "009bf9b563bf7342c94e25bb02e873269366ef2d4c199fc474300fa3c45f59ca",
+    "src/hash.h": "65f1694d15602ad26a4c0edf7b2d6d03e348236add3409f1b55859835ce64653",
+    "src/header_anchors.cpp": "630794962056307becd169620f4726e39e0e771db7b34a110daafc92ceb18ae0",
+    "src/header_anchors.h": "3c53701c8e04e705de7d298ffca512284f3804dd5e6558ed5f86f5cdc7b5b314",
+    "src/header_verification.cpp": "fcb1edb483efb06bf2058bdbb4be24e28282bf84e10e0a57249ccda987f16e26",
+    "src/header_verification.h": "6e9a48f7fb1f9981c94df3c1ebf06f12e715c586ecefa1742c40b80e75637afe",
+    "src/miner.cpp": "2cdfdd436bf2099de436bd329933cee975ff90d1ac76ffde2c2b964ba255005e",
+    "src/net_processing.cpp": "b89df94f41d76028fea63bef8fa24442ea7859dfdcf2e7097556a58f58746154",
+    "src/net_processing.h": "ed558a6c75419d659f563328e0649aea7d9ddfc9e28be348850daa03ca3106e4",
+    "src/rpc/mining.cpp": "4672aa8d6bf5420d361700cb327fd18289cfc6e6804b436a1e21b3f3200dbb20",
+    "src/sync.cpp": "61228a544fd9073fed5f34a48aa7ad29e5ca54dc03fd28698e391294d1a2aae8",
+    "src/sync.h": "97bd9266d495de5c51488daac133946712491bbae14dd5e5ee241201c2d4567a",
+    "src/test/epoch_context_cache_test_access.h": "d00f265538270a0ba11a446b2c3f9f00e609d2cede4bef92236d9026bf81dd14",
+    "src/test/epoch_context_cache_tests.cpp": "7a148fb8143606ec02d7ac6f73165c02cd9fe3875c680b1afe377b3d527a92e0",
+    "src/test/epoch_context_integration_tests.cpp": "68e412e2fff9e4f66cb1dca6be0a1875b9cf9c4b73e1d6d317d79c8c5ecc6263",
+    "src/test/header_anchors_tests.cpp": "0d92ab3ba74b621159e5fb68847c3259ad3970e90dd1cc5c99010905ce339031",
+    "src/test/header_verification_tests.cpp": "040b954d32918f1756b1d512e7e2c6455ea83684b6d0117710d6241a778ae6b3",
+    "src/validation.cpp": "a8fd9583955673ed1bb22f045b75ee4fd3a465ad5f91624d8d266132268f37c9",
+    "src/validation.h": "e3abd8caa06775f299c8a4ba6a8f02759f9f97d5622cfb927a3a9674aacc58fc"
+  }
+}

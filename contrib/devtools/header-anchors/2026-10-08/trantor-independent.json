@@ -1,0 +1,21 @@
+{
+  "anchor_count": 866,
+  "checkpoint_hash": "000000000065bd9be24a1328484cc1904c5d6f8bc8986088bb1f84c26bed6897",
+  "checkpoint_height": 1733712,
+  "header_sha256": "cc2f3df19e8382e44d877a30863c59dbcd6fcbfe0d9d0846fadcb75b9350067b",
+  "interval": 2000,
+  "network": "main",
+  "node_subversion": "/Neurai:2.0.0/",
+  "node_version": 2000000,
+  "prefix_sha256": "a81616274f7a23ddf0912a090369faf7c5eef88f2a64bbf80db728154c8b1c66",
+  "rpc_command": [
+    "/evidence/bin-phase2/neurai-cli",
+    "-datadir=/evidence/data",
+    "-rpcport=19564"
+  ],
+  "source_changes_sha256": "93e898a2718001c9fa8a5c82557d5d24adc3e1217b6eeb707381aa8e001191ae",
+  "source_commit": "eebd0cfdc43d134a91147233574804ef9a09665d",
+  "source_hash": "000000000084070aad6e5186509322d8d88a134ceeedbd5501076a8c4a30d5d5",
+  "source_height": 1738497,
+  "source_id": "trantor-independent"
+}

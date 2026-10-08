@@ -32,6 +32,7 @@
 
 #include <univalue.h>
 #include <crypto/ethash/include/ethash/ethash.hpp>
+#include <crypto/epoch_context_cache.h>
 #include <consensus/merkle.h>
 #include <crypto/ethash/include/ethash/progpow.hpp>
 
@@ -793,8 +794,11 @@ static UniValue getkawpowhash(const JSONRPCRequest& request) {
     if (!ParseUInt64(hex_nonce, &nNonce, 16))
         throw JSONRPCError(RPC_INVALID_PARAMS, "Invalid nonce hex string");
 
-    if (nHeight > (uint32_t)chainActive.Height() + 10)
-        throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Block height is to large");
+    {
+        LOCK(cs_main);
+        if (nHeight > (uint32_t)chainActive.Height() + 10)
+            throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Block height is to large");
+    }
 
     const auto header_hash = to_hash256(str_header_hash);
 
@@ -805,12 +809,12 @@ static UniValue getkawpowhash(const JSONRPCRequest& request) {
         fCheckTarget = true;
     }
 
-    static ethash::epoch_context_ptr context{nullptr, nullptr};
-
-    // Get the context from the block height
-    const auto epoch_number = ethash::get_epoch_number(nHeight);
-    if (!context || context->epoch_number != epoch_number)
-        context = ethash::create_epoch_context(epoch_number);
+    EpochContextCache::Context context;
+    try {
+        context = KawpowRpcCache().Get(ethash::get_epoch_number(nHeight));
+    } catch (const std::exception& e) {
+        throw JSONRPCError(RPC_MISC_ERROR, std::string("KAWPOW context unavailable: ") + e.what());
+    }
 
     // ProgPow hash
     const auto result = progpow::hash(*context, nHeight, header_hash, nNonce);

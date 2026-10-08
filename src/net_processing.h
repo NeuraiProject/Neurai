@@ -15,6 +15,9 @@
 #include <cstdint>
 #include <vector>
 
+class CBlockHeader;
+class CChainParams;
+
 /** Default for -maxorphantx, maximum number of orphan transactions kept in memory */
 static const unsigned int DEFAULT_MAX_ORPHAN_TRANSACTIONS = 100;
 /** Expiration time for orphan transactions in seconds */
@@ -109,6 +112,12 @@ struct HeaderSyncStats {
 
 /** Return header-sync timing collected since process start. */
 HeaderSyncStats GetHeaderSyncStats();
+
+/** Process a decoded header batch. Original wire length controls follow-up
+ * requests even when an authenticated prefix is trimmed. Takes cs_main internally.
+ */
+bool ProcessHeadersMessage(CNode* peer, CConnman* connman, std::vector<CBlockHeader> headers,
+                           const CChainParams& params, bool punish_duplicate_invalid);
 
 /** Get statistics from node state */
 bool GetNodeStateStats(NodeId nodeid, CNodeStateStats &stats);

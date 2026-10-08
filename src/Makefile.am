@@ -145,6 +145,7 @@ NEURAI_CORE_H = \
   blockencodings.h \
   chain.h \
   chainparams.h \
+  chainparamsanchors.h \
   chainparamsbase.h \
   chainparamsseeds.h \
   checkpoints.h \
@@ -272,6 +273,8 @@ libneurai_server_a_SOURCES = \
   miner.cpp \
   net.cpp \
   net_processing.cpp \
+  header_verification.cpp \
+  header_verification.h \
   noui.cpp \
   assets/assets.cpp \
   assets/assetdb.cpp \
@@ -407,6 +410,8 @@ crypto_libneurai_crypto_a_SOURCES = \
   crypto/ed25519/fe_51/constants.h \
   crypto/ed25519/fe_51/base.h \
   crypto/ed25519/fe_51/base2.h \
+  crypto/epoch_context_cache.cpp \
+  crypto/epoch_context_cache.h \
   crypto/ethash/include/ethash/ethash.h \
   crypto/ethash/include/ethash/ethash.hpp \
   crypto/ethash/include/ethash/hash_types.h \
@@ -449,6 +454,8 @@ libneurai_consensus_a_SOURCES = \
   consensus/validation.h \
   hash.cpp \
   hash.h \
+  header_anchors.cpp \
+  header_anchors.h \
   prevector.h \
   primitives/block.cpp \
   primitives/block.h \

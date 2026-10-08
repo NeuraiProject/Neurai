@@ -12,6 +12,8 @@
 #include "chainparams.h"
 #include "consensus/validation.h"
 #include "hash.h"
+#include "header_anchors.h"
+#include "header_verification.h"
 #include "init.h"
 #include "validation.h"
 #include "merkleblock.h"
@@ -38,6 +40,8 @@
 #endif
 
 std::atomic<int64_t> nTimeBestReceived(0); // Used only to inform the wallet of when we last received a block
+
+static_assert(HEADER_ANCHOR_INTERVAL == MAX_HEADERS_RESULTS, "regenerate header anchors when changing batch size");
 
 struct IteratorComparator
 {
@@ -1359,10 +1363,11 @@ inline void static SendBlockTransactions(const CBlock& block, const BlockTransac
     connman->PushMessage(pfrom, msgMaker.Make(nSendFlags, NetMsgType::BLOCKTXN, resp));
 }
 
-bool static ProcessHeadersMessage(CNode *pfrom, CConnman *connman, const std::vector<CBlockHeader>& headers, const CChainParams& chainparams, bool punish_duplicate_invalid)
+bool ProcessHeadersMessage(CNode *pfrom, CConnman *connman, std::vector<CBlockHeader> headers, const CChainParams& chainparams, bool punish_duplicate_invalid)
 {
     const CNetMsgMaker msgMaker(pfrom->GetSendVersion());
-    size_t nCount = headers.size();
+    const size_t nCount = headers.size(); // Original wire count, including any trimmed tail.
+    std::vector<uint8_t> pow_checked;
     const int64_t validation_start_us = GetTimeMicros();
 
     if (nCount == 0) {
@@ -1412,6 +1417,24 @@ bool static ProcessHeadersMessage(CNode *pfrom, CConnman *connman, const std::ve
             hashLastBlock = header.GetHash();
         }
 
+        if (fCheckpointsEnabled && !chainparams.HeaderAnchors().empty()) {
+            const auto prev = mapBlockIndex.find(headers.front().hashPrevBlock);
+            if (prev != mapBlockIndex.end()) {
+                const size_t anchored = CountAnchoredHeaders(chainparams.HeaderAnchors(), prev->second->nHeight + 1, headers);
+                if (anchored != 0) {
+                    // Keep requesting after a full response, even when only its
+                    // anchored prefix is accepted here. Short announcements keep
+                    // their tail and verify it normally.
+                    if (nCount == MAX_HEADERS_RESULTS && anchored < nCount) headers.resize(anchored);
+                    pow_checked.assign(headers.size(), 0);
+                    std::fill_n(pow_checked.begin(), anchored, uint8_t{1});
+                    hashLastBlock = headers.back().GetHash();
+                } else {
+                    LogPrint(BCLog::NET, "No authenticated anchor prefix in headers from peer=%d; checking PoW normally\n", pfrom->GetId());
+                }
+            }
+        }
+
         // If we don't have the last header, then they'll have given us
         // something new (if these headers are valid).
         if (mapBlockIndex.find(hashLastBlock) == mapBlockIndex.end()) {
@@ -1421,7 +1444,8 @@ bool static ProcessHeadersMessage(CNode *pfrom, CConnman *connman, const std::ve
 
     CValidationState state;
     CBlockHeader first_invalid_header;
-    if (!ProcessNewBlockHeaders(headers, state, chainparams, &pindexLast, &first_invalid_header)) {
+    if (!ProcessHeadersWithParallelPoW(headers, state, chainparams, &pindexLast, &first_invalid_header,
+                               pow_checked.empty() ? nullptr : &pow_checked)) {
         int nDoS;
         if (state.IsInvalid(nDoS)) {
             LOCK(cs_main);
@@ -1464,6 +1488,9 @@ bool static ProcessHeadersMessage(CNode *pfrom, CConnman *connman, const std::ve
             }
             return error("invalid header received");
         }
+        // A local resource failure is not an invalid header. No header may have
+        // been accepted, so do not enter the success path or assume pindexLast.
+        return error("header processing failed locally: %s", FormatStateMessage(state));
     }
 
     RecordHeadersResponse(pfrom->GetId(), headers, GetTimeMicros() - validation_start_us);
@@ -2791,7 +2818,7 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
         // disconnect the peer if it is using one of our outbound connection
         // slots.
         bool should_punish = !pfrom->fInbound && !pfrom->m_manual_connection;
-        return ProcessHeadersMessage(pfrom, connman, headers, chainparams, should_punish);
+        return ProcessHeadersMessage(pfrom, connman, std::move(headers), chainparams, should_punish);
     }
 
     else if (strCommand == NetMsgType::BLOCK && !fImporting && !fReindex) // Ignore blocks received while importing

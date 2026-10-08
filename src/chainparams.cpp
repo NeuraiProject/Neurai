@@ -5,6 +5,8 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "chainparams.h"
+#include "chainparamsanchors.h"
+#include "header_anchors.h"
 #include "consensus/merkle.h"
 
 #include "tinyformat.h"
@@ -292,6 +294,12 @@ public:
                 { 1733712, uint256S("0x000000000065bd9be24a1328484cc1904c5d6f8bc8986088bb1f84c26bed6897")}
             }
         };
+
+        // Independently verified mainnet header anchors. Test networks remain
+        // empty; see contrib/devtools/header-anchors.md for the update process.
+        static_assert(HeaderAnchorData::INTERVAL == HEADER_ANCHOR_INTERVAL, "anchor interval mismatch");
+        headerAnchors.reserve(sizeof(HeaderAnchorData::MAINNET) / sizeof(HeaderAnchorData::MAINNET[0]));
+        for (const char* hash : HeaderAnchorData::MAINNET) headerAnchors.push_back(uint256S(hash));
 
         chainTxData = ChainTxData{
             1762149426, // * UNIX timestamp of last known number of transactions

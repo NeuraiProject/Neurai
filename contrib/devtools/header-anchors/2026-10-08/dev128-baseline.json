@@ -1,0 +1,20 @@
+{
+  "anchor_count": 866,
+  "checkpoint_hash": "000000000065bd9be24a1328484cc1904c5d6f8bc8986088bb1f84c26bed6897",
+  "checkpoint_height": 1733712,
+  "header_sha256": "cc2f3df19e8382e44d877a30863c59dbcd6fcbfe0d9d0846fadcb75b9350067b",
+  "interval": 2000,
+  "network": "main",
+  "node_subversion": "/Neurai:2.0.0/",
+  "node_version": 2000000,
+  "prefix_sha256": "a81616274f7a23ddf0912a090369faf7c5eef88f2a64bbf80db728154c8b1c66",
+  "rpc_command": [
+    "/evidence/bin-baseline/neurai-cli",
+    "-datadir=/evidence/mainnet-baseline",
+    "-rpcport=19560"
+  ],
+  "source_commit": "eebd0cfdc43d134a91147233574804ef9a09665d",
+  "source_hash": "00000000005128daa2e0dfec26dd04b72ba5a3ae30e5cd247d3e4f4b2e58ecbe",
+  "source_height": 1738122,
+  "source_id": "dev128-baseline"
+}

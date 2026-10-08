@@ -12,6 +12,7 @@
 #endif
 
 #include "amount.h"
+#include <crypto/ethash/include/ethash/ethash.hpp>
 #include "coins.h"
 #include "fs.h"
 #include "protocol.h" // For CMessageHeader::MessageStartChars
@@ -292,8 +293,29 @@ bool ProcessNewBlock(const CChainParams& chainparams, const std::shared_ptr<cons
  * @param[in]  chainparams The params for the chain we want to connect to
  * @param[out] ppindex If set, the pointer will be set to point to the last new block index object for the given headers
  * @param[out] first_invalid First header that fails validation, if one exists
+ * @param[in] pow_checked Per-header results from trusted anchors or full PoW
+ * already verified in this call. A null or wrong-sized vector skips no checks.
  */
-bool ProcessNewBlockHeaders(const std::vector<CBlockHeader>& block, CValidationState& state, const CChainParams& chainparams, const CBlockIndex** ppindex=nullptr, CBlockHeader *first_invalid=nullptr);
+bool ProcessNewBlockHeaders(const std::vector<CBlockHeader>& block, CValidationState& state, const CChainParams& chainparams, const CBlockIndex** ppindex=nullptr, CBlockHeader *first_invalid=nullptr, const std::vector<uint8_t>* pow_checked=nullptr);
+
+/** Internal acceptance step: requires cs_main and emits no tip notification.
+ * The caller finishes through ProcessNewBlockHeaders after releasing cs_main. */
+bool AcceptBlockHeaders(const std::vector<CBlockHeader>& headers, CValidationState& state,
+    const CChainParams& chainparams, const CBlockIndex** ppindex,
+    CBlockHeader* first_invalid, const std::vector<uint8_t>* pow_checked);
+
+/** Whether the current checkpoint state requires full KAWPOW; requires cs_main.
+ * False does not mean verified: the existing SHA256d/legacy/shortcut check remains.
+ */
+bool NeedsFullKAWPOWCheck(const CBlockHeader& header);
+/** Diagnostic count of full checks (including speculative/repeated work). */
+uint64_t GetFullKawpowCheckCount();
+/** Full KAWPOW and mix check with a retained context of the header's epoch. */
+bool CheckBlockHeaderPoWFull(const CBlockHeader& header, CValidationState& state,
+                           const Consensus::Params& params, const ethash::epoch_context& context);
+/** Serial wrapper: obtains the context and reports construction failures as local errors. */
+bool CheckBlockHeaderPoWFull(const CBlockHeader& header, CValidationState& state,
+                           const Consensus::Params& params);
 
 /** Check whether enough disk space is available for an incoming block */
 bool CheckDiskSpace(uint64_t nAdditionalBytes = 0);
