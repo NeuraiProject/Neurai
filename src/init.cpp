@@ -759,6 +759,18 @@ void ThreadImport(std::vector<fs::path> vImportFiles)
         LoadGenesisBlock(chainparams);
     }
 
+    // LoadGenesisBlock records genesis in the block index, but an empty coins
+    // database still has no active tip. Bootstrap and -loadblock files need not
+    // contain genesis, so activate the available chain before accepting a child.
+    {
+        CValidationState state;
+        if (!ActivateBestChain(state, chainparams)) {
+            LogPrintf("Failed to activate chain before block import\n");
+            StartShutdown();
+            return;
+        }
+    }
+
     // hardcoded $DATADIR/bootstrap.dat
     fs::path pathBootstrap = GetDataDir() / "bootstrap.dat";
     if (fs::exists(pathBootstrap)) {
