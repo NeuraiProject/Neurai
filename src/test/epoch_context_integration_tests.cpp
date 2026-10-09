@@ -102,7 +102,7 @@ BOOST_AUTO_TEST_CASE(construction_failure_is_local_and_retryable)
     CBlockHeader header;
     header.nTime = chainActive.Tip()->nTime + 60;
     header.hashPrevBlock = chainActive.Tip()->GetBlockHash();
-    header.nBits = chainActive.Tip()->nBits;
+    header.nBits = GetNextWorkRequired(chainActive.Tip(), &header, GetParams().GetConsensus());
     header.nHeight = 1;
     int calls = 0;
     EpochContextCacheTestAccess::FactoryOverride inject(KawpowValidationCache(), [&](int epoch) -> Context {
@@ -171,7 +171,7 @@ BOOST_AUTO_TEST_CASE(headers_resource_failure_does_not_penalize_peer_or_record_s
     known.nVersion = 4;
     known.nTime = chainActive.Tip()->nTime + 60;
     known.hashPrevBlock = chainActive.Tip()->GetBlockHash();
-    known.nBits = chainActive.Tip()->nBits;
+    known.nBits = GetNextWorkRequired(chainActive.Tip(), &known, GetParams().GetConsensus());
     known.nHeight = 1;
     // Model an already accepted prefix. Its PoW is not revisited; only the
     // following unknown header requests a context and triggers our local error.

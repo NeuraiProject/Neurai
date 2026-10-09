@@ -119,6 +119,8 @@ NEURAI_TESTS =\
   test/pmt_tests.cpp \
   test/policyestimator_tests.cpp \
   test/pow_tests.cpp \
+  test/block_work_tests.cpp \
+  test/data/mainnet_dgw_history.h \
   test/prevector_tests.cpp \
   test/kawpow_tests.cpp \
   test/kawpow_admission_tests.cpp \

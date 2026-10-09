@@ -202,11 +202,9 @@ BOOST_AUTO_TEST_CASE(prechecked_header_cannot_skip_invalid_mix)
 BOOST_AUTO_TEST_CASE(new_header_with_bad_pow_is_rejected)
 {
     auto block = Block();
-    // Regtest's min-difficulty target is almost UINT256_MAX. Use a target
-    // with a 50% failure rate; PoW rejection precedes contextual nBits checks.
-    block.nBits = 0x207fffff;
-    do { ++block.nNonce64; }
-    while (CheckProofOfWork(block.GetHashFull(block.mix_hash), block.nBits, GetParams().GetConsensus()));
+    // Keep the contextual difficulty valid, so rejection exercises the full
+    // PoW check rather than the earlier difficulty admission check.
+    block.mix_hash.begin()[0] ^= 1;
     const auto before = GetFullKawpowCheckCount();
     BOOST_CHECK(!Import(block));
     BOOST_CHECK_EQUAL(GetFullKawpowCheckCount() - before, 1U);

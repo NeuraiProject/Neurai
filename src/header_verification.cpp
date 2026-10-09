@@ -7,6 +7,7 @@
 #include <consensus/validation.h>
 #include <crypto/ethash/helpers.hpp>
 #include <util.h>
+#include <pow.h>
 #include <validation.h>
 
 #include <algorithm>
@@ -71,6 +72,12 @@ HeaderWindowStatus PrepareHeaderWindow(const std::vector<CBlockHeader>& headers,
         offset = end;
     }
     if (offset == headers.size()) return HeaderWindowStatus::DONE;
+    // Do not build a context for a window whose first candidate already
+    // has impossible difficulty. Serial acceptance owns the rejection verdict.
+    const auto parent = mapBlockIndex.find(headers[offset].hashPrevBlock);
+    if (parent == mapBlockIndex.end() || (parent->second->nStatus & BLOCK_FAILED_MASK) ||
+        headers[offset].nBits != GetNextWorkRequired(parent->second, &headers[offset], params.GetConsensus()))
+        return HeaderWindowStatus::SERIAL;
     window.epoch = ethash::get_epoch_number(headers[offset].nHeight);
     for (size_t i = offset; i < headers.size() && i - offset < limit; ++i) {
         const auto& header = headers[i];

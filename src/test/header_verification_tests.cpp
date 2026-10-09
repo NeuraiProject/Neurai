@@ -253,10 +253,12 @@ BOOST_AUTO_TEST_CASE(failure_at_epoch_boundary_never_constructs_the_next_epoch)
     ++parent.nNonce64;
     TemporaryIndex previous(parent, 7495);
     headers.front().hashPrevBlock = previous.hash;
-    for (size_t i = 0; i < headers.size(); ++i) {
-        headers[i].nHeight = 7496 + i;
-        headers[i].nBits = 0;
-    }
+    for (size_t i = 0; i < headers.size(); ++i) headers[i].nHeight = 7496 + i;
+    // Keep the contextual difficulty valid: this case exercises a PoW failure,
+    // not the early difficulty guard (which must build no context at all).
+    while (CheckProofOfWork(headers.front().GetHashFull(headers.front().mix_hash),
+                           headers.front().nBits, GetParams().GetConsensus()))
+        ++headers.front().nNonce64;
     Relink(headers);
     std::vector<int> epochs;
     EpochContextCacheTestAccess::FactoryOverride factory(KawpowValidationCache(), [&](int epoch) {

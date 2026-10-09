@@ -64,5 +64,30 @@ manipulation.
 
 This document records the inherited design limitation without changing the
 retarget algorithm. A proposed mitigation needs separate consensus review,
-historical replay tests and, where necessary, an explicit activation. The
-arithmetic and target-limit audit is a separate work item.
+historical replay tests and, where necessary, an explicit activation.
+Historical regression vectors preserve the existing target limits and
+256-bit retarget arithmetic. Changing either requires a separate consensus
+proposal; the difficulty admission checks do not change their results.
+
+## Difficulty admission
+
+Incoming full blocks must have a known parent and the exact difficulty required
+by that parent before full proof-of-work and transaction checks run. The check
+also applies to forced submissions and uses the candidate branch, not the active
+tip. New headers are checked for the same difficulty before full proof-of-work.
+
+A full block whose parent is unavailable is deferred without penalizing its
+sender or recording permanent invalidity. It can be submitted again once its
+parent is available. Import and reindex retain their handling of blocks stored
+out of order. This admission step does not change target limits, the retarget
+algorithm, or the proof-of-work and transaction checks required for acceptance.
+
+The standalone regression can exercise each network against a built daemon:
+
+```sh
+python3 test/functional/standalone/block_work_admission.py \
+  --neuraid src/neuraid --network main --tmpdir /tmp/neurai-work-test
+```
+
+Use a new empty output directory for each run. Repeat with `--network test` and
+`--network regtest` when validating either maintained branch.
