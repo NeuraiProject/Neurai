@@ -38,7 +38,9 @@
 #include <consensus/merkle.h>
 #include <crypto/ethash/include/ethash/progpow.hpp>
 
-extern uint64_t nHashesPerSec;
+#include <atomic>
+
+extern std::atomic<uint64_t> nHashesPerSec;
 
 std::map<std::string, CBlock> mapXNAKAWBlockTemplates GUARDED_BY(cs_main);
 
@@ -260,7 +262,7 @@ UniValue getmininginfo(const JSONRPCRequest& request)
     obj.push_back(Pair("currentblocktx",   (uint64_t)nLastBlockTx));
     obj.push_back(Pair("difficulty",       (double)GetDifficulty()));
     obj.push_back(Pair("networkhashps",    getnetworkhashps(request)));
-    obj.push_back(Pair("hashespersec",     (uint64_t)nHashesPerSec));
+    obj.push_back(Pair("hashespersec",     (uint64_t)nHashesPerSec.load()));
     obj.push_back(Pair("pooledtx",         (uint64_t)mempool.size()));
     obj.push_back(Pair("chain", GetParams().NetworkIDString()));
     if (IsDeprecatedRPCEnabled("getmininginfo")) {
@@ -1324,10 +1326,6 @@ UniValue setgenerate(const JSONRPCRequest& request)
             fGenerate = false;
     }
 
-    gArgs.SoftSetArg("-gen", (fGenerate ? "1" : "0"));
-    gArgs.SoftSetArg("-genproclimit", itostr(nGenProcLimit));
-    //mapArgs["-gen"] = (fGenerate ? "1" : "0");
-    //mapArgs ["-genproclimit"] = itostr(nGenProcLimit);
     int numCores = GenerateNeurais(fGenerate, nGenProcLimit, GetParams());
 
     nGenProcLimit = nGenProcLimit >= 0 ? nGenProcLimit : numCores;

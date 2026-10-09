@@ -202,3 +202,21 @@ addresses, inbound exclusion, extreme timestamps and mining-template time.
 It does not connect to external peers. This standalone mainnet/testnet test is
 separate from the legacy regtest runner. Its unit counterpart, `timedata_tests`,
 is included in `make check`.
+
+### Internal miner regression tests
+
+`miner_nonce_tests` is part of the normal unit suite. It checks real KAWPOW
+and legacy hashing, nonce exhaustion, bounded searches, interruption and local
+hashing errors. Branches supporting SHA256d also test its nonce selection.
+
+On Linux, run the standalone wallet/RPC test against an isolated build:
+
+```sh
+python3 test/functional/standalone/mining_internal.py --neuraid src/neuraid --network main --tmpdir /tmp/neurai-miner-main
+python3 test/functional/standalone/mining_internal.py --neuraid src/neuraid --network test --tmpdir /tmp/neurai-miner-test
+```
+
+Use a fresh temporary directory for each run. It mines an isolated chain,
+checks start/stop and concurrent replacements, then reindexes it. It requires
+wallet support and exclusive use of loopback RPC port 29703; it makes no
+external peer connections. See [mining behavior](../doc/mining-behavior.md).

@@ -107,6 +107,7 @@ NEURAI_TESTS =\
   test/merkle_inclusion_tests.cpp \
   test/merkleblock_tests.cpp \
   test/miner_tests.cpp \
+  test/miner_nonce_tests.cpp \
   test/multisig_tests.cpp \
   test/net_tests.cpp \
   test/opcat_tests.cpp \

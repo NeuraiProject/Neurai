@@ -34,6 +34,8 @@
 
 #include <boost/thread.hpp>
 #include <algorithm>
+#include <atomic>
+#include <limits>
 #include <queue>
 #include <utility>
 
@@ -52,9 +54,9 @@ extern std::vector<CWalletRef> vpwallets;
 
 uint64_t nLastBlockTx = 0;
 uint64_t nLastBlockWeight = 0;
-uint64_t nMiningTimeStart = 0;
-uint64_t nHashesPerSec = 0;
-uint64_t nHashesDone = 0;
+static uint64_t nMiningTimeStart = 0;
+std::atomic<uint64_t> nHashesPerSec{0};
+static std::atomic<uint64_t> nHashesDone{0};
 
 
 int64_t UpdateTime(CBlockHeader* pblock, const Consensus::Params& consensusParams, const CBlockIndex* pindexPrev)
@@ -520,6 +522,36 @@ void IncrementExtraNonce(CBlock* pblock, const CBlockIndex* pindexPrev, unsigned
 }
 
 
+MiningScanResult ScanBlockNonces(CBlockHeader& block, const arith_uint256& target,
+                                uint32_t max_tries, uint64_t& hashes_done)
+{
+    bool kawpow = block.nTime >= nKAWPOWActivationTime;
+    if (bNetwork.fSHA256Mining) kawpow = false;
+    hashes_done = 0;
+    for (uint32_t attempt = 0; attempt < max_tries; ++attempt) {
+        boost::this_thread::interruption_point();
+        uint256 mix;
+        const uint256 hash = block.GetHashFull(mix);
+        ++hashes_done;
+        if (UintToArith256(hash) <= target) {
+            block.mix_hash = mix;
+            return MiningScanResult::FOUND;
+        }
+        // Test the last nonce once, then rebuild rather than wrapping and
+        // repeating the same work. The other algorithm's nonce is untouched.
+        if (kawpow) {
+            if (block.nNonce64 == std::numeric_limits<uint64_t>::max())
+                return MiningScanResult::EXHAUSTED;
+            ++block.nNonce64;
+        } else {
+            if (block.nNonce == std::numeric_limits<uint32_t>::max())
+                return MiningScanResult::EXHAUSTED;
+            ++block.nNonce;
+        }
+    }
+    return MiningScanResult::MORE;
+}
+
 static bool ProcessBlockFound(const CBlock* pblock, const CChainParams& chainparams)
 {
     LogPrintf("%s\n", pblock->ToString());
@@ -545,216 +577,107 @@ static bool ProcessBlockFound(const CBlock* pblock, const CChainParams& chainpar
     return true;
 }
 
-CWallet *GetFirstWallet() {
-#ifdef ENABLE_WALLET
-    while(vpwallets.size() == 0){
-        MilliSleep(100);
-
-    }
-    if (vpwallets.size() == 0)
-        return(NULL);
-    return(vpwallets[0]);
-#endif
-    return(NULL);
-}
-
-void static NeuraiMiner(const CChainParams& chainparams)
+static void NeuraiMiner(const CChainParams& chainparams)
 {
     LogPrintf("NeuraiMiner -- started\n");
     SetThreadPriority(THREAD_PRIORITY_LOWEST);
     RenameThread("neurai-miner");
 
-    unsigned int nExtraNonce = 0;
-
-
-    CWallet * pWallet = NULL;
-
-#ifdef ENABLE_WALLET
-    pWallet = GetFirstWallet();
-
-
-    if (!EnsureWalletIsAvailable(pWallet, false)) {
-        LogPrintf("NeuraiMiner -- Wallet not available\n");
-    }
-#endif
-
-    if (pWallet == NULL)
-    {
-        LogPrintf("pWallet is NULL\n");
-        return;
-    }
-
-
-    std::shared_ptr<CReserveScript> coinbaseScript;
-
-    pWallet->GetScriptForMining(coinbaseScript);
-
-    //GetMainSignals().ScriptForMining(coinbaseScript);
-
-    if (!coinbaseScript)
-        LogPrintf("coinbaseScript is NULL\n");
-
-    if (coinbaseScript->reserveScript.empty())
-        LogPrintf("coinbaseScript is empty\n");
-
     try {
-        // Throw an error if no script was provided.  This can happen
-        // due to some internal error but also if the keypool is empty.
-        // In the latter case, already the pointer is NULL.
+#ifdef ENABLE_WALLET
+        // Wallets are loaded before RPC mining starts and are destroyed only
+        // after GenerateNeurais(false, ...) has joined all mining threads.
+        if (vpwallets.empty()) {
+            LogPrintf("NeuraiMiner -- Wallet not available\n");
+            return;
+        }
+        CWallet* wallet = vpwallets.front();
+        std::shared_ptr<CReserveScript> coinbaseScript;
+        wallet->GetScriptForMining(coinbaseScript);
         if (!coinbaseScript || coinbaseScript->reserveScript.empty())
-        {
             throw std::runtime_error("No coinbase script available (mining requires a wallet)");
-        }
 
-
+        unsigned int extraNonce = 0;
         while (true) {
-
-            if (chainparams.MiningRequiresPeers()) {
-                // Busy-wait for the network to come online so we don't waste time mining
-                // on an obsolete chain. In regtest mode we expect to fly solo.
-                do {
-                    break;
-                    if ((g_connman->GetNodeCount(CConnman::CONNECTIONS_ALL) > 0) && !IsInitialBlockDownload()) {
-                        break;
-                    }
-
-                    MilliSleep(1000);
-                } while (true);
-            }
-
-
-            //
-            // Create new block
-            //
-            unsigned int nTransactionsUpdatedLast = mempool.GetTransactionsUpdated();
-            CBlockIndex* pindexPrev = chainActive.Tip();
-            if(!pindexPrev) break;
-
-
-
-            std::unique_ptr<CBlockTemplate> pblocktemplate(BlockAssembler(GetParams()).CreateNewBlock(coinbaseScript->reserveScript));
-
-            if (!pblocktemplate.get())
+            boost::this_thread::interruption_point();
+            const unsigned int transactionsUpdated = mempool.GetTransactionsUpdated();
+            CBlockIndex* previous;
+            std::unique_ptr<CBlockTemplate> blockTemplate;
             {
-                LogPrintf("NeuraiMiner -- Keypool ran out, please call keypoolrefill before restarting the mining thread\n");
-                return;
+                // The template, parent and extranonce must describe one tip.
+                LOCK(cs_main);
+                previous = chainActive.Tip();
+                if (!previous) return;
+                blockTemplate = BlockAssembler(chainparams).CreateNewBlock(coinbaseScript->reserveScript);
+                if (!blockTemplate)
+                    throw std::runtime_error("Could not create a mining template");
+                IncrementExtraNonce(&blockTemplate->block, previous, extraNonce);
             }
-            CBlock *pblock = &pblocktemplate->block;
-            IncrementExtraNonce(pblock, pindexPrev, nExtraNonce);
-
-            LogPrintf("NeuraiMiner -- Running miner with %u transactions in block (%u bytes)\n", pblock->vtx.size(),
-                ::GetSerializeSize(*pblock, SER_NETWORK, PROTOCOL_VERSION));
-
-            //
-            // Search
-            //
-            int64_t nStart = GetTime();
-            arith_uint256 hashTarget = arith_uint256().SetCompact(pblock->nBits);
-            while (true)
-            {
-
-                uint256 hash;
-                uint256 mix_hash;
-                while (true)
-                {
-                    hash = pblock->GetHashFull(mix_hash);
-                    if (UintToArith256(hash) <= hashTarget)
-                    {
-                        pblock->mix_hash = mix_hash;
-                        // Found a solution
-                        SetThreadPriority(THREAD_PRIORITY_NORMAL);
-                        LogPrintf("NeuraiMiner:\n  proof-of-work found\n  hash: %s\n  target: %s\n", hash.GetHex(), hashTarget.GetHex());
-                        ProcessBlockFound(pblock, chainparams);
-                        SetThreadPriority(THREAD_PRIORITY_LOWEST);
+            CBlock& block = blockTemplate->block;
+            const int64_t started = GetTime();
+            arith_uint256 target = arith_uint256().SetCompact(block.nBits);
+            while (true) {
+                uint64_t hashes = 0;
+                const MiningScanResult result = ScanBlockNonces(block, target, 256, hashes);
+                const uint64_t total = nHashesDone.fetch_add(hashes) + hashes;
+                nHashesPerSec.store(total / ((GetTimeMicros() - nMiningTimeStart) / 1000000 + 1));
+                if (result == MiningScanResult::FOUND) {
+                    SetThreadPriority(THREAD_PRIORITY_NORMAL);
+                    const bool accepted = ProcessBlockFound(&block, chainparams);
+                    SetThreadPriority(THREAD_PRIORITY_LOWEST);
+                    if (accepted) {
                         coinbaseScript->KeepScript();
-
-                        // In regression test mode, stop mining after a block is found. This
-                        // allows developers to controllably generate a block on demand.
-                        if (chainparams.MineBlocksOnDemand())
-                            throw boost::thread_interrupted();
-
-                        break;
+                        if (chainparams.MineBlocksOnDemand()) return;
                     }
-                    pblock->nNonce += 1;
-                    nHashesDone += 1;
-                    if (nHashesDone % 500000 == 0) {   //Calculate hashing speed
-                        nHashesPerSec = nHashesDone / (((GetTimeMicros() - nMiningTimeStart) / 1000000) + 1);
-                    } 
-                    if ((pblock->nNonce & 0xFF) == 0)
-                        break;
+                    // A found (or stale) solution needs a new template.
+                    break;
                 }
-
-                // Check for stop or if block needs to be rebuilt
-                boost::this_thread::interruption_point();
-                // Regtest mode doesn't require peers
-                //if (vNodes.empty() && chainparams.MiningRequiresPeers())
-                //    break;
-                if (pblock->nNonce >= 0xffff0000)
+                if (result == MiningScanResult::EXHAUSTED) break;
+                if (mempool.GetTransactionsUpdated() != transactionsUpdated && GetTime() - started > 60)
                     break;
-                if (mempool.GetTransactionsUpdated() != nTransactionsUpdatedLast && GetTime() - nStart > 60)
-                    break;
-                if (pindexPrev != chainActive.Tip())
-                    break;
-
-                // Update nTime every few seconds
-                if (UpdateTime(pblock, chainparams.GetConsensus(), pindexPrev) < 0)
-                    break; // Recreate the block if the clock has run backwards,
-                           // so that we can use the correct time.
-                if (chainparams.GetConsensus().fPowAllowMinDifficultyBlocks)
                 {
-                    // Changing pblock->nTime can change work required on testnet:
-                    hashTarget.SetCompact(pblock->nBits);
+                    LOCK(cs_main);
+                    if (previous != chainActive.Tip()) break;
+                    if (UpdateTime(&block, chainparams.GetConsensus(), previous) < 0) break;
+                    if (chainparams.GetConsensus().fPowAllowMinDifficultyBlocks)
+                        target.SetCompact(block.nBits);
                 }
             }
         }
-    }
-    catch (const boost::thread_interrupted&)
-    {
+#else
+        LogPrintf("NeuraiMiner -- Mining requires wallet support\n");
+#endif
+    } catch (const boost::thread_interrupted&) {
         LogPrintf("NeuraiMiner -- terminated\n");
-        throw;
-    }
-    catch (const std::runtime_error &e)
-    {
-        LogPrintf("NeuraiMiner -- runtime error: %s\n", e.what());
-        return;
-    }
-    catch (const std::exception &e)
-    {
-        // In particular, a context allocation failure must not escape the thread.
+    } catch (const std::exception& e) {
         LogPrintf("NeuraiMiner -- local error: %s\n", e.what());
-        return;
     }
 }
 
-int GenerateNeurais(bool fGenerate, int nThreads, const CChainParams& chainparams)
+int GenerateNeurais(bool generate, int threads, const CChainParams& chainparams)
 {
-
-    static boost::thread_group* minerThreads = NULL;
-
-    int numCores = GetNumCores();
-    if (nThreads < 0)
-        nThreads = numCores;
-
-    if (minerThreads != NULL)
-    {
+    // Serialize concurrent start/stop RPCs. Joining before returning also
+    // keeps old workers away from metrics resets and wallet/chain teardown.
+    static CCriticalSection cs_mining;
+    static std::unique_ptr<boost::thread_group> minerThreads;
+    LOCK(cs_mining);
+    const int cores = GetNumCores();
+    if (threads < 0) threads = cores;
+    if (minerThreads) {
         minerThreads->interrupt_all();
-        delete minerThreads;
-        minerThreads = NULL;
+        minerThreads->join_all();
+        minerThreads.reset();
     }
-
-    if (nThreads == 0 || !fGenerate)
-        return numCores;
-
-    minerThreads = new boost::thread_group();
-    
-    //Reset metrics
     nMiningTimeStart = GetTimeMicros();
-    nHashesDone = 0;
-    nHashesPerSec = 0;
+    nHashesDone.store(0);
+    nHashesPerSec.store(0);
+    generate = generate && threads != 0;
+    gArgs.ForceSetArg("-gen", generate ? "1" : "0");
+    gArgs.ForceSetArg("-genproclimit", itostr(threads));
+    if (!generate) return cores;
 
-    for (int i = 0; i < nThreads; i++){
+    minerThreads.reset(new boost::thread_group());
+    for (int i = 0; i < threads; ++i)
         minerThreads->create_thread(boost::bind(&NeuraiMiner, boost::cref(chainparams)));
-    }
-
-    return(numCores);
+    return cores;
 }
