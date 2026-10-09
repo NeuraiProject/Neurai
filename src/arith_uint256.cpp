@@ -96,6 +96,19 @@ base_uint<BITS>& base_uint<BITS>::operator/=(const base_uint& b)
         throw uint_error("Division by zero");
     if (div_bits > num_bits) // the result is certainly 0.
         return *this;
+    if (div_bits <= 32) {
+        // Word-at-a-time division is exact for a single-limb divisor. DGW
+        // uses this path repeatedly; keep the numerator's existing 256-bit
+        // wraparound and avoid the bit-at-a-time loop below.
+        uint64_t remainder = 0;
+        const uint32_t divisor = div.pn[0];
+        for (int i = WIDTH - 1; i >= 0; --i) {
+            const uint64_t value = (remainder << 32) | num.pn[i];
+            pn[i] = value / divisor;
+            remainder = value % divisor;
+        }
+        return *this;
+    }
     int shift = num_bits - div_bits;
     div <<= shift; // shift so that div and num align.
     while (shift >= 0) {
