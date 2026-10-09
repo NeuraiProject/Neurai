@@ -158,7 +158,14 @@ BOOST_AUTO_TEST_CASE(allocation_failure_is_local_and_retryable)
     block.nHeight = 0;
     uint256 ignored;
     KAWPOWHash(block, ignored); // Make the legacy one-entry cache hold epoch zero.
-    CBlockIndex parent;
+    std::vector<CBlockIndex> ancestry(180);
+    for (size_t i = 0; i < ancestry.size(); ++i) {
+        ancestry[i].nHeight = 307320 + i;
+        ancestry[i].nTime = block.nTime - (180 - i) * 60;
+        ancestry[i].nBits = block.nBits;
+        ancestry[i].pprev = i ? &ancestry[i - 1] : nullptr;
+    }
+    CBlockIndex& parent = ancestry.back();
     parent.nHeight = 307499; // A different, valid epoch not used by the vector tests.
     const uint256 parent_hash = uint256S("1234567890");
     struct RemoveParent {
@@ -171,6 +178,7 @@ BOOST_AUTO_TEST_CASE(allocation_failure_is_local_and_retryable)
     }
     block.nHeight = 307500;
     block.hashPrevBlock = parent_hash;
+    block.nBits = GetNextWorkRequired(&parent, &block, GetParams().GetConsensus());
     {
         AllocationFailure fail;
         CValidationState state;
@@ -219,6 +227,7 @@ BOOST_AUTO_TEST_CASE(allocation_failure_is_local_and_retryable)
         LOCK(cs_main);
         BOOST_CHECK_EQUAL(mapBlockIndex.count(block.GetHash()), 0U);
     }
+    block.nBits = UintToArith256(GetParams().GetConsensus().powLimit).GetCompact();
     Mine(block);
     CValidationState retry;
     BOOST_CHECK(CheckBlock(block, retry, GetParams().GetConsensus()));

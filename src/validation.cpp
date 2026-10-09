@@ -4408,6 +4408,17 @@ bool CheckKAWPOWHeaderHeight(const CBlockHeader& block, int nHeight, const Conse
     return block.nHeight == static_cast<uint32_t>(nHeight);
 }
 
+// Use the candidate's own parent, including forks. This check is cheap and
+// independent of the current tip, and must precede full PoW and block-body work.
+static bool CheckBlockHeaderDifficulty(const CBlockHeader& block, CValidationState& state,
+                                      const Consensus::Params& params, const CBlockIndex* prev)
+{
+    AssertLockHeld(cs_main);
+    if (block.nBits != GetNextWorkRequired(prev, &block, params))
+        return state.DoS(100, false, REJECT_INVALID, "bad-diffbits", false, "incorrect proof of work");
+    return true;
+}
+
 static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationState& state, const CChainParams& params, const CBlockIndex* pindexPrev, int64_t nAdjustedTime)
 {
     assert(pindexPrev != nullptr);
@@ -4430,8 +4441,7 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationSta
 
     // Check proof of work
     const Consensus::Params& consensusParams = params.GetConsensus();
-    if (block.nBits != GetNextWorkRequired(pindexPrev, &block, consensusParams))
-        return state.DoS(100, false, REJECT_INVALID, "bad-diffbits", false, "incorrect proof of work");
+    if (!CheckBlockHeaderDifficulty(block, state, consensusParams, pindexPrev)) return false;
 
     // Enforce that a KAWPOW header's declared height matches the real chain
     // height derived from its parent. Without this, CheckBlockHeader's checkpoint
@@ -4599,6 +4609,7 @@ static bool AcceptBlockHeader(const CBlockHeader& block, CValidationState& state
         if (pindexPrev->nStatus & BLOCK_FAILED_MASK)
             return state.DoS(100, error("%s: prev block invalid", __func__), REJECT_INVALID, "bad-prevblk");
         if (!CheckKAWPOWHeaderAdmission(block, state, chainparams.GetConsensus())) return false;
+        if (!CheckBlockHeaderDifficulty(block, state, chainparams.GetConsensus(), pindexPrev)) return false;
         if (!CheckBlockHeader(block, state, chainparams.GetConsensus()))
             return error("%s: Consensus::CheckBlockHeader: %s, %s", __func__, hash.ToString(), FormatStateMessage(state));
         if (!ContextualCheckBlockHeader(block, state, chainparams, pindexPrev, GetAdjustedTime()))
@@ -4747,14 +4758,32 @@ static bool AcceptBlock(const std::shared_ptr<const CBlock>& pblock, CValidation
     return true;
 }
 
+// Network/RPC admission only. Disk import already accepts headers before
+// checking bodies; reindex also queues children whose parents arrive later.
+static bool CheckBlockWorkAdmission(const CBlockHeader& block, CValidationState& state,
+                                    const CChainParams& params)
+{
+    LOCK(cs_main);
+    if (block.hashPrevBlock.IsNull() && block.GetHash() == params.GetConsensus().hashGenesisBlock)
+        return true;
+    const auto prev = mapBlockIndex.find(block.hashPrevBlock);
+    // Do not punish the peer or cache an invalidity verdict for missing context.
+    // The same block may be retried once its parent is known.
+    if (prev == mapBlockIndex.end()) return state.Error("block-parent-unavailable");
+    if (prev->second->nStatus & BLOCK_FAILED_MASK)
+        return state.DoS(100, false, REJECT_INVALID, "bad-prevblk");
+    if (!CheckKAWPOWHeaderAdmission(block, state, params.GetConsensus())) return false;
+    return CheckBlockHeaderDifficulty(block, state, params.GetConsensus(), prev->second);
+}
+
 bool ProcessNewBlock(const CChainParams& chainparams, const std::shared_ptr<const CBlock> pblock, bool fForceProcessing, bool *fNewBlock)
 {
     if (fNewBlock) *fNewBlock = false;
     CValidationState state;
-    bool ret;
+    bool ret = CheckBlockWorkAdmission(*pblock, state, chainparams);
     bool recovered = false;
     {
-        ret = CheckBlock(*pblock, state, chainparams.GetConsensus(), true, true);
+        ret = ret && CheckBlock(*pblock, state, chainparams.GetConsensus(), true, true);
         LOCK(cs_main);
         CBlockIndex* index = nullptr;
         if (ret) ret = AcceptBlock(pblock, state, chainparams, &index, fForceProcessing, nullptr, fNewBlock);
