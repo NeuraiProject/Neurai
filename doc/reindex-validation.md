@@ -1,9 +1,11 @@
 # Reindex and block import optimization: validation record
 
-Phase 3 of the header synchronization plan, requested on 8 October 2026 and
-based on `b778146efed029aa939092f624ca83cb523c1904`. This change reuses a PoW
+Introduced in `16e9e18`, based on `b778146`. This change reuses a PoW
 check within a single call; it adds no anchors and changes no activation
 heights or block validity rules.
+
+This record describes validation of that implementation. It does not report
+a rerun of later changes.
 
 ## Implementation
 
@@ -42,8 +44,6 @@ with serialized blocks and the existing full-KAWPOW counter. Its 11 cases cover:
 - Preservation of completed block checks without serializing `fChecked`.
 - SHA256d block import and rejection of bad SHA256d PoW.
 
-Ubuntu 24.04 Docker, GCC 13:
-
 | Check | Result |
 | --- | --- |
 | New import group, release | 11 cases pass |
@@ -54,37 +54,25 @@ Ubuntu 24.04 Docker, GCC 13:
 | Skip PoW for known headers too | Import tests fail (exit 201) |
 | Lose the completed block check cache | Import tests fail (exit 201) |
 
-Test preparation was corrected before these final runs: bad-PoW candidates
-use a half-range target rather than searching for failures at regtest's nearly
-unrestricted target, and the out-of-order child's difficulty is calculated
-from its parent. Both compiled source trees match the final validation and
-test files. The production implementation did not need changes during testing.
+The tested release and debug sources were checked against the implementation.
 
 ## Complete reindex measurement
 
-Preparation and measurement are isolated from the existing services on the
-authorized Docker host. A separate mainnet copy was synchronized without
-pruning through height 1,814,000. The benchmark runs the reference and optimized
-binaries sequentially on copies of the same frozen block files,
-with `-reindex -stopafterblockimport -dbcache=512 -par=4 -prune=0`, networking
-disabled, and the same 12-CPU / 24-GiB container limits. Our builds and unit
-tests finish before either measurement starts.
+The reference and optimized binaries were measured sequentially using identical
+copies of frozen mainnet block files, matching node options and resource limits,
+and networking disabled. The complete block history through height 1,814,024
+was used for both runs.
 
-This is one sequential comparison on a shared Intel Core i9-14900K host.
-Other host activity was present (observed load averages around 5–12 on 32
-logical CPUs), so scheduling, CPU frequency and shared caches can affect
-elapsed times. The import tests independently establish the removed duplicate
-work by counting full KAWPOW checks.
+This is a single comparison. Resource contention, scheduling and caching can
+affect elapsed times. The import tests independently establish the removed
+duplicate work by counting full KAWPOW checks.
 
 The driver records binary and input-file hashes, elapsed time, peak RSS, and
 the final chain height/hash, UTXO statistics and asset metadata. It requires
 identical final state and restores the original block-file input before the
 second run if reindex truncated preallocated padding.
 
-Both runs completed successfully on 8 October 2026. The frozen input contained
-29 block files (3,807,516,159 bytes) and complete blocks through height
-1,814,024. The reference and optimized runs used identical arguments and block
-file bytes; neither run changed those input bytes.
+Both runs completed successfully and preserved the input block-file bytes.
 
 | Full reindex, including connection and shutdown | Reference `b778146` | Phase 3 |
 | --- | --- | --- |
@@ -92,7 +80,7 @@ file bytes; neither run changed those input bytes.
 | Peak RSS observed | 2,574,836 KiB | 2,576,108 KiB |
 
 This run took **39.1% less elapsed time** (1.64 times as fast), saving about
-69 minutes. This is the observed end-to-end result on this host, not a general
+69 minutes. This is an observed end-to-end result, not a general
 guarantee or a measurement of initial network synchronization. Timing includes
 startup and clean shutdown, sampled at two-second intervals; the subsequent
 RPC snapshots are outside the timed interval.
@@ -110,11 +98,5 @@ Final state matches:
 
 The final comparison parses the raw RPC responses with decimal arithmetic,
 avoiding the rounding in the driver's initial JSON summary. Only UTXO
-`disk_size` is excluded: LevelDB's physical sizes differ (160,301,928 and
-163,192,034 bytes), while all logical UTXO statistics match.
-
-Full logs, binaries, block files, source checksums and the drivers are retained
-in `/home/docker-test/header-sync-20261007/phase3` on the authorized test host.
-A compact copy of the test logs, benchmark evidence and exact state comparison
-is kept locally in `tmp/reindex-validation-20261008/final-evidence.tar.gz`.
-The test nodes and containers are stopped after validation. No commit was made.
+`disk_size` is excluded because LevelDB's physical layout can differ while all
+logical UTXO statistics match.
