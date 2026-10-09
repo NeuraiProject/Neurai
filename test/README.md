@@ -220,3 +220,27 @@ Use a fresh temporary directory for each run. It mines an isolated chain,
 checks start/stop and concurrent replacements, then reindexes it. It requires
 wallet support and exclusive use of loopback RPC port 29703; it makes no
 external peer connections. See [mining behavior](../doc/mining-behavior.md).
+
+### Import without genesis regression tests
+
+Run the standalone import test against each network with a fresh temporary
+directory. It uses only Python's standard library and does not contact external
+peers:
+
+```sh
+python3 test/functional/standalone/import_without_genesis.py --neuraid src/neuraid --network main --tmpdir /tmp/neurai-import-main
+python3 test/functional/standalone/import_without_genesis.py --neuraid src/neuraid --network test --tmpdir /tmp/neurai-import-test
+python3 test/functional/standalone/import_without_genesis.py --neuraid src/neuraid --network regtest --tmpdir /tmp/neurai-import-regtest
+```
+
+The test mines three blocks, omits genesis from the import files and checks
+`-loadblock`, `bootstrap.dat`, split imports, fresh reindexing and existing
+chains with `-checkblockindex` enabled. It compares the tip and UTXO statistics,
+runs `verifychain` and checks persistence after restarting each node. Files
+including genesis and empty files are controls. Import files remain ordered
+parent before child; this test does not require out-of-order `-loadblock` support.
+
+Run one invocation at a time: the shared `block_work_admission` helpers use
+loopback ports 29800 and 29801. This script is separate from the legacy regtest
+runner and can be narrowed with `--scenario loadblock` when reproducing the
+original startup assertion.
