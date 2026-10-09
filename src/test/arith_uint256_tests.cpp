@@ -5,6 +5,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <boost/test/unit_test.hpp>
+#include <boost/multiprecision/cpp_int.hpp>
 #include <stdint.h>
 #include <sstream>
 #include <iomanip>
@@ -624,6 +625,90 @@ BOOST_FIXTURE_TEST_SUITE(arith_uint256_tests, BasicTestingSetup)
         CHECKBITWISEOPERATOR(R1, ~R2, |)
         CHECKBITWISEOPERATOR(R1, ~R2, ^)
         CHECKBITWISEOPERATOR(R1, ~R2, &)
+    }
+
+    namespace {
+    void CheckDivisionReference(const arith_uint256& numerator, const arith_uint256& divisor)
+    {
+        using boost::multiprecision::cpp_int;
+        const cpp_int a("0x" + numerator.GetHex());
+        const cpp_int b("0x" + divisor.GetHex());
+        BOOST_REQUIRE(b != 0);
+        const arith_uint256 quotient = numerator / divisor;
+        const cpp_int q("0x" + quotient.GetHex());
+        BOOST_CHECK_MESSAGE(q == a / b, "division mismatch: " << numerator.GetHex()
+                            << " / " << divisor.GetHex());
+        const cpp_int remainder = a - q * b;
+        BOOST_CHECK(remainder >= 0 && remainder < b);
+    }
+    }
+
+    BOOST_AUTO_TEST_CASE(division_word_boundaries)
+    {
+        const arith_uint256 divisors[] = {
+            1, 2, 3, 181, 255, 256, 257, 65535, 65536, 65537,
+            0x7fffffffULL, 0x80000000ULL, 0xfffffffeULL, 0xffffffffULL,
+            0x100000000ULL, 0x100000001ULL, 0xffffffffffffffffULL
+        };
+        for (const auto& divisor : divisors) {
+            for (const auto& value : {ZeroL, OneL, MaxL, arith_uint256(divisor - 1), divisor,
+                                     arith_uint256(divisor + 1)})
+                CheckDivisionReference(value, divisor);
+            for (unsigned int bit = 0; bit < 256; ++bit) {
+                const arith_uint256 power = OneL << bit;
+                CheckDivisionReference(power, divisor);
+                CheckDivisionReference(power - 1, divisor);
+                CheckDivisionReference(power + 1, divisor);
+            }
+        }
+    }
+
+    BOOST_AUTO_TEST_CASE(division_random_reference)
+    {
+        // A fixed generator keeps failures reproducible without relying on the
+        // arithmetic being tested to construct the arbitrary-precision oracle.
+        uint64_t state = 0x5e3a2947c108d6bfULL;
+        auto next = [&state]() {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            return state;
+        };
+        for (unsigned int trial = 0; trial < 2000; ++trial) {
+            arith_uint256 numerator;
+            for (unsigned int limb = 0; limb < 4; ++limb)
+                numerator = (numerator << 64) | arith_uint256(next());
+            const uint32_t word = static_cast<uint32_t>(next()) | 1U;
+            CheckDivisionReference(numerator, word);
+            CheckDivisionReference(numerator, trial % 179 + 3); // DGW: 3..181
+            CheckDivisionReference(numerator, arith_uint256(next()) | OneL);
+            // Multiplication/addition still wrap before division, including
+            // the high-target cases that determine historical DGW consensus.
+            const uint32_t count = trial % 179 + 2;
+            const arith_uint256 wrapped = numerator * count + MaxL;
+            using boost::multiprecision::cpp_int;
+            const cpp_int original("0x" + numerator.GetHex());
+            const cpp_int mask = (cpp_int(1) << 256) - 1;
+            const cpp_int expected = ((original * count + mask) & mask) / (count + 1);
+            const arith_uint256 quotient = wrapped / (count + 1);
+            BOOST_CHECK(cpp_int("0x" + quotient.GetHex()) == expected);
+        }
+    }
+
+    BOOST_AUTO_TEST_CASE(division_alias_and_zero)
+    {
+        for (const auto& original : {OneL, arith_uint256(181), arith_uint256(0xffffffffULL),
+                                     arith_uint256(0x100000000ULL), MaxL}) {
+            auto aliased = original;
+            aliased /= aliased;
+            BOOST_CHECK(aliased == OneL);
+            auto by_zero = original;
+            BOOST_CHECK_THROW(by_zero /= ZeroL, uint_error);
+            BOOST_CHECK(by_zero == ZeroL); // Preserve the existing exception state.
+        }
+        auto zero = ZeroL;
+        BOOST_CHECK_THROW(zero /= zero, uint_error);
+        BOOST_CHECK(zero == ZeroL);
     }
 
 BOOST_AUTO_TEST_SUITE_END()
