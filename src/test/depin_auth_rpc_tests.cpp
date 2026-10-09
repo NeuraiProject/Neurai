@@ -288,6 +288,8 @@ BOOST_AUTO_TEST_CASE(receivemsg_with_valid_auth)
 // normal nonce: single-use, bound, and useless for other bindings.
 BOOST_AUTO_TEST_CASE(replies_chain_the_next_challenge)
 {
+    // Keep expiration checks independent of wall-clock second boundaries.
+    SetMockTime(1700000000);
     const Holder holder = NewHolder(true, SECTION_A, 10);
     const Holder sender = NewHolder(true, SECTION_A, 10);
     AddMessage(SECTION_A, sender, {holder}, "uno");
