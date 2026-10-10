@@ -93,13 +93,16 @@ self-contained, pins the release tag, and produces the image pushed to the
 `neuraiproject/neurai-node` repository:
 
 ```bash
-cd doc/docker/docker-hub/1.0.6
-docker build -t neuraiproject/neurai-node:v1.0.6 .
-docker push neuraiproject/neurai-node:v1.0.6
+cd doc/docker/docker-hub/1.0.7
+docker build -t neuraiproject/neurai-node:v1.0.7 .
+docker push neuraiproject/neurai-node:v1.0.7
 ```
 
-See `docker-hub/1.0.6/README.md` for the full publish checklist and a Compose
+See `docker-hub/1.0.7/README.md` for the full publish checklist and a Compose
 example that runs the published image without building anything locally.
+
+For an existing v1.0.6 node, keep its volume and deployment configuration;
+see the upgrade instructions in `docker-hub/1.0.7/README.md`.
 
 ## Check status and logs
 
