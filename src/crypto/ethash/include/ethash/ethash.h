@@ -27,6 +27,11 @@ extern "C" {
 #define ETHASH_REVISION "23"
 
 #define ETHASH_EPOCH_LENGTH 7500
+/* Resource admission limit: at epoch 896 the light cache is just below 128 MiB.
+ * This is per light cache, not a bound on total process memory or the full DAG.
+ * Review this limit before the chain approaches height 6,727,500.
+ */
+#define ETHASH_MAX_EPOCH_NUMBER 896
 #define ETHASH_LIGHT_CACHE_ITEM_SIZE 64
 #define ETHASH_FULL_DATASET_ITEM_SIZE 128
 #define ETHASH_NUM_DATASET_ACCESSES 64

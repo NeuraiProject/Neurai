@@ -16,6 +16,7 @@
 #include <boost/multi_index_container.hpp>
 #include <boost/multi_index/ordered_index.hpp>
 
+class arith_uint256;
 class CBlockIndex;
 class CChainParams;
 class CScript;
@@ -206,6 +207,15 @@ private:
 /** Modify the extranonce in a block */
 void IncrementExtraNonce(CBlock* pblock, const CBlockIndex* pindexPrev, unsigned int& nExtraNonce);
 int64_t UpdateTime(CBlockHeader* pblock, const Consensus::Params& consensusParams, const CBlockIndex* pindexPrev);
+
+/** Result of a bounded internal-miner nonce search. */
+enum class MiningScanResult { FOUND, MORE, EXHAUSTED };
+/** Hash at most max_tries nonces, starting with the current nonce. On MORE,
+ * the header holds the next untested nonce; on FOUND it holds the solution
+ * and mix hash; on EXHAUSTED it holds the last nonce. hashes_done is reset
+ * for each call. May throw a local hashing error or thread interruption. */
+MiningScanResult ScanBlockNonces(CBlockHeader& block, const arith_uint256& target,
+                                uint32_t max_tries, uint64_t& hashes_done);
 
 int GenerateNeurais(bool fGenerate, int nThreads, const CChainParams& chainparams);
 #endif // NEURAI_MINER_H

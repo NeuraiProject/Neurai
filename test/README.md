@@ -66,6 +66,39 @@ how many jobs to run, append `--jobs=n`
 The individual tests and the test_runner harness have many command-line
 options. Run `test_runner.py -h` to see them all.
 
+#### Regtest checks when integrating DePIN
+
+The baseline address, serialization, subsidy and versionbits fixtures share the
+fixes from DePIN commits `8685a17` and `a56f93f`. Keep DePIN's additional tests
+and APIs when resolving conflicts; the Base58 JSON values are the same even
+where whitespace differs.
+
+The branches intentionally have different regtest genesis blocks and PoW
+algorithms. Keep the receiving branch's genesis and algorithm. Both branches
+use minimum difficulty and deployment timeouts that permit activation in 2026.
+Use a fresh regtest directory when testing changes to these parameters.
+
+`miner_tests/createnewblock_validity_test` now mines its inputs with
+`GetHashFull` instead of using fixed nonces, and uses the mined subsidy. Keep
+this test enabled: DePIN's old `#if 0` wrapper can merge without a text conflict
+and silently disable it again. Run the case explicitly after integration:
+
+```sh
+src/test/test_neurai --run_test=miner_tests/createnewblock_validity_test
+make check VERBOSE=1
+python3 test/functional/test_runner.py feature_regtest.py
+```
+
+`feature_regtest.py` covers mining past the difficulty transition, deployment
+activation, wallet and asset transactions, invalidation/reconsideration, restart,
+reindex and chainstate rebuild. It mines through RPC and has no fixed genesis
+hash or nonce, so its PoW setup can be reused on either branch. The full merged
+DePIN suite must still run to check its additional consensus features.
+
+Also retain the `cs_main` before `cs_messaging` lock order in
+`ScanForMessageChannels`. Run functional tests with `--enable-debug` as well:
+unit tests alone did not exercise the startup/shutdown lock inversion.
+
 #### Troubleshooting and debugging test failures
 
 ##### Resource contention
@@ -185,3 +218,62 @@ Use the `-v` option for verbose output.
 You are encouraged to write functional tests for new or existing features.
 Further information about the functional test framework and individual 
 tests is found in [test/functional](/test/functional).
+
+## Standalone peer clock policy tests
+
+The clock-policy regression script uses only Python's standard library and runs
+isolated nodes with simulated inbound and outbound peers on loopback. Run one
+invocation at a time, using a fresh data directory:
+
+```sh
+python3 test/functional/standalone/p2p_timeadjustment.py --neuraid src/neuraid --network main --tmpdir /tmp/neurai-clock-main
+python3 test/functional/standalone/p2p_timeadjustment.py --neuraid src/neuraid --network test --tmpdir /tmp/neurai-clock-test
+```
+
+It checks default and custom adjustment limits, disabled adjustment, duplicate
+addresses, inbound exclusion, extreme timestamps and mining-template time.
+It does not connect to external peers. This standalone mainnet/testnet test is
+separate from the legacy regtest runner. Its unit counterpart, `timedata_tests`,
+is included in `make check`.
+
+### Internal miner regression tests
+
+`miner_nonce_tests` is part of the normal unit suite. It checks real KAWPOW
+and legacy hashing, nonce exhaustion, bounded searches, interruption and local
+hashing errors. Branches supporting SHA256d also test its nonce selection.
+
+On Linux, run the standalone wallet/RPC test against an isolated build:
+
+```sh
+python3 test/functional/standalone/mining_internal.py --neuraid src/neuraid --network main --tmpdir /tmp/neurai-miner-main
+python3 test/functional/standalone/mining_internal.py --neuraid src/neuraid --network test --tmpdir /tmp/neurai-miner-test
+```
+
+Use a fresh temporary directory for each run. It mines an isolated chain,
+checks start/stop and concurrent replacements, then reindexes it. It requires
+wallet support and exclusive use of loopback RPC port 29703; it makes no
+external peer connections. See [mining behavior](../doc/mining-behavior.md).
+
+### Import without genesis regression tests
+
+Run the standalone import test against each network with a fresh temporary
+directory. It uses only Python's standard library and does not contact external
+peers:
+
+```sh
+python3 test/functional/standalone/import_without_genesis.py --neuraid src/neuraid --network main --tmpdir /tmp/neurai-import-main
+python3 test/functional/standalone/import_without_genesis.py --neuraid src/neuraid --network test --tmpdir /tmp/neurai-import-test
+python3 test/functional/standalone/import_without_genesis.py --neuraid src/neuraid --network regtest --tmpdir /tmp/neurai-import-regtest
+```
+
+The test mines three blocks, omits genesis from the import files and checks
+`-loadblock`, `bootstrap.dat`, split imports, fresh reindexing and existing
+chains with `-checkblockindex` enabled. It compares the tip and UTXO statistics,
+runs `verifychain` and checks persistence after restarting each node. Files
+including genesis and empty files are controls. Import files remain ordered
+parent before child; this test does not require out-of-order `-loadblock` support.
+
+Run one invocation at a time: the shared `block_work_admission` helpers use
+loopback ports 29800 and 29801. This script is separate from the legacy regtest
+runner and can be narrowed with `--scenario loadblock` when reproducing the
+original startup assertion.

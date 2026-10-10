@@ -65,14 +65,23 @@ NEURAI_TESTS =\
   test/merkle_tests.cpp \
   test/merkleblock_tests.cpp \
   test/miner_tests.cpp \
+  test/miner_nonce_tests.cpp \
   test/multisig_tests.cpp \
   test/net_tests.cpp \
   test/netbase_tests.cpp \
   test/pmt_tests.cpp \
   test/policyestimator_tests.cpp \
   test/pow_tests.cpp \
+  test/block_work_tests.cpp \
+  test/data/mainnet_dgw_history.h \
   test/prevector_tests.cpp \
   test/kawpow_tests.cpp \
+  test/kawpow_admission_tests.cpp \
+  test/kawpow_index_tests.cpp \
+  test/mining_concurrency_tests.cpp \
+  test/mining_rpc_hex_tests.cpp \
+  test/epoch_context_cache_tests.cpp \
+  test/epoch_context_cache_test_access.h \
   test/raii_event_tests.cpp \
   test/random_tests.cpp \
   test/reverselock_tests.cpp \

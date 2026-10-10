@@ -7,6 +7,7 @@
 #include <crypto/ethash/include/ethash/ethash.hpp>
 
 #include <string>
+#include <stdexcept>
 
 template <typename Hash>
 inline std::string to_hex(const Hash& h)
@@ -24,14 +25,22 @@ inline std::string to_hex(const Hash& h)
 
 inline ethash::hash256 to_hash256(const std::string& hex)
 {
-    auto parse_digit = [](char d) -> int { return d <= '9' ? (d - '0') : (d - 'a' + 10); };
-
     ethash::hash256 hash = {};
-    for (size_t i = 1; i < hex.size(); i += 2)
+    if (hex.size() != sizeof(hash.bytes) * 2)
+        throw std::invalid_argument("hash256 requires exactly 64 hexadecimal characters");
+
+    auto parse_digit = [](char d) -> unsigned {
+        if (d >= '0' && d <= '9') return d - '0';
+        if (d >= 'a' && d <= 'f') return d - 'a' + 10;
+        if (d >= 'A' && d <= 'F') return d - 'A' + 10;
+        throw std::invalid_argument("invalid hash256 hexadecimal character");
+    };
+    // Ethash consumes bytes in textual order, not uint256's internal order.
+    for (size_t i = 0; i < sizeof(hash.bytes); ++i)
     {
-        int h = parse_digit(hex[i - 1]);
-        int l = parse_digit(hex[i]);
-        hash.bytes[i / 2] = uint8_t((h << 4) | l);
+        const unsigned h = parse_digit(hex[2 * i]);
+        const unsigned l = parse_digit(hex[2 * i + 1]);
+        hash.bytes[i] = uint8_t((h << 4) | l);
     }
     return hash;
 }

@@ -500,7 +500,7 @@ std::string HelpMessage(HelpMessageMode mode)
     strUsage += HelpMessageOpt("-maxconnections=<n>", strprintf(_("Maintain at most <n> connections to peers (default: %u)"), DEFAULT_MAX_PEER_CONNECTIONS));
     strUsage += HelpMessageOpt("-maxreceivebuffer=<n>", strprintf(_("Maximum per-connection receive buffer, <n>*1000 bytes (default: %u)"), DEFAULT_MAXRECEIVEBUFFER));
     strUsage += HelpMessageOpt("-maxsendbuffer=<n>", strprintf(_("Maximum per-connection send buffer, <n>*1000 bytes (default: %u)"), DEFAULT_MAXSENDBUFFER));
-    strUsage += HelpMessageOpt("-maxtimeadjustment", strprintf(_("Maximum allowed median peer time offset adjustment. Local perspective of time may be influenced by peers forward or backward by this amount. (default: %u seconds)"), DEFAULT_MAX_TIME_ADJUSTMENT));
+    strUsage += HelpMessageOpt("-maxtimeadjustment", strprintf(_("Maximum allowed median time offset from persistent outbound peers. Set to 0 to use only the system clock. (default: %u seconds)"), DEFAULT_MAX_TIME_ADJUSTMENT));
     strUsage += HelpMessageOpt("-onion=<ip:port>", strprintf(_("Use separate SOCKS5 proxy to reach peers via Tor hidden services (default: %s)"), "-proxy"));
     strUsage += HelpMessageOpt("-onlynet=<net>", _("Only connect to nodes in network <net> (ipv4, ipv6 or onion)"));
     strUsage += HelpMessageOpt("-permitbaremultisig", strprintf(_("Relay non-P2SH multisig (default: %u)"), DEFAULT_PERMIT_BAREMULTISIG));
@@ -757,6 +757,18 @@ void ThreadImport(std::vector<fs::path> vImportFiles)
         LogPrintf("Reindexing finished\n");
         // To avoid ending up in a situation without genesis block, re-try initializing (no-op if reindexing worked):
         LoadGenesisBlock(chainparams);
+    }
+
+    // LoadGenesisBlock records genesis in the block index, but an empty coins
+    // database still has no active tip. Bootstrap and -loadblock files need not
+    // contain genesis, so activate the available chain before accepting a child.
+    {
+        CValidationState state;
+        if (!ActivateBestChain(state, chainparams)) {
+            LogPrintf("Failed to activate chain before block import\n");
+            StartShutdown();
+            return;
+        }
     }
 
     // hardcoded $DATADIR/bootstrap.dat
@@ -1649,7 +1661,9 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
                 // ever removed a block file from disk.
                 // Note that it also sets fReindex based on the disk flag!
                 // From here on out fReindex and fReset mean something different!
-                if (!LoadBlockIndex(chainparams)) {
+                std::string powLoadError;
+                if (!LoadBlockIndex(chainparams, &powLoadError)) {
+                    if (!powLoadError.empty()) return InitError(powLoadError);
                     strLoadError = _("Error loading block database");
                     break;
                 }
@@ -1751,6 +1765,10 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
                     }
                     assert(chainActive.Tip() != nullptr);
                 }
+
+                CValidationState powRecovery;
+                if (!RecoverBlockIndexPoW(chainparams, powRecovery))
+                    return InitError(powRecovery.GetRejectReason());
 
                 if (!fReset) {
                     // Note that RewindBlockIndex MUST run even if we're about to -reindex-chainstate.

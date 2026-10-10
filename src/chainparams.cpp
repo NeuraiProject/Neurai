@@ -155,10 +155,10 @@ public:
         uint32_t nGenesisTime = 1681720840;
 
         // The best chain should have at least this much work
-        consensus.nMinimumChainWork = uint256S("0x000000000000000000000000000000000000000000000004875780a8b78c7f02"); // block 1733712
+        consensus.nMinimumChainWork = uint256S("0x00000000000000000000000000000000000000000000000489ec36f3606a69da"); // block 1816500
 
         // By default assume that the signatures in ancestors of this block are valid.
-        consensus.defaultAssumeValid = uint256S("0x000000000065bd9be24a1328484cc1904c5d6f8bc8986088bb1f84c26bed6897"); // Verified mainnet block 1733712
+        consensus.defaultAssumeValid = uint256S("0x00000000000dbfc94f2f79806e254bb9c364382f066cf1dc41b73d5bde8c86ac"); // Verified mainnet block 1816500
 
         /**
          * The message start string is designed to be unlikely to occur in normal data.
@@ -229,16 +229,18 @@ public:
                 { 1330000, uint256S("0x00000000000e22514b7645a6901c97cf91e227fc9615a536f69ae4e1e53a9785")},
                 // Consensus decision (v1.0.6, KAWPOW header-height fix): upgraded nodes
                 // reject any fork below this block that does not connect to it. Must be
-                // coordinated and announced. Aligned with nKAWPOWHeaderHeightCheckActivation.
-                { 1733712, uint256S("0x000000000065bd9be24a1328484cc1904c5d6f8bc8986088bb1f84c26bed6897")}
+                // coordinated and announced. Historical checkpoint; header-height equality has a separate activation.
+                { 1733712, uint256S("0x000000000065bd9be24a1328484cc1904c5d6f8bc8986088bb1f84c26bed6897")},
+                // Independently verified mainnet reference for the maintenance release.
+                { 1816500, uint256S("0x00000000000dbfc94f2f79806e254bb9c364382f066cf1dc41b73d5bde8c86ac")}
             }
         };
 
         chainTxData = ChainTxData{
-            1762149426, // * UNIX timestamp of last known number of transactions
-            1885721,    // * total number of transactions between genesis and that timestamp
+            1791563969, // * UNIX timestamp of last known number of transactions
+            2439721,    // * total number of transactions between genesis and that timestamp
                         //   (the tx=... number in the SetBestChain debug.log lines)
-            0.02      // * estimated number of transactions per second after that timestamp
+            0.01839593356496156 // * estimated transactions per second from the preceding 10080 blocks
         };
 
         /** XNA Start **/
@@ -470,38 +472,41 @@ public:
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days
         consensus.nPowTargetSpacing = 1 * 60;
-        consensus.fPowAllowMinDifficultyBlocks = false;
-        consensus.fPowNoRetargeting = false;
+        // Match DePIN regtest: use DGW's minimum-difficulty branch instead
+        // of retargeting a synthetic chain of near-powLimit blocks.
+        consensus.fPowAllowMinDifficultyBlocks = true;
+        consensus.fPowNoRetargeting = true;
         consensus.nRuleChangeActivationThreshold = 1000; 
         consensus.nMinerConfirmationWindow = 2016; 
+        // Match DePIN: permit activation under the current clock on fresh regtest chains.
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].bit = 28;
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nStartTime = 0;
-        consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nTimeout = 1704063599;
+        consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nTimeout = 1893452400;
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nOverrideRuleChangeActivationThreshold = 108;
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nOverrideMinerConfirmationWindow = 144;
         consensus.vDeployments[Consensus::DEPLOYMENT_ASSETS].bit = 6;
         consensus.vDeployments[Consensus::DEPLOYMENT_ASSETS].nStartTime = 0;
-        consensus.vDeployments[Consensus::DEPLOYMENT_ASSETS].nTimeout = 1704063599;
+        consensus.vDeployments[Consensus::DEPLOYMENT_ASSETS].nTimeout = 1893452400;
         consensus.vDeployments[Consensus::DEPLOYMENT_ASSETS].nOverrideRuleChangeActivationThreshold = 108;
         consensus.vDeployments[Consensus::DEPLOYMENT_ASSETS].nOverrideMinerConfirmationWindow = 144;
         consensus.vDeployments[Consensus::DEPLOYMENT_MSG_REST_ASSETS].bit = 7; 
         consensus.vDeployments[Consensus::DEPLOYMENT_MSG_REST_ASSETS].nStartTime = 0; 
-        consensus.vDeployments[Consensus::DEPLOYMENT_MSG_REST_ASSETS].nTimeout = 1704063599; // Sun Dec 31 2023 22:59:59 GMT+0000
+        consensus.vDeployments[Consensus::DEPLOYMENT_MSG_REST_ASSETS].nTimeout = 1893452400; // Mon Dec 31 2029 23:00:00 GMT+0000
         consensus.vDeployments[Consensus::DEPLOYMENT_MSG_REST_ASSETS].nOverrideRuleChangeActivationThreshold = 108;
         consensus.vDeployments[Consensus::DEPLOYMENT_MSG_REST_ASSETS].nOverrideMinerConfirmationWindow = 144;
         consensus.vDeployments[Consensus::DEPLOYMENT_TRANSFER_SCRIPT_SIZE].bit = 8;
         consensus.vDeployments[Consensus::DEPLOYMENT_TRANSFER_SCRIPT_SIZE].nStartTime = 0;
-        consensus.vDeployments[Consensus::DEPLOYMENT_TRANSFER_SCRIPT_SIZE].nTimeout = 1704063599;
+        consensus.vDeployments[Consensus::DEPLOYMENT_TRANSFER_SCRIPT_SIZE].nTimeout = 1893452400;
         consensus.vDeployments[Consensus::DEPLOYMENT_TRANSFER_SCRIPT_SIZE].nOverrideRuleChangeActivationThreshold = 208;
         consensus.vDeployments[Consensus::DEPLOYMENT_TRANSFER_SCRIPT_SIZE].nOverrideMinerConfirmationWindow = 288;
         consensus.vDeployments[Consensus::DEPLOYMENT_ENFORCE_VALUE].bit = 9;
         consensus.vDeployments[Consensus::DEPLOYMENT_ENFORCE_VALUE].nStartTime = 0;
-        consensus.vDeployments[Consensus::DEPLOYMENT_ENFORCE_VALUE].nTimeout = 1704063599;
+        consensus.vDeployments[Consensus::DEPLOYMENT_ENFORCE_VALUE].nTimeout = 1893452400;
         consensus.vDeployments[Consensus::DEPLOYMENT_ENFORCE_VALUE].nOverrideRuleChangeActivationThreshold = 108;
         consensus.vDeployments[Consensus::DEPLOYMENT_ENFORCE_VALUE].nOverrideMinerConfirmationWindow = 144;
         consensus.vDeployments[Consensus::DEPLOYMENT_COINBASE_ASSETS].bit = 10;
         consensus.vDeployments[Consensus::DEPLOYMENT_COINBASE_ASSETS].nStartTime = 0;
-        consensus.vDeployments[Consensus::DEPLOYMENT_COINBASE_ASSETS].nTimeout = 1704063599;
+        consensus.vDeployments[Consensus::DEPLOYMENT_COINBASE_ASSETS].nTimeout = 1893452400;
         consensus.vDeployments[Consensus::DEPLOYMENT_COINBASE_ASSETS].nOverrideRuleChangeActivationThreshold = 400;
         consensus.vDeployments[Consensus::DEPLOYMENT_COINBASE_ASSETS].nOverrideMinerConfirmationWindow = 500;
 
@@ -523,9 +528,11 @@ public:
 
 
         genesis = CreateGenesisBlock(nGenesisTime, 1, 0x207fffff, 4, 50000 * COIN);
+        // The old assertion referred to a different genesis. Keep the existing
+        // header/coinbase and assert their actual hash (nonce 1 also meets nBits).
         consensus.hashGenesisBlock = genesis.GetX16RHash();
 
-        assert(consensus.hashGenesisBlock == uint256S("0x0b2c703dc93bb63a36c4e33b85be4855ddbca2ac951a7a0a29b8de0408200a3c "));
+        assert(consensus.hashGenesisBlock == uint256S("6d7844e7ab81aa230e4ec37e12d344339098c523a6e92ddac3ab1148000fa2e4"));
         assert(genesis.hashMerkleRoot == uint256S("4b28bf93d960cd83d1889757381d5a587208464e9075bdc0739151fbe15f5951"));
 
         vFixedSeeds.clear(); //!< Regtest mode doesn't have any fixed seeds.

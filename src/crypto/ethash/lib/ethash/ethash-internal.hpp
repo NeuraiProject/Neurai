@@ -29,6 +29,12 @@ extern "C" struct ethash_epoch_context_full : ethash_epoch_context
 
 namespace ethash
 {
+namespace testing {
+// Internal observability/fault injection; failure injection affects only this thread.
+uint64_t context_allocation_count() noexcept;
+bool set_context_allocation_failure(bool fail) noexcept;
+}
+
 inline bool is_less_or_equal(const hash256& a, const hash256& b) noexcept
 {
     for (size_t i = 0; i < (sizeof(a) / sizeof(a.word64s[0])); ++i)

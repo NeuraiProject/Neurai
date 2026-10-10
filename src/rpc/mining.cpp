@@ -27,17 +27,32 @@
 #include "validationinterface.h"
 #include "warnings.h"
 
+#include <deque>
 #include <memory>
+#include <mutex>
 #include <stdint.h>
 
 #include <univalue.h>
 #include <crypto/ethash/include/ethash/ethash.hpp>
+#include <crypto/epoch_context_cache.h>
 #include <consensus/merkle.h>
 #include <crypto/ethash/include/ethash/progpow.hpp>
 
-extern uint64_t nHashesPerSec;
+#include <atomic>
 
-std::map<std::string, CBlock> mapXNAKAWBlockTemplates;
+extern std::atomic<uint64_t> nHashesPerSec;
+
+std::map<std::string, CBlock> mapXNAKAWBlockTemplates GUARDED_BY(cs_main);
+
+// The caller owns cs_main until the independent block copy is complete.
+static std::shared_ptr<CBlock> CopyKawpowBlockTemplate(const std::string& header_hash)
+{
+    AssertLockHeld(cs_main);
+    const auto it = mapXNAKAWBlockTemplates.find(header_hash);
+    if (it == mapXNAKAWBlockTemplates.end())
+        throw JSONRPCError(RPC_INVALID_PARAMS, "Block header hash not found in block data");
+    return std::make_shared<CBlock>(it->second);
+}
 
 unsigned int ParseConfirmTarget(const UniValue& value)
 {
@@ -237,7 +252,7 @@ UniValue getmininginfo(const JSONRPCRequest& request)
     obj.push_back(Pair("currentblocktx",   (uint64_t)nLastBlockTx));
     obj.push_back(Pair("difficulty",       (double)GetDifficulty()));
     obj.push_back(Pair("networkhashps",    getnetworkhashps(request)));
-    obj.push_back(Pair("hashespersec",     (uint64_t)nHashesPerSec));
+    obj.push_back(Pair("hashespersec",     (uint64_t)nHashesPerSec.load()));
     obj.push_back(Pair("pooledtx",         (uint64_t)mempool.size()));
     obj.push_back(Pair("chain", GetParams().NetworkIDString()));
     if (IsDeprecatedRPCEnabled("getmininginfo")) {
@@ -526,6 +541,8 @@ UniValue getblocktemplate(const JSONRPCRequest& request)
     static CBlockIndex* pindexPrev;
     static int64_t nStart;
     static std::unique_ptr<CBlockTemplate> pblocktemplate;
+    static std::deque<std::string> templateOrder;
+    static std::string lastheader;
     // Cache whether the last invocation was with segwit support, to avoid returning
     // a segwit-block to a non-segwit caller.
     static bool fLastTemplateSupportsSegwit = true;
@@ -533,9 +550,14 @@ UniValue getblocktemplate(const JSONRPCRequest& request)
         (mempool.GetTransactionsUpdated() != nTransactionsUpdatedLast && GetTime() - nStart > 5) ||
         fLastTemplateSupportsSegwit != fSupportsSegwit)
     {
+        // A mempool refresh must not discard work already issued on this tip.
+        if (pindexPrev != chainActive.Tip()) {
+            mapXNAKAWBlockTemplates.clear();
+            templateOrder.clear();
+        }
+        lastheader.clear(); // The refreshed template must include the new work.
         // Clear pindexPrev so future calls make a new block, despite any failures from here on
         pindexPrev = nullptr;
-        mapXNAKAWBlockTemplates.clear();
 
         // Store the pindexBest used before CreateNewBlock, to avoid races
         nTransactionsUpdatedLast = mempool.GetTransactionsUpdated();
@@ -717,7 +739,6 @@ UniValue getblocktemplate(const JSONRPCRequest& request)
     if (pblock->nTime >= nKAWPOWActivationTime) {
         std::string address = gArgs.GetArg("-miningaddress", "");
         if (IsValidDestinationString(address)) {
-            static std::string lastheader = "";
             if (mapXNAKAWBlockTemplates.count(lastheader)) {
                 if (pblock->nTime - 30 < mapXNAKAWBlockTemplates.at(lastheader).nTime) {
                     result.pushKV("pprpcheader", lastheader);
@@ -729,44 +750,75 @@ UniValue getblocktemplate(const JSONRPCRequest& request)
             pblock->hashMerkleRoot = BlockMerkleRoot(*pblock);
             result.pushKV("pprpcheader", pblock->GetKAWPOWHeaderHash().GetHex());
             result.pushKV("pprpcepoch", ethash::get_epoch_number(pblock->nHeight));
-            mapXNAKAWBlockTemplates[pblock->GetKAWPOWHeaderHash().GetHex()] = *pblock;
             lastheader = pblock->GetKAWPOWHeaderHash().GetHex();
+            const auto inserted = mapXNAKAWBlockTemplates.emplace(lastheader, *pblock);
+            if (inserted.second) templateOrder.push_back(lastheader);
+            while (templateOrder.size() > MAX_KAWPOW_BLOCK_TEMPLATES) {
+                mapXNAKAWBlockTemplates.erase(templateOrder.front());
+                templateOrder.pop_front();
+            }
         }
     }
 
     return result;
 }
 
-class submitblock_StateCatcher : public CValidationInterface
+class submitblock_StateCatcher
 {
+    struct ResultState {
+        std::mutex mutex;
+        bool found{false};
+        CValidationState state;
+    };
+    // Signal invocations already in progress may outlive disconnection. Each
+    // invocation owns this state, rather than referring to an RPC stack object.
+    const std::shared_ptr<ResultState> m_result{std::make_shared<ResultState>()};
+    boost::signals2::scoped_connection m_connection;
+
 public:
-    uint256 hash;
-    bool found;
-    CValidationState state;
+    explicit submitblock_StateCatcher(const uint256& hash)
+        : m_connection(GetMainSignals().ConnectBlockChecked(
+            [hash, result = m_result](const CBlock& block, const CValidationState& state) {
+                if (block.GetHash() != hash) return;
+                std::lock_guard<std::mutex> lock(result->mutex);
+                result->found = true;
+                result->state = state;
+            })) {}
 
-    explicit submitblock_StateCatcher(const uint256 &hashIn) : hash(hashIn), found(false), state() {}
-
-protected:
-    void BlockChecked(const CBlock& block, const CValidationState& stateIn) override {
-        if (block.GetHash() != hash)
-            return;
-        found = true;
-        state = stateIn;
+    std::pair<bool, CValidationState> Result()
+    {
+        m_connection.disconnect();
+        std::lock_guard<std::mutex> lock(m_result->mutex);
+        return {m_result->found, m_result->state};
     }
 };
 
+// GPU miners may include the documented 0x prefix, but not signs, whitespace
+// or more than 64 bits of hex digits (even if the extra digits are zero).
+static bool ParseKawpowNonce(const std::string& text, uint64_t& nonce)
+{
+    const size_t start = text.size() >= 2 && text[0] == '0' &&
+        (text[1] == 'x' || text[1] == 'X') ? 2 : 0;
+    const size_t digits = text.size() - start;
+    if (digits == 0 || digits > 16) return false;
+    for (size_t i = start; i < text.size(); ++i) {
+        if (HexDigit(text[i]) < 0) return false;
+    }
+    return ParseUInt64(text, &nonce, 16);
+}
+
 static UniValue getkawpowhash(const JSONRPCRequest& request) {
-    if (request.fHelp || request.params.size() < 4) {
+    if (request.fHelp || request.params.size() < 4 || request.params.size() > 5) {
         throw std::runtime_error(
                 "getkawpowhash \"header_hash\" \"mix_hash\" nonce, height, \"target\"\n"
                 "\nGet the kawpow hash for a block given its block data\n"
 
                 "\nArguments\n"
-                "1. \"header_hash\"        (string, required) the prow_pow header hash that was given to the gpu miner from this rpc client\n"
-                "2. \"mix_hash\"           (string, required) the mix hash that was mined by the gpu miner via rpc\n"
-                "3. \"nonce\"              (string, required) the hex nonce of the block that hashed the valid block\n"
+                "1. \"header_hash\"        (string, required) the header hash given to the GPU miner (exactly 64 hex digits)\n"
+                "2. \"mix_hash\"           (string, required) the mix hash mined by the GPU miner (exactly 64 hex digits)\n"
+                "3. \"nonce\"              (string, required) 1 to 16 hex digits, optionally prefixed with 0x\n"
                 "4. \"height\"             (number, required) the height of the block data that is being hashed\n"
-                "5. \"target\"             (string, optional) the target of the block that is hash is trying to meet\n"
+                "5. \"target\"             (string, optional) the target to meet (exactly 64 hex digits)\n"
                 "\nResult:\n"
                 "\nExamples:\n"
                 + HelpExampleCli("getkawpowhash", "\"header_hash\" \"mix_hash\" \"0x100000\" 2456")
@@ -774,33 +826,34 @@ static UniValue getkawpowhash(const JSONRPCRequest& request) {
         );
     }
 
-    std::string str_header_hash = request.params[0].get_str();
-    std::string mix_hash = request.params[1].get_str();
-    std::string hex_nonce = request.params[2].get_str();
-    uint32_t nHeight = request.params[3].get_uint();
+    RPCTypeCheck(request.params, {UniValue::VSTR, UniValue::VSTR, UniValue::VSTR,
+                                 UniValue::VNUM, UniValue::VSTR});
+    // ParseHashV validates length and digits. GetHex preserves display order;
+    // copying the uint256's internal bytes would reverse the ethash header.
+    const auto header_hash = to_hash256(ParseHashV(request.params[0], "header_hash").GetHex());
+    const uint256 mix_hash = ParseHashV(request.params[1], "mix_hash");
+    const bool fCheckTarget = request.params.size() == 5;
+    const uint256 target = fCheckTarget ? ParseHashV(request.params[4], "target") : uint256();
 
     uint64_t nNonce;
-    if (!ParseUInt64(hex_nonce, &nNonce, 16))
+    if (!ParseKawpowNonce(request.params[2].get_str(), nNonce))
         throw JSONRPCError(RPC_INVALID_PARAMS, "Invalid nonce hex string");
+    uint32_t nHeight;
+    if (!ParseUInt32(request.params[3].getValStr(), &nHeight))
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "height must be an unsigned 32-bit integer");
 
-    if (nHeight > (uint32_t)chainActive.Height() + 10)
-        throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Block height is to large");
-
-    const auto header_hash = to_hash256(str_header_hash);
-
-    uint256 target;
-    bool fCheckTarget = false;
-    if (request.params.size() == 5) {
-        target = uint256S(request.params[4].get_str());
-        fCheckTarget = true;
+    {
+        LOCK(cs_main);
+        if (!ethash::is_valid_block_number(nHeight) || int64_t(nHeight) > int64_t(chainActive.Height()) + 10)
+            throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Block height is too large");
     }
 
-    static ethash::epoch_context_ptr context{nullptr, nullptr};
-
-    // Get the context from the block height
-    const auto epoch_number = ethash::get_epoch_number(nHeight);
-    if (!context || context->epoch_number != epoch_number)
-        context = ethash::create_epoch_context(epoch_number);
+    EpochContextCache::Context context;
+    try {
+        context = KawpowRpcCache().Get(ethash::get_epoch_number(nHeight));
+    } catch (const std::exception& e) {
+        throw JSONRPCError(RPC_MISC_ERROR, std::string("KAWPOW context unavailable: ") + e.what());
+    }
 
     // ProgPow hash
     const auto result = progpow::hash(*context, nHeight, header_hash, nNonce);
@@ -811,7 +864,7 @@ static UniValue getkawpowhash(const JSONRPCRequest& request) {
     bool mix_hash_match = false;
     bool final_hash_meets_target = false;
 
-    if (mined_mix_hash == uint256S(mix_hash))
+    if (mined_mix_hash == mix_hash)
         mix_hash_match = true;
 
     if (fCheckTarget) {
@@ -840,40 +893,48 @@ static UniValue pprpcsb(const JSONRPCRequest& request) {
                 "\nAttempts to submit new block to network mined by kawpow gpu miner via rpc.\n"
 
                 "\nArguments\n"
-                "1. \"header_hash\"        (string, required) the prow_pow header hash that was given to the gpu miner from this rpc client\n"
-                "2. \"mix_hash\"           (string, required) the mix hash that was mined by the gpu miner via rpc\n"
-                "3. \"nonce\"              (string, required) the nonce of the block that hashed the valid block\n"
+                "1. \"header_hash\"        (string, required) the header hash given to the GPU miner (exactly 64 hex digits)\n"
+                "2. \"mix_hash\"           (string, required) the mix hash mined by the GPU miner (exactly 64 hex digits)\n"
+                "3. \"nonce\"              (string, required) 1 to 16 hex digits, optionally prefixed with 0x\n"
                 "\nResult:\n"
                 "\nExamples:\n"
-                + HelpExampleCli("pprpcsb", "\"header_hash\" \"mix_hash\" 100000")
-                + HelpExampleRpc("pprpcsb", "\"header_hash\" \"mix_hash\" 100000")
+                + HelpExampleCli("pprpcsb", "\"header_hash\" \"mix_hash\" \"0x100000\"")
+                + HelpExampleRpc("pprpcsb", "\"header_hash\" \"mix_hash\" \"0x100000\"")
         );
     }
 
-    std::string header_hash = request.params[0].get_str();
-    std::string mix_hash = request.params[1].get_str();
-    std::string str_nonce = request.params[2].get_str();
+    RPCTypeCheck(request.params, {UniValue::VSTR, UniValue::VSTR, UniValue::VSTR});
+    const std::string header_hash = ParseHashV(request.params[0], "header_hash").GetHex();
+    const uint256 mix_hash = ParseHashV(request.params[1], "mix_hash");
 
     uint64_t nonce;
-    if (!ParseUInt64(str_nonce, &nonce, 16))
+    if (!ParseKawpowNonce(request.params[2].get_str(), nonce))
         throw JSONRPCError(RPC_INVALID_PARAMS, "Invalid hex nonce");
 
-    if (!mapXNAKAWBlockTemplates.count(header_hash))
-        throw JSONRPCError(RPC_INVALID_PARAMS, "Block header hash not found in block data");
-
-    std::shared_ptr<CBlock> blockptr = std::make_shared<CBlock>();
-    *blockptr = mapXNAKAWBlockTemplates.at(header_hash);
+    std::shared_ptr<CBlock> blockptr;
+    {
+        LOCK(cs_main);
+        blockptr = CopyKawpowBlockTemplate(header_hash);
+    }
+    // Hash and validate outside cs_main; template refreshes cannot alter this copy.
 
     blockptr->nNonce64 = nonce;
-    blockptr->mix_hash = uint256S(mix_hash);
+    blockptr->mix_hash = mix_hash;
 
     if (blockptr->vtx.empty() || !blockptr->vtx[0]->IsCoinBase()) {
         throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Block does not start with a coinbase");
     }
 
+    CValidationState admission;
+    if (!CheckKAWPOWHeaderAdmission(*blockptr, admission, GetParams().GetConsensus()))
+        throw JSONRPCError(admission.IsError() ? RPC_INTERNAL_ERROR : RPC_DESERIALIZATION_ERROR, admission.GetRejectReason());
     uint256 retMixHash;
-    if (!CheckProofOfWork(blockptr->GetHashFull(retMixHash), blockptr->nBits, GetParams().GetConsensus()))
-        throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Block does not solve the boundary");
+    try {
+        if (!CheckProofOfWork(blockptr->GetHashFull(retMixHash), blockptr->nBits, GetParams().GetConsensus()))
+            throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Block does not solve the boundary");
+    } catch (const std::bad_alloc&) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "KAWPOW context unavailable");
+    }
 
 
     uint256 hash = blockptr->GetHash();
@@ -904,19 +965,18 @@ static UniValue pprpcsb(const JSONRPCRequest& request) {
     }
 
     submitblock_StateCatcher sc(blockptr->GetHash());
-    RegisterValidationInterface(&sc);
     bool fAccepted = ProcessNewBlock(GetParams(), blockptr, true, nullptr);
-    UnregisterValidationInterface(&sc);
+    const auto checked = sc.Result();
     if (fBlockPresent) {
-        if (fAccepted && !sc.found) {
+        if (fAccepted && !checked.first) {
             return "duplicate-inconclusive";
         }
         return "duplicate";
     }
-    if (!sc.found) {
+    if (!checked.first) {
         return "inconclusive";
     }
-    UniValue ret = BIP22ValidationResult(sc.state);
+    UniValue ret = BIP22ValidationResult(checked.second);
 
     // BIP22ValidationResult set the return to null when the state is valid
     if (ret.isNull()) {
@@ -986,19 +1046,18 @@ UniValue submitblock(const JSONRPCRequest& request)
     }
 
     submitblock_StateCatcher sc(block.GetHash());
-    RegisterValidationInterface(&sc);
     bool fAccepted = ProcessNewBlock(GetParams(), blockptr, true, nullptr);
-    UnregisterValidationInterface(&sc);
+    const auto checked = sc.Result();
     if (fBlockPresent) {
-        if (fAccepted && !sc.found) {
+        if (fAccepted && !checked.first) {
             return "duplicate-inconclusive";
         }
         return "duplicate";
     }
-    if (!sc.found) {
+    if (!checked.first) {
         return "inconclusive";
     }
-    return BIP22ValidationResult(sc.state);
+    return BIP22ValidationResult(checked.second);
 }
 
 UniValue estimatefee(const JSONRPCRequest& request)
@@ -1257,10 +1316,6 @@ UniValue setgenerate(const JSONRPCRequest& request)
             fGenerate = false;
     }
 
-    gArgs.SoftSetArg("-gen", (fGenerate ? "1" : "0"));
-    gArgs.SoftSetArg("-genproclimit", itostr(nGenProcLimit));
-    //mapArgs["-gen"] = (fGenerate ? "1" : "0");
-    //mapArgs ["-genproclimit"] = itostr(nGenProcLimit);
     int numCores = GenerateNeurais(fGenerate, nGenProcLimit, GetParams());
 
     nGenProcLimit = nGenProcLimit >= 0 ? nGenProcLimit : numCores;
@@ -1278,7 +1333,7 @@ static const CRPCCommand commands[] =
     { "mining",             "getblocktemplate",       &getblocktemplate,       {"template_request"} },
     { "mining",             "submitblock",            &submitblock,            {"hexdata","dummy"} },
     { "mining",             "pprpcsb",                &pprpcsb,                {"header_hash","mix_hash", "nonce"} },
-    { "mining",             "getkawpowhash",          &getkawpowhash,          {"header_hash", "mix_hash", "nonce", "height"} },
+    { "mining",             "getkawpowhash",          &getkawpowhash,          {"header_hash", "mix_hash", "nonce", "height", "target"} },
 
     /* Coin generation */
     { "generating",         "getgenerate",            &getgenerate,            {}  },

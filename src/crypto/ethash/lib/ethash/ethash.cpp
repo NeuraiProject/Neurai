@@ -11,6 +11,7 @@
 #include <crypto/ethash/include/ethash/keccak.hpp>
 #include <crypto/ethash/include/ethash/progpow.hpp>
 
+#include <atomic>
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
@@ -18,6 +19,18 @@
 
 namespace ethash
 {
+namespace testing {
+static std::atomic<uint64_t> allocations{0};
+static thread_local bool fail_allocation{false};
+uint64_t context_allocation_count() noexcept { return allocations.load(std::memory_order_relaxed); }
+bool set_context_allocation_failure(bool fail) noexcept
+{
+    const bool previous = fail_allocation;
+    fail_allocation = fail;
+    return previous;
+}
+}
+
 // Internal constants:
 constexpr static int light_cache_init_size = 1 << 24;
 constexpr static int light_cache_growth = 1 << 17;
@@ -136,13 +149,19 @@ epoch_context_full* create_epoch_context(
 
     const int light_cache_num_items = calculate_light_cache_num_items(epoch_number);
     const int full_dataset_num_items = calculate_full_dataset_num_items(epoch_number);
-    const size_t light_cache_size = get_light_cache_size(light_cache_num_items);
+    if (light_cache_num_items <= 0 || full_dataset_num_items <= 0) return nullptr;
+    const uint64_t light_cache_size64 = uint64_t(light_cache_num_items) * sizeof(hash512);
+    const uint64_t dataset_size64 = full ? uint64_t(full_dataset_num_items) * sizeof(hash1024) : progpow::l1_cache_size;
+    if (context_alloc_size + light_cache_size64 + dataset_size64 > std::numeric_limits<size_t>::max()) return nullptr;
+    const size_t light_cache_size = size_t(light_cache_size64);
     const size_t full_dataset_size =
         full ? static_cast<size_t>(full_dataset_num_items) * sizeof(hash1024) :
                progpow::l1_cache_size;
 
     const size_t alloc_size = context_alloc_size + light_cache_size + full_dataset_size;
 
+    testing::allocations.fetch_add(1, std::memory_order_relaxed);
+    if (testing::fail_allocation) return nullptr;
     char* const alloc_data = static_cast<char*>(std::calloc(1, alloc_size));
     if (!alloc_data)
         return nullptr;  // Signal out-of-memory by returning null pointer.
@@ -372,8 +391,10 @@ int ethash_calculate_light_cache_num_items(int epoch_number) noexcept
     static_assert(
         light_cache_growth % item_size == 0, "light_cache_growth not multiple of item size");
 
-    int num_items_upper_bound = num_items_init + epoch_number * num_items_growth;
-    int num_items = ethash_find_largest_prime(num_items_upper_bound);
+    if (!is_valid_epoch_number(epoch_number)) return 0;
+    const int64_t upper = int64_t(num_items_init) + int64_t(epoch_number) * num_items_growth;
+    if (upper <= 0 || upper > std::numeric_limits<int>::max()) return 0;
+    int num_items = ethash_find_largest_prime(int(upper));
     return num_items;
 }
 
@@ -387,8 +408,10 @@ int ethash_calculate_full_dataset_num_items(int epoch_number) noexcept
     static_assert(
         full_dataset_growth % item_size == 0, "full_dataset_growth not multiple of item size");
 
-    int num_items_upper_bound = num_items_init + epoch_number * num_items_growth;
-    int num_items = ethash_find_largest_prime(num_items_upper_bound);
+    if (!is_valid_epoch_number(epoch_number)) return 0;
+    const int64_t upper = int64_t(num_items_init) + int64_t(epoch_number) * num_items_growth;
+    if (upper <= 0 || upper > std::numeric_limits<int>::max()) return 0;
+    int num_items = ethash_find_largest_prime(int(upper));
     return num_items;
 }
 
@@ -409,6 +432,7 @@ void ethash_destroy_epoch_context_full(epoch_context_full* context) noexcept
 
 void ethash_destroy_epoch_context(epoch_context* context) noexcept
 {
+    if (!context) return;
     context->~epoch_context();
     std::free(context);
 }

@@ -298,7 +298,12 @@ bool LoadExternalBlockFile(const CChainParams& chainparams, FILE* fileIn, CDiskB
 bool LoadGenesisBlock(const CChainParams& chainparams);
 /** Load the block tree and coins database from disk,
  * initializing state if we're running with -reindex. */
-bool LoadBlockIndex(const CChainParams& chainparams);
+bool LoadBlockIndex(const CChainParams& chainparams, std::string* powError = nullptr);
+/** Apply the load-time PoW audit after LoadChainTip, before RewindBlockIndex.
+ * Missing rewind data is a recoverable startup error and leaves failure flags alone. */
+bool CheckBlockHeaderPoWFull(const CBlockHeader& header, CValidationState& state,
+                           const Consensus::Params& params);
+bool RecoverBlockIndexPoW(const CChainParams& chainparams, CValidationState& state);
 /** Update the chain tip based on database information. */
 bool LoadChainTip(const CChainParams& chainparams);
 /** Unload database information */
@@ -458,6 +463,10 @@ bool CheckBlock(const CBlock& block, CValidationState& state, const Consensus::P
  *  when the header satisfies the rule or the rule is not in force for it (below the
  *  activation height, or a pre-KAWPOW header). Exposed for unit testing. */
 bool CheckKAWPOWHeaderHeight(const CBlockHeader& block, int nHeight, const Consensus::Params& consensusParams);
+
+/** Bound external KAWPOW heights before allocating an epoch context.
+ * Unknown-parent resource rejection is local/retryable, never cached as invalid. */
+bool CheckKAWPOWHeaderAdmission(const CBlockHeader& block, CValidationState& state, const Consensus::Params& consensusParams);
 
 /** Remove block index entries left unusable after loading: placeholder entries
  *  (nBits == 0, created for a parent that was never loaded) and every entry that
