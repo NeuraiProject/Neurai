@@ -1,11 +1,15 @@
 # Neurai node v1.0.7 for Docker Hub
 
 This directory builds the image published as `neuraiproject/neurai-node:v1.0.7`.
-It reuses the standalone node definition from `../../node/` (same entrypoint and
-configuration surface), pinned to the `1.0.7` release tag and with two
-publication-oriented changes: the binaries are stripped and the runtime stage
-uses `debian:11-slim`, which together keep the pushed image small. The node user
-is explicitly assigned UID/GID `999:999`, matching the published v1.0.6 image.
+It keeps the standalone node's entrypoint and configuration surface, pinned to
+release tag `1.0.7`. Both build and runtime stages use Debian 11; the runtime
+uses the slim variant and stripped binaries. APT uses the [official Debian
+archive](https://www.debian.org/distrib/archive), including the archived
+security packages, with signature and checksum verification enabled.
+Native build dependencies are installed directly, without the release's legacy
+cross-compilation installer. The release source and dependency recipes are
+built without additional patches.
+The node user is explicitly assigned UID/GID `999:999`, matching v1.0.6.
 
 The build clones the official Neurai repository; it does not use the parent
 working tree. The image is `linux/amd64` only, because `depends` is built with
@@ -28,6 +32,9 @@ docker push neuraiproject/neurai-node:v1.0.7
 docker tag neuraiproject/neurai-node:v1.0.7 neuraiproject/neurai-node:latest
 docker push neuraiproject/neurai-node:latest
 ```
+
+The build uses two parallel jobs by default. On a machine with sufficient
+memory, add `--build-arg BUILD_JOBS=8` to the build command to increase it.
 
 `docker login` should use a Docker Hub access token with write access to the
 `neuraiproject` organization, not the account password.
