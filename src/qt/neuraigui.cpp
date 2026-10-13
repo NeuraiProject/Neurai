@@ -38,7 +38,7 @@
 #include "ui_interface.h"
 #include "util.h"
 #include "core_io.h"
-#include "darkstyle.h"
+#include "guitheme.h"
 
 #include <iostream>
 
@@ -56,7 +56,9 @@
 #include <QDateTime>
 #include <QRegularExpression>
 #include <QDragEnterEvent>
+#include <QFrame>
 #include <QListWidget>
+#include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
@@ -83,7 +85,6 @@ using namespace boost::placeholders;
 #include <QUrlQuery>
 #include <validation.h>
 #include <tinyformat.h>
-#include <QFontDatabase>
 #include <univalue/include/univalue.h>
 #include <QDesktopServices>
 
@@ -123,8 +124,11 @@ NeuraiGUI::NeuraiGUI(const PlatformStyle *_platformStyle, const NetworkStyle *ne
 {
     QSettings settings;
     if (!restoreGeometry(settings.value("MainWindowGeometry").toByteArray())) {
-        // Restore failed (perhaps missing setting), center the window
-        move(QGuiApplication::primaryScreen()->availableGeometry().center() - frameGeometry().center());
+        // Restore failed (perhaps missing setting): default size that fits the
+        // screen, also on scaled laptop displays, and center the window
+        const QRect available = QGuiApplication::primaryScreen()->availableGeometry();
+        resize(QSize(1280, 820).boundedTo(available.size() * 0.9));
+        move(available.center() - frameGeometry().center());
     }
 
     QString windowTitle = tr(PACKAGE_NAME) + " - ";
@@ -172,7 +176,7 @@ NeuraiGUI::NeuraiGUI(const PlatformStyle *_platformStyle, const NetworkStyle *ne
     /** XNA START */
     labelCurrentMarket = new QLabel();
     labelCurrentPrice = new QLabel();
-    headerWidget = new QWidget();
+    headerWidget = new QFrame();
     pricingTimer = new QTimer();
     networkManager = new QNetworkAccessManager();
     request = new QNetworkRequest();
@@ -183,12 +187,6 @@ NeuraiGUI::NeuraiGUI(const PlatformStyle *_platformStyle, const NetworkStyle *ne
 
     // Accept D&D of URIs
     setAcceptDrops(true);
-
-    loadFonts();
-
-#if !defined(Q_OS_MAC)
-    this->setFont(QFont("Open Sans"));
-#endif
 
     // Create actions for the toolbar, menu bar and tray/dock icon
     // Needs walletFrame to be initialized
@@ -217,23 +215,27 @@ NeuraiGUI::NeuraiGUI(const PlatformStyle *_platformStyle, const NetworkStyle *ne
     frameBlocksLayout->setContentsMargins(3,0,3,0);
     frameBlocksLayout->setSpacing(3);
     unitDisplayControl = new UnitDisplayStatusBarControl(platformStyle);
-    labelWalletEncryptionIcon = new QLabel();
-    labelWalletHDStatusIcon = new QLabel();
     connectionsControl = new GUIUtil::ClickableLabel();
     labelBlocksIcon = new GUIUtil::ClickableLabel();
     if(enableWallet)
     {
+        // Connection, sync, encryption and HD state are shown in the header
         frameBlocksLayout->addStretch();
         frameBlocksLayout->addWidget(unitDisplayControl);
         frameBlocksLayout->addStretch();
-        frameBlocksLayout->addWidget(labelWalletEncryptionIcon);
-        frameBlocksLayout->addWidget(labelWalletHDStatusIcon);
+        connectionsControl->setParent(frameBlocks);
+        connectionsControl->hide();
+        labelBlocksIcon->setParent(frameBlocks);
+        labelBlocksIcon->hide();
     }
-    frameBlocksLayout->addStretch();
-    frameBlocksLayout->addWidget(connectionsControl);
-    frameBlocksLayout->addStretch();
-    frameBlocksLayout->addWidget(labelBlocksIcon);
-    frameBlocksLayout->addStretch();
+    else
+    {
+        frameBlocksLayout->addStretch();
+        frameBlocksLayout->addWidget(connectionsControl);
+        frameBlocksLayout->addStretch();
+        frameBlocksLayout->addWidget(labelBlocksIcon);
+        frameBlocksLayout->addStretch();
+    }
 
     // Progress bar and label for blocks download
     progressBarLabel = new QLabel();
@@ -255,9 +257,6 @@ NeuraiGUI::NeuraiGUI(const PlatformStyle *_platformStyle, const NetworkStyle *ne
     statusBar()->addWidget(progressBarLabel);
     statusBar()->addWidget(progressBar);
     statusBar()->addPermanentWidget(frameBlocks);
-
-    if(darkModeEnabled)
-        statusBar()->setStyleSheet(QString(".QStatusBar{background-color: %1; border-top: 1px solid %2;}").arg(platformStyle->TopWidgetBackGroundColor().name(), platformStyle->TextColor().name()));
 
     // Install event filter to be able to catch status tip events (QEvent::StatusTip)
     this->installEventFilter(this);
@@ -297,96 +296,66 @@ NeuraiGUI::~NeuraiGUI()
     delete rpcConsole;
 }
 
-void NeuraiGUI::loadFonts()
-{
-    QFontDatabase::addApplicationFont(":/fonts/opensans-bold");
-    QFontDatabase::addApplicationFont(":/fonts/opensans-bolditalic");
-    QFontDatabase::addApplicationFont(":/fonts/opensans-extrabold");
-    QFontDatabase::addApplicationFont(":/fonts/opensans-extrabolditalic");
-    QFontDatabase::addApplicationFont(":/fonts/opensans-italic");
-    QFontDatabase::addApplicationFont(":/fonts/opensans-light");
-    QFontDatabase::addApplicationFont(":/fonts/opensans-lightitalic");
-    QFontDatabase::addApplicationFont(":/fonts/opensans-regular");
-    QFontDatabase::addApplicationFont(":/fonts/opensans-semibold");
-    QFontDatabase::addApplicationFont(":/fonts/opensans-semibolditalic");
-}
-
-
 void NeuraiGUI::createActions()
 {
-    QFont font = QFont();
-    font.setPixelSize(22);
-    font.setLetterSpacing(QFont::SpacingType::AbsoluteSpacing, -0.43);
-#if !defined(Q_OS_MAC)
-    font.setFamily("Open Sans");
-#endif
-    font.setWeight(QFont::Weight::ExtraLight);
-
     QActionGroup *tabGroup = new QActionGroup(this);
 
-    overviewAction = new QAction(platformStyle->SingleColorIconOnOff(":/icons/overview_selected", ":/icons/overview"), tr("&Overview"), this);
+    overviewAction = new QAction(platformStyle->NavigationIcon(":/icons/nav_overview"), tr("&Overview"), this);
     overviewAction->setStatusTip(tr("Show general overview of wallet"));
     overviewAction->setToolTip(overviewAction->statusTip());
     overviewAction->setCheckable(true);
     overviewAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_1));
-    overviewAction->setFont(font);
     tabGroup->addAction(overviewAction);
 
-    sendCoinsAction = new QAction(platformStyle->SingleColorIconOnOff(":/icons/send_selected", ":/icons/send"), tr("&Send"), this);
+    sendCoinsAction = new QAction(platformStyle->NavigationIcon(":/icons/nav_send"), tr("&Send"), this);
     sendCoinsAction->setStatusTip(tr("Send coins to a Neurai address"));
     sendCoinsAction->setToolTip(sendCoinsAction->statusTip());
     sendCoinsAction->setCheckable(true);
     sendCoinsAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_2));
-    sendCoinsAction->setFont(font);
     tabGroup->addAction(sendCoinsAction);
 
     sendCoinsMenuAction = new QAction(platformStyle->TextColorIcon(":/icons/send"), sendCoinsAction->text(), this);
     sendCoinsMenuAction->setStatusTip(sendCoinsAction->statusTip());
     sendCoinsMenuAction->setToolTip(sendCoinsMenuAction->statusTip());
 
-    receiveCoinsAction = new QAction(platformStyle->SingleColorIconOnOff(":/icons/receiving_addresses_selected", ":/icons/receiving_addresses"), tr("&Receive"), this);
+    receiveCoinsAction = new QAction(platformStyle->NavigationIcon(":/icons/nav_receive"), tr("&Receive"), this);
     receiveCoinsAction->setStatusTip(tr("Request payments (generates QR codes and neurai: URIs)"));
     receiveCoinsAction->setToolTip(receiveCoinsAction->statusTip());
     receiveCoinsAction->setCheckable(true);
     receiveCoinsAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_3));
-    receiveCoinsAction->setFont(font);
     tabGroup->addAction(receiveCoinsAction);
 
     receiveCoinsMenuAction = new QAction(platformStyle->TextColorIcon(":/icons/receiving_addresses"), receiveCoinsAction->text(), this);
     receiveCoinsMenuAction->setStatusTip(receiveCoinsAction->statusTip());
     receiveCoinsMenuAction->setToolTip(receiveCoinsMenuAction->statusTip());
 
-    historyAction = new QAction(platformStyle->SingleColorIconOnOff(":/icons/history_selected", ":/icons/history"), tr("&Transactions"), this);
+    historyAction = new QAction(platformStyle->NavigationIcon(":/icons/nav_history"), tr("&Transactions"), this);
     historyAction->setStatusTip(tr("Browse transaction history"));
     historyAction->setToolTip(historyAction->statusTip());
     historyAction->setCheckable(true);
     historyAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_4));
-    historyAction->setFont(font);
     tabGroup->addAction(historyAction);
 
     /** XNA START */
-    createAssetAction = new QAction(platformStyle->SingleColorIconOnOff(":/icons/asset_create_selected", ":/icons/asset_create"), tr("&Create Assets"), this);
+    createAssetAction = new QAction(platformStyle->NavigationIcon(":/icons/nav_asset_create"), tr("&Create Assets"), this);
     createAssetAction->setStatusTip(tr("Create new assets"));
     createAssetAction->setToolTip(createAssetAction->statusTip());
     createAssetAction->setCheckable(true);
     createAssetAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_5));
-    createAssetAction->setFont(font);
     tabGroup->addAction(createAssetAction);
 
-    transferAssetAction = new QAction(platformStyle->SingleColorIconOnOff(":/icons/asset_transfer_selected", ":/icons/asset_transfer"), tr("&Transfer Assets"), this);
+    transferAssetAction = new QAction(platformStyle->NavigationIcon(":/icons/nav_asset_transfer"), tr("&Transfer Assets"), this);
     transferAssetAction->setStatusTip(tr("Transfer assets to XNA addresses"));
     transferAssetAction->setToolTip(transferAssetAction->statusTip());
     transferAssetAction->setCheckable(true);
     transferAssetAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_6));
-    transferAssetAction->setFont(font);
     tabGroup->addAction(transferAssetAction);
 
-    manageAssetAction = new QAction(platformStyle->SingleColorIconOnOff(":/icons/asset_manage_selected", ":/icons/asset_manage"), tr("&Manage Assets"), this);
+    manageAssetAction = new QAction(platformStyle->NavigationIcon(":/icons/nav_asset_manage"), tr("&Manage Assets"), this);
     manageAssetAction->setStatusTip(tr("Manage assets you are the administrator of"));
     manageAssetAction->setToolTip(manageAssetAction->statusTip());
     manageAssetAction->setCheckable(true);
     manageAssetAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_7));
-    manageAssetAction->setFont(font);
     tabGroup->addAction(manageAssetAction);
 
     messagingAction = new QAction(platformStyle->SingleColorIcon(":/icons/editcopy"), tr("&Messaging"), this);
@@ -394,7 +363,6 @@ void NeuraiGUI::createActions()
     messagingAction->setToolTip(messagingAction->statusTip());
     messagingAction->setCheckable(true);
 //    messagingAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_9));
-    messagingAction->setFont(font);
     tabGroup->addAction(messagingAction);
 
     votingAction = new QAction(platformStyle->SingleColorIcon(":/icons/edit"), tr("&Voting"), this);
@@ -402,24 +370,60 @@ void NeuraiGUI::createActions()
     votingAction->setToolTip(votingAction->statusTip());
     votingAction->setCheckable(true);
     // votingAction->setShortcut(QKeySequence(Qt::ALT + Qt::Key_V));
-    votingAction->setFont(font);
     tabGroup->addAction(votingAction);
 
-    restrictedAssetAction = new QAction(platformStyle->SingleColorIconOnOff(":/icons/restricted_asset_selected", ":/icons/restricted_asset"), tr("&Restricted Assets"), this);
+    restrictedAssetAction = new QAction(platformStyle->NavigationIcon(":/icons/nav_restricted"), tr("&Restricted Assets"), this);
     restrictedAssetAction->setStatusTip(tr("Manage restricted assets"));
     restrictedAssetAction->setToolTip(restrictedAssetAction->statusTip());
     restrictedAssetAction->setCheckable(true);
     restrictedAssetAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_8));
-    restrictedAssetAction->setFont(font);
     tabGroup->addAction(restrictedAssetAction);
 
-    depinAssetAction = new QAction(platformStyle->SingleColorIconOnOff(":/icons/restricted_asset_selected", ":/icons/restricted_asset"), tr("&DePIN"), this);
+    depinAssetAction = new QAction(platformStyle->NavigationIcon(":/icons/nav_depin"), tr("&DePIN"), this);
     depinAssetAction->setStatusTip(tr("Manage DePIN assets"));
     depinAssetAction->setToolTip(depinAssetAction->statusTip());
     depinAssetAction->setCheckable(true);
     depinAssetAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_9));
-    depinAssetAction->setFont(font);
     tabGroup->addAction(depinAssetAction);
+
+    // Placeholder for the privacy pool page: shown, but disabled until it is implemented
+    privacyAction = new QAction(platformStyle->NavigationIcon(":/icons/nav_privacy"), tr("&Privacy"), this);
+    privacyAction->setStatusTip(tr("Privacy pool (coming soon)"));
+    privacyAction->setToolTip(privacyAction->statusTip());
+    privacyAction->setEnabled(false);
+
+    // Asset pages share a single navigation entry with a drop-down menu.
+    // The menu holds plain proxies so that it shows no radio indicators.
+    assetsMenuAction = new QAction(platformStyle->NavigationIcon(":/icons/nav_assets"), tr("&Assets"), this);
+    assetsMenuAction->setStatusTip(tr("Create, transfer, reissue and restrict assets"));
+    assetsMenuAction->setToolTip(assetsMenuAction->statusTip());
+    assetsMenuAction->setCheckable(true);
+    assetsMenuAction->setEnabled(false);
+    QMenu *assetsMenu = new QMenu(this);
+    const QList<QAction*> assetPageActions = {createAssetAction, transferAssetAction, manageAssetAction, restrictedAssetAction};
+    for (QAction *pageAction : assetPageActions) {
+        QAction *item = assetsMenu->addAction(pageAction->icon(), pageAction->text());
+        item->setStatusTip(pageAction->statusTip());
+        item->setEnabled(pageAction->isEnabled());
+        connect(item, &QAction::triggered, pageAction, &QAction::trigger);
+        connect(pageAction, &QAction::changed, this, [this, item, pageAction, assetPageActions] {
+            item->setEnabled(pageAction->isEnabled());
+            bool anyEnabled = false;
+            for (const QAction *action : assetPageActions)
+                anyEnabled |= action->isEnabled();
+            assetsMenuAction->setEnabled(anyEnabled);
+        });
+    }
+    assetsMenuAction->setMenu(assetsMenu);
+    // Highlight the entry while one of its pages is shown
+    for (QAction *navAction : tabGroup->actions()) {
+        connect(navAction, &QAction::toggled, this, [this, assetPageActions] {
+            bool active = false;
+            for (const QAction *action : assetPageActions)
+                active |= action->isChecked();
+            assetsMenuAction->setChecked(active);
+        });
+    }
 
     /** XNA END */
 
@@ -624,178 +628,169 @@ void NeuraiGUI::createToolBars()
         bool IconsOnly = settings.value("fToolbarIconsOnly", false).toBool();
 
         /** XNA START */
-        // Create the background and the vertical tool bar
-        QWidget* toolbarWidget = new QWidget();
-
-        QString widgetStyleSheet = ".QWidget {background-color: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1, stop: 0 %1, stop: 1 %2);}";
-
-        toolbarWidget->setStyleSheet(widgetStyleSheet.arg(platformStyle->LightBlueColor().name(), platformStyle->DarkBlueColor().name()));
+        // Header card: brand and wallet status on the left, page navigation in
+        // the middle, network, balance and market price on the right.
+        // No drop shadow effect here: with fractional display scaling it leaves
+        // stale pixels behind when the navigation buttons change state or size.
+        headerWidget->setObjectName("headerCard");
 
         labelToolbar = new QLabel();
-        labelToolbar->setContentsMargins(0,0,0,50);
-        labelToolbar->setAlignment(Qt::AlignLeft);
+        labelToolbar->setPixmap(QIcon(":/icons/neurai").pixmap(QSize(36, 36)));
 
-        if(IconsOnly) {
-            labelToolbar->setPixmap(QPixmap::fromImage(QImage(":/icons/xnatext")));
-        }
-        else {
-            labelToolbar->setPixmap(QPixmap::fromImage(QImage(":/icons/neuraitext")));
-        }
-        labelToolbar->setStyleSheet(".QLabel{background-color: transparent;}");
+        QLabel* labelHeaderTitle = new QLabel(tr("Neurai"));
+        labelHeaderTitle->setObjectName("headerTitle");
 
+        // Wallet state icons: sync (click for details, right-click to toggle
+        // the network), encryption and HD. Their colour carries the state.
+        const QSize badgeSize(26, 26);
+        headerSyncButton = new QToolButton();
+        headerSyncButton->setFixedSize(badgeSize);
+        headerSyncButton->setIconSize(QSize(16, 16));
+        headerSyncButton->setCursor(Qt::PointingHandCursor);
+        headerSyncButton->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(headerSyncButton, &QToolButton::clicked, this, &NeuraiGUI::showModalOverlay);
+        connect(headerSyncButton, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+            if (!clientModel)
+                return;
+            QMenu menu;
+            QAction* toggle = menu.addAction(clientModel->getNetworkActive() ? tr("Disable network activity") : tr("Enable network activity"));
+            connect(toggle, &QAction::triggered, this, &NeuraiGUI::toggleNetworkActive);
+            menu.exec(headerSyncButton->mapToGlobal(pos));
+        });
+        labelHeaderEncryption = new QLabel();
+        labelHeaderHD = new QLabel();
+        labelHeaderPQ = new QLabel();
+        for (QLabel* badge : {labelHeaderEncryption, labelHeaderHD, labelHeaderPQ}) {
+            badge->setFixedSize(badgeSize);
+            badge->setAlignment(Qt::AlignCenter);
+            badge->hide();
+        }
+        setHeaderIcon(headerSyncButton, nullptr, ":/icons/status_sync", GUITheme::tokens().warning, tr("Synchronizing with network..."));
+
+        QHBoxLayout* statusIconsLayout = new QHBoxLayout();
+        statusIconsLayout->setSpacing(5);
+        statusIconsLayout->addWidget(headerSyncButton);
+        statusIconsLayout->addWidget(labelHeaderEncryption);
+        statusIconsLayout->addWidget(labelHeaderHD);
+        statusIconsLayout->addWidget(labelHeaderPQ);
+        statusIconsLayout->addStretch();
+
+        QVBoxLayout* brandTextLayout = new QVBoxLayout();
+        brandTextLayout->setSpacing(2);
+        brandTextLayout->addStretch();
+        brandTextLayout->addWidget(labelHeaderTitle);
+        brandTextLayout->addLayout(statusIconsLayout);
+        brandTextLayout->addStretch();
+
+        QHBoxLayout* brandLayout = new QHBoxLayout();
+        brandLayout->setSpacing(10);
+        brandLayout->addWidget(labelToolbar, 0, Qt::AlignVCenter);
+        brandLayout->addLayout(brandTextLayout);
         /** XNA END */
 
         m_toolbar = new QToolBar();
-        m_toolbar->setStyle(style());
+        m_toolbar->setObjectName("navBar");
         m_toolbar->setContextMenuPolicy(Qt::PreventContextMenu);
         m_toolbar->setMovable(false);
-
-        if(IconsOnly) {
-            m_toolbar->setMaximumWidth(65);
-            m_toolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);
-        }
-        else {
-            m_toolbar->setMinimumWidth(labelToolbar->width());
-            m_toolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-        }
+        m_toolbar->setFloatable(false);
+        m_toolbar->setIconSize(QSize(22, 22));
+        m_toolbar->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+        navIconsOnly = IconsOnly;
         m_toolbar->addAction(overviewAction);
         m_toolbar->addAction(sendCoinsAction);
         m_toolbar->addAction(receiveCoinsAction);
         m_toolbar->addAction(historyAction);
-        m_toolbar->addAction(createAssetAction);
-        m_toolbar->addAction(transferAssetAction);
-        m_toolbar->addAction(manageAssetAction);
+        m_toolbar->addAction(assetsMenuAction);
+        if (QToolButton *assetsButton = qobject_cast<QToolButton*>(m_toolbar->widgetForAction(assetsMenuAction)))
+            assetsButton->setPopupMode(QToolButton::InstantPopup);
 //        m_toolbar->addAction(messagingAction);
 //        m_toolbar->addAction(votingAction);
-        m_toolbar->addAction(restrictedAssetAction);
         m_toolbar->addAction(depinAssetAction);
-
-        QString openSansFontString = "font: normal 22pt \"Open Sans\";";
-        QString normalString = "font: normal 22pt \"Arial\";";
-        QString stringToUse = "";
-
-#if !defined(Q_OS_MAC)
-        stringToUse = openSansFontString;
-#else
-        stringToUse = normalString;
-#endif
-
-        /** XNA START */
-        QString tbStyleSheet = ".QToolBar {background-color : transparent; border-color: transparent; }  "
-                               ".QToolButton {background-color: transparent; border-color: transparent; width: 249px; color: %1; border: none;} "
-                               ".QToolButton:checked {background: none; background-color: none; selection-background-color: none; color: %2; border: none; font: %4} "
-                               ".QToolButton:hover {background: none; background-color: none; border: none; color: %3;} "
-                               ".QToolButton:disabled {color: gray;}";
-
-        m_toolbar->setStyleSheet(tbStyleSheet.arg(platformStyle->ToolBarNotSelectedTextColor().name(),
-                                                platformStyle->ToolBarSelectedTextColor().name(),
-                                                platformStyle->DarkOrangeColor().name(), stringToUse));
-
-        m_toolbar->setOrientation(Qt::Vertical);
-        m_toolbar->setIconSize(QSize(40, 40));
-
-        QLayout* lay = m_toolbar->layout();
-        for(int i = 0; i < lay->count(); ++i)
-            lay->itemAt(i)->setAlignment(Qt::AlignLeft);
+        m_toolbar->addAction(privacyAction);
+        // The asset pages are reached through the menu; keep their Alt+N shortcuts
+        addAction(createAssetAction);
+        addAction(transferAssetAction);
+        addAction(manageAssetAction);
+        addAction(restrictedAssetAction);
 
         overviewAction->setChecked(true);
 
-        QVBoxLayout* neuraiLabelLayout = new QVBoxLayout(toolbarWidget);
-        neuraiLabelLayout->addWidget(labelToolbar);
-        neuraiLabelLayout->addWidget(m_toolbar);
-        neuraiLabelLayout->setDirection(QBoxLayout::TopToBottom);
-        neuraiLabelLayout->addStretch(1);
+        /** XNA START */
+        const bool isMainnet = GetParams().NetworkIDString() == CBaseChainParams::MAIN;
+        labelNetworkChip = new QLabel(isMainnet ? tr("MAINNET") : QString::fromStdString(GetParams().NetworkIDString()).toUpper());
+        labelNetworkChip->setObjectName("networkChip");
+        labelNetworkChip->setProperty("mainnet", isMainnet);
 
-        QString mainWalletWidgetStyle = QString(".QWidget{background-color: %1}").arg(platformStyle->MainBackGroundColor().name());
-        QWidget* mainWalletWidget = new QWidget();
-        mainWalletWidget->setStyleSheet(mainWalletWidgetStyle);
+        labelHeaderBalance = new QLabel();
+        labelHeaderBalance->setObjectName("headerBalance");
 
-        /** Create the shadow effects for the main wallet frame. Make it so it puts a shadow on the tool bar */
-#if !defined(Q_OS_MAC)
-        QGraphicsDropShadowEffect *walletFrameShadow = new QGraphicsDropShadowEffect;
-        walletFrameShadow->setBlurRadius(50);
-        walletFrameShadow->setColor(COLOR_WALLETFRAME_SHADOW);
-        walletFrameShadow->setXOffset(-8.0);
-        walletFrameShadow->setYOffset(0);
-        mainWalletWidget->setGraphicsEffect(walletFrameShadow);
-#endif
-
-        QString widgetBackgroundSytleSheet = QString(".QWidget{background-color: %1}").arg(platformStyle->TopWidgetBackGroundColor().name());
-
-        // Set the headers widget options
-        headerWidget->setContentsMargins(0,25,0,0);
-        headerWidget->setStyleSheet(widgetBackgroundSytleSheet);
-        headerWidget->setGraphicsEffect(GUIUtil::getShadowEffect());
-        headerWidget->setFixedHeight(75);
-
-        QFont currentMarketFont;
-        currentMarketFont.setFamily("Open Sans");
-        currentMarketFont.setWeight(QFont::Weight::Normal);
-        currentMarketFont.setLetterSpacing(QFont::SpacingType::AbsoluteSpacing, -0.6);
-        currentMarketFont.setPixelSize(18);
-
-        // Set the pricing information
-        QHBoxLayout* priceLayout = new QHBoxLayout(headerWidget);
-        priceLayout->setContentsMargins(0,0,0,25);
-        priceLayout->setDirection(QBoxLayout::LeftToRight);
-        priceLayout->setAlignment(Qt::AlignVCenter);
-        labelCurrentMarket->setContentsMargins(50,0,0,0);
-        labelCurrentMarket->setAlignment(Qt::AlignVCenter);
-        labelCurrentMarket->setStyleSheet(STRING_LABEL_COLOR);
-        labelCurrentMarket->setFont(currentMarketFont);
-        labelCurrentMarket->setText(tr("Neurai Market Price"));
-
-        QString currentPriceStyleSheet = ".QLabel{color: %1;}";
-        labelCurrentPrice->setContentsMargins(25,0,0,0);
-        labelCurrentPrice->setAlignment(Qt::AlignVCenter);
-        labelCurrentPrice->setStyleSheet(currentPriceStyleSheet.arg(COLOR_LABELS.name()));
-        labelCurrentPrice->setFont(currentMarketFont);
+        labelCurrentMarket->setObjectName("headerPrice");
+        labelCurrentMarket->setText(tr("Market price"));
+        labelCurrentMarket->hide(); // shown once a price has been received
+        labelCurrentPrice->setObjectName("headerPrice");
 
         comboXnaUnit = new QComboBox(headerWidget);
+        comboXnaUnit->setObjectName("headerCurrency");
+        comboXnaUnit->setFocusPolicy(Qt::ClickFocus); // keep the initial focus off the header
         QStringList list;
         for(int unitNum = 0; unitNum < CurrencyUnits::count(); unitNum++) {
             list.append(QString(CurrencyUnits::CurrencyOptions[unitNum].Header));
         }
         comboXnaUnit->addItems(list);
-        comboXnaUnit->setFixedHeight(26);
-        comboXnaUnit->setContentsMargins(5,0,0,0);
-        comboXnaUnit->setStyleSheet(STRING_LABEL_COLOR);
-        comboXnaUnit->setFont(currentMarketFont);
 
-        labelVersionUpdate->setText("<a href=\"https://github.com/NeuraiProject/Neurai/releases\">New Wallet Version Available</a>");
+        labelVersionUpdate->setText("<a href=\"https://github.com/NeuraiProject/Neurai/releases\">" + tr("New Wallet Version Available") + "</a>");
+        labelVersionUpdate->setObjectName("headerPrice");
         labelVersionUpdate->setTextFormat(Qt::RichText);
         labelVersionUpdate->setTextInteractionFlags(Qt::TextBrowserInteraction);
         labelVersionUpdate->setOpenExternalLinks(true);
-        labelVersionUpdate->setContentsMargins(0,0,15,0);
-        labelVersionUpdate->setAlignment(Qt::AlignVCenter);
-        labelVersionUpdate->setStyleSheet(STRING_LABEL_COLOR);
-        labelVersionUpdate->setFont(currentMarketFont);
         labelVersionUpdate->hide();
 
-        priceLayout->setGeometry(headerWidget->rect());
-        priceLayout->addWidget(labelCurrentMarket, 0, Qt::AlignVCenter | Qt::AlignLeft);
-        priceLayout->addWidget(labelCurrentPrice, 0,  Qt::AlignVCenter | Qt::AlignLeft);
-        priceLayout->addWidget(comboXnaUnit, 0 , Qt::AlignBottom| Qt::AlignLeft);
+        QHBoxLayout* chipLayout = new QHBoxLayout();
+        chipLayout->addStretch();
+        chipLayout->addWidget(labelVersionUpdate);
+        chipLayout->addWidget(labelNetworkChip);
+
+        QHBoxLayout* priceLayout = new QHBoxLayout();
+        priceLayout->setSpacing(6);
         priceLayout->addStretch();
-        priceLayout->addWidget(labelVersionUpdate, 0 , Qt::AlignVCenter | Qt::AlignRight);
+        priceLayout->addWidget(labelCurrentMarket);
+        priceLayout->addWidget(labelCurrentPrice);
+        priceLayout->addWidget(comboXnaUnit);
 
-        // Create the layout for widget to the right of the tool bar
-        QVBoxLayout* mainFrameLayout = new QVBoxLayout(mainWalletWidget);
-        mainFrameLayout->addWidget(headerWidget);
-#ifdef ENABLE_WALLET
-        mainFrameLayout->addWidget(walletFrame);
-#endif
-        mainFrameLayout->setDirection(QBoxLayout::TopToBottom);
-        mainFrameLayout->setContentsMargins(QMargins());
+        QVBoxLayout* infoLayout = new QVBoxLayout();
+        infoLayout->setSpacing(3);
+        infoLayout->addLayout(chipLayout);
+        infoLayout->addWidget(labelHeaderBalance, 0, Qt::AlignRight);
+        infoLayout->addLayout(priceLayout);
 
-        QVBoxLayout* layout = new QVBoxLayout();
-        layout->addWidget(toolbarWidget);
-        layout->addWidget(mainWalletWidget);
-        layout->setSpacing(0);
-        layout->setContentsMargins(QMargins());
-        layout->setDirection(QBoxLayout::LeftToRight);
+        headerBrandLayout = brandLayout;
+        headerInfoLayout = infoLayout;
+        headerWidget->installEventFilter(this);
+
+        QHBoxLayout* headerLayout = new QHBoxLayout(headerWidget);
+        headerLayout->setContentsMargins(16, 8, 16, 8);
+        headerLayout->setSpacing(12);
+        headerLayout->addLayout(brandLayout);
+        headerLayout->addStretch(1);
+        headerLayout->addWidget(m_toolbar, 0, Qt::AlignVCenter);
+        headerLayout->addStretch(1);
+        headerLayout->addLayout(infoLayout);
+
+        // Pages sit below the header on the plain page background. The side
+        // margin matches the one the pages use, so card edges line up.
         QWidget* containerWidget = new QWidget();
-        containerWidget->setLayout(layout);
+        QVBoxLayout* layout = new QVBoxLayout(containerWidget);
+        layout->setContentsMargins(0, 12, 0, 0);
+        layout->setSpacing(0);
+        QHBoxLayout* headerRow = new QHBoxLayout();
+        headerRow->setContentsMargins(20, 0, 20, 0);
+        headerRow->addWidget(headerWidget);
+        layout->addLayout(headerRow);
+#ifdef ENABLE_WALLET
+        // Pages scroll below this height instead of letting the window collapse
+        walletFrame->setMinimumHeight(300);
+        layout->addWidget(walletFrame, 1);
+#endif
         setCentralWidget(containerWidget);
 
         // Network request code for the header widget
@@ -803,6 +798,7 @@ void NeuraiGUI::createToolBars()
                          this, [=, this](QNetworkReply *reply) {
                     if (reply->error()) {
                         labelCurrentPrice->setText("");
+                        labelCurrentMarket->hide();
                         qDebug() << reply->errorString();
                         return;
                     }
@@ -824,7 +820,7 @@ void NeuraiGUI::createToolBars()
                     if (!list.isEmpty()) {
                         double next = list.first().toDouble(&ok) * this->currentPriceDisplay->Scalar;
                         if (!ok) {
-                            labelCurrentPrice->setStyleSheet(currentPriceStyleSheet.arg(COLOR_LABELS.name()));
+                            labelCurrentPrice->setStyleSheet("");
                             labelCurrentPrice->setText("");
                         } else {
                             double current = labelCurrentPrice->text().toDouble(&ok);
@@ -832,14 +828,15 @@ void NeuraiGUI::createToolBars()
                                 current = 0.00000000;
                             } else {
                                 if (next < current && !this->unitChanged)
-                                    labelCurrentPrice->setStyleSheet(currentPriceStyleSheet.arg("red"));
+                                    labelCurrentPrice->setStyleSheet(currentPriceStyleSheet.arg(GUITheme::tokens().error.name()));
                                 else if (next > current && !this->unitChanged)
-                                    labelCurrentPrice->setStyleSheet(currentPriceStyleSheet.arg("green"));
+                                    labelCurrentPrice->setStyleSheet(currentPriceStyleSheet.arg(GUITheme::tokens().success.name()));
                                 else
-                                    labelCurrentPrice->setStyleSheet(currentPriceStyleSheet.arg(COLOR_LABELS.name()));
+                                    labelCurrentPrice->setStyleSheet("");
                             }
                             this->unitChanged = false;
                             labelCurrentPrice->setText(QString("%1").arg(QString().setNum(next, 'f', this->currentPriceDisplay->Decimals)));
+                            labelCurrentMarket->show();
                             labelCurrentPrice->setToolTip(tr("Brought to you by txbit.io"));
                         }
                     }
@@ -958,18 +955,131 @@ void NeuraiGUI::createToolBars()
 
 void NeuraiGUI::updateIconsOnlyToolbar(bool IconsOnly)
 {
-    if(IconsOnly) {
-        labelToolbar->setPixmap(QPixmap::fromImage(QImage(":/icons/xnatext")));
-        m_toolbar->setMaximumWidth(65);
+    navIconsOnly = IconsOnly;
+    updateNavigationStyle();
+}
+
+void NeuraiGUI::updateNavigationStyle()
+{
+    if (!m_toolbar || !headerWidget || !headerBrandLayout || !headerInfoLayout)
+        return;
+
+    if (!navLabelsWidth && m_toolbar->isVisible()) {
+        // Measure once the style sheet is in effect. The icons-only width is the
+        // minimum, so every page stays visible however narrow the window gets.
+        m_toolbar->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+        equalizeNavigationButtons();
+        navLabelsWidth = m_toolbar->sizeHint().width();
         m_toolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);
+        equalizeNavigationButtons();
+        m_toolbar->setMinimumWidth(m_toolbar->sizeHint().width());
     }
-    else {
-        labelToolbar->setPixmap(QPixmap::fromImage(QImage(":/icons/neuraitext")));
-        m_toolbar->setMinimumWidth(labelToolbar->width());
-        m_toolbar->setMaximumWidth(255);
-        m_toolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);        
+
+    Qt::ToolButtonStyle style = Qt::ToolButtonIconOnly;
+    if (!navIconsOnly) {
+        // Space left for the navigation once brand, info column, margins and spacing are in place
+        const QLayout* headerLayout = headerWidget->layout();
+        const QMargins margins = headerLayout->contentsMargins();
+        const int available = headerWidget->width() - margins.left() - margins.right() - 4 * headerLayout->spacing()
+            - headerBrandLayout->sizeHint().width() - headerInfoLayout->sizeHint().width();
+        if (navLabelsWidth <= available)
+            style = Qt::ToolButtonTextUnderIcon;
+    }
+    if (m_toolbar->toolButtonStyle() != style) {
+        m_toolbar->setToolButtonStyle(style);
+        equalizeNavigationButtons();
     }
 }
+
+void NeuraiGUI::equalizeNavigationButtons()
+{
+    // Same width for every entry, so the icons are evenly spaced whatever the label lengths
+    QList<QToolButton*> buttons;
+    for (QAction* action : m_toolbar->actions()) {
+        if (QToolButton* button = qobject_cast<QToolButton*>(m_toolbar->widgetForAction(action)))
+            buttons << button;
+    }
+    int width = 0;
+    for (QToolButton* button : buttons) {
+        button->setMinimumWidth(0);
+        button->setMaximumWidth(QWIDGETSIZE_MAX);
+        width = qMax(width, button->sizeHint().width());
+    }
+    for (QToolButton* button : buttons)
+        button->setFixedWidth(width);
+    headerWidget->update();
+}
+
+/** XNA START */
+static QString CssColor(const QColor& color)
+{
+    return QString("rgba(%1, %2, %3, %4)").arg(color.red()).arg(color.green()).arg(color.blue()).arg(color.alpha());
+}
+
+void NeuraiGUI::setHeaderIcon(QToolButton* button, QLabel* label, const QString& iconFile, const QColor& color, const QString& tooltip)
+{
+    // Coloured icon on a badge tinted with the same colour, like the
+    // transaction badges of the overview page.
+    const QIcon icon = platformStyle->SingleColorIcon(QIcon(iconFile), color);
+    QColor tint = color;
+    tint.setAlpha(darkModeEnabled ? 56 : 30);
+    if (button) {
+        QColor hover = color;
+        hover.setAlpha(darkModeEnabled ? 96 : 60);
+        button->setIcon(icon);
+        button->setStyleSheet(QString("QToolButton { background-color: %1; border: none; border-radius: 7px; padding: 0; }"
+                                      " QToolButton:hover { background-color: %2; }").arg(CssColor(tint), CssColor(hover)));
+        button->setToolTip(tooltip);
+    } else if (label) {
+        label->setPixmap(icon.pixmap(QSize(16, 16), label->devicePixelRatioF()));
+        label->setStyleSheet(QString("QLabel { background-color: %1; border-radius: 7px; }").arg(CssColor(tint)));
+        label->setToolTip(tooltip);
+        label->show();
+    }
+}
+
+void NeuraiGUI::updateHeaderSyncIcon()
+{
+    if (!headerSyncButton || !clientModel)
+        return;
+
+    // Red: no connection, orange: synchronizing, green: up to date
+    const GUITheme::Tokens& theme = GUITheme::tokens();
+    const int connections = clientModel->getNumConnections();
+    QColor color = theme.success;
+    QString tooltip;
+    if (!clientModel->getNetworkActive()) {
+        color = theme.error;
+        tooltip = "<b>" + tr("Network activity disabled.") + "</b>";
+    } else if (connections == 0) {
+        color = theme.error;
+        tooltip = "<b>" + tr("No connections to the Neurai network.") + "</b>";
+    } else {
+        if (!headerSynced)
+            color = theme.warning;
+        tooltip = tr("%n active connection(s) to Neurai network", "", connections) + ".";
+    }
+    if (!headerSyncTooltip.isEmpty())
+        tooltip += "<br>" + headerSyncTooltip;
+    tooltip += "<br><br>" + tr("Click for synchronization details. Right-click to enable or disable network activity.");
+    setHeaderIcon(headerSyncButton, nullptr, ":/icons/status_sync", color, tooltip);
+}
+
+#ifdef ENABLE_WALLET
+void NeuraiGUI::updateHeaderBalance()
+{
+    if (!labelHeaderBalance || !headerWalletModel)
+        return;
+    int unit = NeuraiUnits::XNA;
+    if (headerWalletModel->getOptionsModel())
+        unit = headerWalletModel->getOptionsModel()->getDisplayUnit();
+    const CAmount balance = headerWalletModel->getBalance();
+    labelHeaderBalance->setText(NeuraiUnits::formatCompactWithUnit(unit, balance));
+    labelHeaderBalance->setToolTip(tr("Available: %1").arg(NeuraiUnits::formatWithUnit(unit, balance, false, NeuraiUnits::separatorAlways)));
+}
+#endif // ENABLE_WALLET
+/** XNA END */
+
 void NeuraiGUI::setClientModel(ClientModel *_clientModel)
 {
     this->clientModel = _clientModel;
@@ -1048,6 +1158,14 @@ bool NeuraiGUI::addWallet(const QString& name, WalletModel *walletModel)
     if(!walletFrame)
         return false;
     setWalletActionsEnabled(true);
+    /** XNA START */
+    headerWalletModel = walletModel;
+    setPQStatus(walletModel->isPQWallet());
+    connect(walletModel, &WalletModel::balanceChanged, this, &NeuraiGUI::updateHeaderBalance);
+    if (walletModel->getOptionsModel())
+        connect(walletModel->getOptionsModel(), &OptionsModel::displayUnitChanged, this, &NeuraiGUI::updateHeaderBalance);
+    updateHeaderBalance();
+    /** XNA END */
     return walletFrame->addWallet(name, walletModel);
 }
 
@@ -1063,6 +1181,9 @@ void NeuraiGUI::removeAllWallets()
     if(!walletFrame)
         return;
     setWalletActionsEnabled(false);
+    headerWalletModel = nullptr;
+    if (labelHeaderBalance)
+        labelHeaderBalance->clear();
     walletFrame->removeAllWallets();
 }
 #endif // ENABLE_WALLET
@@ -1304,6 +1425,7 @@ void NeuraiGUI::updateNetworkState()
     connectionsControl->setToolTip(tooltip);
 
     connectionsControl->setPixmap(platformStyle->SingleColorIcon(icon).pixmap(STATUSBAR_ICONSIZE,STATUSBAR_ICONSIZE));
+    updateHeaderSyncIcon();
 }
 
 void NeuraiGUI::setNumConnections(int count)
@@ -1383,6 +1505,7 @@ void NeuraiGUI::setNumBlocks(int count, const QDateTime& blockDate, double nVeri
     {
         tooltip = tr("Up to date") + QString(".<br>") + tooltip;
         labelBlocksIcon->setPixmap(platformStyle->SingleColorIcon(":/icons/synced").pixmap(STATUSBAR_ICONSIZE, STATUSBAR_ICONSIZE));
+        headerSynced = true;
 
 #ifdef ENABLE_WALLET
         if(walletFrame)
@@ -1406,6 +1529,7 @@ void NeuraiGUI::setNumBlocks(int count, const QDateTime& blockDate, double nVeri
         progressBar->setVisible(true);
 
         tooltip = tr("Catching up...") + QString("<br>") + tooltip;
+        headerSynced = false;
         if(count != prevBlocks)
         {
             labelBlocksIcon->setPixmap(platformStyle->SingleColorIcon(QString(
@@ -1435,6 +1559,8 @@ void NeuraiGUI::setNumBlocks(int count, const QDateTime& blockDate, double nVeri
     labelBlocksIcon->setToolTip(tooltip);
     progressBarLabel->setToolTip(tooltip);
     progressBar->setToolTip(tooltip);
+    headerSyncTooltip = tooltip;
+    updateHeaderSyncIcon();
 }
 
 void NeuraiGUI::message(const QString &title, const QString &message, unsigned int style, bool *ret)
@@ -1544,6 +1670,7 @@ void NeuraiGUI::showEvent(QShowEvent *event)
     openRPCConsoleAction->setEnabled(true);
     aboutAction->setEnabled(true);
     optionsAction->setEnabled(true);
+    updateNavigationStyle();
 }
 
 #ifdef ENABLE_WALLET
@@ -1627,6 +1754,8 @@ bool NeuraiGUI::eventFilter(QObject *object, QEvent *event)
         if (progressBarLabel->isVisible() || progressBar->isVisible())
             return true;
     }
+    if (object == headerWidget && event->type() == QEvent::Resize)
+        updateNavigationStyle();
     return QMainWindow::eventFilter(object, event);
 }
 
@@ -1645,44 +1774,38 @@ bool NeuraiGUI::handlePaymentRequest(const SendCoinsRecipient& recipient)
 
 void NeuraiGUI::setHDStatus(int hdEnabled)
 {
-    QString icon = "";
-    if (hdEnabled == HD_DISABLED) {
-        icon = ":/icons/hd_disabled";
-    } else if (hdEnabled == HD_ENABLED) {
-        icon = ":/icons/hd_enabled";
-    } else if (hdEnabled == HD44_ENABLED) {
-        icon = ":/icons/hd_enabled_44";
-    }
+    const GUITheme::Tokens& theme = GUITheme::tokens();
+    setHeaderIcon(nullptr, labelHeaderHD, ":/icons/status_wallet", hdEnabled ? theme.success : theme.error,
+                  hdEnabled ? tr("HD key generation is <b>enabled</b>") : tr("HD key generation is <b>disabled</b>"));
+}
 
-    labelWalletHDStatusIcon->setPixmap(platformStyle->SingleColorIcon(icon).pixmap(STATUSBAR_ICONSIZE,STATUSBAR_ICONSIZE));
-    labelWalletHDStatusIcon->setToolTip(hdEnabled ? tr("HD key generation is <b>enabled</b>") : tr("HD key generation is <b>disabled</b>"));
-
-    // eventually disable the QLabel to set its opacity to 50%
-    labelWalletHDStatusIcon->setEnabled(hdEnabled);
+void NeuraiGUI::setPQStatus(bool pqEnabled)
+{
+    // Not an error when off: legacy and ECDSA wallets show a neutral badge
+    const GUITheme::Tokens& theme = GUITheme::tokens();
+    setHeaderIcon(nullptr, labelHeaderPQ, ":/icons/status_pq", pqEnabled ? theme.success : theme.textMuted,
+                  pqEnabled ? tr("Post-quantum addresses (ML-DSA-44) are <b>in use</b>") : tr("Post-quantum addresses are <b>not</b> in use"));
 }
 
 void NeuraiGUI::setEncryptionStatus(int status)
 {
+    const GUITheme::Tokens& theme = GUITheme::tokens();
     switch(status)
     {
     case WalletModel::Unencrypted:
-        labelWalletEncryptionIcon->hide();
+        setHeaderIcon(nullptr, labelHeaderEncryption, ":/icons/status_unlock", theme.error, tr("Wallet is <b>not encrypted</b>"));
         encryptWalletAction->setChecked(false);
         changePassphraseAction->setEnabled(false);
         encryptWalletAction->setEnabled(true);
         break;
     case WalletModel::Unlocked:
-        labelWalletEncryptionIcon->show();
-        labelWalletEncryptionIcon->setPixmap(platformStyle->SingleColorIcon(":/icons/lock_open").pixmap(STATUSBAR_ICONSIZE,STATUSBAR_ICONSIZE));
-        labelWalletEncryptionIcon->setToolTip(tr("Wallet is <b>encrypted</b> and currently <b>unlocked</b>"));
+        setHeaderIcon(nullptr, labelHeaderEncryption, ":/icons/status_unlock", theme.warning, tr("Wallet is <b>encrypted</b> and currently <b>unlocked</b>"));
         encryptWalletAction->setChecked(true);
         changePassphraseAction->setEnabled(true);
         encryptWalletAction->setEnabled(false); // TODO: decrypt currently not supported
         break;
     case WalletModel::Locked:
-        labelWalletEncryptionIcon->show();
-        labelWalletEncryptionIcon->setPixmap(platformStyle->SingleColorIcon(":/icons/lock_closed").pixmap(STATUSBAR_ICONSIZE,STATUSBAR_ICONSIZE));
-        labelWalletEncryptionIcon->setToolTip(tr("Wallet is <b>encrypted</b> and currently <b>locked</b>"));
+        setHeaderIcon(nullptr, labelHeaderEncryption, ":/icons/status_lock", theme.success, tr("Wallet is <b>encrypted</b> and currently <b>locked</b>"));
         encryptWalletAction->setChecked(true);
         changePassphraseAction->setEnabled(true);
         encryptWalletAction->setEnabled(false); // TODO: decrypt currently not supported

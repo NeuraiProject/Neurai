@@ -142,7 +142,6 @@ QT_MOC_CPP = \
   qt/moc_coincontroldialog.cpp \
   qt/moc_coincontroltreewidget.cpp \
   qt/moc_csvmodelwriter.cpp \
-  qt/moc_darkstyle.cpp \
   qt/moc_editaddressdialog.cpp \
   qt/moc_guiutil.cpp \
   qt/moc_intro.cpp \
@@ -229,9 +228,9 @@ NEURAI_QT_H = \
   qt/coincontroltreewidget.h \
   qt/csvmodelwriter.h \
   qt/currencyunits.h \
-  qt/darkstyle.h \
   qt/editaddressdialog.h \
   qt/guiconstants.h \
+  qt/guitheme.h \
   qt/guiutil.h \
   qt/witnessestimate.h \
   qt/intro.h \
@@ -335,6 +334,25 @@ RES_ICONS = \
   qt/res/icons/open.png \
   qt/res/icons/overview.png \
   qt/res/icons/overview_selected.png \
+  qt/res/icons/nav_overview.png \
+  qt/res/icons/nav_send.png \
+  qt/res/icons/nav_receive.png \
+  qt/res/icons/nav_history.png \
+  qt/res/icons/nav_asset_create.png \
+  qt/res/icons/nav_asset_transfer.png \
+  qt/res/icons/nav_asset_manage.png \
+  qt/res/icons/nav_restricted.png \
+  qt/res/icons/nav_depin.png \
+  qt/res/icons/nav_assets.png \
+  qt/res/icons/nav_privacy.png \
+  qt/res/icons/status_sync.png \
+  qt/res/icons/status_lock.png \
+  qt/res/icons/status_unlock.png \
+  qt/res/icons/status_wallet.png \
+  qt/res/icons/status_pq.png \
+  qt/res/icons/ui_chevron_down.png \
+  qt/res/icons/ui_chevron_up.png \
+  qt/res/icons/ui_check.png \
   qt/res/icons/quit.png \
   qt/res/icons/receive.png \
   qt/res/icons/receive_selected.png \
@@ -358,39 +376,10 @@ RES_ICONS = \
   qt/res/icons/tx_atomic_swap.png \
   qt/res/icons/warning.png \
   qt/res/icons/verify.png \
-  qt/res/darkstyle/icon_close.png \
-  qt/res/darkstyle/icon_restore.png \
-  qt/res/darkstyle/icon_undock.png \
-  qt/res/darkstyle/icon_branch_closed.png \
-  qt/res/darkstyle/icon_branch_end.png \
-  qt/res/darkstyle/icon_branch_more.png \
-  qt/res/darkstyle/icon_branch_open.png \
-  qt/res/darkstyle/icon_vline.png \
-  qt/res/darkstyle/icon_checkbox_checked.png \
-  qt/res/darkstyle/icon_checkbox_indeterminate.png \
-  qt/res/darkstyle/icon_checkbox_unchecked.png \
-  qt/res/darkstyle/icon_checkbox_checked_pressed.png \
-  qt/res/darkstyle/icon_checkbox_indeterminate_pressed.png \
-  qt/res/darkstyle/icon_checkbox_unchecked_pressed.png \
-  qt/res/darkstyle/icon_checkbox_checked_disabled.png \
-  qt/res/darkstyle/icon_checkbox_indeterminate_disabled.png \
-  qt/res/darkstyle/icon_checkbox_unchecked_disabled.png \
-  qt/res/darkstyle/icon_radiobutton_checked.png \
-  qt/res/darkstyle/icon_radiobutton_unchecked.png \
-  qt/res/darkstyle/icon_radiobutton_checked_pressed.png \
-  qt/res/darkstyle/icon_radiobutton_unchecked_pressed.png \
-  qt/res/darkstyle/icon_radiobutton_checked_disabled.png \
-  qt/res/darkstyle/icon_radiobutton_unchecked_disabled.png \
-  qt/res/fonts/OpenSans-Bold.ttf \
-  qt/res/fonts/OpenSans-BoldItalic.ttf \
-  qt/res/fonts/OpenSans-ExtraBold.ttf \
-  qt/res/fonts/OpenSans-ExtraBoldItalic.ttf \
-  qt/res/fonts/OpenSans-Italic.ttf \
-  qt/res/fonts/OpenSans-Light.ttf \
-  qt/res/fonts/OpenSans-LightItalic.ttf \
-  qt/res/fonts/OpenSans-Regular.ttf \
-  qt/res/fonts/OpenSans-SemiBold.ttf \
-  qt/res/fonts/OpenSans-SemiBoldItalic.ttf
+  qt/res/fonts/Inter-Regular.ttf \
+  qt/res/fonts/Inter-Medium.ttf \
+  qt/res/fonts/Inter-SemiBold.ttf \
+  qt/res/fonts/Inter-Bold.ttf
 
 
 NEURAI_QT_BASE_CPP = \
@@ -401,7 +390,7 @@ NEURAI_QT_BASE_CPP = \
   qt/neuraiunits.cpp \
   qt/clientmodel.cpp \
   qt/csvmodelwriter.cpp \
-  qt/darkstyle.cpp \
+  qt/guitheme.cpp \
   qt/guiutil.cpp \
   qt/intro.cpp \
   qt/modaloverlay.cpp \

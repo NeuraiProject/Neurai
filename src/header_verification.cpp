@@ -68,7 +68,7 @@ HeaderWindowStatus PrepareHeaderWindow(const std::vector<CBlockHeader>& headers,
         const std::vector<CBlockHeader> prefix(headers.begin() + offset, headers.begin() + end);
         const std::vector<uint8_t> marks(authenticated.begin() + offset, authenticated.begin() + end);
         if (!AcceptBlockHeaders(prefix, state, params, last, first_invalid, &marks))
-            return HeaderWindowStatus::ERROR;
+            return HeaderWindowStatus::REJECTED;
         offset = end;
     }
     if (offset == headers.size()) return HeaderWindowStatus::DONE;
@@ -187,7 +187,7 @@ bool ProcessHeadersWithParallelPoW(const std::vector<CBlockHeader>& headers,
                 LOCK(cs_main);
                 status = PrepareHeaderWindow(headers, checked, offset, limit, params, state, last, first_invalid, window);
             }
-            if (status == HeaderWindowStatus::ERROR) return false;
+            if (status == HeaderWindowStatus::REJECTED) return false;
             if (status == HeaderWindowStatus::DONE)
                 return ProcessNewBlockHeaders({}, state, params, last, first_invalid);
             if (status == HeaderWindowStatus::SERIAL)

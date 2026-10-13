@@ -12,6 +12,7 @@
 #include "clientmodel.h"
 #include "assetcontroldialog.h"
 #include "guiutil.h"
+#include "guitheme.h"
 #include "optionsmodel.h"
 #include "platformstyle.h"
 #include "sendassetsentry.h"
@@ -55,6 +56,7 @@ AssetsDialog::AssetsDialog(const PlatformStyle *_platformStyle, QWidget *parent)
         platformStyle(_platformStyle)
 {
     ui->setupUi(this);
+    ui->sendButton->setProperty("primary", true);
 
     if (!_platformStyle->getImagesOnButtons()) {
         ui->addButton->setIcon(QIcon());
@@ -229,7 +231,7 @@ AssetsDialog::~AssetsDialog()
 void AssetsDialog::setupAssetControlFrame(const PlatformStyle *platformStyle)
 {
     /** Update the assetcontrol frame */
-    ui->frameAssetControl->setStyleSheet(QString(".QFrame {background-color: %1; padding-top: 10px; padding-right: 5px; border: none;}").arg(platformStyle->WidgetBackGroundColor().name()));
+    GUITheme::makeCard(ui->frameAssetControl, "padding: 6px;");
     ui->widgetAssetControl->setStyleSheet(".QWidget {background-color: transparent;}");
     /** Create the shadow effects on the frames */
 
@@ -282,18 +284,18 @@ void AssetsDialog::setupAssetControlFrame(const PlatformStyle *platformStyle)
 void AssetsDialog::setupScrollView(const PlatformStyle *platformStyle)
 {
     /** Update the scrollview*/
-    ui->scrollArea->setStyleSheet(QString(".QScrollArea{background-color: %1; border: none}").arg(platformStyle->WidgetBackGroundColor().name()));
+    GUITheme::makeCard(ui->scrollArea, "padding: 5px;");
     ui->scrollArea->setGraphicsEffect(GUIUtil::getShadowEffect());
 
     // Add some spacing so we can see the whole card
     ui->entries->setContentsMargins(10,10,20,0);
-    ui->scrollAreaWidgetContents->setStyleSheet(QString(".QWidget{ background-color: %1;}").arg(platformStyle->WidgetBackGroundColor().name()));
+    ui->scrollAreaWidgetContents->setStyleSheet(".QWidget{ background-color: transparent;}");
 }
 
 void AssetsDialog::setupFeeControl(const PlatformStyle *platformStyle)
 {
     /** Update the coincontrol frame */
-    ui->frameFee->setStyleSheet(QString(".QFrame {background-color: %1; padding-top: 10px; padding-right: 5px; border: none;}").arg(platformStyle->WidgetBackGroundColor().name()));
+    GUITheme::makeCard(ui->frameFee, "padding: 6px;");
     /** Create the shadow effects on the frames */
 
     ui->frameFee->setGraphicsEffect(GUIUtil::getShadowEffect());

@@ -76,6 +76,25 @@
         <file alias="xnatext">res/icons/xnatext.png</file>
 	<file alias="restricted_asset">res/icons/restricted_asset.png</file>
 	<file alias="restricted_asset_selected">res/icons/restricted_asset_selected.png</file>
+        <file alias="nav_overview">res/icons/nav_overview.png</file>
+        <file alias="nav_send">res/icons/nav_send.png</file>
+        <file alias="nav_receive">res/icons/nav_receive.png</file>
+        <file alias="nav_history">res/icons/nav_history.png</file>
+        <file alias="nav_asset_create">res/icons/nav_asset_create.png</file>
+        <file alias="nav_asset_transfer">res/icons/nav_asset_transfer.png</file>
+        <file alias="nav_asset_manage">res/icons/nav_asset_manage.png</file>
+        <file alias="nav_restricted">res/icons/nav_restricted.png</file>
+        <file alias="nav_depin">res/icons/nav_depin.png</file>
+        <file alias="nav_assets">res/icons/nav_assets.png</file>
+        <file alias="nav_privacy">res/icons/nav_privacy.png</file>
+        <file alias="status_sync">res/icons/status_sync.png</file>
+        <file alias="status_lock">res/icons/status_lock.png</file>
+        <file alias="status_unlock">res/icons/status_unlock.png</file>
+        <file alias="status_wallet">res/icons/status_wallet.png</file>
+        <file alias="status_pq">res/icons/status_pq.png</file>
+        <file alias="ui_chevron_down">res/icons/ui_chevron_down.png</file>
+        <file alias="ui_chevron_up">res/icons/ui_chevron_up.png</file>
+        <file alias="ui_check">res/icons/ui_check.png</file>
     </qresource>
     <qresource prefix="/movies">
         <file alias="spinner-000">res/movies/spinner-000.png</file>
@@ -115,42 +134,10 @@
         <file alias="spinner-034">res/movies/spinner-034.png</file>
         <file alias="spinner-035">res/movies/spinner-035.png</file>
     </qresource>
-    <qresource prefix="/darkstyle">
-        <file alias="qss">res/darkstyle/darkstyle.qss</file>
-        <file alias="close">res/darkstyle/icon_close.png</file>
-        <file alias="restore">res/darkstyle/icon_restore.png</file>
-        <file alias="undock">res/darkstyle/icon_undock.png</file>
-        <file alias="branch-closed">res/darkstyle/icon_branch_closed.png</file>
-        <file alias="branch-end">res/darkstyle/icon_branch_end.png</file>
-        <file alias="branch-more">res/darkstyle/icon_branch_more.png</file>
-        <file alias="branch-open">res/darkstyle/icon_branch_open.png</file>
-        <file alias="vline">res/darkstyle/icon_vline.png</file>
-        <file alias="checkbox-checked">res/darkstyle/icon_checkbox_checked.png</file>
-        <file alias="checkbox-indeterminate">res/darkstyle/icon_checkbox_indeterminate.png</file>
-        <file alias="checkbox-unchecked">res/darkstyle/icon_checkbox_unchecked.png</file>
-        <file alias="checkbox-checked-pressed">res/darkstyle/icon_checkbox_checked_pressed.png</file>
-        <file alias="checkbox-indeterminate-pressed">res/darkstyle/icon_checkbox_indeterminate_pressed.png</file>
-        <file alias="checkbox-unchecked-pressed">res/darkstyle/icon_checkbox_unchecked_pressed.png</file>
-        <file alias="checkbox-checked-disabled">res/darkstyle/icon_checkbox_checked_disabled.png</file>
-        <file alias="checkbox-indeterminate-disabled">res/darkstyle/icon_checkbox_indeterminate_disabled.png</file>
-        <file alias="checkbox-unchecked-disabled">res/darkstyle/icon_checkbox_unchecked_disabled.png</file>
-        <file alias="radio-checked">res/darkstyle/icon_radiobutton_checked.png</file>
-        <file alias="radio-unchecked">res/darkstyle/icon_radiobutton_unchecked.png</file>
-        <file alias="radio-checked-press">res/darkstyle/icon_radiobutton_checked_pressed.png</file>
-        <file alias="radio-unchecked-press">res/darkstyle/icon_radiobutton_unchecked_pressed.png</file>
-        <file alias="radio-checked-disabled">res/darkstyle/icon_radiobutton_checked_disabled.png</file>
-        <file alias="radio-unchecked-disabled">res/darkstyle/icon_radiobutton_unchecked_disabled.png</file>
-    </qresource>
     <qresource prefix="/fonts">
-        <file alias="opensans-bold">res/fonts/OpenSans-Bold.ttf</file>
-        <file alias="opensans-bolditalic">res/fonts/OpenSans-BoldItalic.ttf</file>
-        <file alias="opensans-extrabold">res/fonts/OpenSans-ExtraBold.ttf</file>
-        <file alias="opensans-extrabolditalic">res/fonts/OpenSans-ExtraBoldItalic.ttf</file>
-        <file alias="opensans-italic">res/fonts/OpenSans-Italic.ttf</file>
-        <file alias="opensans-light">res/fonts/OpenSans-Light.ttf</file>
-        <file alias="opensans-lightitalic">res/fonts/OpenSans-LightItalic.ttf</file>
-        <file alias="opensans-regular">res/fonts/OpenSans-Regular.ttf</file>
-        <file alias="opensans-semibold">res/fonts/OpenSans-SemiBold.ttf</file>
-        <file alias="opensans-semibolditalic">res/fonts/OpenSans-SemiBoldItalic.ttf</file>
+        <file alias="inter-regular">res/fonts/Inter-Regular.ttf</file>
+        <file alias="inter-medium">res/fonts/Inter-Medium.ttf</file>
+        <file alias="inter-semibold">res/fonts/Inter-SemiBold.ttf</file>
+        <file alias="inter-bold">res/fonts/Inter-Bold.ttf</file>
     </qresource>
 </RCC>

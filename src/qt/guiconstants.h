@@ -18,13 +18,14 @@ static const int STATUSBAR_ICONSIZE = 16;
 static const bool DEFAULT_SPLASHSCREEN = true;
 
 /* Invalid field background style */
-#define STYLE_INVALID "background:#FF8080; border: 1px solid lightgray; padding: 0px;"
-#define STYLE_VALID "border: 1px solid lightgray; padding: 0px;"
+#define STYLE_INVALID "background-color: rgba(239, 68, 68, 30); border: 1px solid #ef4444;"
+/* Empty: fall back to the application style sheet (see guitheme.cpp) */
+#define STYLE_VALID ""
 
 /* Transaction list -- unconfirmed transaction */
 #define COLOR_UNCONFIRMED QColor(128, 128, 128)
 /* Transaction list -- negative amount */
-#define COLOR_NEGATIVE QColor(255, 0, 0)
+#define COLOR_NEGATIVE QColor("#ef4444")
 /* Transaction list -- bare address (without label) */
 #define COLOR_BAREADDRESS QColor(140, 140, 140)
 /* Transaction list -- TX status decoration - open until date */
@@ -92,8 +93,8 @@ static const bool DEFAULT_SPLASHSCREEN = true;
 
 
 /* Neurai label color as a string */
-#define STRING_LABEL_COLOR "color: #4960ad"
-#define STRING_LABEL_COLOR_WARNING "color: #FF8080"
+#define STRING_LABEL_COLOR "color: palette(window-text)"
+#define STRING_LABEL_COLOR_WARNING "color: #ef4444"
 
 
 

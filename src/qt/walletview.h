@@ -84,6 +84,12 @@ private:
     RestrictedAssetsDialog *depinAssetsPage;
     /** XNA END */
 
+    /** Add a page inside a scroll area: it fills the view when there is room and
+     *  scrolls instead of being squeezed when the window is small or the text large */
+    void addPage(QWidget *page);
+    /** Show a page added with addPage() */
+    void showPage(QWidget *page);
+
 public Q_SLOTS:
     /** Switch to overview (home) page */
     void gotoOverviewPage();

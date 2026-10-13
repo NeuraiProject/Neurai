@@ -81,68 +81,45 @@ extern double NSAppKitVersionNumber;
 
 #include <QGraphicsDropShadowEffect>
 #include "guiconstants.h"
+#include "guitheme.h"
 #include "platformstyle.h"
 
 namespace GUIUtil {
 
+static QFont makeThemeFont(QFont::Weight weight, int pxsize)
+{
+    QFont font;
+#if !defined(Q_OS_MAC)
+    font.setFamily(GUITheme::FONT_FAMILY);
+#endif
+    font.setWeight(weight);
+    font.setPixelSize(pxsize);
+    return font;
+}
+
 QFont getSubLabelFont()
 {
-    QFont labelSubFont;
-#if !defined(Q_OS_MAC)
-    labelSubFont.setFamily("Open Sans");
-#endif
-    labelSubFont.setWeight(QFont::Weight::ExtraLight);
-    labelSubFont.setLetterSpacing(QFont::SpacingType::AbsoluteSpacing, -0.6);
-    labelSubFont.setPixelSize(14);
-    return labelSubFont;
+    return makeThemeFont(QFont::Weight::Normal, 13);
 }
 
 QFont getSubLabelFontBolded()
 {
-    QFont labelSubFont;
-#if !defined(Q_OS_MAC)
-    labelSubFont.setFamily("Open Sans");
-#endif
-    labelSubFont.setWeight(QFont::Weight::Bold);
-    labelSubFont.setLetterSpacing(QFont::SpacingType::AbsoluteSpacing, -0.6);
-    labelSubFont.setPixelSize(14);
-    return labelSubFont;
+    return makeThemeFont(QFont::Weight::DemiBold, 13);
 }
 
 QFont getTopLabelFontBolded()
 {
-    QFont labelTopFont;
-#if !defined(Q_OS_MAC)
-    labelTopFont.setFamily("Open Sans");
-#endif
-    labelTopFont.setWeight(QFont::Weight::Bold);
-    labelTopFont.setLetterSpacing(QFont::SpacingType::AbsoluteSpacing, -0.6);
-    labelTopFont.setPixelSize(18);
-    return labelTopFont;
+    return makeThemeFont(QFont::Weight::Bold, 15);
 }
 
 QFont getTopLabelFont(int weight, int pxsize)
 {
-    QFont labelTopFont;
-#if !defined(Q_OS_MAC)
-    labelTopFont.setFamily("Open Sans");
-#endif
-    labelTopFont.setWeight(static_cast<QFont::Weight>(weight));
-    labelTopFont.setLetterSpacing(QFont::SpacingType::AbsoluteSpacing, -0.6);
-    labelTopFont.setPixelSize(pxsize);
-    return labelTopFont;
+    return makeThemeFont(static_cast<QFont::Weight>(weight), pxsize);
 }
 
 QFont getTopLabelFont()
 {
-    QFont labelTopFont;
-#if !defined(Q_OS_MAC)
-    labelTopFont.setFamily("Open Sans");
-#endif
-    labelTopFont.setWeight(QFont::Weight::Light);
-    labelTopFont.setLetterSpacing(QFont::SpacingType::AbsoluteSpacing, -0.6);
-    labelTopFont.setPixelSize(18);
-    return labelTopFont;
+    return makeThemeFont(QFont::Weight::DemiBold, 15);
 }
 
 QGraphicsDropShadowEffect* getShadowEffect()
@@ -151,9 +128,9 @@ QGraphicsDropShadowEffect* getShadowEffect()
     return nullptr;
 #endif
     QGraphicsDropShadowEffect *shadow = new QGraphicsDropShadowEffect;
-    shadow->setBlurRadius(50);
-    shadow->setColor(darkModeEnabled ? COLOR_SHADOW_DARK : COLOR_SHADOW_LIGHT);
-    shadow->setOffset(8.0);
+    shadow->setBlurRadius(28);
+    shadow->setColor(GUITheme::tokens().shadow);
+    shadow->setOffset(0, 4);
     return shadow;
 }
 

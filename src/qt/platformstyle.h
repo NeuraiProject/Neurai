@@ -67,6 +67,8 @@ public:
 
     /** Colorize an icon (given object) with the color dark orange */
     QIcon OrangeColorIcon(const QIcon& icon) const;
+    /** Navigation icon: text colour when idle, accent colour when checked or hovered */
+    QIcon NavigationIcon(const QString& filename) const;
 
 private:
     PlatformStyle(const QString &name, bool imagesOnButtons, bool colorizeIcons, bool useExtraSpacing);

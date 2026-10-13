@@ -29,6 +29,7 @@ AssignQualifier::AssignQualifier(const PlatformStyle *_platformStyle, QWidget *p
         platformStyle(_platformStyle)
 {
     ui->setupUi(this);
+    ui->buttonSubmit->setProperty("primary", true);
 
     ui->buttonSubmit->setDisabled(true);
     ui->lineEditAddress->installEventFilter(this);

@@ -10,6 +10,7 @@
 #include "addresstablemodel.h"
 #include "neuraiunits.h"
 #include "guiutil.h"
+#include "guitheme.h"
 #include "optionsmodel.h"
 #include "platformstyle.h"
 #include "receiverequestdialog.h"
@@ -32,6 +33,7 @@ ReceiveCoinsDialog::ReceiveCoinsDialog(const PlatformStyle *_platformStyle, QWid
     platformStyle(_platformStyle)
 {
     ui->setupUi(this);
+    ui->receiveButton->setProperty("primary", true);
 
     if (!_platformStyle->getImagesOnButtons()) {
         ui->clearButton->setIcon(QIcon());
@@ -128,7 +130,7 @@ void ReceiveCoinsDialog::accept()
 void ReceiveCoinsDialog::setupRequestFrame(const PlatformStyle *platformStyle)
 {
     /** Update the coincontrol frame */
-    ui->frame2->setStyleSheet(QString(".QFrame {background-color: %1; border: none;}").arg(platformStyle->WidgetBackGroundColor().name()));
+    GUITheme::makeCard(ui->frame2, "padding: 6px;");
     /** Create the shadow effects on the frames */
 
     ui->frame2->setGraphicsEffect(GUIUtil::getShadowEffect());
@@ -167,7 +169,7 @@ void ReceiveCoinsDialog::setupRequestFrame(const PlatformStyle *platformStyle)
 void ReceiveCoinsDialog::setupHistoryFrame(const PlatformStyle *platformStyle)
 {
     /** Update the coincontrol frame */
-    ui->frame->setStyleSheet(QString(".QFrame {background-color: %1; border: none;}").arg(platformStyle->WidgetBackGroundColor().name()));
+    GUITheme::makeCard(ui->frame, "padding: 6px;");
     /** Create the shadow effects on the frames */
 
     ui->frame->setGraphicsEffect(GUIUtil::getShadowEffect());

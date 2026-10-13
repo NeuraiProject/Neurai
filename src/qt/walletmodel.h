@@ -291,6 +291,8 @@ public:
 
     bool hdEnabled() const;
     bool hd44Enabled() const;
+    /** True when the wallet derives post-quantum (ML-DSA-44) addresses */
+    bool isPQWallet() const;
     QString getMyWords() const;
 
     int getDefaultConfirmTarget() const;

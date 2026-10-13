@@ -97,6 +97,10 @@ public:
     static QString format(int unit, const CAmount& amount, bool plussign=false, SeparatorStyle separators=separatorStandard, const int nAssetUnit = MIN_ASSET_UNITS - 1);
     //! Format as string (with unit)
     static QString formatWithUnit(int unit, const CAmount& amount, bool plussign=false, SeparatorStyle separators=separatorStandard);
+    //! Format with unit and at most maxDecimals decimals; further digits are dropped, never rounded up
+    static QString formatWithUnitTruncated(int unit, const CAmount& amount, int maxDecimals, SeparatorStyle separators=separatorStandard);
+    //! Short form for tight spaces: two decimals at most and K/M/B from a thousand units up (e.g. "11.09M XNA")
+    static QString formatCompactWithUnit(int unit, const CAmount& amount);
     //! Format as string (with custom name)
     static QString formatWithCustomName(QString customName, const CAmount& amount, int unit = MAX_ASSET_UNITS, bool plussign=false, SeparatorStyle separators=separatorStandard);
     //! Format as HTML string (with unit)

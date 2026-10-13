@@ -10,6 +10,7 @@
 #include "neuraiunits.h"
 #include "clientmodel.h"
 #include "guiutil.h"
+#include "guitheme.h"
 #include "optionsmodel.h"
 #include "platformstyle.h"
 #include "walletmodel.h"
@@ -442,6 +443,7 @@ void RestrictedAssetsDialog::createDepinTab()
     depinCheckButton = new QPushButton(tr("Check"), depinTab);
     depinClearButton = new QPushButton(tr("Clear"), depinTab);
     depinSubmitButton = new QPushButton(tr("Submit"), depinTab);
+    depinSubmitButton->setProperty("primary", true);
     depinSubmitButton->setDisabled(true);
     buttonsLayout->addWidget(depinCheckButton);
     buttonsLayout->addStretch();
@@ -594,6 +596,7 @@ void RestrictedAssetsDialog::createDepinCreateTab()
     QHBoxLayout *buttonsLayout = new QHBoxLayout();
     depinCreateClearButton = new QPushButton(tr("Clear"), depinCreateTab);
     depinCreateButton = new QPushButton(tr("Reissue"), depinCreateTab);
+    depinCreateButton->setProperty("primary", true);
     depinCreateButton->setDisabled(true);
     buttonsLayout->addStretch();
     buttonsLayout->addWidget(depinCreateClearButton);
@@ -675,6 +678,7 @@ void RestrictedAssetsDialog::createDepinTransferTab()
     QHBoxLayout *buttonsLayout = new QHBoxLayout();
     depinTransferClearButton = new QPushButton(tr("Clear"), depinTransferTab);
     depinTransferButton = new QPushButton(tr("Transfer"), depinTransferTab);
+    depinTransferButton->setProperty("primary", true);
     depinTransferButton->setDisabled(true);
     buttonsLayout->addStretch();
     buttonsLayout->addWidget(depinTransferClearButton);
@@ -1926,10 +1930,10 @@ void RestrictedAssetsDialog::updateDepinCreateCoinControlState(CCoinControl& ctr
 void RestrictedAssetsDialog::setupStyling(const PlatformStyle *platformStyle)
 {
     /** Update the restrictedassets frame */
-    ui->frameAssetBalance->setStyleSheet(QString(".QFrame {background-color: %1; padding-top: 10px; padding-right: 5px; border: none;}").arg(platformStyle->WidgetBackGroundColor().name()));
-    ui->frameAddressList->setStyleSheet(QString(".QFrame {background-color: %1; padding-top: 10px; padding-right: 5px; border: none;}").arg(platformStyle->WidgetBackGroundColor().name()));
+    GUITheme::makeCard(ui->frameAssetBalance, "padding: 6px;");
+    GUITheme::makeCard(ui->frameAddressList, "padding: 6px;");
 
-    ui->tabFrame->setStyleSheet(QString(".QFrame {background-color: %1; padding-top: 10px; padding-right: 5px; border: none;}").arg(platformStyle->WidgetBackGroundColor().name()));
+    GUITheme::makeCard(ui->tabFrame, "padding: 6px;");
 
     /** Create the shadow effects on the frames */
     ui->frameAssetBalance->setGraphicsEffect(GUIUtil::getShadowEffect());

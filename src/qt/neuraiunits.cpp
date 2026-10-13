@@ -155,6 +155,40 @@ QString NeuraiUnits::formatWithUnit(int unit, const CAmount& amount, bool plussi
     return format(unit, amount, plussign, separators) + QString(" ") + name(unit);
 }
 
+QString NeuraiUnits::formatWithUnitTruncated(int unit, const CAmount& amount, int maxDecimals, SeparatorStyle separators)
+{
+    QString text = format(unit, amount, false, separators);
+    const int dot = text.indexOf('.');
+    if (dot >= 0)
+        text.truncate(maxDecimals > 0 ? dot + 1 + maxDecimals : dot);
+    return text + QString(" ") + name(unit);
+}
+
+QString NeuraiUnits::formatCompactWithUnit(int unit, const CAmount& amount)
+{
+    // Integer arithmetic only: the digits shown are exact and never rounded up
+    static const struct {
+        qint64 scale;
+        const char* suffix;
+    } SCALES[] = {{1000000000, "B"}, {1000000, "M"}, {1000, "K"}, {1, ""}};
+
+    const qint64 coin = factor(unit);
+    const qint64 n_abs = amount < 0 ? -amount : amount;
+    for (const auto& s : SCALES) {
+        if (s.scale > 1 && n_abs / coin < s.scale)
+            continue;
+        const qint64 divisor = coin * s.scale;
+        const qint64 whole = n_abs / divisor;
+        const qint64 remainder = n_abs % divisor;
+        const qint64 cents = divisor >= 100 ? remainder / (divisor / 100) : remainder * 100 / divisor;
+        QString text = QString("%1.%2%3").arg(whole).arg(cents, 2, 10, QChar('0')).arg(QLatin1String(s.suffix));
+        if (amount < 0)
+            text.prepend('-');
+        return text + QString(" ") + name(unit);
+    }
+    return QString();
+}
+
 QString NeuraiUnits::formatWithCustomName(QString customName, const CAmount& amount, int unit, bool plussign, SeparatorStyle separators)
 {
     return format(XNA, amount / factorAsset(MAX_ASSET_UNITS - unit), plussign, separators, unit) + QString(" ") + customName;

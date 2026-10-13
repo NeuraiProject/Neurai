@@ -6,6 +6,7 @@
 #include "platformstyle.h"
 
 #include "guiconstants.h"
+#include "guitheme.h"
 
 #include <QApplication>
 #include <QColor>
@@ -25,10 +26,11 @@ static const struct {
     /** Extra padding/spacing in transactionview */
     const bool useExtraSpacing;
 } platform_styles[] = {
+    // Text-only push buttons on every platform, as in the web wallet.
     {"macosx", false, true, true},
-    {"windows", true, true, false},
+    {"windows", false, true, false},
     /* Other: linux, unix, ... */
-    {"other", true, true, false}
+    {"other", false, true, false}
 };
 static const unsigned platform_styles_count = sizeof(platform_styles)/sizeof(*platform_styles);
 
@@ -151,6 +153,22 @@ QIcon PlatformStyle::OrangeColorIcon(const QIcon& icon) const
 }
 
 
+QIcon PlatformStyle::NavigationIcon(const QString& filename) const
+{
+    const GUITheme::Tokens& t = GUITheme::tokens();
+    const QPixmap idle = QPixmap::fromImage(ColorizeImage(filename, t.text));
+    const QPixmap active = QPixmap::fromImage(ColorizeImage(filename, t.primary));
+    const QPixmap disabled = QPixmap::fromImage(ColorizeImage(filename, t.textMuted));
+    QIcon icon;
+    icon.addPixmap(idle, QIcon::Normal, QIcon::Off);
+    icon.addPixmap(active, QIcon::Normal, QIcon::On);
+    icon.addPixmap(active, QIcon::Active, QIcon::Off);
+    icon.addPixmap(active, QIcon::Active, QIcon::On);
+    icon.addPixmap(disabled, QIcon::Disabled, QIcon::Off);
+    icon.addPixmap(disabled, QIcon::Disabled, QIcon::On);
+    return icon;
+}
+
 QIcon PlatformStyle::TextColorIcon(const QString& filename) const
 {
     return ColorizeIcon(filename, TextColor());
@@ -163,110 +181,72 @@ QIcon PlatformStyle::TextColorIcon(const QIcon& icon) const
 
 QColor PlatformStyle::TextColor() const
 {
-    if (darkModeEnabled)
-        return COLOR_TOOLBAR_SELECTED_TEXT_DARK_MODE;
-
-    return textColor;
+    return GUITheme::tokens().text;
 }
 
 QColor PlatformStyle::ToolBarSelectedTextColor() const
 {
-    if (darkModeEnabled)
-        return COLOR_TOOLBAR_SELECTED_TEXT_DARK_MODE;
-
-    return COLOR_TOOLBAR_SELECTED_TEXT;
+    return GUITheme::tokens().primary;
 }
 
 QColor PlatformStyle::ToolBarNotSelectedTextColor() const
 {
-    if (darkModeEnabled)
-        return COLOR_TOOLBAR_NOT_SELECTED_TEXT_DARK_MODE;
-
-    return COLOR_TOOLBAR_NOT_SELECTED_TEXT;
+    return GUITheme::tokens().text;
 }
 
 QColor PlatformStyle::MainBackGroundColor() const
 {
-    if (darkModeEnabled)
-        return COLOR_BLACK;
-
-    return COLOR_BACKGROUND_LIGHT;
+    return GUITheme::tokens().page;
 }
 
 QColor PlatformStyle::TopWidgetBackGroundColor() const
 {
-    if (darkModeEnabled)
-        return COLOR_PRICING_WIDGET;
-
-    return COLOR_BACKGROUND_LIGHT;
+    return GUITheme::tokens().surface;
 }
 
 QColor PlatformStyle::WidgetBackGroundColor() const
 {
-    if (darkModeEnabled)
-        return COLOR_WIDGET_BACKGROUND_DARK;
-
-    return COLOR_WHITE;
+    return GUITheme::tokens().surface;
 }
 
 QColor PlatformStyle::SendEntriesBackGroundColor() const
 {
-    if (darkModeEnabled)
-     // return QColor(21,20,17);
-        return COLOR_SENDENTRIES_BACKGROUND_DARK;
-
-//  return QColor("#faf9f6");
-    return COLOR_SENDENTRIES_BACKGROUND;
+    return GUITheme::tokens().surface;
 }
 
 QColor PlatformStyle::ShadowColor() const
 {
-    if (darkModeEnabled)
-        return COLOR_SHADOW_DARK;
-
-    return COLOR_SHADOW_LIGHT;
+    return GUITheme::tokens().shadow;
 }
 
 QColor PlatformStyle::LightBlueColor() const
 {
-    if (darkModeEnabled)
-        return COLOR_LIGHT_BLUE_DARK;
-
-    return COLOR_LIGHT_BLUE;
+    return GUITheme::tokens().surfaceAlt;
 }
 
 QColor PlatformStyle::DarkBlueColor() const
 {
-    if (darkModeEnabled)
-        return COLOR_DARK_BLUE_DARK;
-
-    return COLOR_DARK_BLUE;
+    return GUITheme::tokens().text;
 }
 
 QColor PlatformStyle::LightOrangeColor() const
 {
-        return COLOR_LIGHT_ORANGE;
+    return GUITheme::tokens().primary;
 }
 
 QColor PlatformStyle::DarkOrangeColor() const
 {
-    return COLOR_DARK_ORANGE;
+    return GUITheme::tokens().primaryHover;
 }
 
 QColor PlatformStyle::SingleColor() const
 {
-    if (darkModeEnabled)
-        return COLOR_ASSET_TEXT; // WHITE (black -> white)
-
-    return singleColor;
+    return GUITheme::tokens().text;
 }
 
 QColor PlatformStyle::AssetTxColor() const
 {
-    if (darkModeEnabled)
-        return COLOR_LIGHT_BLUE;
-
-    return COLOR_DARK_BLUE;
+    return GUITheme::tokens().primary;
 }
 
 

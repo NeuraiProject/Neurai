@@ -869,6 +869,11 @@ bool WalletModel::hd44Enabled() const
     return wallet->IsBip44Enabled();
 }
 
+bool WalletModel::isPQWallet() const
+{
+    return wallet->GetAddressType() == WalletAddressType::PQ;
+}
+
 QString WalletModel::getMyWords() const
 {
     LOCK2(cs_main, wallet->cs_wallet);

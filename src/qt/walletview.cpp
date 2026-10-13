@@ -28,10 +28,15 @@
 
 #include "ui_interface.h"
 
+#include <algorithm>
+
 #include <QAction>
 #include <QActionGroup>
 #include <QFileDialog>
 #include <QHBoxLayout>
+#include <QScrollArea>
+#include <QScrollBar>
+#include <QScreen>
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QVBoxLayout>
@@ -72,17 +77,17 @@ WalletView::WalletView(const PlatformStyle *_platformStyle, QWidget *parent):
     usedSendingAddressesPage = new AddressBookPage(platformStyle, AddressBookPage::ForEditing, AddressBookPage::SendingTab, this);
     usedReceivingAddressesPage = new AddressBookPage(platformStyle, AddressBookPage::ForEditing, AddressBookPage::ReceivingTab, this);
 
-    addWidget(overviewPage);
-    addWidget(transactionsPage);
-    addWidget(receiveCoinsPage);
-    addWidget(sendCoinsPage);
+    addPage(overviewPage);
+    addPage(transactionsPage);
+    addPage(receiveCoinsPage);
+    addPage(sendCoinsPage);
 
     /** XNA START */
-    addWidget(assetsPage);
-    addWidget(createAssetsPage);
-    addWidget(manageAssetsPage);
-    addWidget(restrictedAssetsPage);
-    addWidget(depinAssetsPage);
+    addPage(assetsPage);
+    addPage(createAssetsPage);
+    addPage(manageAssetsPage);
+    addPage(restrictedAssetsPage);
+    addPage(depinAssetsPage);
     /** XNA END */
 
     // Clicking on a transaction on the overview pre-selects the transaction on the transaction history page
@@ -117,6 +122,61 @@ WalletView::~WalletView()
 {
 }
 
+namespace {
+/** Scroll area for a wallet page. Its minimum width is the page's, so the window
+ *  cannot get narrower than the forms; only on screens too small for that does
+ *  the page scroll horizontally. Vertically it scrolls whenever needed. */
+class PageScrollArea : public QScrollArea
+{
+public:
+    using QScrollArea::QScrollArea;
+
+    QSize minimumSizeHint() const override
+    {
+        QSize hint = QScrollArea::minimumSizeHint();
+        if (const QWidget *page = widget()) {
+            int width = std::max(page->minimumWidth(), page->minimumSizeHint().width()) + verticalScrollBar()->sizeHint().width();
+            if (screen())
+                width = std::min(width, screen()->availableGeometry().width() - 80);
+            hint.setWidth(width);
+        }
+        return hint;
+    }
+};
+} // namespace
+
+void WalletView::addPage(QWidget *page)
+{
+    // Fixed minimum heights from the forms can be below what their contents need
+    // (larger fonts, display scaling); let the layouts decide so nothing is squeezed.
+    QList<QWidget*> containers = page->findChildren<QWidget*>();
+    containers.prepend(page);
+    for (QWidget *container : containers) {
+        if (container->layout() && container->minimumHeight() > 0)
+            container->setMinimumHeight(0);
+    }
+
+    QScrollArea *scroll = new PageScrollArea(this);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setObjectName("walletPageScroll");
+    scroll->setStyleSheet("QScrollArea#walletPageScroll { background: transparent; border: none; }");
+    scroll->viewport()->setAutoFillBackground(false);
+    scroll->setWidget(page);
+    addWidget(scroll);
+}
+
+void WalletView::showPage(QWidget *page)
+{
+    // The page lives in the viewport of its scroll area
+    for (QWidget *w = page; w; w = w->parentWidget()) {
+        if (w->parentWidget() == this) {
+            setCurrentWidget(w);
+            return;
+        }
+    }
+}
+
 void WalletView::setNeuraiGUI(NeuraiGUI *gui)
 {
     if (gui)
@@ -135,6 +195,11 @@ void WalletView::setNeuraiGUI(NeuraiGUI *gui)
 
         // Clicking on a asset menu item Reissue
         connect(overviewPage, SIGNAL(assetReissueClicked(QModelIndex)), gui, SLOT(gotoManageAssetsPage()));
+
+        // Quick actions of the overview page
+        connect(overviewPage, SIGNAL(sendCoinsClicked()), gui, SLOT(gotoSendCoinsPage()));
+        connect(overviewPage, SIGNAL(receiveCoinsClicked()), gui, SLOT(gotoReceiveCoinsPage()));
+        connect(overviewPage, SIGNAL(createAssetClicked()), gui, SLOT(gotoCreateAssetsPage()));
 
         // Receive and report messages
         connect(this, SIGNAL(message(QString,QString,unsigned int)), gui, SLOT(message(QString,QString,unsigned int)));
@@ -251,23 +316,23 @@ void WalletView::processNewTransaction(const QModelIndex& parent, int start, int
 
 void WalletView::gotoOverviewPage()
 {
-    setCurrentWidget(overviewPage);
+    showPage(overviewPage);
     Q_EMIT checkAssets();
 }
 
 void WalletView::gotoHistoryPage()
 {
-    setCurrentWidget(transactionsPage);
+    showPage(transactionsPage);
 }
 
 void WalletView::gotoReceiveCoinsPage()
 {
-    setCurrentWidget(receiveCoinsPage);
+    showPage(receiveCoinsPage);
 }
 
 void WalletView::gotoSendCoinsPage(QString addr)
 {
-    setCurrentWidget(sendCoinsPage);
+    showPage(sendCoinsPage);
 
     if (!addr.isEmpty())
         sendCoinsPage->setAddress(addr);
@@ -442,27 +507,27 @@ void WalletView::gotoAssetsPage()
         fFirstVisit = false;
         assetsPage->handleFirstSelection();
     }
-    setCurrentWidget(assetsPage);
+    showPage(assetsPage);
     assetsPage->focusAssetListBox();
 }
 
 void WalletView::gotoCreateAssetsPage()
 {
-    setCurrentWidget(createAssetsPage);
+    showPage(createAssetsPage);
 }
 
 void WalletView::gotoManageAssetsPage()
 {
-    setCurrentWidget(manageAssetsPage);
+    showPage(manageAssetsPage);
 }
 
 void WalletView::gotoRestrictedAssetsPage()
 {
-    setCurrentWidget(restrictedAssetsPage);
+    showPage(restrictedAssetsPage);
 }
 
 void WalletView::gotoDepinAssetsPage()
 {
-    setCurrentWidget(depinAssetsPage);
+    showPage(depinAssetsPage);
 }
 /** XNA END */

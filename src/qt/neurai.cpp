@@ -42,7 +42,7 @@
 #include <stdint.h>
 
 #include <boost/thread.hpp>
-#include "darkstyle.h"
+#include "guitheme.h"
 
 #include <QApplication>
 #include <QDebug>
@@ -438,8 +438,6 @@ void NeuraiApplication::createOptionsModel(bool resetSettings)
 void NeuraiApplication::createWindow(const NetworkStyle *networkStyle)
 {
     window = new NeuraiGUI(platformStyle, networkStyle, 0);
-    window->setMinimumSize(1024,700);
-    window->setBaseSize(1024,700);
 
     pollShutdownTimer = new QTimer(window);
     connect(pollShutdownTimer, SIGNAL(timeout()), window, SLOT(detectShutdown()));
@@ -747,12 +745,8 @@ int main(int argc, char *argv[])
     // Load GUI settings from QSettings
     app.createOptionsModel(gArgs.IsArgSet("-resetguisettings"));
 
-    if (app.getOptionsModel()->getDarkModeEnabled()) {
-        app.setStyle(new DarkStyle);
-        darkModeEnabled = true;
-    } else {
-        app.setStyle("");
-    }
+    darkModeEnabled = app.getOptionsModel()->getDarkModeEnabled();
+    GUITheme::apply(app, darkModeEnabled);
 
     // Subscribe to global signals from core
     uiInterface.InitMessage.connect(InitMessage);

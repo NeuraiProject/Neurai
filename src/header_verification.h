@@ -23,7 +23,8 @@ struct HeaderVerificationWindow {
     bool pow_failed{false};
     EpochContextCache::Pinned context;
 };
-enum class HeaderWindowStatus { READY, SERIAL, DONE, ERROR };
+// Not ERROR: windows.h defines it as a macro, which breaks the Windows build.
+enum class HeaderWindowStatus { READY, SERIAL, DONE, REJECTED };
 
 /** Requires cs_main. Accept cheap/authenticated prefixes before expensive work.
  * offset advances only over accepted prefixes. */

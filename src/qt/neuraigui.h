@@ -40,6 +40,8 @@ class ModalOverlay;
 
 QT_BEGIN_NAMESPACE
 class QAction;
+class QFrame;
+class QToolButton;
 class QProgressBar;
 class QProgressDialog;
 class QNetworkAccessManager;
@@ -97,8 +99,6 @@ private:
     WalletFrame *walletFrame = nullptr;
 
     UnitDisplayStatusBarControl *unitDisplayControl = nullptr;
-    QLabel *labelWalletEncryptionIcon = nullptr;
-    QLabel *labelWalletHDStatusIcon = nullptr;
     QLabel *connectionsControl = nullptr;
     QLabel *labelBlocksIcon = nullptr;
     QLabel *progressBarLabel = nullptr;
@@ -146,7 +146,18 @@ private:
     QAction *votingAction = nullptr;
     QAction *restrictedAssetAction = nullptr;
     QAction *depinAssetAction = nullptr;
-    QWidget *headerWidget = nullptr;
+    QAction *assetsMenuAction = nullptr;
+    QAction *privacyAction = nullptr;
+    QFrame *headerWidget = nullptr;
+    QToolButton *headerSyncButton = nullptr;
+    QLabel *labelHeaderEncryption = nullptr;
+    QLabel *labelHeaderHD = nullptr;
+    QLabel *labelHeaderPQ = nullptr;
+    QLabel *labelHeaderBalance = nullptr;
+    QLabel *labelNetworkChip = nullptr;
+    bool headerSynced = false;
+    QString headerSyncTooltip;
+    WalletModel *headerWalletModel = nullptr;
     QLabel *labelCurrentMarket = nullptr;
     QLabel *labelCurrentPrice = nullptr;
     QComboBox *comboXnaUnit = nullptr;
@@ -159,6 +170,10 @@ private:
 
     QLabel *labelToolbar = nullptr;
     QToolBar *m_toolbar = nullptr;
+    QLayout *headerBrandLayout = nullptr;
+    QLayout *headerInfoLayout = nullptr;
+    bool navIconsOnly = false;   //!< "icons only" toolbar option
+    int navLabelsWidth = 0;      //!< width of the navigation bar with labels
 
     /** XNA END */
 
@@ -178,14 +193,18 @@ private:
     const CurrencyUnitDetails* currentPriceDisplay = &CurrencyUnits::CurrencyOptions[0];
     bool unitChanged = true; //Setting this true makes the first price update not appear as an uptick
 
-    /** Load the custome open sans fonts into the font database */
-    void loadFonts();
     /** Create the main UI actions. */
     void createActions();
     /** Create the menu bar and sub-menus. */
     void createMenuBar();
     /** Create the toolbars */
     void createToolBars();
+    /** Set a coloured state icon and its tooltip on a header button or label */
+    void setHeaderIcon(QToolButton* button, QLabel* label, const QString& iconFile, const QColor& color, const QString& tooltip);
+    /** Refresh the header sync icon from the connection and sync state */
+    void updateHeaderSyncIcon();
+    /** Give all navigation entries the width of the widest one */
+    void equalizeNavigationButtons();
     /** Create system tray icon and notification */
     void createTrayIcon(const NetworkStyle *networkStyle);
     /** Create system tray menu (or setup the dock menu) */
@@ -240,6 +259,12 @@ public Q_SLOTS:
 
     /** IconsOnly true/false and updates toolbar accordingly. */
     void updateIconsOnlyToolbar(bool);
+    /** Show navigation labels only when they fit in the header */
+    void updateNavigationStyle();
+#ifdef ENABLE_WALLET
+    /** Refresh the balance shown in the header */
+    void updateHeaderBalance();
+#endif
 
 #ifdef ENABLE_WALLET
     /** Set the encryption status as shown in the UI.
@@ -253,6 +278,9 @@ public Q_SLOTS:
      @see WalletModel::EncryptionStatus
      */
     void setHDStatus(int hdEnabled);
+
+    /** Show whether the wallet uses post-quantum addresses */
+    void setPQStatus(bool pqEnabled);
 
     bool handlePaymentRequest(const SendCoinsRecipient& recipient);
 

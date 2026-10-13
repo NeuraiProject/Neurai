@@ -10,6 +10,7 @@
 #include "addressbookpage.h"
 #include "addresstablemodel.h"
 #include "guiutil.h"
+#include "guitheme.h"
 #include "optionsmodel.h"
 #include "platformstyle.h"
 #include "walletmodel.h"
@@ -133,9 +134,8 @@ SendAssetsEntry::SendAssetsEntry(const PlatformStyle *_platformStyle, const QStr
 
     fShowAdministratorList = false;
 
-    this->setStyleSheet(QString(".SendAssetsEntry {background-color: %1; padding-top: 10px; padding-right: 30px; border: none;}").arg(platformStyle->SendEntriesBackGroundColor().name()));
+    this->setStyleSheet(QString(".SendAssetsEntry {background-color: transparent; padding-top: 10px; padding-right: 30px; border: none; border-bottom: 1px solid %1;}").arg(GUITheme::tokens().border.name()));
 
-    this->setGraphicsEffect(GUIUtil::getShadowEffect());
 
     ui->assetBoxLabel->setStyleSheet(STRING_LABEL_COLOR);
     ui->assetBoxLabel->setFont(GUIUtil::getSubLabelFont());

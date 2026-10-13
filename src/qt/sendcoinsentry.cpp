@@ -10,11 +10,11 @@
 #include "addressbookpage.h"
 #include "addresstablemodel.h"
 #include "guiutil.h"
+#include "guitheme.h"
 #include "optionsmodel.h"
 #include "platformstyle.h"
 #include "walletmodel.h"
 #include "guiconstants.h"
-#include "darkstyle.h"
 
 #include <QGraphicsDropShadowEffect>
 #include <QApplication>
@@ -54,9 +54,8 @@ SendCoinsEntry::SendCoinsEntry(const PlatformStyle *_platformStyle, QWidget *par
     connect(ui->deleteButton_is, SIGNAL(clicked()), this, SLOT(deleteClicked()));
     connect(ui->deleteButton_s, SIGNAL(clicked()), this, SLOT(deleteClicked()));
 
-    this->setStyleSheet(QString(".SendCoinsEntry {background-color: %1; padding-top: 10px; padding-right: 30px; border: none;}").arg(platformStyle->SendEntriesBackGroundColor().name()));
+    this->setStyleSheet(QString(".SendCoinsEntry {background-color: transparent; padding-top: 10px; padding-right: 30px; border: none; border-bottom: 1px solid %1;}").arg(GUITheme::tokens().border.name()));
 
-    this->setGraphicsEffect(GUIUtil::getShadowEffect());
 
     ui->payToLabel->setStyleSheet(STRING_LABEL_COLOR);
     ui->payToLabel->setFont(GUIUtil::getSubLabelFont());

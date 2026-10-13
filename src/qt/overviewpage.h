@@ -58,6 +58,9 @@ public Q_SLOTS:
     void assetIssueUniqueClicked(const QModelIndex &index);
     void assetReissueClicked(const QModelIndex &index);
     void outOfSyncWarningClicked();
+    void sendCoinsClicked();
+    void receiveCoinsClicked();
+    void createAssetClicked();
 
 private:
     Ui::OverviewPage *ui;

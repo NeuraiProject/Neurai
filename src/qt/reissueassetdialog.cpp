@@ -18,6 +18,7 @@
 #include "sendcoinsdialog.h"
 #include "coincontroldialog.h"
 #include "guiutil.h"
+#include "guitheme.h"
 #include "clientmodel.h"
 #include "guiconstants.h"
 
@@ -55,6 +56,7 @@ ReissueAssetDialog::ReissueAssetDialog(const PlatformStyle *_platformStyle, QWid
         platformStyle(_platformStyle)
 {
     ui->setupUi(this);
+    ui->reissueAssetButton->setProperty("primary", true);
     setWindowTitle("Reissue Assets");
     connect(ui->comboBox, SIGNAL(activated(int)), this, SLOT(onAssetSelected(int)));
     connect(ui->quantitySpinBox, SIGNAL(valueChanged(double)), this, SLOT(onQuantityChanged(double)));
@@ -307,7 +309,7 @@ void ReissueAssetDialog::setUpValues()
 void ReissueAssetDialog::setupCoinControlFrame(const PlatformStyle *platformStyle)
 {
     /** Update the assetcontrol frame */
-    ui->frameCoinControl->setStyleSheet(QString(".QFrame {background-color: %1; padding-top: 10px; padding-right: 5px; border: none;}").arg(platformStyle->WidgetBackGroundColor().name()));
+    GUITheme::makeCard(ui->frameCoinControl, "padding: 6px;");
     ui->widgetCoinControl->setStyleSheet(".QWidget {background-color: transparent;}");
     /** Create the shadow effects on the frames */
 
@@ -360,7 +362,7 @@ void ReissueAssetDialog::setupCoinControlFrame(const PlatformStyle *platformStyl
 void ReissueAssetDialog::setupAssetDataView(const PlatformStyle *platformStyle)
 {
     /** Update the scrollview*/
-    ui->frame->setStyleSheet(QString(".QFrame {background-color: %1; padding-top: 10px; padding-right: 5px; border: none;}").arg(platformStyle->WidgetBackGroundColor().name()));
+    GUITheme::makeCard(ui->frame, "padding: 6px;");
     ui->frame->setGraphicsEffect(GUIUtil::getShadowEffect());
 
     ui->assetNameLabel->setStyleSheet(STRING_LABEL_COLOR);
@@ -379,10 +381,10 @@ void ReissueAssetDialog::setupAssetDataView(const PlatformStyle *platformStyle)
 
     ui->ipfsBox->setStyleSheet(QString(".QCheckBox{ %1; }").arg(STRING_LABEL_COLOR));
 
-    ui->frame_3->setStyleSheet(QString(".QFrame {background-color: %1; padding-top: 10px; padding-right: 5px; border: none;}").arg(platformStyle->WidgetBackGroundColor().name()));
+    GUITheme::makeCard(ui->frame_3, "padding: 6px;");
     ui->frame_3->setGraphicsEffect(GUIUtil::getShadowEffect());
 
-    ui->frame_2->setStyleSheet(QString(".QFrame {background-color: %1; padding-top: 10px; padding-right: 5px; border: none;}").arg(platformStyle->WidgetBackGroundColor().name()));
+    GUITheme::makeCard(ui->frame_2, "padding: 6px;");
     ui->frame_2->setGraphicsEffect(GUIUtil::getShadowEffect());
 
     ui->currentDataLabel->setStyleSheet(STRING_LABEL_COLOR);
@@ -402,7 +404,7 @@ void ReissueAssetDialog::setupAssetDataView(const PlatformStyle *platformStyle)
 void ReissueAssetDialog::setupFeeControl(const PlatformStyle *platformStyle)
 {
     /** Update the coincontrol frame */
-    ui->frameFee->setStyleSheet(QString(".QFrame {background-color: %1; padding-top: 10px; padding-right: 5px; border: none;}").arg(platformStyle->WidgetBackGroundColor().name()));
+    GUITheme::makeCard(ui->frameFee, "padding: 6px;");
     /** Create the shadow effects on the frames */
 
     ui->frameFee->setGraphicsEffect(GUIUtil::getShadowEffect());
