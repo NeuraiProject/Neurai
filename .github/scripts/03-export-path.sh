@@ -24,7 +24,16 @@ add_to_path() {
 if [[ ${OS} == "windows" ]]; then
     add_to_path "${GITHUB_WORKSPACE}/depends/x86_64-w64-mingw32/native/bin"
 elif [[ ${OS} == "osx" ]]; then
-    add_to_path "${GITHUB_WORKSPACE}/depends/x86_64-apple-darwin14/native/bin"
+    source "${GITHUB_WORKSPACE}/contrib/mac-cross/env.sh"
+    mac_environment "$GITHUB_WORKSPACE"
+    add_to_path "$OSXCROSS_ROOT/bin"
+    add_to_path "$MAC_DEPENDS_PREFIX/native/bin"
+    add_to_path /usr/lib/llvm-18/bin
+    if [[ -n "${GITHUB_ENV:-}" ]]; then
+        for variable in MAC_WORKDIR OSXCROSS_ROOT MAC_HOST OSX_SDK OSX_SDK_VERSION OSX_MIN_VERSION MAC_DEPENDS_PREFIX MAC_CONSENSUS_LIBS; do
+            printf '%s=%s\n' "$variable" "${!variable}" >> "$GITHUB_ENV"
+        done
+    fi
 elif [[ ${OS} == "linux" || ${OS} == "linux-disable-wallet" ]]; then
     add_to_path "${GITHUB_WORKSPACE}/depends/x86_64-linux-gnu/native/bin"
 elif [[ ${OS} == "arm32v7" || ${OS} == "arm32v7-disable-wallet" ]]; then

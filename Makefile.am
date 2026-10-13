@@ -233,6 +233,16 @@ endif
 dist_noinst_SCRIPTS = autogen.sh
 
 EXTRA_DIST = $(DIST_SHARE) test/functional/test_runner.py test/functional $(DIST_CONTRIB) $(DIST_DOCS) $(WINDOWS_PACKAGING) $(OSX_PACKAGING) $(BIN_CHECKS)
+EXTRA_DIST += contrib/mac-cross/Dockerfile contrib/mac-cross/env.sh \
+  contrib/mac-cross/setup.sh contrib/mac-cross/build.sh \
+  contrib/mac-cross/verify.py contrib/mac-cross/package.py \
+  .github/scripts/00-install-deps.sh .github/scripts/02-copy-build-dependencies.sh \
+  .github/scripts/03-export-path.sh \
+  .github/scripts/04-configure-build.sh .github/scripts/05-binary-checks.sh \
+  .github/scripts/06-package.sh
+EXTRA_DIST += depends/Makefile depends/funcs.mk depends/config.site.in \
+  depends/config.guess depends/config.sub depends/README.md \
+  depends/builders depends/hosts depends/packages depends/patches
 
 EXTRA_DIST += \
     test/util/neurai-util-test.py \

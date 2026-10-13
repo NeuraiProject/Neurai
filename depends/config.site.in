@@ -50,6 +50,8 @@ fi
 if test x@host_os@ = xdarwin; then
   BREW=no
   PORT=no
+  OSX_MIN_VERSION="@OSX_MIN_VERSION@"
+  export MACOSX_DEPLOYMENT_TARGET="$OSX_MIN_VERSION"
 fi
 
 if test x@host_os@ = xmingw32; then

@@ -48,37 +48,14 @@ if [[ ${OS} == "windows" ]]; then
 
 
 elif [[ ${OS} == "osx" ]]; then
-    apt -y install \
-    autoconf \
-    automake \
-    awscli \
-    bsdmainutils \
-    ca-certificates \
-    cmake \
-    curl \
-    fonts-tuffy \
-    g++ \
-    git \
-    imagemagick \
-    libbz2-dev \
-    libcap-dev \
-    librsvg2-bin \
-    libtiff-tools \
-    libtool \
-    libz-dev \
-    p7zip-full \
-    pkg-config \
-    python3 \
-    python3-dev \
-    python3-setuptools \
-    s3curl \
-    sleuthkit \
-    bison \
-    libtinfo5 \
-    python3-pip
+    # Linux -> macOS x86-64, Qt 6.8 and C++20. SDK/toolchain downloads
+    # are handled by contrib/mac-cross/setup.sh, outside the repository.
+    apt-get install -y --no-install-recommends \
+      autoconf automake bison bsdextrautils build-essential ca-certificates \
+      clang-18 cmake curl file flex gettext git libbz2-dev libclang-18-dev \
+      libssl-dev libtool libxml2-dev lld-18 llvm-18 llvm-18-dev make ninja-build \
+      patch perl pkg-config python3 unzip uuid-dev xz-utils zip zlib1g-dev
 
-    pip3 install ds-store
-    
 elif [[ ${OS} == "linux" || ${OS} == "linux-disable-wallet" ]]; then
     # x86-64 build on ubuntu-24.04. The aarch64 cross toolchain and the GCC 9
     # packages this list used to share with the aarch64 entries do not exist

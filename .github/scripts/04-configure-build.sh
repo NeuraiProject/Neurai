@@ -12,7 +12,18 @@ fi
 if [[ ${OS} == "windows" ]]; then
     CONFIG_SITE=${GITHUB_WORKSPACE}/depends/x86_64-w64-mingw32/share/config.site ./configure --prefix=/ --disable-ccache --disable-maintainer-mode --disable-dependency-tracking --enable-reduce-exports --disable-bench --disable-tests --disable-gui-tests --enable-shared=no CFLAGS="-O2 -g" CXXFLAGS="-O2 -g"
 elif [[ ${OS} == "osx" ]]; then
-    CONFIG_SITE=${GITHUB_WORKSPACE}/depends/x86_64-apple-darwin14/share/config.site ./configure --prefix=/ --disable-ccache --disable-maintainer-mode --disable-dependency-tracking --enable-reduce-exports --disable-bench --disable-gui-tests GENISOIMAGE=${GITHUB_WORKSPACE}/depends/x86_64-apple-darwin14/native/bin/genisoimage
+    set -euo pipefail
+    source "${GITHUB_WORKSPACE}/contrib/mac-cross/env.sh"
+    mac_environment "$GITHUB_WORKSPACE"
+    gui=qt6
+    qrencode=--with-qrencode
+    if [[ -n "${NO_QT:-}" ]]; then gui=no; qrencode=--without-qrencode; fi
+    tests=--enable-tests
+    if [[ "${MAC_BUILD_TESTS:-yes}" == no ]]; then tests=--disable-tests; fi
+    CONFIG_SITE="$MAC_DEPENDS_PREFIX/share/config.site" "$GITHUB_WORKSPACE/configure" \
+      --prefix=/ --disable-ccache --disable-maintainer-mode --disable-dependency-tracking \
+      --disable-bench --disable-gui-tests --with-libs="$MAC_CONSENSUS_LIBS" \
+      --with-gui="$gui" "$qrencode" "$tests" --with-tx
 elif [[ ${OS} == "linux" || ${OS} == "linux-disable-wallet" ]]; then
     if [[ ${OS} == "linux-disable-wallet" ]]; then
         EXTRA_OPTS="--disable-wallet"

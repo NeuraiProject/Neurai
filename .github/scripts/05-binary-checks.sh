@@ -16,9 +16,18 @@ if [[ ${OS} == "windows" ]]; then
     make -C src check-security
     make -C src check-symbols
 elif [[ ${OS} == "osx" ]]; then
-    echo "----------------------------------------"
-    echo "No binary checks available for ${OS}"
-    echo "----------------------------------------"
+    source "${GITHUB_WORKSPACE}/contrib/mac-cross/env.sh"
+    mac_environment "$GITHUB_WORKSPACE"
+    mkdir -p "$MAC_WORKDIR/results"
+    binaries=(src/neuraid src/neurai-cli src/neurai-tx)
+    if [[ -z "${NO_QT:-}" ]]; then binaries+=(src/qt/neurai-qt); fi
+    if [[ "${MAC_BUILD_TESTS:-yes}" != no ]]; then
+        binaries+=(src/test/test_neurai src/test/test_neurai_fuzzy src/test/test_neurai_hash)
+    fi
+    python3 "$GITHUB_WORKSPACE/contrib/mac-cross/verify.py" \
+      --minimum "$OSX_MIN_VERSION" --sdk "$OSX_SDK_VERSION" \
+      --depends "$MAC_DEPENDS_PREFIX" --ar "$OSXCROSS_ROOT/bin/$MAC_HOST-ar" \
+      --output "$MAC_WORKDIR/results/$(basename "$PWD")-verification.json" "${binaries[@]}"
 elif [[ ${OS} == "linux" || ${OS} == "linux-disable-wallet" ]]; then
     echo "----------------------------------------"
     echo "Checking binary security for ${OS}"

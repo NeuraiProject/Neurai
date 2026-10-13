@@ -1,136 +1,130 @@
-macOS Build Instructions and Notes
-====================================
-The commands in this guide should be executed in a Terminal application.
-The built-in one is located in 
-```
-/Applications/Utilities/Terminal.app
-```
+macOS build instructions
+========================
 
-Preparation
------------
-Install the macOS command line tools:
+The supported cross-build target is **x86-64, macOS 12.0 or later**. The
+NIP-018 `mcl` backend currently requires x86-64; an arm64 or universal binary
+needs a separate backend port and cryptographic validation.
 
-`xcode-select --install`
+Linux cross-compilation
+-----------------------
 
-When the popup appears, click `Install`.
+The maintained build stages are in `.github/scripts/`. The macOS entry point
+below uses those same stages to build dependencies, configure the project,
+verify the Mach-O executables and produce release packages. It does not patch
+source files or edit generated pkg-config files.
 
-Then install [Homebrew](https://brew.sh).
+On Ubuntu 24.04, install the build tools from the repository root:
 
-Dependencies
-----------------------
-
-    brew install automake berkeley-db4 libtool boost miniupnpc openssl@1.1 pkg-config protobuf python qt libevent qrencode
-
-If you run into issues, check [Homebrew's troubleshooting page](https://docs.brew.sh/Troubleshooting).
-See [dependencies.md](dependencies.md) for a complete overview.
-
-If you want to build the disk image with `make deploy` (.dmg / optional), you need RSVG:
-```shell
-brew install librsvg
+```sh
+sudo ./.github/scripts/00-install-deps.sh osx
 ```
 
-## Berkeley DB
-It is recommended to use Berkeley DB 4.8. If you have to build it yourself,
-you can use [this](/contrib/install_db4.sh) script to install it
-like so:
+Choose a persistent work directory. SDKs, OSXCross sources and tools, dependency
+archives, build outputs and reports stay there:
 
-```shell
-./contrib/install_db4.sh .
+```sh
+JOBS=16 ./contrib/mac-cross/setup.sh /home/docker-test/MAC
+JOBS=16 ./contrib/mac-cross/build.sh /home/docker-test/MAC gui
 ```
 
-from the root of the repository.
+For the daemon, CLI, transaction utility and unit-test executable without Qt:
 
-**Note**: You only need Berkeley DB if the wallet is enabled (see [*Disable-wallet mode*](/doc/build-osx.md#disable-wallet-mode)).
-
-## Build Neurai
-
-1. Clone the Neurai source code:
-    ```shell
-    git clone https://github.com/NeuraiProject/Neurai
-    cd Neurai
-    ```
-
-2.  Build neurai-core:
-
-    Configure and build the headless neurai binaries as well as the GUI (if Qt is found).
-
-    You can disable the GUI build by passing `--without-gui` to configure.
-    ```shell
-    ./autogen.sh
-    ./configure
-    make
-    ```
-
-3.  It is recommended to build and run the unit tests:
-    ```shell
-    make check
-    ```
-
-4.  You can also create a  `.dmg` that contains the `.app` bundle (optional):
-    ```shell
-    make deploy
-    ```
-
-## `disable-wallet` mode
-When the intention is to run only a P2P node without a wallet, Neurai may be
-compiled in `disable-wallet` mode with:
-```shell
-./configure --disable-wallet
+```sh
+JOBS=16 ./contrib/mac-cross/build.sh /home/docker-test/MAC headless
 ```
 
-In this case there is no dependency on Berkeley DB 4.8 and SQLite.
+`setup.sh` downloads the pinned macOS 14.5 SDK and OSXCross revision, verifies
+the SDK SHA-256, and builds the LLVM toolchain with clang/LLD 18. Downloads
+are reused. The SDK archive may also be supplied with `MACOS_SDK_ARCHIVE` and
+`MACOS_SDK_SHA256`. The default work directory is `MAC/` in the repository;
+that generated directory is ignored by Git.
 
-Mining is also possible in disable-wallet mode using the `getblocktemplate` RPC call.
+The SDK comes from Xcode and retains Apple's license terms. The default
+packaged archive is hosted by [macosx-sdks](https://github.com/joseluisq/macosx-sdks/releases/tag/14.5).
+The cross-toolchain is [OSXCross](https://github.com/tpoechtrager/osxcross).
 
-## Running
-Neurai is now available at `./src/neuraid`
+Docker on a Linux build machine
+-------------------------------
 
-Before running, you may create an empty configuration file:
-```shell
-mkdir -p "/Users/${USER}/Library/Application Support/Neurai"
+The supplied Dockerfile installs the build tools; the persistent work directory
+is mounted into the container. Copy the project into `MAC/sources/neurai` on
+the build machine, then run:
 
-touch "/Users/${USER}/Library/Application Support/Neurai/neurai.conf"
-
-chmod 600 "/Users/${USER}/Library/Application Support/Neurai/neurai.conf"
+```sh
+docker build -t neurai-mac-cross -f contrib/mac-cross/Dockerfile contrib/mac-cross
+mkdir -p /home/docker-test/MAC
+docker run --rm --user "$(id -u):$(id -g)" --cpus 16 --memory 48g \
+  --mount type=bind,source=/home/docker-test/MAC,target=/MAC \
+  --env JOBS=16 --env MAC_WORKDIR=/MAC \
+  neurai-mac-cross /MAC/sources/neurai/contrib/mac-cross/setup.sh /MAC
+docker run --rm --user "$(id -u):$(id -g)" --cpus 16 --memory 48g \
+  --mount type=bind,source=/home/docker-test/MAC,target=/MAC \
+  --env JOBS=16 --env MAC_WORKDIR=/MAC \
+  neurai-mac-cross /MAC/sources/neurai/contrib/mac-cross/build.sh /MAC gui
 ```
 
-The first time you run neuraid, it will start downloading the blockchain. This process could
-take many hours, or even days on slower than average systems.
+Adjust CPU and memory limits for the build machine. CPU-intensive builds and
+all downloads happen on the machine running these commands.
 
-You can monitor the download process by looking at the debug.log file:
-```shell
-tail -f $HOME/Library/Application\ Support/Neurai/debug.log
+Configuration
+-------------
+
+Paths are configurable; no recipe requires `/home/docker-test` or `/MAC`:
+
+| Variable | Purpose |
+| --- | --- |
+| `MAC_WORKDIR` | Persistent downloads, toolchain, dependency cache and build directory. |
+| `OSXCROSS_ROOT` | An existing OSXCross installation (`bin/` and `SDK/`). |
+| `OSX_SDK` | SDK directory; defaults to the SDK reported by OSXCross. |
+| `OSX_MIN_VERSION` | Deployment target and application-bundle minimum; defaults to `12.0`. |
+| `MAC_HOST` | x86-64 Darwin triplet; defaults to the OSXCross target. |
+| `MAC_DEPENDS_PREFIX` | Dependency installation directory. |
+| `MAC_BUILD_DIR` | Out-of-tree project build directory. |
+| `MAC_RELEASE_DIR` | Package output directory. |
+| `MAC_BUILD_TESTS` | `yes` (default) compiles the tests; `no` omits them. |
+| `JOBS` | Compilation parallelism; defaults to `2`. |
+
+The default release directory is `MAC/build/project-gui/release` (or
+`project-headless/release`). It contains a CLI `.tar.gz`, an unsigned `.app`
+ZIP for GUI builds, SHA-256 files and `macos-build.json`. The bundle contains
+static Qt, its translations and a `qt.conf` that resolves paths relative to
+the application. The compiler and `Info.plist` use the same minimum macOS version.
+
+Qt's Cocoa integration and TLS plugins are linked explicitly. The macOS
+GSS dependency and the pinned LLVM OS-availability implementation are part of
+the normal `depends` recipes, including download hashes and the LLVM license.
+Linux/XCB libraries are not used by the Darwin Qt metadata.
+
+The LLVM flavor of OSXCross uses `ld64.lld`, whose relocatable `-r` link is
+not supported by the libtool shared-consensus-library build. The scripts
+therefore select `--with-libs=no` with that flavor; the node, wallet, GUI,
+CLI, transaction utility and test executables are built normally.
+
+Verification and execution
+--------------------------
+
+The macOS binary-check stage verifies Mach-O format, x86-64 architecture,
+SDK/deployment versions, PIE, stack/segment permissions, system-only dynamic
+dependencies, and the object format of dependency archives. A failed check
+fails the build and removes its previous successful report.
+
+Linux cannot run the resulting macOS executables. The unit tests are compiled
+but require a Mac for execution. For example, after unpacking the CLI archive:
+
+```sh
+./bin/neuraid --version
+./bin/neurai-cli --version
+./bin/test_neurai
 ```
 
-Other commands:
--------
+Packages produced by these scripts are unsigned. Signing and notarization
+are subsequent release steps.
 
-    ./src/neuraid -daemon # Starts the neurai daemon.
-    ./src/neurai-cli --help # Outputs a list of command-line options.
-    ./src/neurai-cli help # Outputs a list of RPC commands when the daemon is running.
+Native Intel macOS builds
+-------------------------
 
-Using Qt Creator as IDE
-------------------------
-You can use Qt Creator as an IDE, for neurai development.
-Download and install the community edition of [Qt Creator](https://www.qt.io/download/).
-Uncheck everything except Qt Creator during the installation process.
-
-1. Make sure you installed everything through Homebrew mentioned above
-2. Do a proper ./configure --enable-debug
-3. In Qt Creator do "New Project" -> Import Project -> Import Existing Project
-4. Enter "neurai-qt" as project name, enter src/qt as location
-5. Leave the file selection as it is
-6. Confirm the "summary page"
-7. In the "Projects" tab select "Manage Kits..."
-8. Select the default "Desktop" kit and select "Clang (x86 64bit in /usr/bin)" as compiler
-9. Select LLDB as debugger (you might need to set the path to your installation)
-10. Start debugging with Qt Creator
-
-Notes
------
-
-* Tested on OS X 10.8 through 10.15 on 64-bit Intel processors only.
-
-* Building with downloaded Qt binaries is not officially supported. 
-
-* autoreconf (boost issue)
+`depends/hosts/darwin.mk` selects the Xcode compiler and SDK through `xcrun`
+on macOS, and `depends/builders/darwin.mk` selects the corresponding build
+host tools. The integration was validated by cross-compiling on Linux;
+execution and a native macOS build require validation on a Mac. Apple Silicon
+is still rejected by the existing x86-64 backend guard.

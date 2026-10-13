@@ -80,7 +80,7 @@ endef
 #   2. Configure + build qttools       (needs lrelease/lupdate)
 #   3. Install qttools                 → qt_install
 define $(package)_build_cmds
-  ninja -C qtbase/build && \
+  ninja -j$(JOBS) -C qtbase/build && \
   cmake --install qtbase/build --prefix $($(package)_extract_dir)/qt_install && \
   cmake -B qttools/build -S qttools \
     -GNinja \
@@ -102,7 +102,7 @@ define $(package)_build_cmds
     -DFEATURE_qtattributionsscanner=OFF \
     -DFEATURE_qtdiag=OFF \
     -DFEATURE_qtplugininfo=OFF && \
-  ninja -C qttools/build
+  ninja -j$(JOBS) -C qttools/build
 endef
 
 define $(package)_stage_cmds

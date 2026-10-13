@@ -133,3 +133,6 @@ CMakeLists.txt
 
 # Generated local review results
 /doc/review-results/
+
+# Downloaded macOS SDK, toolchain, build cache and packages
+/MAC/

@@ -377,9 +377,9 @@ AC_DEFUN([_NEURAI_QT_CHECK_STATIC_LIBS], [
     dnl modules.  Prepend them so the static linker sees dependents before
     dnl dependencies (XcbQpa -> FbSupport/InputSupport -> Gui -> Core).
     QT_LIBS="-lQt6XcbQpa -lQt6FbSupport -lQt6InputSupport -lQt6DeviceDiscoverySupport $QT_LIBS"
-  elif test "x$TARGET_OS" = xdarwin; then
-    QT_LIBS="-lQt6CocoaIntegration $QT_LIBS"
   fi
+  dnl macOS: Qt6 includes Cocoa integration in the qcocoa platform plugin,
+  dnl checked below. There is no separate Qt6CocoaIntegration library.
   dnl Windows: Qt6 has no separate integration library (Qt5's
   dnl Qt5WindowsUIAutomationSupport and friends are gone); the qwindows
   dnl platform plugin, checked below with -lqwindows, carries it.

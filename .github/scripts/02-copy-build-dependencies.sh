@@ -2,7 +2,7 @@
 
 OS=${1}
 GITHUB_WORKSPACE=${2}
-GITHUB_REF=${3}
+GITHUB_REF=${3:-}
 
 if [[ ! ${OS} || ! ${GITHUB_WORKSPACE} ]]; then
     echo "Error: Invalid options"
@@ -21,12 +21,20 @@ echo "----------------------------------------"
 echo "Building Dependencies for ${OS}"
 echo "----------------------------------------"
 
-cd depends
+cd "$GITHUB_WORKSPACE/depends"
 if [[ ${OS} == "windows" ]]; then
     make HOST=x86_64-w64-mingw32 -j2
 elif [[ ${OS} == "osx" ]]; then
-    echo "OSX building is not currently enabled"
-    exit 1
+    set -euo pipefail
+    source "${GITHUB_WORKSPACE}/contrib/mac-cross/env.sh"
+    mac_paths "$GITHUB_WORKSPACE"
+    if [[ ! -x "$OSXCROSS_ROOT/bin/osxcross-conf" ]]; then
+        "${GITHUB_WORKSPACE}/contrib/mac-cross/setup.sh"
+    fi
+    mac_environment "$GITHUB_WORKSPACE"
+    make -j"$JOBS" HOST="$MAC_HOST" PREFIX="$MAC_DEPENDS_PREFIX" \
+      OSXCROSS_ROOT="$OSXCROSS_ROOT" OSX_SDK="$OSX_SDK" \
+      OSX_SDK_VERSION="$OSX_SDK_VERSION" OSX_MIN_VERSION="$OSX_MIN_VERSION" JOBS="$JOBS"
 elif [[ ${OS} == "linux" || ${OS} == "linux-disable-wallet" ]]; then
     make HOST=x86_64-linux-gnu -j2
 elif [[ ${OS} == "arm32v7" || ${OS} == "arm32v7-disable-wallet" ]]; then

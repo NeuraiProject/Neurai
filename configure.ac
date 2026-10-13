@@ -21,6 +21,11 @@ NEURAI_GUI_NAME=neurai-qt
 NEURAI_CLI_NAME=neurai-cli
 NEURAI_TX_NAME=neurai-tx
 
+dnl The application bundle and the compiler must agree on the minimum OS.
+AC_ARG_VAR([OSX_MIN_VERSION], [minimum macOS version for the application bundle])
+OSX_MIN_VERSION=${OSX_MIN_VERSION:-${MACOSX_DEPLOYMENT_TARGET:-12.0}}
+AC_SUBST([OSX_MIN_VERSION])
+
 dnl Unless the user specified ARFLAGS, force it to be cr
 AC_ARG_VAR(ARFLAGS, [Flags for the archiver, defaults to <cr> if not set])
 if test "x${ARFLAGS+set}" != "xset"; then

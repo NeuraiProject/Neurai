@@ -6,6 +6,7 @@ SDK_PATH ?= $(BASEDIR)/SDKs
 NO_QT ?=
 NO_WALLET ?=
 NO_UPNP ?=
+JOBS ?= 2
 
 BUILD = $(shell ./config.guess)
 HOST ?= $(BUILD)
@@ -56,7 +57,9 @@ ifeq ($(host_os),)
 host_os=$(full_host_os)
 endif
 
-$(host_arch)_$(host_os)_prefix=$(BASEDIR)/$(host)
+# A single prefix override must also reach the package-specific staging paths.
+PREFIX ?= $(BASEDIR)/$(host)
+$(host_arch)_$(host_os)_prefix=$(PREFIX)
 $(host_arch)_$(host_os)_host=$(host)
 host_prefix=$($(host_arch)_$(host_os)_prefix)
 build_prefix=$(host_prefix)/native
@@ -87,6 +90,7 @@ $(host_arch)_$(host_os)_id_string+=$(shell $(host_AR) --version 2>/dev/null)
 $(host_arch)_$(host_os)_id_string+=$(shell $(host_CXX) --version 2>/dev/null)
 $(host_arch)_$(host_os)_id_string+=$(shell $(host_RANLIB) --version 2>/dev/null)
 $(host_arch)_$(host_os)_id_string+=$(shell $(host_STRIP) --version 2>/dev/null)
+$(host_arch)_$(host_os)_id_string+=$($(host_os)_id_extra)
 
 qt_packages_$(NO_QT) = $(qt_packages) $(qt_$(host_os)_packages) $(qt_$(host_arch)_$(host_os)_packages)
 wallet_packages_$(NO_WALLET) = $(wallet_packages)
@@ -129,6 +133,7 @@ $(host_prefix)/share/config.site : config.site.in $(host_prefix)/.stamp_$(final_
             -e 's|@STRIP@|$(host_STRIP)|' \
             -e 's|@build_os@|$(build_os)|' \
             -e 's|@host_os@|$(host_os)|' \
+            -e 's|@OSX_MIN_VERSION@|$(OSX_MIN_VERSION)|' \
             -e 's|@CFLAGS@|$(strip $(host_CFLAGS) $(host_$(release_type)_CFLAGS))|' \
             -e 's|@CXXFLAGS@|$(strip $(host_CXXFLAGS) $(host_$(release_type)_CXXFLAGS))|' \
             -e 's|@CPPFLAGS@|$(strip $(host_CPPFLAGS) $(host_$(release_type)_CPPFLAGS))|' \
@@ -171,7 +176,7 @@ install: check-packages $(host_prefix)/share/config.site
 download-one: check-sources $(all_sources)
 
 download-osx:
-	@$(MAKE) -s HOST=x86_64-apple-darwin11 download-one
+	@$(MAKE) -s HOST=$(or $(MAC_HOST),x86_64-apple-darwin23.5) download-one
 download-linux:
 	@$(MAKE) -s HOST=x86_64-unknown-linux-gnu download-one
 download-win:

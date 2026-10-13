@@ -15,6 +15,9 @@ $(package)_linux_dependencies=freetype fontconfig libxcb libxkbcommon libxcb_uti
 ifneq ($(host_arch)_$(host_os),$(build_arch)_$(build_os))
 $(package)_dependencies += native_qt
 endif
+ifneq ($(build_os),darwin)
+$(package)_darwin_dependencies = macos_availability
+endif
 
 $(package)_qttranslations_file_name=qttranslations-$($(package)_suffix)
 $(package)_qttranslations_sha256_hash=c3c61d79c3d8fe316a20b3617c64673ce5b5519b2e45535f49bee313152fa531
@@ -39,6 +42,17 @@ $(package)_toolchain_opts_mingw32 = -DCMAKE_SYSTEM_NAME=Windows \
   -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \
   -DQT_HOST_PATH=$(build_prefix)
 
+# Every Qt module must use the same Darwin target, not the Linux compiler.
+$(package)_toolchain_opts_darwin = -DCMAKE_SYSTEM_NAME=Darwin \
+  -DCMAKE_C_COMPILER=$(firstword $(host_CC)) \
+  -DCMAKE_CXX_COMPILER=$(firstword $(host_CXX)) \
+  -DCMAKE_OSX_SYSROOT=$(OSX_SDK) -DCMAKE_OSX_DEPLOYMENT_TARGET=$(OSX_MIN_VERSION) \
+  -DCMAKE_OSX_ARCHITECTURES=$(host_arch)
+ifneq ($(build_os),darwin)
+$(package)_toolchain_opts_darwin += -DQT_HOST_PATH=$(build_prefix) \
+  -DQT_NO_APPLE_SDK_AND_XCODE_CHECK=ON
+endif
+
 # Libraries in the .pc files written by postprocess below. The defaults are the
 # Linux ones. Windows takes Qt's own lists from its .prl files (static MinGW
 # build): Win32 system libraries instead of xcb and -ldl; the qwindows platform
@@ -49,6 +63,16 @@ $(package)_pc_network_libs = -lQt6Network -lssl -lcrypto
 $(package)_pc_core_libs_mingw32 = -lQt6Core -lQt6BundledPcre2 -lQt6BundledZLIB -lsynchronization -lmpr -luserenv -ladvapi32 -lauthz -lkernel32 -lnetapi32 -lole32 -lshell32 -luser32 -luuid -lversion -lwinmm -lws2_32
 $(package)_pc_gui_libs_mingw32 = -lQt6Gui -lQt6BundledHarfbuzz -lQt6BundledFreetype -lQt6BundledLibpng -ld3d11 -ldxgi -ldxguid -ld3d12 -ld3d9 -ld2d1 -ldwrite -lgdi32 -luxtheme -ldwmapi -limm32 -loleaut32 -lsetupapi -lshlwapi -lwinspool -lwtsapi32 -lshcore -lcomdlg32 -lruntimeobject
 $(package)_pc_network_libs_mingw32 = -lQt6Network -ldnsapi -liphlpapi -lsecur32 -lwinhttp -lssl -lcrypto -lcrypt32 -lws2_32
+
+# Qt is static and not a framework. Cocoa is imported and linked by configure.
+# Keep system frameworks and compiler-rt support in the .pc metadata so every
+# consumer gets a complete link without editing generated files afterwards.
+$(package)_pc_core_libs_darwin = -lQt6Core -lQt6BundledPcre2 -lQt6BundledZLIB -lresolv -framework Foundation -framework CoreFoundation -framework IOKit -framework CoreServices -framework DiskArbitration
+ifneq ($(build_os),darwin)
+$(package)_pc_core_libs_darwin += -lmacos-availability
+endif
+$(package)_pc_gui_libs_darwin = -lQt6Gui -lQt6BundledHarfbuzz -lQt6BundledFreetype -lQt6BundledLibpng -framework AppKit -framework ApplicationServices -framework CoreGraphics -framework CoreText -framework CoreVideo -framework ImageIO -framework Metal -framework QuartzCore -framework IOSurface -framework Carbon -framework UniformTypeIdentifiers
+$(package)_pc_network_libs_darwin = -lQt6Network -lssl -lcrypto -framework Security -framework SystemConfiguration -framework GSS
 
 # native/bin links to this Qt's own tools (see postprocess), for builds that
 # run them on the build machine; same condition as native_qt in packages.mk.
@@ -149,17 +173,12 @@ $(package)_config_opts_aarch64_linux += -DCMAKE_C_COMPILER=$(host)-gcc
 $(package)_config_opts_aarch64_linux += -DCMAKE_CXX_COMPILER=$(host)-g++
 
 # --- macOS ---
+$(package)_config_opts_darwin += -DFEATURE_framework=OFF
+$(package)_config_opts_darwin += -DFEATURE_printsupport=OFF
+$(package)_config_opts_darwin += $($(package)_toolchain_opts_darwin)
 $(package)_config_opts_darwin += -DQT_FEATURE_dbus=OFF
 $(package)_config_opts_darwin += -DQT_FEATURE_opengl=OFF
 $(package)_config_opts_darwin += -DCMAKE_OSX_DEPLOYMENT_TARGET=$(OSX_MIN_VERSION)
-$(package)_config_opts_darwin += -DQT_HOST_PATH=$(build_prefix)
-
-ifneq ($(build_os),darwin)
-$(package)_config_opts_darwin += -DCMAKE_SYSTEM_NAME=Darwin
-$(package)_config_opts_darwin += -DCMAKE_C_COMPILER=$(host)-clang
-$(package)_config_opts_darwin += -DCMAKE_CXX_COMPILER=$(host)-clang++
-$(package)_config_opts_darwin += -DCMAKE_OSX_SYSROOT=$(OSX_SDK)
-endif
 
 # --- Windows (MinGW cross-compilation) ---
 $(package)_config_opts_mingw32 += -DQT_FEATURE_dbus=OFF
@@ -232,7 +251,7 @@ endef
 #   4. Configure+build+install qtwayland on Linux (needs libwayland + wayland-protocols from host_prefix)
 #   5. Configure+build qttranslations  (needs lrelease from step 3)
 define $(package)_build_cmds
-  ninja -C qtbase/build && \
+  ninja -j$(JOBS) -C qtbase/build && \
   cmake --install qtbase/build --prefix $($(package)_extract_dir)/qt_install && \
   cmake -B qttools/build -S qttools \
     -GNinja \
@@ -255,7 +274,7 @@ define $(package)_build_cmds
     -DFEATURE_qtattributionsscanner=OFF \
     -DFEATURE_qtdiag=OFF \
     -DFEATURE_qtplugininfo=OFF && \
-  ninja -C qttools/build && \
+  ninja -j$(JOBS) -C qttools/build && \
   cmake --install qttools/build --prefix $($(package)_extract_dir)/qt_install && \
   if [ "$(host_os)" = "linux" ]; then \
     export PKG_CONFIG_SYSROOT_DIR=/ ; \
@@ -276,7 +295,7 @@ define $(package)_build_cmds
       -DFEATURE_wayland_compositor_quick=OFF \
       -DFEATURE_wayland_egl_client=OFF \
       -DFEATURE_opengl=OFF && \
-    ninja -C qtwayland/build && \
+    ninja -j$(JOBS) -C qtwayland/build && \
     cmake --install qtwayland/build --prefix $($(package)_extract_dir)/qt_install ; \
   fi && \
   cmake -B qttranslations/build -S qttranslations \
@@ -285,7 +304,7 @@ define $(package)_build_cmds
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_PREFIX_PATH=$($(package)_extract_dir)/qt_install \
     -DCMAKE_INSTALL_PREFIX=$($(package)_extract_dir)/qt_install && \
-  ninja -C qttranslations/build
+  ninja -j$(JOBS) -C qttranslations/build
 endef
 
 # Install all modules to the depends staging prefix.

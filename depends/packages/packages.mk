@@ -22,8 +22,8 @@ wallet_packages=bdb
 
 upnp_packages=miniupnpc
 
-darwin_native_packages = native_biplist native_ds_store native_mac_alias
-
+# ZIP/.app packaging is provided by contrib/mac-cross/package.py. The old
+# Python 2 DMG tools and pinned clang 11/cctools are not used by OSXCross.
 ifneq ($(build_os),darwin)
-darwin_native_packages += native_cctools native_libtapi native_cdrkit native_libdmg-hfsplus native_clang
+darwin_packages = macos_availability
 endif
