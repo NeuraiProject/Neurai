@@ -120,10 +120,7 @@ QT_FORMS_UI = \
   qt/forms/restrictedassetsdialog.ui \
   qt/forms/restrictedassignqualifier.ui \
   qt/forms/restrictedfreezeaddress.ui \
-  qt/forms/sendassetsentry.ui \
-  qt/forms/mnemonicdialog1.ui \
-  qt/forms/mnemonicdialog2.ui \
-  qt/forms/mnemonicdialog3.ui
+  qt/forms/sendassetsentry.ui
 
 QT_MOC_CPP = \
   qt/moc_addressbookpage.cpp \
@@ -350,6 +347,10 @@ RES_ICONS = \
   qt/res/icons/status_unlock.png \
   qt/res/icons/status_wallet.png \
   qt/res/icons/status_pq.png \
+  qt/res/icons/setup_create.png \
+  qt/res/icons/setup_restore.png \
+  qt/res/icons/setup_warning.png \
+  qt/res/icons/ui_chevron_right.png \
   qt/res/icons/ui_chevron_down.png \
   qt/res/icons/ui_chevron_up.png \
   qt/res/icons/ui_check.png \

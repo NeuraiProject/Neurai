@@ -92,6 +92,10 @@
         <file alias="status_unlock">res/icons/status_unlock.png</file>
         <file alias="status_wallet">res/icons/status_wallet.png</file>
         <file alias="status_pq">res/icons/status_pq.png</file>
+        <file alias="setup_create">res/icons/setup_create.png</file>
+        <file alias="setup_restore">res/icons/setup_restore.png</file>
+        <file alias="setup_warning">res/icons/setup_warning.png</file>
+        <file alias="ui_chevron_right">res/icons/ui_chevron_right.png</file>
         <file alias="ui_chevron_down">res/icons/ui_chevron_down.png</file>
         <file alias="ui_chevron_up">res/icons/ui_chevron_up.png</file>
         <file alias="ui_check">res/icons/ui_check.png</file>

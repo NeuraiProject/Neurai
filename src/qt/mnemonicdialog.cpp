@@ -1,296 +1,552 @@
 // Copyright (c) 2020 Hans Schmidt
 // Copyright (c) 2017-2018 The Particl Core developers
+// Copyright (c) 2026 The Neurai developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#define TEST 0
-
 #include <qt/mnemonicdialog.h>
 
-#include <ui_mnemonicdialog1.h>
-#include <ui_mnemonicdialog2.h>
-#include <ui_mnemonicdialog3.h>
+#include <qt/guitheme.h>
+#include <util.h>
 #include <wallet/bip39.h>
+#include <wallet/wallet.h>
 
-#if !TEST
-  #include <qt/guiutil.h>
-  #include <util.h>
-  #include <wallet/wallet.h>
-#endif
+#include <QCheckBox>
+#include <QComboBox>
+#include <QFrame>
+#include <QGridLayout>
+#include <QHBoxLayout>
+#include <QIcon>
+#include <QKeyEvent>
+#include <QLabel>
+#include <QLineEdit>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QPixmap>
+#include <QPlainTextEdit>
+#include <QPushButton>
+#include <QScreen>
+#include <QScrollArea>
+#include <QStackedWidget>
+#include <QStyle>
+#include <QVBoxLayout>
 
-#include <QRadioButton>
+#include <algorithm>
+#include <array>
+#include <functional>
 
-#if !TEST
 namespace {
+
+const int NUM_WORDS = 12;
+
+// Address types in the order of the chooser cards
+const std::array<WalletAddressType, 3> ADDRESS_TYPES = {WalletAddressType::LEGACY, WalletAddressType::PQ, WalletAddressType::ECDSA};
+
 // The address type the dialog starts with: -addresstype, Legacy by default.
-WalletAddressType PresetAddressType()
+int PresetAddressTypeIndex()
 {
     WalletAddressType type = DEFAULT_WALLET_ADDRESS_TYPE;
     ParseWalletAddressType(gArgs.GetArg("-addresstype", WalletAddressTypeName(DEFAULT_WALLET_ADDRESS_TYPE)), type);
-    return type;
+    for (size_t i = 0; i < ADDRESS_TYPES.size(); ++i) {
+        if (ADDRESS_TYPES[i] == type) return i;
+    }
+    return 0;
 }
 
-void CheckAddressType(QRadioButton* legacy, QRadioButton* pq, QRadioButton* ecdsa, WalletAddressType type)
+QString CssColor(const QColor& color)
 {
-    (type == WalletAddressType::PQ ? pq : type == WalletAddressType::ECDSA ? ecdsa : legacy)->setChecked(true);
+    return QString("rgba(%1, %2, %3, %4)").arg(color.red()).arg(color.green()).arg(color.blue()).arg(color.alpha());
 }
 
-WalletAddressType CheckedAddressType(const QRadioButton* pq, const QRadioButton* ecdsa)
+QColor WithAlpha(QColor color, int alpha)
 {
-    if (pq->isChecked()) return WalletAddressType::PQ;
-    if (ecdsa->isChecked()) return WalletAddressType::ECDSA;
-    return WalletAddressType::LEGACY;
+    color.setAlpha(alpha);
+    return color;
 }
+
+/** Single colour icon from one of the monochrome resource images. */
+QPixmap TintedIcon(const QString& file, const QColor& color, int size, qreal dpr)
+{
+    QPixmap pixmap = QIcon(file).pixmap(QSize(size, size), dpr);
+    QPainter painter(&pixmap);
+    painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+    painter.fillRect(pixmap.rect(), color);
+    return pixmap;
+}
+
+QLabel* MakeLabel(const QString& text, const char* objectName, QWidget* parent = nullptr)
+{
+    QLabel* label = new QLabel(text, parent);
+    label->setObjectName(objectName);
+    label->setWordWrap(true);
+    return label;
+}
+
+/** Clickable card with an optional icon, a title and a description. */
+class ChoiceCard : public QFrame
+{
+public:
+    ChoiceCard(const QString& title, const QString& description, const QString& iconFile, bool chevron, std::function<void()> onClick, QWidget* parent = nullptr)
+        : QFrame(parent), m_onClick(std::move(onClick))
+    {
+        setObjectName("choiceCard");
+        setAttribute(Qt::WA_Hover);
+        setFocusPolicy(Qt::StrongFocus);
+        setCursor(Qt::PointingHandCursor);
+
+        const GUITheme::Tokens& theme = GUITheme::tokens();
+        QHBoxLayout* layout = new QHBoxLayout(this);
+        layout->setContentsMargins(16, 14, 16, 14);
+        layout->setSpacing(14);
+        if (!iconFile.isEmpty()) {
+            QLabel* icon = new QLabel(this);
+            icon->setObjectName("cardIcon");
+            icon->setFixedSize(44, 44);
+            icon->setAlignment(Qt::AlignCenter);
+            icon->setPixmap(TintedIcon(iconFile, theme.primary, 22, devicePixelRatioF()));
+            layout->addWidget(icon, 0, Qt::AlignVCenter);
+        }
+        QVBoxLayout* text = new QVBoxLayout();
+        text->setSpacing(3);
+        text->addWidget(MakeLabel(title, "cardTitle", this));
+        text->addWidget(MakeLabel(description, "cardText", this));
+        layout->addLayout(text, 1);
+        if (chevron) {
+            QLabel* arrow = new QLabel(this);
+            arrow->setPixmap(TintedIcon(":/icons/ui_chevron_right", theme.textMuted, 18, devicePixelRatioF()));
+            layout->addWidget(arrow, 0, Qt::AlignVCenter);
+        }
+    }
+
+    void setSelected(bool selected)
+    {
+        setProperty("selected", selected);
+        style()->unpolish(this);
+        style()->polish(this);
+    }
+
+protected:
+    void mouseReleaseEvent(QMouseEvent* event) override
+    {
+        if (event->button() == Qt::LeftButton && rect().contains(event->position().toPoint()))
+            m_onClick();
+        QFrame::mouseReleaseEvent(event);
+    }
+
+    void keyPressEvent(QKeyEvent* event) override
+    {
+        if (event->key() == Qt::Key_Space || event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+            m_onClick();
+            return;
+        }
+        QFrame::keyPressEvent(event);
+    }
+
+private:
+    std::function<void()> m_onClick;
+};
+
+QString SetupStyleSheet()
+{
+    const GUITheme::Tokens& t = GUITheme::tokens();
+    return QString(
+        "QDialog#walletSetup { background-color: %1; }"
+        "QWidget#setupPage { background: transparent; }"
+        "QLabel#setupTitle { color: %2; font-size: 24px; font-weight: 700; }"
+        "QLabel#setupSubtitle { color: %3; font-size: 14px; }"
+        "QLabel#sectionLabel { color: %2; font-size: 13px; font-weight: 600; }"
+        "QLabel#hintText { color: %3; font-size: 12px; }"
+        "QLabel#errorText { color: %7; font-size: 13px; font-weight: 600; }"
+        "QFrame#choiceCard { background-color: %1; border: 1px solid %4; border-radius: 12px; }"
+        "QFrame#choiceCard:hover, QFrame#choiceCard:focus { border-color: %5; }"
+        "QFrame#choiceCard[selected=\"true\"] { border: 2px solid %5; background-color: %6; }"
+        "QLabel#cardIcon { background-color: %6; border-radius: 12px; }"
+        "QLabel#cardTitle { color: %2; font-size: 15px; font-weight: 600; background: transparent; }"
+        "QLabel#cardText { color: %3; font-size: 12px; background: transparent; }"
+        "QFrame#wordChip { background-color: %8; border: 1px solid %4; border-radius: 8px; }"
+        "QLabel#wordIndex { color: %3; font-size: 12px; background: transparent; }"
+        "QLabel#wordText { color: %2; font-size: 14px; font-weight: 600; background: transparent; }"
+        "QFrame#warningBox { background-color: %9; border: 1px solid %10; border-radius: 10px; }"
+        "QLabel#warningText { color: %2; font-size: 13px; background: transparent; }")
+        .arg(CssColor(t.surface), CssColor(t.text), CssColor(t.textMuted), CssColor(t.border), CssColor(t.primary),
+             CssColor(t.accent), CssColor(t.error), CssColor(t.surfaceAlt), CssColor(WithAlpha(t.warning, 30)))
+        .arg(CssColor(WithAlpha(t.warning, 110)));
+}
+
+/** Page container that scrolls when the screen is too small for it. */
+QWidget* Scrollable(QWidget* page)
+{
+    QScrollArea* scroll = new QScrollArea();
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setObjectName("setupScroll");
+    scroll->setStyleSheet("QScrollArea#setupScroll { background: transparent; border: none; }");
+    scroll->viewport()->setAutoFillBackground(false);
+    scroll->setWidget(page);
+    return scroll;
+}
+
+QWidget* NewPage(QVBoxLayout*& layout)
+{
+    QWidget* page = new QWidget();
+    page->setObjectName("setupPage");
+    layout = new QVBoxLayout(page);
+    layout->setContentsMargins(36, 26, 36, 22);
+    layout->setSpacing(11);
+    return page;
+}
+
+QComboBox* LanguageCombo()
+{
+    QComboBox* combo = new QComboBox();
+    const auto languages = CMnemonic::GetLanguagesDetails();
+    for (const auto& language : languages) {
+        combo->addItem(language.label);
+    }
+    return combo;
+}
+
+/** Words as typed by the user: single spaces, lower case. Any other
+ *  spelling of a valid phrase would fail CMnemonic::Check anyway. */
+QString NormalizedWords(const QString& text)
+{
+    return text.simplified().toLower();
+}
+
 } // namespace
-#endif
 
 MnemonicDialog::MnemonicDialog(QWidget *parent) :
     QDialog(parent)
 {
-    setWindowTitle(tr("HD Wallet Setup"));
+    setObjectName("walletSetup");
+    setWindowTitle(tr("Wallet Setup"));
+    setStyleSheet(SetupStyleSheet());
 
-    stackedLayout = new QStackedLayout(this);
+    createType = restoreType = PresetAddressTypeIndex();
 
-    MnemonicDialog1 *pgWalletType = new MnemonicDialog1(this);
-    MnemonicDialog2 *pgNewWalletInfo = new MnemonicDialog2(this);
-    MnemonicDialog3 *pgOldWalletInfo = new MnemonicDialog3(this);
+    pages = new QStackedWidget(this);
+    pages->addWidget(Scrollable(createWelcomePage()));
+    pages->addWidget(Scrollable(createNewWalletPage()));
+    pages->addWidget(Scrollable(createRestorePage()));
 
-    connect(pgWalletType,&MnemonicDialog1::updateMainWindowStackWidget,this,&MnemonicDialog::onChangeWindowRequested);
-    connect(pgNewWalletInfo,&MnemonicDialog2::updateMainWindowStackWidget,this,&MnemonicDialog::onChangeWindowRequested);
-    connect(pgOldWalletInfo,&MnemonicDialog3::updateMainWindowStackWidget,this,&MnemonicDialog::onChangeWindowRequested);
+    QVBoxLayout* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->addWidget(pages);
 
-    connect(pgNewWalletInfo,&MnemonicDialog2::allCloseRequested,this,&MnemonicDialog::closeMainDialog);
-    connect(pgOldWalletInfo,&MnemonicDialog3::allCloseRequested,this,&MnemonicDialog::closeMainDialog);
-
-    stackedLayout -> addWidget(pgWalletType);
-    stackedLayout -> addWidget(pgNewWalletInfo);
-    stackedLayout -> addWidget(pgOldWalletInfo);
-    stackedLayout -> setCurrentIndex(0);
-
-};
-
-void MnemonicDialog::onChangeWindowRequested(int ind)  //slot
-{
-    stackedLayout -> setCurrentIndex(ind);
+    // Tall enough for the longest page, but never taller than the screen (pages scroll)
+    const QRect available = screen()->availableGeometry();
+    resize(QSize(720, 760).boundedTo(available.size() * 0.92));
+    showPage(0);
 }
 
-void MnemonicDialog::closeMainDialog()
+MnemonicDialog::~MnemonicDialog()
 {
-    close();
+    // Do not leave the generated words lying around in memory longer than needed
+    std::fill(generatedWords.begin(), generatedWords.end(), '\0');
 }
 
-// #############################
-
-MnemonicDialog1::MnemonicDialog1(QWidget *parent) :
-    QFrame(parent),
-    ui(new Ui::MnemonicDialog1),
-    radioselected("none")
+void MnemonicDialog::showPage(int index)
 {
-    ui->setupUi(this);
-};
+    pages->setCurrentIndex(index);
+    if (index == 1 && generatedWords.empty())
+        generateWords();
+}
 
-MnemonicDialog1::~MnemonicDialog1()
+QWidget* MnemonicDialog::createWelcomePage()
 {
-    delete ui;
-};
+    QVBoxLayout* layout;
+    QWidget* page = NewPage(layout);
+    layout->setContentsMargins(48, 48, 48, 40);
 
-void MnemonicDialog1::on_walletNewRadio_clicked()
+    QLabel* logo = new QLabel();
+    logo->setPixmap(QIcon(":/icons/neurai").pixmap(QSize(80, 80), devicePixelRatioF()));
+    logo->setAlignment(Qt::AlignCenter);
+
+    QLabel* title = MakeLabel(tr("Welcome to Neurai"), "setupTitle");
+    title->setAlignment(Qt::AlignCenter);
+    QLabel* subtitle = MakeLabel(tr("No wallet was found in this data directory, so a new one will be created. "
+                                    "Choose how you want to set it up."), "setupSubtitle");
+    subtitle->setAlignment(Qt::AlignCenter);
+
+    ChoiceCard* create = new ChoiceCard(tr("Create a new wallet"),
+                                        tr("Generate a new set of 12 recovery words (BIP39)."),
+                                        ":/icons/setup_create", true, [this] { showPage(1); });
+    ChoiceCard* restore = new ChoiceCard(tr("Restore a wallet"),
+                                         tr("Use the recovery words of a wallet you already have."),
+                                         ":/icons/setup_restore", true, [this] { showPage(2); });
+
+    layout->addStretch(1);
+    layout->addWidget(logo);
+    layout->addSpacing(6);
+    layout->addWidget(title);
+    layout->addWidget(subtitle);
+    layout->addSpacing(22);
+    layout->addWidget(create);
+    layout->addWidget(restore);
+    layout->addStretch(2);
+    return page;
+}
+
+QWidget* MnemonicDialog::createAddressTypeChooser(QList<QFrame*>& cards, int& selected)
 {
-    ui->walletLabel->setText(tr("You are choosing to create a new wallet using new seed words."));
-    radioselected = "new";
-};
+    QWidget* chooser = new QWidget();
+    QHBoxLayout* row = new QHBoxLayout(chooser);
+    row->setContentsMargins(0, 0, 0, 0);
+    row->setSpacing(10);
 
-void MnemonicDialog1::on_walletOldRadio_clicked()
-{
-    ui->walletLabel->setText(tr("You are choosing to re-create an old wallet using seed words which you know."));
-    radioselected = "old";
-};
-
-void MnemonicDialog1::on_acceptButton_clicked()
-{
-    if (radioselected == "new")
-        Q_EMIT updateMainWindowStackWidget(1);  // "emit" is not supported on older QT revs
-    else if (radioselected == "old")
-        Q_EMIT updateMainWindowStackWidget(2);  // "emit" is not supported on older QT revs
-};
-
-// =========
-
-MnemonicDialog2::MnemonicDialog2(QWidget *parent) :
-    QFrame(parent),
-    ui(new Ui::MnemonicDialog2)
-{
-    ui->setupUi(this);
-    
-    std::array<LanguageDetails, NUM_LANGUAGES_BIP39_SUPPORTED> languagesDetails = CMnemonic::GetLanguagesDetails();    
-   
-    for(int langNum = 0; langNum < NUM_LANGUAGES_BIP39_SUPPORTED; langNum++) {
-        MnemonicDialog2::ui->languageSeedWords->addItem(languagesDetails[langNum].label);
+    const QString titles[] = {tr("Legacy"), tr("Post-Quantum"), tr("ECDSA")};
+    const QString descriptions[] = {
+        tr("Classic Base58 addresses (secp256k1). Default."),
+        tr("Quantum-resistant ML-DSA-44 (FIPS 204), witness v2."),
+        tr("secp256k1 signatures, strict witness v3 addresses."),
+    };
+    for (int i = 0; i < 3; ++i) {
+        ChoiceCard* card = new ChoiceCard(titles[i], descriptions[i], QString(), false,
+                                          [this, &cards, &selected, i] { selectAddressType(cards, selected, i); });
+        cards << card;
+        row->addWidget(card, 1);
     }
-    MnemonicDialog2::ui->languageSeedWords->installEventFilter(this);
-#if !TEST
-    CheckAddressType(ui->addressTypeLegacyRadio, ui->addressTypePQRadio, ui->addressTypeEcdsaRadio, PresetAddressType());
-#endif
+    selectAddressType(cards, selected, selected);
+    return chooser;
+}
 
-};
-
-MnemonicDialog2::~MnemonicDialog2()
+void MnemonicDialog::selectAddressType(QList<QFrame*>& cards, int& selected, int index)
 {
-    delete ui;
-};
+    selected = index;
+    for (int i = 0; i < cards.size(); ++i) {
+        static_cast<ChoiceCard*>(cards[i])->setSelected(i == index);
+    }
+}
 
-void MnemonicDialog2::on_backButton_clicked()
+QWidget* MnemonicDialog::createPassphraseField(QLineEdit*& edit, const QString& hint)
 {
-    Q_EMIT updateMainWindowStackWidget(0);  // "emit" is not supported on older QT revs
-};
+    QWidget* field = new QWidget();
+    QVBoxLayout* layout = new QVBoxLayout(field);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(6);
+    edit = new QLineEdit();
+    edit->setPlaceholderText(tr("Seed extension word (optional)"));
+    edit->setToolTip(tr("The Seed Extension Word is like adding a password to your seed phrase. If someone finds your "
+                        "12 words but you have chosen an extension word, they will not be able to access your wallet. "
+                        "Without it, the wallet cannot be restored."));
+    layout->addWidget(MakeLabel(tr("Seed extension word"), "sectionLabel"));
+    layout->addWidget(edit);
+    layout->addWidget(MakeLabel(hint, "hintText"));
+    return field;
+}
 
-void MnemonicDialog2::on_acceptButton_clicked()
+QWidget* MnemonicDialog::createNewWalletPage()
 {
-    std::string words = MnemonicDialog2::ui->seedwordsText->toPlainText().toStdString();
-    std::string passphrase = MnemonicDialog2::ui->passphraseEdit->text().toStdString();
+    QVBoxLayout* layout;
+    QWidget* page = NewPage(layout);
 
-    int languageSelected = MnemonicDialog2::ui->languageSeedWords->currentIndex();
+    layout->addWidget(MakeLabel(tr("Your recovery words"), "setupTitle"));
+    layout->addWidget(MakeLabel(tr("Write down these 12 words in order and keep them somewhere safe. "
+                                   "They are the only way to restore your wallet."), "setupSubtitle"));
 
-#if TEST
-    std::string my_words;
-    std::string my_passphrase;    
-    int my_languageSelected;
-#endif
-    my_words = words;
-    my_passphrase = passphrase;
-    int my_languageSelected = languageSelected;
+    // Language and regenerate
+    createLanguage = LanguageCombo();
+    QPushButton* regenerate = new QPushButton(tr("New words"));
+    regenerate->setAutoDefault(false);
+    QHBoxLayout* toolbar = new QHBoxLayout();
+    toolbar->addWidget(createLanguage);
+    toolbar->addStretch();
+    toolbar->addWidget(regenerate);
+    layout->addLayout(toolbar);
+    connect(regenerate, &QPushButton::clicked, this, &MnemonicDialog::generateWords);
+    connect(createLanguage, qOverload<int>(&QComboBox::currentIndexChanged), this, &MnemonicDialog::generateWords);
 
-#if TEST
-    // NOTE: default mnemonic passphrase is an empty string
-    if (my_words != "embark lawsuit town sunny forum churn amused gate ensuure smooth valley veteran") {
-#else
-    SecureString tmp(my_words.begin(), my_words.end());
+    // Words as numbered chips, 4 columns x 3 rows
+    QGridLayout* grid = new QGridLayout();
+    grid->setHorizontalSpacing(8);
+    grid->setVerticalSpacing(8);
+    for (int i = 0; i < NUM_WORDS; ++i) {
+        QFrame* chip = new QFrame();
+        chip->setObjectName("wordChip");
+        QHBoxLayout* chipLayout = new QHBoxLayout(chip);
+        chipLayout->setContentsMargins(10, 8, 10, 8);
+        chipLayout->setSpacing(8);
+        QLabel* index = new QLabel(QString::number(i + 1));
+        index->setObjectName("wordIndex");
+        index->setFixedWidth(18);
+        index->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        QLabel* word = new QLabel();
+        word->setObjectName("wordText");
+        word->setTextInteractionFlags(Qt::NoTextInteraction);
+        chipLayout->addWidget(index);
+        chipLayout->addWidget(word, 1);
+        wordLabels << word;
+        grid->addWidget(chip, i / 4, i % 4);
+    }
+    layout->addLayout(grid);
 
-    // NOTE: default mnemonic passphrase is an empty string
-    if (!CMnemonic::Check(tmp, my_languageSelected)) {
-#endif
+    // Warning
+    QFrame* warning = new QFrame();
+    warning->setObjectName("warningBox");
+    QHBoxLayout* warningLayout = new QHBoxLayout(warning);
+    warningLayout->setContentsMargins(14, 10, 14, 10);
+    warningLayout->setSpacing(12);
+    QLabel* warningIcon = new QLabel();
+    warningIcon->setPixmap(TintedIcon(":/icons/setup_warning", GUITheme::tokens().warning, 20, devicePixelRatioF()));
+    warningLayout->addWidget(warningIcon, 0, Qt::AlignTop);
+    warningLayout->addWidget(MakeLabel(tr("Anyone with these words can take your funds: never share them. "
+                                          "If you lose them, together with the optional extension word, the wallet cannot be recovered."),
+                                       "warningText"), 1);
+    layout->addWidget(warning);
 
-        MnemonicDialog2::ui->lblHelp->setText(tr("Words are not valid, please generate new words and try again"));
-        my_words.clear();
-        my_passphrase.clear();
+    layout->addWidget(MakeLabel(tr("Address type"), "sectionLabel"));
+    layout->addWidget(createAddressTypeChooser(createTypeCards, createType));
+    layout->addWidget(MakeLabel(tr("The address type is stored in the wallet when it is created and cannot be changed later. "
+                                   "Post-Quantum and ECDSA addresses can only be used once the network activates them."),
+                                "hintText"));
+
+    layout->addWidget(createPassphraseField(createPassphrase,
+        tr("An extra word you choose and remember, which protects the 12 words. Write it down too.")));
+
+    createError = MakeLabel(QString(), "errorText");
+    createError->hide();
+    layout->addWidget(createError);
+
+    confirmBackup = new QCheckBox(tr("I have written down my recovery words and will keep them safe"));
+    connect(confirmBackup, &QCheckBox::toggled, this, &MnemonicDialog::updateCreateButton);
+    layout->addSpacing(4);
+    layout->addWidget(confirmBackup);
+
+    QPushButton* back = new QPushButton(tr("Back"));
+    back->setAutoDefault(false);
+    createButton = new QPushButton(tr("Create wallet"));
+    createButton->setProperty("primary", true);
+    createButton->setAutoDefault(false);
+    createButton->setEnabled(false);
+    connect(back, &QPushButton::clicked, this, [this] { showPage(0); });
+    connect(createButton, &QPushButton::clicked, this, &MnemonicDialog::createWallet);
+    QHBoxLayout* buttons = new QHBoxLayout();
+    buttons->addWidget(back);
+    buttons->addStretch();
+    buttons->addWidget(createButton);
+    layout->addStretch(1);
+    layout->addLayout(buttons);
+    return page;
+}
+
+QWidget* MnemonicDialog::createRestorePage()
+{
+    QVBoxLayout* layout;
+    QWidget* page = NewPage(layout);
+
+    layout->addWidget(MakeLabel(tr("Restore a wallet"), "setupTitle"));
+    layout->addWidget(MakeLabel(tr("Enter the recovery words of your wallet in order, separated by spaces."), "setupSubtitle"));
+
+    restoreLanguage = LanguageCombo();
+    QHBoxLayout* toolbar = new QHBoxLayout();
+    toolbar->addWidget(restoreLanguage);
+    toolbar->addStretch();
+    layout->addLayout(toolbar);
+    connect(restoreLanguage, qOverload<int>(&QComboBox::currentIndexChanged), this, &MnemonicDialog::updateRestoreState);
+
+    restoreWords = new QPlainTextEdit();
+    restoreWords->setPlaceholderText(tr("word1 word2 word3 ..."));
+    restoreWords->setTabChangesFocus(true);
+    restoreWords->setFixedHeight(110);
+    layout->addWidget(restoreWords);
+    connect(restoreWords, &QPlainTextEdit::textChanged, this, &MnemonicDialog::updateRestoreState);
+
+    restoreCounter = MakeLabel(QString(), "hintText");
+    layout->addWidget(restoreCounter);
+
+    layout->addSpacing(4);
+    layout->addWidget(MakeLabel(tr("Address type of the wallet being restored"), "sectionLabel"));
+    layout->addWidget(createAddressTypeChooser(restoreTypeCards, restoreType));
+    layout->addWidget(MakeLabel(tr("Choose the type the wallet was created with: each type derives its own addresses from the seed, "
+                                   "so restoring with a different type shows a different wallet."),
+                                "hintText"));
+
+    layout->addSpacing(4);
+    layout->addWidget(createPassphraseField(restorePassphrase,
+        tr("Only if the wallet was created with an extension word.")));
+
+    restoreError = MakeLabel(QString(), "errorText");
+    restoreError->hide();
+    layout->addWidget(restoreError);
+
+    QPushButton* back = new QPushButton(tr("Back"));
+    back->setAutoDefault(false);
+    restoreButton = new QPushButton(tr("Restore wallet"));
+    restoreButton->setProperty("primary", true);
+    restoreButton->setAutoDefault(false);
+    connect(back, &QPushButton::clicked, this, [this] { showPage(0); });
+    connect(restoreButton, &QPushButton::clicked, this, &MnemonicDialog::restoreWallet);
+    QHBoxLayout* buttons = new QHBoxLayout();
+    buttons->addWidget(back);
+    buttons->addStretch();
+    buttons->addWidget(restoreButton);
+    layout->addStretch(1);
+    layout->addLayout(buttons);
+
+    updateRestoreState();
+    return page;
+}
+
+void MnemonicDialog::generateWords()
+{
+    createError->hide();
+    const SecureString words = CMnemonic::Generate(128, createLanguage->currentIndex());
+    std::fill(generatedWords.begin(), generatedWords.end(), '\0');
+    generatedWords.assign(words.begin(), words.end());
+
+    const QStringList list = QString::fromStdString(generatedWords).split(' ', Qt::SkipEmptyParts);
+    for (int i = 0; i < wordLabels.size(); ++i) {
+        wordLabels[i]->setText(i < list.size() ? list[i] : QString());
+    }
+}
+
+void MnemonicDialog::updateCreateButton()
+{
+    createButton->setEnabled(confirmBackup->isChecked());
+}
+
+void MnemonicDialog::createWallet()
+{
+    const SecureString words(generatedWords.begin(), generatedWords.end());
+    if (!CMnemonic::Check(words, createLanguage->currentIndex())) {
+        createError->setText(tr("Words are not valid, please generate new words and try again."));
+        createError->show();
         return;
     }
 
-#if !TEST
-    my_address_type = CheckedAddressType(ui->addressTypePQRadio, ui->addressTypeEcdsaRadio);
-#endif
-
-    Q_EMIT allCloseRequested();
-};
-
-
-void MnemonicDialog2::on_generateButton_clicked()
-{
-    MnemonicDialog2::ui->lblHelp->clear();
-    int languageSelected = MnemonicDialog2::ui->languageSeedWords->currentIndex();
-    GenerateWords(languageSelected);
-};
-
-
-void MnemonicDialog2::GenerateWords(int languageSelected)
-{
-#if TEST
-    std::string str_words = "embark lawsuit town sunny forum churn amused gate ensuure smooth valley veteran";
-#else
-    SecureString words = CMnemonic::Generate(128, languageSelected);
-    std::string str_words = std::string(words.begin(), words.end());
-#endif
-    MnemonicDialog2::ui->seedwordsText->setPlainText(QString::fromStdString(str_words));
+    my_words = generatedWords;
+    my_passphrase = createPassphrase->text().toStdString();
+    my_address_type = ADDRESS_TYPES[createType];
+    accept();
 }
 
-// =========
-
-MnemonicDialog3::MnemonicDialog3(QWidget *parent) :
-    QFrame(parent),
-    ui(new Ui::MnemonicDialog3)
+void MnemonicDialog::updateRestoreState()
 {
-    ui->setupUi(this);
-
-    MnemonicDialog3::ui->seedwordsEdit->installEventFilter(this);
-
-    std::array<LanguageDetails, NUM_LANGUAGES_BIP39_SUPPORTED> languagesDetails = CMnemonic::GetLanguagesDetails();    
-   
-    for(int langNum = 0; langNum < NUM_LANGUAGES_BIP39_SUPPORTED; langNum++) {
-        MnemonicDialog3::ui->languageSeedWords->addItem(languagesDetails[langNum].label);
-    }
-    MnemonicDialog3::ui->languageSeedWords->installEventFilter(this);
-#if !TEST
-    CheckAddressType(ui->addressTypeLegacyRadio, ui->addressTypePQRadio, ui->addressTypeEcdsaRadio, PresetAddressType());
-#endif
-};
-
-bool MnemonicDialog3::eventFilter(QObject *obj, QEvent *ev)
-{
-    if (obj == MnemonicDialog3::ui->seedwordsEdit && ev->type() == QEvent::FocusIn)
-    {
-        // Clear invalid flag on focus
-        MnemonicDialog3::ui->lblHelp->clear();
-        MnemonicDialog3::ui->lblWarningJapanese->clear();
-    }
-    return QWidget::eventFilter(obj, ev);
+    restoreError->hide();
+    const QString words = NormalizedWords(restoreWords->toPlainText());
+    const int count = words.isEmpty() ? 0 : words.count(' ') + 1;
+    const bool validCount = count == 12 || count == 18 || count == 24;
+    const GUITheme::Tokens& theme = GUITheme::tokens();
+    const QString counted = count == 1 ? tr("1 word") : tr("%1 words").arg(count);
+    restoreCounter->setText(counted + QString::fromUtf8(" · ") + tr("12, 18 or 24 words"));
+    restoreCounter->setStyleSheet(validCount ? QString("color: %1;").arg(theme.success.name()) : QString());
+    restoreButton->setEnabled(count > 0);
 }
 
-
-MnemonicDialog3::~MnemonicDialog3()
+void MnemonicDialog::restoreWallet()
 {
-    delete ui;
-};
-
-void MnemonicDialog3::on_backButton_clicked()
-{
-    Q_EMIT updateMainWindowStackWidget(0);  // "emit" is not supported on older QT revsöU
-};
-
-void MnemonicDialog3::on_acceptButton_clicked()
-{
-    std::string words = MnemonicDialog3::ui->seedwordsEdit->toPlainText().toStdString();
-    std::string passphrase = MnemonicDialog3::ui->passphraseEdit->text().toStdString();
-
-    int languageSelected = MnemonicDialog3::ui->languageSeedWords->currentIndex();
-
-#if TEST
-    std::string my_words;
-    std::string my_passphrase;
-    int my_languageSelected;
-#endif
-    my_words = words;
-    my_passphrase = passphrase;
-    int my_languageSelected = languageSelected;
-
-#if TEST
-    // NOTE: default mnemonic passphrase is an empty string
-    if (my_words != "embark lawsuit town sunny forum churn amused gate ensuure smooth valley veteran") {
-#else
-    SecureString tmp(my_words.begin(), my_words.end());
-
-    // NOTE: default mnemonic passphrase is an empty string
-    if (!CMnemonic::Check(tmp, my_languageSelected)) {
-#endif
-
-        MnemonicDialog3::ui->lblHelp->setText(tr("Words are not valid, please check the words and the language, and try again."));
-        
-        if (CMnemonic::GetLanguagesDetails()[my_languageSelected].name == JAPANESE){
-            MnemonicDialog3::ui->lblWarningJapanese->setText(tr("In Japanese, please use standard space, ideographic japanese space is not supported."));
-        }else {
-            MnemonicDialog3::ui->lblWarningJapanese->clear();
-        }
-         
-        my_words.clear();
-        my_passphrase.clear();
-#if !TEST
-        my_address_type.reset();
-#endif
+    const std::string words = NormalizedWords(restoreWords->toPlainText()).toStdString();
+    const int language = restoreLanguage->currentIndex();
+    const SecureString check(words.begin(), words.end());
+    if (!CMnemonic::Check(check, language)) {
+        QString message = tr("Words are not valid, please check the words and the language, and try again.");
+        restoreError->setText(message);
+        restoreError->show();
         return;
     }
 
-#if !TEST
-    my_address_type = CheckedAddressType(ui->addressTypePQRadio, ui->addressTypeEcdsaRadio);
-#endif
-
-    Q_EMIT allCloseRequested();
-};
+    my_words = words;
+    my_passphrase = restorePassphrase->text().toStdString();
+    my_address_type = ADDRESS_TYPES[restoreType];
+    accept();
+}
