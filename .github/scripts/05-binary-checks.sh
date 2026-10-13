@@ -26,6 +26,7 @@ elif [[ ${OS} == "osx" ]]; then
     fi
     python3 "$GITHUB_WORKSPACE/contrib/mac-cross/verify.py" \
       --minimum "$OSX_MIN_VERSION" --sdk "$OSX_SDK_VERSION" \
+      --architecture "$MAC_ARCH" \
       --depends "$MAC_DEPENDS_PREFIX" --ar "$OSXCROSS_ROOT/bin/$MAC_HOST-ar" \
       --output "$MAC_WORKDIR/results/$(basename "$PWD")-verification.json" "${binaries[@]}"
 elif [[ ${OS} == "linux" || ${OS} == "linux-disable-wallet" ]]; then

@@ -16,9 +16,12 @@ redistributing sources or binaries, including when JIT is disabled.
 
 Build: src/Makefile.mcl.include. Required static library, Fp/Fr capacity 256/256,
 BN_SNARK1 only, no Xbyak/JIT, LLVM, BINT assembly, specialized MSM or external
-GMP. Baseline x86-64 flags; incompatible user ISA flags fail in mcl_config.h.
-Other architectures are outside the present integration scope. Only Linux x86-64
-has been tested here; this is not a claim of Windows/macOS validation.
+GMP. The same portable implementation targets baseline x86-64 or little-endian
+ARMv8-A; incompatible user ISA flags fail in mcl_config.h. Compiler flags are
+selected from the configured host CPU in configure.ac. Other architectures
+remain outside the integration scope. ARM64 functional validation runs the
+existing differential corpus and concurrent-initialization test under Linux
+QEMU with UBSan. Cross-compilation does not establish macOS runtime validation.
 
 Both compiled translation units use private `neurai_mcl_detail` and
 `neurai_cybozu_detail` namespaces through target-local preprocessing. Public

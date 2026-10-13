@@ -58,8 +58,11 @@ else
   CXXFLAGS_overridden=no
 fi
 AC_PROG_CXX
-AS_CASE([$host_cpu], [x86_64|amd64], [],
-  [AC_MSG_ERROR([The pinned NIP-018 mcl backend currently requires x86-64])])
+AS_CASE([$host_cpu],
+  [x86_64|amd64], [MCL_BASELINE_CXXFLAGS="-march=x86-64 -mtune=generic -mno-bmi -mno-bmi2 -mno-adx -mno-avx -mno-avx2"],
+  [aarch64|arm64], [MCL_BASELINE_CXXFLAGS="-mcpu=generic -march=armv8-a -mtune=generic"],
+  [AC_MSG_ERROR([The pinned NIP-018 mcl backend requires x86-64 or little-endian ARM64])])
+AC_SUBST(MCL_BASELINE_CXXFLAGS)
 
 dnl By default, libtool for mingw refuses to link static libs into a dll for
 dnl fear of mixing pic/non-pic objects, and import/export complications. Since

@@ -35,9 +35,10 @@ fi
 mkdir -p "$cross_source/tarballs"
 ln -sfn "$sdk_archive" "$cross_source/tarballs/MacOSX$sdk_version.sdk.tar.xz"
 export PATH="/usr/lib/llvm-18/bin:$PATH"
-if [[ ! -x "$OSXCROSS_ROOT/bin/x86_64-apple-darwin23.5-clang++" || "$sdk_version" != 14.5 ]]; then
+if [[ ! -x "$OSXCROSS_ROOT/bin/x86_64-apple-darwin23.5-clang++" || \
+      ! -x "$OSXCROSS_ROOT/bin/aarch64-apple-darwin23.5-clang++" || "$sdk_version" != 14.5 ]]; then
     (cd "$cross_source" && UNATTENDED=1 BUILD_FLAVOR=llvm ENABLE_REPLACEMENT_LIPO=0 \
-      ENABLE_ARCHS=x86_64 TARGET_DIR="$OSXCROSS_ROOT" OSX_VERSION_MIN="$OSX_MIN_VERSION" ./build.sh)
+      ENABLE_ARCHS="x86_64 arm64" TARGET_DIR="$OSXCROSS_ROOT" OSX_VERSION_MIN="$OSX_MIN_VERSION" ./build.sh)
 fi
 git -C "$cross_source" rev-parse HEAD > "$MAC_WORKDIR/results/osxcross-commit.txt"
 "$OSXCROSS_ROOT/bin/osxcross-conf" > "$MAC_WORKDIR/results/toolchain.txt"

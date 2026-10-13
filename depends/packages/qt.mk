@@ -47,7 +47,7 @@ $(package)_toolchain_opts_darwin = -DCMAKE_SYSTEM_NAME=Darwin \
   -DCMAKE_C_COMPILER=$(firstword $(host_CC)) \
   -DCMAKE_CXX_COMPILER=$(firstword $(host_CXX)) \
   -DCMAKE_OSX_SYSROOT=$(OSX_SDK) -DCMAKE_OSX_DEPLOYMENT_TARGET=$(OSX_MIN_VERSION) \
-  -DCMAKE_OSX_ARCHITECTURES=$(host_arch)
+  -DCMAKE_OSX_ARCHITECTURES=$(if $(filter aarch64,$(host_arch)),arm64,$(host_arch))
 ifneq ($(build_os),darwin)
 $(package)_toolchain_opts_darwin += -DQT_HOST_PATH=$(build_prefix) \
   -DQT_NO_APPLE_SDK_AND_XCODE_CHECK=ON

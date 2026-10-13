@@ -28,7 +28,8 @@ elif [[ ${OS} == "osx" ]]; then
     set -euo pipefail
     source "${GITHUB_WORKSPACE}/contrib/mac-cross/env.sh"
     mac_paths "$GITHUB_WORKSPACE"
-    if [[ ! -x "$OSXCROSS_ROOT/bin/osxcross-conf" ]]; then
+    if [[ ! -x "$OSXCROSS_ROOT/bin/osxcross-conf" ]] || \
+       { [[ "$MAC_ARCH" == arm64 ]] && ! compgen -G "$OSXCROSS_ROOT/bin/aarch64-apple-darwin*-clang++" >/dev/null; }; then
         "${GITHUB_WORKSPACE}/contrib/mac-cross/setup.sh"
     fi
     mac_environment "$GITHUB_WORKSPACE"

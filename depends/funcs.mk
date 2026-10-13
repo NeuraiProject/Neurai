@@ -173,7 +173,7 @@ $(1)_cmake += -DCMAKE_CXX_COMPILER_TARGET=$(host)
 ifeq ($(host_os),darwin)
 $(1)_cmake += -DCMAKE_OSX_SYSROOT=$(OSX_SDK)
 $(1)_cmake += -DCMAKE_OSX_DEPLOYMENT_TARGET=$(OSX_MIN_VERSION)
-$(1)_cmake += -DCMAKE_OSX_ARCHITECTURES=$(host_arch)
+$(1)_cmake += -DCMAKE_OSX_ARCHITECTURES=$(if $(filter aarch64,$(host_arch)),arm64,$(host_arch))
 endif
 endif
 endif

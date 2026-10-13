@@ -30,7 +30,7 @@ elif [[ ${OS} == "osx" ]]; then
     add_to_path "$MAC_DEPENDS_PREFIX/native/bin"
     add_to_path /usr/lib/llvm-18/bin
     if [[ -n "${GITHUB_ENV:-}" ]]; then
-        for variable in MAC_WORKDIR OSXCROSS_ROOT MAC_HOST OSX_SDK OSX_SDK_VERSION OSX_MIN_VERSION MAC_DEPENDS_PREFIX MAC_CONSENSUS_LIBS; do
+        for variable in MAC_WORKDIR MAC_ARCH OSXCROSS_ROOT MAC_HOST OSX_SDK OSX_SDK_VERSION OSX_MIN_VERSION MAC_DEPENDS_PREFIX MAC_CONSENSUS_LIBS; do
             printf '%s=%s\n' "$variable" "${!variable}" >> "$GITHUB_ENV"
         done
     fi

@@ -14,6 +14,7 @@ if [[ "$OS" == osx ]]; then
     mac_environment "$GITHUB_WORKSPACE"
     python3 "$GITHUB_WORKSPACE/contrib/mac-cross/package.py" \
       --source "$GITHUB_WORKSPACE" --build "$PWD" --depends "$MAC_DEPENDS_PREFIX" \
+      --architecture "$MAC_ARCH" \
       --minimum "$OSX_MIN_VERSION" --output "${MAC_RELEASE_DIR:-$PWD/release}"
     exit 0
 fi

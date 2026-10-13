@@ -54,11 +54,18 @@ jobs:
   build:
     needs: check-jobs
     runs-on: ubuntu-24.04
+    env:
+      MAC_ARCH: ${{ matrix.mac_arch || 'x86_64' }}
     strategy:
       matrix:
-       # No ARM entries (arm32v7, aarch64): configure requires x86-64 for the
-       # NIP-018 mcl backend, so they cannot build until that changes.
-       OS: [ 'windows', 'linux', 'linux-disable-wallet', 'osx' ]
+        include:
+          - OS: windows
+          - OS: linux
+          - OS: linux-disable-wallet
+          - OS: osx
+            mac_arch: x86_64
+          - OS: osx
+            mac_arch: arm64
 
     steps:
     - if: ${{ needs.check-jobs.outputs.should_skip != 'true' }}
@@ -86,9 +93,9 @@ jobs:
        # restored cache never matches and depends rebuilds on every run. A key
        # miss still restores the latest cache for this OS, and depends then
        # rebuilds only the packages that changed.
-       key: ubuntu-24.04-${{ MATRIX.OS }}-${{ hashFiles('depends/Makefile', 'depends/funcs.mk', 'depends/config.site.in', 'depends/hosts/**', 'depends/builders/**', 'depends/packages/**', 'depends/patches/**') }}
+       key: ubuntu-24.04-${{ MATRIX.OS }}-${{ matrix.mac_arch || 'native' }}-${{ hashFiles('depends/Makefile', 'depends/funcs.mk', 'depends/config.site.in', 'depends/hosts/**', 'depends/builders/**', 'depends/packages/**', 'depends/patches/**') }}
        restore-keys: |
-        ubuntu-24.04-${{ MATRIX.OS }}-
+        ubuntu-24.04-${{ MATRIX.OS }}-${{ matrix.mac_arch || 'native' }}-
       
     - if: ${{ needs.check-jobs.outputs.should_skip != 'true' }}
       name: Build dependencies.
@@ -122,5 +129,5 @@ jobs:
       name: Upload Artifacts to Job
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ MATRIX.OS }}
+        name: ${{ MATRIX.OS }}-${{ matrix.mac_arch || 'native' }}
         path: ${{ GITHUB.WORKSPACE }}/release

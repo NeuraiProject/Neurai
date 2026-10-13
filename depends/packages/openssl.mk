@@ -46,6 +46,7 @@ $(package)_config_opts_powerpc_linux=linux-generic32
 $(package)_config_opts_x86_64_darwin=AR=$($(package)_ar)
 $(package)_config_opts_x86_64_darwin+=RANLIB=$($(package)_ranlib)
 $(package)_config_opts_x86_64_darwin+=darwin64-x86_64-cc
+$(package)_config_opts_aarch64_darwin=AR=$($(package)_ar) RANLIB=$($(package)_ranlib) darwin64-arm64-cc
 
 $(package)_config_opts_x86_64_mingw32=mingw64
 $(package)_config_opts_i686_mingw32=mingw32

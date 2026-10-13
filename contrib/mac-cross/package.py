@@ -13,7 +13,7 @@ import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from verify import encoded_version, verify_binary
+from verify import CPU_TYPES, encoded_version, verify_binary
 
 
 def main():
@@ -21,13 +21,14 @@ def main():
     for name in ('source', 'build', 'depends', 'output'):
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--minimum', default='12.0')
+    parser.add_argument('--architecture', choices=CPU_TYPES, default='x86_64')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     config = (args.build / 'src/config/neurai-config.h').read_text()
     match = re.search(r'^#define PACKAGE_VERSION "([^"]+)"', config, re.MULTILINE)
     if not match:
         raise ValueError('Cannot read the configured project version')
-    name = f'neurai-{match[1]}-macos-x86_64'
+    name = f'neurai-{match[1]}-macos-{args.architecture}'
     stage = args.output / name
     if stage.exists():
         shutil.rmtree(stage)
@@ -38,7 +39,7 @@ def main():
         sources.append(test)
     minimum = encoded_version(args.minimum)
     sdk = encoded_version(os.environ.get('OSX_SDK_VERSION', '14.5'))
-    reports = [verify_binary(path, minimum, sdk) for path in sources]
+    reports = [verify_binary(path, minimum, sdk, args.architecture) for path in sources]
     for path in sources:
         shutil.copy2(path, stage / 'bin' / path.name)
     shutil.copy2(args.source / 'COPYING', stage / 'COPYING')
@@ -52,7 +53,7 @@ def main():
 
     gui = args.build / 'src/qt/neurai-qt'
     if gui.exists() and not os.environ.get('NO_QT'):
-        reports.append(verify_binary(gui, minimum, sdk))
+        reports.append(verify_binary(gui, minimum, sdk, args.architecture))
         bundle = stage / 'Neurai-Qt.app'
         contents = bundle / 'Contents'
         executable = contents / 'MacOS'
@@ -85,7 +86,7 @@ def main():
             if output.testzip() is not None:
                 raise ValueError('Application ZIP integrity check failed')
         packages.append(zipped)
-    report = {'version': match[1], 'architecture': 'x86_64', 'minimum_macos': args.minimum,
+    report = {'version': match[1], 'architecture': args.architecture, 'minimum_macos': args.minimum,
               'signed': False, 'runtime_tested_on_macos': False, 'binaries': reports,
               'packages': [{'path': str(path.resolve()), 'size_bytes': path.stat().st_size,
                             'sha256': hashlib.sha256(path.read_bytes()).hexdigest()} for path in packages]}
