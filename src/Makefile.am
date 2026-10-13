@@ -296,6 +296,7 @@ libneurai_server_a_SOURCES = \
   rpc/mining.cpp \
   rpc/misc.cpp \
   rpc/net.cpp \
+  rpc/privacypool.cpp \
   rpc/rawtransaction.cpp \
   rpc/rewards.cpp \
   rpc/safemode.cpp \

@@ -1177,6 +1177,76 @@ exactly as in NIP-043 §8. DOMAIN binds the network genesis and UNIQUE issuance
 outpoint; the transfer scripts are compared in full. This is a
 state-transition integration test, not a private pool or an audited application.
 
+### Privacy pool history RPC prototype
+
+`getprivacypoolinfo pool (limit)` and
+`getprivacypoolupdates pool (cursor limit)` provide public state-thread history
+without registering pools, listing them in a public directory, or sending a
+viewing key. A caller supplies `pool = {"txid": birth_txid, "vout": birth_output}`
+from its locally pinned deployment. Each birth outpoint has a distinct `pool_id`
+bound to the network genesis, even if multiple instances share contract code.
+
+The prototype follows AuthScript v1 states with an unchanged commitment and,
+when present, the same asset transfer name and amount. It finds the spending
+input and successor output rather than assuming either has index zero. C6 XNA
+and ordinary-asset instances fit this transport. Arbitrary creators can use
+their own commitments, circuit keys and private manifests. Contracts that rotate
+commitments, split state into several successors, or encrypt the continuation
+rule need a profile-specific adapter. The returned
+`profile = "authscript-v1-state-thread"` describes this transport;
+`privacy_profile = null` means the node has not inferred or certified a privacy
+protocol. Wallets still pin the deployment and interpret its complete witnesses.
+
+Both methods require `-spentindex` and `-txindex` with readable historical
+transactions. They reuse the existing confirmed indexes, without a new on-chain
+registry, consensus rule or disk index. `indexed_height` is the captured active
+chain height covered by those synchronous indexes. Mempool spends are excluded.
+
+`getprivacypoolinfo` reports the birth, immutable commitment, optional thread
+asset, captured snapshot and current public state. Queries default to 100
+transitions and allow 1 through 1000. If the limit is reached, `has_more = true`
+and `current_state = null`: `last_state` is only the verified page boundary,
+and `next_cursor` continues from it. A result is not a private wallet balance.
+
+`getprivacypoolupdates` starts at birth when `cursor` is null. Each update carries
+its sequence, txid, wtxid, height, block hash, spent outpoint, spending input,
+successor state, full raw transaction and every input witness stack. Pages also
+have a 1 MiB budget for raw transaction bytes; JSON hex and duplicated witness
+fields make wire responses larger. A single larger transaction is rejected by
+this prototype rather than silently omitted.
+
+Pass `next_cursor` unchanged to the next query. While `has_more` is true, pages
+share one fixed chain snapshot and exclude transitions confirmed above it.
+After a completed page, its cursor starts an incremental query at the latest
+tip. Unknown fields, unrelated births, fabricated positions or sequence numbers,
+and reorganized snapshots are rejected. The node checks ancestry on a cache
+miss, including after restart; it does not trust a caller-selected state just
+because the commitment matches. This prototype bounds that validation to 10000
+transitions and caches up to 4096 verified positions in memory. A persistent
+index would remove that fallback cost for long histories. Wallet checkpoints
+must retain canonical block anchors and recover from reorgs independently.
+
+If a spending transaction has no matching successor, the method includes that
+transaction and returns `continuation = "not_found"`, a null current state and
+a terminal transport cursor. This describes the end of the recognizable
+thread, not proof that an arbitrary contract has closed. Several matching
+successors produce an explicit ambiguity error.
+
+Private note ownership, decryption, nullifier derivation and balance calculation
+remain in the wallet. Knowledge of a private manifest is not enforced as an RPC
+access restriction: anyone who knows the birth can request the public on-chain
+data. The RPC endpoint's ordinary authentication still applies. Querying one
+pool reveals that pool to the provider; these methods do not conceal network
+metadata or prove history completeness against a malicious RPC provider.
+
+`test/functional/rpc_privacypool.py` tests unregistered threads, unrelated births
+with identical code, nonzero input/output indexes, exact witnesses, count and
+byte limits, fixed snapshots, suffix-only refreshes, restart and reorg recovery.
+`contrib/privacypool/review_c6.py` checks exact raw/witness equality and real
+reorganizations on disposable clones of previously validated C6 XNA and asset
+chains. Benchmark reports distinguish localhost measurements from deliberately
+added per-call latency; the latter is a model, not a public-network measurement.
+
 
 ## NIP-044 AuthScript trees (initial integration)
 

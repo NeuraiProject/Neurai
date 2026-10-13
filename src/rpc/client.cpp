@@ -29,6 +29,11 @@ public:
  */
 static const CRPCConvertParam vRPCConvertParams[] =
 {
+    { "getprivacypoolinfo", 0, "pool" },
+    { "getprivacypoolinfo", 1, "limit" },
+    { "getprivacypoolupdates", 0, "pool" },
+    { "getprivacypoolupdates", 1, "cursor" },
+    { "getprivacypoolupdates", 2, "limit" },
     { "issue", 1, "qty" },
     { "issue", 4, "units" },
     { "issue", 5, "reissuable" },

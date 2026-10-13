@@ -27,6 +27,8 @@ void RegisterAssetRPCCommands(CRPCTable &tableRPC);
 void RegisterMessageRPCCommands(CRPCTable &tableRPC);
 /** Register rewards RPC commands */
 void RegisterRewardsRPCCommands(CRPCTable &tableRPC);
+/** Register public privacy-pool state-thread transport commands */
+void RegisterPrivacyPoolRPCCommands(CRPCTable &tableRPC);
 
 static inline void RegisterAllCoreRPCCommands(CRPCTable &t)
 {
@@ -38,6 +40,7 @@ static inline void RegisterAllCoreRPCCommands(CRPCTable &t)
     RegisterAssetRPCCommands(t);
     RegisterMessageRPCCommands(t);
     RegisterRewardsRPCCommands(t);
+    RegisterPrivacyPoolRPCCommands(t);
 }
 
 #endif
