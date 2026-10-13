@@ -165,7 +165,7 @@ public:
         return result;
     }
 
-    bool Lock();
+    virtual bool Lock();
 
     virtual bool AddCryptedKey(const CPubKey &vchPubKey, const std::vector<unsigned char> &vchCryptedSecret);
     virtual bool AddCryptedWords(const uint256& hash, const std::vector<unsigned char> &vchCryptedWords);

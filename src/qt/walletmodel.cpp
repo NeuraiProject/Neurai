@@ -887,9 +887,9 @@ QString WalletModel::getMyWords() const
     if (wallet->IsLocked())
         return tr("Error: Wallet locked");
 
-    std::vector<unsigned char> vchWords;
-    std::vector<unsigned char> vchPassphrase;
-    std::vector<unsigned char> vchSeed;
+    SecureVector vchWords;
+    SecureVector vchPassphrase;
+    SecureVector vchSeed;
     uint256 hash;
 
     // Populate

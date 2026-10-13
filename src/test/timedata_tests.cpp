@@ -119,10 +119,10 @@ BOOST_AUTO_TEST_CASE(out_of_range_median_resets_offset_and_warns_once)
     for (unsigned int i = 5; i <= 20; ++i) warnings += data.AddSample(TimePeer(i), 1000, 300);
     BOOST_CHECK_EQUAL(data.Offset(), 0);
     BOOST_CHECK_EQUAL(warnings, 1U);
-    TimeOffsetData near;
-    BOOST_CHECK(!near.AddSample(TimePeer(1), 60, 300));
-    for (unsigned int i = 2; i <= 8; ++i) BOOST_CHECK(!near.AddSample(TimePeer(i), 1000, 300));
-    BOOST_CHECK_EQUAL(near.Offset(), 0);
+    TimeOffsetData near_limit;
+    BOOST_CHECK(!near_limit.AddSample(TimePeer(1), 60, 300));
+    for (unsigned int i = 2; i <= 8; ++i) BOOST_CHECK(!near_limit.AddSample(TimePeer(i), 1000, 300));
+    BOOST_CHECK_EQUAL(near_limit.Offset(), 0);
 }
 
 BOOST_AUTO_TEST_CASE(extreme_samples_cannot_overflow_median_bounds)

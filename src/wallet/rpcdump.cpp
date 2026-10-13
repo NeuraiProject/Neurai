@@ -758,9 +758,9 @@ UniValue dumpwallet(const JSONRPCRequest& request)
 		{
             CWalletDB walletdb(pwallet->GetDBHandle());
 
-            std::vector<unsigned char> vchWords;
-            std::vector<unsigned char> vchPassphrase;
-            std::vector<unsigned char> vchSeed;
+            SecureVector vchWords;
+            SecureVector vchPassphrase;
+            SecureVector vchSeed;
             uint256 hash;
 
             pwallet->GetBip39Data(hash, vchWords, vchPassphrase, vchSeed);
@@ -928,9 +928,9 @@ UniValue getmasterkeyinfo(const JSONRPCRequest& request)
         {
             CWalletDB walletdb(pwallet->GetDBHandle());
 
-            std::vector<unsigned char> vchWords;
-            std::vector<unsigned char> vchPassphrase;
-            std::vector<unsigned char> vchSeed;
+            SecureVector vchWords;
+            SecureVector vchPassphrase;
+            SecureVector vchSeed;
             uint256 hash;
 
             pwallet->GetBip39Data(hash, vchWords, vchPassphrase, vchSeed);

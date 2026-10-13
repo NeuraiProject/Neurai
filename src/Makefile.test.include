@@ -203,6 +203,7 @@ NEURAI_TESTS += \
   wallet/test/depin_subasset_wallet_tests.cpp \
   wallet/test/wallet_tests.cpp \
   wallet/test/pqwallet_guard_tests.cpp \
+  wallet/test/wallet_lock_tests.cpp \
   wallet/test/crypto_tests.cpp
 endif
 
@@ -227,6 +228,10 @@ test_test_neurai_LDADD += $(LIBNEURAI_CONSENSUS) $(LIBNEURAI_CRYPTO) $(BDB_LIBS)
 # so it cannot live here. If the repeated listing ever stops resolving the refs, re-introduce the
 # group through an AC_SUBST'd variable so automake does not scan the literal flag.
 test_test_neurai_LDADD += $(LIBNEURAI_CONSENSUS) $(LIBNEURAI_CRYPTO)
+if TARGET_WINDOWS
+# Boost.Filesystem's unique_path() uses Windows CNG for test-directory names.
+test_test_neurai_LDADD += -lbcrypt
+endif
 test_test_neurai_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS) -static
 
 if ENABLE_ZMQ

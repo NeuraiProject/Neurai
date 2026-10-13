@@ -292,6 +292,8 @@ CXpqpub CWallet::GenerateXpqpub(uint32_t chain, uint32_t count, uint32_t offset)
 
 CExtKeyPQ CWallet::GetMasterExtKeyPQ() const
 {
+    if (IsLocked())
+        throw std::runtime_error(std::string(__func__) + ": PQ key derivation requires an unlocked wallet");
     // PQ keys derive exclusively from the BIP44 (BIP39) seed, which is 64
     // bytes. An empty seed would make SetSeed() HMAC an empty message under a
     // fixed public key, producing the SAME master key for every wallet; a
@@ -588,7 +590,7 @@ bool CWallet::LoadVchSeed(const std::vector<unsigned char> &vchSeed)
     return CCryptoKeyStore::AddVchSeed(vchSeed);
 }
 
-void CWallet::GetBip39Data(uint256& hash, std::vector<unsigned char> &vchWords, std::vector<unsigned char> &vchPassphrase, std::vector<unsigned char>& vchSeed)
+void CWallet::GetBip39Data(uint256& hash, SecureVector& vchWords, SecureVector& vchPassphrase, SecureVector& vchSeed)
 {
     CCryptoKeyStore::GetBip39Data(hash, vchWords, vchPassphrase, vchSeed);
 }
@@ -694,6 +696,15 @@ bool CWallet::RemoveWatchOnly(const CScript &dest)
 bool CWallet::LoadWatchOnly(const CScript &dest)
 {
     return CCryptoKeyStore::AddWatchOnly(dest);
+}
+
+bool CWallet::Lock()
+{
+    LOCK(cs_wallet);
+    // Do not erase an unencrypted wallet if the keystore cannot lock it.
+    if (!SetCrypted()) return false;
+    hdChain.ClearSensitiveData();
+    return CCryptoKeyStore::Lock();
 }
 
 bool CWallet::Unlock(const SecureString& strWalletPassphrase)
@@ -2042,7 +2053,7 @@ CPubKey CWallet::GenerateNewSeed()
 	if (!newHdChain.SetMnemonic(vchMnemonic, vchMnemonicPassphrase, vchSeed))
 		throw std::runtime_error(std::string(__func__) + ": SetMnemonic failed");
 
-	g_vchSeed = std::vector<unsigned char>(vchSeed.begin(), vchSeed.end());
+	g_vchSeed = vchSeed;
 
 	CPubKey seed(vchSeed.begin(), vchSeed.end());
 	newHdChain.seed_id = seed.GetID();

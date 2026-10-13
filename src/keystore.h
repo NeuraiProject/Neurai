@@ -12,6 +12,7 @@
 #include "script/script.h"
 #include "script/standard.h"
 #include "sync.h"
+#include "support/allocators/secure.h"
 
 #include <boost/signals2/signal.hpp>
 #include <map>
@@ -99,9 +100,9 @@ protected:
     AuthScriptSpendDataMap mapAuthScriptSpendData;
 
     uint256 nWordHash;
-    std::vector<unsigned char> vchWords;
-    std::vector<unsigned char> vchPassphrase;
-    std::vector<unsigned char> g_vchSeed;
+    SecureVector vchWords;
+    SecureVector vchPassphrase;
+    SecureVector g_vchSeed;
 
 public:
     bool AddKeyPubKey(const CKey& key, const CPubKey &pubkey) override;
@@ -155,7 +156,7 @@ public:
     bool AddWords(const uint256& p_hash, const std::vector<unsigned char>& p_vchWords);
     bool AddPassphrase(const std::vector<unsigned char>& p_vchPassphrase);
     bool AddVchSeed(const std::vector<unsigned char>& p_vchSeed);
-    void GetBip39Data(uint256& p_hash, std::vector<unsigned char>& p_vchWords, std::vector<unsigned char>& p_vchPassphrase, std::vector<unsigned char>& p_vchSeed);
+    void GetBip39Data(uint256& p_hash, SecureVector& p_vchWords, SecureVector& p_vchPassphrase, SecureVector& p_vchSeed);
 };
 
 typedef std::vector<unsigned char, secure_allocator<unsigned char> > CKeyingMaterial;

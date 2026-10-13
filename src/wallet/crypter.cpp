@@ -166,11 +166,13 @@ bool CCryptoKeyStore::Lock()
 
     {
         LOCK(cs_KeyStore);
-        vMasterKey.clear();
+        // clear() retains the allocation. Releasing secure vectors scrubs
+        // their full capacity, including bytes left by an earlier resize.
+        CKeyingMaterial().swap(vMasterKey);
+        SecureVector().swap(vchWords);
+        SecureVector().swap(vchPassphrase);
+        SecureVector().swap(g_vchSeed);
     }
-
-    vchWords.clear();
-    vchPassphrase.clear();
 
     NotifyStatusChanged(this);
     return true;
@@ -200,12 +202,6 @@ bool CCryptoKeyStore::Unlock(const CKeyingMaterial& vMasterKeyIn)
             if (fDecryptionThoroughlyChecked)
                 break;
         }
-        if (vchCryptedBip39Words.size() || vchCryptedBip39Passphrase.size() || vchCryptedBip39VchSeed.size()) {
-            if (!DecryptBip39(vMasterKeyIn)) {
-                LogPrintf("Failed to decrypt bip 39 data");
-                assert(false);
-            }
-        }
         if (keyPass && keyFail)
         {
             LogPrintf("The wallet is probably corrupted: Some keys decrypt but not all.\n");
@@ -213,6 +209,12 @@ bool CCryptoKeyStore::Unlock(const CKeyingMaterial& vMasterKeyIn)
         }
         if (keyFail || !keyPass)
             return false;
+        if (vchCryptedBip39Words.size() || vchCryptedBip39Passphrase.size() || vchCryptedBip39VchSeed.size()) {
+            if (!DecryptBip39(vMasterKeyIn)) {
+                LogPrintf("Failed to decrypt bip 39 data");
+                return false;
+            }
+        }
         vMasterKey = vMasterKeyIn;
         fDecryptionThoroughlyChecked = true;
     }
@@ -396,22 +398,22 @@ bool CCryptoKeyStore::DecryptBip39(const CKeyingMaterial& vMasterKeyIn)
             return false;
         }
 
-        vchWords = std::vector<unsigned char>(vchDecryptedWords.begin(), vchDecryptedWords.end());
-
         CKeyingMaterial vchDecryptedVchSeed;
         if (!DecryptSecret(vMasterKeyIn, vchCryptedBip39VchSeed, nWordHash, vchDecryptedVchSeed)) {
             return false;
         }
 
-        g_vchSeed = std::vector<unsigned char>(vchDecryptedVchSeed.begin(), vchDecryptedVchSeed.end());
-
+        CKeyingMaterial vchDecryptedPassphrase;
         if (!vchCryptedBip39Passphrase.empty()) {
-            CKeyingMaterial vchDecryptedPassphrase;
             if (!DecryptSecret(vMasterKeyIn, vchCryptedBip39Passphrase, nWordHash, vchDecryptedPassphrase)) {
                 return false;
             }
-            vchPassphrase = std::vector<unsigned char>(vchDecryptedPassphrase.begin(), vchDecryptedPassphrase.end());
         }
+        // Publish only a complete successful decryption. Failure leaves the
+        // existing state unchanged and the temporary plaintext is scrubbed.
+        vchWords.swap(vchDecryptedWords);
+        g_vchSeed.swap(vchDecryptedVchSeed);
+        vchPassphrase.swap(vchDecryptedPassphrase);
     }
 
     return true;

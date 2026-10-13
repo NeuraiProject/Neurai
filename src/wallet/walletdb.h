@@ -112,6 +112,14 @@ public:
 
     void SetSeedFromSeedId();
 
+    //! Transient creation-time copies; these fields are not serialized.
+    void ClearSensitiveData()
+    {
+        SecureVector().swap(vchMnemonic);
+        SecureVector().swap(vchMnemonicPassphrase);
+        SecureVector().swap(vchSeed);
+    }
+
     void SetNull()
     {
         nVersion = CHDChain::CURRENT_VERSION;

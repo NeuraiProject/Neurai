@@ -42,9 +42,9 @@ bool DeriveDepinPoolKeys(CWallet* pwallet, CKey& privKey, CPubKey& pubkey,
 
     {
         uint256 hash;
-        std::vector<unsigned char> vchWords;
-        std::vector<unsigned char> vchPassphrase;
-        std::vector<unsigned char> vchSeed;
+        SecureVector vchWords;
+        SecureVector vchPassphrase;
+        SecureVector vchSeed;
 
         pwallet->GetBip39Data(hash, vchWords, vchPassphrase, vchSeed);
 

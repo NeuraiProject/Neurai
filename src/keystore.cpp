@@ -167,29 +167,31 @@ bool CBasicKeyStore::AddWords(const uint256& p_hash, const std::vector<unsigned 
 {
     LOCK(cs_KeyStore);
     nWordHash = p_hash;
-    vchWords = p_vchWords;
+    vchWords = SecureVector(p_vchWords.begin(), p_vchWords.end());
     return true;
 }
 
 bool CBasicKeyStore::AddPassphrase(const std::vector<unsigned char>& p_vchPassphrase)
 {
     LOCK(cs_KeyStore);
-    vchPassphrase = p_vchPassphrase;
+    vchPassphrase = SecureVector(p_vchPassphrase.begin(), p_vchPassphrase.end());
     return true;
 }
 
-void CBasicKeyStore::GetBip39Data(uint256& p_hash, std::vector<unsigned char>& p_vchWords, std::vector<unsigned char>& p_vchPassphrase, std::vector<unsigned char>& p_vchSeed)
+void CBasicKeyStore::GetBip39Data(uint256& p_hash, SecureVector& p_vchWords, SecureVector& p_vchPassphrase, SecureVector& p_vchSeed)
 {
     LOCK(cs_KeyStore);
     p_hash = nWordHash;
-    p_vchWords = vchWords;
-    p_vchPassphrase = vchPassphrase;
-    p_vchSeed = g_vchSeed;
+    // Moving fresh secure buffers also scrubs an output's previous allocation
+    // when a caller reuses it after the wallet has been locked.
+    p_vchWords = SecureVector(vchWords);
+    p_vchPassphrase = SecureVector(vchPassphrase);
+    p_vchSeed = SecureVector(g_vchSeed);
 }
 
 bool CBasicKeyStore::AddVchSeed(const std::vector<unsigned char>& p_vchSeed)
 {
     LOCK(cs_KeyStore);
-    g_vchSeed = p_vchSeed;
+    g_vchSeed = SecureVector(p_vchSeed.begin(), p_vchSeed.end());
     return true;
 }

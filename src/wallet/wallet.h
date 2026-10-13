@@ -986,7 +986,7 @@ public:
     bool LoadCryptedPassphrase(const std::vector<unsigned char> &vchCryptedPassphrase);
     bool LoadCryptedVchSeed(const std::vector<unsigned char> &vchCryptedVchSeed);
     bool LoadWords(const uint256& hash, const std::vector<unsigned char> &vchWords);
-    void GetBip39Data(uint256& hash, std::vector<unsigned char> &vchWords, std::vector<unsigned char> &vchPassphrase, std::vector<unsigned char>& vchSeed);
+    void GetBip39Data(uint256& hash, SecureVector& vchWords, SecureVector& vchPassphrase, SecureVector& vchSeed);
     bool LoadPassphrase(const std::vector<unsigned char> &vchPassphrase);
     bool LoadVchSeed(const std::vector<unsigned char> &vchSeed);
     bool AddCScript(const CScript& redeemScript) override;
@@ -1016,6 +1016,7 @@ public:
     //! Holds a timestamp at which point the wallet is scheduled (externally) to be relocked. Caller must arrange for actual relocking to occur via Lock().
     int64_t nRelockTime;
 
+    bool Lock() override;
     bool Unlock(const SecureString& strWalletPassphrase);
     bool ChangeWalletPassphrase(const SecureString& strOldWalletPassphrase, const SecureString& strNewWalletPassphrase);
     bool EncryptWallet(const SecureString& strWalletPassphrase);
