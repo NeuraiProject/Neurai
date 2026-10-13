@@ -42,6 +42,7 @@ LIBNEURAICONSENSUS=libneuraiconsensus.la
 endif
 if ENABLE_WALLET
 LIBNEURAI_WALLET=libneurai_wallet.a
+LIBNEURAI_PRIVACY=privacy/libneurai_privacy.a privacy/libneurai_privacy_prover.a
 endif
 
 $(LIBSECP256K1): $(wildcard secp256k1/src/*) $(wildcard secp256k1/include/*)
@@ -57,6 +58,7 @@ EXTRA_LIBRARIES += \
   $(LIBNEURAI_SERVER) \
   $(LIBNEURAI_CLI) \
   $(LIBNEURAI_WALLET) \
+  $(LIBNEURAI_PRIVACY) \
   $(LIBNEURAI_ZMQ)
 
 lib_LTLIBRARIES = $(LIBNEURAICONSENSUS)
@@ -346,6 +348,73 @@ libneurai_wallet_a_SOURCES = \
   wallet/walletdb.cpp \
   wallet/bip39.cpp \
   $(NEURAI_CORE_H)
+
+# privacy pool client (C6 XNA): wallet-side proving, scanning and transaction
+# construction for the Qt wallet. Not used by consensus.
+privacy_libneurai_privacy_a_CPPFLAGS = $(AM_CPPFLAGS) $(NEURAI_INCLUDES)
+privacy_libneurai_privacy_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+privacy_libneurai_privacy_a_CFLAGS = $(AM_CFLAGS) $(PIE_FLAGS)
+privacy_libneurai_privacy_a_SOURCES = \
+  monocypher/monocypher.c \
+  monocypher/monocypher.h \
+  privacy/c6_chain.cpp \
+  privacy/c6_config.cpp \
+  privacy/c6_config.h \
+  privacy/c6_ops.cpp \
+  privacy/c6_ops.h \
+  privacy/c6_scan.cpp \
+  privacy/c6_scan.h \
+  privacy/c6_wallet.cpp \
+  privacy/c6_wallet.h \
+  privacy/c6_world.cpp \
+  privacy/c6_world.h \
+  privacy/circom_witness.cpp \
+  privacy/circom_witness.h \
+  privacy/notes.cpp \
+  privacy/notes.h \
+  privacy/nzk.cpp \
+  privacy/nzk.h \
+  privacy/primitives.cpp \
+  privacy/primitives.h \
+  privacy/publication.cpp \
+  privacy/publication.h \
+  wasm3/m3_api_defs.h \
+  wasm3/m3_bind.c \
+  wasm3/m3_bind.h \
+  wasm3/m3_code.c \
+  wasm3/m3_code.h \
+  wasm3/m3_compile.c \
+  wasm3/m3_compile.h \
+  wasm3/m3_config.h \
+  wasm3/m3_config_platforms.h \
+  wasm3/m3_core.c \
+  wasm3/m3_core.h \
+  wasm3/m3_emit.c \
+  wasm3/m3_emit.h \
+  wasm3/m3_env.c \
+  wasm3/m3_env.h \
+  wasm3/m3_exception.h \
+  wasm3/m3_exec.c \
+  wasm3/m3_exec.h \
+  wasm3/m3_exec_defs.h \
+  wasm3/m3_function.c \
+  wasm3/m3_function.h \
+  wasm3/m3_info.c \
+  wasm3/m3_info.h \
+  wasm3/m3_math_utils.h \
+  wasm3/m3_module.c \
+  wasm3/m3_optimize.c \
+  wasm3/m3_parse.c \
+  wasm3/wasm3.h \
+  wasm3/wasm3_defs.h
+
+# The Groth16 prover uses the pinned mcl backend with the same private
+# namespaces and baseline flags as the consensus verifier.
+privacy_libneurai_privacy_prover_a_CPPFLAGS = $(crypto_libneurai_mcl_a_CPPFLAGS) $(NEURAI_INCLUDES)
+privacy_libneurai_privacy_prover_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS) $(MCL_BASELINE_CXXFLAGS)
+privacy_libneurai_privacy_prover_a_SOURCES = \
+  privacy/groth16_prover.cpp \
+  privacy/groth16_prover.h
 
 # crypto primitives library
 #
@@ -661,6 +730,7 @@ CLEANFILES += zmq/*.gcda zmq/*.gcno
 CLEANFILES += obj/build.h
 
 EXTRA_DIST = $(CTAES_DIST)
+EXTRA_DIST += monocypher/LICENCE.md monocypher/README.neurai.md wasm3/LICENSE wasm3/README.neurai.md
 
 
 config/neurai-config.h: config/stamp-h1

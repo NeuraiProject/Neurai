@@ -105,6 +105,8 @@ public Q_SLOTS:
     void gotoRestrictedAssetsPage();
     void gotoDepinAssetsPage();
     /** XNA END */
+    /** Switch to the privacy pool page */
+    void gotoPrivacyPage();
 };
 
 #endif // NEURAI_QT_WALLETFRAME_H

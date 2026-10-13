@@ -94,6 +94,14 @@ using namespace boost::placeholders;
 #define QTversionPreFiveEleven
 #endif
 
+namespace {
+/** The privacy pool page serves the pinned testnet pool instance only. */
+bool PrivacyPoolNetwork()
+{
+    return GetParams().NetworkIDString() == CBaseChainParams::TESTNET;
+}
+} // namespace
+
 const std::string NeuraiGUI::DEFAULT_UIPLATFORM =
 #if defined(Q_OS_MAC)
         "macosx"
@@ -386,11 +394,13 @@ void NeuraiGUI::createActions()
     depinAssetAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_9));
     tabGroup->addAction(depinAssetAction);
 
-    // Placeholder for the privacy pool page: shown, but disabled until it is implemented
+    // Privacy pool (C6 XNA): testnet only for now
     privacyAction = new QAction(platformStyle->NavigationIcon(":/icons/nav_privacy"), tr("&Privacy"), this);
-    privacyAction->setStatusTip(tr("Privacy pool (coming soon)"));
+    privacyAction->setStatusTip(PrivacyPoolNetwork() ? tr("Private XNA notes in the privacy pool") : tr("Privacy pool: available on testnet only"));
     privacyAction->setToolTip(privacyAction->statusTip());
+    privacyAction->setCheckable(true);
     privacyAction->setEnabled(false);
+    tabGroup->addAction(privacyAction);
 
     // Asset pages share a single navigation entry with a drop-down menu.
     // The menu holds plain proxies so that it shows no radio indicators.
@@ -452,6 +462,8 @@ void NeuraiGUI::createActions()
     connect(restrictedAssetAction, SIGNAL(triggered()), this, SLOT(gotoRestrictedAssetsPage()));
     connect(depinAssetAction, SIGNAL(triggered()), this, SLOT(showNormalIfMinimized()));
     connect(depinAssetAction, SIGNAL(triggered()), this, SLOT(gotoDepinAssetsPage()));
+    connect(privacyAction, SIGNAL(triggered()), this, SLOT(showNormalIfMinimized()));
+    connect(privacyAction, SIGNAL(triggered()), this, SLOT(gotoPrivacyPage()));
     // TODO add messaging actions to go to messaging page when clicked
     // TODO add voting actions to go to voting page when clicked
 #endif // ENABLE_WALLET
@@ -1215,6 +1227,7 @@ void NeuraiGUI::setWalletActionsEnabled(bool enabled)
     restrictedAssetAction->setEnabled(false);
     depinAssetAction->setEnabled(false);
     /** XNA END */
+    privacyAction->setEnabled(enabled && PrivacyPoolNetwork());
 }
 
 void NeuraiGUI::createTrayIcon(const NetworkStyle *networkStyle)
@@ -1395,6 +1408,12 @@ void NeuraiGUI::gotoDepinAssetsPage()
     depinAssetAction->setChecked(true);
     if (walletFrame) walletFrame->gotoDepinAssetsPage();
 };
+
+void NeuraiGUI::gotoPrivacyPage()
+{
+    privacyAction->setChecked(true);
+    if (walletFrame) walletFrame->gotoPrivacyPage();
+}
 /** XNA END */
 #endif // ENABLE_WALLET
 

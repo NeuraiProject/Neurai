@@ -154,6 +154,8 @@ QT_MOC_CPP = \
   qt/moc_myrestrictedassettablemodel.cpp \
   qt/moc_peertablemodel.cpp \
   qt/moc_paymentserver.cpp \
+  qt/moc_privacypage.cpp \
+  qt/moc_privacypoolmodel.cpp \
   qt/moc_qvalidatedlineedit.cpp \
   qt/moc_qvaluecombobox.cpp \
   qt/moc_receivecoinsdialog.cpp \
@@ -247,6 +249,8 @@ NEURAI_QT_H = \
   qt/paymentserver.h \
   qt/peertablemodel.h \
   qt/platformstyle.h \
+  qt/privacypage.h \
+  qt/privacypoolmodel.h \
   qt/qvalidatedlineedit.h \
   qt/qvaluecombobox.h \
   qt/receivecoinsdialog.h \
@@ -342,6 +346,7 @@ RES_ICONS = \
   qt/res/icons/nav_depin.png \
   qt/res/icons/nav_assets.png \
   qt/res/icons/nav_privacy.png \
+  qt/res/icons/qr_logo.png \
   qt/res/icons/status_sync.png \
   qt/res/icons/status_lock.png \
   qt/res/icons/status_unlock.png \
@@ -354,6 +359,7 @@ RES_ICONS = \
   qt/res/icons/ui_chevron_down.png \
   qt/res/icons/ui_chevron_up.png \
   qt/res/icons/ui_check.png \
+  qt/res/icons/ui_copy.png \
   qt/res/icons/quit.png \
   qt/res/icons/receive.png \
   qt/res/icons/receive_selected.png \
@@ -429,6 +435,8 @@ NEURAI_QT_WALLET_CPP = \
   qt/myrestrictedassetrecord.cpp \
   qt/paymentrequestplus.cpp \
   qt/paymentserver.cpp \
+  qt/privacypage.cpp \
+  qt/privacypoolmodel.cpp \
   qt/receivecoinsdialog.cpp \
   qt/receiverequestdialog.cpp \
   qt/recentrequeststablemodel.cpp \
@@ -504,7 +512,7 @@ endif
 if TARGET_WINDOWS
   qt_neurai_qt_SOURCES += $(NEURAI_RC)
 endif
-qt_neurai_qt_LDADD = qt/libneuraiqt.a $(LIBNEURAI_SERVER)
+qt_neurai_qt_LDADD = qt/libneuraiqt.a $(LIBNEURAI_PRIVACY) $(LIBNEURAI_SERVER)
 if ENABLE_WALLET
 qt_neurai_qt_LDADD += $(LIBNEURAI_WALLET)
 endif

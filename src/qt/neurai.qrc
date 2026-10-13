@@ -87,6 +87,7 @@
         <file alias="nav_depin">res/icons/nav_depin.png</file>
         <file alias="nav_assets">res/icons/nav_assets.png</file>
         <file alias="nav_privacy">res/icons/nav_privacy.png</file>
+        <file alias="qr_logo">res/icons/qr_logo.png</file>
         <file alias="status_sync">res/icons/status_sync.png</file>
         <file alias="status_lock">res/icons/status_lock.png</file>
         <file alias="status_unlock">res/icons/status_unlock.png</file>
@@ -99,6 +100,7 @@
         <file alias="ui_chevron_down">res/icons/ui_chevron_down.png</file>
         <file alias="ui_chevron_up">res/icons/ui_chevron_up.png</file>
         <file alias="ui_check">res/icons/ui_check.png</file>
+        <file alias="ui_copy">res/icons/ui_copy.png</file>
     </qresource>
     <qresource prefix="/movies">
         <file alias="spinner-000">res/movies/spinner-000.png</file>

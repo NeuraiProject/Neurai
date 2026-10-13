@@ -1,0 +1,4 @@
+# Proving files (~64 MB) are distributed separately, not stored in git.
+# The wallet checks each one against the digests pinned in c6-testnet.json.
+*.wasm
+*.zkey

@@ -24,6 +24,7 @@ class AssetsDialog;
 class CreateAssetDialog;
 class ReissueAssetDialog;
 class RestrictedAssetsDialog;
+class PrivacyPage;
 
 QT_BEGIN_NAMESPACE
 class QModelIndex;
@@ -82,6 +83,7 @@ private:
     ReissueAssetDialog *manageAssetsPage;
     RestrictedAssetsDialog *restrictedAssetsPage;
     RestrictedAssetsDialog *depinAssetsPage;
+    PrivacyPage *privacyPage;
     /** XNA END */
 
     /** Add a page inside a scroll area: it fills the view when there is room and
@@ -145,6 +147,8 @@ public Q_SLOTS:
     void gotoManageAssetsPage();
     void gotoRestrictedAssetsPage();
     void gotoDepinAssetsPage();
+    /** Switch to the privacy pool page */
+    void gotoPrivacyPage();
 
     /** XNA END */
 

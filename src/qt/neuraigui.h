@@ -319,6 +319,8 @@ private Q_SLOTS:
     void gotoRestrictedAssetsPage();
     void gotoDepinAssetsPage();
     /** XNA END */
+    /** Switch to the privacy pool page */
+    void gotoPrivacyPage();
 
 #endif // ENABLE_WALLET
     /** Show configuration dialog */
