@@ -1671,6 +1671,10 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
 
     // sanitize comments per BIP-0014, format user agent and check total size
     std::vector<std::string> uacomments;
+#ifdef CLIENT_BUILD_TAG
+    // Build tag chosen when compiling (--with-build-tag), announced before any -uacomment
+    uacomments.push_back(CLIENT_BUILD_TAG);
+#endif
     for (const std::string& cmt : gArgs.GetArgs("-uacomment")) {
         if (cmt != SanitizeString(cmt, SAFE_CHARS_UA_COMMENT))
             return InitError(strprintf(_("User Agent comment (%s) contains unsafe characters."), cmt));

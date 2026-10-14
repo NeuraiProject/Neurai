@@ -333,6 +333,18 @@ AC_ARG_WITH([daemon],
   [build_neuraid=$withval],
   [build_neuraid=yes])
 
+AC_ARG_WITH([build-tag],
+  [AS_HELP_STRING([--with-build-tag=TAG],
+  [identify this build in the user agent sent to peers, e.g. --with-build-tag=20261014-28d3403 announces /Neurai:2.0.0(20261014-28d3403)/ (default is none)])],
+  [build_tag=$withval],
+  [build_tag=no])
+if test "x$build_tag" != xno && test "x$build_tag" != xyes && test "x$build_tag" != x; then
+  if echo "$build_tag" | grep -q '[[^A-Za-z0-9 .,;:?@_-]]'; then
+    AC_MSG_ERROR([--with-build-tag may only contain letters, digits, spaces and . , ; : ? @ _ -])
+  fi
+  AC_DEFINE_UNQUOTED([CLIENT_BUILD_TAG], ["$build_tag"], [Build tag announced as the first user agent comment])
+fi
+
 use_pkgconfig=yes
 case $host in
   *mingw*)
