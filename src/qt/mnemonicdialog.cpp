@@ -7,12 +7,15 @@
 #include <qt/mnemonicdialog.h>
 
 #include <qt/guitheme.h>
+#include <random.h>
+#include <support/cleanse.h>
 #include <util.h>
 #include <wallet/bip39.h>
 #include <wallet/wallet.h>
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QCursor>
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -24,20 +27,31 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QPlainTextEdit>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QScreen>
 #include <QScrollArea>
 #include <QStackedWidget>
 #include <QStyle>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <functional>
 
 namespace {
 
 const int NUM_WORDS = 12;
+// Extra randomness is collected for this long before new words are shown.
+const int ENTROPY_MS = 2000;
+const int ENTROPY_TICK_MS = 15;
+
+int64_t HighResolutionTicks()
+{
+    return std::chrono::high_resolution_clock::now().time_since_epoch().count();
+}
 
 // Address types in the order of the chooser cards
 const std::array<WalletAddressType, 3> ADDRESS_TYPES = {WalletAddressType::LEGACY, WalletAddressType::PQ, WalletAddressType::ECDSA};
@@ -247,9 +261,8 @@ MnemonicDialog::~MnemonicDialog()
 
 void MnemonicDialog::showPage(int index)
 {
+    // The words are generated only when the user asks for them.
     pages->setCurrentIndex(index);
-    if (index == 1 && generatedWords.empty())
-        generateWords();
 }
 
 QWidget* MnemonicDialog::createWelcomePage()
@@ -341,20 +354,40 @@ QWidget* MnemonicDialog::createNewWalletPage()
     QWidget* page = NewPage(layout);
 
     layout->addWidget(MakeLabel(tr("Your recovery words"), "setupTitle"));
-    layout->addWidget(MakeLabel(tr("Write down these 12 words in order and keep them somewhere safe. "
-                                   "They are the only way to restore your wallet."), "setupSubtitle"));
+    layout->addWidget(MakeLabel(tr("Press Generate words to create your 12 recovery words, then write them down in order "
+                                   "and keep them somewhere safe. They are the only way to restore your wallet."), "setupSubtitle"));
 
-    // Language and regenerate
+    // Language and generate
     createLanguage = LanguageCombo();
-    QPushButton* regenerate = new QPushButton(tr("New words"));
-    regenerate->setAutoDefault(false);
+    generateButton = new QPushButton(tr("Generate words"));
+    generateButton->setProperty("primary", true);
+    generateButton->setAutoDefault(false);
     QHBoxLayout* toolbar = new QHBoxLayout();
     toolbar->addWidget(createLanguage);
     toolbar->addStretch();
-    toolbar->addWidget(regenerate);
+    toolbar->addWidget(generateButton);
     layout->addLayout(toolbar);
-    connect(regenerate, &QPushButton::clicked, this, &MnemonicDialog::generateWords);
-    connect(createLanguage, qOverload<int>(&QComboBox::currentIndexChanged), this, &MnemonicDialog::generateWords);
+    connect(generateButton, &QPushButton::clicked, this, &MnemonicDialog::generateWords);
+    // Another language shows the same words (same entropy) in that word list.
+    connect(createLanguage, qOverload<int>(&QComboBox::currentIndexChanged), this, &MnemonicDialog::showWords);
+
+    // Extra randomness collection, shown while it runs
+    entropyBar = new QProgressBar();
+    entropyBar->setRange(0, 100);
+    entropyBar->setTextVisible(false);
+    entropyBar->setFixedHeight(8);
+    entropyBar->setStyleSheet(QString("QProgressBar { min-height: 8px; max-height: 8px; border-radius: 4px; background-color: %1; }"
+                                      "QProgressBar::chunk { border-radius: 4px; background-color: %2; }")
+                                  .arg(CssColor(GUITheme::tokens().border), CssColor(GUITheme::tokens().primary)));
+    entropyBar->hide();
+    layout->addWidget(entropyBar);
+    entropyNote = MakeLabel(tr("Adding extra randomness from timing jitter and mouse movement to the system random generator…"),
+                            "hintText");
+    entropyNote->hide();
+    layout->addWidget(entropyNote);
+    entropyTimer = new QTimer(this);
+    entropyTimer->setInterval(ENTROPY_TICK_MS);
+    connect(entropyTimer, &QTimer::timeout, this, &MnemonicDialog::collectEntropy);
 
     // Words as numbered chips, 4 columns x 3 rows
     QGridLayout* grid = new QGridLayout();
@@ -489,24 +522,102 @@ QWidget* MnemonicDialog::createRestorePage()
 
 void MnemonicDialog::generateWords()
 {
+    if (entropyTimer->isActive()) return;
     createError->hide();
-    const SecureString words = CMnemonic::Generate(128, createLanguage->currentIndex());
-    std::fill(generatedWords.begin(), generatedWords.end(), '\0');
-    generatedWords.assign(words.begin(), words.end());
+    // New words invalidate the confirmation given for the previous ones.
+    entropy.clear();
+    showWords();
+    confirmBackup->setChecked(false);
+    generateButton->setEnabled(false);
+    createLanguage->setEnabled(false);
 
+    entropyPool.Reset();
+    const std::string tag = "Neurai/BIP39/extra-entropy/v1";
+    entropyPool.Write(reinterpret_cast<const unsigned char*>(tag.data()), tag.size());
+    entropyClock.start();
+    entropyBar->setValue(0);
+    entropyBar->show();
+    entropyNote->show();
+    entropyTimer->start();
+}
+
+void MnemonicDialog::collectEntropy()
+{
+    // CPU timing jitter: how long a short busy loop takes depends on caches,
+    // interrupts and the scheduler, so the low bits of each duration are
+    // unpredictable. The cursor position adds whatever the user does meanwhile.
+    for (int i = 0; i < 64; ++i) {
+        const int64_t start = HighResolutionTicks();
+        volatile uint64_t x = static_cast<uint64_t>(start);
+        for (int k = 0; k < 64 + (start & 31); ++k) x = x * 6364136223846793005ULL + 1442695040888963407ULL;
+        const int64_t delta = HighResolutionTicks() - start;
+        entropyPool.Write(reinterpret_cast<const unsigned char*>(&delta), sizeof(delta));
+    }
+    const QPoint cursor = QCursor::pos();
+    const int64_t sample[3] = {cursor.x(), cursor.y(), HighResolutionTicks()};
+    entropyPool.Write(reinterpret_cast<const unsigned char*>(sample), sizeof(sample));
+
+    const qint64 elapsed = entropyClock.elapsed();
+    entropyBar->setValue(static_cast<int>(std::min<qint64>(100, elapsed * 100 / ENTROPY_MS)));
+    if (elapsed < ENTROPY_MS) return;
+    entropyTimer->stop();
+
+    // Final entropy = SHA-512(tag, system strong randomness, collected samples):
+    // as unpredictable as the best of both sources.
+    unsigned char system[32], extra[CSHA512::OUTPUT_SIZE], mixed[CSHA512::OUTPUT_SIZE];
+    GetStrongRandBytes(system, sizeof(system));
+    entropyPool.Finalize(extra);
+    const std::string tag = "Neurai/BIP39/entropy/v1";
+    CSHA512()
+        .Write(reinterpret_cast<const unsigned char*>(tag.data()), tag.size())
+        .Write(system, sizeof(system))
+        .Write(extra, sizeof(extra))
+        .Finalize(mixed);
+    entropy.assign(mixed, mixed + 32);
+    memory_cleanse(system, sizeof(system));
+    memory_cleanse(extra, sizeof(extra));
+    memory_cleanse(mixed, sizeof(mixed));
+    entropyPool.Reset();
+
+    entropyBar->hide();
+    entropyNote->hide();
+    generateButton->setText(tr("New words"));
+    generateButton->setProperty("primary", false);
+    generateButton->style()->unpolish(generateButton);
+    generateButton->style()->polish(generateButton);
+    generateButton->setEnabled(true);
+    createLanguage->setEnabled(true);
+    showWords();
+}
+
+void MnemonicDialog::showWords()
+{
+    std::fill(generatedWords.begin(), generatedWords.end(), '\0');
+    generatedWords.clear();
+    if (entropy.size() >= 16) {
+        // 128 bits of entropy (plus a 4-bit checksum) give the 12 words.
+        const SecureString words = CMnemonic::FromData(entropy, 16, createLanguage->currentIndex());
+        generatedWords.assign(words.begin(), words.end());
+    }
     const QStringList list = QString::fromStdString(generatedWords).split(' ', Qt::SkipEmptyParts);
     for (int i = 0; i < wordLabels.size(); ++i) {
         wordLabels[i]->setText(i < list.size() ? list[i] : QString());
     }
+    updateCreateButton();
 }
 
 void MnemonicDialog::updateCreateButton()
 {
-    createButton->setEnabled(confirmBackup->isChecked());
+    createButton->setEnabled(confirmBackup->isChecked() && !generatedWords.empty() && !entropyTimer->isActive());
 }
 
 void MnemonicDialog::createWallet()
 {
+    if (generatedWords.empty()) {
+        createError->setText(tr("Generate your recovery words first."));
+        createError->show();
+        return;
+    }
     const SecureString words(generatedWords.begin(), generatedWords.end());
     if (!CMnemonic::Check(words, createLanguage->currentIndex())) {
         createError->setText(tr("Words are not valid, please generate new words and try again."));

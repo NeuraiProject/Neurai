@@ -7,7 +7,11 @@
 #ifndef NEURAI_QT_MNEMONICDIALOG_H
 #define NEURAI_QT_MNEMONICDIALOG_H
 
+#include "crypto/sha512.h"
+#include "support/allocators/secure.h"
+
 #include <QDialog>
+#include <QElapsedTimer>
 #include <QList>
 
 #include <string>
@@ -18,8 +22,10 @@ class QFrame;
 class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
+class QProgressBar;
 class QPushButton;
 class QStackedWidget;
+class QTimer;
 
 /** First-run wallet setup: create a wallet from new BIP39 words or restore one.
  *  On success it fills my_words, my_passphrase and my_address_type (wallet.h)
@@ -34,7 +40,11 @@ public:
     ~MnemonicDialog();
 
 private Q_SLOTS:
+    /** Starts two seconds of extra randomness collection; the words follow. */
     void generateWords();
+    void collectEntropy();
+    /** Shows the words of the current entropy in the selected language. */
+    void showWords();
     void createWallet();
     void restoreWallet();
     void updateRestoreState();
@@ -54,6 +64,13 @@ private:
 
     // New wallet page
     QComboBox *createLanguage = nullptr;
+    QPushButton *generateButton = nullptr;
+    QProgressBar *entropyBar = nullptr;
+    QLabel *entropyNote = nullptr;
+    QTimer *entropyTimer = nullptr;
+    QElapsedTimer entropyClock;
+    CSHA512 entropyPool;
+    SecureVector entropy; //!< seed of the shown words (BIP39 uses the first 16 bytes)
     QList<QLabel*> wordLabels;
     QLineEdit *createPassphrase = nullptr;
     QList<QFrame*> createTypeCards;
