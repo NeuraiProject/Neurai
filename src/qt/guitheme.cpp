@@ -23,37 +23,39 @@ const char* const FONT_FAMILY = "Inter";
 namespace
 {
 
-// Same values as the DaisyUI themes of the web wallet (src/styles/tailwind.css).
+// Accent and status colours follow the DaisyUI themes of the web wallet
+// (src/styles/tailwind.css). The neutrals give cards a clear step from the
+// window: warm "sand" in light mode, raised slate cards in dark mode.
 const Tokens LIGHT_TOKENS = {
-    /* page */         QColor("#f4f4f6"),
-    /* surface */      QColor("#ffffff"),
-    /* surfaceAlt */   QColor("#f9fafb"),
-    /* border */       QColor("#e5e7eb"),
-    /* fieldBorder */  QColor("#d1d5db"),
+    /* page */         QColor("#ece8e2"),
+    /* surface */      QColor("#fffdfa"),
+    /* surfaceAlt */   QColor("#f6f2ec"),
+    /* border */       QColor("#ddd5ca"),
+    /* fieldBorder */  QColor("#d0c6b9"),
     /* text */         QColor("#111827"),
-    /* textMuted */    QColor("#6b7280"),
+    /* textMuted */    QColor("#67615a"),
     /* primary */      QColor("#f97316"),
     /* primaryHover */ QColor("#ea6c10"),
     /* primaryText */  QColor("#ffffff"),
-    /* accent */       QColor("#fff7ed"),
+    /* accent */       QColor("#fdeedf"),
     /* success */      QColor("#16a34a"),
     /* warning */      QColor("#d97706"),
     /* error */        QColor("#ef4444"),
-    /* shadow */       QColor(17, 24, 39, 34),
+    /* shadow */       QColor(68, 52, 36, 36),
 };
 
 const Tokens DARK_TOKENS = {
-    /* page */         QColor("#111827"),
-    /* surface */      QColor("#1f2937"),
-    /* surfaceAlt */   QColor("#273343"),
-    /* border */       QColor("#374151"),
-    /* fieldBorder */  QColor("#4b5563"),
+    /* page */         QColor("#090c11"),
+    /* surface */      QColor("#252f3e"),
+    /* surfaceAlt */   QColor("#2c3748"),
+    /* border */       QColor("#3c495c"),
+    /* fieldBorder */  QColor("#4f5d72"),
     /* text */         QColor("#f9fafb"),
     /* textMuted */    QColor("#9ca3af"),
     /* primary */      QColor("#f97316"),
     /* primaryHover */ QColor("#ea6c10"),
     /* primaryText */  QColor("#ffffff"),
-    /* accent */       QColor("#40342f"),
+    /* accent */       QColor("#45362b"),
     /* success */      QColor("#22c55e"),
     /* warning */      QColor("#f59e0b"),
     /* error */        QColor("#f87171"),

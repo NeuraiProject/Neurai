@@ -24,6 +24,7 @@
 #include <QComboBox>
 #include <QFontMetrics>
 #include <QFrame>
+#include <QGraphicsDropShadowEffect>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -162,6 +163,7 @@ QLabel* Muted(const QString& text = QString())
     return label;
 }
 
+/** A card with the same border, radius and shadow as the other pages. */
 QFrame* Card(QLayout* layout)
 {
     QFrame* card = new QFrame;
@@ -169,6 +171,7 @@ QFrame* Card(QLayout* layout)
     layout->setContentsMargins(18, 16, 18, 16);
     layout->setSpacing(10);
     GUITheme::makeCard(card);
+    card->setGraphicsEffect(GUIUtil::getShadowEffect());
     return card;
 }
 
