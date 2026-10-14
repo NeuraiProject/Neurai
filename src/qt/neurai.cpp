@@ -693,6 +693,7 @@ int main(int argc, char *argv[])
     // - Needs to be done before createOptionsModel
 
     // Check for -testnet or -regtest parameter (GetParams() calls are only valid after this clause)
+    OptionsModel::ApplyStartOnTestnet();
     try {
         SelectParams(ChainNameFromCommandLine(), true);
     } catch(std::exception &e) {

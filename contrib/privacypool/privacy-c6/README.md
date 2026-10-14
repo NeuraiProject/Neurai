@@ -34,8 +34,10 @@ same directory.
 
 ## Use
 
-Run `neurai-qt -testnet` with a wallet created from recovery words (English
-BIP39), open **Privacy** and press **Open private wallet**. The private wallet
+Run `neurai-qt -testnet` (or tick **Use the test network (testnet) from the
+next start** in Wallet → Options and restart) with a wallet created from
+recovery words (English BIP39), open **Privacy** and press **Open private
+wallet**. The private wallet
 is derived from the words as in NeuraiWallet (NeuraiZK/v2, family from the
 wallet address type), so both wallets show the same notes.
 

@@ -38,6 +38,16 @@
         </widget>
        </item>
        <item>
+        <widget class="QCheckBox" name="startOnTestnet">
+         <property name="toolTip">
+          <string>Open %1 on the test network (testnet) from the next start. Testnet has its own data folder and wallet. Uncheck it to go back to mainnet. -testnet or -regtest on the command line or in the configuration file take precedence.</string>
+         </property>
+         <property name="text">
+          <string>Use the &amp;test network (testnet) from the next start</string>
+         </property>
+        </widget>
+       </item>
+       <item>
         <layout class="QHBoxLayout" name="horizontalLayout_2_Main">
          <item>
           <widget class="QLabel" name="databaseCacheLabel">

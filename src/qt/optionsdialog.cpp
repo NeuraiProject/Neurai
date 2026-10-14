@@ -77,6 +77,7 @@ OptionsDialog::OptionsDialog(QWidget *parent, bool enableWallet) :
 
     ui->neuraiAtStartup->setToolTip(ui->neuraiAtStartup->toolTip().arg(tr(PACKAGE_NAME)));
     ui->neuraiAtStartup->setText(ui->neuraiAtStartup->text().arg(tr(PACKAGE_NAME)));
+    ui->startOnTestnet->setToolTip(ui->startOnTestnet->toolTip().arg(tr(PACKAGE_NAME)));
 
     ui->openNeuraiConfButton->setToolTip(ui->openNeuraiConfButton->toolTip().arg(tr(PACKAGE_NAME)));
 
@@ -163,6 +164,7 @@ void OptionsDialog::setModel(OptionsModel *_model)
     /* warn when one of the following settings changes by user action (placed here so init via mapper doesn't trigger them) */
 
     /* Main */
+    connect(ui->startOnTestnet, SIGNAL(clicked(bool)), this, SLOT(showRestartWarning()));
     connect(ui->databaseCache, SIGNAL(valueChanged(int)), this, SLOT(showRestartWarning()));
     connect(ui->threadsScriptVerif, SIGNAL(valueChanged(int)), this, SLOT(showRestartWarning()));
     /* Wallet */
@@ -182,6 +184,7 @@ void OptionsDialog::setMapper()
 {
     /* Main */
     mapper->addMapping(ui->neuraiAtStartup, OptionsModel::StartAtStartup);
+    mapper->addMapping(ui->startOnTestnet, OptionsModel::StartOnTestnet);
     mapper->addMapping(ui->threadsScriptVerif, OptionsModel::ThreadsScriptVerif);
     mapper->addMapping(ui->databaseCache, OptionsModel::DatabaseCache);
 

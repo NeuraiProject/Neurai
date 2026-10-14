@@ -30,6 +30,24 @@
 #include <QSettings>
 #include <QStringList>
 
+// The network to start on is read before the network-specific settings exist,
+// so it is kept in the settings of the default (mainnet) application name.
+static const char* const START_ON_TESTNET_KEY = "fStartOnTestnet";
+static bool fTestnetFromSettings = false;
+
+static QSettings StartupSettings()
+{
+    return QSettings(QAPP_ORG_NAME, QAPP_APP_NAME_DEFAULT);
+}
+
+void OptionsModel::ApplyStartOnTestnet()
+{
+    if (gArgs.IsArgSet("-testnet") || gArgs.IsArgSet("-regtest"))
+        return;
+    if (StartupSettings().value(START_ON_TESTNET_KEY, false).toBool())
+        fTestnetFromSettings = gArgs.SoftSetBoolArg("-testnet", true);
+}
+
 OptionsModel::OptionsModel(QObject *parent, bool resetSettings) :
     QAbstractListModel(parent)
 {
@@ -171,6 +189,14 @@ void OptionsModel::Init(bool resetSettings)
         addOverriddenOption("-lang");
 
     language = settings.value("language").toString();
+
+    // Network
+    if (!fTestnetFromSettings) {
+        if (gArgs.IsArgSet("-testnet"))
+            addOverriddenOption("-testnet");
+        if (gArgs.IsArgSet("-regtest"))
+            addOverriddenOption("-regtest");
+    }
 }
 
 /** Helper function to copy contents from one QSettings to another.
@@ -211,6 +237,9 @@ void OptionsModel::Reset()
 
     // Set that this was reset
     settings.setValue("fReset", true);
+
+    // Start on mainnet again
+    StartupSettings().remove(START_ON_TESTNET_KEY);
 
     // default setting for OptionsModel::StartAtStartup - disabled
     if (GUIUtil::GetStartOnSystemStartup())
@@ -301,6 +330,8 @@ QVariant OptionsModel::data(const QModelIndex & index, int role) const
             return fCustomFeeFeatures;
         case DarkModeEnabled:
             return fDarkModeEnabled;
+        case StartOnTestnet:
+            return StartupSettings().value(START_ON_TESTNET_KEY, false);
         default:
             return QVariant();
         }
@@ -474,6 +505,14 @@ bool OptionsModel::setData(const QModelIndex & index, const QVariant & value, in
             fDarkModeEnabled = value.toBool();
             settings.setValue("fDarkModeEnabled", fDarkModeEnabled);
             break;
+        case StartOnTestnet: {
+            QSettings startup = StartupSettings();
+            if (startup.value(START_ON_TESTNET_KEY, false).toBool() != value.toBool()) {
+                startup.setValue(START_ON_TESTNET_KEY, value.toBool());
+                setRestartRequired(true);
+            }
+        }
+        break;
         default:
             break;
         }

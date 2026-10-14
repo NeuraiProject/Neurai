@@ -52,11 +52,17 @@ public:
         Listen,                 // bool
         CustomFeeFeatures,      // bool
         DarkModeEnabled,        // bool
+        StartOnTestnet,         // bool
         OptionIDRowCount,
     };
 
     void Init(bool resetSettings = false);
     void Reset();
+
+    /** Selects testnet for this start when the "start on testnet" option is on
+     *  and neither the command line nor the configuration file chooses a
+     *  network. Must be called before SelectParams(). */
+    static void ApplyStartOnTestnet();
 
     int rowCount(const QModelIndex & parent = QModelIndex()) const;
     QVariant data(const QModelIndex & index, int role = Qt::DisplayRole) const;
