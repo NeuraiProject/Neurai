@@ -6,6 +6,8 @@
 
 #include <qt/mnemonicdialog.h>
 
+#include <chainparams.h>
+#include <chainparamsbase.h>
 #include <qt/guitheme.h>
 #include <random.h>
 #include <support/cleanse.h>
@@ -53,18 +55,34 @@ int64_t HighResolutionTicks()
     return std::chrono::high_resolution_clock::now().time_since_epoch().count();
 }
 
-// Address types in the order of the chooser cards
-const std::array<WalletAddressType, 3> ADDRESS_TYPES = {WalletAddressType::LEGACY, WalletAddressType::PQ, WalletAddressType::ECDSA};
+// Address types in the order of the chooser cards: Legacy, Standard (strict ECDSA), Post-Quantum.
+const std::array<WalletAddressType, 3> ADDRESS_TYPES = {WalletAddressType::LEGACY, WalletAddressType::ECDSA, WalletAddressType::PQ};
 
-// The address type the dialog starts with: -addresstype, Legacy by default.
+// Standard and Post-Quantum wallets can be created only outside mainnet for now.
+bool StrictTypesAllowed()
+{
+    return GetParams().NetworkIDString() != CBaseChainParams::MAIN;
+}
+
+// The address type the dialog starts with: Legacy on mainnet; elsewhere
+// -addresstype if given, otherwise Standard.
 int PresetAddressTypeIndex()
 {
-    WalletAddressType type = DEFAULT_WALLET_ADDRESS_TYPE;
-    ParseWalletAddressType(gArgs.GetArg("-addresstype", WalletAddressTypeName(DEFAULT_WALLET_ADDRESS_TYPE)), type);
+    if (!StrictTypesAllowed()) return 0;
+    WalletAddressType type = WalletAddressType::ECDSA;
+    if (gArgs.IsArgSet("-addresstype")) ParseWalletAddressType(gArgs.GetArg("-addresstype", ""), type);
     for (size_t i = 0; i < ADDRESS_TYPES.size(); ++i) {
         if (ADDRESS_TYPES[i] == type) return i;
     }
-    return 0;
+    return 1;
+}
+
+QString AddressTypeHint()
+{
+    return StrictTypesAllowed()
+        ? QObject::tr("The address type is stored in the wallet when it is created and cannot be changed later.")
+        : QObject::tr("The address type is stored in the wallet when it is created and cannot be changed later. On mainnet "
+                      "only Legacy wallets can be created for now; Standard and Post-Quantum are available on testnet.");
 }
 
 QString CssColor(const QColor& color)
@@ -174,6 +192,8 @@ QString SetupStyleSheet()
         "QFrame#choiceCard { background-color: %1; border: 1px solid %4; border-radius: 12px; }"
         "QFrame#choiceCard:hover, QFrame#choiceCard:focus { border-color: %5; }"
         "QFrame#choiceCard[selected=\"true\"] { border: 2px solid %5; background-color: %6; }"
+        "QFrame#choiceCard:disabled { background-color: %8; border: 1px dashed %4; }"
+        "QFrame#choiceCard:disabled QLabel#cardTitle, QFrame#choiceCard:disabled QLabel#cardText { color: %3; }"
         "QLabel#cardIcon { background-color: %6; border-radius: 12px; }"
         "QLabel#cardTitle { color: %2; font-size: 15px; font-weight: 600; background: transparent; }"
         "QLabel#cardText { color: %3; font-size: 12px; background: transparent; }"
@@ -307,15 +327,21 @@ QWidget* MnemonicDialog::createAddressTypeChooser(QList<QFrame*>& cards, int& se
     row->setContentsMargins(0, 0, 0, 0);
     row->setSpacing(10);
 
-    const QString titles[] = {tr("Legacy"), tr("Post-Quantum"), tr("ECDSA")};
+    const bool strict = StrictTypesAllowed();
+    const QString titles[] = {tr("Legacy"), tr("Standard"), tr("Post-Quantum")};
     const QString descriptions[] = {
-        tr("Classic Base58 addresses (secp256k1). Default."),
-        tr("Quantum-resistant ML-DSA-44 (FIPS 204), witness v2."),
-        tr("secp256k1 signatures, strict witness v3 addresses."),
+        tr("Classic Base58 addresses (secp256k1)."),
+        // On mainnet the hint below the cards says why these two are disabled.
+        strict ? tr("secp256k1 signatures, strict addresses. Default.") : tr("secp256k1 signatures, strict addresses."),
+        tr("Quantum-resistant ML-DSA-44 (FIPS 204)."),
     };
     for (int i = 0; i < 3; ++i) {
         ChoiceCard* card = new ChoiceCard(titles[i], descriptions[i], QString(), false,
                                           [this, &cards, &selected, i] { selectAddressType(cards, selected, i); });
+        if (i > 0 && !strict) {
+            card->setEnabled(false);
+            card->setToolTip(tr("Only Legacy wallets can be created on mainnet for now."));
+        }
         cards << card;
         row->addWidget(card, 1);
     }
@@ -429,9 +455,7 @@ QWidget* MnemonicDialog::createNewWalletPage()
 
     layout->addWidget(MakeLabel(tr("Address type"), "sectionLabel"));
     layout->addWidget(createAddressTypeChooser(createTypeCards, createType));
-    layout->addWidget(MakeLabel(tr("The address type is stored in the wallet when it is created and cannot be changed later. "
-                                   "Post-Quantum and ECDSA addresses can only be used once the network activates them."),
-                                "hintText"));
+    layout->addWidget(MakeLabel(AddressTypeHint(), "hintText"));
 
     layout->addWidget(createPassphraseField(createPassphrase,
         tr("An extra word you choose and remember, which protects the 12 words. Write it down too.")));
@@ -627,7 +651,7 @@ void MnemonicDialog::createWallet()
 
     my_words = generatedWords;
     my_passphrase = createPassphrase->text().toStdString();
-    my_address_type = ADDRESS_TYPES[createType];
+    my_address_type = StrictTypesAllowed() ? ADDRESS_TYPES[createType] : WalletAddressType::LEGACY;
     accept();
 }
 
@@ -658,6 +682,6 @@ void MnemonicDialog::restoreWallet()
 
     my_words = words;
     my_passphrase = restorePassphrase->text().toStdString();
-    my_address_type = ADDRESS_TYPES[restoreType];
+    my_address_type = StrictTypesAllowed() ? ADDRESS_TYPES[restoreType] : WalletAddressType::LEGACY;
     accept();
 }
