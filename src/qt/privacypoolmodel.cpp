@@ -57,14 +57,20 @@ bool ReadFile(const QString& path, std::vector<uint8_t>& out)
 }
 
 /** Where the pool config and proving artifacts live: -privacypooldir, the
- *  network data directory, or next to the executable. */
+ *  network data directory, or next to the executable (on macOS, next to the
+ *  application bundle). */
 QString FindPoolDirectory()
 {
     QStringList candidates;
     const std::string arg = gArgs.GetArg("-privacypooldir", "");
     if (!arg.empty()) candidates << QString::fromStdString(arg);
     candidates << QString::fromStdString((GetDataDir() / "privacy-c6").string());
-    candidates << QCoreApplication::applicationDirPath() + "/privacy-c6";
+    const QString appDir = QCoreApplication::applicationDirPath();
+#ifdef Q_OS_MACOS
+    // The executable is in Neurai-Qt.app/Contents/MacOS; look beside the bundle.
+    candidates << QDir::cleanPath(appDir + "/../../../privacy-c6");
+#endif
+    candidates << appDir + "/privacy-c6";
     for (const QString& dir : candidates) {
         if (QFile::exists(dir + "/" + CONFIG_FILE)) return dir;
     }

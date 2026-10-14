@@ -23,8 +23,14 @@ commitment and birth state).
 The first folder that contains `c6-testnet.json`:
 
 1. `-privacypooldir=<folder>`
-2. `privacy-c6` inside the testnet data directory (for example `~/.neurai/testnet/privacy-c6`)
-3. `privacy-c6` next to the `neurai-qt` executable
+2. `privacy-c6` inside the testnet data directory: `~/.neurai/testnet/privacy-c6` on
+   Linux, `%APPDATA%\Neurai\testnet\privacy-c6` on Windows,
+   `~/Library/Application Support/Neurai/testnet/privacy-c6` on macOS
+3. `privacy-c6` next to the `neurai-qt` executable, or on macOS next to
+   `Neurai-Qt.app`
+
+The simplest way is to extract the wallet zip and this folder's zip into the
+same directory.
 
 ## Use
 
