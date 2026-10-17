@@ -164,6 +164,19 @@
              </widget>
             </item>
             <item>
+             <widget class="QPushButton" name="silentCodeButton">
+              <property name="toolTip">
+               <string>Show the reusable silent payment code of this wallet. Every payment to it arrives at a new address that only this wallet links to the code.</string>
+              </property>
+              <property name="text">
+               <string>Silent payment &amp;code</string>
+              </property>
+              <property name="autoDefault">
+               <bool>false</bool>
+              </property>
+             </widget>
+            </item>
+            <item>
              <widget class="QPushButton" name="clearButton">
               <property name="sizePolicy">
                <sizepolicy hsizetype="Minimum" vsizetype="Fixed">

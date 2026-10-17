@@ -29,7 +29,9 @@ double GetDifficulty(const CBlockIndex* blockindex = nullptr);
 void RPCNotifyBlockChange(bool ibd, const CBlockIndex *);
 
 /** Block description to JSON */
-UniValue blockToJSON(const CBlock& block, const CBlockIndex* blockindex, bool txDetails = false);
+class CBlockUndo;
+/** Block description to JSON. With blockUndo, each input also carries its spent output ("prevout"). */
+UniValue blockToJSON(const CBlock& block, const CBlockIndex* blockindex, bool txDetails = false, const CBlockUndo* blockUndo = nullptr);
 UniValue decodeblockToJSON(const CBlock& block);
 
 /** Mempool information to JSON */

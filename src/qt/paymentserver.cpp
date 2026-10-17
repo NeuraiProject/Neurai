@@ -14,6 +14,7 @@
 #include "policy/policy.h"
 #include "ui_interface.h"
 #include "util.h"
+#include "wallet/silentpayments.h"
 #include "wallet/wallet.h"
 
 #include <cstdlib>
@@ -436,7 +437,15 @@ void PaymentServer::handleURIOrFile(const QString& s)
             SendCoinsRecipient recipient;
             if (GUIUtil::parseNeuraiURI(s, &recipient))
             {
-                if (!IsValidDestinationString(recipient.address.toStdString())) {
+                // A silent payment code (NIP-047) of this network is a valid target too.
+                silentpayments::PaymentCode code;
+                std::string reason;
+                const bool isCode = silentpayments::DecodeCode(recipient.address.toStdString(), silentpayments::LocalNetworkId(), code, reason);
+                if (!isCode && reason == "network") {
+                    Q_EMIT message(tr("URI handling"), tr("This silent payment code belongs to another network: %1").arg(recipient.address),
+                        CClientUIInterface::MSG_ERROR);
+                }
+                else if (!isCode && !IsValidDestinationString(recipient.address.toStdString())) {
                     Q_EMIT message(tr("URI handling"), tr("Invalid payment address %1").arg(recipient.address),
                         CClientUIInterface::MSG_ERROR);
                 }

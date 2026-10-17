@@ -122,7 +122,7 @@ BOOST_AUTO_TEST_CASE(binding_chunks_and_profile_separation)
 
 BOOST_AUTO_TEST_CASE(independent_height_gate)
 {
-    Consensus::Params params;
+    Consensus::Params params{};
     params.nZKVerifyHeight = 0; params.nPoseidonWorkHeight = 0;
     params.nZKPortableTreeHeight = 120;
     BOOST_CHECK(!(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, params, false, 119) & SCRIPT_VERIFY_ZK_PORTABLE_TREE));

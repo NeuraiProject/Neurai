@@ -1,0 +1,11 @@
+# UndefinedBehaviorSanitizer suppressions (UBSAN_OPTIONS=suppressions=...).
+# Inherited code predating NIP-047, traced in the 2026-10-17 audit. Each entry
+# names the file of the existing diagnostic; new code must not be added here.
+# prevector keeps its size field in a packed union: swapping/moving a CScript
+# binds misaligned references, reported at prevector.h or, inlined, at
+# std::swap in <bits/move.h>. Upstream fix: drop the packing (core change).
+alignment:prevector.h
+alignment:move.h
+# Hash algorithms of the PoW/assets code (signed shifts, unaligned stores).
+shift-base:simd.c
+alignment:sph_types.h

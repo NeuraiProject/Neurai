@@ -2112,6 +2112,20 @@ UniValue signrawtransaction(const JSONRPCRequest& request)
             if (!key.IsValid())
                 throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Private key outside allowed range");
             tempKeystore.AddKey(key);
+            // A given key also signs its strict AuthScript output (witness v3
+            // for compressed ECDSA, v2 for PQ): the strict signer looks the key
+            // up through the commitment, which a bare key does not register.
+            const CPubKey pubkey = key.GetPubKey();
+            WitnessStrictAuthScript strict;
+            if (GetStrictAuthScriptDestinationForPubKey(pubkey, strict)) {
+                AuthScriptSpendData spendData;
+                spendData.auth_type = StrictAuthScriptAuthType(strict.version);
+                spendData.witnessScript = GetStrictAuthScriptTemplate();
+                spendData.pubkey = pubkey;
+                spendData.key_id = pubkey.GetID();
+                spendData.is_default_template = true;
+                tempKeystore.AddAuthScriptSpendData(strict.version, strict.commitment, spendData);
+            }
         }
     }
 #ifdef ENABLE_WALLET

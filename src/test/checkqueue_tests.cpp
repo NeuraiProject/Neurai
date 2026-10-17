@@ -508,11 +508,12 @@ BOOST_FIXTURE_TEST_SUITE(checkqueue_tests, TestingSetup)
             boost::thread_group tg;
             std::mutex m;
             std::condition_variable cv;
+            // Outlive the thread (joined below), which still reads them.
+            bool has_lock{false};
+            bool has_tried{false};
+            bool done{false};
+            bool done_ack{false};
             {
-                bool has_lock{false};
-                bool has_tried{false};
-                bool done{false};
-                bool done_ack{false};
                 std::unique_lock<std::mutex> l(m);
                 tg.create_thread([&]
                                  {

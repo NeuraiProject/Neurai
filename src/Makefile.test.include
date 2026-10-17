@@ -204,6 +204,8 @@ NEURAI_TESTS += \
   wallet/test/wallet_tests.cpp \
   wallet/test/pqwallet_guard_tests.cpp \
   wallet/test/wallet_lock_tests.cpp \
+  wallet/test/silentpayments_tests.cpp \
+  wallet/test/silentpayments_wallet_tests.cpp \
   wallet/test/crypto_tests.cpp
 endif
 

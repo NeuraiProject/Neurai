@@ -17,6 +17,7 @@
 #include <QVariant>
 
 class PlatformStyle;
+class QRImageWidget;
 class WalletModel;
 
 namespace Ui {
@@ -24,7 +25,10 @@ namespace Ui {
 }
 
 QT_BEGIN_NAMESPACE
+class QFrame;
+class QLabel;
 class QModelIndex;
+class QPlainTextEdit;
 QT_END_NAMESPACE
 
 /** Dialog for requesting payment of neurais */
@@ -64,8 +68,21 @@ private:
     QModelIndex selectedRow();
     void copyColumnToClipboard(int column);
 
+    //! NIP-047: card under the request form with the wallet's silent payment
+    //! code, opened and closed by the code button.
+    QFrame *silentCodeFrame = nullptr;
+    QRImageWidget *silentCodeQR = nullptr;
+    QLabel *silentCodeStatus = nullptr;
+    QPlainTextEdit *silentCodeText = nullptr;
+    QString silentCode;
+    void setupSilentCodeFrame();
+    QString silentCodeURI() const;
+    //! Fills the card; false (after a warning if `warn`) when there is no code.
+    bool fillSilentCodeFrame(bool warn);
+
 private Q_SLOTS:
     void on_receiveButton_clicked();
+    void on_silentCodeButton_clicked();
     void on_showRequestButton_clicked();
     void on_removeRequestButton_clicked();
     void on_recentRequestsView_doubleClicked(const QModelIndex &index);
@@ -76,6 +93,7 @@ private Q_SLOTS:
     void copyLabel();
     void copyMessage();
     void copyAmount();
+    void refreshSilentCodeFrame();
 };
 
 #endif // NEURAI_QT_RECEIVECOINSDIALOG_H

@@ -60,6 +60,7 @@ class CBlockPolicyEstimator;
 class CTxMemPool;
 class CValidationState;
 class CTxUndo;
+class CBlockUndo;
 struct ChainTxData;
 
 class CAssetsDB;
@@ -530,6 +531,8 @@ bool GetAddressUnspent(const CDestinationIndexData& addressData,
 /** Functions for disk access for blocks */
 bool ReadBlockFromDisk(CBlock& block, const CDiskBlockPos& pos, const Consensus::Params& consensusParams);
 bool ReadBlockFromDisk(CBlock& block, const CBlockIndex* pindex, const Consensus::Params& consensusParams);
+/** Read the undo data (spent coins) of a block; hashBlock is the hash of its parent. */
+bool UndoReadFromDisk(CBlockUndo& blockundo, const CDiskBlockPos& pos, const uint256& hashBlock);
 
 /** Functions for validating blocks and updating the block tree */
 

@@ -38,7 +38,9 @@
 #include <QGraphicsDropShadowEffect>
 #include <QScrollBar>
 #include <QUrl>
+#include <QGridLayout>
 #include <QHBoxLayout>
+#include <QLabel>
 #include <QPushButton>
 
 class TxViewDelegate : public QAbstractItemDelegate
@@ -250,6 +252,12 @@ OverviewPage::OverviewPage(const PlatformStyle *platformStyle, QWidget *parent) 
     currentWatchOnlyBalance(-1),
     currentWatchUnconfBalance(-1),
     currentWatchImmatureBalance(-1),
+    silentFrame(nullptr),
+    silentTitle(nullptr),
+    silentAvailable(nullptr),
+    silentPending(nullptr),
+    silentCount(nullptr),
+    silentTotal(nullptr),
     txdelegate(new TxViewDelegate(platformStyle, this)),
     assetdelegate(new AssetViewDelegate(platformStyle, this))
 {
@@ -352,6 +360,9 @@ OverviewPage::OverviewPage(const PlatformStyle *platformStyle, QWidget *parent) 
     ui->labelTotalText->setFont(GUIUtil::getSubLabelFont());
     ui->labelTotal->setFont(GUIUtil::getTopLabelFont(QFont::Weight::Bold, 26));
     ui->labelWatchTotal->setFont(GUIUtil::getTopLabelFont(QFont::Weight::Bold, 26));
+
+    /** Card for received silent payments (built after the fonts it copies) */
+    setupSilentPaymentsCard();
 
     /** Create the search bar for assets */
     ui->assetSearch->setAttribute(Qt::WA_MacShowFocusRect, 0);
@@ -501,15 +512,35 @@ OverviewPage::~OverviewPage()
     delete ui;
 }
 
-void OverviewPage::setBalance(const CAmount& balance, const CAmount& unconfirmedBalance, const CAmount& immatureBalance, const CAmount& watchOnlyBalance, const CAmount& watchUnconfBalance, const CAmount& watchImmatureBalance)
+void OverviewPage::setBalance(const CAmount& walletBalance, const CAmount& walletUnconfirmedBalance, const CAmount& immatureBalance, const CAmount& walletWatchOnlyBalance, const CAmount& walletWatchUnconfBalance, const CAmount& watchImmatureBalance)
 {
     int unit = walletModel->getOptionsModel()->getDisplayUnit();
-    currentBalance = balance;
-    currentUnconfirmedBalance = unconfirmedBalance;
+    currentBalance = walletBalance;
+    currentUnconfirmedBalance = walletUnconfirmedBalance;
     currentImmatureBalance = immatureBalance;
-    currentWatchOnlyBalance = watchOnlyBalance;
-    currentWatchUnconfBalance = watchUnconfBalance;
+    currentWatchOnlyBalance = walletWatchOnlyBalance;
+    currentWatchUnconfBalance = walletWatchUnconfBalance;
     currentWatchImmatureBalance = watchImmatureBalance;
+
+    // NIP-047: received silent payments have their own card; the XNA card
+    // shows the other coins.
+    CAmount silentAvailableAmount = 0, silentPendingAmount = 0;
+    bool silentWatchOnly = false;
+    int silentUnspent = 0;
+    const bool hasSilent = walletModel->getSilentPaymentBalance(silentAvailableAmount, silentPendingAmount, silentWatchOnly, &silentUnspent);
+    CAmount balance = currentBalance, unconfirmedBalance = currentUnconfirmedBalance;
+    CAmount watchOnlyBalance = currentWatchOnlyBalance, watchUnconfBalance = currentWatchUnconfBalance;
+    (silentWatchOnly ? watchOnlyBalance : balance) -= silentAvailableAmount;
+    (silentWatchOnly ? watchUnconfBalance : unconfirmedBalance) -= silentPendingAmount;
+    silentFrame->setVisible(hasSilent);
+    silentTitle->setText(silentWatchOnly ? tr("Silent Payments (watch-only)") : tr("Silent Payments"));
+    silentAvailable->setText(NeuraiUnits::formatWithUnit(unit, silentAvailableAmount, false, NeuraiUnits::separatorAlways));
+    silentPending->setText(NeuraiUnits::formatWithUnit(unit, silentPendingAmount, false, NeuraiUnits::separatorAlways));
+    silentCount->setText(QString::number(silentUnspent));
+    const CAmount silentTotalAmount = silentAvailableAmount + silentPendingAmount;
+    silentTotal->setText(NeuraiUnits::formatWithUnitTruncated(unit, silentTotalAmount, 2, NeuraiUnits::separatorAlways));
+    silentTotal->setToolTip(NeuraiUnits::formatWithUnit(unit, silentTotalAmount, false, NeuraiUnits::separatorAlways));
+
     ui->labelBalance->setText(NeuraiUnits::formatWithUnit(unit, balance, false, NeuraiUnits::separatorAlways));
     ui->labelUnconfirmed->setText(NeuraiUnits::formatWithUnit(unit, unconfirmedBalance, false, NeuraiUnits::separatorAlways));
     ui->labelImmature->setText(NeuraiUnits::formatWithUnit(unit, immatureBalance, false, NeuraiUnits::separatorAlways));
@@ -533,6 +564,63 @@ void OverviewPage::setBalance(const CAmount& balance, const CAmount& unconfirmed
     ui->labelImmature->setVisible(showImmature || showWatchOnlyImmature);
     ui->labelImmatureText->setVisible(showImmature || showWatchOnlyImmature);
     ui->labelWatchImmature->setVisible(showWatchOnlyImmature); // show watch-only immature balance
+}
+
+void OverviewPage::setupSilentPaymentsCard()
+{
+    silentFrame = new QFrame(this);
+    silentFrame->setObjectName("silentPaymentsFrame");
+    QVBoxLayout* layout = new QVBoxLayout(silentFrame);
+
+    silentTitle = new QLabel(tr("Silent Payments"), silentFrame);
+    silentTitle->setObjectName("silentPaymentsLabel");
+    silentTitle->setFont(GUIUtil::getTopLabelFont());
+    silentTitle->setStyleSheet(STRING_LABEL_COLOR);
+    layout->addWidget(silentTitle);
+
+    QFrame* line = new QFrame(silentFrame);
+    line->setFrameShape(ui->line_2->frameShape());
+    line->setFrameShadow(ui->line_2->frameShadow());
+    line->setStyleSheet(ui->line_2->styleSheet());
+    layout->addWidget(line);
+
+    // Same grid as the XNA card: values next to their captions, a line and
+    // the total underneath.
+    QGridLayout* grid = new QGridLayout();
+    grid->setSpacing(ui->gridLayout->spacing());
+    grid->setContentsMargins(ui->gridLayout->contentsMargins());
+    auto addRow = [&](int row, const QString& text, const QString& name) {
+        QLabel* caption = new QLabel(text, silentFrame);
+        caption->setFont(GUIUtil::getSubLabelFont());
+        caption->setStyleSheet(STRING_LABEL_COLOR);
+        QLabel* value = new QLabel(silentFrame);
+        value->setObjectName(name);
+        value->setFont(GUIUtil::getSubLabelFont());
+        value->setAlignment(Qt::AlignRight | Qt::AlignTrailing | Qt::AlignVCenter);
+        value->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+        value->setCursor(Qt::IBeamCursor);
+        grid->addWidget(caption, row, 0);
+        grid->addWidget(value, row, 1);
+        return value;
+    };
+    silentAvailable = addRow(0, tr("Available:"), "labelSilentAvailable");
+    silentPending = addRow(1, tr("Pending:"), "labelSilentPending");
+    silentCount = addRow(2, tr("Payments:"), "labelSilentCount");
+    silentCount->setToolTip(tr("Received payments not spent yet. Each one is a separate coin."));
+    QFrame* totalLine = new QFrame(silentFrame);
+    totalLine->setFrameShape(ui->line->frameShape());
+    totalLine->setFrameShadow(ui->line->frameShadow());
+    totalLine->setStyleSheet(ui->line->styleSheet());
+    grid->addWidget(totalLine, 3, 0, 1, 2);
+    silentTotal = addRow(4, tr("Total:"), "labelSilentTotal");
+    silentTotal->setFont(ui->labelTotal->font());
+    grid->setColumnStretch(2, 1);
+    layout->addLayout(grid);
+
+    GUITheme::makeCard(silentFrame, "padding: 8px 6px 4px 6px;");
+    silentFrame->setGraphicsEffect(GUIUtil::getShadowEffect());
+    ui->verticalLayout_2->insertWidget(ui->verticalLayout_2->indexOf(ui->frame) + 1, silentFrame);
+    silentFrame->hide();
 }
 
 // show/hide watch-only labels

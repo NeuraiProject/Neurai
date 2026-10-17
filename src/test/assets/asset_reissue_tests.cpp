@@ -16,6 +16,21 @@
 #include <consensus/validation.h>
 #include <consensus/tx_verify.h>
 #include <validation.h>
+
+#include <memory>
+
+namespace {
+// Owns the global cache these tests install, which used to be leaked. passets
+// keeps pointing at it after each test, as before.
+std::unique_ptr<CAssetsCache> g_reissue_assets_cache;
+
+void ResetGlobalAssetsCache()
+{
+    g_reissue_assets_cache.reset(new CAssetsCache());
+    passets = g_reissue_assets_cache.get();
+}
+} // namespace
+
 BOOST_FIXTURE_TEST_SUITE(asset_reissue_tests, BasicTestingSetup)
 
 
@@ -26,7 +41,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_reissue_tests, BasicTestingSetup)
         SelectParams(CBaseChainParams::MAIN);
 
         fAssetIndex = true; // We only cache if fAssetIndex is true
-        passets = new CAssetsCache();
+        ResetGlobalAssetsCache();
         // Create assets cache
         CAssetsCache cache;
 
@@ -86,7 +101,7 @@ BOOST_FIXTURE_TEST_SUITE(asset_reissue_tests, BasicTestingSetup)
         SelectParams(CBaseChainParams::MAIN);
 
         fAssetIndex = true; // We only cache if fAssetIndex is true
-        passets = new CAssetsCache();
+        ResetGlobalAssetsCache();
         // Create assets cache
         CAssetsCache cache;
 

@@ -30,6 +30,7 @@
 #include "util.h" // for GetBoolArg
 #include "wallet/coincontrol.h"
 #include "wallet/feebumper.h"
+#include "wallet/silentpayments.h"
 #include "wallet/wallet.h"
 #include "wallet/walletdb.h" // for BackupWallet
 
@@ -164,10 +165,20 @@ void WalletModel::checkBalanceChanged()
         newWatchUnconfBalance = getWatchUnconfirmedBalance();
         newWatchImmatureBalance = getWatchImmatureBalance();
     }
+    // The overview shows received silent payments apart: a change in that
+    // part alone also refreshes it.
+    CAmount newSilentAvailable = 0, newSilentPending = 0;
+    bool silentWatchOnly = false;
+    int newSilentUnspent = 0;
+    getSilentPaymentBalance(newSilentAvailable, newSilentPending, silentWatchOnly, &newSilentUnspent);
 
     if(cachedBalance != newBalance || cachedUnconfirmedBalance != newUnconfirmedBalance || cachedImmatureBalance != newImmatureBalance ||
-        cachedWatchOnlyBalance != newWatchOnlyBalance || cachedWatchUnconfBalance != newWatchUnconfBalance || cachedWatchImmatureBalance != newWatchImmatureBalance)
+        cachedWatchOnlyBalance != newWatchOnlyBalance || cachedWatchUnconfBalance != newWatchUnconfBalance || cachedWatchImmatureBalance != newWatchImmatureBalance ||
+        cachedSilentAvailable != newSilentAvailable || cachedSilentPending != newSilentPending || cachedSilentUnspent != newSilentUnspent)
     {
+        cachedSilentAvailable = newSilentAvailable;
+        cachedSilentPending = newSilentPending;
+        cachedSilentUnspent = newSilentUnspent;
         cachedBalance = newBalance;
         cachedUnconfirmedBalance = newUnconfirmedBalance;
         cachedImmatureBalance = newImmatureBalance;
@@ -203,6 +214,87 @@ bool WalletModel::validateAddress(const QString &address)
     return IsValidDestinationString(address.toStdString());
 }
 
+bool WalletModel::isSilentPaymentCode(const QString &code, QString *error) const
+{
+    silentpayments::PaymentCode decoded;
+    std::string reason;
+    if (silentpayments::DecodeCode(code.trimmed().toStdString(), silentpayments::LocalNetworkId(), decoded, reason)) {
+        return true;
+    }
+    if (error) *error = QString::fromStdString(reason);
+    return false;
+}
+
+bool WalletModel::hasSilentPaymentIdentity() const
+{
+    LOCK(wallet->cs_wallet);
+    return wallet->HasSilentPaymentIdentity();
+}
+
+bool WalletModel::getSilentPaymentBalance(CAmount &available, CAmount &pending, bool &watchOnly, int *unspent) const
+{
+    return wallet->GetSilentPaymentBalance(available, pending, watchOnly, unspent);
+}
+
+bool WalletModel::isSilentPaymentCoin(const COutPoint &outpoint) const
+{
+    return wallet->IsSilentPaymentCoin(outpoint);
+}
+
+bool WalletModel::getSilentPaymentCode(QString &code, QString &error, bool *verified) const
+{
+    LOCK2(cs_main, wallet->cs_wallet);
+    silentpayments::PaymentCode decoded;
+    std::string reason;
+    if (!wallet->GetSilentPaymentCode(decoded, reason, verified)) {
+        error = QString::fromStdString(reason);
+        return false;
+    }
+    code = QString::fromStdString(silentpayments::EncodeCode(decoded));
+    return true;
+}
+
+WalletModel::SendCoinsReturn WalletModel::prepareSilentPaymentTransaction(WalletModelTransaction &transaction, const CCoinControl& coinControl)
+{
+    std::vector<silentpayments::Recipient> recipients;
+    for (const SendCoinsRecipient &rcp : transaction.getRecipients()) {
+        silentpayments::Recipient recipient;
+        std::string reason;
+        if (rcp.paymentRequest.IsInitialized() ||
+            !silentpayments::DecodeCode(rcp.address.trimmed().toStdString(), silentpayments::LocalNetworkId(), recipient.code, reason)) {
+            Q_EMIT message(tr("Send Coins"), tr("Silent payment codes cannot be combined with addresses in one transaction."),
+                           CClientUIInterface::MSG_ERROR);
+            return TransactionCreationFailed;
+        }
+        if (rcp.fSubtractFeeFromAmount) {
+            Q_EMIT message(tr("Send Coins"), tr("Subtracting the fee from the amount is not available for silent payments."),
+                           CClientUIInterface::MSG_ERROR);
+            return TransactionCreationFailed;
+        }
+        if (rcp.amount <= 0) {
+            return InvalidAmount;
+        }
+        recipient.amount = rcp.amount;
+        recipients.push_back(recipient);
+    }
+
+    LOCK2(cs_main, wallet->cs_wallet);
+    transaction.newPossibleKeyChange(wallet);
+    CAmount nFeeRequired = 0;
+    std::vector<unsigned int> positions;
+    std::string error;
+    if (!wallet->CreateSilentPaymentTransaction(recipients, *transaction.getTransaction(), *transaction.getPossibleKeyChange(),
+                                                nFeeRequired, positions, error, coinControl)) {
+        Q_EMIT message(tr("Send Coins"), QString::fromStdString(error), CClientUIInterface::MSG_ERROR);
+        return TransactionCreationFailed;
+    }
+    transaction.setTransactionFee(nFeeRequired);
+    if (nFeeRequired > maxTxFee) {
+        return AbsurdFee;
+    }
+    return SendCoinsReturn(OK);
+}
+
 WalletModel::SendCoinsReturn WalletModel::prepareTransaction(WalletModelTransaction &transaction, const CCoinControl& coinControl)
 {
     CAmount total = 0;
@@ -213,6 +305,14 @@ WalletModel::SendCoinsReturn WalletModel::prepareTransaction(WalletModelTransact
     if(recipients.empty())
     {
         return OK;
+    }
+
+    // A silent payment code in the list routes the whole transaction to the
+    // NIP-047 constructor (codes only; it rejects a mix with addresses).
+    for (const SendCoinsRecipient &rcp : recipients) {
+        if (!rcp.paymentRequest.IsInitialized() && isSilentPaymentCode(rcp.address)) {
+            return prepareSilentPaymentTransaction(transaction, coinControl);
+        }
     }
 
     QSet<QString> setAddress; // Used to detect duplicates
@@ -355,8 +455,9 @@ WalletModel::SendCoinsReturn WalletModel::sendCoins(WalletModelTransaction &tran
     // and emit coinsSent signal for each recipient
     for (const SendCoinsRecipient &rcp : transaction.getRecipients())
     {
-        // Don't touch the address book when we have a payment request
-        if (!rcp.paymentRequest.IsInitialized())
+        // Don't touch the address book when we have a payment request or a
+        // silent payment code (it is not a destination)
+        if (!rcp.paymentRequest.IsInitialized() && validateAddress(rcp.address))
         {
             std::string strAddress = rcp.address.toStdString();
             CTxDestination dest = DecodeDestination(strAddress);
@@ -504,7 +605,15 @@ bool WalletModel::setWalletLocked(bool locked, const SecureString &passPhrase)
     else
     {
         // Unlock
-        return wallet->Unlock(passPhrase);
+        if (!wallet->Unlock(passPhrase)) {
+            return false;
+        }
+        // Silent payments scanning paused while locked resumes from its
+        // cursor on the scheduler, never in the GUI thread.
+        if (!wallet->ScheduleSilentPaymentsResume()) {
+            wallet->ResumeSilentPayments();
+        }
+        return true;
     }
 }
 

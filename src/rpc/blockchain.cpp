@@ -29,6 +29,7 @@
 #include "sync.h"
 #include "txdb.h"
 #include "txmempool.h"
+#include "undo.h"
 #include "util.h"
 #include "utilstrencodings.h"
 #include "hash.h"
@@ -234,7 +235,39 @@ UniValue blockToDeltasJSON(const CBlock& block, const CBlockIndex* blockindex)
     return result;
 }
 
-UniValue blockToJSON(const CBlock& block, const CBlockIndex* blockindex, bool txDetails)
+/** getblock verbosity 3: add each input's spent output, read from the block undo data. */
+static void AddPrevoutsToTxJSON(UniValue& objTx, const CTxUndo& txundo)
+{
+    UniValue result(UniValue::VOBJ);
+    const std::vector<std::string>& keys = objTx.getKeys();
+    const std::vector<UniValue>& values = objTx.getValues();
+    for (size_t i = 0; i < keys.size(); ++i) {
+        if (keys[i] != "vin") {
+            result.pushKV(keys[i], values[i]);
+            continue;
+        }
+        UniValue vin(UniValue::VARR);
+        for (size_t j = 0; j < values[i].size(); ++j) {
+            UniValue in = values[i][j];
+            if (j < txundo.vprevout.size()) {
+                const Coin& coin = txundo.vprevout[j];
+                UniValue prevout(UniValue::VOBJ);
+                prevout.pushKV("generated", (bool)coin.fCoinBase);
+                prevout.pushKV("height", (int64_t)coin.nHeight);
+                prevout.pushKV("value", ValueFromAmount(coin.out.nValue));
+                UniValue spk(UniValue::VOBJ);
+                ScriptPubKeyToUniv(coin.out.scriptPubKey, spk, true);
+                prevout.pushKV("scriptPubKey", spk);
+                in.pushKV("prevout", prevout);
+            }
+            vin.push_back(in);
+        }
+        result.pushKV("vin", vin);
+    }
+    objTx = result;
+}
+
+UniValue blockToJSON(const CBlock& block, const CBlockIndex* blockindex, bool txDetails, const CBlockUndo* blockUndo)
 {
     UniValue result(UniValue::VOBJ);
     result.push_back(Pair("hash", blockindex->GetBlockHash().GetHex()));
@@ -251,12 +284,17 @@ UniValue blockToJSON(const CBlock& block, const CBlockIndex* blockindex, bool tx
     result.push_back(Pair("versionHex", strprintf("%08x", block.nVersion)));
     result.push_back(Pair("merkleroot", block.hashMerkleRoot.GetHex()));
     UniValue txs(UniValue::VARR);
-    for(const auto& tx : block.vtx)
+    for (size_t i = 0; i < block.vtx.size(); ++i)
     {
+        const auto& tx = block.vtx[i];
         if(txDetails)
         {
             UniValue objTx(UniValue::VOBJ);
             TxToUniv(*tx, uint256(), objTx, true, RPCSerializationFlags());
+            // vtxundo covers every transaction except the coinbase.
+            if (blockUndo && i > 0 && i - 1 < blockUndo->vtxundo.size()) {
+                AddPrevoutsToTxJSON(objTx, blockUndo->vtxundo[i - 1]);
+            }
             txs.push_back(objTx);
         }
         else
@@ -957,9 +995,11 @@ UniValue getblock(const JSONRPCRequest& request)
             "\nIf verbosity is 0, returns a string that is serialized, hex-encoded data for block 'hash'.\n"
             "If verbosity is 1, returns an Object with information about block <hash>.\n"
             "If verbosity is 2, returns an Object with information about block <hash> and information about each transaction. \n"
+            "If verbosity is 3, returns the same as verbosity 2 plus a \"prevout\" object in each input with the spent output\n"
+            "(generated, height, value, scriptPubKey), read from the block undo data. This works without -txindex.\n"
             "\nArguments:\n"
             "1. \"blockhash\"          (string, required) The block hash\n"
-            "2. verbosity              (numeric, optional, default=1) 0 for hex encoded data, 1 for a json object, and 2 for json object with transaction data\n"
+            "2. verbosity              (numeric, optional, default=1) 0 for hex encoded data, 1 for a json object, 2 for json object with transaction data, and 3 for json object with transaction data and spent outputs\n"
             "\nResult (for verbosity = 0):\n"
             "\"data\"             (string) A string that is serialized, hex-encoded data for block 'hash'.\n"
             "\nResult (for verbosity = 1):\n"
@@ -1035,6 +1075,19 @@ UniValue getblock(const JSONRPCRequest& request)
         ssBlock << block;
         std::string strHex = HexStr(ssBlock.begin(), ssBlock.end());
         return strHex;
+    }
+
+    if (verbosity >= 3) {
+        // Spent outputs come from rev*.dat; a missing or corrupt record is an
+        // explicit error so a caller never mistakes it for "no inputs".
+        CBlockUndo blockUndo;
+        if (pblockindex->pprev) {
+            if (!(pblockindex->nStatus & BLOCK_HAVE_UNDO))
+                throw JSONRPCError(RPC_MISC_ERROR, "Undo data not available");
+            if (!UndoReadFromDisk(blockUndo, pblockindex->GetUndoPos(), pblockindex->pprev->GetBlockHash()))
+                throw JSONRPCError(RPC_MISC_ERROR, "Undo data could not be read");
+        }
+        return blockToJSON(block, pblockindex, true, &blockUndo);
     }
 
     return blockToJSON(block, pblockindex, verbosity >= 2);

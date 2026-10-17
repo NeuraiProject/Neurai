@@ -25,6 +25,11 @@
 #include <QScrollBar>
 #include <QTextDocument>
 #include <QGraphicsDropShadowEffect>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QPlainTextEdit>
+#include <QPushButton>
+#include <QVBoxLayout>
 
 ReceiveCoinsDialog::ReceiveCoinsDialog(const PlatformStyle *_platformStyle, QWidget *parent) :
     QDialog(parent),
@@ -71,6 +76,7 @@ ReceiveCoinsDialog::ReceiveCoinsDialog(const PlatformStyle *_platformStyle, QWid
 
     setupRequestFrame(platformStyle);
     setupHistoryFrame(platformStyle);
+    setupSilentCodeFrame();
 }
 
 void ReceiveCoinsDialog::setModel(WalletModel *_model)
@@ -101,6 +107,12 @@ void ReceiveCoinsDialog::setModel(WalletModel *_model)
 
         tableView->show();
     }
+    // NIP-047: only wallets with a silent payment identity have a code. The
+    // card says whether the code was checked against the seed, which changes
+    // with the lock state.
+    ui->silentCodeButton->setVisible(_model && _model->hasSilentPaymentIdentity());
+    if (_model)
+        connect(_model, SIGNAL(encryptionStatusChanged(int)), this, SLOT(refreshSilentCodeFrame()));
 }
 
 ReceiveCoinsDialog::~ReceiveCoinsDialog()
@@ -158,6 +170,7 @@ void ReceiveCoinsDialog::setupRequestFrame(const PlatformStyle *platformStyle)
     ui->reqMessage->setFont(GUIUtil::getSubLabelFont());
     ui->receiveButton->setFont(GUIUtil::getSubLabelFont());
     ui->clearButton->setFont(GUIUtil::getSubLabelFont());
+    ui->silentCodeButton->setFont(GUIUtil::getSubLabelFont());
     ui->recentRequestsView->setFont(GUIUtil::getSubLabelFont());
     ui->showRequestButton->setFont(GUIUtil::getSubLabelFont());
     ui->removeRequestButton->setFont(GUIUtil::getSubLabelFont());
@@ -229,6 +242,137 @@ void ReceiveCoinsDialog::on_receiveButton_clicked()
 
     /* Store request for later reference */
     model->getRecentRequestsTableModel()->addNewRequest(info);
+}
+
+void ReceiveCoinsDialog::setupSilentCodeFrame()
+{
+    silentCodeFrame = new QFrame(this);
+    silentCodeFrame->setObjectName("silentCodeFrame");
+    QHBoxLayout* layout = new QHBoxLayout(silentCodeFrame);
+    layout->setSpacing(16);
+
+    silentCodeQR = new QRImageWidget(silentCodeFrame);
+    silentCodeQR->setObjectName("silentCodeQR");
+    silentCodeQR->setAlignment(Qt::AlignCenter);
+    silentCodeQR->setToolTip(tr("Drag the image, or right-click to save or copy it."));
+    layout->addWidget(silentCodeQR, 0, Qt::AlignTop);
+
+    QVBoxLayout* info = new QVBoxLayout();
+    QLabel* title = new QLabel(tr("Silent payment code"), silentCodeFrame);
+    title->setFont(GUIUtil::getSubLabelFontBolded());
+    title->setStyleSheet(STRING_LABEL_COLOR);
+    info->addWidget(title);
+
+    silentCodeStatus = new QLabel(silentCodeFrame);
+    silentCodeStatus->setObjectName("silentCodeStatus");
+    silentCodeStatus->setWordWrap(true);
+    silentCodeStatus->setFont(GUIUtil::getSubLabelFont());
+    silentCodeStatus->setStyleSheet(STRING_LABEL_COLOR);
+    info->addWidget(silentCodeStatus);
+
+    // The code has no spaces: a read-only text box wraps it anywhere and
+    // copies it whole.
+    silentCodeText = new QPlainTextEdit(silentCodeFrame);
+    silentCodeText->setObjectName("silentCodeText");
+    silentCodeText->setReadOnly(true);
+    silentCodeText->setWordWrapMode(QTextOption::WrapAnywhere);
+    silentCodeText->setFont(GUIUtil::fixedPitchFont());
+    silentCodeText->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    silentCodeText->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    silentCodeText->setTabChangesFocus(true);
+    silentCodeText->setFixedHeight(silentCodeText->fontMetrics().lineSpacing() * 3 + 12);
+    info->addWidget(silentCodeText);
+
+    QLabel* help = new QLabel(tr("Share this code instead of an address. It can be reused: every payment to it arrives at a new "
+                                 "address that only this wallet links to the code. The sender needs a wallet that supports "
+                                 "silent payments."), silentCodeFrame);
+    help->setWordWrap(true);
+    help->setFont(GUIUtil::getSubLabelFont());
+    help->setStyleSheet(STRING_LABEL_COLOR);
+    info->addWidget(help);
+
+    QHBoxLayout* buttons = new QHBoxLayout();
+    QPushButton* copyCode = new QPushButton(tr("Copy code"), silentCodeFrame);
+    copyCode->setObjectName("silentCodeCopy");
+    QPushButton* copyURI = new QPushButton(tr("Copy URI"), silentCodeFrame);
+    QPushButton* saveImage = new QPushButton(tr("Save image..."), silentCodeFrame);
+    for (QPushButton* button : {copyCode, copyURI, saveImage}) {
+        button->setFont(GUIUtil::getSubLabelFont());
+        button->setAutoDefault(false);
+        buttons->addWidget(button);
+    }
+    buttons->addStretch();
+    info->addLayout(buttons);
+    info->addStretch();
+    layout->addLayout(info, 1);
+
+    connect(copyCode, &QPushButton::clicked, this, [this]() { GUIUtil::setClipboard(silentCode); });
+    connect(copyURI, &QPushButton::clicked, this, [this]() { GUIUtil::setClipboard(silentCodeURI()); });
+    connect(saveImage, &QPushButton::clicked, silentCodeQR, &QRImageWidget::saveImage);
+
+    GUITheme::makeCard(silentCodeFrame, "padding: 6px;");
+    silentCodeFrame->setGraphicsEffect(GUIUtil::getShadowEffect());
+    ui->verticalLayout_5->insertWidget(ui->verticalLayout_5->indexOf(ui->frame2) + 1, silentCodeFrame);
+    silentCodeFrame->hide();
+    ui->silentCodeButton->setCheckable(true);
+}
+
+QString ReceiveCoinsDialog::silentCodeURI() const
+{
+    return GUIUtil::formatNeuraiURI(SendCoinsRecipient(silentCode, QString(), 0, QString()));
+}
+
+bool ReceiveCoinsDialog::fillSilentCodeFrame(bool warn)
+{
+    if (!model || !model->getOptionsModel())
+        return false;
+    QString code, error;
+    bool ok = model->getSilentPaymentCode(code, error);
+    if (!ok && warn && model->getEncryptionStatus() == WalletModel::Locked) {
+        // 047c D8: the code is shown only once checked against the seed in
+        // this session; an encrypted wallet asks for its passphrase once.
+        WalletModel::UnlockContext ctx(model->requestUnlock());
+        if (!ctx.isValid())
+            return false;
+        ok = model->getSilentPaymentCode(code, error);
+    }
+    if (!ok) {
+        if (warn) {
+            QMessageBox::warning(this, tr("Silent payment code"),
+                tr("The silent payment code is not available: %1").arg(error));
+        }
+        return false;
+    }
+    silentCode = code;
+    silentCodeText->setPlainText(code);
+    silentCodeStatus->setText(tr("Checked against this wallet's seed."));
+    QString qrError;
+    const QImage image = MakeQRCodeImage(silentCodeURI(), code, qrError, 240);
+    if (image.isNull()) {
+        silentCodeQR->setText(qrError);
+    } else {
+        silentCodeQR->setPixmap(QPixmap::fromImage(image));
+    }
+    return true;
+}
+
+void ReceiveCoinsDialog::on_silentCodeButton_clicked()
+{
+    // The button is checkable: checked opens the card, unchecked closes it.
+    const bool open = ui->silentCodeButton->isChecked() && fillSilentCodeFrame(true);
+    ui->silentCodeButton->setChecked(open);
+    ui->silentCodeButton->setText(open ? tr("Hide silent payment &code") : tr("Silent payment &code"));
+    silentCodeFrame->setVisible(open);
+}
+
+void ReceiveCoinsDialog::refreshSilentCodeFrame()
+{
+    if (silentCodeFrame->isHidden())
+        return;
+    if (!fillSilentCodeFrame(false)) {
+        ui->silentCodeButton->setChecked(false);
+        on_silentCodeButton_clicked();
+    }
 }
 
 void ReceiveCoinsDialog::on_recentRequestsView_doubleClicked(const QModelIndex &index)

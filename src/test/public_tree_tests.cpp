@@ -143,7 +143,7 @@ BOOST_AUTO_TEST_CASE(activation_and_profile_one_are_separate)
         // MUST pin profile 2. Changing it changes the MAST commitment.
         BOOST_CHECK(Run(stack, FLAGS & ~SCRIPT_VERIFY_ZK_PUBLIC_TREE) == SCRIPT_ERR_OK);
     }
-    Consensus::Params params;
+    Consensus::Params params{};
     params.nZKVerifyHeight = 1; params.nPoseidonWorkHeight = 1; params.nZKPublicTreeHeight = 120;
     BOOST_CHECK(!(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, params, false, 119) & SCRIPT_VERIFY_ZK_PUBLIC_TREE));
     BOOST_CHECK(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, params, false, 120) & SCRIPT_VERIFY_ZK_PUBLIC_TREE);

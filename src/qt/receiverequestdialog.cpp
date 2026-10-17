@@ -13,6 +13,7 @@
 #include "walletmodel.h"
 
 #include <QClipboard>
+#include <QCoreApplication>
 #include <QDrag>
 #include <QMenu>
 #include <QMimeData>
@@ -29,6 +30,52 @@
 #ifdef USE_QRCODE
 #include <qrencode.h>
 #endif
+
+QImage MakeQRCodeImage(const QString& text, const QString& caption, QString& error, int size)
+{
+#ifdef USE_QRCODE
+    QRcode *code = QRcode_encodeString(text.toUtf8().constData(), 0, QR_ECLEVEL_L, QR_MODE_8, 1);
+    if (!code)
+    {
+        error = QCoreApplication::translate("ReceiveRequestDialog", "Error encoding URI into QR Code.");
+        return QImage();
+    }
+    QImage qrImage = QImage(code->width + 8, code->width + 8, QImage::Format_RGB32);
+    qrImage.fill(0xffffff);
+    unsigned char *p = code->data;
+    for (int y = 0; y < code->width; y++)
+    {
+        for (int x = 0; x < code->width; x++)
+        {
+            qrImage.setPixel(x + 4, y + 4, ((*p & 1) ? 0x0 : 0xffffff));
+            p++;
+        }
+    }
+    QRcode_free(code);
+
+    QImage qrAddrImage = QImage(size, size+20, QImage::Format_RGB32);
+    qrAddrImage.fill(0xffffff);
+    QPainter painter(&qrAddrImage);
+    painter.drawImage(0, 0, qrImage.scaled(size, size));
+    QFont font = GUIUtil::fixedPitchFont();
+    font.setPixelSize(12);
+    painter.setFont(font);
+    QRect paddedRect = qrAddrImage.rect();
+    paddedRect.setHeight(size+12);
+    // A 120-character silent payment code does not fit under the QR:
+    // show its start and end, the full code is in the text and URI.
+    QString shown = caption;
+    const int keep = size / 18; // characters kept at each end so that the caption fits the width
+    if (shown.size() > 2 * keep + 1)
+        shown = shown.left(keep) + QString::fromUtf8("\u2026") + shown.right(keep);
+    painter.drawText(paddedRect, Qt::AlignBottom|Qt::AlignCenter, shown);
+    painter.end();
+    return qrAddrImage;
+#else
+    error = QCoreApplication::translate("ReceiveRequestDialog", "This build has no QR code support.");
+    return QImage();
+#endif
+}
 
 QRImageWidget::QRImageWidget(QWidget *parent):
     QLabel(parent), contextMenu(0)
@@ -148,7 +195,12 @@ void ReceiveRequestDialog::update()
     html += "<b>"+tr("Payment information")+"</b><br>";
     html += "<b>"+tr("URI")+"</b>: ";
     html += "<a href=\""+uri+"\">" + GUIUtil::HtmlEscape(uri) + "</a><br>";
-    html += "<b>"+tr("Address")+"</b>: " + GUIUtil::HtmlEscape(info.address) + "<br>";
+    if (info.address.startsWith("nsp1") || info.address.startsWith("tnsp1")) {
+        html += "<b>"+tr("Silent payment code")+"</b>: " + GUIUtil::HtmlEscape(info.address) + "<br>";
+        html += tr("Reusable: every payment to this code arrives at a new strict ECDSA address that only this wallet links to it.") + "<br>";
+    } else {
+        html += "<b>"+tr("Address")+"</b>: " + GUIUtil::HtmlEscape(info.address) + "<br>";
+    }
     if(info.amount)
         html += "<b>"+tr("Amount")+"</b>: " + NeuraiUnits::formatHtmlWithUnit(model->getDisplayUnit(), info.amount) + "<br>";
     if(!info.label.isEmpty())
@@ -166,38 +218,14 @@ void ReceiveRequestDialog::update()
         {
             ui->lblQRCode->setText(tr("Resulting URI too long, try to reduce the text for label / message."));
         } else {
-            QRcode *code = QRcode_encodeString(uri.toUtf8().constData(), 0, QR_ECLEVEL_L, QR_MODE_8, 1);
-            if (!code)
+            QString error;
+            const QImage image = MakeQRCodeImage(uri, info.address, error);
+            if (image.isNull())
             {
-                ui->lblQRCode->setText(tr("Error encoding URI into QR Code."));
+                ui->lblQRCode->setText(error);
                 return;
             }
-            QImage qrImage = QImage(code->width + 8, code->width + 8, QImage::Format_RGB32);
-            qrImage.fill(0xffffff);
-            unsigned char *p = code->data;
-            for (int y = 0; y < code->width; y++)
-            {
-                for (int x = 0; x < code->width; x++)
-                {
-                    qrImage.setPixel(x + 4, y + 4, ((*p & 1) ? 0x0 : 0xffffff));
-                    p++;
-                }
-            }
-            QRcode_free(code);
-
-            QImage qrAddrImage = QImage(QR_IMAGE_SIZE, QR_IMAGE_SIZE+20, QImage::Format_RGB32);
-            qrAddrImage.fill(0xffffff);
-            QPainter painter(&qrAddrImage);
-            painter.drawImage(0, 0, qrImage.scaled(QR_IMAGE_SIZE, QR_IMAGE_SIZE));
-            QFont font = GUIUtil::fixedPitchFont();
-            font.setPixelSize(12);
-            painter.setFont(font);
-            QRect paddedRect = qrAddrImage.rect();
-            paddedRect.setHeight(QR_IMAGE_SIZE+12);
-            painter.drawText(paddedRect, Qt::AlignBottom|Qt::AlignCenter, info.address);
-            painter.end();
-
-            ui->lblQRCode->setPixmap(QPixmap::fromImage(qrAddrImage));
+            ui->lblQRCode->setPixmap(QPixmap::fromImage(image));
             ui->btnSaveAs->setEnabled(true);
         }
     }

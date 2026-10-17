@@ -13,6 +13,7 @@
 #include "key.h"
 #include "keystore.h"
 #include "wallet/bip39.h"
+#include "wallet/silentpayments.h"
 
 #include <list>
 #include <stdint.h>
@@ -187,6 +188,10 @@ public:
     }
 };
 
+//! Testing only: let `writes` more silent payment records succeed, then fail
+//! every following one (-1, the default, never fails).
+void SetSilentPaymentWriteBudgetForTesting(int writes);
+
 /** Access to the wallet database.
  * This should really be named CWalletDBBatch, as it represents a single transaction at the
  * database. It will be committed when the object goes out of scope.
@@ -245,6 +250,22 @@ public:
     //! Version-aware record: version 1 goes to the historical "authscript" record,
     //! strict versions 2/3 go to "authscriptv" keyed by (version, commitment).
     bool WriteAuthScriptSpendData(uint8_t witnessVersion, const uint256& commitment, const AuthScriptSpendData& spendData);
+
+    //! NIP-047 Silent Payments: received payments, scan cursor, cached public
+    //! code and an imported view-only identity.
+    bool WriteSilentPayment(const COutPoint& outpoint, const silentpayments::PaymentRecord& record);
+    bool WriteSilentPaymentCursor(int height, const uint256& blockHash);
+    bool WriteSilentPaymentCode(const CPubKey& scanKey, const CPubKey& spendKey);
+    bool WriteSilentPaymentViewKey(const std::vector<unsigned char>& scanSecret, const CPubKey& spendKey);
+    //! Identity failure (stored code does not match the seed); survives
+    //! restarts until an explicit repair erases it.
+    bool WriteSilentPaymentIdentityFailure(const std::string& reason);
+    bool EraseSilentPaymentIdentityFailure();
+    //! Key d_k of a received payment, plain ("spkey") or encrypted
+    //! ("spckey", which replaces the plain record). Clients without NIP-047
+    //! ignore these records instead of loading d_k as an ordinary key.
+    bool WriteSilentPaymentKey(const CPubKey& pubkey, const CPrivKey& privkey, const CKeyMetadata& keyMeta);
+    bool WriteSilentPaymentCryptedKey(const CPubKey& pubkey, const std::vector<unsigned char>& cryptedSecret, const CKeyMetadata& keyMeta);
 
     bool WriteBestBlock(const CBlockLocator& locator);
     bool ReadBestBlock(CBlockLocator& locator);

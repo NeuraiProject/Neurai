@@ -127,6 +127,77 @@ bool CWalletDB::WriteAuthScriptSpendData(uint8_t witnessVersion, const uint256& 
     return WriteIC(std::make_pair(std::string("authscriptv"), std::make_pair(witnessVersion, commitment)), spendData);
 }
 
+namespace {
+std::atomic<int> g_silent_payment_write_budget{-1};
+
+bool SilentPaymentWriteAllowed()
+{
+    int budget = g_silent_payment_write_budget.load();
+    while (budget >= 0) {
+        if (budget == 0) return false;
+        if (g_silent_payment_write_budget.compare_exchange_weak(budget, budget - 1)) return true;
+    }
+    return true;
+}
+} // namespace
+
+void SetSilentPaymentWriteBudgetForTesting(int writes)
+{
+    g_silent_payment_write_budget = writes;
+}
+
+bool CWalletDB::WriteSilentPayment(const COutPoint& outpoint, const silentpayments::PaymentRecord& record)
+{
+    return SilentPaymentWriteAllowed() && WriteIC(std::make_pair(std::string("sppayment"), outpoint), record);
+}
+
+bool CWalletDB::WriteSilentPaymentCursor(int height, const uint256& blockHash)
+{
+    return SilentPaymentWriteAllowed() && WriteIC(std::string("spcursor"), std::make_pair(height, blockHash));
+}
+
+bool CWalletDB::WriteSilentPaymentCode(const CPubKey& scanKey, const CPubKey& spendKey)
+{
+    return SilentPaymentWriteAllowed() && WriteIC(std::string("spcode"), std::make_pair(scanKey, spendKey));
+}
+
+bool CWalletDB::WriteSilentPaymentViewKey(const std::vector<unsigned char>& scanSecret, const CPubKey& spendKey)
+{
+    return SilentPaymentWriteAllowed() && WriteIC(std::string("spviewkey"), std::make_pair(scanSecret, spendKey));
+}
+
+bool CWalletDB::WriteSilentPaymentIdentityFailure(const std::string& reason)
+{
+    return SilentPaymentWriteAllowed() && WriteIC(std::string("spidfail"), reason);
+}
+
+bool CWalletDB::EraseSilentPaymentIdentityFailure()
+{
+    return SilentPaymentWriteAllowed() && EraseIC(std::string("spidfail"));
+}
+
+bool CWalletDB::WriteSilentPaymentKey(const CPubKey& pubkey, const CPrivKey& privkey, const CKeyMetadata& keyMeta)
+{
+    if (!SilentPaymentWriteAllowed()) return false;
+    // Same pubkey/privkey hash as the "key" record, checked when loading.
+    std::vector<unsigned char> vchKey;
+    vchKey.reserve(pubkey.size() + privkey.size());
+    vchKey.insert(vchKey.end(), pubkey.begin(), pubkey.end());
+    vchKey.insert(vchKey.end(), privkey.begin(), privkey.end());
+    return WriteIC(std::make_pair(std::string("spkey"), pubkey),
+                   std::make_pair(std::make_pair(privkey, Hash(vchKey.begin(), vchKey.end())), keyMeta), false);
+}
+
+bool CWalletDB::WriteSilentPaymentCryptedKey(const CPubKey& pubkey, const std::vector<unsigned char>& cryptedSecret, const CKeyMetadata& keyMeta)
+{
+    if (!SilentPaymentWriteAllowed() ||
+        !WriteIC(std::make_pair(std::string("spckey"), pubkey), std::make_pair(cryptedSecret, keyMeta), false)) {
+        return false;
+    }
+    EraseIC(std::make_pair(std::string("spkey"), pubkey));
+    return true;
+}
+
 bool CWalletDB::WriteBestBlock(const CBlockLocator& locator)
 {
     WriteIC(std::string("bestblock"), CBlockLocator()); // Write empty block locator so versions that require a merkle branch automatically rescan
@@ -393,6 +464,77 @@ bool ReadKeyValue(CWallet* pwallet, CDataStream& ssKey, CDataStream& ssValue,
                 strErr = "Error reading wallet database: LoadAuthScriptSpendData (versioned) failed";
                 return false;
             }
+        }
+        else if (strType == "sppayment")
+        {
+            COutPoint outpoint;
+            ssKey >> outpoint;
+            silentpayments::PaymentRecord record;
+            ssValue >> record;
+            pwallet->LoadSilentPayment(outpoint, record);
+        }
+        else if (strType == "spcursor")
+        {
+            std::pair<int, uint256> cursor;
+            ssValue >> cursor;
+            pwallet->LoadSilentPaymentCursor(cursor.first, cursor.second);
+        }
+        else if (strType == "spcode")
+        {
+            std::pair<CPubKey, CPubKey> keys;
+            ssValue >> keys;
+            pwallet->LoadSilentPaymentCode(keys.first, keys.second);
+        }
+        else if (strType == "spidfail")
+        {
+            std::string reason;
+            ssValue >> reason;
+            pwallet->LoadSilentPaymentIdentityFailure(reason);
+        }
+        else if (strType == "spviewkey")
+        {
+            std::pair<std::vector<unsigned char>, CPubKey> view;
+            ssValue >> view;
+            if (!pwallet->LoadSilentPaymentViewKey(view.first, view.second)) {
+                strErr = "Error reading wallet database: invalid silent payment view key";
+                return false;
+            }
+        }
+        else if (strType == "spkey")
+        {
+            CPubKey vchPubKey;
+            ssKey >> vchPubKey;
+            std::pair<std::pair<CPrivKey, uint256>, CKeyMetadata> value;
+            ssValue >> value;
+            CPrivKey& pkey = value.first.first;
+            std::vector<unsigned char> vchKey;
+            vchKey.reserve(vchPubKey.size() + pkey.size());
+            vchKey.insert(vchKey.end(), vchPubKey.begin(), vchPubKey.end());
+            vchKey.insert(vchKey.end(), pkey.begin(), pkey.end());
+            CKey key;
+            if (!vchPubKey.IsValid() || Hash(vchKey.begin(), vchKey.end()) != value.first.second || !key.Load(pkey, vchPubKey, true))
+            {
+                strErr = "Error reading wallet database: silent payment key corrupt";
+                return false;
+            }
+            if (!pwallet->LoadSilentPaymentKey(key, vchPubKey, value.second))
+            {
+                strErr = "Error reading wallet database: LoadSilentPaymentKey failed";
+                return false;
+            }
+        }
+        else if (strType == "spckey")
+        {
+            CPubKey vchPubKey;
+            ssKey >> vchPubKey;
+            std::pair<std::vector<unsigned char>, CKeyMetadata> value;
+            ssValue >> value;
+            if (!vchPubKey.IsValid() || !pwallet->LoadSilentPaymentCryptedKey(vchPubKey, value.first, value.second))
+            {
+                strErr = "Error reading wallet database: LoadSilentPaymentCryptedKey failed";
+                return false;
+            }
+            wss.fIsEncrypted = true;
         }
         else if (strType == "key" || strType == "wkey")
         {
@@ -674,7 +816,8 @@ bool ReadKeyValue(CWallet* pwallet, CDataStream& ssKey, CDataStream& ssValue,
 bool CWalletDB::IsKeyType(const std::string& strType)
 {
     return (strType== "key" || strType == "wkey" ||
-            strType == "mkey" || strType == "ckey");
+            strType == "mkey" || strType == "ckey" ||
+            strType == "spkey" || strType == "spckey");
 }
 
 DBErrors CWalletDB::LoadWallet(CWallet* pwallet)

@@ -19,11 +19,13 @@
 #include "wallet/crypter.h"
 #include "wallet/walletdb.h"
 #include "wallet/rpcwallet.h"
+#include "wallet/silentpayments.h"
 #include "assets/assettypes.h"
 
 #include <algorithm>
 #include <atomic>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -46,6 +48,13 @@ extern bool fWalletRbf;
 
 extern std::string my_words;
 extern std::string my_passphrase;
+//! Set by the first-run GUI dialog when the words restore an existing wallet
+//! (Silent Payments then scan the chain from the start).
+extern bool my_mnemonic_restore;
+
+//! nLockTime for a new transaction: the current height, occasionally moved
+//! back at random (anti-fee-sniping and privacy). Needs cs_main.
+uint32_t GetAntiFeeSnipingLockTime();
 
 static const unsigned int DEFAULT_KEYPOOL_SIZE = 1000;
 //! -paytxfee default
@@ -66,6 +75,8 @@ static const CAmount MIN_FINAL_CHANGE = MIN_CHANGE/2;
 static const bool DEFAULT_SPEND_ZEROCONF_CHANGE = true;
 //! Default for -walletrejectlongchains
 static const bool DEFAULT_WALLET_REJECT_LONG_CHAINS = false;
+//! Default for -mixsilentpayments
+static const bool DEFAULT_MIX_SILENT_PAYMENTS = false;
 //! -txconfirmtarget default
 static const unsigned int DEFAULT_TX_CONFIRM_TARGET = 6;
 //! -walletrbf default
@@ -712,9 +723,12 @@ private:
     /**
      * Select a set of coins such that nValueRet >= nTargetValue and at least
      * all coins from coinControl are selected; Never select unconfirmed coins
-     * if they are not ours
+     * if they are not ours. Received silent payments are not combined with
+     * each other or with other coins automatically (see
+     * SilentPaymentSelectionGroups); when only combining them would cover the
+     * target, `fMixNeeded` is set.
      */
-    bool SelectCoins(const std::vector<COutput>& vAvailableCoins, const CAmount& nTargetValue, std::set<CInputCoin>& setCoinsRet, CAmount& nValueRet, const CCoinControl *coinControl = nullptr) const;
+    bool SelectCoins(const std::vector<COutput>& vAvailableCoins, const CAmount& nTargetValue, std::set<CInputCoin>& setCoinsRet, CAmount& nValueRet, const CCoinControl *coinControl = nullptr, bool* fMixNeeded = nullptr) const;
 
     bool SelectAssets(const std::map<std::string, std::vector<COutput> >& mapAvailableAssets, const std::map<std::string, CAmount>& mapAssetTargetValue, std::set<CInputCoin>& setCoinsRet, std::map<std::string, CAmount>& nValueRet) const;
 
@@ -771,6 +785,55 @@ private:
     std::set<int64_t> setStrictEcdsaExternalKeyPool;
     int64_t m_max_strict_keypool_index;
     std::map<CKeyID, int64_t> m_strict_pool_key_to_index;
+
+    //! NIP-047 Silent Payments state. The cursor is the last block whose
+    //! eligible transactions were scanned (-1: nothing scanned yet). It only
+    //! advances after the payments of that block are stored.
+    int nSilentPaymentHeight = -1;
+    uint256 hashSilentPaymentBlock;
+    bool fSilentPaymentCursorLoaded = false;
+    //! Public code cached while the seed was available, so a locked wallet
+    //! can still show it.
+    CPubKey silentPaymentScanPub;
+    CPubKey silentPaymentSpendPub;
+    //! Imported view-only identity (b_scan, B_spend); detects payments only.
+    CKey silentPaymentViewScan;
+    CPubKey silentPaymentViewSpend;
+    //! Scripts of the received payments: never treated as change.
+    std::set<CScript> setSilentPaymentScripts;
+    //! Keys d_k of the received payments. They are stored in their own
+    //! records ("spkey"/"spckey"), which clients without NIP-047 do not load,
+    //! so those clients can neither show nor export them.
+    std::set<CKeyID> setSilentPaymentKeys;
+    //! Last scan failure (missing block or undo data); cleared on success.
+    std::string strSilentPaymentError;
+    //! Identity failure: the stored code does not match the seed (persisted,
+    //! cleared only by an explicit repair) or the stored view key is invalid.
+    //! While set, the code is never shown and nothing is scanned.
+    std::string strSilentPaymentIdentityError;
+    bool fSilentPaymentViewKeyCorrupt = false;
+    //! The public code was checked against the seed in this session.
+    bool fSilentPaymentCodeVerified = false;
+    //! Account keys of the own identity while the wallet is unlocked (always
+    //! for an unencrypted wallet, whose seed stays in memory anyway); cleared
+    //! by Lock(). Secure memory only.
+    std::unique_ptr<silentpayments::AccountKeys> silentPaymentKeyCache;
+    //! Background catch-up queued on the scheduler (one at a time).
+    std::atomic<bool> fSilentPaymentCatchUpQueued{false};
+    CScheduler* silentPaymentScheduler = nullptr;
+
+    bool GetSilentPaymentAccountKeys(silentpayments::AccountKeys& keys, std::string& error);
+    bool DeriveSilentPaymentAccountKeys(silentpayments::AccountKeys& keys, std::string& error);
+    bool SetSilentPaymentIdentityFailure(const std::string& reason);
+    bool ScanSilentPaymentBlock(CWalletDB& walletdb, const CBlock& block, const CBlockIndex* pindex,
+                                const silentpayments::AccountKeys& keys, const std::vector<unsigned char>& context,
+                                bool addTransactions, bool addAll, int& found, bool& matched, std::string& error);
+    bool RegisterSilentPayment(CWalletDB& walletdb, const COutPoint& outpoint, silentpayments::Match& match,
+                               const silentpayments::AccountKeys& keys, const CBlockIndex* pindex, bool& isNew);
+    bool WriteSilentPaymentCursor(CWalletDB& walletdb, const CBlockIndex* pindex);
+    bool UnconfirmSilentPayments(CWalletDB& walletdb, int aboveHeight, const uint256* blockHash, std::string& error);
+    void ScanSilentPaymentsInMempoolTx(const CTransactionRef& ptx);
+    void SilentPaymentsBlockDisconnected(const uint256& blockHash);
 
     int64_t nTimeFirstKey;
 
@@ -1124,6 +1187,85 @@ public:
      *  (witness v3). Change always returns to the family it was spent from;
      *  a family this wallet cannot produce falls back to the wallet default. */
     bool GetChangeScriptForFamily(int family, CReserveKey& reservekey, CScript& scriptRet, std::string& strFailReason);
+
+    /** NIP-047 Silent Payments (see wallet/silentpayments.h). A strict ECDSA
+     *  BIP44 wallet owns one identity derived from its seed; any other
+     *  unencrypted wallet may import a view-only identity instead. */
+    std::map<COutPoint, silentpayments::PaymentRecord> mapSilentPayments;
+    void LoadSilentPayment(const COutPoint& outpoint, const silentpayments::PaymentRecord& record);
+    void LoadSilentPaymentCursor(int height, const uint256& blockHash);
+    void LoadSilentPaymentCode(const CPubKey& scanKey, const CPubKey& spendKey);
+    bool LoadSilentPaymentViewKey(const std::vector<unsigned char>& scanSecret, const CPubKey& spendKey);
+    void LoadSilentPaymentIdentityFailure(const std::string& reason) { strSilentPaymentIdentityError = reason; }
+    bool LoadSilentPaymentKey(const CKey& key, const CPubKey& pubkey, const CKeyMetadata& meta);
+    bool LoadSilentPaymentCryptedKey(const CPubKey& pubkey, const std::vector<unsigned char>& cryptedSecret, const CKeyMetadata& meta);
+    bool IsSilentPaymentKey(const CKeyID& keyID) const;
+    bool IsSilentPaymentCoin(const COutPoint& outpoint) const;
+    //! Unspent received payments, split as GetBalance (trusted) and
+    //! GetUnconfirmedBalance (in the mempool) split them, and how many they
+    //! are (`unspent`, one coin each); they are watch-only in a view-only
+    //! wallet (`watchOnly`). False if the wallet has no records.
+    bool GetSilentPaymentBalance(CAmount& available, CAmount& pending, bool& watchOnly, int* unspent = nullptr) const;
+    //! Groups (indexes into `coins`) that automatic coin selection tries one
+    //! after another. Spending coins together links them on chain, so other
+    //! coins form one group and each received silent payment a group of its
+    //! own (smallest first). A preset payment is not completed with anything
+    //! and preset ordinary coins only with ordinary ones. -mixsilentpayments
+    //! adds all coins together as a last group.
+    std::vector<std::vector<size_t>> SilentPaymentSelectionGroups(const std::vector<COutPoint>& coins,
+                                                                  const std::vector<COutPoint>& preset) const;
+    //! Error shown when only combining both kinds of coins covers an amount.
+    static std::string SilentPaymentMixRefusal();
+    bool HasSilentPaymentIdentity() const;
+    bool IsSilentPaymentViewOnly() const { return silentPaymentViewSpend.IsValid() || fSilentPaymentViewKeyCorrupt; }
+    bool HasSilentPaymentViewKey() const { return IsSilentPaymentViewOnly(); }
+    bool IsSilentPaymentScript(const CScript& script) const;
+    //! Public payment code; derived (and cached) while the seed is available.
+    //! Fails while the identity is in error, and until the code was checked
+    //! against the seed in this session: an encrypted wallet needs one unlock
+    //! first (047c D8). `verified` is then always true.
+    bool GetSilentPaymentCode(silentpayments::PaymentCode& code, std::string& error, bool* verified = nullptr);
+    std::string GetSilentPaymentIdentityError() const;
+    //! Explicit repair after an identity failure: the seed is authoritative;
+    //! rewrites the code from it. Needs the unlocked own identity.
+    bool RepairSilentPaymentIdentity(silentpayments::PaymentCode& previous, silentpayments::PaymentCode& code, std::string& error);
+    //! Whether scanning waits for an unlock (own identity of a locked wallet).
+    bool SilentPaymentsPaused() const;
+    int GetSilentPaymentCursor(uint256* blockHash = nullptr) const;
+    std::string GetSilentPaymentError() const { return strSilentPaymentError; }
+    //! State of a received payment: pending, unconfirmed, confirmed, spent,
+    //! conflicted, abandoned, other_chain (its block is not known here) or
+    //! unknown (its transaction is not in the wallet).
+    std::string GetSilentPaymentStatus(const COutPoint& outpoint, const silentpayments::PaymentRecord& record, int& depth) const;
+    //! Startup: set the cursor of a new wallet (restores scan from the start)
+    //! and catch up to the tip when the keys are available.
+    void InitSilentPayments(bool fFirstRun, bool fRestore);
+    //! Scan forward from the cursor to `target` along its branch, rewinding
+    //! first when the cursor left that branch. `block` may hold the target
+    //! block (live notification). Stops without advancing past a block whose
+    //! data or undo data cannot be read.
+    bool SyncSilentPayments(const CBlockIndex* target, const CBlock* block = nullptr, int* found = nullptr);
+    //! Live notification: scans a short gap inline; a long one is left to
+    //! the background catch-up so validation is not held up.
+    void SyncSilentPaymentsOnBlock(const CBlockIndex* pindex, const CBlock* block);
+    //! Catch up to the active tip in chunks of `chunkBlocks`, taking and
+    //! releasing cs_main/cs_wallet per chunk, then scan the mempool. Call it
+    //! without those locks held so the node keeps working meanwhile.
+    bool ResumeSilentPayments(int* found = nullptr, int chunkBlocks = 500);
+    //! Queue ResumeSilentPayments on the scheduler (GUI unlock, long gaps);
+    //! false when no scheduler is available yet.
+    bool ScheduleSilentPaymentsResume();
+    //! Move the cursor back to start_height - 1 and scan again to the tip.
+    //! Same locking rule as ResumeSilentPayments.
+    bool RescanSilentPayments(int startHeight, int& found, std::string& error, int chunkBlocks = 500);
+    bool ImportSilentPaymentViewKey(const CKey& scanKey, const CPubKey& spendKey, std::string& error);
+    bool GetSilentPaymentViewKey(CKey& scanKey, CPubKey& spendKey, std::string& error);
+    //! Pay payment codes from strict v3 inputs only, change to the internal
+    //! strict ECDSA branch; the caller commits the result.
+    //! paymentPositions[i] is the output index paying recipients[i].
+    bool CreateSilentPaymentTransaction(const std::vector<silentpayments::Recipient>& recipients, CWalletTx& wtxNew,
+                                        CReserveKey& reservekey, CAmount& nFeeRet, std::vector<unsigned int>& paymentPositions,
+                                        std::string& error, const CCoinControl& coin_control);
 
     /** XNA END */
 

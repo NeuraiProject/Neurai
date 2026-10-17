@@ -16,9 +16,36 @@
 #include "walletmodel.h"
 #include "guiconstants.h"
 
+#include "base58.h"
+#include "wallet/silentpayments.h"
+
 #include <QGraphicsDropShadowEffect>
 #include <QApplication>
 #include <QClipboard>
+#include <QValidator>
+
+namespace {
+
+/** Accepts a Neurai address or a silent payment code (NIP-047) of this network. */
+class PayToCheckValidator : public QValidator
+{
+public:
+    explicit PayToCheckValidator(QObject *parent) : QValidator(parent) {}
+
+    State validate(QString &input, int &pos) const override
+    {
+        Q_UNUSED(pos);
+        silentpayments::PaymentCode code;
+        std::string error;
+        if (IsValidDestinationString(input.toStdString()) ||
+            silentpayments::DecodeCode(input.toStdString(), silentpayments::LocalNetworkId(), code, error)) {
+            return QValidator::Acceptable;
+        }
+        return QValidator::Invalid;
+    }
+};
+
+} // namespace
 
 SendCoinsEntry::SendCoinsEntry(const PlatformStyle *_platformStyle, QWidget *parent) :
     QStackedWidget(parent),
@@ -44,6 +71,8 @@ SendCoinsEntry::SendCoinsEntry(const PlatformStyle *_platformStyle, QWidget *par
 
     // normal neurai address field
     GUIUtil::setupAddressWidget(ui->payTo, this);
+    ui->payTo->setCheckValidator(new PayToCheckValidator(this));
+    ui->payTo->setPlaceholderText(tr("Enter a Neurai address or a silent payment code"));
     // just a label for displaying neurai address(es)
     ui->payTo_is->setFont(GUIUtil::getSubLabelFont());
 
@@ -155,7 +184,9 @@ bool SendCoinsEntry::validate()
     if (recipient.paymentRequest.IsInitialized())
         return retval;
 
-    if (!model->validateAddress(ui->payTo->text()))
+    // A silent payment code (NIP-047) is accepted as well as an address.
+    const bool isCode = model->isSilentPaymentCode(ui->payTo->text());
+    if (!isCode && !model->validateAddress(ui->payTo->text()))
     {
         ui->payTo->setValid(false);
         retval = false;
@@ -174,7 +205,7 @@ bool SendCoinsEntry::validate()
     }
 
     // Reject dust outputs:
-    if (retval && GUIUtil::isDust(ui->payTo->text(), ui->payAmount->value())) {
+    if (retval && !isCode && GUIUtil::isDust(ui->payTo->text(), ui->payAmount->value())) {
         ui->payAmount->setValid(false);
         retval = false;
     }

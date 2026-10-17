@@ -8,6 +8,7 @@
 
 #include "addresstablemodel.h"
 #include "neuraiunits.h"
+#include "guitheme.h"
 #include "guiutil.h"
 #include "witnessestimate.h"
 #include "optionsmodel.h"
@@ -666,7 +667,20 @@ void CoinControlDialog::updateView()
             }
 
             // label
-            if (!(sAddress == sWalletAddress)) // change
+            if (model->isSilentPaymentCoin(COutPoint(out.tx->GetHash(), out.i)))
+            {
+                // NIP-047: a received silent payment, kept apart by the automatic
+                // selection; choosing it here with other coins links them on chain.
+                itemOutput->setText(COLUMN_LABEL, tr("Silent payment"));
+                itemOutput->setForeground(COLUMN_LABEL, GUITheme::tokens().primary);
+                itemOutput->setToolTip(COLUMN_LABEL, tr("Received at your silent payment code. Spending it together with "
+                                                        "other coins or other silent payments links them on the blockchain."));
+                if (treeMode && sAddress == sWalletAddress) {
+                    itemWalletAddress->setText(COLUMN_LABEL, tr("Silent payment"));
+                    itemWalletAddress->setForeground(COLUMN_LABEL, GUITheme::tokens().primary);
+                }
+            }
+            else if (!(sAddress == sWalletAddress)) // change
             {
                 // tooltip from where the change comes from
                 itemOutput->setToolTip(COLUMN_LABEL, tr("change from %1 (%2)").arg(sWalletLabel).arg(sWalletAddress));

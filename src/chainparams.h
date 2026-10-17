@@ -195,10 +195,12 @@ protected:
     std::string strNetworkID;
     CBlock genesis;
     std::vector<SeedSpec6> vFixedSeeds;
-    bool fDefaultConsistencyChecks;
-    bool fRequireStandard;
-    bool fMineBlocksOnDemand;
-    bool fMiningRequiresPeers;
+    // Defaults for networks that do not set them (regtest left
+    // fMiningRequiresPeers uninitialized: undefined value, UBSan report).
+    bool fDefaultConsistencyChecks = false;
+    bool fRequireStandard = false;
+    bool fMineBlocksOnDemand = false;
+    bool fMiningRequiresPeers = false;
     CCheckpointData checkpointData;
     std::vector<uint256> headerAnchors;
     ChainTxData chainTxData;

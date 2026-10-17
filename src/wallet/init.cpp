@@ -37,6 +37,7 @@ std::string GetWalletHelpString(bool showDebug)
     strUsage += HelpMessageOpt("-fallbackfee=<amt>", strprintf(_("A fee rate (in %s/kB) that will be used when fee estimation has insufficient data (default: %s)"), CURRENCY_UNIT, FormatMoney(DEFAULT_FALLBACK_FEE)));
     strUsage += HelpMessageOpt("-keypool=<n>", strprintf(_("Set key pool size to <n> (default: %u)"), DEFAULT_KEYPOOL_SIZE));
     strUsage += HelpMessageOpt("-mintxfee=<amt>", strprintf(_("Fees (in %s/kB) smaller than this are considered zero fee for transaction creation (default: %s)"), CURRENCY_UNIT, FormatMoney(DEFAULT_TRANSACTION_MINFEE)));
+    strUsage += HelpMessageOpt("-mixsilentpayments", strprintf(_("Let automatic coin selection combine received silent payments with each other or with other coins when nothing covers an amount on its own; spending them together links them on the blockchain (default: %u)"), DEFAULT_MIX_SILENT_PAYMENTS));
     strUsage += HelpMessageOpt("-mnemonic=<word-list>", strprintf(_("A space separated list of 12-words used to import a bip44 wallet")));
     strUsage += HelpMessageOpt("-mnemonicpassphrase=<passphrase>", strprintf(_("Passphrase securing your 12-word mnemonic word-list")));
     strUsage += HelpMessageOpt("-paytxfee=<amt>", strprintf(_("Fee (in %s/kB) to add to transactions you send (default: %s)"), CURRENCY_UNIT, FormatMoney(payTxFee.GetFeePerK())));
@@ -204,6 +205,7 @@ void RegisterWalletRPC(CRPCTable &t)
     if (gArgs.GetBoolArg("-disablewallet", false)) return;
 
     RegisterWalletRPCCommands(t);
+    RegisterSilentPaymentsRPCCommands(t);
 }
 
 bool VerifyWallets()

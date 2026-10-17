@@ -66,7 +66,10 @@ TestingSetup::TestingSetup(const std::string &chainName) : BasicTestingSetup(cha
     // instead of unit tests, but for now we need these here.
     RegisterAllCoreRPCCommands(tableRPC);
     ClearDatadirCache();
-    pathTemp = fs::temp_directory_path() / strprintf("test_neurai_%lu_%i", (unsigned long) GetTime(), (int) (InsecureRandRange(100000)));
+    // The name must not come from insecure_rand_ctx: tests may seed it
+    // deterministically, and then concurrent test processes sharing the temp
+    // directory would pick the same data directory and clobber its block files.
+    pathTemp = fs::temp_directory_path() / strprintf("test_neurai_%lu_%s", (unsigned long) GetTime(), GetRandHash().GetHex().substr(0, 16));
     fs::create_directories(pathTemp);
     gArgs.ForceSetArg("-datadir", pathTemp.string());
 

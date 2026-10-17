@@ -209,7 +209,7 @@ BOOST_AUTO_TEST_CASE(flat_tree_and_wrapped_proofs)
 }
 BOOST_AUTO_TEST_CASE(height_gate)
 {
-    Consensus::Params params; params.nZKVerifyHeight=120;
+    Consensus::Params params{}; params.nZKVerifyHeight=120;
     BOOST_CHECK(!(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE,params,false,119)&SCRIPT_VERIFY_ZKVERIFY));
     BOOST_CHECK(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE,params,false,120)&SCRIPT_VERIFY_ZKVERIFY);
     BOOST_CHECK(!(CreateChainParams(CBaseChainParams::MAIN)->GetConsensus().IsZKVerifyActive(440000)));

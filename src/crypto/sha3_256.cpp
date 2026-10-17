@@ -61,7 +61,7 @@ void SHA3_256(const unsigned char* data, size_t len,
     // Last partial block: copy remaining bytes into a zero-padded
     // RATE_BYTES buffer, then apply FIPS-202 padding bytes.
     uint8_t last_block[RATE_BYTES] = {0};
-    std::memcpy(last_block, data, len);
+    if (len) std::memcpy(last_block, data, len); // data may be null when len == 0
     last_block[len] = 0x06;                    // SHA3 domain separator
     last_block[RATE_BYTES - 1] |= 0x80;        // pad10*1 final bit
 

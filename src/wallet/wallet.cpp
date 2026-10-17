@@ -58,6 +58,7 @@ const uint32_t BIP32_HARDENED_KEY_LIMIT = 0x80000000;
 
 std::string my_words;
 std::string my_passphrase;
+bool my_mnemonic_restore = false;
 std::optional<WalletAddressType> my_address_type;
 
 /**
@@ -516,6 +517,9 @@ bool CWallet::AddKeyPubKeyWithDB(CWalletDB &walletdb, const CKey& secret, const 
     }
 
     if (!IsCrypted()) {
+        if (IsSilentPaymentKey(pubkey.GetID())) {
+            return walletdb.WriteSilentPaymentKey(pubkey, secret.GetPrivKey(), mapKeyMetadata[pubkey.GetID()]);
+        }
         return walletdb.WriteKey(pubkey,
                                                  secret.GetPrivKey(),
                                                  mapKeyMetadata[pubkey.GetID()]);
@@ -536,14 +540,18 @@ bool CWallet::AddCryptedKey(const CPubKey &vchPubKey,
         return false;
     {
         LOCK(cs_wallet);
+        // Also reached for every key when the wallet gets encrypted: a
+        // received silent payment key keeps its own record type.
+        const CKeyID keyID = vchPubKey.GetID();
+        auto write = [&](CWalletDB& walletdb) {
+            return IsSilentPaymentKey(keyID) ?
+                walletdb.WriteSilentPaymentCryptedKey(vchPubKey, vchCryptedSecret, mapKeyMetadata[keyID]) :
+                walletdb.WriteCryptedKey(vchPubKey, vchCryptedSecret, mapKeyMetadata[keyID]);
+        };
         if (pwalletdbEncryption)
-            return pwalletdbEncryption->WriteCryptedKey(vchPubKey,
-                                                        vchCryptedSecret,
-                                                        mapKeyMetadata[vchPubKey.GetID()]);
-        else
-            return CWalletDB(*dbw).WriteCryptedKey(vchPubKey,
-                                                            vchCryptedSecret,
-                                                            mapKeyMetadata[vchPubKey.GetID()]);
+            return write(*pwalletdbEncryption);
+        CWalletDB walletdb(*dbw);
+        return write(walletdb);
     }
 }
 
@@ -704,6 +712,7 @@ bool CWallet::Lock()
     // Do not erase an unencrypted wallet if the keystore cannot lock it.
     if (!SetCrypted()) return false;
     hdChain.ClearSensitiveData();
+    silentPaymentKeyCache.reset(); // secure memory, wiped on release
     return CCryptoKeyStore::Lock();
 }
 
@@ -939,6 +948,10 @@ void CWallet::AddToSpends(const uint256& wtxid)
 bool CWallet::EncryptWallet(const SecureString& strWalletPassphrase)
 {
     if (IsCrypted())
+        return false;
+    // An imported silent payment view key is stored unencrypted and scans
+    // while locked; such a watch wallet stays unencrypted.
+    if (HasSilentPaymentViewKey())
         return false;
 
     CKeyingMaterial _vMasterKey;
@@ -1822,6 +1835,9 @@ void CWallet::SyncTransaction(const CTransactionRef& ptx, const CBlockIndex *pin
 
 void CWallet::TransactionAddedToMempool(const CTransactionRef& ptx) {
     LOCK2(cs_main, cs_wallet);
+    // Silent payments first: a found payment registers its key, so the
+    // transaction below is already recognised as ours.
+    ScanSilentPaymentsInMempoolTx(ptx);
     SyncTransaction(ptx);
 }
 
@@ -1838,6 +1854,9 @@ void CWallet::BlockConnected(const std::shared_ptr<const CBlock>& pblock, const 
     for (const CTransactionRef& ptx : vtxConflicted) {
         SyncTransaction(ptx);
     }
+    // Silent payments of this block are registered before the transactions
+    // are synced; a long gap behind the cursor is left to the catch-up.
+    SyncSilentPaymentsOnBlock(pindex, pblock.get());
     for (size_t i = 0; i < pblock->vtx.size(); i++) {
         SyncTransaction(pblock->vtx[i], pindex, i);
     }
@@ -1849,6 +1868,7 @@ void CWallet::BlockDisconnected(const std::shared_ptr<const CBlock>& pblock) {
     for (const CTransactionRef& ptx : pblock->vtx) {
         SyncTransaction(ptx);
     }
+    SilentPaymentsBlockDisconnected(pblock->GetHash());
 }
 
 
@@ -1919,6 +1939,11 @@ bool CWallet::IsChange(const CTxOut& txout) const
     // which output, if any, was change).
     if (::IsMine(*this, txout.scriptPubKey))
     {
+        // A received silent payment is never change, although its key is
+        // not in the address book.
+        if (IsSilentPaymentScript(txout.scriptPubKey))
+            return false;
+
         CTxDestination address;
         if (!ExtractDestination(txout.scriptPubKey, address))
             return true;
@@ -2204,6 +2229,21 @@ bool CWallet::IsAddressTypeActive(const std::string& addressType, std::string& e
         error = strprintf("%s are not active yet on this chain; they apply from block %d", family, nActivation);
     }
     return false;
+}
+
+uint32_t GetAntiFeeSnipingLockTime()
+{
+    AssertLockHeld(cs_main);
+    // Discourage fee sniping: a transaction is only valid in the next block,
+    // not at a lower height in a fork of the best chain.
+    uint32_t nLockTime = chainActive.Height();
+
+    // Occasionally pick a nLockTime further back, so that transactions that
+    // are delayed after signing for whatever reason (high-latency mix
+    // networks, some CoinJoin implementations) have better privacy.
+    if (GetRandInt(10) == 0)
+        nLockTime = std::max(0, (int)nLockTime - GetRandInt(100));
+    return nLockTime;
 }
 
 int64_t CWalletTx::GetTxTime() const
@@ -2673,6 +2713,11 @@ std::vector<uint256> CWallet::ResendWalletTransactionsBefore(int64_t nTime, CCon
         CWalletTx& wtx = item.second;
         // Don't rebroadcast if newer than nTime:
         if (wtx.nTimeReceived > nTime)
+            continue;
+        // Only transactions this wallet signed (they spend its coins): a
+        // payment it merely received is the sender's to rebroadcast, and
+        // announcing it again would point at the receiver (NIP-047, 047c D1).
+        if (!wtx.IsFromMe(ISMINE_SPENDABLE))
             continue;
         mapSorted.insert(std::make_pair(wtx.nTimeReceived, &wtx));
     }
@@ -3395,8 +3440,9 @@ bool CWallet::SelectCoinsMinConf(const CAmount& nTargetValue, const int nConfMin
     return true;
 }
 
-bool CWallet::SelectCoins(const std::vector<COutput>& vAvailableCoins, const CAmount& nTargetValue, std::set<CInputCoin>& setCoinsRet, CAmount& nValueRet, const CCoinControl* coinControl) const
+bool CWallet::SelectCoins(const std::vector<COutput>& vAvailableCoins, const CAmount& nTargetValue, std::set<CInputCoin>& setCoinsRet, CAmount& nValueRet, const CCoinControl* coinControl, bool* fMixNeeded) const
 {
+    if (fMixNeeded) *fMixNeeded = false;
     std::vector<COutput> vCoins(vAvailableCoins);
 
     // coin control -> return all selected outputs (we want all selected to go into the transaction for sure)
@@ -3446,14 +3492,47 @@ bool CWallet::SelectCoins(const std::vector<COutput>& vAvailableCoins, const CAm
     size_t nMaxChainLength = std::min(gArgs.GetArg("-limitancestorcount", DEFAULT_ANCESTOR_LIMIT), gArgs.GetArg("-limitdescendantcount", DEFAULT_DESCENDANT_LIMIT));
     bool fRejectLongChains = gArgs.GetBoolArg("-walletrejectlongchains", DEFAULT_WALLET_REJECT_LONG_CHAINS);
 
-    bool res = nTargetValue <= nValueFromPresetInputs ||
-        SelectCoinsMinConf(nTargetValue - nValueFromPresetInputs, 1, 6, 0, vCoins, setCoinsRet, nValueRet) ||
-        SelectCoinsMinConf(nTargetValue - nValueFromPresetInputs, 1, 1, 0, vCoins, setCoinsRet, nValueRet) ||
-        (bSpendZeroConfChange && SelectCoinsMinConf(nTargetValue - nValueFromPresetInputs, 0, 1, 2, vCoins, setCoinsRet, nValueRet)) ||
-        (bSpendZeroConfChange && SelectCoinsMinConf(nTargetValue - nValueFromPresetInputs, 0, 1, std::min((size_t)4, nMaxChainLength/3), vCoins, setCoinsRet, nValueRet)) ||
-        (bSpendZeroConfChange && SelectCoinsMinConf(nTargetValue - nValueFromPresetInputs, 0, 1, nMaxChainLength/2, vCoins, setCoinsRet, nValueRet)) ||
-        (bSpendZeroConfChange && SelectCoinsMinConf(nTargetValue - nValueFromPresetInputs, 0, 1, nMaxChainLength, vCoins, setCoinsRet, nValueRet)) ||
-        (bSpendZeroConfChange && !fRejectLongChains && SelectCoinsMinConf(nTargetValue - nValueFromPresetInputs, 0, 1, std::numeric_limits<uint64_t>::max(), vCoins, setCoinsRet, nValueRet));
+    struct Level { int nConfMine; int nConfTheirs; uint64_t nMaxAncestors; };
+    std::vector<Level> levels{{1, 6, 0}, {1, 1, 0}};
+    if (bSpendZeroConfChange) {
+        levels.push_back({0, 1, 2});
+        levels.push_back({0, 1, std::min((size_t)4, nMaxChainLength/3)});
+        levels.push_back({0, 1, nMaxChainLength/2});
+        levels.push_back({0, 1, nMaxChainLength});
+        if (!fRejectLongChains) levels.push_back({0, 1, std::numeric_limits<uint64_t>::max()});
+    }
+
+    // NIP-047 (047c D2): other coins and each received silent payment are
+    // tried as separate groups. Each confirmation level tries every group
+    // before relaxing, so separation never costs confirmed coins.
+    std::vector<COutPoint> vOutpoints;
+    vOutpoints.reserve(vCoins.size());
+    for (const COutput& out : vCoins) vOutpoints.emplace_back(out.tx->GetHash(), out.i);
+    std::vector<std::vector<COutput>> groups;
+    for (const std::vector<size_t>& indexes : SilentPaymentSelectionGroups(vOutpoints, vPresetInputs)) {
+        std::vector<COutput> group;
+        group.reserve(indexes.size());
+        for (size_t i : indexes) group.push_back(vCoins[i]);
+        groups.push_back(std::move(group));
+    }
+    const bool fSeparated = !groups.empty() && groups.back().size() != vCoins.size();
+
+    auto select = [&](const std::vector<std::vector<COutput>>& candidates) {
+        for (const Level& level : levels) {
+            for (const std::vector<COutput>& group : candidates) {
+                if (SelectCoinsMinConf(nTargetValue - nValueFromPresetInputs, level.nConfMine, level.nConfTheirs, level.nMaxAncestors, group, setCoinsRet, nValueRet))
+                    return true;
+            }
+        }
+        return false;
+    };
+    bool res = nTargetValue <= nValueFromPresetInputs || select(groups);
+    if (!res && fSeparated && fMixNeeded) {
+        // Tell the caller whether combining both kinds would have worked.
+        *fMixNeeded = select({vCoins});
+        setCoinsRet.clear();
+        nValueRet = 0;
+    }
 
     // because SelectCoinsMinConf clears the setCoinsRet, we now add the possible inputs to the coinset
     setCoinsRet.insert(setPresetCoins.begin(), setPresetCoins.end());
@@ -4038,14 +4117,7 @@ bool CWallet::CreateTransactionAll(const std::vector<CRecipient>& vecSend, CWall
     // enough, that fee sniping isn't a problem yet, but by implementing a fix
     // now we ensure code won't be written that makes assumptions about
     // nLockTime that preclude a fix later.
-    txNew.nLockTime = chainActive.Height();
-
-    // Secondly occasionally randomly pick a nLockTime even further back, so
-    // that transactions that are delayed after signing for whatever reason,
-    // e.g. high-latency mix networks and some CoinJoin implementations, have
-    // better privacy.
-    if (GetRandInt(10) == 0)
-        txNew.nLockTime = std::max(0, (int)txNew.nLockTime - GetRandInt(100));
+    txNew.nLockTime = GetAntiFeeSnipingLockTime();
 
     assert(txNew.nLockTime <= (unsigned int)chainActive.Height());
     assert(txNew.nLockTime < LOCKTIME_THRESHOLD);
@@ -4189,9 +4261,10 @@ bool CWallet::CreateTransactionAll(const std::vector<CRecipient>& vecSend, CWall
                 if (pick_new_inputs) {
                     nValueIn = 0;
                     setCoins.clear();
-                    if (!SelectCoins(vAvailableCoins, nValueToSelect, setCoins, nValueIn, &coin_control))
+                    bool fMixNeeded = false;
+                    if (!SelectCoins(vAvailableCoins, nValueToSelect, setCoins, nValueIn, &coin_control, &fMixNeeded))
                     {
-                        strFailReason = _("Insufficient funds");
+                        strFailReason = fMixNeeded ? SilentPaymentMixRefusal() : _("Insufficient funds");
                         return false;
                     }
 
@@ -4703,8 +4776,20 @@ DBErrors CWallet::ZapSelectTx(std::vector<uint256>& vHashIn, std::vector<uint256
 {
     AssertLockHeld(cs_wallet); // mapWallet
     DBErrors nZapSelectTxRet = CWalletDB(*dbw,"cr+").ZapSelectTx(vHashIn, vHashOut);
-    for (uint256 hash : vHashOut)
-        mapWallet.erase(hash);
+    for (uint256 hash : vHashOut) {
+        const auto it = mapWallet.find(hash);
+        if (it == mapWallet.end()) continue;
+        // wtxOrdered points into the element being erased: drop that entry
+        // too, or ComputeTimeSmart later reads freed memory.
+        for (auto ordered = wtxOrdered.begin(); ordered != wtxOrdered.end();) {
+            if (ordered->second.first == &it->second) {
+                ordered = wtxOrdered.erase(ordered);
+            } else {
+                ++ordered;
+            }
+        }
+        mapWallet.erase(it);
+    }
 
     if (nZapSelectTxRet == DB_NEED_REWRITE)
     {
@@ -5804,6 +5889,7 @@ CWallet* CWallet:: CreateWalletFromFile(const std::string walletFile)
         }
     }
 
+    bool fRestoreMnemonic = false;
     if (fFirstRun)
     {
         // ensure this wallet.dat can only be opened by clients supporting HD with chain split and expects no default key
@@ -5846,6 +5932,11 @@ CWallet* CWallet:: CreateWalletFromFile(const std::string walletFile)
                 my_address_type.reset();
             }
         }
+
+        // Words given by the user restore an existing wallet; generated
+        // words start a new one.
+        fRestoreMnemonic = !gArgs.GetArg("-mnemonic", "").empty() || my_mnemonic_restore;
+        my_mnemonic_restore = false;
 
         // Decided before the seed is derived: the HD chain carries the PQ flag.
         if (addressType == WalletAddressType::PQ) {
@@ -5991,6 +6082,9 @@ CWallet* CWallet:: CreateWalletFromFile(const std::string walletFile)
             }
         }
     }
+    // NIP-047: set the scan cursor of a new identity and catch up to the tip.
+    walletInstance->InitSilentPayments(fFirstRun, fRestoreMnemonic);
+
     walletInstance->SetBroadcastTransactions(gArgs.GetBoolArg("-walletbroadcast", DEFAULT_WALLETBROADCAST));
 
     {
@@ -6015,6 +6109,9 @@ void CWallet::postInitProcess(CScheduler& scheduler)
     if (!CWallet::fFlushScheduled.exchange(true)) {
         scheduler.scheduleEvery(MaybeCompactWalletDB, 500);
     }
+
+    // Long silent payment catch-ups run here, in chunks, from now on.
+    silentPaymentScheduler = &scheduler;
 }
 
 bool CWallet::BackupWallet(const std::string& strDest)

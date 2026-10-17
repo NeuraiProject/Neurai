@@ -27,6 +27,8 @@ namespace Ui {
 }
 
 QT_BEGIN_NAMESPACE
+class QFrame;
+class QLabel;
 class QModelIndex;
 QT_END_NAMESPACE
 
@@ -72,6 +74,16 @@ private:
     CAmount currentWatchOnlyBalance;
     CAmount currentWatchUnconfBalance;
     CAmount currentWatchImmatureBalance;
+
+    //! NIP-047: received silent payments, in their own card under the XNA
+    //! balance and only while the wallet has any.
+    QFrame *silentFrame;
+    QLabel *silentTitle;
+    QLabel *silentAvailable;
+    QLabel *silentPending;
+    QLabel *silentCount;
+    QLabel *silentTotal;
+    void setupSilentPaymentsCard();
 
     TxViewDelegate *txdelegate;
     std::unique_ptr<TransactionFilterProxy> filter;

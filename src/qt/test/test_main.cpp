@@ -17,6 +17,7 @@
 #ifdef ENABLE_WALLET
 #include "paymentservertests.h"
 #include "wallettests.h"
+#include "silentpaymenttests.h"
 #endif
 
 #include <QApplication>
@@ -55,6 +56,11 @@ extern void noui_connect();
 // This is all you need to run all the tests
 int main(int argc, char *argv[])
 {
+    // NEURAI_QT_TEST=silentpayments runs only the NIP-047 GUI tests, which
+    // were written for the current UI; the rest of the suite stays off.
+    const char* selected = getenv("NEURAI_QT_TEST");
+    const bool silentPaymentsOnly = selected && std::string(selected) == "silentpayments";
+    if (!silentPaymentsOnly)
     return 0; //~~ The QT UI has had major changes made to it.  This test suite needs to be re-written/adapted to the new changes.  Until then, just return true so that make check passes for auto-build-testing.
     SetupEnvironment();
     SetupNetworking();
@@ -86,6 +92,7 @@ int main(int argc, char *argv[])
 
     SSL_library_init();
 
+    if (!silentPaymentsOnly) {
     URITests test1;
     if (QTest::qExec(&test1) != 0)
     {
@@ -110,6 +117,13 @@ int main(int argc, char *argv[])
 #ifdef ENABLE_WALLET
     WalletTests test5;
     if (QTest::qExec(&test5) != 0) {
+        fInvalid = true;
+    }
+#endif
+    }
+#ifdef ENABLE_WALLET
+    SilentPaymentTests test6;
+    if (QTest::qExec(&test6) != 0) {
         fInvalid = true;
     }
 #endif

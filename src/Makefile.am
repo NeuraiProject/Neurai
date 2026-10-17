@@ -238,6 +238,7 @@ NEURAI_CORE_H = \
   wallet/init.h \
   wallet/depinpoolkeyload.h \
   wallet/rpcwallet.h \
+  wallet/silentpayments.h \
   wallet/wallet.h \
   wallet/walletdb.h \
   wallet/bip39.h \
@@ -343,7 +344,10 @@ libneurai_wallet_a_SOURCES = \
   wallet/init.cpp \
   wallet/depinpoolkeyload.cpp \
   wallet/rpcdump.cpp \
+  wallet/rpcsilentpayments.cpp \
   wallet/rpcwallet.cpp \
+  wallet/silentpayments.cpp \
+  wallet/silentpayments_wallet.cpp \
   wallet/wallet.cpp \
   wallet/walletdb.cpp \
   wallet/bip39.cpp \

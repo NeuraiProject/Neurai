@@ -338,6 +338,12 @@ void SendCoinsDialog::on_sendButton_clicked()
             else
             {
                 valid = false;
+                // A silent payment code of another network gets an explicit reason.
+                QString reason;
+                if (model && !model->isSilentPaymentCode(entry->getValue().address, &reason) && reason == "network") {
+                    Q_EMIT message(tr("Send Coins"), tr("This silent payment code belongs to another network."),
+                                   CClientUIInterface::MSG_ERROR);
+                }
             }
         }
     }

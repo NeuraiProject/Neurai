@@ -14,6 +14,7 @@ class CWallet;
 class JSONRPCRequest;
 
 void RegisterWalletRPCCommands(CRPCTable &t);
+void RegisterSilentPaymentsRPCCommands(CRPCTable &t);
 
 /**
  * Figures out what wallet, if any, to use for a JSONRPCRequest.

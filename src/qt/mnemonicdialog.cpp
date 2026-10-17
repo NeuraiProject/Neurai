@@ -651,6 +651,7 @@ void MnemonicDialog::createWallet()
 
     my_words = generatedWords;
     my_passphrase = createPassphrase->text().toStdString();
+    my_mnemonic_restore = false;
     my_address_type = StrictTypesAllowed() ? ADDRESS_TYPES[createType] : WalletAddressType::LEGACY;
     accept();
 }
@@ -682,6 +683,7 @@ void MnemonicDialog::restoreWallet()
 
     my_words = words;
     my_passphrase = restorePassphrase->text().toStdString();
+    my_mnemonic_restore = true;
     my_address_type = StrictTypesAllowed() ? ADDRESS_TYPES[restoreType] : WalletAddressType::LEGACY;
     accept();
 }

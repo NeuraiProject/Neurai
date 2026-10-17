@@ -657,6 +657,14 @@ UniValue dumpprivkey(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_TYPE_ERROR, "Address does not refer to a key");
     }
 
+    // NIP-047: a received silent payment key d_k plus the view key reveals
+    // the spend key b_spend = d_k - t_k, so it is never exported on its own.
+    auto meta = pwallet->mapKeyMetadata.find(keyID);
+    if (pwallet->IsSilentPaymentKey(keyID) ||
+        (meta != pwallet->mapKeyMetadata.end() && meta->second.hdKeypath.compare(0, 14, "silentpayment/") == 0)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "The private key of a received silent payment is not exported: with the view key it reveals the spend key");
+    }
+
     CKey vchSecret;
     if (!pwallet->GetKey(keyID, vchSecret)) {
         throw JSONRPCError(RPC_WALLET_ERROR, "Private key for address " + strAddress + " is not known");

@@ -1,0 +1,11 @@
+# LeakSanitizer suppressions (LSAN_OPTIONS=suppressions=test/sanitizer_suppressions/lsan).
+# Only allocations made by Berkeley DB 4.8 when its environment is opened:
+# the library keeps them for the process lifetime. Seen with and without
+# silent payments (control without NIP-047 identity, audit 2026-10-17).
+leak:__os_malloc
+leak:__os_calloc
+leak:__os_realloc
+leak:DbEnv::open
+# CWallet::CreateWalletFromFile returns nullptr on init errors without freeing
+# the instance (the node then stops); reached by pqwallet_guard_tests.
+leak:CWallet::CreateWalletFromFile

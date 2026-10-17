@@ -2428,6 +2428,9 @@ bool UndoWriteToDisk(const CBlockUndo& blockundo, CDiskBlockPos& pos, const uint
     return true;
 }
 
+} // namespace
+
+// Also used by getblock verbosity 3 and the wallet's silent payment scanner.
 bool UndoReadFromDisk(CBlockUndo& blockundo, const CDiskBlockPos& pos, const uint256& hashBlock)
 {
     // Open history file to read
@@ -2453,6 +2456,8 @@ bool UndoReadFromDisk(CBlockUndo& blockundo, const CDiskBlockPos& pos, const uin
 
     return true;
 }
+
+namespace {
 
 /** Abort with a message */
 bool AbortNode(const std::string& strMessage, const std::string& userMessage="")

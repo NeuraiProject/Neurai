@@ -94,9 +94,8 @@ BOOST_FIXTURE_TEST_SUITE(hash_tests, BasicTestingSetup)
 
         int expectedPositions[16] = {13, 2, 8, 6, 5, 5, 14, 7, 14, 9, 11, 14, 3, 9, 7, 0};
 
-        uint256 *hash = new uint256();
-        hash->SetHex(hashHex);
-        uint256 hash256 = hash[0];
+        uint256 hash256;
+        hash256.SetHex(hashHex);
 
         BOOST_CHECK_EQUAL(hash256.GetHex(), hashHex);
         for (int i = 0; i < 15; i++)

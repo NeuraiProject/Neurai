@@ -212,6 +212,18 @@ public:
 
     // Check address for validity
     bool validateAddress(const QString &address);
+    //! NIP-047: a silent payment code of this network (error gets the reason otherwise).
+    bool isSilentPaymentCode(const QString &code, QString *error = nullptr) const;
+    //! Whether this wallet has a silent payment identity (strict ECDSA wallet or view key).
+    bool hasSilentPaymentIdentity() const;
+    //! verified: checked against the seed in this session (see CWallet::GetSilentPaymentCode).
+    bool getSilentPaymentCode(QString &code, QString &error, bool *verified = nullptr) const;
+    //! Part of the balances that is received silent payments, and how many
+    //! unspent payments make it (see CWallet::GetSilentPaymentBalance); false
+    //! if the wallet has none.
+    bool getSilentPaymentBalance(CAmount &available, CAmount &pending, bool &watchOnly, int *unspent = nullptr) const;
+    //! A coin that was received as a silent payment.
+    bool isSilentPaymentCoin(const COutPoint &outpoint) const;
 
     // Return status record for SendCoins, contains error id + information
     struct SendCoinsReturn
@@ -227,6 +239,8 @@ public:
 
     // prepare transaction for getting txfee before sending coins
     SendCoinsReturn prepareTransaction(WalletModelTransaction &transaction, const CCoinControl& coinControl);
+    //! Payments to silent payment codes only (strict v3 inputs and outputs).
+    SendCoinsReturn prepareSilentPaymentTransaction(WalletModelTransaction &transaction, const CCoinControl& coinControl);
 
     // Send coins to a list of recipients
     SendCoinsReturn sendCoins(WalletModelTransaction &transaction);
@@ -323,6 +337,9 @@ private:
     CAmount cachedWatchOnlyBalance;
     CAmount cachedWatchUnconfBalance;
     CAmount cachedWatchImmatureBalance;
+    CAmount cachedSilentAvailable = 0;
+    CAmount cachedSilentPending = 0;
+    int cachedSilentUnspent = 0;
     EncryptionStatus cachedEncryptionStatus;
     int cachedNumBlocks;
 

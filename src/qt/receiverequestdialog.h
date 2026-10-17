@@ -7,6 +7,7 @@
 #ifndef NEURAI_QT_RECEIVEREQUESTDIALOG_H
 #define NEURAI_QT_RECEIVEREQUESTDIALOG_H
 
+#include "guiconstants.h"
 #include "walletmodel.h"
 
 #include <QDialog>
@@ -23,6 +24,10 @@ namespace Ui {
 QT_BEGIN_NAMESPACE
 class QMenu;
 QT_END_NAMESPACE
+
+/** QR code of `text` with `caption` under it, `size` pixels wide. A null
+ *  image with `error` set when it cannot be made (or without USE_QRCODE). */
+QImage MakeQRCodeImage(const QString& text, const QString& caption, QString& error, int size = QR_IMAGE_SIZE);
 
 /* Label widget for QR code. This image can be dragged, dropped, copied and saved
  * to disk.
