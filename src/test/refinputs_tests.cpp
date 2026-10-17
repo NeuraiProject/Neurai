@@ -15,11 +15,18 @@
 #include "primitives/transaction.h"
 #include "consensus/tx_verify.h"
 #include "consensus/validation.h"
+#include "key.h"
+#include "miner.h"
+#include "pow.h"
 #include "test/test_neurai.h"
 #include "streams.h"
+#include "txmempool.h"
+#include "validation.h"
 #include "version.h"
 
 #include <cstring>
+#include <memory>
+#include <string>
 #include <vector>
 #include <stdint.h>
 #include <set>
@@ -1003,6 +1010,178 @@ BOOST_AUTO_TEST_CASE(refinput_authscript_covenant_pattern)
 
     std::vector<std::vector<unsigned char>> result;
     BOOST_CHECK(RunRefInputScript(tx, refOutputs, script, REFINPUT_FLAGS, result));
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// NIP-014 section 9.4: relay policy between mempool referencers and spenders
+// of the same outpoint, block assembly order, and same-block coexistence under
+// the snapshot rule of section 7.4.
+struct RefInputsMempoolSetup : public TestChain100Setup {
+    const CScript coinbaseScript;
+
+    RefInputsMempoolSetup()
+        : coinbaseScript(CScript() << ToByteVector(coinbaseKey.GetPubKey()) << OP_CHECKSIG) {}
+
+    // Like CreateAndProcessBlock, but rebuilds the witness commitment for the
+    // supplied transactions. CreateAndProcessBlock keeps the commitment of the
+    // template, which only matches when the mempool selected the same set.
+    CBlock MineBlock(const std::vector<CMutableTransaction>& txns)
+    {
+        const CChainParams& chainparams = GetParams();
+        std::unique_ptr<CBlockTemplate> blockTemplate = BlockAssembler(chainparams).CreateNewBlock(coinbaseScript);
+        CBlock block = blockTemplate->block;
+        block.vtx.resize(1);
+        for (const CMutableTransaction& tx : txns) block.vtx.push_back(MakeTransactionRef(tx));
+
+        CMutableTransaction coinbase(*block.vtx[0]);
+        for (auto it = coinbase.vout.begin(); it != coinbase.vout.end();) {
+            const CScript& spk = it->scriptPubKey;
+            const bool isCommitment = spk.size() >= 38 && spk[0] == OP_RETURN && spk[1] == 0x24 &&
+                                      spk[2] == 0xaa && spk[3] == 0x21 && spk[4] == 0xa9 && spk[5] == 0xed;
+            it = isCommitment ? coinbase.vout.erase(it) : it + 1;
+        }
+        block.vtx[0] = MakeTransactionRef(std::move(coinbase));
+
+        unsigned int extraNonce = 0;
+        {
+            LOCK(cs_main);
+            GenerateCoinbaseCommitment(block, chainActive.Tip(), chainparams.GetConsensus());
+            IncrementExtraNonce(&block, chainActive.Tip(), extraNonce);
+        }
+        uint256 mixHash;
+        while (!CheckProofOfWork(block.GetHashFull(mixHash), block.nBits, chainparams.GetConsensus())) {
+            ++block.nNonce64;
+            ++block.nNonce;
+        }
+        block.mix_hash = mixHash;
+        ProcessNewBlock(chainparams, std::make_shared<const CBlock>(block), true, nullptr);
+        return block;
+    }
+
+    // TestChain100Setup leaves only the first coinbase mature for the mempool;
+    // each extra block matures one more.
+    void MatureCoinbases(int count)
+    {
+        for (int i = 0; i < count; ++i) MineBlock({});
+    }
+
+    // Spends output 0 of coinbaseTxns[index], leaving `fee` to the miner.
+    CMutableTransaction Spend(size_t index, int version, const std::vector<COutPoint>& refs, CAmount fee)
+    {
+        const CTransaction& coinbase = coinbaseTxns.at(index);
+        CMutableTransaction tx;
+        tx.nVersion = version;
+        tx.vin.resize(1);
+        tx.vin[0].prevout = COutPoint(coinbase.GetHash(), 0);
+        tx.vout.resize(1);
+        tx.vout[0].nValue = coinbase.vout[0].nValue - fee;
+        tx.vout[0].scriptPubKey = coinbaseScript;
+        tx.vrefin = refs;
+        std::vector<unsigned char> sig;
+        const uint256 hash = SignatureHash(coinbaseScript, tx, 0, SIGHASH_ALL, coinbase.vout[0].nValue, SIGVERSION_BASE);
+        BOOST_REQUIRE(coinbaseKey.Sign(hash, sig));
+        sig.push_back(static_cast<unsigned char>(SIGHASH_ALL));
+        tx.vin[0].scriptSig << sig;
+        return tx;
+    }
+
+    COutPoint CoinbaseOutput(size_t index) const { return COutPoint(coinbaseTxns.at(index).GetHash(), 0); }
+
+    static bool Submit(const CMutableTransaction& tx, std::string& reason)
+    {
+        LOCK(cs_main);
+        CValidationState state;
+        const bool accepted = AcceptToMemoryPool(mempool, state, MakeTransactionRef(tx), nullptr /* pfMissingInputs */,
+                                                 nullptr /* plTxnReplaced */, false /* bypass_limits */, 0 /* nAbsurdFee */);
+        reason = state.GetRejectReason();
+        return accepted;
+    }
+
+    static bool InMempool(const CMutableTransaction& tx) { return mempool.exists(tx.GetHash()); }
+
+    static bool InBlock(const CBlock& block, const CMutableTransaction& tx)
+    {
+        for (const auto& included : block.vtx) {
+            if (included->GetHash() == tx.GetHash()) return true;
+        }
+        return false;
+    }
+
+    static uint256 TipHash()
+    {
+        LOCK(cs_main);
+        return chainActive.Tip()->GetBlockHash();
+    }
+};
+
+BOOST_FIXTURE_TEST_SUITE(refinputs_mempool_tests, RefInputsMempoolSetup)
+
+BOOST_AUTO_TEST_CASE(spender_keeps_referencer_until_spend_confirms)
+{
+    MatureCoinbases(3);
+    const COutPoint shared = CoinbaseOutput(0);
+    std::string reason;
+
+    const CMutableTransaction referencer = Spend(1, 3, {shared}, COIN);
+    BOOST_REQUIRE_MESSAGE(Submit(referencer, reason), reason);
+
+    // Admitting a spender of the referenced outpoint does not evict the referencer.
+    const CMutableTransaction spender = Spend(0, 2, {}, COIN);
+    BOOST_REQUIRE_MESSAGE(Submit(spender, reason), reason);
+    BOOST_CHECK(InMempool(referencer));
+    BOOST_CHECK(InMempool(spender));
+
+    // A new referencer of an outpoint already spent in the mempool is rejected.
+    const CMutableTransaction late = Spend(2, 3, {shared}, COIN);
+    BOOST_CHECK(!Submit(late, reason));
+    BOOST_CHECK_EQUAL(reason, "refinput-spent-in-mempool");
+
+    // Confirming only the spender evicts the referencer.
+    const CBlock block = MineBlock({spender});
+    BOOST_REQUIRE(TipHash() == block.GetHash());
+    BOOST_CHECK(!InMempool(spender));
+    BOOST_CHECK(!InMempool(referencer));
+}
+
+BOOST_AUTO_TEST_CASE(assembler_skips_referencer_selected_after_spender)
+{
+    MatureCoinbases(4);
+    std::string reason;
+
+    // The spender pays more and is selected first: the referencer is skipped.
+    const CMutableTransaction cheapReferencer = Spend(1, 3, {CoinbaseOutput(0)}, COIN / 10);
+    const CMutableTransaction richSpender = Spend(0, 2, {}, 5 * COIN);
+    // The referencer pays more and is selected first: both are included.
+    const CMutableTransaction richReferencer = Spend(3, 3, {CoinbaseOutput(2)}, 5 * COIN);
+    const CMutableTransaction cheapSpender = Spend(2, 2, {}, COIN / 10);
+    for (const CMutableTransaction* tx : {&cheapReferencer, &richSpender, &richReferencer, &cheapSpender}) {
+        BOOST_REQUIRE_MESSAGE(Submit(*tx, reason), reason);
+    }
+
+    // CreateNewBlock also runs TestBlockValidity on the template.
+    const std::unique_ptr<CBlockTemplate> blockTemplate = BlockAssembler(GetParams()).CreateNewBlock(coinbaseScript);
+    BOOST_REQUIRE(blockTemplate);
+    const CBlock& block = blockTemplate->block;
+    BOOST_CHECK(InBlock(block, richSpender));
+    BOOST_CHECK(!InBlock(block, cheapReferencer));
+    BOOST_CHECK(InBlock(block, richReferencer));
+    BOOST_CHECK(InBlock(block, cheapSpender));
+}
+
+BOOST_AUTO_TEST_CASE(referencer_and_spender_share_block_in_either_order)
+{
+    MatureCoinbases(4);
+
+    const CMutableTransaction spenderFirst = Spend(0, 2, {}, COIN);
+    const CMutableTransaction referencerSecond = Spend(1, 3, {CoinbaseOutput(0)}, COIN);
+    const CBlock first = MineBlock({spenderFirst, referencerSecond});
+    BOOST_CHECK(TipHash() == first.GetHash());
+
+    const CMutableTransaction referencerFirst = Spend(3, 3, {CoinbaseOutput(2)}, COIN);
+    const CMutableTransaction spenderSecond = Spend(2, 2, {}, COIN);
+    const CBlock second = MineBlock({referencerFirst, spenderSecond});
+    BOOST_CHECK(TipHash() == second.GetHash());
 }
 
 BOOST_AUTO_TEST_SUITE_END()
