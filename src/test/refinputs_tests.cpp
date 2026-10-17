@@ -5,7 +5,10 @@
 // NIP-014: Unit tests for transaction v3 reference inputs (vrefin)
 // NIP-017: Unit tests for OP_REFINPUT* opcode family
 
+#include "amount.h"
+#include "assets/assetdb.h"
 #include "assets/assets.h"
+#include "assets/restricteddb.h"
 #include "base58.h"
 #include "chainparams.h"
 #include "script/interpreter.h"
@@ -17,7 +20,6 @@
 #include "consensus/validation.h"
 #include "key.h"
 #include "miner.h"
-#include "pow.h"
 #include "test/test_neurai.h"
 #include "streams.h"
 #include "txmempool.h"
@@ -1015,49 +1017,39 @@ BOOST_AUTO_TEST_CASE(refinput_authscript_covenant_pattern)
 BOOST_AUTO_TEST_SUITE_END()
 
 // NIP-014 section 9.4: relay policy between mempool referencers and spenders
-// of the same outpoint, block assembly order, and same-block coexistence under
-// the snapshot rule of section 7.4.
+// of the same outpoint, block assembly order, same-block coexistence under the
+// snapshot rule of section 7.4, and the re-check after a reorg.
 struct RefInputsMempoolSetup : public TestChain100Setup {
     const CScript coinbaseScript;
 
+    // Disconnecting a block (the reorg case) needs the asset databases, which
+    // TestChain100Setup does not create.
     RefInputsMempoolSetup()
-        : coinbaseScript(CScript() << ToByteVector(coinbaseKey.GetPubKey()) << OP_CHECKSIG) {}
-
-    // Like CreateAndProcessBlock, but rebuilds the witness commitment for the
-    // supplied transactions. CreateAndProcessBlock keeps the commitment of the
-    // template, which only matches when the mempool selected the same set.
-    CBlock MineBlock(const std::vector<CMutableTransaction>& txns)
+        : coinbaseScript(CScript() << ToByteVector(coinbaseKey.GetPubKey()) << OP_CHECKSIG)
     {
-        const CChainParams& chainparams = GetParams();
-        std::unique_ptr<CBlockTemplate> blockTemplate = BlockAssembler(chainparams).CreateNewBlock(coinbaseScript);
-        CBlock block = blockTemplate->block;
-        block.vtx.resize(1);
-        for (const CMutableTransaction& tx : txns) block.vtx.push_back(MakeTransactionRef(tx));
-
-        CMutableTransaction coinbase(*block.vtx[0]);
-        for (auto it = coinbase.vout.begin(); it != coinbase.vout.end();) {
-            const CScript& spk = it->scriptPubKey;
-            const bool isCommitment = spk.size() >= 38 && spk[0] == OP_RETURN && spk[1] == 0x24 &&
-                                      spk[2] == 0xaa && spk[3] == 0x21 && spk[4] == 0xa9 && spk[5] == 0xed;
-            it = isCommitment ? coinbase.vout.erase(it) : it + 1;
-        }
-        block.vtx[0] = MakeTransactionRef(std::move(coinbase));
-
-        unsigned int extraNonce = 0;
-        {
-            LOCK(cs_main);
-            GenerateCoinbaseCommitment(block, chainActive.Tip(), chainparams.GetConsensus());
-            IncrementExtraNonce(&block, chainActive.Tip(), extraNonce);
-        }
-        uint256 mixHash;
-        while (!CheckProofOfWork(block.GetHashFull(mixHash), block.nBits, chainparams.GetConsensus())) {
-            ++block.nNonce64;
-            ++block.nNonce;
-        }
-        block.mix_hash = mixHash;
-        ProcessNewBlock(chainparams, std::make_shared<const CBlock>(block), true, nullptr);
-        return block;
+        passetsdb = new CAssetsDB(1 << 20, true, true);
+        passetsCache = new CLRUCache<std::string, CDatabasedAssetData>(100);
+        prestricteddb = new CRestrictedDB(1 << 20, true, true);
+        passetsVerifierCache = new CLRUCache<std::string, CNullAssetTxVerifierString>(100);
+        passetsQualifierCache = new CLRUCache<std::string, int8_t>(100);
+        passetsRestrictionCache = new CLRUCache<std::string, int8_t>(100);
+        passetsGlobalRestrictionCache = new CLRUCache<std::string, int8_t>(100);
+        passetsDepinTransferStateCache = new CLRUCache<std::string, int8_t>(100);
     }
+
+    ~RefInputsMempoolSetup()
+    {
+        delete passetsDepinTransferStateCache; passetsDepinTransferStateCache = nullptr;
+        delete passetsGlobalRestrictionCache; passetsGlobalRestrictionCache = nullptr;
+        delete passetsRestrictionCache; passetsRestrictionCache = nullptr;
+        delete passetsQualifierCache; passetsQualifierCache = nullptr;
+        delete passetsVerifierCache; passetsVerifierCache = nullptr;
+        delete prestricteddb; prestricteddb = nullptr;
+        delete passetsCache; passetsCache = nullptr;
+        delete passetsdb; passetsdb = nullptr;
+    }
+
+    CBlock MineBlock(const std::vector<CMutableTransaction>& txns) { return CreateAndProcessBlock(txns, coinbaseScript); }
 
     // TestChain100Setup leaves only the first coinbase mature for the mempool;
     // each extra block matures one more.
@@ -1182,6 +1174,33 @@ BOOST_AUTO_TEST_CASE(referencer_and_spender_share_block_in_either_order)
     const CMutableTransaction spenderSecond = Spend(2, 2, {}, COIN);
     const CBlock second = MineBlock({referencerFirst, spenderSecond});
     BOOST_CHECK(TipHash() == second.GetHash());
+}
+
+BOOST_AUTO_TEST_CASE(reorg_evicts_referencer_of_disconnected_output)
+{
+    MatureCoinbases(2);
+    std::string reason;
+
+    // The parent creates the referenced output in a block that is later disconnected.
+    const CMutableTransaction parent = Spend(0, 2, {}, COIN);
+    const CBlock block = MineBlock({parent});
+    BOOST_REQUIRE(TipHash() == block.GetHash());
+
+    const CMutableTransaction referencer = Spend(1, 3, {COutPoint(parent.GetHash(), 0)}, COIN);
+    BOOST_REQUIRE_MESSAGE(Submit(referencer, reason), reason);
+
+    CValidationState state;
+    {
+        LOCK(cs_main);
+        BOOST_REQUIRE(InvalidateBlock(state, GetParams(), mapBlockIndex.at(block.GetHash())));
+    }
+    BOOST_REQUIRE(ActivateBestChain(state, GetParams()));
+    BOOST_REQUIRE(TipHash() == block.hashPrevBlock);
+
+    // The parent returns to the mempool, but its output is no longer confirmed,
+    // so the referencer is evicted (NIP-014 section 9.4, removeForReorg).
+    BOOST_CHECK(InMempool(parent));
+    BOOST_CHECK(!InMempool(referencer));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

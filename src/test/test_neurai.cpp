@@ -23,6 +23,7 @@
 #include "rpc/register.h"
 #include "script/sigcache.h"
 
+#include <algorithm>
 #include <memory>
 
 uint256 insecure_rand_seed = GetRandHash();
@@ -123,6 +124,45 @@ TestChain100Setup::TestChain100Setup() : TestingSetup(CBaseChainParams::REGTEST)
     }
 }
 
+namespace {
+
+bool IsWitnessCommitment(const CTxOut& out)
+{
+    const CScript& spk = out.scriptPubKey;
+    return spk.size() >= 38 && spk[0] == OP_RETURN && spk[1] == 0x24 && spk[2] == 0xaa &&
+           spk[3] == 0x21 && spk[4] == 0xa9 && spk[5] == 0xed;
+}
+
+// Fees of txns connected in order on top of the current tip. Transactions whose
+// inputs cannot be resolved (deliberately invalid test cases, such as a double
+// spend or a duplicate) contribute nothing and do not add outputs.
+CAmount BlockFees(const std::vector<CMutableTransaction>& txns, int nHeight)
+{
+    CCoinsViewCache view(pcoinsTip);
+    CAmount fees = 0;
+    for (const CMutableTransaction& mtx : txns) {
+        const CTransaction tx(mtx);
+        CAmount in = 0;
+        bool resolved = true;
+        for (const CTxIn& txin : tx.vin) {
+            const Coin& coin = view.AccessCoin(txin.prevout);
+            if (coin.IsSpent()) {
+                resolved = false;
+                break;
+            }
+            in += coin.out.nValue;
+        }
+        if (!resolved) continue;
+        for (const CTxIn& txin : tx.vin) view.SpendCoin(txin.prevout);
+        const CAmount out = tx.GetValueOut();
+        if (in > out) fees += in - out;
+        AddCoins(view, tx, nHeight, uint256(), true /* check: tolerate an existing coin */);
+    }
+    return fees;
+}
+
+} // namespace
+
 //
 // Create a new block with just given transactions, coinbase paying to
 // scriptPubKey, and try to add it to the current chain.
@@ -138,6 +178,18 @@ TestChain100Setup::CreateAndProcessBlock(const std::vector<CMutableTransaction> 
     block.vtx.resize(1);
     for (const CMutableTransaction &tx : txns)
         block.vtx.push_back(MakeTransactionRef(tx));
+    // The template coinbase pays the fees of, and commits to the witnesses of,
+    // the mempool selection. Rebuild both for the passed-in txns; otherwise any
+    // other set fails with bad-cb-amount or bad-witness-merkle-match. For the
+    // same set the result is unchanged.
+    {
+        LOCK(cs_main);
+        CMutableTransaction coinbase(*block.vtx[0]);
+        coinbase.vout[0].nValue += pblocktemplate->vTxFees[0] + BlockFees(txns, chainActive.Height() + 1);
+        coinbase.vout.erase(std::remove_if(coinbase.vout.begin(), coinbase.vout.end(), IsWitnessCommitment), coinbase.vout.end());
+        block.vtx[0] = MakeTransactionRef(std::move(coinbase));
+        GenerateCoinbaseCommitment(block, chainActive.Tip(), chainparams.GetConsensus());
+    }
     // IncrementExtraNonce creates a valid coinbase and merkleRoot
     unsigned int extraNonce = 0;
     IncrementExtraNonce(&block, chainActive.Tip(), extraNonce);
