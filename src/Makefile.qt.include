@@ -5,7 +5,7 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 bin_PROGRAMS += qt/neurai-qt
-EXTRA_LIBRARIES += qt/libneuraiqt.a
+EXTRA_LIBRARIES += qt/libneuraiqt.a qt/libqrkude.a
 
 # neurai qt core #
 QT_TS = \
@@ -251,6 +251,7 @@ NEURAI_QT_H = \
   qt/platformstyle.h \
   qt/privacypage.h \
   qt/privacypoolmodel.h \
+  qt/qrimage.h \
   qt/qvalidatedlineedit.h \
   qt/qvaluecombobox.h \
   qt/receivecoinsdialog.h \
@@ -408,6 +409,7 @@ NEURAI_QT_BASE_CPP = \
   qt/assettablemodel.cpp \
   qt/peertablemodel.cpp \
   qt/platformstyle.cpp \
+  qt/qrimage.cpp \
   qt/qvalidatedlineedit.cpp \
   qt/qvaluecombobox.cpp \
   qt/rpcconsole.cpp \
@@ -481,6 +483,29 @@ qt_libneuraiqt_a_CPPFLAGS = $(AM_CPPFLAGS) $(NEURAI_INCLUDES) $(NEURAI_QT_INCLUD
   $(QT_INCLUDES) $(QT_DBUS_INCLUDES) $(PROTOBUF_CFLAGS) $(QR_CFLAGS)
 qt_libneuraiqt_a_CXXFLAGS = $(AM_CXXFLAGS) $(QT_PIE_FLAGS)
 
+# QRKude: styled QR codes (vendored, Apache-2.0, see qrkude/README.neurai.md).
+LIBQRKUDE = qt/libqrkude.a
+qt_libqrkude_a_CPPFLAGS = $(AM_CPPFLAGS) $(QT_INCLUDES)
+qt_libqrkude_a_CFLAGS = $(AM_CFLAGS) $(PIE_FLAGS)
+qt_libqrkude_a_CXXFLAGS = $(AM_CXXFLAGS) $(QT_PIE_FLAGS)
+qt_libqrkude_a_SOURCES = \
+  qrkude/qrkude.h \
+  qrkude/qrk_internal.h \
+  qrkude/qrk_encode.c \
+  qrkude/qrk_json.c \
+  qrkude/qrk_layout.c \
+  qrkude/qrk_lint.c \
+  qrkude/qrk_payload.c \
+  qrkude/qrk_raster.c \
+  qrkude/qrk_svg.c \
+  qrkude/qrkudecode.cpp \
+  qrkude/qrkudecode.h \
+  qrkude/qrkudeglobal.h \
+  qrkude/qrkuderenderer.cpp \
+  qrkude/qrkuderenderer.h \
+  qrkude/qrkudestyle.cpp \
+  qrkude/qrkudestyle.h
+
 qt_libneuraiqt_a_SOURCES = $(NEURAI_QT_CPP) $(NEURAI_QT_H) $(QT_FORMS_UI) \
   $(QT_QRC) $(QT_QRC_LOCALE) $(QT_TS) $(PROTOBUF_PROTO) $(RES_ICONS) $(RES_IMAGES) $(RES_MOVIES)
 
@@ -512,7 +537,7 @@ endif
 if TARGET_WINDOWS
   qt_neurai_qt_SOURCES += $(NEURAI_RC)
 endif
-qt_neurai_qt_LDADD = qt/libneuraiqt.a $(LIBNEURAI_PRIVACY) $(LIBNEURAI_SERVER)
+qt_neurai_qt_LDADD = qt/libneuraiqt.a $(LIBQRKUDE) $(LIBNEURAI_PRIVACY) $(LIBNEURAI_SERVER)
 if ENABLE_WALLET
 qt_neurai_qt_LDADD += $(LIBNEURAI_WALLET)
 endif

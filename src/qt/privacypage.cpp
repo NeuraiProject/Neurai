@@ -11,14 +11,11 @@
 #include "qt/optionsmodel.h"
 #include "qt/platformstyle.h"
 #include "qt/privacypoolmodel.h"
+#include "qt/qrimage.h"
 #include "qt/walletmodel.h"
 
-#include "config/neurai-config.h" /* for USE_QRCODE */
 #include "ui_interface.h"
 
-#ifdef USE_QRCODE
-#include <qrencode.h>
-#endif
 
 #include <QButtonGroup>
 #include <QComboBox>
@@ -31,96 +28,24 @@
 #include <QImage>
 #include <QLabel>
 #include <QLineEdit>
-#include <QLinearGradient>
 #include <QMessageBox>
-#include <QPainter>
-#include <QPainterPath>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QTableWidget>
 #include <QVBoxLayout>
 
 #include <algorithm>
-#include <cmath>
 
 namespace {
 
 constexpr CAmount QUANTUM = 100 * COIN;
 constexpr int QR_SIZE = 140;
 
-/** QR of a private address drawn like NeuraiWallet's: high error correction, a
- *  navy gradient, rounded finder patterns and the Neurai logo in the middle. */
+/** QR of a private address in the common Neurai style (see qrimage.h). */
 QPixmap AddressQr(const QString& text, int size, qreal dpr)
 {
-#ifdef USE_QRCODE
-    QRcode* code = QRcode_encodeString(text.toUtf8().constData(), 0, QR_ECLEVEL_H, QR_MODE_8, 1);
-    if (!code) return QPixmap();
-    const int n = code->width;
-    std::vector<bool> dark(static_cast<size_t>(n) * n);
-    for (size_t i = 0; i < dark.size(); ++i) dark[i] = code->data[i] & 1;
-    QRcode_free(code);
-
-    // Drawn in device pixels so that modules land on whole pixels and stay sharp.
-    const int pixels = qRound(size * dpr);
-    QImage image(pixels, pixels, QImage::Format_ARGB32_Premultiplied);
-    image.fill(Qt::white);
-    QPainter painter(&image);
-    painter.setRenderHint(QPainter::SmoothPixmapTransform);
-
-    // One quiet cell around the symbol; the logo clears an odd, centred square.
-    const qreal cell = qreal(pixels) / (n + 2);
-    const qreal logoSize = pixels * 0.3;
-    int logoCells = static_cast<int>(std::ceil((logoSize + cell) / cell));
-    if (logoCells % 2 == 0) ++logoCells;
-    logoCells = std::min(logoCells, n);
-    const int logoStart = (n - logoCells) / 2, logoEnd = logoStart + logoCells;
-    const int finders[3][2] = {{0, 0}, {0, n - 7}, {n - 7, 0}};
-    auto inFinder = [&](int r, int c) {
-        for (const auto& f : finders) {
-            if (r >= f[0] && r < f[0] + 7 && c >= f[1] && c < f[1] + 7) return true;
-        }
-        return false;
-    };
-
-    QLinearGradient gradient(0, 0, pixels, pixels);
-    gradient.setColorAt(0, QColor("#0c2550"));
-    gradient.setColorAt(1, QColor("#1e3a8a"));
-    QPainterPath cells;
-    cells.setFillRule(Qt::WindingFill);
-    for (int r = 0; r < n; ++r) {
-        for (int c = 0; c < n; ++c) {
-            if (!dark[static_cast<size_t>(r) * n + c] || inFinder(r, c)) continue;
-            if (r >= logoStart && r < logoEnd && c >= logoStart && c < logoEnd) continue;
-            const int x0 = qRound((c + 1) * cell), y0 = qRound((r + 1) * cell);
-            cells.addRect(x0, y0, qRound((c + 2) * cell) - x0, qRound((r + 2) * cell) - y0);
-        }
-    }
-    painter.fillPath(cells, gradient);
-    painter.setRenderHint(QPainter::Antialiasing);
-    for (const auto& f : finders) {
-        const qreal x = (f[1] + 1) * cell, y = (f[0] + 1) * cell;
-        QPainterPath frame, hole, dot;
-        frame.addRoundedRect(x, y, 7 * cell, 7 * cell, 2 * cell, 2 * cell);
-        hole.addRoundedRect(x + cell, y + cell, 5 * cell, 5 * cell, 1.25 * cell, 1.25 * cell);
-        dot.addRoundedRect(x + 2 * cell, y + 2 * cell, 3 * cell, 3 * cell, 0.9 * cell, 0.9 * cell);
-        painter.fillPath(frame, gradient);
-        painter.fillPath(hole, Qt::white);
-        painter.fillPath(dot, gradient);
-    }
-    QPainterPath backdrop;
-    backdrop.addRoundedRect((logoStart + 1) * cell, (logoStart + 1) * cell, logoCells * cell, logoCells * cell, 0.5 * cell, 0.5 * cell);
-    painter.fillPath(backdrop, Qt::white);
-    const QRectF logo(pixels / 2.0 - logoSize / 2, pixels / 2.0 - logoSize / 2, logoSize, logoSize);
-    painter.drawImage(logo, QImage(":/icons/qr_logo"));
-    painter.end();
-    image.setDevicePixelRatio(dpr);
-    return QPixmap::fromImage(image);
-#else
-    Q_UNUSED(text);
-    Q_UNUSED(size);
-    Q_UNUSED(dpr);
-    return QPixmap();
-#endif
+    QString error;
+    return QPixmap::fromImage(NeuraiQRImage(text, size, error, QString(), dpr));
 }
 
 QString Css(const QColor& color) { return color.name(); }

@@ -10,10 +10,10 @@
 #include "guiconstants.h"
 #include "guiutil.h"
 #include "optionsmodel.h"
+#include "qrimage.h"
 #include "walletmodel.h"
 
 #include <QClipboard>
-#include <QCoreApplication>
 #include <QDrag>
 #include <QMenu>
 #include <QMimeData>
@@ -27,55 +27,6 @@
 #include "config/neurai-config.h" /* for USE_QRCODE */
 #endif
 
-#ifdef USE_QRCODE
-#include <qrencode.h>
-#endif
-
-QImage MakeQRCodeImage(const QString& text, const QString& caption, QString& error, int size)
-{
-#ifdef USE_QRCODE
-    QRcode *code = QRcode_encodeString(text.toUtf8().constData(), 0, QR_ECLEVEL_L, QR_MODE_8, 1);
-    if (!code)
-    {
-        error = QCoreApplication::translate("ReceiveRequestDialog", "Error encoding URI into QR Code.");
-        return QImage();
-    }
-    QImage qrImage = QImage(code->width + 8, code->width + 8, QImage::Format_RGB32);
-    qrImage.fill(0xffffff);
-    unsigned char *p = code->data;
-    for (int y = 0; y < code->width; y++)
-    {
-        for (int x = 0; x < code->width; x++)
-        {
-            qrImage.setPixel(x + 4, y + 4, ((*p & 1) ? 0x0 : 0xffffff));
-            p++;
-        }
-    }
-    QRcode_free(code);
-
-    QImage qrAddrImage = QImage(size, size+20, QImage::Format_RGB32);
-    qrAddrImage.fill(0xffffff);
-    QPainter painter(&qrAddrImage);
-    painter.drawImage(0, 0, qrImage.scaled(size, size));
-    QFont font = GUIUtil::fixedPitchFont();
-    font.setPixelSize(12);
-    painter.setFont(font);
-    QRect paddedRect = qrAddrImage.rect();
-    paddedRect.setHeight(size+12);
-    // A 120-character silent payment code does not fit under the QR:
-    // show its start and end, the full code is in the text and URI.
-    QString shown = caption;
-    const int keep = size / 18; // characters kept at each end so that the caption fits the width
-    if (shown.size() > 2 * keep + 1)
-        shown = shown.left(keep) + QString::fromUtf8("\u2026") + shown.right(keep);
-    painter.drawText(paddedRect, Qt::AlignBottom|Qt::AlignCenter, shown);
-    painter.end();
-    return qrAddrImage;
-#else
-    error = QCoreApplication::translate("ReceiveRequestDialog", "This build has no QR code support.");
-    return QImage();
-#endif
-}
 
 QRImageWidget::QRImageWidget(QWidget *parent):
     QLabel(parent), contextMenu(0)
@@ -219,7 +170,7 @@ void ReceiveRequestDialog::update()
             ui->lblQRCode->setText(tr("Resulting URI too long, try to reduce the text for label / message."));
         } else {
             QString error;
-            const QImage image = MakeQRCodeImage(uri, info.address, error);
+            const QImage image = NeuraiQRImage(uri, QR_IMAGE_SIZE, error, info.address, devicePixelRatioF());
             if (image.isNull())
             {
                 ui->lblQRCode->setText(error);

@@ -735,6 +735,7 @@ CLEANFILES += obj/build.h
 
 EXTRA_DIST = $(CTAES_DIST)
 EXTRA_DIST += monocypher/LICENCE.md monocypher/README.neurai.md wasm3/LICENSE wasm3/README.neurai.md
+EXTRA_DIST += qrkude/LICENSE qrkude/NOTICE qrkude/README.neurai.md
 
 
 config/neurai-config.h: config/stamp-h1

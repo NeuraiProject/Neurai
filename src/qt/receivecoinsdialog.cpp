@@ -13,6 +13,7 @@
 #include "guitheme.h"
 #include "optionsmodel.h"
 #include "platformstyle.h"
+#include "qrimage.h"
 #include "receiverequestdialog.h"
 #include "recentrequeststablemodel.h"
 #include "walletmodel.h"
@@ -347,7 +348,7 @@ bool ReceiveCoinsDialog::fillSilentCodeFrame(bool warn)
     silentCodeText->setPlainText(code);
     silentCodeStatus->setText(tr("Checked against this wallet's seed."));
     QString qrError;
-    const QImage image = MakeQRCodeImage(silentCodeURI(), code, qrError, 240);
+    const QImage image = NeuraiQRImage(silentCodeURI(), 280, qrError, code, devicePixelRatioF());
     if (image.isNull()) {
         silentCodeQR->setText(qrError);
     } else {

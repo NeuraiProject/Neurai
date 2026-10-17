@@ -9,6 +9,7 @@
 #include "qt/guiutil.h"
 #include "qt/neuraiunits.h"
 #include "qt/overviewpage.h"
+#include "qt/qrimage.h"
 #include "qt/neuraiamountfield.h"
 #include "qt/optionsmodel.h"
 #include "qt/platformstyle.h"
@@ -21,6 +22,7 @@
 #include "test/test_neurai.h"
 #include "validation.h"
 #include "assets/myassetsdb.h"
+#include "base58.h"
 #include "wallet/bip39.h"
 #include "wallet/silentpayments.h"
 #include "wallet/wallet.h"
@@ -243,6 +245,15 @@ void TestSilentPaymentsGUI()
 #endif
     button->click();
     QVERIFY(codeCard->isHidden());
+
+    // Styled QR codes (dots, logo in the middle) read without warnings, also
+    // for the longest payload shown: a payment code URI.
+    const QString codeURI = GUIUtil::formatNeuraiURI(SendCoinsRecipient(ownCode, QString(), 0, QString()));
+    for (const QString& text : {codeURI, QString::fromStdString(EncodeDestination(CTxDestination(coinbasePub.GetID())))}) {
+        QString qrError;
+        QVERIFY(!NeuraiQRImage(text, 240, qrError, text).isNull());
+        QVERIFY2(NeuraiQRWarnings(text).isEmpty(), qPrintable(NeuraiQRWarnings(text).join(", ")));
+    }
 
     bitdb.Flush(true);
     bitdb.Reset();
