@@ -91,6 +91,9 @@ class CScript;
 // Testing fixture that pre-creates a
 // 100-block REGTEST-mode block chain
 //
+// A 100-block regtest chain. After building it, the fixture also creates the
+// in-memory asset databases and caches, which DisconnectBlock (any reorg) and
+// the asset metadata lookups need.
 struct TestChain100Setup : public TestingSetup
 {
     TestChain100Setup();

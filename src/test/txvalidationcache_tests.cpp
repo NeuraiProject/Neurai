@@ -518,12 +518,6 @@ BOOST_AUTO_TEST_CASE(rewind_without_readmission_crosses_strict_height)
         int height;
         ~RestoreHeight() { params.nStrictAuthScriptHeight = height; }
     } restore{consensus, consensus.nStrictAuthScriptHeight};
-    // TestChain100Setup does not create the asset undo DB used by DisconnectBlock.
-    struct AssetUndoDB {
-        CAssetsDB* previous;
-        AssetUndoDB() : previous(passetsdb) { passetsdb = new CAssetsDB(1 << 20, true, true); }
-        ~AssetUndoDB() { delete passetsdb; passetsdb = previous; }
-    } assetUndoDB;
     consensus.nStrictAuthScriptHeight = 120;
     const CScript reward = CScript() << ToByteVector(coinbaseKey.GetPubKey()) << OP_CHECKSIG;
     for (int i = 0; i < 21; ++i) CreateAndProcessBlock({}, reward);
@@ -557,12 +551,6 @@ BOOST_AUTO_TEST_CASE(rewind_without_readmission_crosses_budget_height)
         int height;
         ~RestoreHeight() { params.nAuthScriptBudgetHeight = height; }
     } restore{consensus, consensus.nAuthScriptBudgetHeight};
-    // TestChain100Setup does not create the asset undo DB used by DisconnectBlock.
-    struct AssetUndoDB {
-        CAssetsDB* previous;
-        AssetUndoDB() : previous(passetsdb) { passetsdb = new CAssetsDB(1 << 20, true, true); }
-        ~AssetUndoDB() { delete passetsdb; passetsdb = previous; }
-    } assetUndoDB;
     consensus.nAuthScriptBudgetHeight = 120;
     const CScript reward = CScript() << ToByteVector(coinbaseKey.GetPubKey()) << OP_CHECKSIG;
     for (int i = 0; i < 21; ++i) CreateAndProcessBlock({}, reward);

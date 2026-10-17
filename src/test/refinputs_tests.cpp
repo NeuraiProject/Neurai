@@ -5,10 +5,7 @@
 // NIP-014: Unit tests for transaction v3 reference inputs (vrefin)
 // NIP-017: Unit tests for OP_REFINPUT* opcode family
 
-#include "amount.h"
-#include "assets/assetdb.h"
 #include "assets/assets.h"
-#include "assets/restricteddb.h"
 #include "base58.h"
 #include "chainparams.h"
 #include "script/interpreter.h"
@@ -1022,32 +1019,8 @@ BOOST_AUTO_TEST_SUITE_END()
 struct RefInputsMempoolSetup : public TestChain100Setup {
     const CScript coinbaseScript;
 
-    // Disconnecting a block (the reorg case) needs the asset databases, which
-    // TestChain100Setup does not create.
     RefInputsMempoolSetup()
-        : coinbaseScript(CScript() << ToByteVector(coinbaseKey.GetPubKey()) << OP_CHECKSIG)
-    {
-        passetsdb = new CAssetsDB(1 << 20, true, true);
-        passetsCache = new CLRUCache<std::string, CDatabasedAssetData>(100);
-        prestricteddb = new CRestrictedDB(1 << 20, true, true);
-        passetsVerifierCache = new CLRUCache<std::string, CNullAssetTxVerifierString>(100);
-        passetsQualifierCache = new CLRUCache<std::string, int8_t>(100);
-        passetsRestrictionCache = new CLRUCache<std::string, int8_t>(100);
-        passetsGlobalRestrictionCache = new CLRUCache<std::string, int8_t>(100);
-        passetsDepinTransferStateCache = new CLRUCache<std::string, int8_t>(100);
-    }
-
-    ~RefInputsMempoolSetup()
-    {
-        delete passetsDepinTransferStateCache; passetsDepinTransferStateCache = nullptr;
-        delete passetsGlobalRestrictionCache; passetsGlobalRestrictionCache = nullptr;
-        delete passetsRestrictionCache; passetsRestrictionCache = nullptr;
-        delete passetsQualifierCache; passetsQualifierCache = nullptr;
-        delete passetsVerifierCache; passetsVerifierCache = nullptr;
-        delete prestricteddb; prestricteddb = nullptr;
-        delete passetsCache; passetsCache = nullptr;
-        delete passetsdb; passetsdb = nullptr;
-    }
+        : coinbaseScript(CScript() << ToByteVector(coinbaseKey.GetPubKey()) << OP_CHECKSIG) {}
 
     CBlock MineBlock(const std::vector<CMutableTransaction>& txns) { return CreateAndProcessBlock(txns, coinbaseScript); }
 

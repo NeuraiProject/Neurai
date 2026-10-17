@@ -108,14 +108,6 @@ struct AssetReadSetup : public TestChain100Setup {
 
     AssetReadSetup() : TestChain100Setup()
     {
-        passetsdb = new CAssetsDB(1 << 20, true, true);
-        passetsCache = new CLRUCache<std::string, CDatabasedAssetData>(100);
-        prestricteddb = new CRestrictedDB(1 << 20, true, true);
-        passetsVerifierCache = new CLRUCache<std::string, CNullAssetTxVerifierString>(100);
-        passetsQualifierCache = new CLRUCache<std::string, int8_t>(100);
-        passetsRestrictionCache = new CLRUCache<std::string, int8_t>(100);
-        passetsGlobalRestrictionCache = new CLRUCache<std::string, int8_t>(100);
-        passetsDepinTransferStateCache = new CLRUCache<std::string, int8_t>(100);
         // TestingSetup keeps the coins database in a member that hides the
         // global, which gettxoutsetinfo reads; point the global at it.
         ::pcoinsdbview = pcoinsdbview;
@@ -137,14 +129,6 @@ struct AssetReadSetup : public TestChain100Setup {
     ~AssetReadSetup()
     {
         ::pcoinsdbview = nullptr;
-        delete passetsDepinTransferStateCache; passetsDepinTransferStateCache = nullptr;
-        delete passetsGlobalRestrictionCache; passetsGlobalRestrictionCache = nullptr;
-        delete passetsRestrictionCache; passetsRestrictionCache = nullptr;
-        delete passetsQualifierCache; passetsQualifierCache = nullptr;
-        delete passetsVerifierCache; passetsVerifierCache = nullptr;
-        delete prestricteddb; prestricteddb = nullptr;
-        delete passetsCache; passetsCache = nullptr;
-        delete passetsdb; passetsdb = nullptr;
     }
 
     COutPoint Seed(const CScript& script)

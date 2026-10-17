@@ -4,6 +4,11 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "test_neurai.h"
+#include "amount.h"
+#include "assets/assetdb.h"
+#include "assets/assets.h"
+#include "assets/assettypes.h"
+#include "assets/restricteddb.h"
 #include "chainparams.h"
 #include "consensus/consensus.h"
 #include "consensus/validation.h"
@@ -122,6 +127,15 @@ TestChain100Setup::TestChain100Setup() : TestingSetup(CBaseChainParams::REGTEST)
         CBlock b = CreateAndProcessBlock(noTxns, scriptPubKey);
         coinbaseTxns.push_back(*b.vtx[0]);
     }
+
+    passetsdb = new CAssetsDB(1 << 20, true, true);
+    passetsCache = new CLRUCache<std::string, CDatabasedAssetData>(100);
+    prestricteddb = new CRestrictedDB(1 << 20, true, true);
+    passetsVerifierCache = new CLRUCache<std::string, CNullAssetTxVerifierString>(100);
+    passetsQualifierCache = new CLRUCache<std::string, int8_t>(100);
+    passetsRestrictionCache = new CLRUCache<std::string, int8_t>(100);
+    passetsGlobalRestrictionCache = new CLRUCache<std::string, int8_t>(100);
+    passetsDepinTransferStateCache = new CLRUCache<std::string, int8_t>(100);
 }
 
 namespace {
@@ -207,6 +221,14 @@ TestChain100Setup::CreateAndProcessBlock(const std::vector<CMutableTransaction> 
 
 TestChain100Setup::~TestChain100Setup()
 {
+    delete passetsDepinTransferStateCache; passetsDepinTransferStateCache = nullptr;
+    delete passetsGlobalRestrictionCache; passetsGlobalRestrictionCache = nullptr;
+    delete passetsRestrictionCache; passetsRestrictionCache = nullptr;
+    delete passetsQualifierCache; passetsQualifierCache = nullptr;
+    delete passetsVerifierCache; passetsVerifierCache = nullptr;
+    delete prestricteddb; prestricteddb = nullptr;
+    delete passetsCache; passetsCache = nullptr;
+    delete passetsdb; passetsdb = nullptr;
 }
 
 
