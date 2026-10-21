@@ -3,8 +3,8 @@ Unauthenticated REST Interface
 
 The REST API can be enabled with the `-rest` option.
 
-The interface runs on the same port as the JSON-RPC interface, by default port 8766 for mainnet, port 18766 for testnet,
-and port 18443 for regtest.
+The interface runs on the same port as the JSON-RPC interface, by default port 19001 for mainnet, port 19101 for
+testnet and port 19201 for regtest.
 
 REST Interface consistency guarantees
 -------------------------------------
@@ -30,60 +30,65 @@ For full TX query capability, one must enable the transaction index via "txindex
 Given a block hash: returns a block, in binary, hex-encoded binary or JSON formats.
 Responds with 404 if the block doesn't exist.
 
-The HTTP request and response are both handled entirely in-memory, thus making maximum memory usage at least 2.66MB (1 MB max block, plus hex encoding) per request.
+The HTTP request and response are both handled entirely in-memory, thus making maximum memory usage at least 24 MB (8 MB max serialized block, plus hex encoding) per request.
 
 With the /notxdetails/ option JSON response will only contain the transaction hash instead of the complete transaction details. The option only affects the JSON response.
 
 #### Blockheaders
 `GET /rest/headers/<COUNT>/<BLOCK-HASH>.<bin|hex|json>`
 
-Given a block hash: returns <COUNT> amount of blockheaders in upward direction.
+Given a block hash: returns <COUNT> amount of blockheaders in upward direction (at most 2000).
 Returns empty if the block doesn't exist or it isn't in the active chain.
 
 #### Chaininfos
 `GET /rest/chaininfo.json`
 
-Returns various state info regarding block chain processing.
+Returns various state info regarding block chain processing: the same object as the `getblockchaininfo` RPC.
 Only supports JSON as output format.
-* chain : (string) current network name as defined in BIP70 (main, test, regtest)
+* chain : (string) current network name (main, test, regtest)
 * blocks : (numeric) the current number of blocks processed in the server
+* asset_marker : (string) marker required for new asset outputs in the next block ("rvn" or "xna")
+* zk_public_tree, zk_portable_tree : (object) activation of the privacy pool profiles: activation_height (null when unscheduled), active_at_tip, active_for_next_block
 * headers : (numeric) the current number of headers we have validated
 * bestblockhash : (string) the hash of the currently best block
 * difficulty : (numeric) the current difficulty
+* difficulty_algorithm : (string) "DGW-180", or "BTC" before DGW activation (then DGW_activation_height is also present)
 * mediantime : (numeric) the median time of the 11 blocks before the most recent block on the blockchain
 * verificationprogress : (numeric) estimate of verification progress [0..1]
 * chainwork : (string) total amount of work in active chain, in hexadecimal
+* size_on_disk : (numeric) the estimated size of the block and undo files on disk
 * pruned : (boolean) if the blocks are subject to pruning
-* pruneheight : (numeric) heighest block available
+* pruneheight : (numeric) lowest-height complete block stored (only present if pruning is enabled)
+* automatic_pruning, prune_target_size : pruning settings (only present if pruning is enabled)
 * softforks : (array) status of softforks in progress
 * bip9_softforks : (object) status of BIP9 softforks in progress
+* warnings : (string) any network and blockchain warnings
 
 #### Query UTXO set
 `GET /rest/getutxos/<checkmempool>/<txid>-<n>/<txid>-<n>/.../<txid>-<n>.<bin|hex|json>`
 
-The getutxo command allows querying of the UTXO set given a set of outpoints.
+The getutxo command allows querying of the UTXO set given a set of outpoints (at most 15 per request).
 See BIP64 for input and output serialisation:
 https://github.com/bitcoin/bips/blob/master/bip-0064.mediawiki
 
-Example:
+Example on testnet (an output still in the mempool has height 2147483647):
 ```
-$ curl localhost:18766/rest/getutxos/checkmempool/b2cdfd7b89def827ff8af7cd9bff7627ff72e5e8b0f71210f92ea7a4000c5d75-0.json 2>/dev/null | json_pp
+$ curl localhost:19101/rest/getutxos/checkmempool/4d6f7e3a1c2b5a8d9e0f1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7-0.json 2>/dev/null | json_pp
 {
-   "chainHeight" : 325347,
-   "chaintipHash" : "00000000fb01a7f3745a717f8caebee056c484e6e0bfe4a9591c235bb70506fb",
-   "bitmap": "1",
+   "chainHeight" : 70123,
+   "chaintipHash" : "000000d6b2c08bcb8a7e4b4a2a7a1e3f6c2d0b9e8f7a6b5c4d3e2f1a0b9c8d7e",
+   "bitmap" : "1",
    "utxos" : [
       {
-         "txvers" : 1
          "height" : 2147483647,
-         "value" : 8.8687,		 
+         "value" : 8.8687,
          "scriptPubKey" : {
             "asm" : "OP_DUP OP_HASH160 1c7cebb529b86a04c683dfa87be49de35bcf589e OP_EQUALVERIFY OP_CHECKSIG",
             "hex" : "76a9141c7cebb529b86a04c683dfa87be49de35bcf589e88ac",
             "reqSigs" : 1,
             "type" : "pubkeyhash",
             "addresses" : [
-               "mi7as51dvLJsizWnTMurtRmrP8hG2m1XvD"
+               "t9XEconFHDitovkAr5ExeS8STCpMP9CKJS"
             ]
          }
       }
@@ -141,4 +146,4 @@ Test vectors: `src/test/data/silentpayment_index_vectors.json`.
 
 Risks
 -------------
-Running a web browser on the same node with a REST enabled neuraid can be a risk. Accessing prepared XSS websites could read out tx/block data of your node by placing links like `<script src="http://127.0.0.1:8766/rest/tx/1234567890.json">` which might break the nodes privacy.
+Running a web browser on the same node with a REST enabled neuraid can be a risk. Accessing prepared XSS websites could read out tx/block data of your node by placing links like `<script src="http://127.0.0.1:19001/rest/tx/1234567890.json">` which might break the nodes privacy.
