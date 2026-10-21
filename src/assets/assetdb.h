@@ -88,7 +88,8 @@ public:
 
     // Helper functions
     bool LoadAssets();
-    bool AssetDir(std::vector<CDatabasedAssetData>& assets, const std::string filter, const size_t count, const long start);
+    // flush=false requires cs_main; the caller must merge pending chainstate.
+    bool AssetDir(std::vector<CDatabasedAssetData>& assets, const std::string filter, const size_t count, const long start, bool flush = true);
 
     bool AddressDir(std::vector<std::pair<std::string, CAmount> >& vecAssetAmount, int& totalEntries, const bool& fGetTotal, const std::string& address, const size_t count, const long start);
     bool AssetAddressDir(std::vector<std::pair<std::string, CAmount> >& vecAddressAmount, int& totalEntries, const bool& fGetTotal, const std::string& assetName, const size_t count, const long start);
@@ -98,9 +99,9 @@ public:
      *
      * Exists so a caller that needs N assets at once (an ancestor chain, for
      * example) pays for one flush instead of N: unlike AssetAddressDir() this
-     * function deliberately does NOT flush. The caller must call
-     * FlushStateForDatabaseReads() once beforehand, under cs_main, and keep that
-     * lock while reading so every asset resolves against the same chain state.
+     * function deliberately does NOT flush. Under cs_main, callers either
+     * flush once with FlushStateForDatabaseReads() or merge pending cache state
+     * into these persisted rows (DePIN). Keep that lock throughout the merge.
      *
      * Each name is matched with exact equality (key.second.first == assetName),
      * never by prefix: sharing leading characters does not make two assets

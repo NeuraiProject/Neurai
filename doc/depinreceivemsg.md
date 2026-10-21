@@ -416,3 +416,18 @@ before the challenge is consumed, so a typo does not cost a challenge.
   time rather than retry.
 - Only P2PKH (secp256k1) addresses can authenticate; the pool key, the
   envelope and `poolsig` are secp256k1 as well.
+
+## Current permissions and restoration
+
+Authorization uses the latest connected active-chain block, including dirty
+asset state not yet persisted. A confirmed freeze, self-revocation, balance
+change or owner transfer applies to existing challenges at use time. An
+operation selects or mutates its result under the same chain lock as its
+permission check. Historical messages survive a restart with persistence
+enabled even when participants lost access; the reader must still qualify.
+
+A stale/unsynchronized node returns `-10` (`DePIN service not ready:`). A new
+submission with an unauthorized declared recipient returns `-26`
+(`Recipient not authorized:`); refresh, re-encrypt and re-sign if the intended
+recipient policy still permits sending. See the [full authorization contract](depin-authorization.md)
+for thresholds, defaults and remaining client/library work.

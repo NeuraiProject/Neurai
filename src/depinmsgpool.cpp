@@ -27,6 +27,44 @@
 #include <algorithm>
 
 std::unique_ptr<CDepinMsgPool> pDepinMsgPool;
+CDepinAdmissionStats gDepinAdmissionStats;
+
+CDepinServiceStatus GetDepinServiceStatus()
+{
+    LOCK(cs_main);
+    CDepinServiceStatus status;
+    const CBlockIndex* tip = chainActive.Tip();
+    const int64_t maxAge = gArgs.GetArg("-depinmaxtipage", DEFAULT_DEPIN_MAX_TIP_AGE);
+    const int64_t maxLag = gArgs.GetArg("-depinmaxheaderlag", DEFAULT_DEPIN_MAX_HEADER_LAG);
+    status.height = chainActive.Height();
+    status.headers = pindexBestHeader ? pindexBestHeader->nHeight : -1;
+    status.tipAge = tip ? std::max<int64_t>(0, GetTime() - tip->GetBlockTime()) : 0;
+    if (maxAge <= 0 || maxLag < 0) {
+        status.reason = "invalid freshness configuration";
+    } else if (fImporting || fReindex || !tip || !pindexBestHeader || !pcoinsTip || !passets ||
+               tip->nChainWork < nMinimumChainWork) {
+        status.reason = "initial block download or chainstate unavailable";
+    } else if (status.tipAge > maxAge) {
+        status.reason = "active tip is too old";
+    } else if (int64_t(status.headers) - status.height > maxLag) {
+        status.reason = "active chain is behind known headers";
+    } else if (IsInitialBlockDownload()) {
+        status.reason = "initial block download";
+    } else {
+        status.ready = true;
+    }
+    return status;
+}
+
+bool CheckDepinServiceReady(std::string& error)
+{
+    const CDepinServiceStatus status = GetDepinServiceStatus();
+    if (!status.ready) {
+        error = "DePIN service not ready: " + status.reason;
+        return false;
+    }
+    return true;
+}
 
 // CDepinMessage implementation
 
@@ -135,13 +173,26 @@ bool CDepinMsgPool::Initialize(const std::string& token, unsigned int maxRecipie
     return true;
 }
 
-bool CDepinMsgPool::AddMessage(const CDepinMessage& message, std::string& error, bool skipSignatureCheck) {
-    LOCK(cs_depinmsgpool);
+bool CDepinMsgPool::AddMessage(const CDepinMessage& message, std::string& error, bool skipSignatureCheck,
+                              DepinAdmissionError* admissionError) {
+    if (admissionError) *admissionError = DepinAdmissionError::NONE;
+    // A block cannot connect or disconnect between authorization and insertion.
+    // Never acquire cs_main for the first time under the pool lock.
+    LOCK(cs_main);
+    if (!CheckDepinServiceReady(error)) return false;
+    return AddMessageInternal(message, error, skipSignatureCheck, /*restoring=*/false, admissionError);
+}
 
+bool CDepinMsgPool::AddMessageInternal(const CDepinMessage& message, std::string& error,
+                                      bool skipSignatureCheck, bool restoring,
+                                      DepinAdmissionError* admissionError) {
     if (!fEnabled) {
         error = "Chat mempool is not enabled";
         return false;
     }
+
+    // Restoration bypasses current membership, never token syntax/type.
+    if (!IsValidDepinMessagingToken(message.token, error)) return false;
 
     // Verify that the token is the active token or a section (sub-asset)
     // inside its subtree. The root itself always qualifies, so a pre-sections
@@ -189,6 +240,7 @@ bool CDepinMsgPool::AddMessage(const CDepinMessage& message, std::string& error,
 
     // Reject undecodable ECIES before storing it, and cap the sender-chosen
     // recipient count. This is not a full structural or canonical validator.
+    std::vector<uint160> recipients;
     try {
         CECIESEncryptedMessage eciesProbe;
         CDataStream ssProbe(message.encryptedPayload, SER_NETWORK, PROTOCOL_VERSION);
@@ -198,17 +250,11 @@ bool CDepinMsgPool::AddMessage(const CDepinMessage& message, std::string& error,
                              eciesProbe.recipientKeys.size(), nMaxRecipients);
             return false;
         }
+        for (const auto& entry : eciesProbe.recipientKeys) {
+            recipients.push_back(entry.first);
+        }
     } catch (const std::exception&) {
         error = "Invalid ECIES message payload: failed to deserialize";
-        return false;
-    }
-
-    // Verify pool size limit
-    size_t currentPoolSize = DynamicMemoryUsage();
-    size_t maxPoolSizeBytes = (size_t)nMaxPoolSizeMB * 1024 * 1024;  // Convert MB to bytes
-    if (currentPoolSize + message.encryptedPayload.size() > maxPoolSizeBytes) {
-        error = strprintf("Pool size limit exceeded (current: %d MB, limit: %d MB). Message rejected.",
-                         currentPoolSize / (1024 * 1024), nMaxPoolSizeMB);
         return false;
     }
 
@@ -222,14 +268,36 @@ bool CDepinMsgPool::AddMessage(const CDepinMessage& message, std::string& error,
         LogPrintf("AddMessage: Skipping signature check for pre-authenticated message\n");
     }
 
-    // Verify that the sender has ACTIVE inherited access to the message's own
-    // token -- not merely a balance of the pool root. This is the authoritative
-    // write check: it runs against message.token (the previous code checked
-    // activeToken, which is what made publishing from a section impossible) and
-    // it excludes frozen and self-revoked pairs. HasDepinSectionAccess performs
-    // only direct database reads, which is what makes it callable here under
-    // cs_depinmsgpool -- see its contract in depinmsgpool.h.
-    if (!HasDepinSectionAccess(message.senderAddress, message.token, activeToken, error)) {
+    // New publications require current sender and recipient permissions.
+    // Restoration preserves valid historical messages for remaining readers.
+    const int64_t permissionStart = GetTimeMicros();
+    if (!restoring) {
+        if (!HasDepinSectionAccess(message.senderAddress, message.token, activeToken, error)) {
+            return false;
+        }
+        for (const uint160& id : recipients) {
+            const std::string address = EncodeDestination(CKeyID(id));
+            std::string accessError;
+            if (!HasDepinSectionAccess(address, message.token, activeToken, accessError)) {
+                if (admissionError) *admissionError = DepinAdmissionError::RECIPIENT_NOT_AUTHORIZED;
+                error = strprintf("Recipient not authorized: %s: %s", address, accessError);
+                return false;
+            }
+        }
+    }
+    gDepinAdmissionStats.permissionMicros += GetTimeMicros() - permissionStart;
+
+    // Permission reads and signature work run before taking the pool lock.
+    // cs_main is still held by AddMessage, so no authorization can go stale.
+    const int64_t poolWaitStart = GetTimeMicros();
+    LOCK(cs_depinmsgpool);
+    const int64_t poolStart = GetTimeMicros();
+    gDepinAdmissionStats.poolWaitMicros += poolStart - poolWaitStart;
+    const size_t currentPoolSize = DynamicMemoryUsage();
+    const size_t maxPoolSizeBytes = (size_t)nMaxPoolSizeMB * 1024 * 1024;
+    if (currentPoolSize + message.encryptedPayload.size() > maxPoolSizeBytes) {
+        error = strprintf("Pool size limit exceeded (current: %d MB, limit: %d MB). Message rejected.",
+                         currentPoolSize / (1024 * 1024), nMaxPoolSizeMB);
         return false;
     }
 
@@ -248,6 +316,8 @@ bool CDepinMsgPool::AddMessage(const CDepinMessage& message, std::string& error,
     LogPrint(BCLog::MEMPOOL, "DePIN message added: hash=%s, sender=%s, payload_size=%d\n",
              hash.ToString(), message.senderAddress, message.encryptedPayload.size());
 
+    gDepinAdmissionStats.poolHoldMicros += GetTimeMicros() - poolStart;
+    gDepinAdmissionStats.admitted++;
     return true;
 }
 
@@ -503,6 +573,8 @@ int64_t CDepinMsgPool::GetNewestMessageTime() const {
 }
 
 bool CDepinMsgPool::GetSections(std::vector<std::string>& sections, std::string& error) {
+    LOCK(cs_main);
+    if (!CheckDepinServiceReady(error)) return false;
     if (!fEnabled) {
         error = "Chat mempool is not enabled";
         return false;
@@ -531,30 +603,33 @@ bool CDepinMsgPool::GetSections(std::vector<std::string>& sections, std::string&
         }
     }
 
-    // Build OUTSIDE the cache lock: AssetDir is a full scan of the asset
-    // keyspace (plus its own flush under cs_main), and holding cs_sectionCache
-    // through it would serialize concurrent readers behind disk work. Two
-    // concurrent builders only waste work; the last swap wins.
+    // Build outside the section-cache lock but under cs_main. Read persisted
+    // metadata without flushing and merge creations/deletions from the tip.
     //
     // The '/'-terminated wildcard prefix already excludes "&TESTING" and
     // "&TEST.FOO"; IsDepinSectionOrRoot below is a belt-and-braces recheck.
     std::vector<CDatabasedAssetData> subAssets;
-    if (!passetsdb->AssetDir(subAssets, activeToken + "/*", MAX_CACHE_ASSETS_SIZE, 0)) {
+    if (!passetsdb->AssetDir(subAssets, activeToken + "/*", MAX_CACHE_ASSETS_SIZE, 0, /*flush=*/false)) {
         error = strprintf("Failed to enumerate sections of '%s' from the asset database", activeToken);
         return false;
     }
 
-    std::vector<std::string> built;
-    built.push_back(activeToken);  // the root is always the first tab
+    if (!passets) {
+        error = "Asset chainstate cache not available";
+        return false;
+    }
+    std::set<std::string> names;
     for (const auto& data : subAssets) {
         const std::string& name = data.asset.strName;
-        if (name != activeToken && IsDepinSectionOrRoot(name, activeToken)) {
-            built.push_back(name);
-        }
+        if (name != activeToken && IsDepinSectionOrRoot(name, activeToken)) names.insert(name);
     }
-    // AssetDir returns LevelDB key order (length-first); sort everything after
-    // the root lexicographically so the tab order is stable and human.
-    std::sort(built.begin() + 1, built.end());
+    for (const auto& item : passets->setNewAssetsToRemove) names.erase(item.asset.strName);
+    for (const auto& item : passets->setNewAssetsToAdd) {
+        const std::string& name = item.asset.strName;
+        if (name != activeToken && IsDepinSectionOrRoot(name, activeToken)) names.insert(name);
+    }
+    std::vector<std::string> built{activeToken};
+    built.insert(built.end(), names.begin(), names.end());
 
     {
         LOCK(cs_sectionCache);
@@ -734,17 +809,17 @@ static bool CheckDepinAccessPreconditions(bool fRequireRestrictions, std::string
                 "holders publish";
         return false;
     }
+    if (!passets) {
+        error = "Asset chainstate cache not available";
+        return false;
+    }
     return true;
 }
 
 bool HasDepinSectionAccess(const std::string& address, const std::string& sectionToken,
                            const std::string& root, std::string& error)
 {
-    // See the header for the lock/freshness contract: this runs under
-    // cs_depinmsgpool, so ONLY direct database reads are allowed here -- no
-    // GetDepinAncestorRecipients (cs_main + flush), no CAssetsCache methods
-    // (they touch passets' dirty sets and passetsRestrictionCache, cs_main
-    // domain). Three exact reads per ancestor, nothing else.
+    LOCK(cs_main);
     if (!CheckDepinAccessPreconditions(true, error))
         return false;
 
@@ -760,16 +835,16 @@ bool HasDepinSectionAccess(const std::string& address, const std::string& sectio
     if (!DeriveDepinAncestors(sectionToken, root, ancestors, error))
         return false;
 
+    // Query results stay local; reading new pairs must not fill the global map
+    // and indirectly trigger a full chainstate/UTXO flush.
+    CAssetsCache balances;
     for (const std::string& ancestor : ancestors) {
-        CAmount quantity = 0;
-        if (!passetsdb->ReadAssetAddressQuantity(ancestor, address, quantity))
+        gDepinAdmissionStats.balanceQueries++;
+        if (!GetBestAssetAddressAmount(balances, ancestor, address) ||
+            balances.mapAssetsAddressAmount.at(std::make_pair(ancestor, address)) <= 0)
             continue;
-        if (quantity <= 0)
+        if (passets->CheckForDEPINRestriction(ancestor, address))
             continue;
-        if (prestricteddb->ReadRestrictedAddress(address, ancestor))
-            continue;  // owner freeze 'R'
-        if (prestricteddb->ReadSelfRestriction(address, ancestor))
-            continue;  // self-revocation 'S'
         return true;
     }
 
@@ -781,6 +856,7 @@ bool HasDepinSectionAccess(const std::string& address, const std::string& sectio
 bool HasDepinSectionOwnerAccess(const std::string& address, const std::string& sectionToken,
                                 const std::string& root, std::string& error)
 {
+    LOCK(cs_main);
     if (!CheckDepinAccessPreconditions(false, error))
         return false;
 
@@ -799,10 +875,12 @@ bool HasDepinSectionOwnerAccess(const std::string& address, const std::string& s
     if (!DeriveDepinAncestors(sectionToken, root, ancestors, error))
         return false;
 
+    CAssetsCache balances;
     for (const std::string& ancestor : ancestors) {
-        CAmount quantity = 0;
-        if (passetsdb->ReadAssetAddressQuantity(ancestor + OWNER_TAG, address, quantity) &&
-            quantity > 0) {
+        const std::string owner = ancestor + OWNER_TAG;
+        gDepinAdmissionStats.balanceQueries++;
+        if (GetBestAssetAddressAmount(balances, owner, address) &&
+            balances.mapAssetsAddressAmount.at(std::make_pair(owner, address)) > 0) {
             return true;
         }
     }
@@ -897,16 +975,6 @@ namespace {
 // assets.cpp keeps SUB_NAME_DELIMITER file-static (assets.cpp:75); this is the
 // same '/' that separates the components of a sub-DEPIN name.
 const char DEPIN_SECTION_DELIMITER = '/';
-
-// The single flush point of an ancestor query, wrapped only so the tests can
-// count it. See CDepinAncestorRecipientsStats for what the counter does and
-// does not catch. The counter sees every call; FlushStateForDatabaseReads()
-// itself only flushes once per chain state.
-void DepinAncestorFlushOnce()
-{
-    gDepinAncestorRecipientsStats.flushCalls++;
-    FlushStateForDatabaseReads();
-}
 
 } // namespace
 
@@ -1016,19 +1084,11 @@ bool GetDepinAncestorRecipients(const std::string& token,
         return false;
     }
 
-    // The lock and the flush belong to this function, not to its callers: it is
-    // public and reusable, and a caller that forgot either would get an
-    // incoherent answer with no warning. cs_main is recursive, so a caller that
-    // already holds it (depinsendmsg does) is unaffected.
+    // The public helper owns the chain lock so each caller gets a coherent
+    // directory. Recursive acquisition is safe for callers already holding it.
     LOCK(cs_main);
 
-    // Preconditions first, BEFORE the flush. Not merely to avoid paying for a
-    // global flush on the way to an error: FlushStateToDisk() dereferences
-    // pcoinsTip unguarded in its main path (validation.cpp:3202) and pblocktree
-    // unguarded in its pruning branch (validation.cpp:3165). With either null,
-    // flushing first would not produce a precondition error, it would take the
-    // node down. Everything below then reads chain state under the same cs_main
-    // that has already been taken, so nothing changes between check and use.
+    // Fail closed before reading any chainstate-dependent data.
     if (!fAssetIndex) {
         error = "Asset index is required but not enabled. Restart with -assetindex and -reindex";
         return false;
@@ -1060,8 +1120,7 @@ bool GetDepinAncestorRecipients(const std::string& token,
         return false;
     }
 
-    // Name validation and ancestor derivation are pure, so they run before the
-    // flush too -- a malformed token should not cost a global flush.
+    // Name validation and ancestor derivation are pure and precede disk reads.
     if (!IsValidDepinMessagingToken(token, error))
         return false;
 
@@ -1086,10 +1145,12 @@ bool GetDepinAncestorRecipients(const std::string& token,
         }
     }
 
-    // Single flush of the query. Everything read below -- asset existence,
-    // holders, restrictions -- is read from disk, so this is what makes the
-    // databases authoritative for state produced by recently connected blocks.
-    DepinAncestorFlushOnce();
+    if (!passets || !passetsCache) {
+        error = "Asset chainstate cache not available";
+        return false;
+    }
+    // No disk flush: read and merge the connected-tip cache under cs_main.
+    if (!CheckDepinServiceReady(error)) return false;
 
     // Each ancestor must exist exactly. A missing intermediate level is an
     // error, never something to skip on the way to the root: silently jumping
@@ -1098,7 +1159,7 @@ bool GetDepinAncestorRecipients(const std::string& token,
         CNewAsset asset;
         int assetHeight = 0;
         uint256 assetBlockHash;
-        if (!passetsdb->ReadAssetData(ancestor, asset, assetHeight, assetBlockHash)) {
+        if (!passets->GetAssetMetaDataIfExists(ancestor, asset, assetHeight, assetBlockHash)) {
             if (ancestor == token) {
                 error = strprintf("DEPIN token '%s' does not exist", token);
             } else {
@@ -1130,6 +1191,26 @@ bool GetDepinAncestorRecipients(const std::string& token,
         return false;
     }
 
+    size_t rowCount = 0;
+    for (const auto& rows : rowsByAsset) rowCount += rows.second.size();
+    for (const std::string& ancestor : ancestors) {
+        auto& rows = rowsByAsset[ancestor];
+        std::map<std::string, CAmount> current(rows.begin(), rows.end());
+        auto it = passets->mapAssetsAddressAmount.lower_bound(std::make_pair(ancestor, std::string()));
+        for (; it != passets->mapAssetsAddressAmount.end() && it->first.first == ancestor; ++it) {
+            const std::string& address = it->first.second;
+            if (!current.count(address)) {
+                if (it->second <= 0) continue;
+                if (++rowCount > MAX_DEPIN_ANCESTOR_SCAN_ROWS) {
+                    error = "Recipient working set exceeds the exploration limit";
+                    return false;
+                }
+            }
+            current[address] = it->second; // Includes zero-balance deletions.
+        }
+        rows.assign(current.begin(), current.end());
+    }
+
     // Group by address, dropping non-positive balances. std::map orders the
     // addresses lexicographically, which is what makes the result -- and
     // therefore the truncation point -- independent of LevelDB's physical
@@ -1155,23 +1236,16 @@ bool GetDepinAncestorRecipients(const std::string& token,
     for (const auto& entry : activeAssetsByAddress) {
         const std::string& address = entry.first;
 
-        // (a) Two ranged seeks for this address -- not one lookup per ancestor.
-        std::set<std::string> ownerFrozen;
-        std::set<std::string> selfRevoked;
-        gDepinAncestorRecipientsStats.restrictionQueries++;
-        if (!prestricteddb->GetAddressDepinRestrictions(address, ownerFrozen, selfRevoked)) {
-            error = strprintf("Failed to read restriction state for address '%s'", address);
-            return false;
-        }
-
-        // (b) Membership resolved in memory. One active pair is enough: holding
+        // Membership follows the connected cache, including pending freezes,
+        // unfreezes and self-revocations. One active pair is enough: holding
         // an ancestor already grants visibility over the branch, so revoking in
         // a section does not withdraw what the root grants. Deciding this after
         // looking at ALL of the address's pairs is what keeps skippedRestricted
         // from counting addresses that are still active elsewhere.
         bool hasActivePair = false;
+        gDepinAncestorRecipientsStats.restrictionQueries++;
         for (const std::string& assetName : entry.second) {
-            if (ownerFrozen.count(assetName) || selfRevoked.count(assetName))
+            if (passets->CheckForDEPINRestriction(assetName, address))
                 continue;
             hasActivePair = true;
             break;
@@ -1439,8 +1513,7 @@ bool CDepinMsgPool::LoadFromDisk()
         if (magic != DEPINPOOL_MAGIC_BYTES) {
             LogPrintf("ERROR: CDepinMsgPool::LoadFromDisk(): Invalid magic bytes (file corrupted)\n");
             filein.fclose();
-            // Delete corrupted file
-            fs::remove(filepath);
+            // Preserve the only copy for diagnosis or recovery.
             return false;
         }
 
@@ -1479,7 +1552,7 @@ bool CDepinMsgPool::LoadFromDisk()
 
             // Add to pool
             std::string error;
-            if (AddMessage(msg, error)) {
+            if (AddMessageInternal(msg, error, /*skipSignatureCheck=*/false, /*restoring=*/true)) {
                 loadedCount++;
             } else {
                 LogPrintf("WARNING: CDepinMsgPool::LoadFromDisk(): Failed to add message: %s\n", error);

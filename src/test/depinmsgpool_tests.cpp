@@ -5,6 +5,7 @@
 #include "depinmsgpool.h"
 #include "depinecies.h"
 #include "test/test_neurai.h"
+#include "test/depin_test_utils.h"
 #include "assets/assetdb.h"
 #include "assets/assets.h"
 #include "assets/restricteddb.h"
@@ -326,6 +327,7 @@ BOOST_AUTO_TEST_CASE(token_depin_rejected_on_mainnet_by_network_gate)
 // DepinSectionsSetup in depin_sections_tests.cpp (helpers are duplicated per
 // test file, same as NetworkGuard above).
 struct DepinSignatureSetup : public TestingSetup {
+    ScopedDepinTestTipTime currentTip;
     bool prevAssetIndex;
     bool prevPubKeyIndex;
     CAssetsDB* prevAssetsDb;
@@ -389,9 +391,8 @@ struct DepinSignatureSetup : public TestingSetup {
         msg.messageType = 0x02;
         CECIESEncryptedMessage ecies;
         std::string error;
-        CKey recipient;
-        recipient.MakeNewKey(true);
-        const CPubKey pubkey = recipient.GetPubKey();
+        CPubKey pubkey;
+        BOOST_REQUIRE_MESSAGE(CheckAddressHasPublicKey(sender, pubkey, error), error);
         BOOST_REQUIRE_MESSAGE(ECIESEncryptMessage("signature test",
             {{EncodeDestination(pubkey.GetID()), pubkey}}, ecies, error), error);
         CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);

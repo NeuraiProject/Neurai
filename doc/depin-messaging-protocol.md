@@ -105,6 +105,15 @@ subtree below it. Ancestors *above* `R` are outside the pool: holders of
 `&A` are not recipients of a pool rooted at `&A/B`, and recipient resolution
 for publishing stops at `R` (§8.3).
 
+New publications validate the sender and every declared recipient against
+current connected-chain permissions. Private subsets are allowed; any invalid
+recipient rejects the entire signed message (`-26`). An old challenge does
+not override a confirmed freeze. Authorization includes the latest connected
+block, excludes the mempool and follows reorganizations. A node with an old
+tip or too much header lag denies permission-dependent calls (`-10`). See
+[authorization and restoration](depin-authorization.md) for the exact lock,
+freshness, restart and client retry contracts.
+
 Query RPCs (all public, cacheable, no authentication):
 
 | RPC | Returns |
@@ -328,7 +337,10 @@ a message is still eligible. Section counters exclude expired entries;
 physical pool statistics can include them until cleanup releases storage.
 Expiry cannot erase copies already downloaded. Nothing is
 persistent unless the operator enables `-depinpoolpersist`; clients MUST NOT
-assume a message is retrievable later.
+assume a message is retrievable later. When enabled, restoration validates
+historical signatures and format without requiring all historical participants
+to retain access; every new read still requires the reader's current permission.
+File version 1 and its existing recovery/durability limits remain unchanged.
 
 ---
 
@@ -705,9 +717,11 @@ SHOULD branch on `code` and show `message`.
   message.
 - **Recipient snapshot**: the recipient set is fixed by the sender at
   encryption time; newly issued holders do not gain access to older
-  ciphertexts. A sender can include readers outside the holder set; the
-  chain-derived set is a policy the client enforces, not a cryptographic
-  guarantee about other senders.
+  ciphertexts. New admissions reject declared readers outside the current
+  active holder set. Clients should still verify their own directory and
+  recipient policy independently: a malicious service can bypass its checks,
+  and a sender can share plaintext or keys elsewhere. Admission policy is not
+  a cryptographic guarantee about other senders.
 - **Metadata is public**: token holdings, sections and revealed keys are on
   chain; the node sees sender, token, timestamp and recipient hash160s. Do
   not promise anonymity.

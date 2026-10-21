@@ -447,6 +447,8 @@ bool IssueDepinChallengeForAddress(const std::string& token, const std::string& 
                                    DepinChallengeType type, const std::string& poolRoot,
                                    std::string& nonce, CPubKey& pubkeyOut, std::string& error)
 {
+    LOCK(cs_main);
+    if (!CheckDepinServiceReady(error)) return false;
     if (!CheckDepinChallengeRequest(token, address, type, poolRoot, pubkeyOut, error)) {
         return false;
     }
@@ -459,6 +461,10 @@ bool CheckDepinChallengeAuth(DepinChallengeType type, const std::string& token,
                              const std::string& signatureBase64, const std::string& poolRoot,
                              std::string& error)
 {
+    // Callers retain cs_main through selection or mutation; this also makes
+    // standalone verification and nonce consumption one coherent operation.
+    LOCK(cs_main);
+    if (!CheckDepinServiceReady(error)) return false;
     // 1. Form. Nothing here touches the store.
     if (!IsP2PKH(address, error)) {
         return false;

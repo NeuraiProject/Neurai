@@ -22,6 +22,7 @@
 #include "key.h"
 #include "pubkey.h"
 #include "test/test_neurai.h"
+#include "test/depin_test_utils.h"
 #include "utilstrencodings.h"
 #include "utiltime.h"
 
@@ -57,6 +58,7 @@ struct DepinChallengeSetup : public BasicTestingSetup {
 // restriction index and the revealed-pubkey index. REGTEST: DEPIN names only
 // validate on testnet/regtest.
 struct DepinChallengeAccessSetup : public TestingSetup {
+    ScopedDepinTestTipTime currentTip;
     bool prevAssetIndex;
     bool prevPubKeyIndex;
     CAssetsDB* prevAssetsDb;
@@ -77,6 +79,7 @@ struct DepinChallengeAccessSetup : public TestingSetup {
         prestricteddb = new CRestrictedDB(1 << 20, true, true);
         g_depinChallenges.Clear();
         SetMockTime(1700000000);
+        RefreshDepinTestTipTime();
     }
 
     ~DepinChallengeAccessSetup()

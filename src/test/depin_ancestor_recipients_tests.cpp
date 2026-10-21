@@ -35,6 +35,7 @@
 #include "rpc/server.h"
 #include "script/standard.h"
 #include "test/test_neurai.h"
+#include "test/depin_test_utils.h"
 #include "txdb.h"
 #include "utilstrencodings.h"
 #include "validation.h"
@@ -62,6 +63,7 @@ struct Holder {
 };
 
 struct DepinAncestorSetup : public TestingSetup {
+    ScopedDepinTestTipTime currentTip;
     // Everything global this fixture touches is saved and put back, including
     // the database pointers: restoring them to nullptr would be right only as
     // long as nothing else in the binary ever leaves them set.
@@ -976,7 +978,7 @@ BOOST_AUTO_TEST_CASE(flushes_exactly_once_and_helpers_never_flush)
     BOOST_REQUIRE_MESSAGE(GetDepinAncestorRecipients(LEAF_TOKEN, 100, result, error), error);
 
     BOOST_CHECK_EQUAL(result.recipients.size(), 5U);
-    BOOST_CHECK_EQUAL(gDepinAncestorRecipientsStats.flushCalls.load(), 1U);
+    BOOST_CHECK_EQUAL(gDepinAncestorRecipientsStats.flushCalls.load(), 0U);
     BOOST_CHECK_EQUAL(gDepinAncestorRecipientsStats.restrictionQueries.load(), 5U);
 
     // Now with pcoinsTip gone: neither helper may flush, so both must still

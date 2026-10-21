@@ -157,6 +157,7 @@ struct DepinSelfRevokeWalletSetup : public TestingSetup {
     // owner token is auto-attached by CreateTransferAssetTransaction.
     void TransferAndConfirm(const std::string& assetName, CAmount amount, const std::string& toAddress)
     {
+        LOCK2(cs_main, wallet->cs_wallet);
         CCoinControl ctrl;
         CWalletTx wtx;
         CReserveKey reservekey(wallet.get());
@@ -477,6 +478,7 @@ BOOST_AUTO_TEST_CASE(owner_holder_recovery_takes_two_transactions)
 
     // Hand-built self-revocation of the owner-holding address.
     {
+        LOCK2(cs_main, wallet->cs_wallet);
         CCoinControl ctrl;
         ctrl.SelectAsset(outpoint);
         CWalletTx wtx;

@@ -118,9 +118,10 @@ does, because it aggregates the holders of all its ancestors.
 - "The root sees everything" only holds for holders with a **revealed public
   key**; holders that never spent from their address are skipped (reported as
   `skipped_no_pubkey` in `depinsendmsg`).
-- `recipientKeys` is a snapshot chosen by the sender: sections compute the
-  legitimate recipient set, but cannot prove a sender did not add an external
-  public key. The pool caps the recipient *count* per message as hardening.
+- `recipientKeys` is a snapshot chosen by the sender. New publications reject
+  any declared recipient without current branch permission; private subsets
+  are allowed. Independent client verification still matters with a malicious
+  service or directory. See [authorization and restoration](depin-authorization.md).
 - The token filter in `depinreceivemsg` is a scope. The challenge proves
   control of the address; what an address can actually read is fixed
   cryptographically by `recipientKeys` + ECIES.

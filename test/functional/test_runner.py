@@ -121,6 +121,7 @@ BASE_SCRIPTS= [
     'feature_rawassettransactions.py',
     'feature_nip040_marker_migration.py',
     'feature_depin_transfer_state.py',
+    'feature_depin_messaging_permissions.py',
     'wallet_importmulti.py',
     'wallet_labels.py',
     'wallet_import_with_label.py',

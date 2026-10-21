@@ -47,6 +47,14 @@
 #include "wallet/depinpoolkeyload.h"
 #endif
 
+static void EnsureDepinServiceReady()
+{
+    std::string error;
+    if (!CheckDepinServiceReady(error)) {
+        throw JSONRPCError(RPC_CLIENT_IN_INITIAL_DOWNLOAD, error);
+    }
+}
+
 std::string MessageActivationWarning()
 {
     return AreMessagesDeployed() ? "" : "\nTHIS COMMAND IS NOT YET ACTIVE!\nhttps://github.com/NeuraiProject/rips/blob/master/rip-0005.mediawiki\n";
@@ -553,6 +561,13 @@ UniValue depingetmsginfo(const JSONRPCRequest& request)
                 "  \"memoryusagemb\": n,           (numeric) Memory usage in MB\n"
                 "  \"oldestmessage\": \"time\",      (string) Timestamp of oldest message\n"
                 "  \"newestmessage\": \"time\"       (string) Timestamp of newest message\n"
+                "  \"ready\": true|false,          (boolean) Whether current-chain service is available\n"
+                "  \"not_ready_reason\": \"text\",   (string) Reason when not ready\n"
+                "  \"authorization_height\": n,     (numeric) Active connected-chain height\n"
+                "  \"known_headers\": n,            (numeric) Best known header height\n"
+                "  \"tip_age_seconds\": n,          (numeric) Active-tip age\n"
+                "  \"maxtipage\": n,                (numeric) Configured age bound in seconds\n"
+                "  \"maxheaderlag\": n,             (numeric) Configured header lead bound\n"
                 "  \"protocol\": 2,                  (numeric) DePIN RPC protocol version\n"
                 "  \"depinpoolpkey\": \"hex\",        (string) Pool public key: pin it on first use; encrypt depinsubmitmsg envelopes for it; verifies poolsig\n"
                 "  \"depinpoolkeyaddress\": \"addr\", (string) P2PKH address of the pool key (verifymessage-compatible)\n"
@@ -593,6 +608,14 @@ UniValue depingetmsginfo(const JSONRPCRequest& request)
     // The service identity: the pool public key and which wallet it came
     // from. Clients pin depinpoolpkey on first use; nothing served here is
     // trusted on its own.
+    const CDepinServiceStatus status = GetDepinServiceStatus();
+    obj.push_back(Pair("ready", status.ready));
+    obj.push_back(Pair("not_ready_reason", status.reason));
+    obj.push_back(Pair("authorization_height", status.height));
+    obj.push_back(Pair("known_headers", status.headers));
+    obj.push_back(Pair("tip_age_seconds", status.tipAge));
+    obj.push_back(Pair("maxtipage", gArgs.GetArg("-depinmaxtipage", DEFAULT_DEPIN_MAX_TIP_AGE)));
+    obj.push_back(Pair("maxheaderlag", gArgs.GetArg("-depinmaxheaderlag", DEFAULT_DEPIN_MAX_HEADER_LAG)));
     obj.push_back(Pair("protocol", DEPIN_RPC_PROTOCOL_VERSION));
     CKey poolKey;
     CPubKey poolPubKey;
@@ -670,6 +693,7 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
     }
 
     LOCK2(cs_main, pwallet->cs_wallet);
+    EnsureDepinServiceReady();
     EnsureWalletIsUnlocked(pwallet);
 
     {
@@ -719,7 +743,7 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
 
     // Recipients: the ACTIVE holders of the token and of every ancestor UP TO
     // THE POOL'S ROOT, resolved by GetDepinAncestorRecipients -- exact reads,
-    // one flush, freeze/self-revoke respected, missing pubkeys skipped and
+    // no flush, freeze/self-revoke respected, missing pubkeys skipped and
     // counted. Deriving past the pool root would encrypt for holders the pool
     // does not serve, and an extra recipientKeys entry is an extra reader.
     // The limit is never zero: Initialize() rejects maxRecipients == 0.
@@ -781,8 +805,11 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_WALLET_ERROR, "Failed to sign message");
     }
 
-    if (!pDepinMsgPool->AddMessage(chatMsg, error, /*skipSignatureCheck=*/false)) {
-        throw JSONRPCError(RPC_MISC_ERROR, strprintf("Failed to add message: %s", error));
+    DepinAdmissionError admissionError;
+    if (!pDepinMsgPool->AddMessage(chatMsg, error, /*skipSignatureCheck=*/false, &admissionError)) {
+        throw JSONRPCError(admissionError == DepinAdmissionError::RECIPIENT_NOT_AUTHORIZED
+                          ? RPC_VERIFY_REJECTED : RPC_MISC_ERROR,
+                          strprintf("Failed to add message: %s", error));
     }
 
     UniValue result(UniValue::VOBJ);
@@ -872,6 +899,9 @@ UniValue depinchallenge(const JSONRPCRequest& request)
                                         DepinRequestClockMillis(), error)) {
         throw JSONRPCError(RPC_INVALID_REQUEST, strprintf("Request authentication failed: %s", error));
     }
+
+    LOCK(cs_main);
+    EnsureDepinServiceReady();
 
     // 2. Validate the revealed key and access before recording the request:
     //    otherwise arbitrary valid signatures from non-holders could fill the
@@ -1226,6 +1256,9 @@ UniValue depinsubmitmsg(const JSONRPCRequest& request)
                                    chatMsg.senderAddress));
     }
 
+    LOCK(cs_main);
+    EnsureDepinServiceReady();
+
     // Verify sender has active inherited access to the message's token (a
     // balance-only check would let frozen or self-revoked holders through).
     // AddMessage repeats this authoritatively; this pre-check exists to return
@@ -1247,8 +1280,11 @@ UniValue depinsubmitmsg(const JSONRPCRequest& request)
     }
 
     // Add to pool (no signature skip - always verify)
-    if (!pDepinMsgPool->AddMessage(chatMsg, error, false)) {
-        throw JSONRPCError(RPC_MISC_ERROR, strprintf("Failed to add message: %s", error));
+    DepinAdmissionError admissionError;
+    if (!pDepinMsgPool->AddMessage(chatMsg, error, false, &admissionError)) {
+        throw JSONRPCError(admissionError == DepinAdmissionError::RECIPIENT_NOT_AUTHORIZED
+                          ? RPC_VERIFY_REJECTED : RPC_MISC_ERROR,
+                          strprintf("Failed to add message: %s", error));
     }
 
     LogPrintf("depinsubmitmsg: Added message from %s, hash=%s\n",
@@ -1342,6 +1378,9 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
                           strprintf("Address has no revealed public key, and responses are always encrypted: %s",
                                    pubkeyError));
     }
+
+    LOCK(cs_main);
+    EnsureDepinServiceReady();
 
     // Proof of control: form, existence, signature, access re-check, consume
     // (in that order; see CheckDepinChallengeAuth).
@@ -1533,6 +1572,7 @@ UniValue depingetmsg(const JSONRPCRequest& request)
     }
 
     LOCK2(cs_main, pwallet->cs_wallet);
+    EnsureDepinServiceReady();
 
     // The token may be a section inside the configured subtree; it then acts
     // as the tab scope for the loop below.
@@ -1604,6 +1644,10 @@ UniValue depingetmsg(const JSONRPCRequest& request)
         // Try to decrypt with each owned address
         bool decrypted = false;
         for (const std::string& myAddress : myAddresses) {
+            std::string accessError;
+            if (!HasDepinSectionAccess(myAddress, msg.token, pDepinMsgPool->GetActiveToken(), accessError)) {
+                continue;
+            }
             std::string decryptedMessage;
             std::string error;
 
@@ -1724,6 +1768,9 @@ UniValue depinclearmsg(const JSONRPCRequest& request)
                           strprintf("Address has no revealed public key, and responses are always encrypted: %s",
                                    pubkeyError));
     }
+
+    LOCK(cs_main);
+    EnsureDepinServiceReady();
 
     // Owner-level proof for exactly this scope, consumed here.
     std::string authError;
@@ -2010,8 +2057,10 @@ UniValue depingetancestorrecipients(const JSONRPCRequest& request)
         stopAt = request.params[2].get_str();
     }
 
-    // No lock or flush here on purpose: GetDepinAncestorRecipients() owns that
-    // contract so every caller gets it, not only this one.
+    LOCK(cs_main);
+    EnsureDepinServiceReady();
+
+    // The helper also checks freshness for non-RPC callers.
     // RPC_MISC_ERROR rather than RPC_INVALID_PARAMETER: the function reports
     // missing indexes and databases through the same channel as a bad token, so
     // the code cannot honestly claim the caller's parameters were at fault.
@@ -2096,6 +2145,9 @@ UniValue depinlistsections(const JSONRPCRequest& request)
     std::string challenge;
     std::string signature;
     CPubKey clientPubKey;
+    LOCK(cs_main);
+    EnsureDepinServiceReady();
+
     if (request.params.size() == 4) {
         address = request.params[0].get_str();
         scope = request.params[1].get_str();

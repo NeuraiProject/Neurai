@@ -254,7 +254,7 @@ bool CheckDepinChallengeRequest(const std::string& token, const std::string& add
 
 /**
  * CheckDepinChallengeRequest followed by issuance (no rate limiting). On
- * success `nonce` and `pubkeyOut` are set.
+ * success `nonce` and `pubkeyOut` are set. Takes cs_main and checks readiness.
  */
 bool IssueDepinChallengeForAddress(const std::string& token, const std::string& address,
                                    DepinChallengeType type, const std::string& poolRoot,
@@ -262,7 +262,7 @@ bool IssueDepinChallengeForAddress(const std::string& token, const std::string& 
 
 /**
  * The complete check an authenticated RPC performs, in this order and with no
- * shortcuts:
+ * shortcuts (first taking cs_main and checking service readiness):
  *   1. form (address, nonce, signature are well-formed)
  *   2. the nonce exists and has not expired (read-only)
  *   3. the signature over DepinChallengePreimage(type, token, address, nonce)
@@ -271,7 +271,8 @@ bool IssueDepinChallengeForAddress(const std::string& token, const std::string& 
  *      issuance and use invalidates the challenge)
  *   5. the nonce is consumed atomically for exactly these bindings
  * Nothing before step 5 modifies the store, so a request that fails cannot
- * invalidate someone else's nonce.
+ * invalidate someone else's nonce. Callers must retain cs_main through the
+ * authorized selection or mutation; never enter under a pool/challenge lock.
  */
 bool CheckDepinChallengeAuth(DepinChallengeType type, const std::string& token,
                              const std::string& address, const std::string& nonce,

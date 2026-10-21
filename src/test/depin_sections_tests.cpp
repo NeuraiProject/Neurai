@@ -18,11 +18,8 @@
 //   - missing_dependencies_are_named_errors: passetsdb / prestricteddb /
 //     fAssetIndex are dependencies that MUST fail with a named error when
 //     absent (a missing restriction DB fails OPEN otherwise).
-//   - authorization_touches_no_cs_main_state: passets / passetsRestrictionCache
-//     are caches that must NOT be needed at all -- authorization runs under
-//     cs_depinmsgpool, where CAssetsCache methods would race with block
-//     validation. Reintroducing CheckForDEPINRestriction() in the access path
-//     makes this test crash rather than pass silently.
+//   - authorization_requires_chainstate_cache: a missing connected-tip cache
+//     must fail closed; reading only persisted balances is no longer enough.
 //
 // Runs on REGTEST: DEPIN names only validate on testnet/regtest.
 
@@ -36,6 +33,8 @@
 #include "chainparams.h"
 #include "depinchallenge.h"
 #include "depinecies.h"
+#include "clientversion.h"
+#include "util.h"
 #include "depinpoolkey.h"
 #include "hash.h"
 #include "key.h"
@@ -47,6 +46,7 @@
 #include "script/standard.h"
 #include "streams.h"
 #include "test/test_neurai.h"
+#include "test/depin_test_utils.h"
 #include "txdb.h"
 #include "utilstrencodings.h"
 #include "utiltime.h"
@@ -55,9 +55,11 @@
 #include <boost/test/unit_test.hpp>
 
 #include <algorithm>
+#include <fstream>
 #include <map>
 #include <set>
 #include <string>
+#include <thread>
 #include <univalue.h>
 #include <vector>
 
@@ -75,6 +77,7 @@ struct Holder {
 };
 
 struct DepinSectionsSetup : public TestingSetup {
+    ScopedDepinTestTipTime currentTip;
     bool prevAssetIndex;
     bool prevPubKeyIndex;
     CAssetsDB* prevAssetsDb;
@@ -472,32 +475,19 @@ BOOST_AUTO_TEST_CASE(missing_dependencies_are_named_errors)
     BOOST_CHECK_MESSAGE(HasDepinSectionAccess(holder.address, SECTION_A, ROOT, error), error);
 }
 
-// (7) Proof BY CONSTRUCTION that authorization reads no cs_main-domain state:
-// with passets and passetsRestrictionCache null it still answers correctly.
-// CheckForDEPINRestriction() dereferences passets' dirty sets unconditionally,
-// so reintroducing it here crashes this test instead of passing silently.
-// (Deliberate asymmetry with the previous test: passetsdb/prestricteddb must
-// error when absent; passets/passetsRestrictionCache must not be needed.)
-BOOST_AUTO_TEST_CASE(authorization_touches_no_cs_main_state)
+// (7) Chainstate absence must be a named error even when disk has a balance.
+BOOST_AUTO_TEST_CASE(authorization_requires_chainstate_cache)
 {
     const Holder active = NewHolder(false);
-    const Holder revoked = NewHolder(false);
-
     SetBalance(SECTION_A, active.address, 10);
-    SetBalance(SECTION_A, revoked.address, 10);
-    SelfRevoke(SECTION_A, revoked.address);
-
-    NullGuard<CAssetsCache> assetsGuard(passets);
-    NullGuard<CLRUCache<std::string, int8_t> > cacheGuard(passetsRestrictionCache);
-
     std::string error;
+    {
+        NullGuard<CAssetsCache> assetsGuard(passets);
+        BOOST_CHECK(!HasDepinSectionAccess(active.address, SECTION_A, ROOT, error));
+        BOOST_CHECK(error.find("chainstate cache") != std::string::npos);
+        BOOST_CHECK(!HasDepinSectionOwnerAccess(active.address, SECTION_A, ROOT, error));
+    }
     BOOST_CHECK_MESSAGE(HasDepinSectionAccess(active.address, SECTION_A, ROOT, error), error);
-    BOOST_CHECK(!HasDepinSectionAccess(revoked.address, SECTION_A, ROOT, error));
-
-    // Owner variant runs under the same constraint.
-    const Holder owner = NewHolder(false);
-    SetBalance(ROOT + OWNER_TAG, owner.address, 1 * COIN);
-    BOOST_CHECK_MESSAGE(HasDepinSectionOwnerAccess(owner.address, SECTION_A, ROOT, error), error);
 }
 
 // (8) Owner authority follows the BASE-name chain with '!' re-appended per
@@ -634,6 +624,7 @@ BOOST_AUTO_TEST_CASE(pool_accepts_section_and_rejects_unauthorized)
 
     const Holder sectionSender = NewHolder(false);
     const Holder audience = NewHolder(false);
+    SetBalance(ROOT, audience.address, 10);
     SetBalance(SECTION_A, sectionSender.address, 10);
 
     std::string error;
@@ -664,14 +655,14 @@ BOOST_AUTO_TEST_CASE(pool_accepts_section_and_rejects_unauthorized)
 }
 
 // (13) Guard: accepting a message performs NO resolver flush. The authorization
-// path must stay direct-reads-only; wiring GetDepinAncestorRecipients (or any
-// flushing helper) into AddMessage turns this red.
+// path reads through a local cache without flushing global state.
 BOOST_AUTO_TEST_CASE(addmessage_does_not_flush)
 {
     ScopedInitializedPool pool(ROOT);
 
     const Holder sender = NewHolder(false);
     const Holder audience = NewHolder(false);
+    SetBalance(ROOT, audience.address, 10);
     SetBalance(ROOT, sender.address, 10);
 
     gDepinAncestorRecipientsStats.Reset();
@@ -695,6 +686,7 @@ BOOST_AUTO_TEST_CASE(addmessage_caps_recipient_count)
     const Holder r1 = NewHolder(false);
     const Holder r2 = NewHolder(false);
     const Holder r3 = NewHolder(false);
+    for (const Holder& h : {r1, r2, r3}) SetBalance(ROOT, h.address, 10);
 
     std::string error;
 
@@ -716,6 +708,7 @@ BOOST_AUTO_TEST_CASE(reject_malformed_ecies_locally_and_through_submit_rpc)
     ScopedInitializedPool pool(ROOT);
     const Holder sender = NewHolder(true);
     const Holder audience = NewHolder(false);
+    SetBalance(ROOT, audience.address, 10);
     SetBalance(SECTION_A, sender.address, 10);
     const CDepinMessage valid = MakeEciesMessage(SECTION_A, sender, {audience}, "valid ECIES");
     std::string error;
@@ -756,6 +749,7 @@ BOOST_AUTO_TEST_CASE(depinsubmitmsg_accepts_section)
     // index, and the reply is encrypted for it) and an active section balance.
     const Holder sender = NewHolder(true);
     const Holder audience = NewHolder(false);
+    SetBalance(ROOT, audience.address, 10);
     SetBalance(SECTION_A, sender.address, 10);
 
     CDepinMessage msg = MakeEciesMessage(SECTION_A, sender, {audience}, "via rpc");
@@ -801,6 +795,7 @@ BOOST_AUTO_TEST_CASE(depinsubmitmsg_is_rate_limited_per_sender)
     const Holder sender = NewHolder(true);
     const Holder other = NewHolder(true);
     const Holder audience = NewHolder(false);
+    SetBalance(ROOT, audience.address, 10);
     SetBalance(SECTION_A, sender.address, 10);
     SetBalance(SECTION_A, other.address, 10);
 
@@ -831,6 +826,7 @@ BOOST_AUTO_TEST_CASE(depinsubmitmsg_invalid_signature_does_not_consume_sender_qu
     const Holder victim = NewHolder(true);
     const Holder attacker = NewHolder(true);
     const Holder audience = NewHolder(false);
+    SetBalance(ROOT, audience.address, 10);
     SetBalance(SECTION_A, victim.address, 10);
 
     auto submit = [&](const Holder& from, const CKey& signWith, const std::string& text) {
@@ -878,6 +874,7 @@ BOOST_AUTO_TEST_CASE(depinsubmitmsg_requires_revealed_sender_key)
 
     const Holder sender = NewHolder(false);
     const Holder audience = NewHolder(false);
+    SetBalance(ROOT, audience.address, 10);
     SetBalance(SECTION_A, sender.address, 10);
 
     CDepinMessage msg = MakeEciesMessage(SECTION_A, sender, {audience}, "sin clave");
@@ -998,6 +995,248 @@ BOOST_AUTO_TEST_CASE(branch_resolution_stops_at_pool_root)
     CDepinAncestorRecipients absolute;
     BOOST_REQUIRE_MESSAGE(GetDepinAncestorRecipients(SECTION_A_SUB, 50, absolute, error, ""), error);
     BOOST_CHECK(contains(absolute, rootHolder.address));
+}
+
+BOOST_AUTO_TEST_CASE(new_messages_require_enabled_recipients_and_allow_private_subsets)
+{
+    ScopedInitializedPool pool(ROOT);
+    CreateAsset(ROOT);
+    CreateAsset(SECTION_A);
+    const Holder sender = NewHolder(true);
+    const Holder receiver = NewHolder(true);
+    const Holder stranger = NewHolder(true);
+    SetBalance(ROOT, sender.address, 10);
+    SetBalance(SECTION_A, receiver.address, 10);
+    SetBalance(SECTION_B, stranger.address, 10);
+    std::string error, plaintext;
+    CDepinMessage good = MakeEciesMessage(SECTION_A, sender, {receiver}, "private subset");
+    good.messageType = 0x01;
+    SignMessageWithKey(good, sender.key);
+    BOOST_REQUIRE_MESSAGE(pDepinMsgPool->AddMessage(good, error), error);
+    BOOST_REQUIRE(TryDecrypt(good, receiver, plaintext));
+    BOOST_CHECK_EQUAL(plaintext, "private subset");
+    Holder poolHolder;
+    poolHolder.key = poolKey;
+    poolHolder.pubkey = poolKey.GetPubKey();
+    poolHolder.address = EncodeDestination(poolHolder.pubkey.GetID());
+    BOOST_CHECK(!TryDecrypt(good, poolHolder, plaintext));
+
+    CDepinMessage bad = MakeEciesMessage(SECTION_A, sender, {receiver, stranger}, "sibling is not eligible");
+    SignMessageWithKey(bad, sender.key);
+    BOOST_CHECK(!pDepinMsgPool->AddMessage(bad, error));
+    BOOST_CHECK(error.find("Recipient not authorized") != std::string::npos);
+    UniValue params(UniValue::VARR);
+    params.push_back(WrapForPool(sender.address, bad));
+    try {
+        CallDepinRPC("depinsubmitmsg", params);
+        BOOST_FAIL("Unauthorized recipient admitted through RPC");
+    } catch (const UniValue& rpcError) {
+        BOOST_CHECK_EQUAL(rpcError["code"].get_int(), RPC_VERIFY_REJECTED);
+        BOOST_CHECK(rpcError["message"].get_str().find("Recipient not authorized:") != std::string::npos);
+    }
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessageCount(), 1U);
+    CDepinAncestorRecipients beforeFreeze;
+    BOOST_REQUIRE(GetDepinAncestorRecipients(SECTION_A, 20, beforeFreeze, error, ROOT));
+    BOOST_CHECK(std::any_of(beforeFreeze.recipients.begin(), beforeFreeze.recipients.end(),
+        [&](const CDepinRecipient& r) { return r.address == receiver.address; }));
+    // A once-valid directory/ciphertext must fail admission after revocation.
+    FreezeAddress(SECTION_A, receiver.address);
+    bad = MakeEciesMessage(SECTION_A, sender, {receiver}, "frozen recipient");
+    SignMessageWithKey(bad, sender.key);
+    BOOST_CHECK(!pDepinMsgPool->AddMessage(bad, error));
+    SetBalance(ROOT, receiver.address, 10); // Active ancestor still grants access.
+    BOOST_REQUIRE_MESSAGE(pDepinMsgPool->AddMessage(bad, error), error);
+    SelfRevoke(ROOT, receiver.address); // No remaining active ancestor.
+    bad = MakeEciesMessage(SECTION_A, sender, {receiver}, "self-revoked recipient");
+    SignMessageWithKey(bad, sender.key);
+    BOOST_CHECK(!pDepinMsgPool->AddMessage(bad, error));
+    BOOST_CHECK(error.find("Recipient not authorized:") != std::string::npos);
+}
+
+BOOST_AUTO_TEST_CASE(cache_permissions_override_disk_without_growing_global_balances)
+{
+    const Holder holder = NewHolder(true);
+    SetBalance(SECTION_A, holder.address, 10);
+    SetBalance(ROOT + OWNER_TAG, holder.address, COIN);
+    LOCK(cs_main);
+    const size_t oldSize = passets->mapAssetsAddressAmount.size();
+    const uint64_t oldFlushes = nFullStateFlushes.load();
+    std::string error;
+    BOOST_REQUIRE(HasDepinSectionAccess(holder.address, SECTION_A, ROOT, error));
+    BOOST_CHECK_EQUAL(passets->mapAssetsAddressAmount.size(), oldSize);
+    const auto pair = std::make_pair(SECTION_A, holder.address);
+    passets->mapAssetsAddressAmount[pair] = 0;
+    BOOST_CHECK(!HasDepinSectionAccess(holder.address, SECTION_A, ROOT, error));
+    passets->mapAssetsAddressAmount.erase(pair);
+    BOOST_CHECK(HasDepinSectionAccess(holder.address, SECTION_A, ROOT, error));
+    passets->setNewRestrictedAddressToAdd.insert(CAssetCacheRestrictedAddress(
+        SECTION_A, holder.address, RestrictedType::FREEZE_ADDRESS));
+    BOOST_CHECK(!HasDepinSectionAccess(holder.address, SECTION_A, ROOT, error));
+    passets->setNewRestrictedAddressToAdd.clear();
+    SelfRevoke(SECTION_A, holder.address);
+    BOOST_CHECK(!HasDepinSectionAccess(holder.address, SECTION_A, ROOT, error));
+    passets->setNewSelfRestrictionToAdd.insert(CAssetCacheSelfRestriction(SECTION_A, holder.address, false));
+    BOOST_CHECK(HasDepinSectionAccess(holder.address, SECTION_A, ROOT, error));
+    passets->mapAssetsAddressAmount[std::make_pair(ROOT + OWNER_TAG, holder.address)] = 0;
+    BOOST_CHECK(!HasDepinSectionOwnerAccess(holder.address, SECTION_A, ROOT, error));
+    passets->mapAssetsAddressAmount.clear();
+    BOOST_CHECK(HasDepinSectionOwnerAccess(holder.address, SECTION_A, ROOT, error));
+    BOOST_CHECK_EQUAL(nFullStateFlushes.load(), oldFlushes);
+}
+
+BOOST_AUTO_TEST_CASE(restoration_keeps_history_after_sender_and_recipient_revoke)
+{
+    ScopedInitializedPool pool(ROOT);
+    const Holder sender = NewHolder(true);
+    const Holder revoked = NewHolder(true);
+    const Holder remaining = NewHolder(true);
+    for (const Holder& h : {sender, revoked, remaining}) SetBalance(SECTION_A, h.address, 10);
+    CDepinMessage msg = MakeEciesMessage(SECTION_A, sender, {revoked, remaining}, "historical message");
+    SignMessageWithKey(msg, sender.key);
+    std::string error, plaintext;
+    BOOST_REQUIRE_MESSAGE(pDepinMsgPool->AddMessage(msg, error), error);
+    BOOST_REQUIRE(pDepinMsgPool->SaveToDisk());
+    pDepinMsgPool->Clear();
+    FreezeAddress(SECTION_A, revoked.address);
+    SelfRevoke(SECTION_A, sender.address);
+    BOOST_REQUIRE(pDepinMsgPool->LoadFromDisk());
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessageCount(), 1U);
+    const auto history = pDepinMsgPool->GetMessagesForAddress(remaining.address, SECTION_A);
+    BOOST_REQUIRE_EQUAL(history.size(), 1U);
+    BOOST_REQUIRE(TryDecrypt(history[0], remaining, plaintext));
+    BOOST_CHECK_EQUAL(plaintext, "historical message");
+    BOOST_CHECK(!HasDepinSectionAccess(revoked.address, SECTION_A, ROOT, error));
+    BOOST_CHECK(!pDepinMsgPool->AddMessage(msg, error)); // No public restoration bypass.
+
+    // Restoration still verifies signatures, even though it ignores membership.
+    pDepinMsgPool->Clear();
+    CDepinMessage unsignedMessage = MakeEciesMessage(SECTION_A, remaining, {remaining}, "bad signature");
+    BOOST_REQUIRE(pDepinMsgPool->AddMessage(unsignedMessage, error, true));
+    BOOST_REQUIRE(pDepinMsgPool->SaveToDisk());
+    pDepinMsgPool->Clear();
+    BOOST_REQUIRE(pDepinMsgPool->LoadFromDisk());
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessageCount(), 0U);
+
+    // A valid signature cannot make an invalid section name restorable.
+    CDepinMessage invalidName = msg;
+    invalidName.token = ROOT + "/X";
+    SignMessageWithKey(invalidName, sender.key);
+    CDataStream disk(SER_DISK, CLIENT_VERSION);
+    disk << DEPINPOOL_MAGIC_BYTES << DEPINPOOL_FILE_VERSION << GetTime() << uint64_t(1) << invalidName;
+    {
+        std::ofstream file((GetDataDir() / "depinpool.dat").string(), std::ios::binary);
+        file.write(disk.data(), disk.size());
+        BOOST_REQUIRE(file.good());
+    }
+    BOOST_REQUIRE(pDepinMsgPool->LoadFromDisk());
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessageCount(), 0U);
+}
+
+BOOST_AUTO_TEST_CASE(directory_merges_pending_balances_and_restrictions_without_flush)
+{
+    CreateAsset(ROOT);
+    const Holder oldHolder = NewHolder(true);
+    const Holder newHolder = NewHolder(true);
+    SetBalance(ROOT, oldHolder.address, 10);
+    LOCK(cs_main);
+    passets->mapAssetsAddressAmount[std::make_pair(ROOT, oldHolder.address)] = 0;
+    passets->mapAssetsAddressAmount[std::make_pair(ROOT, newHolder.address)] = 10;
+    const size_t size = passets->mapAssetsAddressAmount.size();
+    const uint64_t flushes = nFullStateFlushes.load();
+    CDepinAncestorRecipients result;
+    std::string error;
+    BOOST_REQUIRE_MESSAGE(GetDepinAncestorRecipients(ROOT, 20, result, error, ROOT), error);
+    BOOST_REQUIRE_EQUAL(result.recipients.size(), 1U);
+    BOOST_CHECK_EQUAL(result.recipients[0].address, newHolder.address);
+    passets->setNewRestrictedAddressToAdd.insert(CAssetCacheRestrictedAddress(
+        ROOT, newHolder.address, RestrictedType::FREEZE_ADDRESS));
+    BOOST_REQUIRE(GetDepinAncestorRecipients(ROOT, 20, result, error, ROOT));
+    BOOST_CHECK(result.recipients.empty());
+    BOOST_CHECK_EQUAL(passets->mapAssetsAddressAmount.size(), size);
+    BOOST_CHECK_EQUAL(nFullStateFlushes.load(), flushes);
+}
+
+BOOST_AUTO_TEST_CASE(section_directory_merges_tip_metadata_without_flush)
+{
+    ScopedInitializedPool pool(ROOT);
+    CreateAsset(SECTION_A);
+    LOCK(cs_main);
+    CNewAsset removed(SECTION_A, 10, DEPIN_ASSET_UNITS, 0, 0, "");
+    CNewAsset added(SECTION_B, 10, DEPIN_ASSET_UNITS, 0, 0, "");
+    passets->setNewAssetsToRemove.insert(CAssetCacheNewAsset(removed, "", 1, uint256()));
+    passets->setNewAssetsToAdd.insert(CAssetCacheNewAsset(added, "", 2, uint256()));
+    const uint64_t flushes = nFullStateFlushes.load();
+    std::vector<std::string> sections;
+    std::string error;
+    BOOST_REQUIRE_MESSAGE(pDepinMsgPool->GetSections(sections, error), error);
+    BOOST_REQUIRE_EQUAL(sections.size(), 2U);
+    BOOST_CHECK_EQUAL(sections[0], ROOT);
+    BOOST_CHECK_EQUAL(sections[1], SECTION_B);
+    BOOST_CHECK_EQUAL(nFullStateFlushes.load(), flushes);
+}
+
+BOOST_AUTO_TEST_CASE(admission_cost_and_concurrent_pool_readers)
+{
+    for (unsigned int count : {20U, 50U}) {
+        for (int depth : {1, 4, 12}) {
+            ScopedInitializedPool pool(ROOT, count);
+            std::string token = ROOT;
+            CreateAsset(token);
+            for (int level = 1; level < depth; ++level) {
+                token += "/SUB";
+                CreateAsset(token);
+            }
+            const Holder sender = NewHolder(true);
+            SetBalance(ROOT, sender.address, 10);
+            std::vector<Holder> audience;
+            for (unsigned int i = 0; i < count; ++i) {
+                const Holder receiver = NewHolder(true);
+                SetBalance(ROOT, receiver.address, 10);
+                audience.push_back(receiver);
+            }
+            const uint64_t oldFlushes = nFullStateFlushes.load();
+            gDepinAdmissionStats.Reset();
+            std::atomic<bool> stop{false};
+            std::atomic<uint64_t> reads{0}, maxReadMicros{0};
+            std::thread reader([&] {
+                while (!stop.load()) {
+                    const int64_t start = GetTimeMicros();
+                    pDepinMsgPool->GetAllMessages();
+                    const uint64_t elapsed = GetTimeMicros() - start;
+                    uint64_t previous = maxReadMicros.load();
+                    while (previous < elapsed && !maxReadMicros.compare_exchange_weak(previous, elapsed)) {}
+                    reads++;
+                    std::this_thread::yield();
+                }
+            });
+            while (reads.load() == 0) std::this_thread::yield();
+            bool accepted = true;
+            std::string error;
+            const int iterations = 8;
+            const int64_t start = GetTimeMicros();
+            for (int i = 0; i < iterations; ++i) {
+                CDepinMessage msg = MakeEciesMessage(token, sender, audience, "admission benchmark");
+                SignMessageWithKey(msg, sender.key);
+                if (!pDepinMsgPool->AddMessage(msg, error)) {
+                    accepted = false;
+                    break;
+                }
+            }
+            const int64_t total = GetTimeMicros() - start;
+            stop = true;
+            reader.join();
+            BOOST_REQUIRE_MESSAGE(accepted, error);
+            BOOST_CHECK_EQUAL(gDepinAdmissionStats.admitted.load(), iterations);
+            BOOST_CHECK_EQUAL(gDepinAdmissionStats.balanceQueries.load(), uint64_t(iterations) * (count + 1) * depth);
+            BOOST_CHECK_EQUAL(nFullStateFlushes.load(), oldFlushes);
+            BOOST_TEST_MESSAGE("DEPIN_BENCH recipients=" << count << " depth=" << depth
+                << " iterations=" << iterations << " total_us=" << total
+                << " permission_us=" << gDepinAdmissionStats.permissionMicros.load()
+                << " pool_hold_us=" << gDepinAdmissionStats.poolHoldMicros.load()
+                << " pool_wait_us=" << gDepinAdmissionStats.poolWaitMicros.load()
+                << " reader_max_us=" << maxReadMicros.load() << " reads=" << reads.load());
+        }
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -28,6 +28,31 @@ class CWallet;
 static const unsigned int DEFAULT_MAX_DEPIN_RECIPIENTS = 20;
 static const unsigned int DEFAULT_DEPIN_MESSAGE_SIZE = 1024;  // 1KB
 static const unsigned int DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS = 168;  // 7 days
+static const int64_t DEFAULT_DEPIN_MAX_TIP_AGE = 3600;
+static const int64_t DEFAULT_DEPIN_MAX_HEADER_LAG = 2;
+
+struct CDepinServiceStatus {
+    bool ready = false;
+    std::string reason;
+    int height = -1;
+    int headers = -1;
+    int64_t tipAge = 0;
+};
+
+// Chain-dependent operations hold cs_main from this check through their
+// final permission check and effect. Diagnostics may call this at any time.
+CDepinServiceStatus GetDepinServiceStatus();
+bool CheckDepinServiceReady(std::string& error);
+
+struct CDepinAdmissionStats {
+    std::atomic<uint64_t> balanceQueries{0};
+    std::atomic<uint64_t> permissionMicros{0};
+    std::atomic<uint64_t> poolWaitMicros{0};
+    std::atomic<uint64_t> poolHoldMicros{0};
+    std::atomic<uint64_t> admitted{0};
+    void Reset() { balanceQueries = 0; permissionMicros = 0; poolWaitMicros = 0; poolHoldMicros = 0; admitted = 0; }
+};
+extern CDepinAdmissionStats gDepinAdmissionStats;
 static const unsigned int DEFAULT_DEPIN_POOL_SIZE_MB = 100;  // 100 MB
 
 // Hard limits (maximum allowed values)
@@ -114,6 +139,8 @@ public:
     }
 };
 
+enum class DepinAdmissionError { NONE, RECIPIENT_NOT_AUTHORIZED };
+
 // Chat message mempool
 class CDepinMsgPool {
 private:
@@ -143,6 +170,13 @@ private:
     // Erase `hashes` from both indexes. Caller holds cs_depinmsgpool.
     void EraseMessages(const std::vector<uint256>& hashes);
 
+    // Only LoadFromDisk may restore an already stored message without applying
+    // today's membership to its historical sender and recipients. All other
+    // validations, including the signature, still apply to restoration.
+    bool AddMessageInternal(const CDepinMessage& message, std::string& error,
+                            bool skipSignatureCheck, bool restoring,
+                            DepinAdmissionError* admissionError = nullptr);
+
 public:
     CDepinMsgPool();
 
@@ -161,7 +195,8 @@ public:
     int64_t GetMessageExpiryTime() const { return nMessageExpiryHours * 3600; }  // Convert to seconds
 
     // Message handling
-    bool AddMessage(const CDepinMessage& message, std::string& error, bool skipSignatureCheck = false);
+    bool AddMessage(const CDepinMessage& message, std::string& error, bool skipSignatureCheck = false,
+                    DepinAdmissionError* admissionError = nullptr);
     bool GetDepinMessage(const uint256& hash, CDepinMessage& message) const;
     // Returns only unexpired messages, including for the sender. scopeToken
     // "" considers every token; otherwise
@@ -190,7 +225,8 @@ public:
     // Sub-assets of the active token at the current chain tip, activeToken
     // itself first. Backed by a per-tip snapshot with its OWN lock
     // (cs_sectionCache) so the underlying asset-directory scan never blocks
-    // message delivery; invalidation is lazy on tip change, so reorgs need no
+    // raw pool reads; permission-dependent RPCs still serialize under cs_main.
+    // Invalidation is lazy on tip change, so reorgs need no
     // hook. Lock order: cs_main -> cs_sectionCache; this method never takes
     // cs_depinmsgpool. Authorization is deliberately NOT cached anywhere.
     bool GetSections(std::vector<std::string>& sections, std::string& error);
@@ -251,24 +287,17 @@ std::string GetDepinSectionLabel(const std::string& name, const std::string& roo
 // sectionToken or of any ancestor up to `root` -- holding the root grants the
 // whole branch, so a section-level revocation does not withdraw it.
 //
-// Lock and freshness contract (deliberate, see the sections NIP): this runs
-// inside AddMessage() under cs_depinmsgpool, where calling
-// GetDepinAncestorRecipients() is forbidden (it takes cs_main and flushes) and
-// where CAssetsCache methods such as CheckForDEPINRestriction() would race --
-// they read passets' dirty sets and write passetsRestrictionCache, state that
-// mutates during block validation under cs_main. So this function performs
-// ONLY direct database reads (ReadAssetAddressQuantity, ReadRestrictedAddress,
-// ReadSelfRestriction), which LevelDB serves concurrently without a lock. Its
-// freshness is therefore the flushed state -- the same the pool's ownership
-// check has always had -- with balance and restrictions read at the SAME level
-// rather than mixing disk balances with half-connected in-memory restrictions.
+// Takes cs_main and reads the connected chainstate: dirty asset balances and
+// restrictions override the persisted indexes. A fresh local CAssetsCache
+// receives balance read-throughs, so queries never fill the global balance map
+// or force a full UTXO flush. No mempool permissions are used.
 //
-// Preconditions, each a named error BEFORE any read: fAssetIndex (without the
-// index "no balance" would be indistinguishable from "cannot answer"),
-// passetsdb, prestricteddb (restrictions read from a null pointer would fail
-// OPEN and let frozen/revoked holders publish). Denying with a false reason is
-// as misleading as granting too much, so a missing dependency is an error,
-// never "no access".
+// Callers performing an operation must hold cs_main from CheckDepinServiceReady
+// through authorization and selection/mutation. Lock order is cs_main before
+// pool, section-cache, challenge and wallet locks; never call under a pool lock.
+// These reusable permission helpers do not enforce node freshness themselves.
+// Missing indexes, chainstate cache or databases are named errors. In particular
+// a missing restriction database must fail closed.
 bool HasDepinSectionAccess(const std::string& address, const std::string& sectionToken,
                            const std::string& root, std::string& error);
 
@@ -318,20 +347,11 @@ struct CDepinAncestorRecipients {
           maxResults(0), truncated(false) {}
 };
 
-// Access-pattern instrumentation for GetDepinAncestorRecipients().
-//
-// These counters exist so the tests can assert the *shape* of the query rather
-// than only its result: one flush per call, restrictions resolved once per
-// address instead of once per (asset, address) pair, and no pubkey lookup for
-// an address already dropped by restriction. Those are the regressions that are
-// easy to introduce here and invisible to a functional test -- the answer stays
-// correct while the cost explodes.
-//
-// Counting is confined to GetDepinAncestorRecipients(); the flush counter in
-// particular only sees the flush that function performs. A helper that grew its
-// own raw FlushStateToDisk() call would not be counted here, which is why
-// AssetAddressDirMulti() and GetAddressDepinRestrictions() are additionally
-// tested with a null pcoinsTip -- flushing then crashes rather than passing.
+// Access-pattern instrumentation for GetDepinAncestorRecipients(). flushCalls
+// remains zero for compatibility with earlier tests; nFullStateFlushes checks
+// the actual validation path. restrictionQueries counts addresses evaluated,
+// not low-level database reads; multiple ancestor pairs may be checked for one
+// address. Public keys are only queried after an active pair has been found.
 struct CDepinAncestorRecipientsStats {
     std::atomic<uint64_t> flushCalls;
     std::atomic<uint64_t> restrictionQueries;
@@ -371,13 +391,11 @@ extern CDepinAncestorRecipientsStats gDepinAncestorRecipientsStats;
 // truncated is set -- the order is fixed before any cut, so a restricted or
 // key-less address never displaces a valid one later in the ordering.
 //
-// The function takes cs_main and flushes once itself; that contract belongs to
-// it, not to the caller. Taking cs_main beforehand is harmless (it is a
-// recursive mutex), but it must NOT be called while holding a lock that is
-// elsewhere acquired after cs_main -- cs_depinmsgpool, for instance.
-//
-// Requires fAssetIndex, fPubKeyIndex, passetsdb, pblocktree, pcoinsTip and
-// prestricteddb; a missing one is a named error, never an empty result.
+// Takes cs_main, checks service freshness and merges the persisted directory
+// with connected-tip balances and restrictions without flushing. Callers may
+// already hold cs_main, but must not hold a lock ordered after it (pool, etc.).
+// Requires fAssetIndex, fPubKeyIndex, passets, passetsCache, passetsdb,
+// pblocktree, pcoinsTip and prestricteddb; absence is a named error.
 bool GetDepinAncestorRecipients(const std::string& token,
                                 size_t maxResults,
                                 CDepinAncestorRecipients& result,

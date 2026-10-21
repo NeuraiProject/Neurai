@@ -23,6 +23,7 @@
 #include "base58.h"
 #include "chainparams.h"
 #include "consensus/consensus.h"
+#include "coins.h"
 #include "consensus/validation.h"
 #include "depinecies.h"
 #include "depinmsgpool.h"
@@ -124,7 +125,7 @@ struct DepinSectionsWalletSetup : public TestingSetup {
         fAssetIndex = prevAssetIndex;
     }
 
-    void MineBlock(const CScript& scriptPubKey, bool includeMempool = false)
+    void MineBlock(const CScript& scriptPubKey, bool includeMempool = false, int64_t* validationMicros = nullptr)
     {
         const CChainParams& chainparams = GetParams();
         std::unique_ptr<CBlockTemplate> pblocktemplate = BlockAssembler(chainparams).CreateNewBlock(scriptPubKey);
@@ -142,7 +143,10 @@ struct DepinSectionsWalletSetup : public TestingSetup {
         block.mix_hash = mix_hash;
 
         std::shared_ptr<const CBlock> shared_pblock = std::make_shared<const CBlock>(block);
-        ProcessNewBlock(chainparams, shared_pblock, true, nullptr);
+        const int64_t validationStart = GetTimeMicros();
+        const bool accepted = ProcessNewBlock(chainparams, shared_pblock, true, nullptr);
+        if (validationMicros) *validationMicros = GetTimeMicros() - validationStart;
+        BOOST_REQUIRE(accepted);
     }
 
     // Issue `assetName` for real, mine it, and return the address that
@@ -222,11 +226,10 @@ CDepinMessage MakeMessage(const std::string& token, const std::string& sender)
     msg.senderAddress = sender;
     msg.timestamp = GetTime();
     msg.messageType = 0x02;
-    CKey recipient;
-    recipient.MakeNewKey(true);
-    const CPubKey pubkey = recipient.GetPubKey();
     CECIESEncryptedMessage ecies;
     std::string error;
+    CPubKey pubkey;
+    BOOST_REQUIRE_MESSAGE(CheckAddressHasPublicKey(sender, pubkey, error), error);
     BOOST_REQUIRE_MESSAGE(ECIESEncryptMessage("section test",
         {{EncodeDestination(pubkey.GetID()), pubkey}}, ecies, error), error);
     CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
@@ -589,8 +592,10 @@ BOOST_AUTO_TEST_CASE(local_wallet_read_excludes_expired_without_cleanup)
     BOOST_REQUIRE_EQUAL(CallDepinRPC("depingetmsg", read).size(), 1U);
     read.push_back(address);
     SetMockTime(start + pDepinMsgPool->GetMessageExpiryTime());
+    MineBlock(GetScriptForRawPubKey(coinbaseKey.GetPubKey()));
     BOOST_CHECK_EQUAL(CallDepinRPC("depingetmsg", read).size(), 1U);
     SetMockTime(GetTime() + 1);
+    MineBlock(GetScriptForRawPubKey(coinbaseKey.GetPubKey()));
     BOOST_CHECK_EQUAL(CallDepinRPC("depingetmsg", read).size(), 0U);
     read = UniValue(UniValue::VARR);
     read.push_back(PARENT_ASSET);
@@ -660,6 +665,7 @@ BOOST_AUTO_TEST_CASE(pubkeyindex_ingests_p2pkh_spend_without_addressindex)
     // draw from this outpoint.
     CWalletTx wtx1;
     {
+        LOCK2(cs_main, wallet->cs_wallet);
         CReserveKey reservekey(wallet.get());
         CAmount fee = 0;
         int changePos = -1;
@@ -687,6 +693,7 @@ BOOST_AUTO_TEST_CASE(pubkeyindex_ingests_p2pkh_spend_without_addressindex)
     // ConnectBlock's extractor indexes.
     CWalletTx wtx2;
     {
+        LOCK2(cs_main, wallet->cs_wallet);
         CReserveKey reservekey(wallet.get());
         CAmount fee = 0;
         int changePos = -1;
@@ -708,6 +715,53 @@ BOOST_AUTO_TEST_CASE(pubkeyindex_ingests_p2pkh_spend_without_addressindex)
     error.clear();
     BOOST_CHECK_MESSAGE(CheckAddressHasPublicKey(senderAddress, indexed, error), error);
     BOOST_CHECK(indexed == senderPubKey);
+}
+
+// Compare the rejected flush strategy with cache-backed authorization. Small
+// in-memory chain: records mechanics and timings, not mainnet I/O capacity.
+BOOST_AUTO_TEST_CASE(compare_flush_and_cache_authorization_with_next_block)
+{
+    const std::string holder = IssueAssetAndConfirm(PARENT_ASSET, 10 * COIN);
+    CKey outsiderKey;
+    outsiderKey.MakeNewKey(true);
+    const std::string outsider = EncodeDestination(outsiderKey.GetPubKey().GetID());
+    const CScript script = GetScriptForRawPubKey(coinbaseKey.GetPubKey());
+    for (int round = 0; round < 4; ++round) {
+        for (bool forceFlush : {false, true}) {
+            // Warm real unspent wallet outputs equally for both strategies.
+            LOCK2(cs_main, wallet->cs_wallet);
+            for (const auto& item : wallet->mapWallet) {
+                for (size_t n = 0; n < item.second.tx->vout.size(); ++n)
+                    pcoinsTip->AccessCoin(COutPoint(item.first, n));
+            }
+            const unsigned before = pcoinsTip->GetCacheSize();
+            const uint64_t flushes = nFullStateFlushes.load();
+            const int64_t start = GetTimeMicros();
+            if (forceFlush) FlushStateForDatabaseReads();
+            const int64_t flushMicros = GetTimeMicros() - start;
+            const unsigned after = pcoinsTip->GetCacheSize();
+            std::string error;
+            const size_t balanceSize = passets->mapAssetsAddressAmount.size();
+            const int64_t queryStart = GetTimeMicros();
+            for (int attempt = 0; attempt < 100; ++attempt) {
+                BOOST_CHECK(HasDepinSectionAccess(holder, PARENT_ASSET, PARENT_ASSET, error));
+                BOOST_CHECK(!HasDepinSectionAccess(outsider, PARENT_ASSET, PARENT_ASSET, error));
+            }
+            const int64_t queryMicros = GetTimeMicros() - queryStart;
+            BOOST_CHECK_EQUAL(passets->mapAssetsAddressAmount.size(), balanceSize);
+            BOOST_CHECK_EQUAL(nFullStateFlushes.load() - flushes, forceFlush ? 1U : 0U);
+            if (forceFlush) BOOST_CHECK_EQUAL(after, 0U);
+            else BOOST_CHECK_EQUAL(after, before);
+            const int64_t blockStart = GetTimeMicros();
+            int64_t validationMicros = 0;
+            MineBlock(script, false, &validationMicros);
+            BOOST_TEST_MESSAGE("DEPIN_STRATEGY strategy=" << (forceFlush ? "A" : "B")
+                << " round=" << round << " utxo_before=" << before << " utxo_after=" << after
+                << " flush_us=" << flushMicros << " permission_200_us=" << queryMicros
+                << " next_block_us=" << GetTimeMicros() - blockStart
+                << " validation_us=" << validationMicros);
+        }
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()

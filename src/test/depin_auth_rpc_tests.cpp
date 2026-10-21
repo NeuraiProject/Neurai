@@ -28,6 +28,7 @@
 #include "rpc/server.h"
 #include "streams.h"
 #include "test/test_neurai.h"
+#include "test/depin_test_utils.h"
 #include "txdb.h"
 #include "utilstrencodings.h"
 #include "utiltime.h"
@@ -54,6 +55,7 @@ struct Holder {
 };
 
 struct DepinAuthRpcSetup : public TestingSetup {
+    ScopedDepinTestTipTime currentTip;
     bool prevAssetIndex;
     bool prevPubKeyIndex;
     CAssetsDB* prevAssetsDb;
@@ -138,6 +140,7 @@ struct DepinAuthRpcSetup : public TestingSetup {
     void AddMessage(const std::string& token, const Holder& sender,
                     const std::vector<Holder>& recipients, const std::string& text)
     {
+        RefreshDepinTestTipTime();
         std::map<std::string, CPubKey> keys;
         for (const Holder& r : recipients) keys[r.address] = r.pubkey;
         CECIESEncryptedMessage ecies;
@@ -206,6 +209,7 @@ struct DepinAuthRpcSetup : public TestingSetup {
     static UniValue ChallengeParams(const std::string& token, const Holder& holder, DepinChallengeType type,
                                     const Holder* signer = nullptr, int64_t skewSeconds = 0)
     {
+        RefreshDepinTestTipTime();
         static int64_t sequence = 0;
         const int64_t timestamp = DepinRequestClockMillis() + (++sequence % 1000) + skewSeconds * 1000;
         std::string sig, error;
@@ -304,8 +308,8 @@ BOOST_AUTO_TEST_CASE(receivemsg_has_more_uses_delivery_filters)
     // Neither an extra recipient-excluded message nor the holder's own
     // message in a sibling section may set has_more for this tab.
     AddMessage(SECTION_A, sender, {other}, "other recipient");
-    AddMessage(SECTION_B, sender, {holder}, "other section");
     BOOST_REQUIRE(passetsdb->WriteAssetAddressQuantity(SECTION_B, holder.address, 10));
+    AddMessage(SECTION_B, sender, {holder}, "other section");
     AddMessage(SECTION_B, holder, {holder}, "own sibling message");
     const UniValue filtered = Receive(holder, 1, "", fresh + 2);
     BOOST_REQUIRE_EQUAL(filtered["messages"].size(), 1U);
@@ -775,6 +779,80 @@ BOOST_AUTO_TEST_CASE(named_params_with_null_holes)
          "signature=" + Sign(holder, DepinChallengeType::RECEIVE, SECTION_A, nonce2)});
     BOOST_REQUIRE_EQUAL(listing.size(), 4U);
     BOOST_CHECK_EQUAL(Open(Call("depinlistsections", listing), holder)["sections"].size(), 1U);
+}
+
+BOOST_AUTO_TEST_CASE(pending_freeze_denies_existing_nonce_after_restore)
+{
+    const Holder sender = NewHolder(true, SECTION_A, 10);
+    const Holder frozen = NewHolder(true, SECTION_A, 10);
+    const Holder remaining = NewHolder(true, SECTION_A, 10);
+    AddMessage(SECTION_A, sender, {frozen, remaining}, "history before freeze");
+    CDepinMessage msg = pDepinMsgPool->GetAllMessages()[0];
+    BOOST_REQUIRE(sender.key.Sign(msg.GetHash(), msg.signature));
+    pDepinMsgPool->Clear();
+    std::string error;
+    BOOST_REQUIRE(pDepinMsgPool->AddMessage(msg, error));
+    const std::string nonce = Challenge(SECTION_A, frozen, DepinChallengeType::RECEIVE);
+    BOOST_REQUIRE(pDepinMsgPool->SaveToDisk());
+    const uint64_t flushes = nFullStateFlushes.load();
+    {
+        LOCK(cs_main);
+        passets->setNewRestrictedAddressToAdd.insert(CAssetCacheRestrictedAddress(
+            SECTION_A, frozen.address, RestrictedType::FREEZE_ADDRESS));
+        // The restriction is still absent from disk.
+        BOOST_CHECK(!prestricteddb->ReadRestrictedAddress(frozen.address, SECTION_A));
+    }
+    pDepinMsgPool->Clear();
+    BOOST_REQUIRE(pDepinMsgPool->LoadFromDisk());
+    BOOST_CHECK(Throws("depinreceivemsg", Params({SECTION_A, frozen.address, nonce,
+        Sign(frozen, DepinChallengeType::RECEIVE, SECTION_A, nonce)})));
+    BOOST_CHECK_EQUAL(Receive(remaining)["messages"].size(), 1U);
+    BOOST_CHECK_EQUAL(nFullStateFlushes.load(), flushes);
+}
+
+BOOST_AUTO_TEST_CASE(freshness_gate_blocks_ibd_stale_tip_and_header_lag_without_flush)
+{
+    const Holder holder = NewHolder(true, SECTION_A, 10);
+    const UniValue request = ChallengeParams(SECTION_A, holder, DepinChallengeType::RECEIVE);
+    const uint64_t flushes = nFullStateFlushes.load();
+    LOCK(cs_main);
+    BOOST_REQUIRE(GetDepinServiceStatus().ready);
+    CCoinsViewCache* coins = pcoinsTip;
+    pcoinsTip = nullptr;
+    BOOST_CHECK(!GetDepinServiceStatus().ready);
+    pcoinsTip = coins;
+    CAssetsCache* assets = passets;
+    passets = nullptr;
+    BOOST_CHECK(!GetDepinServiceStatus().ready);
+    passets = assets;
+    const uint32_t savedTime = chainActive.Tip()->nTime;
+    chainActive.Tip()->nTime = GetTime() - DEFAULT_DEPIN_MAX_TIP_AGE;
+    BOOST_CHECK(GetDepinServiceStatus().ready); // Exact threshold is allowed.
+    chainActive.Tip()->nTime--;
+    BOOST_CHECK(!GetDepinServiceStatus().ready);
+    BOOST_CHECK(Throws("depinchallenge", request));
+    const UniValue info = DepinPlainBody(Call("depingetmsginfo", Params({})));
+    BOOST_CHECK(!info["ready"].get_bool());
+    chainActive.Tip()->nTime = savedTime;
+    CBlockIndex header;
+    header.nHeight = chainActive.Height() + DEFAULT_DEPIN_MAX_HEADER_LAG + 1;
+    CBlockIndex* oldHeader = pindexBestHeader;
+    pindexBestHeader = &header;
+    BOOST_CHECK(!GetDepinServiceStatus().ready);
+    BOOST_CHECK(Throws("depinchallenge", request));
+    pindexBestHeader = oldHeader;
+    const bool importing = fImporting;
+    fImporting = true;
+    BOOST_CHECK(!GetDepinServiceStatus().ready);
+    BOOST_CHECK(Throws("depinchallenge", request));
+    CDepinAncestorRecipients recipients;
+    std::string error;
+    BOOST_CHECK(!GetDepinAncestorRecipients(SECTION_A, 20, recipients, error, ROOT));
+    std::vector<std::string> sections;
+    BOOST_CHECK(!pDepinMsgPool->GetSections(sections, error));
+    fImporting = importing;
+    BOOST_CHECK(GetDepinServiceStatus().ready);
+    BOOST_CHECK_EQUAL(nFullStateFlushes.load(), flushes);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

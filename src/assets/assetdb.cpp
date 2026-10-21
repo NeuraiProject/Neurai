@@ -177,15 +177,16 @@ bool CAssetsDB::LoadAssets()
     return true;
 }
 
-bool CAssetsDB::AssetDir(std::vector<CDatabasedAssetData>& assets, const std::string filter, const size_t count, const long start)
+bool CAssetsDB::AssetDir(std::vector<CDatabasedAssetData>& assets, const std::string filter, const size_t count, const long start, bool flush)
 {
+    if (!flush) AssertLockHeld(cs_main);
     // Flush and open the iterator under one cs_main: no full flush can be
     // halfway through writing these rows, and the iterator reads a fixed
     // snapshot from then on, so the scan below needs no lock.
     std::unique_ptr<CDBIterator> pcursor;
     {
         LOCK(cs_main);
-        FlushStateForDatabaseReads();
+        if (flush) FlushStateForDatabaseReads();
         pcursor.reset(NewIterator());
     }
     pcursor->Seek(std::make_pair(ASSET_FLAG, std::string()));

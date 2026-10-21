@@ -43,6 +43,7 @@
 #include "rpc/protocol.h"
 #include "rpc/server.h"
 #include "test/test_neurai.h"
+#include "test/depin_test_utils.h"
 #include "utiltime.h"
 #include "validation.h"
 
@@ -127,6 +128,7 @@ UniValue CallNamed(const std::string& method, const std::vector<std::string>& na
 UniValue OpenResponse(const UniValue& response, const CKey& key, const std::string& address);
 
 struct DepinRpcParamsSetup : public TestingSetup {
+    ScopedDepinTestTipTime currentTip;
     bool prevAssetIndex;
     bool prevPubKeyIndex;
     CAssetsDB* prevAssetsDb;
@@ -255,9 +257,7 @@ struct DepinRpcParamsSetup : public TestingSetup {
         msg.senderAddress = senderAddress;
         msg.timestamp = GetTime() - ageSeconds;
         msg.messageType = 0x02;
-        CKey recipient;
-        recipient.MakeNewKey(true);
-        const CPubKey pubkey = recipient.GetPubKey();
+        const CPubKey pubkey = senderKey.GetPubKey();
         CECIESEncryptedMessage ecies;
         std::string error;
         BOOST_REQUIRE_MESSAGE(ECIESEncryptMessage(std::string(32, tag),

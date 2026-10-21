@@ -531,6 +531,8 @@ std::string HelpMessage(HelpMessageMode mode)
     strUsage += HelpMessageOpt("-depinratelimit=<n>", strprintf(_("Maximum DePIN challenges issued and messages accepted per address and minute, 0 = unlimited (default: %u)"), DEFAULT_DEPIN_RATE_LIMIT));
     strUsage += HelpMessageOpt("-depinmsgmaxusers=<n>", strprintf(_("Maximum number of DePIN message recipients (default: %u)"), DEFAULT_MAX_DEPIN_RECIPIENTS));
     strUsage += HelpMessageOpt("-depinpoolpersist", strprintf(_("Whether to save the DePIN message pool on shutdown and load on restart (default: %u)"), DEFAULT_DEPINPOOL_PERSIST));
+    strUsage += HelpMessageOpt("-depinmaxtipage=<n>", strprintf(_("Maximum active-tip age in seconds for DePIN authorization (positive; default: %d)"), DEFAULT_DEPIN_MAX_TIP_AGE));
+    strUsage += HelpMessageOpt("-depinmaxheaderlag=<n>", strprintf(_("Maximum known header lead in blocks for DePIN authorization (nonnegative; default: %d)"), DEFAULT_DEPIN_MAX_HEADER_LAG));
     strUsage += HelpMessageOpt("-depinmsgsize=<n>", strprintf(_("Maximum DePIN message size in bytes (default: %u, max: %u)"), DEFAULT_DEPIN_MESSAGE_SIZE, MAX_DEPIN_MESSAGE_SIZE));
     strUsage += HelpMessageOpt("-depinmsgexpire=<n>", strprintf(_("DePIN message expiry time in hours (default: %u, max: %u)"), DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS, MAX_DEPIN_MESSAGE_EXPIRY_HOURS));
     strUsage += HelpMessageOpt("-depinpoolsize=<n>", strprintf(_("Maximum DePIN pool size in MB (default: %u, max: %u)"), DEFAULT_DEPIN_POOL_SIZE_MB, MAX_DEPIN_POOL_SIZE_MB));
@@ -2224,6 +2226,10 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
     // ********************************************************* Initialize Chat Mempool
     if (gArgs.GetBoolArg("-depinmsg", false)) {
         std::string token = gArgs.GetArg("-depinmsgtoken", "");
+        if (gArgs.GetArg("-depinmaxtipage", DEFAULT_DEPIN_MAX_TIP_AGE) <= 0 ||
+            gArgs.GetArg("-depinmaxheaderlag", DEFAULT_DEPIN_MAX_HEADER_LAG) < 0) {
+            return InitError(_("Invalid DePIN freshness limits: depinmaxtipage must be positive and depinmaxheaderlag nonnegative"));
+        }
         unsigned int maxRecipients = gArgs.GetArg("-depinmsgmaxusers", DEFAULT_MAX_DEPIN_RECIPIENTS);
         unsigned int maxMessageSize = gArgs.GetArg("-depinmsgsize", DEFAULT_DEPIN_MESSAGE_SIZE);
         unsigned int messageExpiryHours = gArgs.GetArg("-depinmsgexpire", DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS);

@@ -210,7 +210,15 @@ void CDepinMCPWorker::WorkerLoop()
                     std::this_thread::sleep_for(std::chrono::seconds(pollInterval));
                     continue;
                 }
-                messages = pDepinMsgPool->GetAllMessages(/*includeExpired=*/false);
+                LOCK(cs_main);
+                std::string accessError;
+                if (CheckDepinServiceReady(accessError) &&
+                    HasDepinSectionAccess(nodeAddress, depinToken,
+                                          pDepinMsgPool->GetActiveToken(), accessError)) {
+                    messages = pDepinMsgPool->GetMessagesForAddress(nodeAddress, depinToken);
+                } else {
+                    LogPrint(BCLog::NET, "MCPWorker: DePIN reception unavailable: %s\n", accessError);
+                }
             }
 
             LogPrintf("MCPWorker: Found %d total messages in pool\n", messages.size());
@@ -487,8 +495,8 @@ bool CDepinMCPWorker::SendResponse(const std::string& response, const std::strin
         // question was asked in, plus its ancestors up to the monitored token
         // (they see the whole subtree). Resolved by GetDepinAncestorRecipients
         // -- freeze/self-revoke respected, missing pubkeys skipped. This runs
-        // on a task thread with no pool lock held, so the resolver's cs_main +
-        // flush contract is fine here.
+        // on a task thread with no pool lock held; cs_main protects directory
+        // selection through admission, without forcing a disk flush.
         // The reply is published through the LOCAL pool's AddMessage, which
         // caps recipientKeys at the pool's own maxRecipients -- resolve with
         // that limit, not the global hard cap, so an oversized set fails here
@@ -499,6 +507,9 @@ bool CDepinMCPWorker::SendResponse(const std::string& response, const std::strin
             recipientsLimit = std::min<size_t>(pDepinMsgPool->GetMaxRecipients(), MAX_DEPIN_RECIPIENTS);
         }
 
+        // Keep directory selection, encryption and publication on one accepted
+        // chainstate. The external model request completed before this scope.
+        LOCK(cs_main);
         std::string error;
         CDepinAncestorRecipients branchRecipients;
         if (!GetDepinAncestorRecipients(msgToken, recipientsLimit, branchRecipients,
