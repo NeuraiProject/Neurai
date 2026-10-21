@@ -374,6 +374,8 @@ privacy_libneurai_privacy_a_SOURCES = \
   privacy/c6_wallet.h \
   privacy/c6_world.cpp \
   privacy/c6_world.h \
+  privacy/c7.cpp \
+  privacy/c7.h \
   privacy/circom_witness.cpp \
   privacy/circom_witness.h \
   privacy/notes.cpp \

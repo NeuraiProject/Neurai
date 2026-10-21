@@ -35,6 +35,12 @@ bool NzkRoot(const uint8_t seed[64], const std::string& zkPassphrase, uint8_t ro
 /** Human-readable part of nzk addresses for "main", "test" or "regtest" (empty if unknown). */
 std::string NzkHrp(const std::string& chain);
 
+namespace bech32m {
+/** BIP 350 Bech32m without the 90-character limit (nzk addresses are longer). */
+std::string Encode(const std::string& hrp, const Bytes& data);
+bool Decode(const std::string& text, std::string& hrp, Bytes& data);
+} // namespace bech32m
+
 /** Pool instance tag carried by nzk addresses. */
 std::array<uint8_t, 4> NzkInstanceTag(const Bytes32& domain, const Bytes32& assetId);
 std::string EncodeNzkAddress(const Recipient& recipient, const std::string& hrp);

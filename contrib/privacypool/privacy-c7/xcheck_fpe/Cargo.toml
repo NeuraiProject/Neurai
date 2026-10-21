@@ -1,0 +1,11 @@
+[package]
+name = "c7-xcheck-fpe"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Same FF1 crate and AES as the Zcash orchard crate (DiversifierKey::get).
+[dependencies]
+fpe = "=0.6.1"
+aes = "=0.8.4"
+hex = "=0.4.3"

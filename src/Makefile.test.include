@@ -27,7 +27,8 @@ JSON_TEST_FILES = \
   test/data/poseidon_vectors.json \
   test/data/ed25519_vectors.json \
   test/data/wycheproof_ed25519.json \
-  test/data/silentpayment_index_vectors.json
+  test/data/silentpayment_index_vectors.json \
+  test/data/privacy_c7_vectors.json
 
 RAW_TEST_FILES =
 
@@ -208,14 +209,15 @@ NEURAI_TESTS += \
   wallet/test/wallet_lock_tests.cpp \
   wallet/test/silentpayments_tests.cpp \
   wallet/test/silentpayments_wallet_tests.cpp \
-  wallet/test/crypto_tests.cpp
+  wallet/test/crypto_tests.cpp \
+  test/privacy_c7_tests.cpp
 endif
 
 test_test_neurai_SOURCES = $(NEURAI_TESTS) $(JSON_TEST_FILES) $(RAW_TEST_FILES)
 test_test_neurai_CPPFLAGS = $(AM_CPPFLAGS) $(NEURAI_INCLUDES) -I$(builddir)/test/ $(TESTDEFS) $(EVENT_CFLAGS)
 test_test_neurai_LDADD =
 if ENABLE_WALLET
-test_test_neurai_LDADD += $(LIBNEURAI_WALLET)
+test_test_neurai_LDADD += $(LIBNEURAI_WALLET) privacy/libneurai_privacy.a
 endif
 test_test_neurai_LDADD += $(LIBNEURAI_SERVER) $(LIBNEURAI_CLI) $(LIBNEURAI_COMMON) $(LIBNEURAI_UTIL) $(LIBNEURAI_CONSENSUS) $(LIBNEURAI_CRYPTO) $(LIBUNIVALUE) \
   $(LIBLEVELDB) $(LIBLEVELDB_SSE42) $(LIBMEMENV) $(BOOST_LIBS) $(BOOST_UNIT_TEST_FRAMEWORK_LIB) $(LIBSECP256K1) $(EVENT_LIBS) $(EVENT_PTHREADS_LIBS)
