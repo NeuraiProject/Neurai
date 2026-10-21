@@ -255,10 +255,18 @@ struct DepinRpcParamsSetup : public TestingSetup {
         msg.senderAddress = senderAddress;
         msg.timestamp = GetTime() - ageSeconds;
         msg.messageType = 0x02;
-        msg.encryptedPayload.assign(32, tag);
+        CKey recipient;
+        recipient.MakeNewKey(true);
+        const CPubKey pubkey = recipient.GetPubKey();
+        CECIESEncryptedMessage ecies;
+        std::string error;
+        BOOST_REQUIRE_MESSAGE(ECIESEncryptMessage(std::string(32, tag),
+            {{EncodeDestination(pubkey.GetID()), pubkey}}, ecies, error), error);
+        CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
+        ss << ecies;
+        msg.encryptedPayload.assign(ss.begin(), ss.end());
         msg.signature.assign(8, tag);
 
-        std::string error;
         BOOST_REQUIRE_MESSAGE(pDepinMsgPool->AddMessage(msg, error, /*skipSignatureCheck=*/true), error);
     }
 };

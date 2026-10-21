@@ -43,12 +43,13 @@ public:
     // Clave pública efímera (33 bytes comprimida)
     CPubKey ephemeralPubKey;
 
-    // Payload cifrado (AES-256-CBC)
-    // Contiene: [IV (16 bytes) || encrypted_data || HMAC-SHA256 (32 bytes)]
+    // Payload cifrado (AES-256-GCM)
+    // Contiene: [nonce (12 bytes) || encrypted_data || tag GCM (16 bytes)]
     std::vector<unsigned char> encryptedPayload;
 
     // Para cada destinatario: clave AES cifrada con ECDH
-    // Map: address_hash160 -> [ephemeral_pubkey_for_recipient (33) || encrypted_aes_key (32) || hmac (32)]
+    // Map: address_hash160 -> [nonce (12) || encrypted_aes_key (32) || tag GCM (16)]
+    // Cada paquete ocupa 60 bytes y usa la clave efímera común de arriba.
     std::map<uint160, std::vector<unsigned char>> recipientKeys;
 
     CECIESEncryptedMessage() {

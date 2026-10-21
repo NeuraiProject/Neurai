@@ -300,14 +300,12 @@ A message is stored only if **all** of the following hold, in this order:
    `depingetmsginfo`);
 5. `encryptedPayload` is non-empty and `≤ maxmessagesize × maxrecipients`
    bytes (defaults 1024 × 20);
-6. **if** `encryptedPayload` deserializes as a `CECIESEncryptedMessage`,
-   its `recipientKeys` has at most `maxrecipients` entries (default 20, hard
-   cap 50). A payload that does *not* deserialize is not rejected by this
-   rule in the current node: it is stored (within the size cap) but can never
-   be delivered, because visibility is decided by `recipientKeys` membership
-   and an unparseable payload has no entries (only its sender sees it listed,
-   and cannot decrypt it either). Producers MUST emit well-formed payloads;
-   a future node version may reject malformed ones outright;
+6. `encryptedPayload` deserializes as a `CECIESEncryptedMessage`, and its
+   `recipientKeys` has at most `maxrecipients` entries (default 20, hard
+   cap 50). A deserialization failure rejects the message. This minimum check
+   does not enforce canonical encoding, reject duplicate map keys or trailing
+   bytes, or validate every ECIES field. Producers MUST emit well-formed
+   payloads; recipients still verify GCM authentication when decrypting;
 7. the pool size limit is not exceeded;
 8. `signature` verifies against the sender's **revealed** public key (§2.3);
 9. `senderAddress` has inherited access to `token` (§2.2);
@@ -323,7 +321,12 @@ boundary.
 ### 5.4 Expiry
 
 `expired ⇔ now − timestamp > expiry`. The node removes expired messages
-periodically (default every 300 s) and never returns them. Nothing is
+periodically (default every 300 s). Remote reception, local wallet reads and
+MCP polling exclude expired entries using one reference time per snapshot,
+even before cleanup and even for the sender. At exactly `timestamp + expiry`
+a message is still eligible. Section counters exclude expired entries;
+physical pool statistics can include them until cleanup releases storage.
+Expiry cannot erase copies already downloaded. Nothing is
 persistent unless the operator enables `-depinpoolpersist`; clients MUST NOT
 assume a message is retrievable later.
 

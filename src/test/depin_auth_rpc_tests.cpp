@@ -232,6 +232,14 @@ struct DepinAuthRpcSetup : public TestingSetup {
         return sig;
     }
 
+    UniValue Receive(const Holder& holder, int64_t limit = 0,
+                     const std::string& afterHash = "", int64_t timestamp = 0)
+    {
+        const std::string nonce = Challenge(SECTION_A, holder, DepinChallengeType::RECEIVE);
+        return Open(Call("depinreceivemsg", Params({SECTION_A, holder.address, nonce,
+            Sign(holder, DepinChallengeType::RECEIVE, SECTION_A, nonce), timestamp, afterHash, limit})), holder);
+    }
+
     bool PoolSigVerifies(const UniValue& response, const std::string& method, const std::string& token,
                          const std::string& address, const std::string& nonce)
     {
@@ -244,6 +252,114 @@ struct DepinAuthRpcSetup : public TestingSetup {
 } // namespace
 
 BOOST_FIXTURE_TEST_SUITE(depin_auth_rpc_tests, DepinAuthRpcSetup)
+
+BOOST_AUTO_TEST_CASE(receivemsg_pagination_limits_and_cursor)
+{
+    SetMockTime(1800000000);
+    const Holder holder = NewHolder(true, SECTION_A, 10);
+    const Holder sender = NewHolder(true, SECTION_A, 10);
+    UniValue page = Receive(holder, 1);
+    BOOST_CHECK_EQUAL(page["messages"].size(), 0U);
+    BOOST_CHECK(!page["has_more"].get_bool());
+
+    // Equal timestamps retain the existing mapByTime order and hash cursor.
+    AddMessage(SECTION_A, sender, {holder}, "first");
+    AddMessage(SECTION_A, sender, {holder}, "second");
+    AddMessage(SECTION_A, sender, {holder}, "third");
+    const UniValue all = Receive(holder);
+    BOOST_REQUIRE_EQUAL(all["messages"].size(), 3U);
+    BOOST_CHECK(!all["has_more"].get_bool());
+    for (int limit : {4, 3}) {
+        page = Receive(holder, limit);
+        BOOST_CHECK_EQUAL(page["messages"].size(), 3U);
+        BOOST_CHECK(!page["has_more"].get_bool());
+    }
+    page = Receive(holder, 2);
+    BOOST_REQUIRE_EQUAL(page["messages"].size(), 2U);
+    BOOST_CHECK(page["has_more"].get_bool());
+    const std::string anchor = page["messages"][1]["hash"].get_str();
+    page = Receive(holder, 1, anchor);
+    BOOST_REQUIRE_EQUAL(page["messages"].size(), 1U);
+    BOOST_CHECK_EQUAL(page["messages"][0]["hash"].get_str(), all["messages"][2]["hash"].get_str());
+    BOOST_CHECK(!page["has_more"].get_bool());
+    page = Receive(holder, 1, page["messages"][0]["hash"].get_str());
+    BOOST_CHECK_EQUAL(page["messages"].size(), 0U);
+    BOOST_CHECK(!page["has_more"].get_bool());
+    BOOST_CHECK_THROW(Receive(holder, 1, std::string(64, 'f')), UniValue);
+}
+
+BOOST_AUTO_TEST_CASE(receivemsg_has_more_uses_delivery_filters)
+{
+    const int64_t start = 1800000000;
+    SetMockTime(start);
+    const Holder holder = NewHolder(true, SECTION_A, 10);
+    const Holder sender = NewHolder(true, ROOT, 10);
+    const Holder other = NewHolder(true, SECTION_A, 10);
+    AddMessage(SECTION_A, sender, {holder}, "expired");
+    SetMockTime(start + pDepinMsgPool->GetMessageExpiryTime() + 1);
+    const int64_t fresh = GetTime();
+    AddMessage(SECTION_A, sender, {holder}, "before timestamp filter");
+    SetMockTime(fresh + 2);
+    AddMessage(SECTION_A, sender, {holder}, "eligible");
+    // Neither an extra recipient-excluded message nor the holder's own
+    // message in a sibling section may set has_more for this tab.
+    AddMessage(SECTION_A, sender, {other}, "other recipient");
+    AddMessage(SECTION_B, sender, {holder}, "other section");
+    BOOST_REQUIRE(passetsdb->WriteAssetAddressQuantity(SECTION_B, holder.address, 10));
+    AddMessage(SECTION_B, holder, {holder}, "own sibling message");
+    const UniValue filtered = Receive(holder, 1, "", fresh + 2);
+    BOOST_REQUIRE_EQUAL(filtered["messages"].size(), 1U);
+    BOOST_CHECK_EQUAL(filtered["messages"][0]["timestamp"].get_int64(), fresh + 2);
+    BOOST_CHECK(!filtered["has_more"].get_bool());
+    const UniValue unbounded = Receive(holder);
+    BOOST_CHECK_EQUAL(unbounded["messages"].size(), 2U);
+    BOOST_CHECK(!unbounded["has_more"].get_bool());
+    BOOST_CHECK(Receive(holder, 1)["has_more"].get_bool());
+}
+
+BOOST_AUTO_TEST_CASE(expiry_applies_before_cleanup_and_sender_shortcut)
+{
+    const int64_t start = 1800000000;
+    SetMockTime(start);
+    // Exercise a configured TTL shorter than the MCP worker's separate 24 h
+    // command-age cap; delivery must honor the pool's own setting.
+    BOOST_REQUIRE(pDepinMsgPool->Initialize(ROOT, 20, DEFAULT_DEPIN_MESSAGE_SIZE,
+                                           1, DEFAULT_DEPIN_POOL_SIZE_MB));
+    const Holder holder = NewHolder(true, SECTION_A, 10);
+    const Holder sender = NewHolder(true, SECTION_A, 10);
+    AddMessage(SECTION_A, sender, {holder}, "received");
+    AddMessage(SECTION_A, holder, {sender}, "own without recipient entry");
+    SetMockTime(start + pDepinMsgPool->GetMessageExpiryTime() - 1);
+    BOOST_CHECK_EQUAL(Receive(holder)["messages"].size(), 2U);
+    SetMockTime(start + pDepinMsgPool->GetMessageExpiryTime());
+    BOOST_CHECK_EQUAL(Receive(holder)["messages"].size(), 2U);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetAllMessages(false).size(), 2U);
+    const std::string expiredAnchor = Receive(holder)["messages"][0]["hash"].get_str();
+    SetMockTime(GetTime() + 1);
+    BOOST_CHECK_EQUAL(Receive(holder)["messages"].size(), 0U);
+    BOOST_CHECK(pDepinMsgPool->GetMessagesForAddress(holder.address).empty());
+    BOOST_CHECK(pDepinMsgPool->GetAllMessages(false).empty());
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessageCount(), 2U);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetAllMessages().size(), 2U);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->CountMessagesInScope(SECTION_A, GetTime()), 0U);
+
+    AddMessage(SECTION_A, sender, {holder}, "fresh");
+    const UniValue page = Receive(holder, 1);
+    BOOST_CHECK_EQUAL(page["messages"].size(), 1U);
+    BOOST_CHECK(!page["has_more"].get_bool());
+    BOOST_CHECK_THROW(Receive(holder, 1, expiredAnchor), UniValue);
+    const std::string nonce = Challenge(SECTION_A, holder, DepinChallengeType::RECEIVE);
+    const UniValue sections = Open(Call("depinlistsections", Params({holder.address, SECTION_A, nonce,
+        Sign(holder, DepinChallengeType::RECEIVE, SECTION_A, nonce)})), holder);
+    BOOST_REQUIRE_EQUAL(sections["sections"].size(), 1U);
+    BOOST_CHECK_EQUAL(sections["sections"][0]["messages"].get_int(), 1);
+
+    pDepinMsgPool->RemoveExpiredMessages(GetTime());
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessageCount(), 1U);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetAllMessages().size(), 1U);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessagesForAddress(holder.address).size(), 1U);
+    BOOST_CHECK_EQUAL(Receive(holder)["messages"].size(), 1U);
+}
 
 // (7) The happy path, and the two ways a valid-looking request must fail
 // without burning the holder's nonce.

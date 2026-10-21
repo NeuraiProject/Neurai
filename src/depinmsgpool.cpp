@@ -187,12 +187,8 @@ bool CDepinMsgPool::AddMessage(const CDepinMessage& message, std::string& error,
         return false;
     }
 
-    // Hardening, independent of sections: recipientKeys is a snapshot chosen by
-    // the sender (public keys are public), so the byte-size cap above was the
-    // only bound on how many recipients a message could claim. Cap the count
-    // itself. A payload that does not deserialize is NOT rejected here --
-    // delivery already drops those per-recipient -- so this stays a cap, not a
-    // format gate.
+    // Reject undecodable ECIES before storing it, and cap the sender-chosen
+    // recipient count. This is not a full structural or canonical validator.
     try {
         CECIESEncryptedMessage eciesProbe;
         CDataStream ssProbe(message.encryptedPayload, SER_NETWORK, PROTOCOL_VERSION);
@@ -203,7 +199,8 @@ bool CDepinMsgPool::AddMessage(const CDepinMessage& message, std::string& error,
             return false;
         }
     } catch (const std::exception&) {
-        // Undeserializable payloads keep today's behavior: accepted, undeliverable.
+        error = "Invalid ECIES message payload: failed to deserialize";
+        return false;
     }
 
     // Verify pool size limit
@@ -330,10 +327,17 @@ std::vector<CDepinMessage> CDepinMsgPool::GetMessagesForAddress(const std::strin
     // actually being delivered may be copied.
     std::vector<const CDepinMessage*> ordered;
     ordered.reserve(mapByTime.size());
+    const int64_t now = GetTime();
+    const int64_t expiry = GetMessageExpiryTime();
     for (const auto& timeEntry : mapByTime) {
         auto it = mapMessages.find(timeEntry.second);
         if (it == mapMessages.end()) {
             continue;  // Should not happen, but be defensive
+        }
+        // Expiry applies even to the sender's own messages, before visibility
+        // shortcuts and independently of periodic cleanup.
+        if (it->second.IsExpired(now, expiry)) {
+            continue;
         }
         ordered.push_back(&it->second);
     }
@@ -341,10 +345,15 @@ std::vector<CDepinMessage> CDepinMsgPool::GetMessagesForAddress(const std::strin
     return FilterDepinMessagesForAddress(ordered, address, hashPtr, scopeToken);
 }
 
-std::vector<CDepinMessage> CDepinMsgPool::GetAllMessages() const {
+std::vector<CDepinMessage> CDepinMsgPool::GetAllMessages(bool includeExpired) const {
     LOCK(cs_depinmsgpool);
+    const int64_t now = GetTime();
+    const int64_t expiry = GetMessageExpiryTime();
     std::vector<CDepinMessage> result;
     for (const auto& entry : mapMessages) {
+        if (!includeExpired && entry.second.IsExpired(now, expiry)) {
+            continue;
+        }
         result.push_back(entry.second);
     }
     return result;
@@ -447,14 +456,13 @@ size_t CDepinMsgPool::ClearScope(const std::string& scopeToken) {
     return toRemove.size();
 }
 
-size_t CDepinMsgPool::CountMessagesInScope(const std::string& scopeToken) const {
+size_t CDepinMsgPool::CountMessagesInScope(const std::string& scopeToken, int64_t now) const {
     LOCK(cs_depinmsgpool);
-    if (scopeToken.empty()) {
-        return mapMessages.size();
-    }
+    const int64_t expiry = GetMessageExpiryTime();
     size_t count = 0;
     for (const auto& entry : mapMessages) {
-        if (IsDepinSectionOrRoot(entry.second.token, scopeToken)) {
+        if (!entry.second.IsExpired(now, expiry) &&
+            (scopeToken.empty() || IsDepinSectionOrRoot(entry.second.token, scopeToken))) {
             count++;
         }
     }

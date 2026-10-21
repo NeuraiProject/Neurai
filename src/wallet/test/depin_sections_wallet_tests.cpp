@@ -102,6 +102,7 @@ struct DepinSectionsWalletSetup : public TestingSetup {
 
     ~DepinSectionsWalletSetup()
     {
+        SetMockTime(0);
         ClearDepinPoolKey();
         vpwallets.erase(std::remove(vpwallets.begin(), vpwallets.end(), wallet.get()), vpwallets.end());
         wallet.reset();
@@ -221,7 +222,16 @@ CDepinMessage MakeMessage(const std::string& token, const std::string& sender)
     msg.senderAddress = sender;
     msg.timestamp = GetTime();
     msg.messageType = 0x02;
-    msg.encryptedPayload = {0x01, 0x02, 0x03};  // undeserializable: cap probe passes it
+    CKey recipient;
+    recipient.MakeNewKey(true);
+    const CPubKey pubkey = recipient.GetPubKey();
+    CECIESEncryptedMessage ecies;
+    std::string error;
+    BOOST_REQUIRE_MESSAGE(ECIESEncryptMessage("section test",
+        {{EncodeDestination(pubkey.GetID()), pubkey}}, ecies, error), error);
+    CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
+    ss << ecies;
+    msg.encryptedPayload.assign(ss.begin(), ss.end());
     return msg;
 }
 
@@ -553,6 +563,42 @@ BOOST_AUTO_TEST_CASE(send_scopes_recipients_to_the_serving_pool)
     outsideParams.push_back(parentAddress);
     BOOST_CHECK_THROW(CallDepinRPC("depinsendmsg", outsideParams), UniValue);
     BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessageCount(), 1U);
+}
+
+BOOST_AUTO_TEST_CASE(local_wallet_read_excludes_expired_without_cleanup)
+{
+    ScopedInitializedPool pool(PARENT_ASSET);
+    CPubKey pubkey;
+    const std::string address = IssueAssetAndConfirm(PARENT_ASSET, CAmount(1000 * COIN), &pubkey);
+    FlushChainState();
+    CDestinationIndexData addressData;
+    BOOST_REQUIRE(GetDestinationIndexData(DecodeDestination(address), addressData));
+    std::vector<std::pair<CPubKeyIndexKey, CPubKeyIndexValue>> entries;
+    entries.emplace_back(CPubKeyIndexKey(addressData), CPubKeyIndexValue(pubkey, 1, uint256()));
+    BOOST_REQUIRE(pblocktree->WritePubKeyIndex(entries));
+
+    const int64_t start = GetTime();
+    SetMockTime(start);
+    UniValue send(UniValue::VARR);
+    send.push_back(PARENT_ASSET);
+    send.push_back("local expiry regression");
+    send.push_back(address);
+    CallDepinRPC("depinsendmsg", send);
+    UniValue read(UniValue::VARR);
+    read.push_back(PARENT_ASSET);
+    BOOST_REQUIRE_EQUAL(CallDepinRPC("depingetmsg", read).size(), 1U);
+    read.push_back(address);
+    SetMockTime(start + pDepinMsgPool->GetMessageExpiryTime());
+    BOOST_CHECK_EQUAL(CallDepinRPC("depingetmsg", read).size(), 1U);
+    SetMockTime(GetTime() + 1);
+    BOOST_CHECK_EQUAL(CallDepinRPC("depingetmsg", read).size(), 0U);
+    read = UniValue(UniValue::VARR);
+    read.push_back(PARENT_ASSET);
+    BOOST_CHECK_EQUAL(CallDepinRPC("depingetmsg", read).size(), 0U);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessageCount(), 1U);
+    BOOST_CHECK(pDepinMsgPool->GetAllMessages(false).empty());
+    pDepinMsgPool->RemoveExpiredMessages(GetTime());
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessageCount(), 0U);
 }
 
 // SignDepinMessage (the wallet signing path) and VerifyDepinMessageSignature

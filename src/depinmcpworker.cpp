@@ -210,7 +210,7 @@ void CDepinMCPWorker::WorkerLoop()
                     std::this_thread::sleep_for(std::chrono::seconds(pollInterval));
                     continue;
                 }
-                messages = pDepinMsgPool->GetAllMessages();
+                messages = pDepinMsgPool->GetAllMessages(/*includeExpired=*/false);
             }
 
             LogPrintf("MCPWorker: Found %d total messages in pool\n", messages.size());

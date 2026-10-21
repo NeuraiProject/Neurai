@@ -245,9 +245,21 @@ always an object:
 ```
 
 `has_more` is only meaningful with `limit > 0`. Messages are ordered from
-oldest to newest. Save the last returned `hash` and use it as `after_hash`
+oldest to newest. It is true only when another message passes the same
+scope, recipient, timestamp, cursor and expiry filters after the page fills.
+With `limit = 0`, all eligible messages are returned and `has_more` is false.
+Save the last returned `hash` and use it as `after_hash`
 for the next page; sign `next_challenge` for that call. Supplying a hash that
 is not in the address's visible result is an error.
+
+Expired messages are excluded before pagination, including the sender's own
+messages, without waiting for periodic cleanup. At exactly the expiry age
+they remain eligible; they expire when that age is exceeded. Expiry can make
+an `after_hash` anchor unavailable, just like deletion. Recover by obtaining
+a fresh challenge, querying the available history again and deduplicating
+hashes; the current cursor
+does not persist independently of its anchor. Neither expiry nor cleanup
+erases copies already downloaded.
 
 The challenge proves control of the address; what the address can actually
 read is still fixed cryptographically by the recipient list embedded in each

@@ -387,7 +387,16 @@ struct DepinSignatureSetup : public TestingSetup {
         msg.senderAddress = sender;
         msg.timestamp = GetTime();
         msg.messageType = 0x02;
-        msg.encryptedPayload = {0x01, 0x02, 0x03};  // undeserializable: cap probe passes it
+        CECIESEncryptedMessage ecies;
+        std::string error;
+        CKey recipient;
+        recipient.MakeNewKey(true);
+        const CPubKey pubkey = recipient.GetPubKey();
+        BOOST_REQUIRE_MESSAGE(ECIESEncryptMessage("signature test",
+            {{EncodeDestination(pubkey.GetID()), pubkey}}, ecies, error), error);
+        CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
+        ss << ecies;
+        msg.encryptedPayload.assign(ss.begin(), ss.end());
         return msg;
     }
 

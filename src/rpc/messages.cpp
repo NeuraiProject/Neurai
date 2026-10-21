@@ -1398,7 +1398,7 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
 
     UniValue resultArray(UniValue::VARR);
     bool foundAnchor = afterHash.empty();  // If no hash, start from beginning
-    int64_t totalAvailable = 0;
+    bool hasMore = false;
 
     // Convert afterHash string to uint256 if provided
     uint256 afterHashObj;
@@ -1412,8 +1412,6 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
             continue;
         }
 
-        totalAvailable++;  // Count messages that pass timestamp filter
-
         // Filter 2: Pagination cursor (after_hash)
         if (!foundAnchor) {
             if (msg.GetHash() == afterHashObj) {
@@ -1424,7 +1422,8 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
 
         // Filter 3: Limit (pagination size)
         if (limit > 0 && resultArray.size() >= (size_t)limit) {
-            break;  // Already have enough messages
+            hasMore = true;  // An additional eligible message exists.
+            break;
         }
 
         // Build message JSON object (existing logic)
@@ -1450,30 +1449,6 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
     // place to ride. has_more is only meaningful with a limit.
     UniValue result(UniValue::VOBJ);
     result.push_back(Pair("messages", resultArray));
-    bool hasMore = false;
-    if (limit > 0) {
-            // Calculate if there are more messages available
-            bool hasMore = false;
-            if (resultArray.size() == (size_t)limit) {
-                // We filled the limit, check if there's at least one more
-                size_t processed = 0;
-                bool countingAfterAnchor = afterHash.empty();
-                for (const CDepinMessage& msg : messages) {
-                    if (msg.timestamp < fromTimestamp) continue;
-                    if (!countingAfterAnchor) {
-                        if (msg.GetHash() == afterHashObj) {
-                            countingAfterAnchor = true;
-                        }
-                        continue;
-                    }
-                    processed++;
-                    if (processed > (size_t)limit) {
-                        hasMore = true;
-                        break;
-                    }
-                }
-            }
-    }
     result.push_back(Pair("has_more", hasMore));
 
     // Nonce chaining: the next challenge for exactly these bindings travels
@@ -1610,8 +1585,8 @@ UniValue depingetmsg(const JSONRPCRequest& request)
 
     UniValue result(UniValue::VARR);
 
-    // Get ALL messages from pool (we no longer need to filter by address)
-    std::vector<CDepinMessage> allMessages = pDepinMsgPool->GetAllMessages();
+    // Unexpired pool snapshot; address filtering happens during decryption.
+    std::vector<CDepinMessage> allMessages = pDepinMsgPool->GetAllMessages(/*includeExpired=*/false);
     std::set<uint256> processedMessages;  // To avoid duplicates
 
     for (const CDepinMessage& msg : allMessages) {
@@ -2174,6 +2149,7 @@ UniValue depinlistsections(const JSONRPCRequest& request)
 
     const std::string activeToken = pDepinMsgPool->GetActiveToken();
 
+    const int64_t now = GetTime();
     UniValue result(UniValue::VARR);
     for (const std::string& section : sections) {
         // Address mode reports the challenge's subtree only: a holder of one
@@ -2198,7 +2174,7 @@ UniValue depinlistsections(const JSONRPCRequest& request)
             const bool hasAccess = HasDepinSectionAccess(address, section, activeToken, accessError);
             obj.push_back(Pair("access", hasAccess));
             if (hasAccess) {
-                obj.push_back(Pair("messages", (uint64_t)pDepinMsgPool->CountMessagesInScope(section)));
+                obj.push_back(Pair("messages", (uint64_t)pDepinMsgPool->CountMessagesInScope(section, now)));
             }
         }
 

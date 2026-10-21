@@ -64,8 +64,9 @@ static const size_t MAX_DEPIN_ANCESTOR_DEPTH = 64;
 // Primary chat message structure with ECIES hybrid encryption
 // Uses a single CECIESEncryptedMessage shared by all recipients
 // The ECIES structure contains:
-//   - encryptedPayload: message encrypted ONCE with AES-256-CBC
-//   - recipientKeys: map of (address_hash160 -> encrypted_AES_key)
+//   - encryptedPayload: AES-256-GCM [nonce (12) || ciphertext || tag (16)]
+//   - recipientKeys: address_hash160 -> GCM-wrapped AES key (60 bytes:
+//     nonce (12) || encrypted_AES_key (32) || tag (16))
 // Each recipient can decrypt the AES key with their private key,
 // then decrypt the shared payload.
 class CDepinMessage {
@@ -162,15 +163,20 @@ public:
     // Message handling
     bool AddMessage(const CDepinMessage& message, std::string& error, bool skipSignatureCheck = false);
     bool GetDepinMessage(const uint256& hash, CDepinMessage& message) const;
-    // scopeToken "" keeps the historical behavior (every message); otherwise
+    // Returns only unexpired messages, including for the sender. scopeToken
+    // "" considers every token; otherwise
     // only messages whose token is scopeToken or a section inside it are
     // considered. The scope is a TAB filter, not access control: delivery is
     // still decided by recipientKeys membership.
     std::vector<CDepinMessage> GetMessagesForAddress(const std::string& address,
                                                      const std::string& scopeToken = "") const;
-    std::vector<CDepinMessage> GetAllMessages() const;
+    // Physical snapshot by default, for storage statistics and maintenance.
+    // Delivery callers must pass false to exclude expired entries using one
+    // reference time for the whole snapshot, without waiting for cleanup.
+    std::vector<CDepinMessage> GetAllMessages(bool includeExpired = true) const;
     size_t GetMessageCount() const;
-    size_t CountMessagesInScope(const std::string& scopeToken) const;
+    // Unexpired count for section listings; share the RPC's reference time.
+    size_t CountMessagesInScope(const std::string& scopeToken, int64_t now) const;
 
     // Cleanup. scopeToken "" keeps the historical pool-wide behavior; otherwise
     // only messages inside that subtree are touched -- the owner of a section

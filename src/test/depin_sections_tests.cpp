@@ -711,6 +711,43 @@ BOOST_AUTO_TEST_CASE(addmessage_caps_recipient_count)
 // pool key, subtree gate, inherited-access pre-check, real signature), replies
 // encrypted for the sender, and still rejects foreign tokens and the bare
 // (unwrapped) form before anything else.
+BOOST_AUTO_TEST_CASE(reject_malformed_ecies_locally_and_through_submit_rpc)
+{
+    ScopedInitializedPool pool(ROOT);
+    const Holder sender = NewHolder(true);
+    const Holder audience = NewHolder(false);
+    SetBalance(SECTION_A, sender.address, 10);
+    const CDepinMessage valid = MakeEciesMessage(SECTION_A, sender, {audience}, "valid ECIES");
+    std::string error;
+
+    // A valid outer privacy envelope and signature must not disguise a broken
+    // inner ECIES structure. Truncate both its header and its final key entry.
+    for (size_t length : {size_t(1), valid.encryptedPayload.size() - 1}) {
+        CDepinMessage invalid = valid;
+        invalid.encryptedPayload.resize(length);
+        SignMessageWithKey(invalid, sender.key);
+        BOOST_CHECK(!pDepinMsgPool->AddMessage(invalid, error));
+        BOOST_CHECK(error.find("Invalid ECIES message payload") != std::string::npos);
+        UniValue params(UniValue::VARR);
+        params.push_back(WrapForPool(sender.address, invalid));
+        try {
+            CallDepinRPC("depinsubmitmsg", params);
+            BOOST_FAIL("Malformed inner ECIES was admitted");
+        } catch (const UniValue& rpcError) {
+            BOOST_CHECK(rpcError["message"].get_str().find("Invalid ECIES message payload") != std::string::npos);
+        }
+        BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessageCount(), 0U);
+    }
+
+    CDepinMessage signedValid = valid;
+    SignMessageWithKey(signedValid, sender.key);
+    UniValue params(UniValue::VARR);
+    params.push_back(WrapForPool(sender.address, signedValid));
+    const UniValue reply = OpenResponse(CallDepinRPC("depinsubmitmsg", params), sender);
+    BOOST_CHECK_EQUAL(reply["result"].get_str(), "success");
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetMessageCount(), 1U);
+}
+
 BOOST_AUTO_TEST_CASE(depinsubmitmsg_accepts_section)
 {
     ScopedInitializedPool pool(ROOT);
