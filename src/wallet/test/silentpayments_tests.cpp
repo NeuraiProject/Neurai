@@ -6,7 +6,7 @@
 // lab (NIP/NIP_SIN_NUMERO/silent-payments-lab, run1/vectors.json), generated
 // there by an independent pure-Python reference and the libsecp256k1 helper.
 
-#include "wallet/silentpayments.h"
+#include "silentpayments.h"
 
 #include "bech32.h"
 #include "key.h"

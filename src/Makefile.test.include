@@ -26,7 +26,8 @@ JSON_TEST_FILES = \
   test/data/sighash.json \
   test/data/poseidon_vectors.json \
   test/data/ed25519_vectors.json \
-  test/data/wycheproof_ed25519.json
+  test/data/wycheproof_ed25519.json \
+  test/data/silentpayment_index_vectors.json
 
 RAW_TEST_FILES =
 
@@ -148,6 +149,7 @@ NEURAI_TESTS =\
   test/scriptnum_tests.cpp \
   test/serialize_tests.cpp \
   test/sighash_tests.cpp \
+  test/silentpaymentindex_tests.cpp \
   test/sigopcount_tests.cpp \
   test/skiplist_tests.cpp \
   test/spentindex_reorg_tests.cpp \

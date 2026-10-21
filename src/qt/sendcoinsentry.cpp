@@ -17,7 +17,7 @@
 #include "guiconstants.h"
 
 #include "base58.h"
-#include "wallet/silentpayments.h"
+#include "silentpayments.h"
 
 #include <QGraphicsDropShadowEffect>
 #include <QApplication>

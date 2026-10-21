@@ -33,6 +33,7 @@
 #include "script/script.h"
 #include "script/sigcache.h"
 #include "script/standard.h"
+#include "silentpaymentindex.h"
 #include "timedata.h"
 #include "tinyformat.h"
 #include "txdb.h"
@@ -3615,6 +3616,14 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
             return AbortNode(state, "Failed to write blockhash index");
     }
 
+    // NIP-047 light client index, built from the block and its undo data like
+    // the startup repair (silentpaymentindex.h).
+    if (!ignoreAddressIndex && fSilentPaymentIndex &&
+        pindex->nHeight >= silentpayments::IndexStartHeight(chainparams.GetConsensus())) {
+        if (!silentpayments::IndexConnectedBlock(block, blockundo, pindex))
+            return AbortNode(state, "Failed to write silent payment index");
+    }
+
     if (AreMessagesDeployed() && fMessaging && setMessages.size()) {
         LOCK(cs_messaging);
         for (auto message : setMessages) {
@@ -3787,6 +3796,12 @@ bool static FlushStateToDisk(const CChainParams& chainparams, CValidationState &
                 for (std::set<CBlockIndex*>::iterator it = setDirtyBlockIndex.begin(); it != setDirtyBlockIndex.end(); ) {
                     vBlocks.push_back(*it);
                     setDirtyBlockIndex.erase(it++);
+                }
+                // Silent payment records first: the chainstate flushed below
+                // (or rolled forward by ReplayBlocks after a crash) never
+                // covers a block whose record is not on disk.
+                if (!silentpayments::FlushIndex()) {
+                    return AbortNode(state, "Failed to write silent payment index");
                 }
                 if (!pblocktree->WriteBatchSync(vFiles, nLastBlockFile, vBlocks)) {
                     return AbortNode(state, "Failed to write to block index database");

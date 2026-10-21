@@ -30,7 +30,7 @@
 #include "util.h" // for GetBoolArg
 #include "wallet/coincontrol.h"
 #include "wallet/feebumper.h"
-#include "wallet/silentpayments.h"
+#include "silentpayments.h"
 #include "wallet/wallet.h"
 #include "wallet/walletdb.h" // for BackupWallet
 

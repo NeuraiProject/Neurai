@@ -14,7 +14,7 @@
 #include "policy/policy.h"
 #include "ui_interface.h"
 #include "util.h"
-#include "wallet/silentpayments.h"
+#include "silentpayments.h"
 #include "wallet/wallet.h"
 
 #include <cstdlib>

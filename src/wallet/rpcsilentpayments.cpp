@@ -18,7 +18,7 @@
 #include "validation.h"
 #include "wallet/coincontrol.h"
 #include "wallet/rpcwallet.h"
-#include "wallet/silentpayments.h"
+#include "silentpayments.h"
 #include "wallet/wallet.h"
 
 #include <univalue.h>

@@ -39,6 +39,7 @@
 #include "script/standard.h"
 #include "script/sigcache.h"
 #include "scheduler.h"
+#include "silentpaymentindex.h"
 #include "timedata.h"
 #include "txdb.h"
 #include "txmempool.h"
@@ -520,6 +521,8 @@ std::string HelpMessage(HelpMessageMode mode)
     strUsage += HelpMessageOpt("-timestampindex", strprintf(_("Maintain a timestamp index for block hashes, used to query blocks hashes by a range of timestamps (default: %u)"), DEFAULT_TIMESTAMPINDEX));
     strUsage += HelpMessageOpt("-spentindex", strprintf(_("Maintain a full spent index, used to query the spending txid and input index for an outpoint (default: %u)"), DEFAULT_SPENTINDEX));
     strUsage += HelpMessageOpt("-pubkeyindex", strprintf(_("Maintain an index of revealed public keys from spending transactions, used for encryption purposes (default: %u)"), DEFAULT_PUBKEYINDEX));
+    strUsage += HelpMessageOpt("-silentpaymentindex", strprintf(_("Maintain the NIP-047 silent payment index for light clients: public tweaks and v3 outputs of eligible transactions, served by getsilentpaymenttweaks and REST (default: %u)"), DEFAULT_SILENTPAYMENTINDEX));
+    strUsage += HelpMessageOpt("-checksilentpaymentindex=<n>", strprintf(_("How many of the last blocks the startup check of -silentpaymentindex rebuilds and compares byte by byte (default: %u)"), DEFAULT_CHECKSILENTPAYMENTINDEX));
 
     strUsage += HelpMessageGroup(_("DePIN options:"));
     strUsage += HelpMessageOpt("-depinmsg", _("Enable DePIN messaging system (default: 0)"));
@@ -1777,6 +1780,10 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
 
     fReindex = gArgs.GetBoolArg("-reindex", false);
     bool fReindexChainState = gArgs.GetBoolArg("-reindex-chainstate", false);
+    fSilentPaymentIndex = gArgs.GetBoolArg("-silentpaymentindex", DEFAULT_SILENTPAYMENTINDEX);
+    const int nCheckSilentPaymentIndex = gArgs.GetArg("-checksilentpaymentindex", DEFAULT_CHECKSILENTPAYMENTINDEX);
+    if (nCheckSilentPaymentIndex < 0)
+        return InitError(_("-checksilentpaymentindex must not be negative"));
 
     // block tree db settings
     size_t dbMaxFileSize = gArgs.GetArg("-dbmaxfilesize", DEFAULT_DB_MAX_FILE_SIZE) << 20;
@@ -2086,6 +2093,12 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
                         strLoadError = _("Corrupted block database detected");
                         break;
                     }
+                }
+
+                // NIP-047 light client index: option transitions, verification
+                // and repair, before the first prune of this session.
+                if (!silentpayments::InitIndex(chainparams, nCheckSilentPaymentIndex, strLoadError)) {
+                    break;
                 }
             } catch (const std::exception& e) {
                 LogPrintf("%s\n", e.what());

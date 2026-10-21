@@ -30,6 +30,8 @@ static const char DB_TIMESTAMPINDEX = 's';
 static const char DB_BLOCKHASHINDEX = 'z';
 static const char DB_SPENTINDEX = 'p';
 static const char DB_PUBKEYINDEX = 'k';
+static const char DB_SILENTPAYMENTINDEX = 'S';
+static const char* const DB_SILENTPAYMENTINDEX_META = "silentpaymentindex";
 static const char DB_BLOCK_INDEX = 'b';
 
 static const char DB_BEST_BLOCK = 'B';
@@ -471,6 +473,48 @@ bool CBlockTreeDB::WriteIntFlag(const std::string &name, int value) {
 
 bool CBlockTreeDB::ReadIntFlag(const std::string &name, int &value) {
     return Read(std::make_pair(DB_FLAG, name), value);
+}
+
+bool CBlockTreeDB::WriteSilentPaymentRecords(const std::vector<std::pair<uint256, std::vector<unsigned char>>>& records, bool fSync) {
+    CDBBatch batch(*this);
+    for (const auto& record : records)
+        batch.Write(std::make_pair(DB_SILENTPAYMENTINDEX, record.first), record.second);
+    return WriteBatch(batch, fSync);
+}
+
+bool CBlockTreeDB::ReadSilentPaymentRecord(const uint256& hash, std::vector<unsigned char>& value) {
+    return Read(std::make_pair(DB_SILENTPAYMENTINDEX, hash), value);
+}
+
+bool CBlockTreeDB::EraseSilentPaymentRecords() {
+    std::unique_ptr<CDBIterator> pcursor(NewIterator());
+    pcursor->Seek(std::make_pair(DB_SILENTPAYMENTINDEX, uint256()));
+    CDBBatch batch(*this);
+    while (pcursor->Valid()) {
+        std::pair<char, uint256> key;
+        if (!pcursor->GetKey(key) || key.first != DB_SILENTPAYMENTINDEX)
+            break;
+        batch.Erase(key);
+        if (batch.SizeEstimate() > (1 << 20)) {
+            if (!WriteBatch(batch))
+                return false;
+            batch.Clear();
+        }
+        pcursor->Next();
+    }
+    return WriteBatch(batch, true);
+}
+
+bool CBlockTreeDB::WriteSilentPaymentMeta(const std::vector<unsigned char>& meta) {
+    return Write(std::make_pair(DB_FLAG, std::string(DB_SILENTPAYMENTINDEX_META)), meta, true);
+}
+
+bool CBlockTreeDB::ReadSilentPaymentMeta(std::vector<unsigned char>& meta) {
+    return Read(std::make_pair(DB_FLAG, std::string(DB_SILENTPAYMENTINDEX_META)), meta);
+}
+
+bool CBlockTreeDB::EraseSilentPaymentMeta() {
+    return Erase(std::make_pair(DB_FLAG, std::string(DB_SILENTPAYMENTINDEX_META)), true);
 }
 
 bool CBlockTreeDB::LoadBlockIndexGuts(const Consensus::Params& consensusParams, std::function<CBlockIndex*(const uint256&)> insertBlockIndex)

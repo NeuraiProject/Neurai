@@ -116,6 +116,7 @@ BASE_SCRIPTS= [
     'p2p_leak.py',
     'feature_versionbits_warning.py',
     'rpc_spentindex.py',
+    'feature_silentpaymentindex.py',
     'rpc_privacypool.py',
     'feature_rawassettransactions.py',
     'feature_nip040_marker_migration.py',

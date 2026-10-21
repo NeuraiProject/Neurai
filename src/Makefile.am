@@ -202,6 +202,8 @@ NEURAI_CORE_H = \
   script/sigcache.h \
   script/sign.h \
   script/standard.h \
+  silentpaymentindex.h \
+  silentpayments.h \
   script/ismine.h \
   streams.h \
   support/allocators/secure.h \
@@ -238,7 +240,6 @@ NEURAI_CORE_H = \
   wallet/init.h \
   wallet/depinpoolkeyload.h \
   wallet/rpcwallet.h \
-  wallet/silentpayments.h \
   wallet/wallet.h \
   wallet/walletdb.h \
   wallet/bip39.h \
@@ -304,8 +305,10 @@ libneurai_server_a_SOURCES = \
   rpc/rewards.cpp \
   rpc/safemode.cpp \
   rpc/server.cpp \
+  rpc/silentpaymentindex.cpp \
   script/sigcache.cpp \
   script/ismine.cpp \
+  silentpaymentindex.cpp \
   timedata.cpp \
   torcontrol.cpp \
   txdb.cpp \
@@ -346,7 +349,6 @@ libneurai_wallet_a_SOURCES = \
   wallet/rpcdump.cpp \
   wallet/rpcsilentpayments.cpp \
   wallet/rpcwallet.cpp \
-  wallet/silentpayments.cpp \
   wallet/silentpayments_wallet.cpp \
   wallet/wallet.cpp \
   wallet/walletdb.cpp \
@@ -584,6 +586,7 @@ libneurai_common_a_SOURCES = \
   scheduler.cpp \
   script/sign.cpp \
   script/standard.cpp \
+  silentpayments.cpp \
   warnings.cpp \
   assets/assets_fromscript.cpp \
   assets/assettypes.cpp \

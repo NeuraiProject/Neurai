@@ -157,6 +157,15 @@ public:
     bool WritePubKeyIndex(const std::vector<std::pair<CPubKeyIndexKey, CPubKeyIndexValue>>& vect);
     bool ReadPubKeyIndex(const CDestinationIndexData& addressData, CPubKeyIndexValue& value);
     bool ErasePubKeyIndex(const std::vector<CPubKeyIndexKey>& vect);
+
+    // Silent payment index (silentpaymentindex.h): one record per block hash
+    // and its metadata. Values are opaque bytes owned by the index.
+    bool WriteSilentPaymentRecords(const std::vector<std::pair<uint256, std::vector<unsigned char>>>& records, bool fSync);
+    bool ReadSilentPaymentRecord(const uint256& hash, std::vector<unsigned char>& value);
+    bool EraseSilentPaymentRecords();
+    bool WriteSilentPaymentMeta(const std::vector<unsigned char>& meta);
+    bool ReadSilentPaymentMeta(std::vector<unsigned char>& meta);
+    bool EraseSilentPaymentMeta();
 };
 
 #endif // NEURAI_TXDB_H

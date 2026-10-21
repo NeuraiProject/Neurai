@@ -19,7 +19,7 @@
 #include "wallet/crypter.h"
 #include "wallet/walletdb.h"
 #include "wallet/rpcwallet.h"
-#include "wallet/silentpayments.h"
+#include "silentpayments.h"
 #include "assets/assettypes.h"
 
 #include <algorithm>

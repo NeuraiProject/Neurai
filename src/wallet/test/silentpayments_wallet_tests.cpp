@@ -5,7 +5,7 @@
 // NIP-047 wallet scanner over real blocks and undo data: pruned history,
 // cursor behaviour and reorganisations.
 
-#include "wallet/silentpayments.h"
+#include "silentpayments.h"
 
 #include "chainparams.h"
 #include "consensus/validation.h"

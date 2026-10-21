@@ -2,10 +2,11 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include "wallet/silentpayments.h"
+#include "silentpayments.h"
 
 #include "bech32.h"
 #include "chainparams.h"
+#include "crypto/common.h"
 #include "crypto/sha256.h"
 #include "hash.h"
 #include "random.h"
@@ -17,6 +18,7 @@
 
 #include <cassert>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <set>
@@ -26,6 +28,7 @@ namespace {
 
 const char* const TAG_INPUTS = "NeuraiSilentPayments/v0/Inputs";
 const char* const TAG_SHARED = "NeuraiSilentPayments/v0/SharedSecret";
+const char* const TAG_INDEX_BLOCK = "NeuraiSilentPayments/v0/IndexBlock";
 const uint32_t HARDENED = 0x80000000;
 const uint32_t BECH32M_CONST = 0x2bc830a3;
 const char* const CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
@@ -165,6 +168,111 @@ uint32_t PolyMod(const std::vector<uint8_t>& values)
 }
 
 std::string Hrp(uint8_t networkId) { return networkId == MAINNET ? "nsp" : "tnsp"; }
+
+typedef std::map<CScript, std::vector<uint32_t>> Candidates;
+
+/** Receiver loop shared by ScanTransaction and ScanIndexEntry: P_k for
+ *  k = 0, 1, ... until the first k without an output. */
+void MatchCandidates(const std::vector<unsigned char>& context, const SecretBytes& shared, const Candidates& candidates,
+                     const CPubKey& spendPub, std::vector<Match>& matches)
+{
+    for (uint32_t k = 0; k < MAX_PAYMENTS_PER_GROUP; ++k) {
+        uint256 t;
+        CPubKey pk;
+        if (!SharedTweak(context, shared, k, t) || !PaymentKey(spendPub, t, pk)) {
+            memory_cleanse(t.begin(), t.size());
+            break;
+        }
+        auto it = candidates.find(PaymentScript(pk));
+        if (it == candidates.end()) { // the sequence ends at the first missing k
+            memory_cleanse(t.begin(), t.size());
+            break;
+        }
+        for (uint32_t n : it->second) matches.push_back(Match{n, k, t, pk});
+        memory_cleanse(t.begin(), t.size());
+    }
+}
+
+void WriteCompactSize(std::vector<unsigned char>& out, uint64_t n)
+{
+    if (n < 253) {
+        out.push_back(n);
+    } else if (n <= 0xffff) {
+        out.push_back(253);
+        for (int i = 0; i < 2; ++i) out.push_back((n >> (8 * i)) & 0xff);
+    } else if (n <= 0xffffffff) {
+        out.push_back(254);
+        for (int i = 0; i < 4; ++i) out.push_back((n >> (8 * i)) & 0xff);
+    } else {
+        out.push_back(255);
+        for (int i = 0; i < 8; ++i) out.push_back((n >> (8 * i)) & 0xff);
+    }
+}
+
+void WriteBytes(std::vector<unsigned char>& out, const unsigned char* begin, size_t size)
+{
+    out.insert(out.end(), begin, begin + size);
+}
+
+/** Strict reader over the canonical index bytes. */
+class IndexReader
+{
+public:
+    IndexReader(const std::vector<unsigned char>& data, size_t& pos) : m_data(data), m_pos(pos) {}
+
+    size_t Remaining() const { return m_data.size() - m_pos; }
+
+    bool Bytes(unsigned char* out, size_t size)
+    {
+        if (Remaining() < size) return false;
+        memcpy(out, m_data.data() + m_pos, size);
+        m_pos += size;
+        return true;
+    }
+
+    bool Hash(uint256& out) { return Bytes(out.begin(), 32); }
+
+    bool Uint32(uint32_t& out)
+    {
+        unsigned char b[4];
+        if (!Bytes(b, sizeof(b))) return false;
+        out = ReadLE32(b);
+        return true;
+    }
+
+    bool Int64(int64_t& out)
+    {
+        unsigned char b[8];
+        if (!Bytes(b, sizeof(b))) return false;
+        out = (int64_t)ReadLE64(b);
+        return true;
+    }
+
+    /** Minimal CompactSize no larger than `max`. */
+    bool CompactSize(uint64_t& out, uint64_t max, std::string& error)
+    {
+        unsigned char first;
+        if (!Bytes(&first, 1)) { error = "truncated"; return false; }
+        uint64_t minimum = 0;
+        size_t size = 0;
+        if (first < 253) {
+            out = first;
+        } else {
+            size = first == 253 ? 2 : first == 254 ? 4 : 8;
+            minimum = first == 253 ? 253 : first == 254 ? 0x10000 : 0x100000000ULL;
+            unsigned char b[8] = {0};
+            if (!Bytes(b, size)) { error = "truncated"; return false; }
+            out = ReadLE64(b);
+            if (out < minimum) { error = "non-canonical compact size"; return false; }
+        }
+        if (out > max) { error = "count out of range"; return false; }
+        return true;
+    }
+
+private:
+    const std::vector<unsigned char>& m_data;
+    size_t& m_pos;
+};
 
 } // namespace
 
@@ -397,7 +505,7 @@ std::vector<Match> ScanTransaction(const std::vector<unsigned char>& context, co
                                    const CKey& scanKey, const CPubKey& spendPub)
 {
     std::vector<Match> matches;
-    std::map<CScript, std::vector<uint32_t>> candidates;
+    Candidates candidates;
     for (uint32_t n = 0; n < tx.vout.size(); ++n) {
         if (IsNativeV3Script(tx.vout[n].scriptPubKey)) candidates[tx.vout[n].scriptPubKey].push_back(n);
     }
@@ -409,21 +517,7 @@ std::vector<Match> ScanTransaction(const std::vector<unsigned char>& context, co
     SecretBytes bh(scanKey.begin(), scanKey.end());
     SecretBytes shared;
     if (!secp256k1_ec_seckey_tweak_mul(Ctx(), bh.data(), h.begin()) || !Ecdh(sum, bh.data(), shared)) return matches;
-    for (uint32_t k = 0; k < MAX_PAYMENTS_PER_GROUP; ++k) {
-        uint256 t;
-        CPubKey pk;
-        if (!SharedTweak(context, shared, k, t) || !PaymentKey(spendPub, t, pk)) {
-            memory_cleanse(t.begin(), t.size());
-            break;
-        }
-        auto it = candidates.find(PaymentScript(pk));
-        if (it == candidates.end()) { // the sequence ends at the first missing k
-            memory_cleanse(t.begin(), t.size());
-            break;
-        }
-        for (uint32_t n : it->second) matches.push_back(Match{n, k, t, pk});
-        memory_cleanse(t.begin(), t.size());
-    }
+    MatchCandidates(context, shared, candidates, spendPub, matches);
     return matches;
 }
 
@@ -434,6 +528,181 @@ bool PaymentPrivateKey(const CKey& spendKey, const uint256& tweak, CKey& out)
     if (!secp256k1_ec_seckey_tweak_add(Ctx(), d.data(), tweak.begin())) return false;
     out.Set(d.begin(), d.end(), true);
     return out.IsValid();
+}
+
+bool ComputeTweak(const std::vector<unsigned char>& context, const std::vector<CPubKey>& pubkeys,
+                  const std::vector<COutPoint>& outpoints, CPubKey& tweak)
+{
+    CPubKey sum;
+    uint256 h;
+    if (!SumPublicKeys(pubkeys, sum) || !InputHash(context, outpoints, sum, h)) return false;
+    secp256k1_pubkey point;
+    // Variable time is fine here: A and h are public.
+    if (!ParsePub(sum, point) || !secp256k1_ec_pubkey_tweak_mul(Ctx(), &point, h.begin())) return false;
+    tweak = SerializePub(point);
+    return true;
+}
+
+bool operator==(const IndexBlock& a, const IndexBlock& b)
+{
+    std::vector<unsigned char> sa, sb;
+    SerializeIndexBlock(a, sa);
+    SerializeIndexBlock(b, sb);
+    return sa == sb;
+}
+
+bool BuildIndexEntry(const std::vector<unsigned char>& context, const CTransaction& tx,
+                     const std::vector<CTxOut>& spent, IndexEntry& entry)
+{
+    bool hasCandidate = false;
+    for (const CTxOut& out : tx.vout) hasCandidate |= IsNativeV3Script(out.scriptPubKey);
+    if (!hasCandidate) return false; // nothing can pay anyone
+    std::vector<CPubKey> pubkeys;
+    std::vector<COutPoint> outpoints;
+    CPubKey tweak;
+    if (!GetEligibleInputs(tx, spent, pubkeys, outpoints) || !ComputeTweak(context, pubkeys, outpoints, tweak)) return false;
+    entry.txid = tx.GetHash();
+    entry.tweak = tweak;
+    entry.outputs.clear();
+    for (uint32_t n = 0; n < tx.vout.size(); ++n) {
+        const CScript& script = tx.vout[n].scriptPubKey;
+        if (!IsNativeV3Script(script)) continue;
+        IndexOutput output;
+        output.vout = n;
+        memcpy(output.commitment.begin(), script.data() + 2, 32);
+        output.value = tx.vout[n].nValue;
+        entry.outputs.push_back(output);
+    }
+    return true;
+}
+
+void SerializeIndexBlock(const IndexBlock& block, std::vector<unsigned char>& out)
+{
+    unsigned char le[8];
+    WriteBytes(out, block.hash.begin(), 32);
+    WriteBytes(out, block.prev.begin(), 32);
+    WriteLE32(le, block.height);
+    WriteBytes(out, le, 4);
+    WriteCompactSize(out, block.entries.size());
+    for (const IndexEntry& entry : block.entries) {
+        WriteBytes(out, entry.txid.begin(), 32);
+        WriteBytes(out, entry.tweak.begin(), entry.tweak.size());
+        WriteCompactSize(out, entry.outputs.size());
+        for (const IndexOutput& output : entry.outputs) {
+            WriteCompactSize(out, output.vout);
+            WriteBytes(out, output.commitment.begin(), 32);
+            WriteLE64(le, (uint64_t)output.value);
+            WriteBytes(out, le, 8);
+        }
+    }
+    WriteCompactSize(out, block.spent.size());
+    for (const COutPoint& spent : block.spent) {
+        WriteBytes(out, spent.hash.begin(), 32);
+        WriteCompactSize(out, spent.n);
+    }
+}
+
+bool DeserializeIndexBlock(const std::vector<unsigned char>& data, size_t& pos, IndexBlock& block, std::string& error)
+{
+    // Smallest encodings, used to bound each counter by the bytes left before
+    // it: a count above remaining / size is "count out of range".
+    static const uint64_t MIN_ENTRY = 32 + 33 + 1, MIN_OUTPUT = 1 + 32 + 8, MIN_SPENT = 32 + 1;
+    static const uint64_t MAX_VOUT = std::numeric_limits<uint32_t>::max();
+    if (pos > data.size()) { error = "truncated"; return false; }
+    IndexReader in(data, pos);
+    IndexBlock result;
+    if (!in.Hash(result.hash) || !in.Hash(result.prev) || !in.Uint32(result.height)) { error = "truncated"; return false; }
+    uint64_t entries;
+    if (!in.CompactSize(entries, in.Remaining() / MIN_ENTRY, error)) return false;
+    result.entries.resize(entries);
+    for (IndexEntry& entry : result.entries) {
+        unsigned char tweak[33];
+        if (!in.Hash(entry.txid) || !in.Bytes(tweak, sizeof(tweak))) { error = "truncated"; return false; }
+        entry.tweak.Set(tweak, tweak + sizeof(tweak));
+        if ((tweak[0] != 0x02 && tweak[0] != 0x03) || !entry.tweak.IsFullyValid()) { error = "invalid tweak"; return false; }
+        uint64_t outputs;
+        if (!in.CompactSize(outputs, in.Remaining() / MIN_OUTPUT, error)) return false;
+        if (outputs == 0) { error = "entry without outputs"; return false; }
+        entry.outputs.resize(outputs);
+        for (size_t i = 0; i < entry.outputs.size(); ++i) {
+            IndexOutput& output = entry.outputs[i];
+            uint64_t vout;
+            int64_t value;
+            if (!in.CompactSize(vout, MAX_VOUT, error)) return false;
+            if (!in.Hash(output.commitment) || !in.Int64(value)) { error = "truncated"; return false; }
+            if (!MoneyRange(value)) { error = "amount out of range"; return false; }
+            if (i > 0 && vout <= entry.outputs[i - 1].vout) { error = "outputs out of order"; return false; }
+            output.vout = vout;
+            output.value = value;
+        }
+    }
+    uint64_t spent;
+    if (!in.CompactSize(spent, in.Remaining() / MIN_SPENT, error)) return false;
+    result.spent.resize(spent);
+    for (COutPoint& outpoint : result.spent) {
+        uint64_t n;
+        if (!in.Hash(outpoint.hash)) { error = "truncated"; return false; }
+        if (!in.CompactSize(n, MAX_VOUT, error)) return false;
+        outpoint.n = n;
+    }
+    block = std::move(result);
+    return true;
+}
+
+uint256 IndexBlockDigest(const std::vector<unsigned char>& context, const std::vector<unsigned char>& blockBytes)
+{
+    std::vector<unsigned char> msg(context);
+    msg.insert(msg.end(), blockBytes.begin(), blockBytes.end());
+    return TaggedHash(TAG_INDEX_BLOCK, msg);
+}
+
+static void AppendIndexEnvelope(std::vector<unsigned char>& out, IndexMessageType type, const std::vector<unsigned char>& context)
+{
+    static const unsigned char MAGIC[4] = {'N', 'S', 'P', 'T'};
+    WriteBytes(out, MAGIC, sizeof(MAGIC));
+    out.push_back(INDEX_FORMAT);
+    out.push_back(type);
+    out.insert(out.end(), context.begin(), context.end());
+}
+
+void SerializeIndexBlockMessage(const std::vector<unsigned char>& context, const std::vector<unsigned char>& blockBytes,
+                                std::vector<unsigned char>& out)
+{
+    AppendIndexEnvelope(out, INDEX_MESSAGE_BLOCK, context);
+    out.insert(out.end(), blockBytes.begin(), blockBytes.end());
+}
+
+void SerializeIndexRangeMessage(const std::vector<unsigned char>& context, const IndexRangeHeader& header,
+                                const std::vector<std::vector<unsigned char>>& blocks, std::vector<unsigned char>& out)
+{
+    unsigned char le[4];
+    AppendIndexEnvelope(out, INDEX_MESSAGE_RANGE, context);
+    WriteLE32(le, header.snapshotHeight);
+    WriteBytes(out, le, 4);
+    WriteBytes(out, header.snapshotHash.begin(), 32);
+    WriteLE32(le, header.syncedHeight);
+    WriteBytes(out, le, 4);
+    WriteLE32(le, header.nextHeight);
+    WriteBytes(out, le, 4);
+    out.push_back(header.status);
+    WriteCompactSize(out, blocks.size());
+    for (const std::vector<unsigned char>& block : blocks) out.insert(out.end(), block.begin(), block.end());
+}
+
+std::vector<Match> ScanIndexEntry(const std::vector<unsigned char>& context, const IndexEntry& entry,
+                                  const CKey& scanKey, const CPubKey& spendPub)
+{
+    std::vector<Match> matches;
+    Candidates candidates;
+    for (const IndexOutput& output : entry.outputs) {
+        candidates[CScript() << OP_3 << ToByteVector(output.commitment)].push_back(output.vout);
+    }
+    if (candidates.empty() || !scanKey.IsValid()) return matches;
+    matches.reserve(entry.outputs.size()); // no reallocation leaves stale copies of t_k
+    SecretBytes shared;
+    if (!Ecdh(entry.tweak, scanKey.begin(), shared)) return matches;
+    MatchCandidates(context, shared, candidates, spendPub, matches);
+    return matches;
 }
 
 } // namespace silentpayments

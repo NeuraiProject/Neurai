@@ -29,6 +29,8 @@ void RegisterMessageRPCCommands(CRPCTable &tableRPC);
 void RegisterRewardsRPCCommands(CRPCTable &tableRPC);
 /** Register public privacy-pool state-thread transport commands */
 void RegisterPrivacyPoolRPCCommands(CRPCTable &tableRPC);
+/** Register NIP-047 silent payment index commands */
+void RegisterSilentPaymentIndexRPCCommands(CRPCTable &tableRPC);
 
 static inline void RegisterAllCoreRPCCommands(CRPCTable &t)
 {
@@ -41,6 +43,7 @@ static inline void RegisterAllCoreRPCCommands(CRPCTable &t)
     RegisterMessageRPCCommands(t);
     RegisterRewardsRPCCommands(t);
     RegisterPrivacyPoolRPCCommands(t);
+    RegisterSilentPaymentIndexRPCCommands(t);
 }
 
 #endif

@@ -24,7 +24,7 @@
 #include "assets/myassetsdb.h"
 #include "base58.h"
 #include "wallet/bip39.h"
-#include "wallet/silentpayments.h"
+#include "silentpayments.h"
 #include "wallet/wallet.h"
 #include "wallet/walletdb.h"
 

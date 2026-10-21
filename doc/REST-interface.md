@@ -107,6 +107,38 @@ Only supports JSON as output format.
 Returns transactions in the TX mempool.
 Only supports JSON as output format.
 
+#### Silent payment index (NIP-047 light clients)
+Requires `-silentpaymentindex`. The data is the same as the RPC calls `getsilentpaymentindexinfo`,
+`getsilentpaymenttweaks` and `getsilentpaymenttweaksrange`: for each block, every eligible transaction with a
+native v3 output, its public tweak and all its native v3 outputs, plus every native v3 output the block spends.
+Every client downloads the same data, so the server does not learn which payments belong to whom. It can omit
+data, though: compare the `digest` of each block with other servers or with a recomputation from
+`getblock <hash> 3`.
+
+`GET /rest/spindexinfo.json`
+
+State of the index (enabled, complete, height reached, missing ranges). Not cached.
+
+`GET /rest/sptweaks/v1/<BLOCK-HASH>.<bin|hex|json>`
+
+The record of one block. Its content never changes for a block hash, so the response is sent with
+`Cache-Control: public, max-age=31536000, immutable`; it does not say whether the block is in the active chain.
+
+`GET /rest/sptweaksrange/v1/<HEIGHT>/<COUNT>.<bin|hex|json>?anchor=<BLOCK-HASH>`
+
+Consecutive blocks of the active chain from `<HEIGHT>`, whole blocks only (at least one, at most 1000 blocks and
+4 MB). `anchor` is the hash the client has at `<HEIGHT> - 1`; if that block left the active chain the answer is
+HTTP 409 with `{"reorg": true, "fork_height": n}` in JSON, and the client continues from `fork_height + 1`.
+`next_height` and `status` tell how to continue: `more` (ask again now), `tip` (wait for a new block) or
+`incomplete` (the index lacks data from `next_height`).
+
+Binary format 1: a message starts with `"NSPT"`, the format (1), the type (1 block, 2 range) and the 35-byte
+NIP-047 context. A block is `hash[32] prev[32] height:u32 n_entries entry* n_spent spent*`, with
+`entry = txid[32] tweak[33] n_out (vout commitment[32] value:i64)*` and `spent = txid[32] vout`; counters and
+`vout` are minimal CompactSize, hashes in internal byte order and integers little-endian. A range adds
+`snapshot_height:u32 snapshot_hash[32] synced_height:u32 next_height:u32 status:u8 n_blocks` before its blocks.
+Test vectors: `src/test/data/silentpayment_index_vectors.json`.
+
 Risks
 -------------
 Running a web browser on the same node with a REST enabled neuraid can be a risk. Accessing prepared XSS websites could read out tx/block data of your node by placing links like `<script src="http://127.0.0.1:8766/rest/tx/1234567890.json">` which might break the nodes privacy.

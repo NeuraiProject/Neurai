@@ -13,7 +13,7 @@
 #include "key.h"
 #include "keystore.h"
 #include "wallet/bip39.h"
-#include "wallet/silentpayments.h"
+#include "silentpayments.h"
 
 #include <list>
 #include <stdint.h>

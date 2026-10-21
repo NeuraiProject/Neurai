@@ -14,6 +14,7 @@
 #include "httpserver.h"
 #include "rpc/blockchain.h"
 #include "rpc/server.h"
+#include "silentpaymentindex.h"
 #include "streams.h"
 #include "sync.h"
 #include "txmempool.h"
@@ -565,6 +566,147 @@ static bool rest_getutxos(HTTPRequest* req, const std::string& strURIPart)
     }
 }
 
+// NIP-047 light client index (silentpaymentindex.h). The format version is
+// part of the path, so caches never mix formats.
+
+/** Removes "?query" from `path` and returns the query. */
+static std::string StripQuery(std::string& path)
+{
+    const std::string::size_type pos = path.find('?');
+    if (pos == std::string::npos) return "";
+    const std::string query = path.substr(pos + 1);
+    path = path.substr(0, pos);
+    return query;
+}
+
+static std::string QueryValue(const std::string& query, const std::string& name)
+{
+    std::vector<std::string> params;
+    boost::split(params, query, boost::is_any_of("&"));
+    for (const std::string& param : params) {
+        if (param.compare(0, name.size() + 1, name + "=") == 0) return param.substr(name.size() + 1);
+    }
+    return "";
+}
+
+static bool WriteIndexReply(HTTPRequest* req, RetFormat rf, const std::vector<unsigned char>& message,
+                            const UniValue& json, const std::string& cacheControl)
+{
+    req->WriteHeader("Cache-Control", cacheControl);
+    switch (rf) {
+    case RF_BINARY:
+        req->WriteHeader("Content-Type", "application/octet-stream");
+        req->WriteReply(HTTP_OK, std::string(message.begin(), message.end()));
+        return true;
+    case RF_HEX:
+        req->WriteHeader("Content-Type", "text/plain");
+        req->WriteReply(HTTP_OK, HexStr(message) + "\n");
+        return true;
+    case RF_JSON:
+        req->WriteHeader("Content-Type", "application/json");
+        req->WriteReply(HTTP_OK, json.write() + "\n");
+        return true;
+    default:
+        return RESTERR(req, HTTP_NOT_FOUND, "output format not found (available: " + AvailableDataFormatsString() + ")");
+    }
+}
+
+static bool rest_sp_tweaks(HTTPRequest* req, const std::string& strURIPart)
+{
+    if (!CheckWarmup(req))
+        return false;
+    if (!fSilentPaymentIndex)
+        return RESTERR(req, HTTP_SERVICE_UNAVAILABLE, "Silent payment index is disabled");
+    std::string path = strURIPart;
+    StripQuery(path);
+    std::string hashStr;
+    const RetFormat rf = ParseDataFormat(hashStr, path);
+    uint256 hash;
+    if (!ParseHashStr(hashStr, hash))
+        return RESTERR(req, HTTP_BAD_REQUEST, "Invalid hash: " + hashStr);
+    int height;
+    {
+        LOCK(cs_main);
+        BlockMap::const_iterator it = mapBlockIndex.find(hash);
+        if (it == mapBlockIndex.end())
+            return RESTERR(req, HTTP_NOT_FOUND, hashStr + " not found");
+        height = it->second->nHeight;
+    }
+    silentpayments::IndexBlock block;
+    std::vector<unsigned char> bytes;
+    if (height < silentpayments::IndexStartHeight(GetParams().GetConsensus()) ||
+        !silentpayments::ReadIndexRecord(hash, block, bytes) || block.height != (uint32_t)height)
+        return RESTERR(req, HTTP_NOT_FOUND, hashStr + " has no silent payment index record");
+    std::vector<unsigned char> message;
+    if (rf == RF_BINARY || rf == RF_HEX)
+        silentpayments::SerializeIndexBlockMessage(silentpayments::LocalContext(), bytes, message);
+    // The record of a block hash never changes.
+    return WriteIndexReply(req, rf, message, rf == RF_JSON ? silentpayments::IndexBlockMessageToJSON(block, bytes) : UniValue(),
+                           "public, max-age=31536000, immutable");
+}
+
+static bool rest_sp_tweaks_range(HTTPRequest* req, const std::string& strURIPart)
+{
+    if (!CheckWarmup(req))
+        return false;
+    std::string path = strURIPart;
+    const std::string anchor = QueryValue(StripQuery(path), "anchor");
+    std::string param;
+    const RetFormat rf = ParseDataFormat(param, path);
+    std::vector<std::string> parts;
+    boost::split(parts, param, boost::is_any_of("/"));
+    int32_t startHeight;
+    int64_t count;
+    if (parts.size() != 2 || !ParseInt32(parts[0], &startHeight) || !ParseInt64(parts[1], &count))
+        return RESTERR(req, HTTP_BAD_REQUEST, "Use /rest/sptweaksrange/v1/<height>/<count>.<ext>?anchor=<hash>");
+    silentpayments::RangeRequest range;
+    range.startHeight = startHeight;
+    range.count = count;
+    if (!anchor.empty()) {
+        if (!ParseHashStr(anchor, range.anchor))
+            return RESTERR(req, HTTP_BAD_REQUEST, "Invalid anchor: " + anchor);
+        range.hasAnchor = true;
+    }
+    if (rf == RF_UNDEF)
+        return RESTERR(req, HTTP_NOT_FOUND, "output format not found (available: " + AvailableDataFormatsString() + ")");
+
+    silentpayments::RangeResult result;
+    std::string error;
+    switch (silentpayments::QueryRange(range, result, error)) {
+    case silentpayments::RangeError::NONE: break;
+    case silentpayments::RangeError::DISABLED: return RESTERR(req, HTTP_SERVICE_UNAVAILABLE, error);
+    case silentpayments::RangeError::INVALID_PARAMETER: return RESTERR(req, HTTP_BAD_REQUEST, error);
+    case silentpayments::RangeError::ANCHOR_NOT_FOUND: return RESTERR(req, HTTP_NOT_FOUND, error);
+    case silentpayments::RangeError::INCOMPLETE: return RESTERR(req, HTTP_NOT_FOUND, error);
+    case silentpayments::RangeError::READ_FAILED: return RESTERR(req, HTTP_INTERNAL_SERVER_ERROR, error);
+    }
+    if (result.reorg) {
+        // Conflict: the anchor left the active chain. JSON for every format.
+        req->WriteHeader("Content-Type", "application/json");
+        req->WriteHeader("Cache-Control", "no-store");
+        req->WriteReply(409, silentpayments::RangeResultToJSON(result).write() + "\n");
+        return true;
+    }
+    std::vector<unsigned char> message;
+    if (rf == RF_BINARY || rf == RF_HEX) silentpayments::RangeResultToMessage(result, message);
+    // Heights depend on the active chain: cache briefly only.
+    return WriteIndexReply(req, rf, message, rf == RF_JSON ? silentpayments::RangeResultToJSON(result) : UniValue(),
+                           "public, max-age=5");
+}
+
+static bool rest_sp_index_info(HTTPRequest* req, const std::string& strURIPart)
+{
+    if (!CheckWarmup(req))
+        return false;
+    std::string param;
+    if (ParseDataFormat(param, strURIPart) != RF_JSON || !param.empty())
+        return RESTERR(req, HTTP_NOT_FOUND, "output format not found (available: json)");
+    req->WriteHeader("Content-Type", "application/json");
+    req->WriteHeader("Cache-Control", "no-store");
+    req->WriteReply(HTTP_OK, silentpayments::IndexStatusToJSON(silentpayments::GetIndexStatus()).write() + "\n");
+    return true;
+}
+
 static const struct {
     const char* prefix;
     bool (*handler)(HTTPRequest* req, const std::string& strReq);
@@ -577,6 +719,9 @@ static const struct {
       {"/rest/mempool/contents", rest_mempool_contents},
       {"/rest/headers/", rest_headers},
       {"/rest/getutxos", rest_getutxos},
+      {"/rest/sptweaks/v1/", rest_sp_tweaks},
+      {"/rest/sptweaksrange/v1/", rest_sp_tweaks_range},
+      {"/rest/spindexinfo", rest_sp_index_info},
 };
 
 bool StartREST()
