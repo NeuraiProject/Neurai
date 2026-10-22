@@ -142,7 +142,7 @@ parámetros alterados por un proxy sin convertir información pública en privad
 
 ## Descubrimiento, respuestas y errores
 
-`depingetmsginfo` es el único bootstrap: admite el objeto reducido con versión 4,
+`depingetmsginfo` es el único bootstrap: admite el objeto reducido con versión 5,
 request_id y timestamp_ms, para descubrir la identidad antes de poder incluirla
 en una petición completa. Para calcular `R`, usa clase pública, network/instance/membership_revision
 cero, pool_pubkey vacío, y root/token/address/challenge/args vacíos. Los demás RPC
@@ -323,7 +323,7 @@ se conserva su evidencia anterior y se añade el error RPC por capacidad con
 protocolo 4. Tampoco se certifican todas las posibilidades de fallo, GUI,
 configuración desplegada del proxy, carga de producción o librerías externas.
 
-P7 del nodo está implementado; las librerías/aplicaciones externas siguen pendientes. P2 no
+P7 del nodo está implementado; cada librería/aplicación externa requiere su propia integración y pruebas. P2 no
 convierte un directorio firmado en una prueba de posesión de assets: mantener
 la comparación independiente y la política de destinatarios de C1. El robo de
 una clave Legacy puede exponer mensajes históricos cifrados para ella; la clave
