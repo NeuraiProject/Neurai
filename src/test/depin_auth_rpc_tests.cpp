@@ -29,6 +29,7 @@
 #include "streams.h"
 #include "test/test_neurai.h"
 #include "test/depin_test_utils.h"
+#include "test/depin_rpc_test_client.h"
 #include "txdb.h"
 #include "utilstrencodings.h"
 #include "utiltime.h"
@@ -38,6 +39,7 @@
 #include <boost/test/unit_test.hpp>
 
 #include <map>
+#include <future>
 #include <string>
 #include <univalue.h>
 #include <vector>
@@ -122,6 +124,7 @@ struct DepinAuthRpcSetup : public TestingSetup {
         h.key.MakeNewKey(true);
         h.pubkey = h.key.GetPubKey();
         h.address = EncodeDestination(h.pubkey.GetID());
+        RememberDepinTestKey(h.key);
         if (reveal) {
             CDestinationIndexData addressData;
             BOOST_REQUIRE(GetDestinationIndexData(DecodeDestination(h.address), addressData));
@@ -166,7 +169,7 @@ struct DepinAuthRpcSetup : public TestingSetup {
         request.params = params;
         request.fHelp = false;
         BOOST_REQUIRE(tableRPC[method]);
-        return (*tableRPC[method]->actor)(request);
+        return CallDepinTestRpc(method,params);
     }
 
     // JSONRPCError throws a UniValue, type errors throw std::runtime_error:
@@ -248,8 +251,10 @@ struct DepinAuthRpcSetup : public TestingSetup {
                          const std::string& address, const std::string& nonce)
     {
         std::string error;
-        return VerifyDepinResponseSignature(poolKey.GetPubKey(), method, token, address, nonce,
-                                            response["encrypted"].get_str(), response["poolsig"].get_str(), error);
+        const auto it=DepinTestRequests().find(response["request_hash"].get_str());
+        return it!=DepinTestRequests().end() && it->second.method==method && it->second.token==token &&
+               it->second.address==address && it->second.nonce==nonce &&
+               VerifyDepinRpcResponse(response,it->second,poolKey.GetPubKey(),error);
     }
 };
 
@@ -522,7 +527,7 @@ BOOST_AUTO_TEST_CASE(challenge_requests_are_signed_and_not_replayable)
     std::string error;
     BOOST_CHECK(g_depinChallenges.Peek(mine, error));
     BOOST_CHECK_EQUAL(g_depinChallenges.CountForAddress(holder.address), 1U);
-    BOOST_CHECK_EQUAL(g_depinRequestGuard.Size(), 1U); // only the holder's own request was recorded
+    BOOST_CHECK_EQUAL(DepinRpcReplaySize(), 1U); // only the holder's own request was recorded
 
     // Even a cryptographically valid request from its own address must not
     // consume global replay capacity if that address has no access to the
@@ -531,7 +536,7 @@ BOOST_AUTO_TEST_CASE(challenge_requests_are_signed_and_not_replayable)
     for (int i = 0; i < 10; ++i) {
         BOOST_CHECK(Throws("depinchallenge", ChallengeParams(SECTION_A, nonHolder, DepinChallengeType::RECEIVE)));
     }
-    BOOST_CHECK_EQUAL(g_depinRequestGuard.Size(), 1U);
+    BOOST_CHECK_EQUAL(DepinRpcReplaySize(), 1U);
 
     // Unsigned / malformed shapes.
     BOOST_CHECK(Throws("depinchallenge", Params({SECTION_A, holder.address})));
@@ -746,39 +751,20 @@ BOOST_AUTO_TEST_CASE(clearmsg_challenge_scope_must_match_exactly)
 
 // (24) Named invocation with holes: the optional parameters after the
 // signature arrive as JSON nulls and the RPCs treat them as absent.
-BOOST_AUTO_TEST_CASE(named_params_with_null_holes)
+BOOST_AUTO_TEST_CASE(named_request_preserves_optional_nulls)
 {
-    const Holder holder = NewHolder(true, SECTION_A, 10);
-    const Holder sender = NewHolder(true, SECTION_A, 10);
-    AddMessage(SECTION_A, sender, {holder}, "x");
-
-    auto namedToPositional = [](const std::string& method, const std::vector<std::string>& nameEqualsValue) {
-        JSONRPCRequest request;
-        request.strMethod = method;
-        request.params = RPCConvertNamedValues(method, nameEqualsValue);
-        request.fHelp = false;
-        return transformNamedArguments(request, tableRPC[method]->argNames).params;
-    };
-
-    const std::string nonce = Challenge(SECTION_A, holder, DepinChallengeType::RECEIVE);
-    const std::string sig = Sign(holder, DepinChallengeType::RECEIVE, SECTION_A, nonce);
-    const UniValue positional = namedToPositional("depinreceivemsg",
-        {"token=" + SECTION_A, "address=" + holder.address, "challenge=" + nonce, "signature=" + sig, "limit=10"});
-    BOOST_REQUIRE_EQUAL(positional.size(), 7U);
-    BOOST_CHECK(positional[4].isNull());
-    BOOST_CHECK(positional[5].isNull());
-    BOOST_CHECK(positional[6].isNum());
-    const UniValue paged = Open(Call("depinreceivemsg", positional), holder);
-    BOOST_REQUIRE(paged.isObject());
-    BOOST_CHECK_EQUAL(paged["messages"].size(), 1U);
-    BOOST_CHECK(paged.exists("has_more"));
-
-    const std::string nonce2 = Challenge(SECTION_A, holder, DepinChallengeType::RECEIVE);
-    const UniValue listing = namedToPositional("depinlistsections",
-        {"address=" + holder.address, "scope=" + SECTION_A, "challenge=" + nonce2,
-         "signature=" + Sign(holder, DepinChallengeType::RECEIVE, SECTION_A, nonce2)});
-    BOOST_REQUIRE_EQUAL(listing.size(), 4U);
-    BOOST_CHECK_EQUAL(Open(Call("depinlistsections", listing), holder)["sections"].size(), 1U);
+    const Holder holder=NewHolder(true,SECTION_A,10), sender=NewHolder(true,SECTION_A,10);
+    AddMessage(SECTION_A,sender,{holder},"named");
+    const auto nonce=Challenge(SECTION_A,holder,DepinChallengeType::RECEIVE);
+    UniValue args(UniValue::VOBJ);args.pushKV("limit",10);args.pushKV("timestamp",NullUniValue);args.pushKV("after_hash",NullUniValue);
+    auto object=MakeDepinRpcRequest("depinreceivemsg",GetDepinRpcIdentity(),SECTION_A,holder.address,nonce,args);
+    object=DepinTestSign("depinreceivemsg",object,holder.key);
+    JSONRPCRequest request;request.strMethod="depinreceivemsg";
+    request.params=RPCConvertNamedValues(request.strMethod,{"request="+object.write()});
+    const auto positional=transformNamedArguments(request,tableRPC[request.strMethod]->argNames).params;
+    BOOST_REQUIRE_EQUAL(positional.size(),1U);BOOST_CHECK(positional[0].isObject());
+    const auto result=Open(Call("depinreceivemsg",positional),holder);
+    BOOST_CHECK_EQUAL(result["messages"].size(),1U);
 }
 
 BOOST_AUTO_TEST_CASE(pending_freeze_denies_existing_nonce_after_restore)
@@ -853,6 +839,92 @@ BOOST_AUTO_TEST_CASE(freshness_gate_blocks_ibd_stale_tip_and_header_lag_without_
     fImporting = importing;
     BOOST_CHECK(GetDepinServiceStatus().ready);
     BOOST_CHECK_EQUAL(nFullStateFlushes.load(), flushes);
+}
+
+BOOST_AUTO_TEST_CASE(v3_clear_binds_mode_hours_and_every_service_field)
+{
+    const auto owner=NewHolder(true,SECTION_A+OWNER_TAG,1);
+    const auto sender=NewHolder(true,SECTION_A,1), reader=NewHolder(true,SECTION_A,1);
+    AddMessage(SECTION_A,sender,{reader},"keep-one");AddMessage(SECTION_A,sender,{reader},"keep-two");
+    const auto nonce=Challenge(SECTION_A,owner,DepinChallengeType::ADMIN);
+    auto object=MakeDepinRpcRequest("depinclearmsg",GetDepinRpcIdentity(),SECTION_A,owner.address,nonce,UniValue(UniValue::VOBJ));
+    object=DepinTestSign("depinclearmsg",object,owner.key);
+    for (const auto& name:{"all","hours"}) {
+        UniValue args(UniValue::VOBJ);args.pushKV("mode",name);if (name==std::string("hours"))args.pushKV("hours",0);
+        BOOST_CHECK(Throws("depinclearmsg",DepinTestParams(DepinTestReplace(object,"args",args))));
+        std::string error;BOOST_CHECK(g_depinChallenges.Peek(nonce,error));BOOST_CHECK_EQUAL(pDepinMsgPool->Size(),2U);
+    }
+    CKey otherPool;otherPool.MakeNewKey(true);const auto otherPub=otherPool.GetPubKey();
+    for (const auto& field:{"network","instance_id","request_id","pool_pubkey","pool_root","token","timestamp_ms","protocol"}) {
+        UniValue value=field==std::string("pool_pubkey")?UniValue(HexStr(otherPub.begin(),otherPub.end())):
+            field==std::string("pool_root")?UniValue(ROOT+"/OTHER"):
+            field==std::string("token")?UniValue(ROOT):
+            field==std::string("timestamp_ms")?UniValue(object["timestamp_ms"].get_int64()+1):
+            field==std::string("protocol")?UniValue(2):UniValue(std::string(64,'f'));
+        BOOST_REQUIRE(value.write()!=object[field].write());
+        BOOST_CHECK(Throws("depinclearmsg",DepinTestParams(DepinTestReplace(object,field,value))));
+        std::string error;BOOST_CHECK(g_depinChallenges.Peek(nonce,error));BOOST_CHECK_EQUAL(pDepinMsgPool->Size(),2U);
+    }
+    auto legacy=object;legacy=DepinTestReplace(legacy,"signature",UniValue(Sign(owner,DepinChallengeType::ADMIN,SECTION_A,nonce)));
+    BOOST_CHECK(Throws("depinclearmsg",DepinTestParams(legacy)));
+    const auto result=Open(Call("depinclearmsg",DepinTestParams(object)),owner);
+    BOOST_CHECK_EQUAL(result["removed"].get_int(),0);BOOST_CHECK_EQUAL(result["remaining"].get_int(),2);
+    BOOST_CHECK(Throws("depinclearmsg",DepinTestParams(object)));
+}
+
+BOOST_AUTO_TEST_CASE(v3_nonce_cannot_authorize_a_different_method_or_two_concurrent_reads)
+{
+    const auto holder=NewHolder(true,SECTION_A,1);
+    const auto nonce=Challenge(SECTION_A,holder,DepinChallengeType::RECEIVE);
+    auto object=MakeDepinRpcRequest("depinreceivemsg",GetDepinRpcIdentity(),SECTION_A,holder.address,nonce,UniValue(UniValue::VOBJ));
+    object=DepinTestSign("depinreceivemsg",object,holder.key);
+    BOOST_CHECK(Throws("depinlistsections",DepinTestParams(object)));
+    std::string error;BOOST_REQUIRE(g_depinChallenges.Peek(nonce,error));
+    auto run=[&] {
+        JSONRPCRequest r;r.strMethod="depinreceivemsg";r.params=DepinTestParams(object);
+        return (*tableRPC[r.strMethod]->actor)(r);
+    };
+    auto first=std::async(std::launch::async,run),second=std::async(std::launch::async,run);
+    const auto a=Open(first.get(),holder),b=Open(second.get(),holder);
+    BOOST_CHECK(a.exists("error")!=b.exists("error"));
+    BOOST_CHECK(!g_depinChallenges.Peek(nonce,error));
+}
+
+BOOST_AUTO_TEST_CASE(v3_restart_and_clock_rollback_invalidate_old_requests)
+{
+    SetMockTime(1800000000);RefreshDepinTestTipTime();
+    const auto holder=NewHolder(true,SECTION_A,1);const auto nonce=Challenge(SECTION_A,holder,DepinChallengeType::RECEIVE);
+    const auto epoch=GetDepinRpcIdentity().instance;
+    auto object=MakeDepinRpcRequest("depinreceivemsg",GetDepinRpcIdentity(),SECTION_A,holder.address,nonce,UniValue(UniValue::VOBJ));
+    object=DepinTestSign("depinreceivemsg",object,holder.key);
+    ResetDepinRpcInstance();BOOST_CHECK(GetDepinRpcIdentity().instance!=epoch);
+    BOOST_CHECK(Throws("depinreceivemsg",DepinTestParams(object)));
+    const auto fresh=Challenge(SECTION_A,holder,DepinChallengeType::RECEIVE);const auto before=GetDepinRpcIdentity().instance;
+    SetMockTime(1799999999);ObserveDepinRpcClock(DepinRequestClockMillis());RefreshDepinTestTipTime();
+    BOOST_CHECK(GetDepinRpcIdentity().instance!=before);std::string error;BOOST_CHECK(!g_depinChallenges.Peek(fresh,error));
+    BOOST_CHECK_NO_THROW(Challenge(SECTION_A,holder,DepinChallengeType::RECEIVE));
+}
+
+BOOST_AUTO_TEST_CASE(v3_signed_purge_failure_keeps_messages_and_never_reports_success)
+{
+    const auto owner=NewHolder(true,SECTION_A+OWNER_TAG,1);
+    const auto sender=NewHolder(true,SECTION_A,1), reader=NewHolder(true,SECTION_A,1);
+    std::string error;BOOST_REQUIRE(pDepinMsgPool->InitializeStorage(false,error,1));
+    AddMessage(SECTION_A,sender,{reader},"retained-one");AddMessage(SECTION_A,sender,{reader},"retained-two");
+    const auto nonce=Challenge(SECTION_A,owner,DepinChallengeType::ADMIN);
+    UniValue args(UniValue::VOBJ);args.pushKV("mode","all");
+    auto object=DepinTestSign("depinclearmsg",MakeDepinRpcRequest("depinclearmsg",GetDepinRpcIdentity(),SECTION_A,owner.address,nonce,args),owner.key);
+    const auto parsed=ParseDepinRpcRequest("depinclearmsg",object);
+    JSONRPCRequest rpc;rpc.strMethod="depinclearmsg";rpc.params=DepinTestParams(object);
+    const auto response=(*tableRPC[rpc.strMethod]->actor)(rpc);
+    BOOST_CHECK(response.exists("encrypted"));BOOST_CHECK(!response.exists("body"));
+    BOOST_CHECK(VerifyDepinRpcResponse(response,parsed,poolKey.GetPubKey(),error));
+    const auto body=Open(response,owner);BOOST_REQUIRE(body.exists("error"));
+    BOOST_CHECK_EQUAL(body["error"]["code"].get_int(),RPC_DATABASE_ERROR);
+    BOOST_CHECK_EQUAL(body["error"]["data"]["depin_error"].get_str(),"storage_failure");
+    BOOST_CHECK(!body.exists("removed"));BOOST_CHECK(!body.exists("result"));
+    BOOST_CHECK_EQUAL(pDepinMsgPool->Size(),2U);BOOST_CHECK_EQUAL(pDepinMsgPool->GetTombstoneCount(),0U);
+    BOOST_CHECK(pDepinMsgPool->StorageHealthy());BOOST_CHECK(!g_depinChallenges.Peek(nonce,error));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

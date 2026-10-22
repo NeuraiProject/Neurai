@@ -31,6 +31,16 @@
 #include <string>
 
 namespace {
+// Legacy encodings remain negative/interoperability fixtures only. The core
+// checker now requires an explicit operation preimage; RPCs always use v3.
+bool CheckFixtureDepinChallengeAuth(DepinChallengeType type, const std::string& token,
+    const std::string& address, const std::string& nonce, const std::string& signature,
+    const std::string& root, std::string& error)
+{
+    return CheckDepinChallengeAuth(type,token,address,nonce,signature,root,error,
+                                  DepinChallengePreimage(type,token,address,nonce));
+}
+
 
 const std::string TOKEN = "&TEST";
 const std::string SECTION = "&TEST/SEC";
@@ -439,26 +449,26 @@ BOOST_FIXTURE_TEST_CASE(invalid_signature_does_not_consume_nonce, DepinChallenge
     CPubKey pubkey;
     BOOST_REQUIRE(IssueDepinChallengeForAddress(SECTION, holder.address, DepinChallengeType::RECEIVE, TOKEN, nonce, pubkey, error));
 
-    BOOST_CHECK(!CheckDepinChallengeAuth(DepinChallengeType::RECEIVE, SECTION, holder.address, nonce, "garbage", TOKEN, error));
+    BOOST_CHECK(!CheckFixtureDepinChallengeAuth(DepinChallengeType::RECEIVE, SECTION, holder.address, nonce, "garbage", TOKEN, error));
     BOOST_CHECK(g_depinChallenges.Peek(nonce, error));
     // `other` signs the same preimage with its own key: valid signature, wrong address.
-    BOOST_CHECK(!CheckDepinChallengeAuth(DepinChallengeType::RECEIVE, SECTION, holder.address, nonce, Sign(other, DepinChallengeType::RECEIVE, SECTION, nonce), TOKEN, error));
+    BOOST_CHECK(!CheckFixtureDepinChallengeAuth(DepinChallengeType::RECEIVE, SECTION, holder.address, nonce, Sign(other, DepinChallengeType::RECEIVE, SECTION, nonce), TOKEN, error));
     BOOST_CHECK(g_depinChallenges.Peek(nonce, error));
     // `other` presents holder's nonce as its own: signature ok for `other`, nonce was not issued to it.
-    BOOST_CHECK(!CheckDepinChallengeAuth(DepinChallengeType::RECEIVE, SECTION, other.address, nonce, Sign(other, DepinChallengeType::RECEIVE, SECTION, nonce), TOKEN, error));
+    BOOST_CHECK(!CheckFixtureDepinChallengeAuth(DepinChallengeType::RECEIVE, SECTION, other.address, nonce, Sign(other, DepinChallengeType::RECEIVE, SECTION, nonce), TOKEN, error));
     BOOST_CHECK(g_depinChallenges.Peek(nonce, error));
     // Right signer, wrong token / type.
-    BOOST_CHECK(!CheckDepinChallengeAuth(DepinChallengeType::RECEIVE, TOKEN, holder.address, nonce, Sign(holder, DepinChallengeType::RECEIVE, TOKEN, nonce), TOKEN, error));
-    BOOST_CHECK(!CheckDepinChallengeAuth(DepinChallengeType::ADMIN, SECTION, holder.address, nonce, Sign(holder, DepinChallengeType::ADMIN, SECTION, nonce), TOKEN, error));
+    BOOST_CHECK(!CheckFixtureDepinChallengeAuth(DepinChallengeType::RECEIVE, TOKEN, holder.address, nonce, Sign(holder, DepinChallengeType::RECEIVE, TOKEN, nonce), TOKEN, error));
+    BOOST_CHECK(!CheckFixtureDepinChallengeAuth(DepinChallengeType::ADMIN, SECTION, holder.address, nonce, Sign(holder, DepinChallengeType::ADMIN, SECTION, nonce), TOKEN, error));
     BOOST_CHECK(g_depinChallenges.Peek(nonce, error));
     // Malformed nonce / missing signature never reach the store.
-    BOOST_CHECK(!CheckDepinChallengeAuth(DepinChallengeType::RECEIVE, SECTION, holder.address, "abc", "x", TOKEN, error));
-    BOOST_CHECK(!CheckDepinChallengeAuth(DepinChallengeType::RECEIVE, SECTION, holder.address, nonce, "", TOKEN, error));
+    BOOST_CHECK(!CheckFixtureDepinChallengeAuth(DepinChallengeType::RECEIVE, SECTION, holder.address, "abc", "x", TOKEN, error));
+    BOOST_CHECK(!CheckFixtureDepinChallengeAuth(DepinChallengeType::RECEIVE, SECTION, holder.address, nonce, "", TOKEN, error));
 
     // The owner's own use succeeds exactly once.
     const std::string sig = Sign(holder, DepinChallengeType::RECEIVE, SECTION, nonce);
-    BOOST_CHECK_MESSAGE(CheckDepinChallengeAuth(DepinChallengeType::RECEIVE, SECTION, holder.address, nonce, sig, TOKEN, error), error);
-    BOOST_CHECK(!CheckDepinChallengeAuth(DepinChallengeType::RECEIVE, SECTION, holder.address, nonce, sig, TOKEN, error));
+    BOOST_CHECK_MESSAGE(CheckFixtureDepinChallengeAuth(DepinChallengeType::RECEIVE, SECTION, holder.address, nonce, sig, TOKEN, error), error);
+    BOOST_CHECK(!CheckFixtureDepinChallengeAuth(DepinChallengeType::RECEIVE, SECTION, holder.address, nonce, sig, TOKEN, error));
     BOOST_CHECK_EQUAL(error, "Challenge not found");
 }
 
@@ -476,18 +486,18 @@ BOOST_FIXTURE_TEST_CASE(access_revalidated_at_consumption, DepinChallengeAccessS
 
     // The balance moves away between issuance and use.
     BOOST_REQUIRE(passetsdb->WriteAssetAddressQuantity(SECTION, holder.address, 0));
-    BOOST_CHECK(!CheckDepinChallengeAuth(DepinChallengeType::RECEIVE, SECTION, holder.address, nonce, sig, TOKEN, error));
+    BOOST_CHECK(!CheckFixtureDepinChallengeAuth(DepinChallengeType::RECEIVE, SECTION, holder.address, nonce, sig, TOKEN, error));
     BOOST_CHECK(g_depinChallenges.Peek(nonce, error)); // not consumed by the refusal
     // Back in time for the 30 s window: the same nonce works again.
     BOOST_REQUIRE(passetsdb->WriteAssetAddressQuantity(SECTION, holder.address, 10));
-    BOOST_CHECK_MESSAGE(CheckDepinChallengeAuth(DepinChallengeType::RECEIVE, SECTION, holder.address, nonce, sig, TOKEN, error), error);
+    BOOST_CHECK_MESSAGE(CheckFixtureDepinChallengeAuth(DepinChallengeType::RECEIVE, SECTION, holder.address, nonce, sig, TOKEN, error), error);
 
     // An owner that stops being one before using its ADMIN challenge.
     std::string adminNonce;
     BOOST_REQUIRE(IssueDepinChallengeForAddress(TOKEN, owner.address, DepinChallengeType::ADMIN, TOKEN, adminNonce, pubkey, error));
     const std::string adminSig = Sign(owner, DepinChallengeType::ADMIN, TOKEN, adminNonce);
     BOOST_REQUIRE(passetsdb->WriteAssetAddressQuantity(TOKEN + OWNER_TAG, owner.address, 0));
-    BOOST_CHECK(!CheckDepinChallengeAuth(DepinChallengeType::ADMIN, TOKEN, owner.address, adminNonce, adminSig, TOKEN, error));
+    BOOST_CHECK(!CheckFixtureDepinChallengeAuth(DepinChallengeType::ADMIN, TOKEN, owner.address, adminNonce, adminSig, TOKEN, error));
     BOOST_CHECK(g_depinChallenges.Peek(adminNonce, error));
 }
 

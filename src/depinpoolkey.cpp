@@ -3,6 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "depinpoolkey.h"
+#include "depinrpc.h"
 
 #include "base58.h"
 #include "crypto/sha256.h"
@@ -14,6 +15,7 @@
 #include "tinyformat.h"
 #include "utilstrencodings.h"
 #include "version.h"
+#include "validation.h"
 
 #include <map>
 
@@ -36,21 +38,30 @@ std::string Sha256Hex(const std::string& data)
 
 void SetDepinPoolKey(const CKey& key, const std::string& walletName)
 {
-    LOCK(cs_depinPoolKey);
-    g_poolKey = key;
-    g_poolPubKey = key.GetPubKey();
-    g_poolKeyWallet = walletName;
-    g_havePoolKey = key.IsValid();
+    LOCK(cs_main);
+    {
+        LOCK(cs_depinPoolKey);
+        g_poolKey = key;
+        g_poolPubKey = key.GetPubKey();
+        g_poolKeyWallet = walletName;
+        g_havePoolKey = key.IsValid();
+    }
+    ResetDepinRpcInstance();
 }
 
 void ClearDepinPoolKey()
 {
-    LOCK(cs_depinPoolKey);
-    g_havePoolKey = false;
-    g_poolKey = CKey();
-    g_poolPubKey = CPubKey();
-    g_poolKeyWallet.clear();
+    LOCK(cs_main);
+    {
+        LOCK(cs_depinPoolKey);
+        g_havePoolKey = false;
+        g_poolKey = CKey();
+        g_poolPubKey = CPubKey();
+        g_poolKeyWallet.clear();
+    }
+    ResetDepinRpcInstance();
 }
+
 
 bool HaveDepinPoolKey()
 {

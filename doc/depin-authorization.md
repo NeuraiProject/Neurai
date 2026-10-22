@@ -113,7 +113,9 @@ still appropriate. Replaying the old ciphertext does not update its keys.
 Use bounded retries; never silently discard an intended recipient or treat a
 truncated directory as complete. Preserve verification of signed wrappers.
 
-External library updates, the full method/parameter signature redesign (P2)
-and context revision/challenge invalidation (P7) remain separate work. The
-additive sequence read binds all its own parameters. Current-state checks
-already prevent an old nonce from overriding a confirmed revocation.
+The node now implements complete method/parameter signatures under
+[RPC protocol 3](depin-request-signatures.md), including sequence reads and
+administrative modes. External libraries and context revision/challenge
+invalidation (P7) remain pending. Current-state checks already prevent an old
+nonce from overriding a confirmed revocation. Invalidating the RPC instance
+on restart/key change/clock rollback is distinct from P7 membership revision.

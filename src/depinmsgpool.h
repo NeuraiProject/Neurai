@@ -519,17 +519,6 @@ bool DecryptMessageForAddress(const std::vector<unsigned char>& encryptedData,
                                std::string& decryptedMessage,
                                std::string& error);
 
-#ifdef ENABLE_WALLET
-// Signs a DePIN challenge preimage (DepinChallengePreimage) with the wallet
-// key of `address`. The wallet-side half of the challenge/response flow; the
-// node verifies with VerifyDepinChallengeSignature over the same preimage.
-bool SignDepinChallenge(CWallet* pwallet,
-                        const std::string& address,
-                        const std::string& token,
-                        const std::string& challenge,
-                        std::string& signature,
-                        std::string& error,
-                        DepinChallengeType type = DepinChallengeType::RECEIVE);
-#endif
+
 
 #endif // NEURAI_DEPINMSGPOOL_H

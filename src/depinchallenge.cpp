@@ -311,6 +311,19 @@ bool CDepinChallengeManager::Peek(const std::string& nonce, std::string& error) 
     return true;
 }
 
+bool CDepinChallengeManager::Matches(const std::string& nonce, const std::string& token,
+                                     const std::string& address, DepinChallengeType type, std::string& error, int64_t now) const
+{
+    LOCK(cs_challenges);
+    const auto it=mapChallenges.find(nonce);
+    if (it==mapChallenges.end()) { error="Challenge not found";return false; }
+    if (it->second.expiry<=(now<0?GetTime():now)) { error="Challenge expired";return false; }
+    if (it->second.token!=token || it->second.address!=address || it->second.type!=type) {
+        error="Challenge does not match token, address or type";return false;
+    }
+    return true;
+}
+
 bool CDepinChallengeManager::Consume(const std::string& nonce, const std::string& token,
                                      const std::string& address, DepinChallengeType type,
                                      std::string& error)
@@ -483,14 +496,14 @@ bool CheckDepinChallengeAuth(DepinChallengeType type, const std::string& token,
     }
 
     // 2. Existence, read-only: a cheap gate before the signature work.
-    if (!g_depinChallenges.Peek(nonce, error)) {
+    if (!g_depinChallenges.Matches(nonce, token, address, type, error)) {
         return false;
     }
 
+    if (operationPreimage.empty()) { error="Explicit operation preimage required";return false; }
     // 3. Signature over exactly these bindings.
     if (!VerifyDepinChallengeSignature(address, signatureBase64,
-                                       operationPreimage.empty() ? DepinChallengePreimage(type, token, address, nonce)
-                                                                 : operationPreimage, error)) {
+                                       operationPreimage, error)) {
         return false;
     }
 

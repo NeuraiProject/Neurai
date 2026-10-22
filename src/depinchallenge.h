@@ -138,6 +138,8 @@ public:
      * cheap gate before signature verification; never modifies the store.
      */
     bool Peek(const std::string& nonce, std::string& error) const;
+    bool Matches(const std::string& nonce, const std::string& token, const std::string& address,
+                 DepinChallengeType type, std::string& error, int64_t now = -1) const;
 
     /**
      * Atomic check-and-consume. Succeeds, and erases the nonce, only if it
@@ -265,8 +267,8 @@ bool IssueDepinChallengeForAddress(const std::string& token, const std::string& 
  * shortcuts (first taking cs_main and checking service readiness):
  *   1. form (address, nonce, signature are well-formed)
  *   2. the nonce exists and has not expired (read-only)
- *   3. the signature over DepinChallengePreimage(type, token, address, nonce)
- *      verifies for `address`
+ *   3. the signature over the explicit operation preimage verifies for address;
+ *      RPC callers pass the complete parsed v3 request preimage
  *   4. access is re-validated (a freeze, self-revoke or transfer between
  *      issuance and use invalidates the challenge)
  *   5. the nonce is consumed atomically for exactly these bindings
@@ -277,6 +279,6 @@ bool IssueDepinChallengeForAddress(const std::string& token, const std::string& 
 bool CheckDepinChallengeAuth(DepinChallengeType type, const std::string& token,
                              const std::string& address, const std::string& nonce,
                              const std::string& signatureBase64, const std::string& poolRoot,
-                             std::string& error, const std::string& operationPreimage = "", bool consume = true);
+                             std::string& error, const std::string& operationPreimage, bool consume = true);
 
 #endif // NEURAI_DEPINCHALLENGE_H

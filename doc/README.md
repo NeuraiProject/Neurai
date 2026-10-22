@@ -172,73 +172,27 @@ does, because it aggregates the holders of all its ancestors.
 ```
 
 
-### Authenticated RPC flow (protocol 2)
+### Authenticated RPC flow (protocol 3)
 
-Every DePIN operation is a regular JSON-RPC method on the node's RPC port.
-A service node is published through an RPC proxy that whitelists the DePIN
-methods; holders never get node credentials. Instead, a holder proves control
-of an address with a challenge:
+Remote DePIN methods take one JSON request object with protocol 3, network,
+pool identity/root/instance, fresh request ID, timestamp, scope/address/nonce,
+typed args and operation signature. Legacy formats and signatures are rejected.
+Bootstrap is a reduced depingetmsginfo request. Verify the pinned pool signature
+and locally computed request hash before trusting any response. Private
+responses, including correlatable operation errors, are encrypted for the
+address. The node rechecks current on-chain permission when using a challenge.
 
-1. **Pin the pool key** (first contact). `depingetmsginfo` answers
-   `{"body": "<hex>", "poolsig": "<base64>"}`; decoded, `body` carries
-   `depinpoolpkey` and `depinpoolkeyaddress`. On first contact store that key
-   with the service's identity (trust on first use; a pin shipped with the
-   application avoids even that); from then on verify `poolsig` over the
-   `body` or `encrypted` string of every reply with the pinned key, and treat
-   a changed key as an alert. Message content is never readable by the node
-   or the proxy regardless; the pin is what makes withheld or altered replies
-   detectable.
-2. **Request a challenge.** The request is signed by the address over the
-   current time in milliseconds, `signmessage`-compatible:
-   `DEPIN-REQ|<type>|<token>|<address>|<timestamp>` (a node holding the key:
-   `depinsignrequest "address" "token" ("type")`). The node accepts it within
-   60 s of its clock and never twice, so nobody can spend a holder's quota or
-   evict its live challenges by naming its address.
-   ```bash
-   depinchallenge "&MYTOKEN/SEC" "NXholder..." 1730000000000 "<signature>"          # type receive (default)
-   depinchallenge "&MYTOKEN" "NXowner..." 1730000000000 "<signature>" "admin"       # for depinclearmsg
-   ```
-   The reply is encrypted for the address's revealed public key and signed
-   with the pool key: `{"encrypted": "<hex>", "poolsig": "<base64>"}`.
-   Decrypting it yields `{"challenge": "<64 hex>", "expires_in": 30,
-   "type": "receive"}`. A challenge is bound to the token, the address and
-   the type, is consumed by its first valid use and expires after 30 s. Only
-   a holder (or, for `admin`, an owner) of the token or an ancestor gets one.
-3. **Sign the preimage** with the address's key, `signmessage`-compatible:
-   `DEPIN-GET|<token>|<address>|<challenge>` for `receive`,
-   `DEPIN-CLEAR|<token>|<address>|<challenge>` for `admin`. A node that holds
-   the key can use `depinsignchallenge "address" "token" "challenge" ("type")`.
-4. **Call the RPC** with the challenge and signature:
-   ```bash
-   depinreceivemsg "&MYTOKEN/SEC" "NXholder..." "<challenge>" "<signature>" (timestamp "after_hash" limit)
-   depinlistsections "NXholder..." "&MYTOKEN/SEC" "<challenge>" "<signature>"
-   depinclearmsg "&MYTOKEN/SEC" "NXowner..." "<challenge>" "<signature>" ("all" | hours)
-   ```
-   A failed signature, a nonce issued for other bindings, or an address that
-   lost access between issuance and use is refused — and the refusal never
-   consumes the nonce, so nobody can burn someone else's challenge. Every
-   authenticated reply carries `next_challenge` (valid 300 s) inside its
-   encrypted body: sign it for the next call and `depinchallenge` is needed
-   only once per conversation.
-5. **Verify and decrypt the reply.** Every reply carries `poolsig`, the pool
-   key's compact signature over
-   `DEPIN-RESP|<method>|<token>|<address>|<challenge>|<sha256 hex of the body>`
-   where the body is the `encrypted` hex string (replies bound to an address)
-   or the `body` hex string (plain replies such as `depingetmsginfo`, which
-   carry their JSON hex-encoded), hashed exactly as received. It is
-   `verifymessage`-compatible against `depinpoolkeyaddress`. Verify first,
-   then decrypt `encrypted` with the address's key or hex-decode `body`.
+See [the RPC 3 contract](depin-request-signatures.md) for canonical bytes,
+limits, errors and examples, and [the client guide](depinreceivemsg.md) for
+complete flows. The local signing helper is `depinsignrpc method request`;
+it signs for the explicit destination and must not be exposed by a proxy.
+Purge mode/age, read cursor/filter and the submission privacy envelope are all
+covered by the signature. Content/ECIES and storage formats do not change.
 
-To publish a message through a service node, prepare it client-side: resolve
-recipients (`depingetancestorrecipients` with the pool root as `stop_at`),
-encrypt and sign the `CDepinMessage`, wrap the serialized hex in an ECIES
-envelope for `depinpoolpkey`, and call
-`depinsubmitmsg {"sender": "NXfrom...", "encrypted": "<hex>"}`. The bare hex
-form no longer exists. The reply is encrypted for the sender.
-
-`depingetpoolcontent` was removed: it exposed metadata of the whole pool and
-had no identity to bind a challenge to. `depinpoolstats` keeps the aggregate
-counters.
+The pool does not decrypt user content. Its signature does not prove that a
+malicious directory lists eligible recipients: clients need independent
+verification and their own recipient policy. A freeze denies current access,
+but cannot revoke ciphertext already held by a recipient.
 
 ## System Requirements
 
@@ -298,7 +252,7 @@ thoroughly tested, so DePIN messaging cannot be enabled on mainnet for now.
 2. Client verifies that FROM_ADDRESS holds the selected section or an ancestor
                                     ↓
 3. Resolve active holders with public keys, stopping at the pool root
-   (depingetancestorrecipients "TOKEN" limit "POOL_ROOT")
+   (protocol 3 request with token and args.max_results/stop_at)
                                     ↓
 4. Refuse the send if the complete recipient set exceeds the pool's limit
                                     ↓
@@ -306,8 +260,8 @@ thoroughly tested, so DePIN messaging cannot be enabled on mainnet for now.
                                     ↓
 6. Sign the serialized message with FROM_ADDRESS
                                     ↓
-7. Wrap the serialized hex in an ECIES envelope for depinpoolpkey and call
-   depinsubmitmsg {"sender": FROM_ADDRESS, "encrypted": "<hex>"}
+7. Wrap the serialized hex for depinpoolpkey, put it in args.encrypted,
+   and sign the complete depinsubmitmsg request as FROM_ADDRESS (token="")
                                     ↓
 8. Pool opens the envelope, verifies scope, sender access, signature and size
                                     ↓
@@ -429,9 +383,9 @@ depinmsgmaxusers=50
 
 # Verify DePIN messaging status
 ```ini
-neurai-cli depingetmsginfo
+neurai-cli depingetmsginfo '{"protocol":3,"request_id":"<fresh 32-byte hex>","timestamp_ms":<now_ms>}'
 ```
-# Shows: active token, port, number of messages, etc.
+# Verify the v3 signed wrapper before reading active root, counters and limits.
 
 
 ## Usage
@@ -485,26 +439,14 @@ neurai-cli depingetmsg "TOKEN_OR_SECTION" ("FROM_ADDRESS")
   the wallet tries all of its relevant branch addresses and de-duplicates by
   message hash.
 
-**Any pool, any client** (the holder keeps its keys): `depinchallenge`, sign,
-`depinreceivemsg`, verify `poolsig`, decrypt. The full contract is in
-[`depinreceivemsg.md`](depinreceivemsg.md). From a node that holds the key:
+**Any pool, any client**: follow [the protocol 3 guide](depinreceivemsg.md).
+Obtain verified bootstrap, sign the complete challenge request, decrypt its
+nonce, sign the complete read request with `depinsignrpc`, then verify/decrypt
+the response. Prefer admission-sequence reads. Every remote method receives
+one request object; previous positional calls and signing helpers are gone.
 
-```bash
-# 1. sign the request, ask for the challenge (reply encrypted for the address), open it
-neurai-cli depinsignrequest "NXyouraddress..." "&MYTOKEN/GENERAL"   # -> {"timestamp": ..., "signature": ...}
-neurai-cli depinchallenge "&MYTOKEN/GENERAL" "NXyouraddress..." <timestamp> "<signature>"
-neurai-cli depindecrypt "NXyouraddress..." "<encrypted>"        # -> {"challenge": ..., ...}
-# 2. sign the nonce with the wallet key
-neurai-cli depinsignchallenge "NXyouraddress..." "&MYTOKEN/GENERAL" "<challenge>"
-# 3. read (reply encrypted for the address and signed by the pool key), then open it
-neurai-cli depinreceivemsg "&MYTOKEN/GENERAL" "NXyouraddress..." "<challenge>" "<signature>"
-neurai-cli depindecrypt "NXyouraddress..." "<encrypted>"
-```
-
-`contrib/depin/regtest_walkthrough.sh` runs this whole flow (bootstrap,
-refused start without wallet, signed challenge request, read, chained read,
-forged/replayed requests, rate limit, sections, purge) against a fresh
-regtest node and checks every step.
+`contrib/depin/regtest_walkthrough.sh` runs the disposable HTTP/CLI protocol 3
+regressions and leaves existing node data untouched.
 
 **`depingetmsg` output**:
 ```json
@@ -529,63 +471,35 @@ regtest node and checks every step.
 
 #### 3. DePIN Messaging Information
 
-```bash
-neurai-cli depingetmsginfo
-```
-
-**Output** (a signed plain body; `body` is the hex of the JSON below):
-```json
-{ "body": "7b22656e61626c6564223a747275652c...", "poolsig": "IMn3..." }
-```
-```json
-{
-  "enabled": true,
-  "token": "&MYTOKEN",
-  "maxrecipients": 20,
-  "messages": 42,
-  "memoryusage": 52428,
-  "newestmessage": "2024-11-09 15:20:00",
-  "protocol": 2,
-  "depinpoolpkey": "02ab...",
-  "depinpoolkeyaddress": "NXpool...",
-  "depinwallet": "wallet.dat"
-}
-```
+Call `depingetmsginfo request` with the reduced protocol 3 bootstrap object
+from [the contract](depin-request-signatures.md). Its signed wrapper binds
+the exact request hash and includes the served network/key/root/instance.
+The verified body includes protocol 3, accepted_protocols, server_time_ms,
+limits, counters and persistence/sequence capabilities. A first self-signed
+response does not replace an independent pin.
 
 #### 4. Clear Expired Messages
 
-```bash
-neurai-cli depinclearmsg "SCOPE" "OWNER_ADDRESS" "CHALLENGE" "SIGNATURE" ("all"|HOURS)
-```
-
-`SCOPE` is a served section, or `""` for the whole pool. It clears that
-section and its descendants only; it never clears a parent or sibling. The
-challenge must be an `admin` challenge issued for exactly `SCOPE` (for `""`,
-request it for the pool root by name) to an owner of that token or of an
-ancestor. Automatic cleanup also removes expired messages without any call.
+Call `depinclearmsg request` with an admin nonce and complete operation
+signature. args.mode is expired (default), all or hours; only hours accepts
+and requires args.hours. Empty token normalizes to the root. Scope covers
+that section and descendants; owner access is rechecked. A signed error body
+is a failed operation. Automatic expiry does not need an administrative call.
 
 #### 5. List sections for a client UI
 
-```bash
-neurai-cli depinlistsections ("ADDRESS")
-```
-
-Without an address, this lists public section names, labels and depths. With
-an address over node RPC, it also reports inherited active access and the
-message count for readable sections. The unauthenticated DePIN port rejects
-the address form and returns names only.
-
-```json
-[
-  {"name":"&MYTOKEN", "label":"", "depth":0},
-  {"name":"&MYTOKEN/GENERAL", "label":"GENERAL", "depth":1}
-]
-```
+Call `depinlistsections request`: public root-scoped objects have empty
+address/challenge/signature and return names, labels and depths. Personal
+objects require a receive nonce/signature and return current scoped access
+and counters. Both use the protocol 3 signed response wrapper. There is no
+separate unauthenticated messaging port.
 
 #### 6. Resolve recipient public keys
 
 ```bash
-neurai-cli depingetancestorrecipients "&MYTOKEN/GENERAL" 100 "&MYTOKEN"
+# Full common v3 object: token="&MYTOKEN/GENERAL",
+# args={"max_results":100,"stop_at":"&MYTOKEN"}, public authentication fields empty.
+neurai-cli depingetancestorrecipients '<complete v3 request object>'
 ```
 
 This informational RPC returns active recipient addresses and their revealed
@@ -597,7 +511,7 @@ contract and security rules.
 #### 7. Pool information
 
 ```bash
-neurai-cli depingetmsginfo
+neurai-cli depingetmsginfo '{"protocol":3,"request_id":"<fresh 32-byte hex>","timestamp_ms":<now_ms>}'
 ```
 
 A client publishing through this node reads `token` (the pool root, its

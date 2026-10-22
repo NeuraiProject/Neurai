@@ -38,6 +38,7 @@
 #include "script/standard.h"
 #include "test/test_neurai.h"
 #include "test/scoped_block_network.h"
+#include "test/depin_rpc_test_client.h"
 #include "utiltime.h"
 #include "validation.h"
 #include "wallet/coincontrol.h"
@@ -247,7 +248,7 @@ UniValue CallDepinRPC(const std::string& method, const UniValue& params)
     request.fHelp = false;
 
     BOOST_REQUIRE(tableRPC[method]);
-    return (*tableRPC[method]->actor)(request);
+    return CallDepinTestRpc(method,params);
 }
 
 } // namespace
@@ -358,6 +359,7 @@ BOOST_AUTO_TEST_CASE(scoped_purge_and_listsections_rpc)
         BOOST_REQUIRE(keyID != nullptr);
         CKey key;
         BOOST_REQUIRE(wallet->GetKey(*keyID, key));
+        RememberDepinTestKey(key);
         return key;
     };
     // Replies are opened with depindecrypt, the wallet RPC a neurai-cli client
@@ -370,31 +372,19 @@ BOOST_AUTO_TEST_CASE(scoped_purge_and_listsections_rpc)
         params.push_back(response["encrypted"].get_str());
         return call("depindecrypt", params);
     };
-    // depinsignrequest signs the request for a challenge with the wallet key.
     auto requestParams = [&](const std::string& token, const std::string& address, const std::string& type) {
-        UniValue req(UniValue::VARR);
-        req.push_back(address);
-        req.push_back(token);
-        req.push_back(type);
-        const UniValue signedReq = call("depinsignrequest", req);
-        UniValue params(UniValue::VARR);
-        params.push_back(token);
-        params.push_back(address);
-        params.push_back(signedReq["timestamp"]);
-        params.push_back(signedReq["signature"]);
-        params.push_back(type);
-        return params;
+        const auto key=walletKey(address);std::string signature,error;
+        DepinChallengeType kind;BOOST_REQUIRE(ParseDepinChallengeType(type,kind));
+        const auto timestamp=DepinRequestClockMillis();
+        BOOST_REQUIRE(SignDepinChallengePreimage(key,DepinChallengeRequestPreimage(kind,token,address,timestamp),signature,error));
+        UniValue p(UniValue::VARR);p.push_back(token);p.push_back(address);p.push_back(timestamp);p.push_back(signature);p.push_back(type);return p;
     };
     auto challenge = [&](const std::string& token, const std::string& address, const std::string& type) {
-        return open(call("depinchallenge", requestParams(token, address, type)), address)["challenge"].get_str();
+        return open(call("depinchallenge",requestParams(token,address,type)),address)["challenge"].get_str();
     };
     auto sign = [&](const std::string& address, const std::string& token, const std::string& nonce, const std::string& type) {
-        UniValue params(UniValue::VARR);
-        params.push_back(address);
-        params.push_back(token);
-        params.push_back(nonce);
-        params.push_back(type);
-        return call("depinsignchallenge", params)["signature"].get_str();
+        const auto key=walletKey(address);DepinChallengeType kind;BOOST_REQUIRE(ParseDepinChallengeType(type,kind));
+        std::string signature,error;BOOST_REQUIRE(SignDepinChallengePreimage(key,DepinChallengePreimage(kind,token,address,nonce),signature,error));return signature;
     };
 
     // listsections for the CHILD address, scoped to its own section: access

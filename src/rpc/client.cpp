@@ -69,26 +69,18 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "listassets", 1, "verbose" },
     { "listassets", 2, "count" },
     { "listassets", 3, "start" },
-    // DePIN messaging. Without an entry here the CLI passes these as strings and
-    // get_int64()/get_int() throws "JSON value is not an integer as expected"
-    // before the RPC body ever runs. Only reachable through neurai-cli, so a
-    // unit test that builds the UniValue itself cannot see it.
-    //
-    // depinclearmsg's mode (index 4) is deliberately absent: it accepts a word
-    // ("all") as well as a number, and ParseNonRFCJSONValue() throws on
-    // anything that is not valid JSON, so listing it here would break the word
-    // form. It is normalised inside the RPC instead (ParseFlexibleInt64,
-    // rpc/messages.cpp).
-    { "depingetancestorrecipients", 1, "max_results" },
-    { "depinchallenge", 2, "timestamp" },
-    { "depinreceiveseq", 4, "cursor" },
-    { "depinreceiveseq", 5, "limit" },
-    { "depinreceiveseq", 6, "from_timestamp" },
-    { "depinsignreadseq", 3, "cursor" },
-    { "depinsignreadseq", 4, "limit" },
-    { "depinsignreadseq", 5, "from_timestamp" },
-    { "depinreceivemsg", 4, "timestamp" },
-    { "depinreceivemsg", 6, "limit" },
+    // Protocol 3 is one typed JSON request object, for positional and named CLI.
+    { "depingetmsginfo", 0, "request" },
+    { "depinchallenge", 0, "request" },
+    { "depinpoolstats", 0, "request" },
+    { "depinsubmitmsg", 0, "request" },
+    { "depinreceiveseq", 0, "request" },
+    { "depinreceivemsg", 0, "request" },
+    { "depinmcpstatus", 0, "request" },
+    { "depingetancestorrecipients", 0, "request" },
+    { "depinlistsections", 0, "request" },
+    { "depinclearmsg", 0, "request" },
+    { "depinsignrpc", 1, "request" },
     { "setmocktime", 0, "timestamp" },
     { "generate", 0, "nblocks" },
     { "generate", 1, "maxtries" },

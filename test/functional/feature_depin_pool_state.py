@@ -16,6 +16,7 @@ import struct
 
 from feature_depin_messaging_permissions import DepinMessagingPermissionsTest, TOKEN
 from test_framework.key import ECKey, ECPubKey, SECP256K1
+from test_framework.depin import DepinClient
 from test_framework.util import assert_equal, assert_raises_rpc_error
 
 
@@ -105,34 +106,21 @@ class DepinPoolStateTest(DepinMessagingPermissionsTest):
         super().set_test_params()
         self.depin_args.append('-depinmsgsize=10240')
 
-    def sequence_page(self, address, cursor=None, limit=100, since=0, nonce=None):
-        node = self.nodes[0]
+    def sequence_request(self, address, cursor=None, limit=100, since=0, nonce=None):
         nonce = nonce or self.challenge(address)
-        signed = node.depinsignreadseq(address, TOKEN, nonce, cursor, limit, since)
-        info = self.plain(node.depingetmsginfo())
-        # Reconstruct the contract independently, not merely by asking both
-        # signing/verifying RPCs to use the same possibly incorrect helper.
-        preimage_bytes = (vector(b'depinreceiveseq/v1') + bytes.fromhex(node.getblockhash(0))[::-1] +
-                          vector(bytes.fromhex(info['depinpoolpkey'])) + vector(TOKEN.encode()) +
-                          vector(TOKEN.encode()) + vector(address.encode()) + vector(nonce.encode()) +
-                          bytes([int(cursor is not None)]) +
-                          (bytes.fromhex(cursor['stream_id'])[::-1] if cursor else bytes(32)) +
-                          struct.pack('<Qqq', cursor['after_seq'] if cursor else 0, limit, since))
-        expected = 'DEPIN-READ-SEQUENCE-v1|' + sha256(sha256(preimage_bytes))[::-1].hex()
-        assert_equal(signed['preimage'], expected)
-        assert_equal(node.signmessage(address, expected), signed['signature'])
-        reply = node.depinreceiveseq(TOKEN, address, nonce, signed['signature'], cursor, limit, since)
-        preimage = 'DEPIN-RESP|depinreceiveseq|{}|{}|{}|{}'.format(
-            TOKEN, address, nonce, sha256(reply['encrypted'].encode()).hex())
-        assert node.verifymessage(info['depinpoolkeyaddress'], reply['poolsig'], preimage)
-        return node.depindecrypt(address, reply['encrypted'])
+        return DepinClient(self.nodes[0]).prepare('depinreceiveseq', TOKEN, address, nonce,
+                                                {'cursor': cursor, 'limit': limit, 'from_timestamp': since})
+
+    def sequence_page(self, address, cursor=None, limit=100, since=0, nonce=None):
+        return DepinClient(self.nodes[0]).call_request('depinreceiveseq', self.sequence_request(address, cursor, limit, since, nonce))
 
     def purge(self, owner, mode='all'):
-        node = self.nodes[0]
         nonce = self.challenge(owner, 'admin')
-        signature = node.depinsignchallenge(owner, TOKEN, nonce, 'admin')['signature']
-        reply = node.depinclearmsg(TOKEN, owner, nonce, signature, mode)
-        return node.depindecrypt(owner, reply['encrypted'])
+        args = {'mode': mode} if isinstance(mode, str) else {'mode': 'hours', 'hours': mode}
+        return DepinClient(self.nodes[0]).call('depinclearmsg', TOKEN, owner, nonce, args)
+
+    def submit(self, wrapped):
+        return DepinClient(self.nodes[0]).call('depinsubmitmsg', '', wrapped['sender'], args={'encrypted': wrapped['encrypted']})
 
     def kill_restart(self, args=None):
         node = self.nodes[0]
@@ -144,7 +132,7 @@ class DepinPoolStateTest(DepinMessagingPermissionsTest):
         self.start_node(0, args or self.depin_args)
 
     def wrap(self, message, key=None, extra_recipient=None):
-        info = self.plain(self.nodes[0].depingetmsginfo())
+        info = self.plain(self.info_response(self.nodes[0]))
         keys = [bytes.fromhex(info['depinpoolpkey'])]
         if extra_recipient:
             keys.append(extra_recipient)
@@ -175,18 +163,20 @@ class DepinPoolStateTest(DepinMessagingPermissionsTest):
 
         self.log.info('Signed cursor parameters cannot be changed or moved between methods')
         nonce = self.challenge(reader)
-        signed = node.depinsignreadseq(reader, TOKEN, nonce, old_cursor, 1, 0)
-        assert_raises_rpc_error(-32600, 'Signature does not match', node.depinreceiveseq,
-                                TOKEN, reader, nonce, signed['signature'], old_cursor, 2, 0)
-        assert_raises_rpc_error(-32600, '', node.depinreceivemsg,
-                                TOKEN, reader, nonce, signed['signature'])
+        request = self.sequence_request(reader, old_cursor, 1, 0, nonce)
+        changed = copy.deepcopy(request)
+        changed['args']['limit'] = 2
+        client = DepinClient(node)
+        assert_raises_rpc_error(-32600, 'Signature does not match', client.call_request, 'depinreceiveseq', changed)
+        assert_raises_rpc_error(-8, '', client.call_request, 'depinreceivemsg', request)
         for field, value in [('version', 99), ('address', owner), ('after_seq', -1), ('scope', 123)]:
-            malformed = dict(old_cursor, **{field: value})
-            assert_raises_rpc_error(-8, '', node.depinreceiveseq,
-                                    TOKEN, reader, nonce, signed['signature'], malformed, 1, 0)
-        changed_filter = dict(old_cursor, from_timestamp=1)
-        assert_raises_rpc_error(-32600, 'Signature does not match', node.depinreceiveseq,
-                                TOKEN, reader, nonce, signed['signature'], changed_filter, 1, 1)
+            malformed = copy.deepcopy(request)
+            malformed['args']['cursor'][field] = value
+            assert_raises_rpc_error(-8, '', client.call_request, 'depinreceiveseq', malformed)
+        changed = copy.deepcopy(request)
+        changed['args']['cursor']['from_timestamp'] = 1
+        changed['args']['from_timestamp'] = 1
+        assert_raises_rpc_error(-32600, 'Signature does not match', client.call_request, 'depinreceiveseq', changed)
         resumed = self.sequence_page(reader, old_cursor, 1, nonce=nonce)
         assert_equal(resumed['messages'][0]['hash'], second)
 
@@ -194,20 +184,20 @@ class DepinPoolStateTest(DepinMessagingPermissionsTest):
         stream = old_cursor['stream_id']
         self.kill_restart()
         node = self.nodes[0]
-        assert_equal(self.plain(node.depingetmsginfo())['stream_id'], stream)
+        assert_equal(self.plain(self.info_response(node))['stream_id'], stream)
         assert_equal(self.sequence_page(reader, old_cursor)['messages'][0]['hash'], second)
 
         self.log.info('Moderation survives a kill and a new privacy envelope cannot undo it')
         assert_equal(self.purge(owner)['removed'], 2)
         self.kill_restart()
         node = self.nodes[0]
-        assert_equal(self.plain(node.depingetmsginfo())['messages'], 0)
-        assert_raises_rpc_error(-1, 'administratively deleted', node.depinsubmitmsg, self.wrap(original))
+        assert_equal(self.plain(self.info_response(node))['messages'], 0)
+        assert_raises_rpc_error(-1, 'administratively deleted', self.submit, self.wrap(original))
         late = copy.deepcopy(original)
         late['timestamp'] -= 60
         late['encrypted_payload_hex'] = encrypt(b'late timestamp', [bytes.fromhex(node.validateaddress(reader)['pubkey'])]).hex()
-        accepted = node.depinsubmitmsg(self.wrap(late, signing_key))
-        late_hash = node.depindecrypt(owner, accepted['encrypted'])['hash']
+        accepted = self.submit(self.wrap(late, signing_key))
+        late_hash = accepted['hash']
         resumed = self.sequence_page(reader, old_cursor)
         assert_equal([m['hash'] for m in resumed['messages']], [late_hash])
         assert resumed['messages'][0]['sequence'] > old_cursor['after_seq']
@@ -216,29 +206,28 @@ class DepinPoolStateTest(DepinMessagingPermissionsTest):
         for timestamp in (-2**63, 2**63 - 1):
             invalid = copy.deepcopy(late)
             invalid['timestamp'] = timestamp
-            assert_raises_rpc_error(-1, 'timestamp', node.depinsubmitmsg, self.wrap(invalid, signing_key))
+            assert_raises_rpc_error(-1, 'timestamp', self.submit, self.wrap(invalid, signing_key))
         invalid = copy.deepcopy(late)
         invalid['encrypted_payload_hex'] += '00'
-        assert_raises_rpc_error(-1, 'Invalid ECIES', node.depinsubmitmsg, self.wrap(invalid, signing_key))
-        assert_raises_rpc_error(-22, 'recipients', node.depinsubmitmsg,
+        assert_raises_rpc_error(-1, 'Invalid ECIES', self.submit, self.wrap(invalid, signing_key))
+        assert_raises_rpc_error(-22, 'recipients', self.submit,
                                 self.wrap(late, signing_key, bytes.fromhex(node.validateaddress(reader)['pubkey'])))
-        assert_raises_rpc_error(-8, 'budget', node.depinsubmitmsg,
+        assert_raises_rpc_error(-8, 'budget', self.submit,
                                 {'sender': owner, 'encrypted': '00' * 40000})
         damaged = self.wrap(late, signing_key)
         raw = bytearray.fromhex(damaged['encrypted'])
         raw[-1] ^= 1
         damaged['encrypted'] = raw.hex()
-        assert_raises_rpc_error(-25, 'decrypt', node.depinsubmitmsg, damaged)
+        assert_raises_rpc_error(-25, 'decrypt', self.submit, damaged)
 
         self.log.info('Volatile runs rotate cursors while keeping moderation durable')
         volatile_args = [a for a in self.depin_args if not a.startswith('-depinpoolpersist=')] + ['-depinpoolpersist=0']
         self.restart_node(0, volatile_args)
         node = self.nodes[0]
-        assert_equal(self.plain(node.depingetmsginfo())['messages'], 0)
+        assert_equal(self.plain(self.info_response(node))['messages'], 0)
         nonce = self.challenge(reader)
-        signed = node.depinsignreadseq(reader, TOKEN, nonce, old_cursor, 1)
-        assert_raises_rpc_error(-8, 'stream changed', node.depinreceiveseq,
-                                TOKEN, reader, nonce, signed['signature'], old_cursor, 1)
+        request = self.sequence_request(reader, old_cursor, 1, nonce=nonce)
+        assert_raises_rpc_error(-8, 'stream changed', DepinClient(node).call_request, 'depinreceiveseq', request)
         assert self.sequence_page(reader, nonce=nonce)['cursor']['stream_id'] != stream
         transient_hash = node.depinsendmsg(TOKEN, 'volatile message', owner)['hash']
         transient = self.sequence_page(reader)['messages'][0]
@@ -246,8 +235,8 @@ class DepinPoolStateTest(DepinMessagingPermissionsTest):
         assert_equal(self.purge(owner)['removed'], 2)  # volatile message plus retained late_hash
         self.kill_restart(volatile_args)
         node = self.nodes[0]
-        assert_raises_rpc_error(-1, 'administratively deleted', node.depinsubmitmsg, self.wrap(transient))
-        assert_raises_rpc_error(-1, 'administratively deleted', node.depinsubmitmsg, self.wrap(original))
+        assert_raises_rpc_error(-1, 'administratively deleted', self.submit, self.wrap(transient))
+        assert_raises_rpc_error(-1, 'administratively deleted', self.submit, self.wrap(original))
         self.restart_node(0, self.depin_args)
         node = self.nodes[0]
         assert_equal(self.sequence_page(reader)['messages'], [])

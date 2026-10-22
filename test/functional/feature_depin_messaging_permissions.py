@@ -13,6 +13,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 
+from test_framework.depin import DepinClient
 from test_framework.test_framework import NeuraiTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error, get_rpc_proxy
 
@@ -47,34 +48,31 @@ class DepinMessagingPermissionsTest(NeuraiTestFramework):
         node.sendrawtransaction(signed["hex"])
         node.generate(1)
 
-    def request(self, address, kind="receive"):
-        node = self.nodes[0]
-        # Native helper supplies the node's clock. Distinct milliseconds also
-        # make the test reliable under mock time and exercise signmessage interop.
-        clock = node.depinsignrequest(address, TOKEN, kind)["timestamp"]
-        self.sequence += 1
-        timestamp = clock + self.sequence
-        preimage = "DEPIN-REQ|{}|{}|{}|{}".format(kind, TOKEN, address, timestamp)
-        signature = node.signmessage(address, preimage)
-        return [TOKEN, address, timestamp, signature, kind]
+    def info_response(self, node=None):
+        return DepinClient(node or self.nodes[0]).bootstrap()[0]
+
+    def request(self, address, kind="receive", rpc=None):
+        return [DepinClient(rpc or self.nodes[0]).prepare("depinchallenge", TOKEN, address, args={"type": kind})]
+
+    def call_request(self, node, method, request):
+        return DepinClient(node).call_request(method, request)
 
     def challenge(self, address, kind="receive"):
-        node = self.nodes[0]
-        response = node.depinchallenge(*self.request(address, kind))
-        return node.depindecrypt(address, response["encrypted"])["challenge"]
+        return self.call_request(self.nodes[0], "depinchallenge", self.request(address, kind)[0])["challenge"]
+
+    def read_request(self, address, nonce, node=None, args=None):
+        return DepinClient(node or self.nodes[0]).prepare("depinreceivemsg", TOKEN, address, nonce, args)
 
     def receive(self, address, nonce=None):
-        node = self.nodes[0]
         nonce = nonce or self.challenge(address)
-        signature = node.depinsignchallenge(address, TOKEN, nonce)["signature"]
-        result = node.depinreceivemsg(TOKEN, address, nonce, signature)
-        return node.depindecrypt(address, result["encrypted"])["messages"]
+        return self.call_request(self.nodes[0], "depinreceivemsg", self.read_request(address, nonce))["messages"]
+
 
     def run_test(self):
         node = self.nodes[0]
         self.log.info("Issue a group, reveal Legacy keys and send encrypted history")
         node.generate(432)
-        assert self.plain(node.depingetmsginfo())["ready"]
+        assert self.plain(self.info_response(node))["ready"]
         sender, revoked, remaining, admin, successor = [node.getnewaddress() for _ in range(5)]
         for address in (sender, revoked, remaining, admin, successor):
             self.reveal(address)
@@ -92,9 +90,8 @@ class DepinMessagingPermissionsTest(NeuraiTestFramework):
         self.log.info("A confirmed freeze invalidates access through an existing nonce")
         node.freezedepin(TOKEN, revoked, admin)
         freeze_block = node.generate(1)[0]
-        signature = node.depinsignchallenge(revoked, TOKEN, pending)["signature"]
-        assert_raises_rpc_error(-32600, "no active balance", node.depinreceivemsg,
-                                TOKEN, revoked, pending, signature)
+        request = self.read_request(revoked, pending)
+        assert_raises_rpc_error(-32600, "no active balance", self.call_request, node, "depinreceivemsg", request)
         assert_equal(node.depingetmsg(TOKEN, revoked), [])
         assert_equal(len(self.receive(remaining)), 1)
         second = node.depinsendmsg(TOKEN, "after recipient freeze", sender)["hash"]
@@ -112,7 +109,7 @@ class DepinMessagingPermissionsTest(NeuraiTestFramework):
         self.restart_node(0, self.depin_args)
         node = self.nodes[0]
         assert_equal({m["hash"] for m in self.receive(remaining)}, {first, second})
-        assert_raises_rpc_error(-32600, "no active balance", node.depinchallenge,
+        assert_raises_rpc_error(-32600, "no active balance", self.call_request, node, "depinchallenge",
                                 *self.request(revoked))
         assert_raises_rpc_error(None, "", node.depinsendmsg,
                                 TOKEN, "forbidden sender", sender)
@@ -122,7 +119,7 @@ class DepinMessagingPermissionsTest(NeuraiTestFramework):
         # An orphaned freeze in the mempool must not revoke confirmed ownership.
         assert_equal(len(self.receive(revoked)), 1)
         node.reconsiderblock(sender_freeze_block)
-        assert_raises_rpc_error(-32600, "no active balance", node.depinchallenge,
+        assert_raises_rpc_error(-32600, "no active balance", self.call_request, node, "depinchallenge",
                                 *self.request(revoked))
         node.unfreezedepin(TOKEN, revoked, admin)
         node.generate(1)
@@ -133,41 +130,35 @@ class DepinMessagingPermissionsTest(NeuraiTestFramework):
         admin_nonce = self.challenge(admin, "admin")
         node.transfer(TOKEN + "!", 1, successor)
         owner_block = node.generate(1)[0]
-        admin_sig = node.depinsignchallenge(admin, TOKEN, admin_nonce, "admin")["signature"]
-        assert_raises_rpc_error(-32600, "does not hold the owner token", node.depinclearmsg,
-                                TOKEN, admin, admin_nonce, admin_sig)
+        admin_request = DepinClient(node).prepare("depinclearmsg", TOKEN, admin, admin_nonce)
+        assert_raises_rpc_error(-32600, "does not hold the owner token", self.call_request, node, "depinclearmsg", admin_request)
         self.challenge(successor, "admin")
         node.invalidateblock(owner_block)
-        node.depinclearmsg(TOKEN, admin, admin_nonce, admin_sig)  # Deletes expired only.
+        self.call_request(node, "depinclearmsg", admin_request)  # Deletes expired only.
         assert_equal(len(self.receive(remaining)), 2)
         node.reconsiderblock(owner_block)
 
         self.log.info("A node stalled after IBD denies service but keeps diagnostics available")
         tip_time = node.getblockheader(node.getbestblockhash())["time"]
         node.setmocktime(tip_time + 3601)
-        assert not self.plain(node.depingetmsginfo())["ready"]
-        assert_equal(self.plain(node.depinpoolstats())["total_messages"], 2)
-        assert_raises_rpc_error(-10, "DePIN service not ready", node.depinchallenge,
+        assert not self.plain(self.info_response(node))["ready"]
+        assert_equal(DepinClient(node).call("depinpoolstats", TOKEN)["total_messages"], 2)
+        assert_raises_rpc_error(-10, "DePIN service not ready", self.call_request, node, "depinchallenge",
                                 *self.request(remaining))
         node.setmocktime(0)
-        assert self.plain(node.depingetmsginfo())["ready"]
+        assert self.plain(self.info_response(node))["ready"]
 
         self.log.info("Concurrent signed requests and block validation obey lock order")
         def request_during_mining(address, eligible):
-            # A separate HTTP connection is required for this thread.
-            rpc = get_rpc_proxy(node.url, 0, timeout=60)
+            rpc = get_rpc_proxy(node.url, 500 + int(eligible))
+            client = DepinClient(rpc)
             for _ in range(40):
-                timestamp = rpc.depinsignrequest(address, TOKEN)["timestamp"]
-                self.sequence += 1
-                timestamp += self.sequence
-                preimage = "DEPIN-REQ|receive|{}|{}|{}".format(TOKEN, address, timestamp)
-                params = [TOKEN, address, timestamp, rpc.signmessage(address, preimage)]
+                request = self.request(address, rpc=rpc)[0]
                 if eligible:
-                    response = rpc.depinchallenge(*params)
-                    assert rpc.depindecrypt(address, response["encrypted"])["challenge"]
-                    self.plain(rpc.depingetancestorrecipients(TOKEN))
+                    assert client.call_request("depinchallenge", request)["challenge"]
+                    client.call("depingetancestorrecipients", TOKEN)
                 else:
-                    assert_raises_rpc_error(-32600, "no active balance", rpc.depinchallenge, *params)
+                    assert_raises_rpc_error(-32600, "no active balance", client.call_request, "depinchallenge", request)
             return 40
 
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -190,13 +181,12 @@ class DepinMessagingPermissionsTest(NeuraiTestFramework):
         self.receive(self_revoked)
         revoke_block = node.generate(1)[0]
         old_nonce = nonces[self_revoked]
-        signature = node.depinsignchallenge(self_revoked, TOKEN, old_nonce)["signature"]
-        assert_raises_rpc_error(-32600, "no active balance", node.depinreceivemsg,
-                                TOKEN, self_revoked, old_nonce, signature)
+        request = self.read_request(self_revoked, old_nonce)
+        assert_raises_rpc_error(-32600, "no active balance", self.call_request, node, "depinreceivemsg", request)
         node.invalidateblock(revoke_block)
         assert self.receive(self_revoked, old_nonce)
         node.reconsiderblock(revoke_block)
-        assert_raises_rpc_error(-32600, "no active balance", node.depinchallenge,
+        assert_raises_rpc_error(-32600, "no active balance", self.call_request, node, "depinchallenge",
                                 *self.request(self_revoked))
         node.unfreezedepin(TOKEN, self_revoked, successor)
         node.generate(1)
@@ -207,11 +197,11 @@ class DepinMessagingPermissionsTest(NeuraiTestFramework):
         without_persistence.append("-depinpoolpersist=0")
         self.restart_node(0, without_persistence)
         node = self.nodes[0]
-        assert_equal(self.plain(node.depingetmsginfo())["messages"], 0)
+        assert_equal(self.plain(self.info_response(node))["messages"], 0)
         node.depinsendmsg(TOKEN, "volatile message", remaining)
-        assert_equal(self.plain(node.depingetmsginfo())["messages"], 1)
+        assert_equal(self.plain(self.info_response(node))["messages"], 1)
         self.restart_node(0, without_persistence)
-        assert_equal(self.plain(self.nodes[0].depingetmsginfo())["messages"], 0)
+        assert_equal(self.plain(self.info_response(self.nodes[0]))["messages"], 0)
 
 
 if __name__ == "__main__":

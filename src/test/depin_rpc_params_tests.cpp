@@ -4,7 +4,7 @@
 
 // Argument plumbing for the DePIN RPCs: the CLI conversion table
 // (vRPCConvertParams, rpc/client.cpp) and the parameter names declared in the
-// command table (rpc/messages.cpp).
+// command table (rpc/depin.cpp).
 //
 // This is the layer a normal RPC unit test cannot see. Building the UniValue by
 // hand -- which is what every other test here does -- skips the conversion
@@ -13,11 +13,8 @@
 // found by a functional walkthrough, not by the suite; these tests exist so the
 // next one is found here.
 //
-// One parameter cannot live in the conversion table at all (depinclearmsg's
-// `mode` accepts a word as well as a number, and ParseNonRFCJSONValue throws on
-// non-JSON), so it is normalised inside the RPC. For it the tests assert
-// SEMANTICS, not acceptance: "7" must do what the number 7 does. A test that
-// only checked "does not throw" would measure nothing.
+// Protocol 3 converts one complete request object. Field types and defaults
+// are checked by its common parser; numeric strings are deliberately rejected.
 
 // amount.h first: assets/assetdb.h declares CAmount parameters without
 // including it, so it only compiles when the includer got there first.
@@ -44,6 +41,7 @@
 #include "rpc/server.h"
 #include "test/test_neurai.h"
 #include "test/depin_test_utils.h"
+#include "test/depin_rpc_test_client.h"
 #include "utiltime.h"
 #include "validation.h"
 
@@ -89,7 +87,7 @@ UniValue CallRpc(const std::string& method, const UniValue& params)
     request.fHelp = false;
 
     BOOST_REQUIRE_MESSAGE(tableRPC[method], "RPC not registered: " + method);
-    return (*tableRPC[method]->actor)(request);
+    return CallDepinTestRpc(method,params);
 }
 
 UniValue StrParams(const std::vector<std::string>& args)
@@ -122,7 +120,7 @@ UniValue CallNamed(const std::string& method, const std::vector<std::string>& na
     request.strMethod = method;
     request.params = NamedToPositional(method, nameEqualsValue);
     request.fHelp = false;
-    return (*tableRPC[method]->actor)(request);
+    return CallDepinTestRpc(method,request.params);
 }
 
 UniValue OpenResponse(const UniValue& response, const CKey& key, const std::string& address);
@@ -162,6 +160,7 @@ struct DepinRpcParamsSetup : public TestingSetup {
 
         senderKey.MakeNewKey(true);
         senderAddress = EncodeDestination(senderKey.GetPubKey().GetID());
+        RememberDepinTestKey(senderKey);
         // AddMessage() checks token ownership against the asset index.
         BOOST_REQUIRE(passetsdb->WriteAssetAddressQuantity(POOL_TOKEN, senderAddress, 1));
         // depinreceivemsg encrypts its reply for the address's revealed pubkey.
@@ -169,6 +168,7 @@ struct DepinRpcParamsSetup : public TestingSetup {
         // depinclearmsg is owner-level: an owner address with a revealed key.
         ownerKey.MakeNewKey(true);
         ownerAddress = EncodeDestination(ownerKey.GetPubKey().GetID());
+        RememberDepinTestKey(ownerKey);
         BOOST_REQUIRE(passetsdb->WriteAssetAddressQuantity(POOL_TOKEN + OWNER_TAG, ownerAddress, 1));
         RevealPubKey(ownerAddress, ownerKey.GetPubKey());
         // Every DePIN response is signed with the pool key.
@@ -289,235 +289,69 @@ UniValue OpenResponse(const UniValue& response, const CKey& key, const std::stri
 
 BOOST_FIXTURE_TEST_SUITE(depin_rpc_params_tests, DepinRpcParamsSetup)
 
-// (1) Every numeric DePIN parameter survives the CLI conversion as a number,
-// and the parameters around it stay strings.
-BOOST_AUTO_TEST_CASE(cli_conversion_table_covers_every_numeric_parameter)
+BOOST_AUTO_TEST_CASE(cli_converts_complete_request_objects)
 {
-    for (const ConvertCase& c : CONVERT_CASES) {
-        // Enough positional arguments to reach the index under test; "1" is
-        // valid JSON as a number and valid as a string, so it works for both.
-        std::vector<std::string> args((size_t)c.index + 1, "1");
-        args[0] = POOL_TOKEN;
-
-        const UniValue converted = RPCConvertValues(c.method, args);
-        BOOST_REQUIRE_EQUAL(converted.size(), args.size());
-
-        BOOST_CHECK_MESSAGE(converted[c.index].isNum(),
-                            std::string(c.method) + " parameter " + c.name +
-                                " must reach the RPC as a number, not a string");
-
-        // Index 0 is a token/name in every case listed, so it must stay a
-        // string; this catches an entry landing on the wrong index.
-        BOOST_CHECK_MESSAGE(converted[0].isStr(),
-                            std::string(c.method) + " parameter 0 must stay a string");
+    for (const auto* method:{"depingetmsginfo","depinchallenge","depinpoolstats","depinsubmitmsg","depinreceiveseq","depinreceivemsg","depinmcpstatus","depingetancestorrecipients","depinlistsections","depinclearmsg"}) {
+        const std::string json="{\"protocol\":3,\"args\":{\"limit\":10,\"label\":\"7\"}}";
+        const auto positional=RPCConvertValues(method,{json});
+        BOOST_REQUIRE_EQUAL(positional.size(),1U);BOOST_CHECK(positional[0].isObject());
+        BOOST_CHECK(positional[0]["args"]["limit"].isNum());BOOST_CHECK(positional[0]["args"]["label"].isStr());
+        const auto named=NamedToPositional(method,{"request="+json});
+        BOOST_CHECK_EQUAL(named.write(),positional.write());
     }
 }
-
-// (2c) depinclearmsg: both forms must reach the pool and do different things.
-// Measured by how many messages survive, not by the call returning.
-BOOST_AUTO_TEST_CASE(clearmsg_accepts_word_and_numeric_string)
+BOOST_AUTO_TEST_CASE(clearmsg_numeric_hours_and_all_have_distinct_effects)
 {
-    const int64_t kHour = 3600;
-
-    // One recent message and one ten hours old.
-    AddMessage(/*ageSeconds=*/kHour, 0x01);
-    AddMessage(/*ageSeconds=*/10 * kHour, 0x02);
-    BOOST_REQUIRE_EQUAL(pDepinMsgPool->Size(), 2U);
-
-    // "7" as a string must behave like the number 7: drop the old one only.
-    const UniValue sevenAsString = Clear("", UniValue("7"));
-    BOOST_CHECK_EQUAL(find_value(sevenAsString, "removed").get_int(), 1);
-    BOOST_CHECK_EQUAL(find_value(sevenAsString, "remaining").get_int(), 1);
-    BOOST_CHECK_EQUAL(pDepinMsgPool->Size(), 1U);
-
-    // The numeric form is unaffected: nothing left older than 7 hours.
-    BOOST_CHECK_EQUAL(find_value(Clear("", UniValue((int64_t)7)), "removed").get_int(), 0);
-
-    // "all" still empties the pool.
-    AddMessage(/*ageSeconds=*/2 * kHour, 0x03);
-    BOOST_REQUIRE_EQUAL(pDepinMsgPool->Size(), 2U);
-    const UniValue cleared = Clear("", UniValue("all"));
-    BOOST_CHECK_EQUAL(find_value(cleared, "remaining").get_int(), 0);
-    BOOST_CHECK_EQUAL(pDepinMsgPool->Size(), 0U);
+    AddMessage(3600,1);AddMessage(10*3600,2);
+    BOOST_CHECK_EQUAL(Clear("",UniValue(int64_t(7)))["removed"].get_int(),1);
+    BOOST_CHECK_EQUAL(Clear("",UniValue(int64_t(7)))["removed"].get_int(),0);
+    BOOST_CHECK_EQUAL(Clear("",UniValue("all"))["removed"].get_int(),1);
 }
-
-// RPC into vRPCConvertParams: ParseNonRFCJSONValue("all") throws.
-BOOST_AUTO_TEST_CASE(polymorphic_parameters_are_not_in_the_conversion_table)
+BOOST_AUTO_TEST_CASE(legacy_cli_arguments_and_signers_are_rejected)
 {
-    // scope, address, challenge, signature, then the polymorphic mode.
-    auto withMode = [](const std::string& mode) {
-        return std::vector<std::string>{"", "NXaddress", std::string(64, 'a'), "c2ln", mode};
-    };
-    BOOST_CHECK_NO_THROW(RPCConvertValues("depinclearmsg", withMode("all")));
-
-    // They arrive as strings, which is exactly why the RPC normalises them.
-    BOOST_CHECK(RPCConvertValues("depinclearmsg", withMode("all"))[4].isStr());
-    BOOST_CHECK(RPCConvertValues("depinclearmsg", withMode("7"))[4].isStr());
+    BOOST_CHECK_THROW(RPCConvertValues("depinclearmsg",{"&TEST","address","nonce","sig","all"}),std::exception);
+    BOOST_CHECK(!tableRPC["depinsignchallenge"]);BOOST_CHECK(!tableRPC["depinsignrequest"]);BOOST_CHECK(!tableRPC["depinsignreadseq"]);
+    BOOST_REQUIRE(tableRPC["depinsignrpc"]);
+    const auto p=RPCConvertValues("depinsignrpc",{"depinclearmsg","{\"protocol\":3}"});
+    BOOST_CHECK(p[0].isStr());BOOST_CHECK(p[1].isObject());
 }
-
-// (4) Making the CLI work must not soften validation.
-BOOST_AUTO_TEST_CASE(clearmsg_rejects_partial_numbers)
+BOOST_AUTO_TEST_CASE(clearmsg_rejects_noninteger_hours_without_consuming_nonce)
 {
-    AddMessage(/*ageSeconds=*/3600, 0x04);
-
-    for (const std::string& bad : {std::string("7x"), std::string(""),
-                                   std::string("1.5"), std::string(" 7"),
-                                   std::string("0x10"), std::string("seven")}) {
-        BOOST_CHECK_MESSAGE(([&]() {
-                                try {
-                                    CallRpc("depinclearmsg", AdminParams("", UniValue(bad)));
-                                    return false;
-                                } catch (const UniValue&) {
-                                    return true;
-                                }
-                            })(),
-                            "depinclearmsg must reject \"" + bad + "\" rather than coerce it");
+    AddMessage(3600,4);
+    auto object=DepinTestRequest("depinclearmsg",AdminParams("",UniValue(int64_t(7))));
+    const auto nonce=object["challenge"].get_str();
+    for (const auto& bad:{UniValue("7"),UniValue("7x"),UniValue(""),UniValue(true),UniValue(int64_t(-1))}) {
+        auto args=object["args"];args=DepinTestReplace(args,"hours",bad);
+        BOOST_CHECK_THROW(CallRpc("depinclearmsg",DepinTestParams(DepinTestReplace(object,"args",args))),UniValue);
+        std::string error;BOOST_CHECK(g_depinChallenges.Peek(nonce,error));BOOST_CHECK_EQUAL(pDepinMsgPool->Size(),1U);
     }
-
-    // Nothing was silently removed on the way.
-    BOOST_CHECK_EQUAL(pDepinMsgPool->Size(), 1U);
-
-    // A negative threshold is still refused.
-    BOOST_CHECK_THROW(CallRpc("depinclearmsg", AdminParams("", UniValue("-1"))), UniValue);
+    BOOST_CHECK_EQUAL(DepinTestOpen(CallRpc("depinclearmsg",DepinTestParams(object)),ownerAddress)["removed"].get_int(),0);
 }
-
-// (5) and (6): the declared names match the implementation, one by one.
-BOOST_AUTO_TEST_CASE(argnames_match_the_implementation)
+BOOST_AUTO_TEST_CASE(argnames_match_v3_objects_and_local_wallet_helpers)
 {
-    std::vector<ArgNamesCase> cases = {
-        {"depinchallenge", {"token", "address", "timestamp", "signature", "type"}},
-        {"depinreceivemsg", {"token", "address", "challenge", "signature", "timestamp", "after_hash", "limit"}},
-        {"depinclearmsg", {"scope", "address", "challenge", "signature", "mode"}},
-        {"depingetancestorrecipients", {"token", "max_results", "stop_at"}},
-        {"depinlistsections", {"address", "scope", "challenge", "signature"}},
-        {"depinsubmitmsg", {"message"}},
-    };
-#ifdef ENABLE_WALLET
-    // Wallet RPCs over the local pool; only registered in a wallet build.
-    cases.push_back({"depinsendmsg", {"token", "message", "fromaddress"}});
-    cases.push_back({"depingetmsg", {"token", "fromaddress"}});
-    cases.push_back({"depinsignchallenge", {"address", "token", "challenge", "type"}});
-    cases.push_back({"depinsignrequest", {"address", "token", "type"}});
-    cases.push_back({"depindecrypt", {"address", "encrypted"}});
-#endif
-
-    for (const ArgNamesCase& c : cases) {
-        BOOST_REQUIRE_MESSAGE(tableRPC[c.method], std::string("RPC not registered: ") + c.method);
-        const std::vector<std::string>& declared = tableRPC[c.method]->argNames;
-        BOOST_REQUIRE_EQUAL_COLLECTIONS(declared.begin(), declared.end(),
-                                        c.names.begin(), c.names.end());
+    for (const auto* method:{"depingetmsginfo","depinchallenge","depinpoolstats","depinsubmitmsg","depinreceiveseq","depinreceivemsg","depinmcpstatus","depingetancestorrecipients","depinlistsections","depinclearmsg"}) {
+        BOOST_REQUIRE(tableRPC[method]);const auto& names=tableRPC[method]->argNames;
+        BOOST_REQUIRE_EQUAL(names.size(),1U);BOOST_CHECK_EQUAL(names[0],"request");
     }
+    const auto& signer=tableRPC["depinsignrpc"]->argNames;BOOST_REQUIRE_EQUAL(signer.size(),2U);BOOST_CHECK_EQUAL(signer[0],"method");BOOST_CHECK_EQUAL(signer[1],"request");
 }
-
-// (7) Named invocation, end to end. The only thing that exercises the join
-// between the conversion table and the command table.
-BOOST_AUTO_TEST_CASE(named_invocation_converts_and_positions_arguments)
+BOOST_AUTO_TEST_CASE(named_invocation_reaches_authenticated_read)
 {
-    AddMessage(/*ageSeconds=*/60, 0xCC);
-
-    // Numeric parameters arrive converted and in the right slots.
-    const UniValue named = RPCConvertNamedValues("depinreceivemsg", {"limit=10", "timestamp=0"});
-    BOOST_REQUIRE(named.isObject());
-    BOOST_CHECK(find_value(named, "limit").isNum());
-    BOOST_CHECK_EQUAL(find_value(named, "limit").get_int(), 10);
-    BOOST_CHECK(find_value(named, "timestamp").isNum());
-
-    // Skipping the middle parameters fills them with JSON nulls, which is the
-    // shape that used to make an RPC throw a type error before it did any
-    // work.
-    std::string nonce, sig;
-    ReceiveAuth(nonce, sig);
-    const UniValue positional = NamedToPositional("depinreceivemsg",
-                                                  {"token=" + POOL_TOKEN,
-                                                   "address=" + senderAddress,
-                                                   "challenge=" + nonce,
-                                                   "signature=" + sig,
-                                                   "limit=10"});
-    BOOST_REQUIRE_EQUAL(positional.size(), 7U);  // token .. limit, holes filled
-    BOOST_CHECK(positional[0].isStr());
-    BOOST_CHECK_MESSAGE(positional[4].isNull(), "gaps are filled with JSON nulls");
-    BOOST_CHECK(positional[5].isNull());
-    BOOST_CHECK(positional[6].isNum());
-    BOOST_CHECK_EQUAL(positional[6].get_int(), 10);
-
-    // And the call goes through, nulls and all. limit > 0 selects the
-    // paginated shape, which is how we know the value reached the RPC.
-    UniValue namedResponse;
-    BOOST_REQUIRE_NO_THROW(namedResponse = CallNamed("depinreceivemsg",
-                                                     {"token=" + POOL_TOKEN,
-                                                      "address=" + senderAddress,
-                                                      "challenge=" + nonce,
-                                                      "signature=" + sig,
-                                                      "limit=10"}));
-    const UniValue namedResult = OpenResponse(namedResponse, senderKey, senderAddress);
-    BOOST_CHECK_MESSAGE(namedResult.isObject() && find_value(namedResult, "messages").isArray(),
-                        "limit=10 must reach the RPC as limit");
-
-    // An unknown name is still rejected.
-    BOOST_CHECK_THROW(NamedToPositional("depinreceivemsg", {"noexiste=1"}), UniValue);
-
-    // Explicit nulls from a JSON-RPC caller behave the same way as the gaps.
-    ReceiveAuth(nonce, sig);
-    UniValue withNulls(UniValue::VARR);
-    withNulls.push_back(POOL_TOKEN);
-    withNulls.push_back(senderAddress);
-    withNulls.push_back(nonce);
-    withNulls.push_back(sig);
-    withNulls.push_back(UniValue());
-    withNulls.push_back(UniValue());
-    withNulls.push_back((int64_t)10);
-    BOOST_CHECK_NO_THROW(CallRpc("depinreceivemsg", withNulls));
+    AddMessage(60,0xcc);std::string nonce,sig;ReceiveAuth(nonce,sig);
+    UniValue old(UniValue::VARR);for (const auto& v:{UniValue(POOL_TOKEN),UniValue(senderAddress),UniValue(nonce),UniValue(sig)}) old.push_back(v);
+    auto object=DepinTestRequest("depinreceivemsg",old);
+    const auto result=OpenResponse(CallNamed("depinreceivemsg",{"request="+object.write()}),senderKey,senderAddress);
+    BOOST_CHECK_EQUAL(result["messages"].size(),1U);
+    BOOST_CHECK_THROW(NamedToPositional("depinreceivemsg",{"token=&TEST"}),UniValue);
 }
-
-#ifdef ENABLE_WALLET
-// (7b) depingetmsg by name: fromaddress binds to the second slot and unknown
-// names are still rejected.
-BOOST_AUTO_TEST_CASE(getmsg_named_fromaddress_binds_to_the_second_slot)
+BOOST_AUTO_TEST_CASE(optional_nulls_hash_like_omitted_defaults)
 {
-    const UniValue local = NamedToPositional("depingetmsg",
-                                             {"token=" + POOL_TOKEN,
-                                              "fromaddress=" + senderAddress});
-    BOOST_REQUIRE_EQUAL(local.size(), 2U);
-    BOOST_CHECK_EQUAL(local[0].get_str(), POOL_TOKEN);
-    BOOST_CHECK_EQUAL(local[1].get_str(), senderAddress);
-
-    BOOST_CHECK_THROW(NamedToPositional("depingetmsg", {"token=" + POOL_TOKEN, "noexiste=1"}),
-                      UniValue);
+    std::string nonce,sig;ReceiveAuth(nonce,sig);
+    UniValue old(UniValue::VARR);for (const auto& v:{UniValue(POOL_TOKEN),UniValue(senderAddress),UniValue(nonce),UniValue(sig)}) old.push_back(v);
+    const auto object=DepinTestRequest("depinreceivemsg",old);UniValue args(UniValue::VOBJ);
+    args.pushKV("timestamp",NullUniValue);args.pushKV("after_hash",NullUniValue);args.pushKV("limit",NullUniValue);
+    const auto withNulls=DepinTestReplace(object,"args",args);
+    BOOST_CHECK_EQUAL(ParseDepinRpcRequest("depinreceivemsg",object).Hash(),ParseDepinRpcRequest("depinreceivemsg",withNulls).Hash());
+    BOOST_CHECK_NO_THROW(CallRpc("depinreceivemsg",DepinTestParams(withNulls)));
 }
-#endif
-
-// (8) The join between the two tables: a parameter must convert under the same
-// NAME the command table declares at that index.
-//
-// Test 1 probes the conversion table by index, which is the path neurai-cli
-// takes positionally. This one probes it by name, which is the path
-// RPCConvertNamedValues takes, and then checks that argNames agrees. Both
-// halves are needed: an entry can be present by index and absent by name only
-// if the two tables disagree, and that disagreement is exactly what makes a
-// named call convert the wrong argument.
-BOOST_AUTO_TEST_CASE(conversion_table_agrees_with_command_table)
-{
-    for (const ConvertCase& c : CONVERT_CASES) {
-        // Probe the real vRPCConvertParams rather than trusting this file's
-        // copy of it: a registered name has its value parsed as JSON, an
-        // unregistered one is passed through as a string.
-        const UniValue byName = RPCConvertNamedValues(c.method, {std::string(c.name) + "=1"});
-        BOOST_CHECK_MESSAGE(find_value(byName, c.name).isNum(),
-                            std::string(c.method) + " does not convert parameter \"" + c.name +
-                                "\" by name; vRPCConvertParams is missing it or spells it "
-                                "differently");
-
-        const CRPCCommand* cmd = tableRPC[c.method];
-        if (!cmd) continue;  // wallet-only RPC, not registered in this build
-
-        BOOST_REQUIRE_MESSAGE(cmd->argNames.size() > (size_t)c.index,
-                              std::string(c.method) + " declares fewer argNames than index " +
-                                  std::to_string(c.index));
-        BOOST_CHECK_MESSAGE(cmd->argNames[c.index] == c.name,
-                            std::string(c.method) + " argNames[" + std::to_string(c.index) +
-                                "] is \"" + cmd->argNames[c.index] + "\", conversion table says \"" +
-                                c.name + "\"");
-    }
-}
-
 BOOST_AUTO_TEST_SUITE_END()

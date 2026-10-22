@@ -13,6 +13,7 @@ TEST_BINARY=test/test_neurai$(EXEEXT)
 
 JSON_TEST_FILES = \
   test/data/sph_compat.json \
+  test/data/depin_rpc_v3.json \
   test/data/c5_public_tree.json \
   test/data/c6_public_tree.json \
   test/data/nip043_b3_fixture.json \
@@ -91,6 +92,8 @@ NEURAI_TESTS =\
   test/depinchallenge_tests.cpp \
   test/depinpoolkey_tests.cpp \
   test/depin_auth_rpc_tests.cpp \
+  test/depinrpc_tests.cpp \
+  test/depin_rpc_test_client.h \
   test/cuckoocache_tests.cpp \
   test/DoS_tests.cpp \
   test/getarg_tests.cpp \

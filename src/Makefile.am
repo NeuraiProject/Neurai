@@ -220,6 +220,7 @@ NEURAI_CORE_H = \
   txmempool.h \
   depinmsgpool.h \
   depinchallenge.h \
+  depinrpc.h \
   depinpoolkey.h \
   depinecies.h \
   depinserialization.h \
@@ -298,6 +299,7 @@ libneurai_server_a_SOURCES = \
   rpc/assets.cpp \
   rpc/blockchain.cpp \
   rpc/messages.cpp \
+  rpc/depin.cpp \
   rpc/mining.cpp \
   rpc/misc.cpp \
   rpc/net.cpp \
@@ -317,6 +319,7 @@ libneurai_server_a_SOURCES = \
   depinmsgpool.cpp \
   depinstate.cpp \
   depinchallenge.cpp \
+  depinrpc.cpp \
   depinpoolkey.cpp \
   depinecies.cpp \
   depinmcpclient.cpp \

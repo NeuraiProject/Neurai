@@ -53,6 +53,7 @@
 #include "streams.h"
 #include "test/test_neurai.h"
 #include "test/depin_test_utils.h"
+#include "test/depin_rpc_test_client.h"
 #include "txdb.h"
 #include "utilstrencodings.h"
 #include "utiltime.h"
@@ -194,6 +195,7 @@ struct DepinSectionsSetup : public TestingSetup {
         holder.key.MakeNewKey(true);
         holder.pubkey = holder.key.GetPubKey();
         holder.address = EncodeDestination(holder.pubkey.GetID());
+        RememberDepinTestKey(holder.key);
         if (revealPubKey) {
             RevealPubKey(holder.address, holder.pubkey);
         }
@@ -307,7 +309,7 @@ UniValue CallDepinRPC(const std::string& method, const UniValue& params)
     request.fHelp = false;
 
     BOOST_REQUIRE(tableRPC[method]);
-    return (*tableRPC[method]->actor)(request);
+    return CallDepinTestRpc(method,params);
 }
 
 // What a client sends to depinsubmitmsg: the serialized message inside an

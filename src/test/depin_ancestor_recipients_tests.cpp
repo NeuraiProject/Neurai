@@ -36,6 +36,7 @@
 #include "script/standard.h"
 #include "test/test_neurai.h"
 #include "test/depin_test_utils.h"
+#include "test/depin_rpc_test_client.h"
 #include "txdb.h"
 #include "utilstrencodings.h"
 #include "validation.h"
@@ -213,7 +214,7 @@ UniValue CallAncestorRecipientsRPC(const UniValue& params)
 
     BOOST_REQUIRE(tableRPC["depingetancestorrecipients"]);
     // The RPC answers a signed plain body; these tests are about its content.
-    return DepinPlainBody((*tableRPC["depingetancestorrecipients"]->actor)(request));
+    return DepinPlainBody(CallDepinTestRpc("depingetancestorrecipients", request.params));
 }
 
 } // namespace
@@ -620,6 +621,15 @@ BOOST_AUTO_TEST_CASE(stop_at_bounds_the_ancestor_chain)
 // (14) The RPC validates its parameters and serialises the whole result.
 BOOST_AUTO_TEST_CASE(rpc_validates_and_serialises)
 {
+    struct ServingPool {
+        std::unique_ptr<CDepinMsgPool> previous;
+        ServingPool() : previous(std::move(pDepinMsgPool)) {
+            pDepinMsgPool.reset(new CDepinMsgPool());
+            BOOST_REQUIRE(pDepinMsgPool->Initialize(ROOT_TOKEN,20,DEFAULT_DEPIN_MESSAGE_SIZE,
+                          DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS,DEFAULT_DEPIN_POOL_SIZE_MB));
+        }
+        ~ServingPool() { pDepinMsgPool=std::move(previous); }
+    } servingPool;
     CreateBranch();
 
     const Holder leafHolder = NewHolder();
@@ -634,7 +644,8 @@ BOOST_AUTO_TEST_CASE(rpc_validates_and_serialises)
     const UniValue result = CallAncestorRecipientsRPC(params);
 
     BOOST_CHECK_EQUAL(find_value(result, "token").get_str(), LEAF_TOKEN);
-    BOOST_CHECK_EQUAL(find_value(result, "stop_at").get_str(), "");
+    // Protocol 3 signs and reports the effective boundary, including defaults.
+    BOOST_CHECK_EQUAL(find_value(result, "stop_at").get_str(), ROOT_TOKEN);
     BOOST_CHECK_EQUAL(find_value(result, "max_results").get_int64(),
                       (int64_t)DEFAULT_DEPIN_ANCESTOR_RECIPIENTS_LIMIT);
     BOOST_CHECK_EQUAL(find_value(result, "returned").get_int64(), 2);
@@ -687,26 +698,15 @@ BOOST_AUTO_TEST_CASE(rpc_validates_and_serialises)
     badToken.push_back("PLAINASSET");
     BOOST_CHECK_THROW(CallAncestorRecipientsRPC(badToken), UniValue);
 
-    // neurai-cli hands every argument over as a string unless the command is
-    // listed in vRPCConvertParams (rpc/client.cpp). Without an entry for
-    // max_results, `neurai-cli depingetancestorrecipients "&TEST" 5` dies with
-    // "JSON value is not an integer as expected" before the RPC body runs --
-    // a failure the checks above cannot see, because they build the UniValue
-    // themselves and so bypass that layer entirely. This was a real defect,
-    // found by the regtest/testnet walkthrough rather than by this suite.
-    const std::vector<std::string> cliArgs = {LEAF_TOKEN, "5", LEAF_TOKEN};
-    const UniValue converted = RPCConvertValues("depingetancestorrecipients", cliArgs);
-    BOOST_REQUIRE_EQUAL(converted.size(), 3U);
-    BOOST_CHECK(converted[0].isStr());
-    BOOST_CHECK_MESSAGE(converted[1].isNum(),
-                        "max_results must be converted to a number by the CLI layer");
-    BOOST_CHECK_EQUAL(converted[1].get_int64(), 5);
-    BOOST_CHECK(converted[2].isStr());
-
-    // And the converted parameters actually work end to end.
-    const UniValue viaCli = CallAncestorRecipientsRPC(converted);
-    BOOST_CHECK_EQUAL(find_value(viaCli, "max_results").get_int64(), 5);
-    BOOST_CHECK_EQUAL(find_value(viaCli, "stop_at").get_str(), LEAF_TOKEN);
+    // The CLI converts one v3 JSON object, preserving typed nested values.
+    UniValue rawArgs(UniValue::VARR);rawArgs.push_back(LEAF_TOKEN);rawArgs.push_back(5);rawArgs.push_back(LEAF_TOKEN);
+    const auto object=DepinTestRequest("depingetancestorrecipients",rawArgs);
+    const auto converted=RPCConvertValues("depingetancestorrecipients",{object.write()});
+    BOOST_REQUIRE_EQUAL(converted.size(),1U);BOOST_CHECK(converted[0].isObject());
+    BOOST_CHECK(converted[0]["args"]["max_results"].isNum());
+    const auto viaCli=CallAncestorRecipientsRPC(converted);
+    BOOST_CHECK_EQUAL(viaCli["max_results"].get_int64(),5);
+    BOOST_CHECK_EQUAL(viaCli["stop_at"].get_str(),LEAF_TOKEN);
 }
 
 // (15) The *_complete flags tell the caller whether a count is a total or only

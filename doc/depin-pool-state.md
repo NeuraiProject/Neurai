@@ -2,11 +2,13 @@
 
 Node contract for P5, P4, P8 and P9b, 2026-10-22. Authorization follows
 [depin-authorization.md](depin-authorization.md). The user message and ECIES
-wire encodings stay unchanged. Protocol `2` keeps its existing RPCs and adds
-`depinreceiveseq` and the wallet helper `depinsignreadseq`. Discover the
-extension using `depingetmsginfo`'s signed `body`: `sequence_rpc`,
-`state_format: 2`, `stream_id`, `admission_sequence`, `tombstones`,
-`max_message_wire_bytes` and `max_reply_plaintext_bytes`.
+wire encodings stay unchanged. Remote RPCs now use protocol **3** and the
+common request/signature contract in
+[depin-request-signatures.md](depin-request-signatures.md). Storage version 2
+and cursor version 1 are independent of the RPC version. Discover capabilities
+through the verified `depingetmsginfo` body: `sequence_rpc`, `state_format: 2`,
+`stream_id`, `admission_sequence`, `tombstones`, `max_message_wire_bytes` and
+`max_reply_plaintext_bytes`.
 
 ## Strict encoding and resource budgets (P5)
 
@@ -39,7 +41,9 @@ the pool as recipient**. Its plaintext is ASCII hex of the serialized signed
 message, at most 32768 bytes. Before `ParseHex`, the RPC rejects hex longer
 than `2 * (80 + 32768 + 81)` characters, invalid hex and malformed ECIES.
 After decryption it bounds the hex again and rejects trailing inner bytes.
-The outer `sender` must match the signed sender. It grants no authority.
+The outer request `address` must match the signed sender and its protocol 3
+operation signature must verify. That proof does not replace inner signature
+or current permission checks.
 
 Encrypted RPC replies have a **4 MiB plaintext JSON budget**, independent of
 content size. Both receive RPCs build bounded pages under the pool lock;
@@ -60,11 +64,13 @@ Recipients must reject it, never display unauthenticated plaintext.
 ## Reading by admission sequence (P4)
 
 ```
-depinreceiveseq token address challenge signature (cursor limit from_timestamp)
-depinsignreadseq address token challenge (cursor limit from_timestamp)
+depinreceiveseq request
+depinsignrpc "depinreceiveseq" request
 ```
 
-Use an ordinary `receive` challenge. For a first scan pass `null` as cursor;
+Include the ordinary `receive` challenge in the common signed request; cursor,
+limit and from_timestamp belong in its args object. For a first scan pass null
+as cursor;
 `limit` defaults to 100 and accepts 1..1000; `from_timestamp` defaults to 0
 and accepts nonnegative int64 values. It is an explicit historical filter
 `message.timestamp >= from_timestamp`, with no legacy one-second overlap.
@@ -113,43 +119,26 @@ recovery that loses a complete record create a new ID; no continuity is
 claimed with the previous stream. Sequence exhaustion at int64 maximum
 rejects admissions explicitly rather than wrapping.
 
-### Signature preimage
+### Request and response signatures
 
-All new operation parameters are signature-bound. This does not retrofit
-P2 into older methods. Compute double SHA256 with `CHashWriter` over these
-serialized fields, in order:
+Both sequence and timestamp reads use the complete protocol 3 signature in
+[the RPC contract](depin-request-signatures.md). This covers method, network/pool
+identity, instance, unique request ID, timestamp, scope/address/nonce and every
+effective argument. The cursor's stream and sequence are signature-bound; its
+version/scope/address/filter must also match the operation. Null/omitted
+arguments normalize to defaults. A continuation at sequence zero still has
+flag 1 and binds its stream. The old READ-SEQUENCE-v1 proof and wallet helper
+are rejected/removed, with no RPC fallback.
 
-| Field | Serialization |
-|---|---|
-| `depinreceiveseq/v1` | CompactSize-prefixed UTF-8 string |
-| Network genesis hash | uint256, node wire byte order |
-| Service pool public key | CompactSize-prefixed public key bytes |
-| Configured pool root, token, address, nonce | Four CompactSize-prefixed strings |
-| Continuation flag | uint8, 0 for null cursor, otherwise 1 |
-| Stream | uint256, all zero bytes for a first scan |
-| After sequence | uint64 little-endian, zero for a first scan |
-| Normalized limit | int64 little-endian |
-| Normalized from_timestamp | int64 little-endian |
+Responses bind the request hash computed by the client and encrypt the full
+page/cursor. Challenges are memory-only; restart changes the RPC instance and
+requires a fresh challenge even if the durable cursor survives.
 
-Sign `DEPIN-READ-SEQUENCE-v1|<hash.ToString()>` using the standard compact
-Base64 `signmessage` signature and Neurai message magic. `ToString()` is
-reverse-digest hex as for message hashes. The wallet helper returns both
-`preimage` and `signature`; independent clients must reconstruct and check
-the preimage with their pinned service identity, not sign an arbitrary string
-from an untrusted service. Omitted and null optional values normalize to
-their defaults. Explicit defaults sign identically. A continuation with
-`after_seq=0` still has flag 1 and binds its stream ID.
-
-The response uses the existing signed/encrypted wrapper, with method
-`depinreceiveseq` in `DEPIN-RESP|...`; the signed encrypted body contains the
-cursor and all message metadata. Challenges remain memory-only and are lost
-on restart. A new challenge is needed even when the durable cursor survives.
-
-The legacy `depinreceivemsg` keeps its timestamp/after_hash arguments and
-signature. Its anchor can still disappear through expiry/deletion, and it
-can miss late timestamps when used as a moving time cursor. Adopt the new
-method when updating libraries. The new method must also be added to an
-operator's proxy allowlist before clients can use it through that proxy.
+`depinreceivemsg` retains its timestamp/after_hash semantics **inside args**,
+but also requires the v3 common signature. Its anchor may disappear through
+expiry/deletion and its time cursor can miss late timestamps. Prefer the
+sequence method when updating libraries. Operators must add it to their proxy
+allowlist.
 
 ## Durable moderation (P8)
 
@@ -187,10 +176,11 @@ storage outcome of an I/O error can be uncertain: recovery may find the
 entire batch or none, never an intentionally acknowledged partial batch.
 Do not retry by discarding the state directory.
 
-P8 does not solve the deferred P2 issue: the old administrative signature
-still does not bind the purge mode/age. An intermediary able to alter an
-authenticated legacy admin request can change that selection. The new
-durability protects the selected deletion, not that old signature contract.
+Protocol 3 now binds administrative mode and age to the exact operation.
+Changing expired to all, or altering hours, cannot reuse the proof. A purge
+error is a signed/encrypted error body, never a success result. If the nonce
+was consumed before storage failed, obtain a new one explicitly; do not
+automatically repeat an administrative action after a lost response.
 
 ## Persistence and migration (P9b)
 
@@ -265,5 +255,5 @@ External libraries have deliberately not been changed. Their final migration
 must check canonical encoding, explicit size semantics, strict decryption,
 signed service identity, cursor storage/recovery, proxy allowlisting and
 bounded handling of `-8`, `-10` and `-26`. No passing node test certifies an
-untested external client. Full method signing P2 and context revision P7
-remain separate work.
+untested external client. Full method signing P2 is implemented in the node;
+context revision P7 and external migrations remain pending.
