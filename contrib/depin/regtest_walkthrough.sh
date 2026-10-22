@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Disposable protocol 3 RPC walkthrough and attack regressions.
+# Disposable protocol 4 RPC walkthrough and attack regressions.
 # Run after building neuraid/neurai-cli and configuring the functional framework.
-# Arguments are passed to the framework, e.g. --tmpdir=/tmp/depin-rpc3 --nocleanup.
+# Arguments are passed to the framework, e.g. --tmpdir=/tmp/depin-rpc4 --nocleanup.
 # The framework chooses fresh wallets, ports and data directories; no existing
 # node or DATADIR is reused. The independent client verifies signatures first.
 set -euo pipefail

@@ -94,6 +94,11 @@ public:
     bool AddressDir(std::vector<std::pair<std::string, CAmount> >& vecAssetAmount, int& totalEntries, const bool& fGetTotal, const std::string& address, const size_t count, const long start);
     bool AssetAddressDir(std::vector<std::pair<std::string, CAmount> >& vecAddressAmount, int& totalEntries, const bool& fGetTotal, const std::string& assetName, const size_t count, const long start);
 
+    // Read-only, bounded address rows. No flush, no count pass. The caller
+    // retains cs_main and merges dirty balances; rows consume a shared budget.
+    bool ReadAddressAssets(const std::string& address, size_t& remainingRows,
+                           std::vector<std::pair<std::string, CAmount>>& rows, bool& limited);
+
     /**
      * Holders of several assets in one pass, keyed by exact asset name.
      *

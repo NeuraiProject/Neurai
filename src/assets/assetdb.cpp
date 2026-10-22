@@ -67,6 +67,28 @@ bool CAssetsDB::ReadAddressAssetQuantity(const std::string &address, const std::
     return Read(std::make_pair(ADDRESS_ASSET_QUANTITY_FLAG, std::make_pair(address, assetName)), quantity);
 }
 
+bool CAssetsDB::ReadAddressAssets(const std::string& address, size_t& remainingRows,
+                                 std::vector<std::pair<std::string, CAmount>>& rows, bool& limited)
+{
+    AssertLockHeld(cs_main);
+    rows.clear();
+    limited = false;
+    std::unique_ptr<CDBIterator> cursor(NewIterator());
+    cursor->Seek(std::make_pair(ADDRESS_ASSET_QUANTITY_FLAG, std::make_pair(address, std::string())));
+    while (cursor->Valid()) {
+        std::pair<char, std::pair<std::string, std::string>> key;
+        if (!cursor->GetKey(key)) return false;
+        if (key.first != ADDRESS_ASSET_QUANTITY_FLAG || key.second.first != address) break;
+        if (!remainingRows) { limited = true; break; }
+        CAmount amount;
+        if (!cursor->GetValue(amount)) return false;
+        --remainingRows;
+        rows.emplace_back(key.second.second, amount);
+        cursor->Next();
+    }
+    return true;
+}
+
 bool CAssetsDB::EraseAssetData(const std::string& assetName)
 {
     return Erase(std::make_pair(ASSET_FLAG, assetName));

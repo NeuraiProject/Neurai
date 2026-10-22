@@ -841,7 +841,7 @@ BOOST_AUTO_TEST_CASE(freshness_gate_blocks_ibd_stale_tip_and_header_lag_without_
     BOOST_CHECK_EQUAL(nFullStateFlushes.load(), flushes);
 }
 
-BOOST_AUTO_TEST_CASE(v3_clear_binds_mode_hours_and_every_service_field)
+BOOST_AUTO_TEST_CASE(v4_clear_binds_mode_hours_and_every_service_field)
 {
     const auto owner=NewHolder(true,SECTION_A+OWNER_TAG,1);
     const auto sender=NewHolder(true,SECTION_A,1), reader=NewHolder(true,SECTION_A,1);
@@ -855,7 +855,7 @@ BOOST_AUTO_TEST_CASE(v3_clear_binds_mode_hours_and_every_service_field)
         std::string error;BOOST_CHECK(g_depinChallenges.Peek(nonce,error));BOOST_CHECK_EQUAL(pDepinMsgPool->Size(),2U);
     }
     CKey otherPool;otherPool.MakeNewKey(true);const auto otherPub=otherPool.GetPubKey();
-    for (const auto& field:{"network","instance_id","request_id","pool_pubkey","pool_root","token","timestamp_ms","protocol"}) {
+    for (const auto& field:{"network","instance_id","request_id","pool_pubkey","pool_root","membership_revision","token","timestamp_ms","protocol"}) {
         UniValue value=field==std::string("pool_pubkey")?UniValue(HexStr(otherPub.begin(),otherPub.end())):
             field==std::string("pool_root")?UniValue(ROOT+"/OTHER"):
             field==std::string("token")?UniValue(ROOT):
@@ -872,7 +872,7 @@ BOOST_AUTO_TEST_CASE(v3_clear_binds_mode_hours_and_every_service_field)
     BOOST_CHECK(Throws("depinclearmsg",DepinTestParams(object)));
 }
 
-BOOST_AUTO_TEST_CASE(v3_nonce_cannot_authorize_a_different_method_or_two_concurrent_reads)
+BOOST_AUTO_TEST_CASE(v4_nonce_cannot_authorize_a_different_method_or_two_concurrent_reads)
 {
     const auto holder=NewHolder(true,SECTION_A,1);
     const auto nonce=Challenge(SECTION_A,holder,DepinChallengeType::RECEIVE);
@@ -890,7 +890,7 @@ BOOST_AUTO_TEST_CASE(v3_nonce_cannot_authorize_a_different_method_or_two_concurr
     BOOST_CHECK(!g_depinChallenges.Peek(nonce,error));
 }
 
-BOOST_AUTO_TEST_CASE(v3_restart_and_clock_rollback_invalidate_old_requests)
+BOOST_AUTO_TEST_CASE(v4_restart_and_clock_rollback_invalidate_old_requests)
 {
     SetMockTime(1800000000);RefreshDepinTestTipTime();
     const auto holder=NewHolder(true,SECTION_A,1);const auto nonce=Challenge(SECTION_A,holder,DepinChallengeType::RECEIVE);
@@ -905,7 +905,7 @@ BOOST_AUTO_TEST_CASE(v3_restart_and_clock_rollback_invalidate_old_requests)
     BOOST_CHECK_NO_THROW(Challenge(SECTION_A,holder,DepinChallengeType::RECEIVE));
 }
 
-BOOST_AUTO_TEST_CASE(v3_signed_purge_failure_keeps_messages_and_never_reports_success)
+BOOST_AUTO_TEST_CASE(v4_signed_purge_failure_keeps_messages_and_never_reports_success)
 {
     const auto owner=NewHolder(true,SECTION_A+OWNER_TAG,1);
     const auto sender=NewHolder(true,SECTION_A,1), reader=NewHolder(true,SECTION_A,1);
@@ -925,6 +925,128 @@ BOOST_AUTO_TEST_CASE(v3_signed_purge_failure_keeps_messages_and_never_reports_su
     BOOST_CHECK(!body.exists("removed"));BOOST_CHECK(!body.exists("result"));
     BOOST_CHECK_EQUAL(pDepinMsgPool->Size(),2U);BOOST_CHECK_EQUAL(pDepinMsgPool->GetTombstoneCount(),0U);
     BOOST_CHECK(pDepinMsgPool->StorageHealthy());BOOST_CHECK(!g_depinChallenges.Peek(nonce,error));
+}
+
+
+BOOST_AUTO_TEST_CASE(membership_invalidates_receive_admin_and_pending_timestamp_proofs)
+{
+    const auto holder = NewHolder(true, SECTION_A, 1);
+    const auto owner = NewHolder(true, ROOT + OWNER_TAG, 1);
+    const auto receive = Challenge(SECTION_A, holder, DepinChallengeType::RECEIVE);
+    const auto admin = Challenge(ROOT, owner, DepinChallengeType::ADMIN);
+    const auto before = GetDepinRpcIdentity();
+    const auto oldRead = DepinTestSign("depinreceivemsg", MakeDepinRpcRequest(
+        "depinreceivemsg", before, SECTION_A, holder.address, receive, UniValue(UniValue::VOBJ)), holder.key);
+    const auto oldAdmin = DepinTestSign("depinclearmsg", MakeDepinRpcRequest(
+        "depinclearmsg", before, ROOT, owner.address, admin, UniValue(UniValue::VOBJ)), owner.key);
+    const auto oldChallenge = DepinTestSign("depinchallenge", MakeDepinRpcRequest(
+        "depinchallenge", before, SECTION_A, holder.address, "", UniValue(UniValue::VOBJ)), holder.key);
+    const auto oldPublic = MakeDepinRpcRequest("depinlistsections", before, ROOT, "", "", UniValue(UniValue::VOBJ));
+    {
+        LOCK(cs_main);
+        NotifyDepinMembershipTip(chainActive.Tip()->GetBlockHash(), true);
+    }
+    const auto after = GetDepinRpcIdentity();
+    BOOST_CHECK(before.membership.revision != after.membership.revision);
+    BOOST_CHECK_EQUAL(before.instance, after.instance);
+    BOOST_CHECK_EQUAL(g_depinChallenges.Size(), 0U);
+    for (const auto& entry : std::vector<std::pair<std::string, UniValue>>{
+             {"depinreceivemsg", oldRead}, {"depinclearmsg", oldAdmin}, {"depinchallenge", oldChallenge}}) {
+        JSONRPCRequest rpc; rpc.strMethod = entry.first; rpc.params = DepinTestParams(entry.second);
+        const auto response = (*tableRPC[rpc.strMethod]->actor)(rpc);
+        std::string error;
+        BOOST_REQUIRE(VerifyDepinRpcResponse(response, ParseDepinRpcRequest(entry.first, entry.second), poolKey.GetPubKey(), error));
+        const auto body = Open(response, entry.first == "depinclearmsg" ? owner : holder);
+        BOOST_CHECK_EQUAL(body["error"]["data"]["depin_error"].get_str(), "membership_stale");
+        BOOST_CHECK_EQUAL(body["error"]["data"]["membership_revision"].get_str(), after.membership.revision);
+        BOOST_CHECK(body["error"]["data"]["renew_challenge"].get_bool());
+        BOOST_CHECK(!body.exists("messages"));
+    }
+    // Refreshing a public directory is allowed with the previous revision.
+    const auto publicReply = Call("depinlistsections", DepinTestParams(oldPublic));
+    BOOST_CHECK_EQUAL(publicReply["membership_revision"].get_str(), after.membership.revision);
+    const auto fresh = Challenge(SECTION_A, holder, DepinChallengeType::RECEIVE);
+    const auto freshRead = DepinTestSign("depinreceivemsg", MakeDepinRpcRequest(
+        "depinreceivemsg", after, SECTION_A, holder.address, fresh, UniValue(UniValue::VOBJ)), holder.key);
+    BOOST_CHECK_NO_THROW(Call("depinreceivemsg", DepinTestParams(freshRead)));
+    // Another relevant transition never restores the earlier epoch/nonces.
+    { LOCK(cs_main); NotifyDepinMembershipTip(chainActive.Tip()->GetBlockHash(), true); }
+    const auto third = GetDepinRpcIdentity();
+    BOOST_CHECK(third.membership.revision != before.membership.revision);
+    BOOST_CHECK(third.membership.revision != after.membership.revision);
+    BOOST_CHECK(Throws("depinreceivemsg", DepinTestParams(oldRead)));
+}
+
+BOOST_AUTO_TEST_CASE(membership_unrelated_events_and_invalid_requests_preserve_current_challenges)
+{
+    const auto holder = NewHolder(true, SECTION_A, 1);
+    const auto nonce = Challenge(SECTION_A, holder, DepinChallengeType::RECEIVE);
+    const auto initial = GetDepinRpcIdentity();
+    const auto read = DepinTestSign("depinreceivemsg", MakeDepinRpcRequest(
+        "depinreceivemsg", initial, SECTION_A, holder.address, nonce, UniValue(UniValue::VOBJ)), holder.key);
+    {
+        LOCK(cs_main);
+        CAssetsCache changes;
+        changes.mapAssetsAddressAmount[{"&TESTING", holder.address}] = 1;
+        BOOST_CHECK(!DepinMembershipAffected(changes));
+        NotifyDepinMembershipTip(chainActive.Tip()->GetBlockHash(), false);
+    }
+    BOOST_CHECK_EQUAL(GetDepinRpcIdentity().membership.revision, initial.membership.revision);
+    const auto malformed = DepinTestReplace(read, "membership_revision", UniValue(std::string(64, 'f')));
+    BOOST_CHECK(Throws("depinreceivemsg", DepinTestParams(malformed)));
+    const auto deliberatelyStale = DepinTestSign("depinreceivemsg", malformed, holder.key);
+    const auto quota = g_depinRateLimiter.Size(), replay = DepinRpcReplaySize();
+    BOOST_CHECK(Throws("depinreceivemsg", DepinTestParams(deliberatelyStale)));
+    BOOST_CHECK_EQUAL(g_depinRateLimiter.Size(), quota);
+    BOOST_CHECK_EQUAL(DepinRpcReplaySize(), replay);
+    std::string error; BOOST_CHECK(g_depinChallenges.Peek(nonce, error));
+    BOOST_CHECK_EQUAL(GetDepinRpcIdentity().membership.revision, initial.membership.revision);
+    BOOST_CHECK_NO_THROW(Call("depinreceivemsg", DepinTestParams(read)));
+}
+
+BOOST_AUTO_TEST_CASE(membership_observer_covers_sections_owners_restrictions_and_key_reveals_without_flush)
+{
+    LOCK(cs_main);
+    const auto unknown = NewHolder(false);
+    const auto known = NewHolder(true, SECTION_A, 1);
+    GetDepinRpcIdentity();
+    const auto flushes = nFullStateFlushes.load();
+    CAssetsCache changes;
+    changes.mapAssetsAddressAmount[{SECTION_A, unknown.address}] = 1;
+    BOOST_CHECK(DepinMembershipAffected(changes));
+    changes.ClearDirtyCache(); changes.mapAssetsAddressAmount.clear();
+    changes.setNewOwnerAssetsToAdd.insert(CAssetCacheNewOwner(SECTION_B + OWNER_TAG, known.address));
+    BOOST_CHECK(DepinMembershipAffected(changes));
+    changes.ClearDirtyCache();
+    changes.setNewSelfRestrictionToAdd.insert(CAssetCacheSelfRestriction(SECTION_A, known.address, true));
+    BOOST_CHECK(DepinMembershipAffected(changes));
+    changes.ClearDirtyCache();
+    changes.setNewRestrictedAddressToAdd.insert(CAssetCacheRestrictedAddress(ROOT, known.address, RestrictedType::FREEZE_ADDRESS));
+    BOOST_CHECK(DepinMembershipAffected(changes));
+    changes.ClearDirtyCache();
+    BOOST_CHECK(!DepinMembershipAffected(changes, {unknown.address}));
+    passets->mapAssetsAddressAmount[{SECTION_B, unknown.address}] = 1;
+    BOOST_CHECK(DepinMembershipAffected(changes, {unknown.address}));
+    passets->mapAssetsAddressAmount.erase({SECTION_B, unknown.address});
+    BOOST_REQUIRE(passetsdb->WriteAddressAssetQuantity(unknown.address, SECTION_B, 1));
+    BOOST_CHECK(DepinMembershipAffected(changes, {unknown.address}));
+    passets->mapAssetsAddressAmount[{SECTION_B, unknown.address}] = 0;
+    BOOST_CHECK(!DepinMembershipAffected(changes, {unknown.address}));
+    passets->mapAssetsAddressAmount.erase({SECTION_B, unknown.address});
+    // The reverse address index is length-ordered, not lexicographic by asset.
+    BOOST_REQUIRE(passetsdb->WriteAddressAssetQuantity(unknown.address, "UNRELATED", 1));
+    std::vector<std::pair<std::string,CAmount>> rows; bool limited = false; size_t budget = 1;
+    BOOST_REQUIRE(passetsdb->ReadAddressAssets(unknown.address, budget, rows, limited));
+    BOOST_CHECK(limited); BOOST_CHECK_EQUAL(budget, 0U); BOOST_CHECK_EQUAL(rows.size(), 1U);
+    CDestinationIndexData destination;
+    BOOST_REQUIRE(GetDestinationIndexData(DecodeDestination(unknown.address), destination));
+    std::vector<std::pair<CPubKeyIndexKey,CPubKeyIndexValue>> entries{
+        {CPubKeyIndexKey(destination), CPubKeyIndexValue(unknown.pubkey, 1, uint256())}};
+    std::set<std::string> revealed;
+    CaptureDepinMembershipKeys(entries, revealed); BOOST_CHECK(revealed.count(unknown.address));
+    BOOST_REQUIRE(pblocktree->WritePubKeyIndex(entries));
+    revealed.clear(); CaptureDepinMembershipKeys(entries, revealed); BOOST_CHECK(revealed.empty());
+    BOOST_CHECK_EQUAL(nFullStateFlushes.load(), flushes);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

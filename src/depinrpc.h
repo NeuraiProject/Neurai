@@ -4,6 +4,7 @@
 #define NEURAI_DEPINRPC_H
 
 #include "pubkey.h"
+#include "depinmembership.h"
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -14,6 +15,7 @@ class CRPCTable;
 
 struct DepinRpcIdentity {
     std::string network, poolKey, root, instance;
+    DepinMembershipContext membership;
 };
 struct DepinRpcRequest {
     std::string method;

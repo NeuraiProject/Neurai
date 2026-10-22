@@ -1,4 +1,4 @@
-# DePIN Messaging Protocol Specification (protocol 3)
+# DePIN Messaging Protocol Specification (protocol 4)
 
 This document specifies the DePIN messaging protocol of Neurai at the level an
 implementer needs to write an independent client or library in any language:
@@ -16,19 +16,19 @@ Companion documents:
 - [`README.md`](README.md) — operating a service node (configuration,
   indexes, wallet requirements).
 - `contrib/depin/regtest_walkthrough.sh` — an executable end-to-end run of
-  protocol 3 functional regressions against a disposable regtest node.
+  protocol 4 functional regressions against a disposable regtest node.
 
 Reference code: `src/depinmsgpool.{h,cpp}` (message, pool, access),
 `src/depinecies.{h,cpp}` (ECIES), `src/depinchallenge.{h,cpp}`
 (authentication), `src/depinpoolkey.{h,cpp}` (reply signing/encryption),
-`src/depinrpc.{h,cpp}` and `src/rpc/depin.cpp` (RPC 3 codec/dispatcher),
+`src/depinrpc.{h,cpp}` and `src/rpc/depin.cpp` (RPC 4 codec/dispatcher),
 `src/rpc/messages.cpp` (local wallet/query business logic). A JavaScript implementation of the message
 cryptography exists in the
 [DePIN-Messaging](https://github.com/NeuraiProject/DePIN-Messaging) repository.
 
 DePIN messaging is experimental and currently available on **testnet and
-regtest** only. Protocol **3** rejects old RPC formats/signatures. Clients
-MUST verify the bootstrap and require protocol 3. External SDKs are to be
+regtest** only. Protocol **4** rejects old RPC formats/signatures. Clients
+MUST verify the bootstrap and require protocol 4. External SDKs are to be
 updated after the node; no external implementation is certified here.
 
 ---
@@ -169,7 +169,7 @@ address types cannot authenticate and are not recipients.
 
 ### 3.1 Serialization
 
-Message and ECIES structures use Bitcoin's serialization. RPC 3 uses the
+Message and ECIES structures use Bitcoin's serialization. RPC 4 uses the
 separate U32-length codec in the [request contract](depin-request-signatures.md):
 
 - integers little-endian (`int64` = 8 bytes, `uint8` = 1 byte);
@@ -196,7 +196,7 @@ order by the RPC codec; do not apply the message/uint256 reversal there.
 ### 3.3 Message signing (recoverable, `signmessage`-compatible)
 
 Used for complete RPC operation requests and response poolsig. The
-message-magic wrapper below is unchanged; the v3 signed texts are specified
+message-magic wrapper below is unchanged; the v4 signed texts are specified
 in [depin-request-signatures.md](depin-request-signatures.md).
 
 ```
@@ -363,7 +363,7 @@ sequence read signatures, retention toggles, migration and recovery.
 
 ---
 
-## 6. RPC authentication and transport (protocol 3)
+## 6. RPC authentication and transport (protocol 4)
 
 [depin-request-signatures.md](depin-request-signatures.md) defines the exact
 common object, binary field order, single-SHA256 request/response domains,
@@ -434,17 +434,17 @@ remain operator responsibilities; local wallet RPCs must stay private.
 
 ## 8. Executable vectors and tests
 
-The [13 canonical RPC request vectors](../src/test/data/depin_rpc_v3.json)
+The [15 canonical RPC request vectors](../src/test/data/depin_rpc_v4.json)
 come from an independent Python encoder in contrib/devtools. C++ checks the
 exact bytes/hash/preimage. The independent functional client reconstructs
 all request/response preimages, compares wallet signing with signmessage and
-verifies responses before decryption. The protocol 3 walkthrough also writes
+verifies responses before decryption. The protocol 4 walkthrough also writes
 public interoperability material (signed request and bootstrap response) in
 its disposable test directory, without wallet keys or RPC cookies.
 
 Run `contrib/depin/regtest_walkthrough.sh` after configuring/building the
 functional test environment. Permission and pool-state functional tests cover
 real connected chain changes, storage and process kills. The historical
-protocol 2 authentication vectors are not valid RPC 3 examples. P7 context
-revision and external library migration remain future work; no node-only
+protocol 2 authentication vectors are not valid RPC 4 examples. P7 context
+revision is implemented; external library migration remains future work; no node-only
 result certifies an external library or all production failure modes.

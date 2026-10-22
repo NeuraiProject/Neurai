@@ -69,7 +69,7 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "listassets", 1, "verbose" },
     { "listassets", 2, "count" },
     { "listassets", 3, "start" },
-    // Protocol 3 is one typed JSON request object, for positional and named CLI.
+    // DePIN remote RPCs use one typed JSON object, for positional and named CLI.
     { "depingetmsginfo", 0, "request" },
     { "depinchallenge", 0, "request" },
     { "depinpoolstats", 0, "request" },

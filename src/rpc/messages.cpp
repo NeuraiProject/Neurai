@@ -545,7 +545,7 @@ UniValue depingetmsginfo(const JSONRPCRequest& request)
                 "  \"tip_age_seconds\": n,          (numeric) Active-tip age\n"
                 "  \"maxtipage\": n,                (numeric) Configured age bound in seconds\n"
                 "  \"maxheaderlag\": n,             (numeric) Configured header lead bound\n"
-                "  \"protocol\": 3,                  (numeric) DePIN RPC protocol version\n"
+                "  \"protocol\": 4,                  (numeric) DePIN RPC protocol version\n"
                 "  \"depinpoolpkey\": \"hex\",        (string) Pool public key: pin it on first use; encrypt depinsubmitmsg envelopes for it; verifies poolsig\n"
                 "  \"depinpoolkeyaddress\": \"addr\", (string) P2PKH address of the pool key (verifymessage-compatible)\n"
 

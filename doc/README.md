@@ -172,9 +172,9 @@ does, because it aggregates the holders of all its ancestors.
 ```
 
 
-### Authenticated RPC flow (protocol 3)
+### Authenticated RPC flow (protocol 4)
 
-Remote DePIN methods take one JSON request object with protocol 3, network,
+Remote DePIN methods take one JSON request object with protocol 4, network,
 pool identity/root/instance, fresh request ID, timestamp, scope/address/nonce,
 typed args and operation signature. Legacy formats and signatures are rejected.
 Bootstrap is a reduced depingetmsginfo request. Verify the pinned pool signature
@@ -182,7 +182,7 @@ and locally computed request hash before trusting any response. Private
 responses, including correlatable operation errors, are encrypted for the
 address. The node rechecks current on-chain permission when using a challenge.
 
-See [the RPC 3 contract](depin-request-signatures.md) for canonical bytes,
+See [the RPC 4 contract](depin-request-signatures.md) for canonical bytes,
 limits, errors and examples, and [the client guide](depinreceivemsg.md) for
 complete flows. The local signing helper is `depinsignrpc method request`;
 it signs for the explicit destination and must not be exposed by a proxy.
@@ -252,7 +252,7 @@ thoroughly tested, so DePIN messaging cannot be enabled on mainnet for now.
 2. Client verifies that FROM_ADDRESS holds the selected section or an ancestor
                                     ↓
 3. Resolve active holders with public keys, stopping at the pool root
-   (protocol 3 request with token and args.max_results/stop_at)
+   (protocol 4 request with token and args.max_results/stop_at)
                                     ↓
 4. Refuse the send if the complete recipient set exceeds the pool's limit
                                     ↓
@@ -383,9 +383,9 @@ depinmsgmaxusers=50
 
 # Verify DePIN messaging status
 ```ini
-neurai-cli depingetmsginfo '{"protocol":3,"request_id":"<fresh 32-byte hex>","timestamp_ms":<now_ms>}'
+neurai-cli depingetmsginfo '{"protocol":4,"request_id":"<fresh 32-byte hex>","timestamp_ms":<now_ms>}'
 ```
-# Verify the v3 signed wrapper before reading active root, counters and limits.
+# Verify the v4 signed wrapper before reading active root, counters and limits.
 
 
 ## Usage
@@ -439,13 +439,13 @@ neurai-cli depingetmsg "TOKEN_OR_SECTION" ("FROM_ADDRESS")
   the wallet tries all of its relevant branch addresses and de-duplicates by
   message hash.
 
-**Any pool, any client**: follow [the protocol 3 guide](depinreceivemsg.md).
+**Any pool, any client**: follow [the protocol 4 guide](depinreceivemsg.md).
 Obtain verified bootstrap, sign the complete challenge request, decrypt its
 nonce, sign the complete read request with `depinsignrpc`, then verify/decrypt
 the response. Prefer admission-sequence reads. Every remote method receives
 one request object; previous positional calls and signing helpers are gone.
 
-`contrib/depin/regtest_walkthrough.sh` runs the disposable HTTP/CLI protocol 3
+`contrib/depin/regtest_walkthrough.sh` runs the disposable HTTP/CLI protocol 4
 regressions and leaves existing node data untouched.
 
 **`depingetmsg` output**:
@@ -471,10 +471,10 @@ regressions and leaves existing node data untouched.
 
 #### 3. DePIN Messaging Information
 
-Call `depingetmsginfo request` with the reduced protocol 3 bootstrap object
+Call `depingetmsginfo request` with the reduced protocol 4 bootstrap object
 from [the contract](depin-request-signatures.md). Its signed wrapper binds
 the exact request hash and includes the served network/key/root/instance.
-The verified body includes protocol 3, accepted_protocols, server_time_ms,
+The verified body includes protocol 4, accepted_protocols, server_time_ms,
 limits, counters and persistence/sequence capabilities. A first self-signed
 response does not replace an independent pin.
 
@@ -491,15 +491,15 @@ is a failed operation. Automatic expiry does not need an administrative call.
 Call `depinlistsections request`: public root-scoped objects have empty
 address/challenge/signature and return names, labels and depths. Personal
 objects require a receive nonce/signature and return current scoped access
-and counters. Both use the protocol 3 signed response wrapper. There is no
+and counters. Both use the protocol 4 signed response wrapper. There is no
 separate unauthenticated messaging port.
 
 #### 6. Resolve recipient public keys
 
 ```bash
-# Full common v3 object: token="&MYTOKEN/GENERAL",
+# Full common v4 object: token="&MYTOKEN/GENERAL",
 # args={"max_results":100,"stop_at":"&MYTOKEN"}, public authentication fields empty.
-neurai-cli depingetancestorrecipients '<complete v3 request object>'
+neurai-cli depingetancestorrecipients '<complete v4 request object>'
 ```
 
 This informational RPC returns active recipient addresses and their revealed
@@ -511,7 +511,7 @@ contract and security rules.
 #### 7. Pool information
 
 ```bash
-neurai-cli depingetmsginfo '{"protocol":3,"request_id":"<fresh 32-byte hex>","timestamp_ms":<now_ms>}'
+neurai-cli depingetmsginfo '{"protocol":4,"request_id":"<fresh 32-byte hex>","timestamp_ms":<now_ms>}'
 ```
 
 A client publishing through this node reads `token` (the pool root, its

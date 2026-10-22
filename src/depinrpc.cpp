@@ -14,6 +14,8 @@
 #include "sync.h"
 #include "utilstrencodings.h"
 #include "version.h"
+#include "validation.h"
+#include <climits>
 #include <algorithm>
 #include <limits>
 #include <map>
@@ -28,7 +30,7 @@ void Fixed(Bytes& out, const std::string& hex) { const auto b=ParseHex(hex);out.
 std::string Digest(const Bytes& bytes) { unsigned char hash[32];CSHA256().Write(bytes.data(),bytes.size()).Finalize(hash);return HexStr(hash,hash+32); }
 [[noreturn]] void Bad(const std::string& reason)
 {
-    throw DepinRpcError(RPC_INVALID_PARAMETER,reason.find("unsupported_protocol")==0?"unsupported_protocol":"invalid_parameters","DePIN v3: "+reason);
+    throw DepinRpcError(RPC_INVALID_PARAMETER,reason.find("unsupported_protocol")==0?"unsupported_protocol":"invalid_parameters","DePIN v4: "+reason);
 }
 void Keys(const UniValue& o, const std::set<std::string>& allowed, const std::set<std::string>& required = {})
 {
@@ -85,25 +87,26 @@ std::vector<unsigned char> DepinRpcRequest::Bytes() const
 {
     std::vector<unsigned char> out;
     Text(out,"Neurai/DePIN/RPC/request");Number(out,DEPIN_RPC_PROTOCOL_VERSION,2);Text(out,method);Number(out,kind,1);
-    Fixed(out,target.network);Blob(out,ParseHex(target.poolKey));Text(out,target.root);Fixed(out,target.instance);
+    Fixed(out,target.network);Blob(out,ParseHex(target.poolKey));Text(out,target.root);Fixed(out,target.instance);Fixed(out,target.membership.revision);
     Fixed(out,id);Number(out,uint64_t(timestamp),8);Text(out,token);Text(out,address);Blob(out,ParseHex(nonce));Blob(out,argumentBytes);
     return out;
 }
 std::string DepinRpcRequest::Hash() const { return Digest(Bytes()); }
-std::string DepinRpcRequest::Preimage() const { return "DEPIN-RPC-REQUEST-v3|"+Hash(); }
+std::string DepinRpcRequest::Preimage() const { return "DEPIN-RPC-REQUEST-v4|"+Hash(); }
 
 DepinRpcRequest ParseDepinRpcRequest(const std::string& method, const UniValue& o)
 {
     DepinRpcRequest r;r.method=method;
     if (!o.isObject() || !o.exists("protocol") || !o["protocol"].isNum() || Integer(o["protocol"])!=DEPIN_RPC_PROTOCOL_VERSION)
-        Bad("unsupported_protocol: protocol 3 required; legacy signatures are not accepted");
+        Bad("unsupported_protocol: protocol 4 required; legacy signatures are not accepted");
     if (method=="depingetmsginfo") {
         Keys(o,{"protocol","request_id","timestamp_ms"},{"protocol","request_id","timestamp_ms"});
-        r.bootstrap=true;r.target.network=r.target.instance=std::string(64,'0');
+        r.bootstrap=true;r.target.network=r.target.instance=r.target.membership.revision=std::string(64,'0');
     } else {
-        Keys(o,{"protocol","network","pool_pubkey","pool_root","instance_id","request_id","timestamp_ms","token","address","challenge","args","signature"},
-               {"protocol","network","pool_pubkey","pool_root","instance_id","request_id","timestamp_ms","token","address","challenge","args","signature"});
+        Keys(o,{"protocol","network","pool_pubkey","pool_root","instance_id","membership_revision","request_id","timestamp_ms","token","address","challenge","args","signature"},
+               {"protocol","network","pool_pubkey","pool_root","instance_id","membership_revision","request_id","timestamp_ms","token","address","challenge","args","signature"});
         r.target.network=Hex(o["network"],32);r.target.instance=Hex(o["instance_id"],32);
+        r.target.membership.revision=Hex(o["membership_revision"],32);
         r.target.poolKey=Hex(o["pool_pubkey"],33);const auto key=ParseHex(r.target.poolKey);
         if (!CPubKey(key).IsFullyValid() || !CPubKey(key).IsCompressed()) Bad("invalid pool public key");
         r.target.root=String(o["pool_root"],128);r.token=String(o["token"],128);r.address=String(o["address"],64);
@@ -181,7 +184,7 @@ UniValue MakeDepinRpcRequest(const std::string& method, const DepinRpcIdentity& 
 {
     UniValue o(UniValue::VOBJ);o.pushKV("protocol",DEPIN_RPC_PROTOCOL_VERSION);
     if (method!="depingetmsginfo") {
-        o.pushKV("network",t.network);o.pushKV("pool_pubkey",t.poolKey);o.pushKV("pool_root",t.root);o.pushKV("instance_id",t.instance);
+        o.pushKV("network",t.network);o.pushKV("pool_pubkey",t.poolKey);o.pushKV("pool_root",t.root);o.pushKV("instance_id",t.instance);o.pushKV("membership_revision",t.membership.revision);
         o.pushKV("token",token);o.pushKV("address",address);o.pushKV("challenge",nonce);o.pushKV("args",args);o.pushKV("signature","");
     }
     o.pushKV("request_id",id.empty()?RandomId():id);o.pushKV("timestamp_ms",timestamp<0?DepinRequestClockMillis():timestamp);
@@ -189,7 +192,7 @@ UniValue MakeDepinRpcRequest(const std::string& method, const DepinRpcIdentity& 
 }
 UniValue MakeDepinRpcBootstrap() { return MakeDepinRpcRequest("depingetmsginfo",{},"","","",UniValue(UniValue::VOBJ)); }
 
-void ResetDepinRpcInstance() { LOCK(cs_rpcState);instance.clear();lastWall=-1;replay.clear();replayExpiry.clear();g_depinChallenges.Clear(); }
+void ResetDepinRpcInstance() { LOCK(cs_main);ResetDepinMembershipContext();LOCK(cs_rpcState);instance.clear();lastWall=-1;replay.clear();replayExpiry.clear();g_depinChallenges.Clear(); }
 void ObserveDepinRpcClock(int64_t nowMs)
 {
     LOCK(cs_rpcState);
@@ -203,11 +206,13 @@ void ObserveDepinRpcClock(int64_t nowMs)
 }
 DepinRpcIdentity GetDepinRpcIdentity()
 {
+    LOCK(cs_main);
+    const auto membership=GetDepinMembershipContext();
     CKey key;CPubKey pub;
     if (!GetDepinPoolKey(key,pub)) throw JSONRPCError(RPC_MISC_ERROR,"DePIN pool key unavailable");
     const auto root=pDepinMsgPool?pDepinMsgPool->GetActiveToken():"";
     LOCK(cs_rpcState);if (instance.empty()) instance=RandomId();
-    return {GetParams().GetConsensus().hashGenesisBlock.ToString(),HexStr(pub.begin(),pub.end()),root,instance};
+    return {GetParams().GetConsensus().hashGenesisBlock.ToString(),HexStr(pub.begin(),pub.end()),root,instance,membership};
 }
 bool CheckDepinRpcReplay(const DepinRpcRequest& r, std::string& error)
 {
@@ -232,8 +237,8 @@ std::string DepinRpcResponsePreimage(const DepinRpcIdentity& i, const std::strin
                                      uint8_t kind, const std::vector<unsigned char>& body)
 {
     Bytes q;Text(q,"Neurai/DePIN/RPC/response");Number(q,DEPIN_RPC_PROTOCOL_VERSION,2);Text(q,method);
-    Fixed(q,i.network);Blob(q,ParseHex(i.poolKey));Text(q,i.root);Fixed(q,i.instance);Fixed(q,requestHash);Number(q,kind,1);Blob(q,body);
-    return "DEPIN-RPC-RESPONSE-v3|"+Digest(q);
+    Fixed(q,i.network);Blob(q,ParseHex(i.poolKey));Text(q,i.root);Fixed(q,i.instance);Fixed(q,i.membership.revision);Number(q,uint64_t(i.membership.height),8);Fixed(q,i.membership.block);Fixed(q,requestHash);Number(q,kind,1);Blob(q,body);
+    return "DEPIN-RPC-RESPONSE-v4|"+Digest(q);
 }
 UniValue FinishDepinRpcResponse(const UniValue& result, const DepinRpcRequest& r, const CPubKey* clientKey)
 {
@@ -249,6 +254,7 @@ UniValue FinishDepinRpcResponse(const UniValue& result, const DepinRpcRequest& r
     std::string sig;if (!SignDepinChallengePreimage(key,DepinRpcResponsePreimage(identity,r.method,r.Hash(),clientKey?1:0,body),sig,error)) throw JSONRPCError(RPC_INTERNAL_ERROR,error);
     UniValue out(UniValue::VOBJ);out.pushKV("protocol",DEPIN_RPC_PROTOCOL_VERSION);out.pushKV("network",identity.network);
     out.pushKV("pool_pubkey",identity.poolKey);out.pushKV("pool_root",identity.root);out.pushKV("instance_id",identity.instance);
+    out.pushKV("membership_revision",identity.membership.revision);out.pushKV("membership_height",identity.membership.height);out.pushKV("membership_blockhash",identity.membership.block);
     out.pushKV("request_hash",r.Hash());out.pushKV("body_kind",clientKey?1:0);out.pushKV(clientKey?"encrypted":"body",HexStr(body));out.pushKV("poolsig",sig);return out;
 }
 bool VerifyDepinRpcResponse(const UniValue& o, const DepinRpcRequest& r, const CPubKey& pinned, std::string& error)
@@ -258,10 +264,12 @@ bool VerifyDepinRpcResponse(const UniValue& o, const DepinRpcRequest& r, const C
         if (!o.isObject() || !o.exists("body_kind")) Bad("invalid response wrapper");
         const auto kind=Integer(o["body_kind"]);if (kind!=0 && kind!=1) Bad("invalid body_kind");
         const std::string field=kind?"encrypted":"body";
-        Keys(o,{"protocol","network","pool_pubkey","pool_root","instance_id","request_hash","body_kind",field,"poolsig"},
-               {"protocol","network","pool_pubkey","pool_root","instance_id","request_hash","body_kind",field,"poolsig"});
+        Keys(o,{"protocol","network","pool_pubkey","pool_root","instance_id","membership_revision","membership_height","membership_blockhash","request_hash","body_kind",field,"poolsig"},
+               {"protocol","network","pool_pubkey","pool_root","instance_id","membership_revision","membership_height","membership_blockhash","request_hash","body_kind",field,"poolsig"});
         if (Integer(o["protocol"])!=DEPIN_RPC_PROTOCOL_VERSION || Hex(o["request_hash"],32)!=r.Hash()) Bad("response request mismatch");
         DepinRpcIdentity i{Hex(o["network"],32),Hex(o["pool_pubkey"],33),String(o["pool_root"],128),Hex(o["instance_id"],32)};
+        i.membership={Hex(o["membership_revision"],32),Hex(o["membership_blockhash"],32),Integer(o["membership_height"])};
+        if (i.membership.height < -1 || i.membership.height > INT_MAX) Bad("invalid membership height");
         if (i.poolKey!=HexStr(pinned.begin(),pinned.end())) Bad("response pool key mismatch");
         if (!r.bootstrap && (i.network!=r.target.network || i.poolKey!=r.target.poolKey || i.root!=r.target.root || i.instance!=r.target.instance)) Bad("response service mismatch");
         if ((r.kind!=0)!=(kind!=0)) Bad("response confidentiality mismatch");

@@ -30,15 +30,15 @@ class CPubKey;
  * (strMessageMagic + compact signature, base64), so `signmessage` and
  * `verifymessage` interoperate with it.
  *
- * Only two things ever remove a nonce from the store: its expiry, and its
- * consumption after a VALID signature for matching bindings. A request that
+ * Nonces leave the store on expiry, valid consumption, bounded per-address
+ * eviction, process/key reset or pool membership renewal (RECEIVE and ADMIN). A request that
  * presents an invalid signature, or a nonce issued for other bindings, fails
  * without touching the store; otherwise anyone who learned a nonce could
  * invalidate it for its owner by sending garbage.
  */
 enum class DepinChallengeType {
-    RECEIVE,  // read a holder's messages / section access (preimage "DEPIN-GET")
-    ADMIN     // owner-level operations such as depinclearmsg (preimage "DEPIN-CLEAR")
+    RECEIVE,  // holder reads / section access; full RPC 4 operation preimage
+    ADMIN     // owner operations such as depinclearmsg; full RPC 4 preimage
 };
 
 /** Lifetime of a challenge issued by depinchallenge, in seconds. */
@@ -87,7 +87,8 @@ std::string DepinChallengeTypeName(DepinChallengeType type);
 bool ParseDepinChallengeType(const std::string& name, DepinChallengeType& type);
 
 /**
- * The exact string a holder signs: "DEPIN-GET|token|address|nonce" for
+ * Legacy fixture encoder, not the public RPC authentication contract.
+ * The old string was "DEPIN-GET|token|address|nonce" for
  * RECEIVE, "DEPIN-CLEAR|token|address|nonce" for ADMIN. Shared by the signer
  * (wallet) and the verifier (node) so the two can never drift apart.
  */
@@ -95,7 +96,7 @@ std::string DepinChallengePreimage(DepinChallengeType type, const std::string& t
                                    const std::string& address, const std::string& nonce);
 
 /**
- * What a holder signs to ASK for a challenge:
+ * Legacy fixture encoder. RPC 4 signs the full request instead:
  * "DEPIN-REQ|receive|token|address|timestamp" (or "admin"). The timestamp is
  * Unix MILLISECONDS from the client's clock.
  */
@@ -268,7 +269,7 @@ bool IssueDepinChallengeForAddress(const std::string& token, const std::string& 
  *   1. form (address, nonce, signature are well-formed)
  *   2. the nonce exists and has not expired (read-only)
  *   3. the signature over the explicit operation preimage verifies for address;
- *      RPC callers pass the complete parsed v3 request preimage
+ *      RPC callers pass the complete parsed v4 request preimage
  *   4. access is re-validated (a freeze, self-revoke or transfer between
  *      issuance and use invalidates the challenge)
  *   5. the nonce is consumed atomically for exactly these bindings

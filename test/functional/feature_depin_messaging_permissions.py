@@ -85,13 +85,13 @@ class DepinMessagingPermissionsTest(NeuraiTestFramework):
         original = self.receive(revoked)
         assert_equal(len(original), 1)
         assert_equal(original[0]["hash"], first)
-        pending = self.challenge(revoked)
+        pending = self.read_request(revoked, self.challenge(revoked))
 
         self.log.info("A confirmed freeze invalidates access through an existing nonce")
         node.freezedepin(TOKEN, revoked, admin)
         freeze_block = node.generate(1)[0]
-        request = self.read_request(revoked, pending)
-        assert_raises_rpc_error(-32600, "no active balance", self.call_request, node, "depinreceivemsg", request)
+        request = pending
+        assert_raises_rpc_error(-32600, "membership changed", self.call_request, node, "depinreceivemsg", request)
         assert_equal(node.depingetmsg(TOKEN, revoked), [])
         assert_equal(len(self.receive(remaining)), 1)
         second = node.depinsendmsg(TOKEN, "after recipient freeze", sender)["hash"]
@@ -128,13 +128,15 @@ class DepinMessagingPermissionsTest(NeuraiTestFramework):
 
         self.log.info("A confirmed owner move revokes old administrative challenges")
         admin_nonce = self.challenge(admin, "admin")
+        admin_request = DepinClient(node).prepare("depinclearmsg", TOKEN, admin, admin_nonce)
         node.transfer(TOKEN + "!", 1, successor)
         owner_block = node.generate(1)[0]
-        admin_request = DepinClient(node).prepare("depinclearmsg", TOKEN, admin, admin_nonce)
-        assert_raises_rpc_error(-32600, "does not hold the owner token", self.call_request, node, "depinclearmsg", admin_request)
+        assert_raises_rpc_error(-32600, "membership changed", self.call_request, node, "depinclearmsg", admin_request)
         self.challenge(successor, "admin")
         node.invalidateblock(owner_block)
-        self.call_request(node, "depinclearmsg", admin_request)  # Deletes expired only.
+        assert_raises_rpc_error(-32600, "membership changed", self.call_request, node, "depinclearmsg", admin_request)
+        fresh_admin = DepinClient(node).prepare("depinclearmsg", TOKEN, admin, self.challenge(admin, "admin"))
+        self.call_request(node, "depinclearmsg", fresh_admin)  # Deletes expired only.
         assert_equal(len(self.receive(remaining)), 2)
         node.reconsiderblock(owner_block)
 
@@ -179,12 +181,13 @@ class DepinMessagingPermissionsTest(NeuraiTestFramework):
                             if v["scriptPubKey"].get("asset", {}).get("name") == TOKEN)
         # A mempool-only revocation does not alter confirmed authorization.
         self.receive(self_revoked)
-        revoke_block = node.generate(1)[0]
         old_nonce = nonces[self_revoked]
         request = self.read_request(self_revoked, old_nonce)
-        assert_raises_rpc_error(-32600, "no active balance", self.call_request, node, "depinreceivemsg", request)
+        revoke_block = node.generate(1)[0]
+        assert_raises_rpc_error(-32600, "membership changed", self.call_request, node, "depinreceivemsg", request)
         node.invalidateblock(revoke_block)
-        assert self.receive(self_revoked, old_nonce)
+        assert_raises_rpc_error(-32600, "membership changed", self.call_request, node, "depinreceivemsg", request)
+        assert self.receive(self_revoked)
         node.reconsiderblock(revoke_block)
         assert_raises_rpc_error(-32600, "no active balance", self.call_request, node, "depinchallenge",
                                 *self.request(self_revoked))

@@ -19,6 +19,7 @@
 #include "consensus/tx_verify.h"
 #include "consensus/validation.h"
 #include "cuckoocache.h"
+#include "depinmembership.h"
 #include "fs.h"
 #include "hash.h"
 #include "init.h"
@@ -3128,7 +3129,8 @@ static int64_t nBlocksTotal = 0;
  *  Validity checks that depend on the UTXO set are also done; ConnectBlock()
  *  can fail if those validity checks fail (among other reasons). */
 static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockIndex* pindex,
-                  CCoinsViewCache& view, const CChainParams& chainparams, CAssetsCache* assetsCache = nullptr, bool fJustCheck = false, bool ignoreAddressIndex = false)
+                  CCoinsViewCache& view, const CChainParams& chainparams, CAssetsCache* assetsCache = nullptr, bool fJustCheck = false, bool ignoreAddressIndex = false,
+                  std::set<std::string>* depinRevealedKeys = nullptr)
 {
 
     AssertLockHeld(cs_main);
@@ -3591,9 +3593,11 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
             return AbortNode(state, "Failed to write transaction index");
 
     if (!ignoreAddressIndex && fPubKeyIndex)
-        if (!pubkeyIndex.empty())
+        if (!pubkeyIndex.empty()) {
+            if (depinRevealedKeys) CaptureDepinMembershipKeys(pubkeyIndex, *depinRevealedKeys);
             if (!pblocktree->WritePubKeyIndex(pubkeyIndex))
                 return AbortNode(state, "Failed to write pubkey index");
+        }
 
     if (!ignoreAddressIndex && fTimestampIndex) {
         unsigned int logicalTS = pindex->nTime;
@@ -4013,6 +4017,7 @@ bool static DisconnectTip(CValidationState& state, const CChainParams& chainpara
         return error("DisconnectTip() : Failed to read block");
     // Apply the block atomically to the chain state.
     int64_t nStart = GetTimeMicros();
+    bool depinMembershipChanged = false;
     {
         CCoinsViewCache view(pcoinsTip);
         CAssetsCache assetCache;
@@ -4020,6 +4025,7 @@ bool static DisconnectTip(CValidationState& state, const CChainParams& chainpara
         assert(view.GetBestBlock() == pindexDelete->GetBlockHash());
         if (DisconnectBlock(block, pindexDelete, view, &assetCache, /*ignoreAddressIndex=*/false, /*databaseMessaging=*/true, /*updateSpentIndex=*/true) != DISCONNECT_OK)
             return error("DisconnectTip(): DisconnectBlock %s failed", pindexDelete->GetBlockHash().ToString());
+        depinMembershipChanged = DepinMembershipAffected(assetCache);
         bool flushed = view.Flush();
         assert(flushed);
 
@@ -4047,6 +4053,7 @@ bool static DisconnectTip(CValidationState& state, const CChainParams& chainpara
 
     // Update chainActive and related variables.
     UpdateTip(pindexDelete->pprev, chainparams);
+    NotifyDepinMembershipTip(pindexDelete->GetBlockHash(), depinMembershipChanged);
     // NIP-040: the mempool's target height moved back from
     // pindexDelete->nHeight + 1 to pindexDelete->nHeight; if that crossed
     // the marker fork, evict the outputs that are no longer minable.
@@ -4183,6 +4190,8 @@ bool static ConnectTip(CValidationState& state, const CChainParams& chainparams,
     /** XNA START */
     // Initialize sets used from removing asset entries from the mempool
     ConnectedBlockAssetData assetDataFromBlock;
+    bool depinMembershipChanged = false;
+    std::set<std::string> depinRevealedKeys;
     /** XNA END */
 
     {
@@ -4197,7 +4206,8 @@ bool static ConnectTip(CValidationState& state, const CChainParams& chainparams,
 
         int64_t nTimeConnectStart = GetTimeMicros();
 
-        bool rv = ConnectBlock(blockConnecting, state, pindexNew, view, chainparams, &assetCache);
+        bool rv = ConnectBlock(blockConnecting, state, pindexNew, view, chainparams, &assetCache,
+                               false, false, IsDepinMembershipTracking() ? &depinRevealedKeys : nullptr);
         GetMainSignals().BlockChecked(blockConnecting, state);
         if (!rv) {
             if (state.IsInvalid())
@@ -4234,6 +4244,7 @@ bool static ConnectTip(CValidationState& state, const CChainParams& chainparams,
 
         /** XNA START */
         nTimeAssetsFlush = GetTimeMicros();
+        depinMembershipChanged = DepinMembershipAffected(assetCache, depinRevealedKeys);
         bool assetFlushed = assetCache.Flush();
         assert(assetFlushed);
         nChainstateChanges++;
@@ -4252,6 +4263,7 @@ bool static ConnectTip(CValidationState& state, const CChainParams& chainparams,
     disconnectpool.removeForBlock(blockConnecting.vtx);
     // Update chainActive & related variables.
     UpdateTip(pindexNew, chainparams);
+    NotifyDepinMembershipTip(pindexNew->pprev ? pindexNew->pprev->GetBlockHash() : uint256(), depinMembershipChanged);
     // NIP-040: the mempool's target height advanced from pindexNew->nHeight
     // to pindexNew->nHeight + 1; if that crossed the marker fork (i.e. we
     // just connected H-1), evict the legacy-marker outputs.

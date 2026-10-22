@@ -2,7 +2,7 @@
 
 Node contract for P5, P4, P8 and P9b, 2026-10-22. Authorization follows
 [depin-authorization.md](depin-authorization.md). The user message and ECIES
-wire encodings stay unchanged. Remote RPCs now use protocol **3** and the
+wire encodings stay unchanged. Remote RPCs now use protocol **4** and the
 common request/signature contract in
 [depin-request-signatures.md](depin-request-signatures.md). Storage version 2
 and cursor version 1 are independent of the RPC version. Discover capabilities
@@ -41,7 +41,7 @@ the pool as recipient**. Its plaintext is ASCII hex of the serialized signed
 message, at most 32768 bytes. Before `ParseHex`, the RPC rejects hex longer
 than `2 * (80 + 32768 + 81)` characters, invalid hex and malformed ECIES.
 After decryption it bounds the hex again and rejects trailing inner bytes.
-The outer request `address` must match the signed sender and its protocol 3
+The outer request `address` must match the signed sender and its protocol 4
 operation signature must verify. That proof does not replace inner signature
 or current permission checks.
 
@@ -121,7 +121,7 @@ rejects admissions explicitly rather than wrapping.
 
 ### Request and response signatures
 
-Both sequence and timestamp reads use the complete protocol 3 signature in
+Both sequence and timestamp reads use the complete protocol 4 signature in
 [the RPC contract](depin-request-signatures.md). This covers method, network/pool
 identity, instance, unique request ID, timestamp, scope/address/nonce and every
 effective argument. The cursor's stream and sequence are signature-bound; its
@@ -135,7 +135,7 @@ page/cursor. Challenges are memory-only; restart changes the RPC instance and
 requires a fresh challenge even if the durable cursor survives.
 
 `depinreceivemsg` retains its timestamp/after_hash semantics **inside args**,
-but also requires the v3 common signature. Its anchor may disappear through
+but also requires the v4 common signature. Its anchor may disappear through
 expiry/deletion and its time cursor can miss late timestamps. Prefer the
 sequence method when updating libraries. Operators must add it to their proxy
 allowlist.
@@ -176,7 +176,7 @@ storage outcome of an I/O error can be uncertain: recovery may find the
 entire batch or none, never an intentionally acknowledged partial batch.
 Do not retry by discarding the state directory.
 
-Protocol 3 now binds administrative mode and age to the exact operation.
+Protocol 4 binds administrative mode and age to the exact operation.
 Changing expired to all, or altering hours, cannot reuse the proof. A purge
 error is a signed/encrypted error body, never a success result. If the nonce
 was consumed before storage failed, obtain a new one explicitly; do not
@@ -256,4 +256,4 @@ must check canonical encoding, explicit size semantics, strict decryption,
 signed service identity, cursor storage/recovery, proxy allowlisting and
 bounded handling of `-8`, `-10` and `-26`. No passing node test certifies an
 untested external client. Full method signing P2 is implemented in the node;
-context revision P7 and external migrations remain pending.
+P7 pool renewal is implemented; external migrations remain pending.

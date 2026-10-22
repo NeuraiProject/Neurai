@@ -1,6 +1,6 @@
 # Copyright (c) 2026 The Neurai developers
 # Distributed under the MIT software license, see COPYING.
-"""Independent protocol-3 test client; no project client libraries or C++ codec."""
+"""Independent protocol-4 test client; no project client libraries or C++ codec."""
 import copy
 import hashlib
 import json
@@ -52,19 +52,19 @@ def arguments(method, r):
 def request_bytes(method, request):
     r = copy.deepcopy(request)
     if method == 'depingetmsginfo':
-        r.update(network='00'*32, pool_pubkey='', pool_root='', instance_id='00'*32,
+        r.update(network='00'*32, pool_pubkey='', pool_root='', instance_id='00'*32, membership_revision='00'*32,
                  token='', address='', challenge='', args={})
     if method == 'depinclearmsg' and not r['token']:
         r['token'] = r['pool_root']
     kind, args = arguments(method, r)
-    return (text('Neurai/DePIN/RPC/request') + struct.pack('<H', 3) + text(method) + bytes([kind]) +
+    return (text('Neurai/DePIN/RPC/request') + struct.pack('<H', 4) + text(method) + bytes([kind]) +
             bytes.fromhex(r['network']) + blob(bytes.fromhex(r['pool_pubkey'])) + text(r['pool_root']) +
-            bytes.fromhex(r['instance_id']) + bytes.fromhex(r['request_id']) + struct.pack('<q', r['timestamp_ms']) +
+            bytes.fromhex(r['instance_id']) + bytes.fromhex(r['membership_revision']) + bytes.fromhex(r['request_id']) + struct.pack('<q', r['timestamp_ms']) +
             text(r['token']) + text(r['address']) + blob(bytes.fromhex(r['challenge'])) + blob(args))
 
 
 def preimage(method, request):
-    return 'DEPIN-RPC-REQUEST-v3|' + digest(request_bytes(method, request)).hex()
+    return 'DEPIN-RPC-REQUEST-v4|' + digest(request_bytes(method, request)).hex()
 
 
 def pool_address(pubkey):
@@ -82,10 +82,11 @@ def pool_address(pubkey):
 def response_preimage(method, response):
     kind = response['body_kind']
     body = bytes.fromhex(response['encrypted' if kind else 'body'])
-    q = (text('Neurai/DePIN/RPC/response') + struct.pack('<H', 3) + text(method) +
+    q = (text('Neurai/DePIN/RPC/response') + struct.pack('<H', 4) + text(method) +
          bytes.fromhex(response['network']) + blob(bytes.fromhex(response['pool_pubkey'])) + text(response['pool_root']) +
-         bytes.fromhex(response['instance_id']) + bytes.fromhex(response['request_hash']) + bytes([kind]) + blob(body))
-    return 'DEPIN-RPC-RESPONSE-v3|' + digest(q).hex()
+         bytes.fromhex(response['instance_id']) + bytes.fromhex(response['membership_revision']) +
+         struct.pack('<q', response['membership_height']) + bytes.fromhex(response['membership_blockhash']) + bytes.fromhex(response['request_hash']) + bytes([kind]) + blob(body))
+    return 'DEPIN-RPC-RESPONSE-v4|' + digest(q).hex()
 
 
 class DepinClient:
@@ -93,9 +94,10 @@ class DepinClient:
         self.node = node
 
     def verify(self, method, request, response, pinned=None):
-        assert response['protocol'] == 3
+        assert response['protocol'] == 4
         assert response['body_kind'] in (0, 1)
         assert set(response) == {'protocol', 'network', 'pool_pubkey', 'pool_root', 'instance_id',
+                                 'membership_revision', 'membership_height', 'membership_blockhash',
                                  'request_hash', 'body_kind', 'poolsig',
                                  'encrypted' if response['body_kind'] else 'body'}
         assert response['request_hash'] == digest(request_bytes(method, request)).hex()
@@ -111,16 +113,19 @@ class DepinClient:
         else:
             assert 'encrypted' not in response
             result = json.loads(bytes.fromhex(response['body']).decode())
+        self.context = {key: response[key] for key in ['membership_revision', 'membership_height', 'membership_blockhash']}
         if isinstance(result, dict) and 'error' in result:
             raise JSONRPCException(result['error'])
         if method != 'depingetmsginfo':
             for key in ['network', 'pool_pubkey', 'pool_root', 'instance_id']:
                 assert response[key] == request[key]
             assert bool(response['body_kind']) == bool(arguments(method, request)[0])
+            if arguments(method, request)[0]:
+                assert response['membership_revision'] == request['membership_revision']
         return result
 
     def bootstrap(self):
-        r = {'protocol': 3, 'request_id': os.urandom(32).hex(), 'timestamp_ms': int(time.time()*1000)}
+        r = {'protocol': 4, 'request_id': os.urandom(32).hex(), 'timestamp_ms': int(time.time()*1000)}
         response = self.node.depingetmsginfo(r)
         info = self.verify('depingetmsginfo', r, response)
         assert info['network'] == response['network'] and info['instance_id'] == response['instance_id']
@@ -133,8 +138,8 @@ class DepinClient:
             timestamp = info["server_time_ms"]
         else:
             timestamp = int(time.time()*1000)
-        r = {key: identity[key] for key in ['network', 'pool_pubkey', 'pool_root', 'instance_id']}
-        r.update(protocol=3, request_id=os.urandom(32).hex(), timestamp_ms=timestamp,
+        r = {key: identity[key] for key in ['network', 'pool_pubkey', 'pool_root', 'instance_id', 'membership_revision']}
+        r.update(protocol=4, request_id=os.urandom(32).hex(), timestamp_ms=timestamp,
                  token=token, address=address, challenge=nonce, args=args or {}, signature='')
         if arguments(method, r)[0]:
             expected = preimage(method, r)

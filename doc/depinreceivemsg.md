@@ -1,7 +1,7 @@
-# DePIN client integration guide (protocol 3)
+# DePIN client integration guide (protocol 4)
 
-The node accepts RPC protocol **3** only for remote messaging calls. Upgrade
-the node first, then libraries/applications. Positional protocol 2 calls and
+The node accepts RPC protocol **4** only for remote messaging calls. Upgrade
+the node first, then libraries/applications. Positional protocol 2/3 calls and
 GET/CLEAR/REQ/READ-SEQUENCE-v1 proofs are rejected. The content wire format,
 ECIES, storage version 2 and cursor version 1 remain unchanged.
 
@@ -16,7 +16,7 @@ and recovery. External libraries have not yet been migrated.
 Send `depingetmsginfo` one JSON object (illustrative placeholders):
 
 ```json
-{"protocol":3,"request_id":"<fresh random 32-byte lowercase hex>","timestamp_ms":1792660000000}
+{"protocol":4,"request_id":"<fresh random 32-byte lowercase hex>","timestamp_ms":1792660000000}
 ```
 
 JSON-RPC params may be `[request]` or `{"request":request}`. CLI accepts that
@@ -28,7 +28,7 @@ request hash before decoding its body. A pin should include endpoint, network,
 pool root and compressed pool key. A self-signed first contact without a known
 pin provides self-consistency only: obtain the pin independently or apply an
 explicit trust-on-first-use policy. Never silently replace it from a reply.
-The signed body advertises protocol 3, `accepted_protocols: [3]`, network,
+The signed body advertises protocol 4, `accepted_protocols: [4]`, network,
 `instance_id`, `server_time_ms`, pool key/root, limits and state capabilities.
 
 Bootstrap/public queries do not enforce a clock window. Generate a new random
@@ -44,8 +44,9 @@ sequence page, after obtaining a receive nonce:
 
 ```json
 {
-  "protocol":3,"network":"<genesis>","pool_pubkey":"<pinned key>",
+  "protocol":4,"network":"<genesis>","pool_pubkey":"<pinned key>",
   "pool_root":"&GROUP","instance_id":"<verified current instance>",
+  "membership_revision":"<verified directory revision>",
   "request_id":"<fresh random 32-byte hex>","timestamp_ms":1792660000000,
   "token":"&GROUP/SEC","address":"<Legacy holder>",
   "challenge":"<receive nonce>",
@@ -87,9 +88,10 @@ failure: never assume all errors leave it usable.
 ## Verify and open the response
 
 Require the exact wrapper schema: protocol, network, pool_pubkey, pool_root,
-instance_id, request_hash, body_kind, exactly one of body/encrypted, poolsig.
+instance_id, membership_revision, membership_height, membership_blockhash,
+request_hash, body_kind, exactly one of body/encrypted, poolsig.
 Compare request_hash with your own canonical request, enforce confidentiality,
-and verify the v3 response preimage against the pinned key. The signature
+and verify the v4 response preimage against the pinned key. The signature
 covers decoded body bytes, method and service context. It does **not** use
 the old DEPIN-RESP string/hash-of-hex construction.
 
@@ -103,6 +105,24 @@ result wrapper. Check its code and `data.depin_error`. Syntax, unavailable
 service and unavailable-key errors can be ordinary JSON-RPC errors before
 a wrapper can be constructed. Treat these as unauthenticated transport
 failures; they do not authorize repinning or changing the requested operation.
+
+## Membership changes (P7)
+
+Each wrapper signs membership_revision, membership_height and membership_blockhash.
+Every complete request includes the required membership_revision. All confirmed
+relevant pool changes invalidate RECEIVE and ADMIN challenges. Public directory
+refresh accepts the previous revision; private operations require the current
+one, including challenge issuance and submission. The reference can be older
+than the current tip; compare its hash as well as height, scoped to this service.
+
+On the signed membership_stale error, refresh recipients/policy, obtain a fresh
+challenge as needed, rebuild the prepared content when recipients changed, and
+sign a new request. Do not automatically retry the same proof. Keep your message
+cursor while its stream remains valid. Use bounded retries/backoff under churn.
+A private success must match the request's revision; public refresh or a signed
+stale-context error can legitimately announce a newer revision. Verify all
+metadata before updating local context. A frozen user cannot renew access.
+See [depin-membership.md](depin-membership.md) for exact events and semantics.
 
 ## Methods and operational recovery
 
@@ -135,7 +155,7 @@ failures; they do not authorize repinning or changing the requested operation.
   empty args and authentication fields; useful for service diagnostics.
 
 If instance changes (restart/key reset/clock rollback), verify bootstrap
-again and prepare a newly signed request. The v3 request is not portable
+again and prepare a newly signed request. The v4 request is not portable
 between nodes, methods, roots or networks. Do not reuse request_id.
 
 On -10 use bounded backoff. On -26 refresh membership and recipient policy,
@@ -151,7 +171,7 @@ arbitrary content ciphertext will decrypt correctly.
 
 ## Executable examples and remaining work
 
-`contrib/depin/regtest_walkthrough.sh` runs the disposable protocol 3
+`contrib/depin/regtest_walkthrough.sh` runs the disposable protocol 4
 functional walkthrough. It exercises actual HTTP and positional/named CLI,
 parameter tampering, replay, clock rollback, restart and signed replies.
 It creates independent test wallets and does not reuse DATADIR. Configure
@@ -166,4 +186,5 @@ but stealing a recipient's static Legacy key can expose captured historical
 ciphertexts. A freeze denies future authorized downloads; it cannot revoke
 ciphertext or plaintext already obtained. A malicious directory can cause
 senders to encrypt for an unintended key unless clients verify recipients.
-P7 informational context and external library/proxy migration remain pending.
+P7 pool renewal is implemented; external library/proxy migration remains pending.
+See [the membership contract](depin-membership.md) for refresh and mandatory challenges.

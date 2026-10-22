@@ -123,6 +123,7 @@ BASE_SCRIPTS= [
     'feature_depin_transfer_state.py',
     'feature_depin_messaging_permissions.py',
     'feature_depin_request_signatures.py',
+    'feature_depin_membership.py',
     'feature_depin_pool_state.py',
     'wallet_importmulti.py',
     'wallet_labels.py',

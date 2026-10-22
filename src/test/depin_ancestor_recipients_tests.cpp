@@ -644,7 +644,7 @@ BOOST_AUTO_TEST_CASE(rpc_validates_and_serialises)
     const UniValue result = CallAncestorRecipientsRPC(params);
 
     BOOST_CHECK_EQUAL(find_value(result, "token").get_str(), LEAF_TOKEN);
-    // Protocol 3 signs and reports the effective boundary, including defaults.
+    // Protocol 4 signs and reports the effective boundary, including defaults.
     BOOST_CHECK_EQUAL(find_value(result, "stop_at").get_str(), ROOT_TOKEN);
     BOOST_CHECK_EQUAL(find_value(result, "max_results").get_int64(),
                       (int64_t)DEFAULT_DEPIN_ANCESTOR_RECIPIENTS_LIMIT);
@@ -698,7 +698,7 @@ BOOST_AUTO_TEST_CASE(rpc_validates_and_serialises)
     badToken.push_back("PLAINASSET");
     BOOST_CHECK_THROW(CallAncestorRecipientsRPC(badToken), UniValue);
 
-    // The CLI converts one v3 JSON object, preserving typed nested values.
+    // The CLI converts one v4 JSON object, preserving typed nested values.
     UniValue rawArgs(UniValue::VARR);rawArgs.push_back(LEAF_TOKEN);rawArgs.push_back(5);rawArgs.push_back(LEAF_TOKEN);
     const auto object=DepinTestRequest("depingetancestorrecipients",rawArgs);
     const auto converted=RPCConvertValues("depingetancestorrecipients",{object.write()});

@@ -1,21 +1,22 @@
-# DePIN RPC 3: firmas completas de peticiones y respuestas
+# DePIN RPC 4: firmas completas de peticiones y respuestas
 
-Fecha: 2026-10-22. Base revisada:
-`1320936c00402befba337aaf7864ff524bce6105`.
+Fecha: 2026-10-22. Base de P7:
+`4c460b3` (P2 ya implementado).
 
 **Estado: implementado en el nodo sobre esta base.** El servicio está en testnet:
 primero se incorpora el cambio al nodo y después se actualizan las librerías y
-aplicaciones. Protocolo **3**, sin aceptar formatos o firmas del protocolo 2 en
+aplicaciones. Protocolo **4**, sin aceptar formatos o firmas de protocolos 2/3 en
 las operaciones migradas. El contrato ejecutable está en `depinrpc.cpp` y
 `rpc/depin.cpp`; los resultados y límites de validación se conservan en la
-[entrega P2](../NIP/NIP_SIN_NUMERO/actualizacion-depin-evidencias-20261021/p2/README.md).
+[entrega P7](../NIP/NIP_SIN_NUMERO/actualizacion-depin-evidencias-20261021/p7/README.md).
 
 ## Alcance y migración
 
 P2 autentica la operación y sus parámetros efectivos, además de comprobar los
 permisos vigentes de P3. Abarca solicitud de challenge, lectura, listado personal
-de secciones, administración y envío remoto. La lectura por secuencia adopta el
-mismo esquema aunque su firma actual ya vincula sus parámetros. Los antiguos
+de secciones, administración y envío remoto. P7 añade a todas las peticiones
+completas la revisión vigente del pool.
+La lectura por secuencia utiliza ese mismo esquema. Los antiguos
 prefijos GET/CLEAR/REQ y READ-SEQUENCE-v1 no son vías alternativas de ejecución.
 
 La versión RPC es independiente de la versión del almacenamiento P9b, del cursor
@@ -30,11 +31,13 @@ las firmas débiles.
 
 Cada petición se vincula a:
 
-- Versión 3, método RPC exacto y clase de autenticación.
+- Versión 4, método RPC exacto y clase de autenticación.
 - Hash del génesis de la red, desde `GetConsensus().hashGenesisBlock`.
 - Clave pública comprimida del pool y raíz configurada.
 - `instance_id` aleatorio de 32 bytes, nuevo al arrancar, restablecer/cambiar la
   clave del pool o detectar cualquier retroceso del reloj.
+- `membership_revision` aleatorio de 32 bytes: cambia ante eventos pertinentes
+  de membresía/directorio, invalidando challenges RECEIVE y ADMIN del pool.
 - `request_id` aleatorio de 32 bytes, nuevo para cada operación del cliente.
 - Timestamp Unix en milisegundos, dirección, ámbito y challenge cuando proceda.
 - Argumentos efectivos normalizados con el esquema específico del método.
@@ -51,7 +54,7 @@ nodo que aloja la wallet sea el nodo receptor.
 Cada RPC remoto migrado recibe un objeto de petición, en lugar de combinar los
 argumentos posicionales antiguos con reglas nuevas. Claves comunes:
 `protocol`, `network`, `pool_pubkey`, `pool_root`, `instance_id`, `request_id`,
-`timestamp_ms`, `token`, `address`, `challenge`, `args`, `signature`.
+`membership_revision`, `timestamp_ms`, `token`, `address`, `challenge`, `args`, `signature`.
 El método y la clase se reconstruyen desde el RPC ejecutado; no se confía en un
 nombre de método enviado dentro de `args`.
 
@@ -80,12 +83,12 @@ La preimagen no depende de serializar de nuevo JSON. Se define:
 En orden fijo:
 
 ```text
-R = S("Neurai/DePIN/RPC/request") || U16(3) || S(method) || U8(auth_kind)
+R = S("Neurai/DePIN/RPC/request") || U16(4) || S(method) || U8(auth_kind)
     || H(network) || B(pool_pubkey) || S(pool_root) || H(instance_id)
-    || H(request_id) || I64(timestamp_ms) || S(token) || S(address)
+    || H(membership_revision) || H(request_id) || I64(timestamp_ms) || S(token) || S(address)
     || B(challenge) || B(method_args)
 request_hash = SHA256(R)
-preimage = "DEPIN-RPC-REQUEST-v3|" + lowercase_hex(request_hash)
+preimage = "DEPIN-RPC-REQUEST-v4|" + lowercase_hex(request_hash)
 ```
 
 Se conserva el esquema secp256k1 de firma compacta recuperable y Base64 que usa
@@ -131,7 +134,7 @@ En envío, el token común vacío evita revelar fuera del ECIES la sección que 
 viaja dentro del sobre. La firma de operación cubre todos los bytes del sobre;
 la firma interna sigue cubriendo contenido y metadatos. Después de descifrar se
 comprueban remitente, ámbito y permisos actuales de todos los participantes como
-ahora. La firma interna por sí sola ya no autoriza un envío RPC v3, y la firma
+ahora. La firma interna por sí sola ya no autoriza un envío RPC v4, y la firma
 exterior no autoriza contenido que falle la validación interna.
 
 Las consultas públicas no necesitan una clave de usuario: el servidor vincula
@@ -140,14 +143,14 @@ parámetros alterados por un proxy sin convertir información pública en privad
 
 ## Descubrimiento, respuestas y errores
 
-`depingetmsginfo` es el único bootstrap: admite el objeto reducido con versión 3,
+`depingetmsginfo` es el único bootstrap: admite el objeto reducido con versión 4,
 request_id y timestamp_ms, para descubrir la identidad antes de poder incluirla
-en una petición completa. Para calcular `R`, usa clase pública, network/instance
+en una petición completa. Para calcular `R`, usa clase pública, network/instance/membership_revision
 cero, pool_pubkey vacío, y root/token/address/challenge/args vacíos. Los demás RPC
 exigen una identidad explícita que coincida con el servicio actual.
 
 La respuesta de bootstrap anuncia red, clave del pool, raíz, instance_id,
-`accepted_protocols: [3]` y `server_time_ms`, dentro de su cuerpo firmado. La firma de esa primera respuesta no sustituye el pinning de
+`accepted_protocols: [4]` y `server_time_ms`, dentro de su cuerpo firmado. La firma de esa primera respuesta no sustituye el pinning de
 la clave ni la comparación independiente de C1. Una respuesta bootstrap enviada
 al destino equivocado debe detectarse contra la identidad esperada por el
 cliente, cuando ya la conoce.
@@ -155,10 +158,12 @@ cliente, cuando ya la conoce.
 Todas las respuestas remotas migradas usan un dominio separado:
 
 ```text
-Q = S("Neurai/DePIN/RPC/response") || U16(3) || S(method)
+Q = S("Neurai/DePIN/RPC/response") || U16(4) || S(method)
     || H(served_network) || B(served_pool_pubkey) || S(served_pool_root)
-    || H(served_instance_id) || request_hash || U8(body_kind) || B(body_bytes)
-preimage = "DEPIN-RPC-RESPONSE-v3|" + lowercase_hex(SHA256(Q))
+    || H(served_instance_id) || H(served_membership_revision)
+    || I64(membership_height) || H(membership_blockhash)
+    || request_hash || U8(body_kind) || B(body_bytes)
+preimage = "DEPIN-RPC-RESPONSE-v4|" + lowercase_hex(SHA256(Q))
 ```
 
 `body_kind=0` corresponde a JSON público y `1` a ECIES. `body_bytes` son los
@@ -168,14 +173,14 @@ tipo de cuerpo y poolsig. El cliente calcula su propio request_hash y exige que
 coincida: no toma el hash recibido como sustituto de su petición original.
 
 El cuerpo contiene directamente el resultado o `{"error": {"code": ...,
-"message": ..., "data": {"depin_error": ..., "expected_protocol": 3}}}`. Se
+"message": ..., "data": {"depin_error": ..., "expected_protocol": 4}}}`. Se
 conservan los códigos existentes: por ejemplo `-10` servicio sin frescura, `-26`
 destinatario no autorizado y `-20` fallo de almacenamiento del borrado. Las
 razones incluyen `unsupported_protocol`, `invalid_parameters`,
 `service_mismatch`, `request_expired`, `signature_invalid`, `request_replayed`,
 `replay_capacity`, `challenge_invalid`, `rate_limited`, `service_not_ready`,
 `service_disabled`, `public_key_unavailable`, `storage_failure` y
-`operation_failed`. No todos los rechazos de permisos tienen una razón propia.
+`operation_failed` y `membership_stale`. No todos los rechazos de permisos tienen una razón propia.
 
 Los errores posteriores a normalizar la petición y obtener la clave pública
 del usuario se firman y se cifran para esa dirección, incluso si falla su
@@ -186,10 +191,14 @@ de assets/claves: no se intenta cifrar un error consultando un índice no listo.
 No existe respuesta privada de éxito en claro. Un error sin firma no autentica
 instrucciones de renovación o migración.
 
-El wrapper tiene exactamente las nueve claves `protocol`, `network`,
-`pool_pubkey`, `pool_root`, `instance_id`, `request_hash`, `body_kind`,
+El wrapper tiene exactamente las doce claves `protocol`, `network`,
+`pool_pubkey`, `pool_root`, `instance_id`, `membership_revision`,
+`membership_height`, `membership_blockhash`, `request_hash`, `body_kind`,
 `body` **o** `encrypted`, y `poolsig`. Verificar clave fijada, hash local, firma,
-forma y confidencialidad antes de interpretar el cuerpo. Para un resultado,
+forma y confidencialidad antes de interpretar el cuerpo. Para un resultado privado,
+exigir además membership_revision igual a la petición. El verificador C++
+autentica el wrapper; el cliente aplica esta comprobación después de abrir
+el cuerpo, distinguiendo errores de resultados. Para cualquier resultado,
 exigir también la identidad/instancia solicitada; un cambio exige bootstrap
 verificado y una petición nueva. Un cliente que interprete un error firmado de
 instancia distinta debe limitarlo a diagnóstico, verificar la clave ya fijada y
@@ -231,13 +240,34 @@ respuesta; eso puede consumir el nonce y dejar resultado desconocido para el
 cliente. Se exige recuperación explícita con reintentos acotados, sin prometer
 entrega exactamente una vez.
 
-## Coordinación con P7 y trabajo pendiente
+## Membresía, renovación y errores P7
 
-P7 fase 1 puede añadir información de revisión al cuerpo ya firmado de las
-respuestas. No se inventa una revisión actual ni se invalidan todas las sesiones
-por cada bloque como parte de P2. Si se aprueba una fase 2 que exija contexto en
-la petición, ese contexto deberá entrar en el esquema firmado y anunciarse
-explícitamente: no se aceptará como campo exterior sin firmar.
+[P7 está implementado](depin-membership.md): cada respuesta firma la revisión
+del pool, su altura y hash de referencia. Son campos del wrapper; bootstrap
+los repite en el cuerpo y anuncia membership_policy=pool_challenges_and_signed_requests.
+La altura/hash identifica la referencia de revisión, no necesariamente el
+tip más reciente. Revisiones opacas de pools/instancias diferentes no se comparan
+como contadores. La firma no certifica que el nodo siga la cadena global correcta.
+
+Todas las peticiones privadas, incluidos emisión de challenge y envío, exigen
+la revisión vigente. Una firma válida sobre una revisión anterior produce
+-32600 con data.depin_error=membership_stale, membership_revision actual,
+refresh_recipients=true y renew_challenge=true, en error firmado y cifrado.
+No ejecuta la operación ni consume cuota/replay. Si el cliente actualiza la
+revisión pero reutiliza un nonce invalidado, obtiene challenge_invalid. Quien
+perdió permisos tampoco obtiene un challenge nuevo.
+
+Las consultas públicas aceptan una revisión antigua para permitir renovar el
+directorio: su respuesta enlaza el hash exacto de esa consulta con la revisión
+servida. Antes de reenviar, actualizar destinatarios/política, volver a cifrar
+y firmar según corresponda, y obtener un challenge nuevo si la operación lo
+necesita. Conservar el cursor de mensajes mientras no cambie el stream; P7 no
+reinicia el histórico ni las secuencias. Reintentos acotados y backoff ante
+cambios repetidos. El servidor no reescribe las claves de un mensaje firmado.
+
+Protocolos anteriores se rechazan. Cambia el dominio a v4 y U16(4), además de
+los campos nuevos: añadir un campo exterior sin cambiar su firma no es válido.
+Las librerías externas y el proxy deben migrar después del nodo.
 
 ## Uso del RPC y helpers
 
@@ -245,15 +275,16 @@ Cada método remoto recibe **un** parámetro `request`, mediante `[objeto]` o
 `{"request": objeto}` en JSON-RPC. Bootstrap:
 
 ```json
-{"protocol":3,"request_id":"<32 bytes aleatorios en hex minúsculo>","timestamp_ms":1792660000000}
+{"protocol":4,"request_id":"<32 bytes aleatorios en hex minúsculo>","timestamp_ms":1792660000000}
 ```
 
 Objeto completo (los marcadores deben sustituirse por valores válidos):
 
 ```json
 {
-  "protocol":3,"network":"<génesis>","pool_pubkey":"<clave fijada>",
+  "protocol":4,"network":"<génesis>","pool_pubkey":"<clave fijada>",
   "pool_root":"&GROUP","instance_id":"<instancia verificada>",
+  "membership_revision":"<revisión del directorio verificada>",
   "request_id":"<32 bytes aleatorios nuevos>","timestamp_ms":1792660000000,
   "token":"&GROUP/SEC","address":"<dirección Legacy>",
   "challenge":"<nonce de recepción>","args":{"cursor":null,"limit":100,"from_timestamp":0},
@@ -274,8 +305,8 @@ comprobaciones de permisos. No hay fallback público a firmas antiguas.
 
 ## Vectores y validación
 
-- [13 vectores de peticiones](../src/test/data/depin_rpc_v3.json) con bytes,
-  SHA256 y preimagen, generados por [Python struct/hashlib independiente](../contrib/devtools/depin-v3-vectors.py).
+- [15 vectores de peticiones](../src/test/data/depin_rpc_v4.json) con bytes,
+  SHA256 y preimagen, generados por [Python struct/hashlib independiente](../contrib/devtools/depin-v4-vectors.py).
 - [Pruebas C++](../src/test/depinrpc_tests.cpp): codec, defaults/null, enteros,
   duplicados, cursor, respuesta, capacidad, reloj y replay concurrente.
 - [Cliente funcional independiente](../test/functional/test_framework/depin.py):
@@ -290,10 +321,10 @@ comprobaciones de permisos. No hay fallback público a firmas antiguas.
 No se cambia consenso, minería, P2P, cifrado de contenido, formato de estado 2 ni
 cursor 1. No se vuelve a ejecutar aquí el ensayo físico de disco lleno de P8:
 se conserva su evidencia anterior y se añade el error RPC por capacidad con
-protocolo 3. Tampoco se certifican todas las posibilidades de fallo, GUI,
+protocolo 4. Tampoco se certifican todas las posibilidades de fallo, GUI,
 configuración desplegada del proxy, carga de producción o librerías externas.
 
-P7 informativo y las librerías/aplicaciones externas siguen pendientes. P2 no
+P7 del nodo está implementado; las librerías/aplicaciones externas siguen pendientes. P2 no
 convierte un directorio firmado en una prueba de posesión de assets: mantener
 la comparación independiente y la política de destinatarios de C1. El robo de
 una clave Legacy puede exponer mensajes históricos cifrados para ella; la clave

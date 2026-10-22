@@ -23,7 +23,7 @@
 #include <limits>
 #include <algorithm>
 
-// Public, non-authenticating business queries. Only the v3 dispatcher below is
+// Public, non-authenticating business queries. Only the v4 dispatcher below is
 // registered: their old positional forms are not reachable through the table.
 UniValue depingetmsginfo(const JSONRPCRequest&);
 UniValue depinpoolstats(const JSONRPCRequest&);
@@ -84,7 +84,11 @@ UniValue Run(const DepinRpcRequest& r, const JSONRPCRequest& original)
             auto info=depingetmsginfo(q);const auto id=GetDepinRpcIdentity();
             info.pushKV("network",id.network);info.pushKV("instance_id",id.instance);info.pushKV("server_time_ms",DepinRequestClockMillis());
             UniValue versions(UniValue::VARR);versions.push_back(DEPIN_RPC_PROTOCOL_VERSION);
-            info.pushKV("accepted_protocols",versions);return info;
+            info.pushKV("accepted_protocols",versions);
+            info.pushKV("membership_revision",id.membership.revision);
+            info.pushKV("membership_height",id.membership.height);
+            info.pushKV("membership_blockhash",id.membership.block);
+            info.pushKV("membership_policy","pool_challenges_and_signed_requests");return info;
         }
         return r.method=="depinpoolstats"?depinpoolstats(q):depinmcpstatus(q);
     }
@@ -168,10 +172,10 @@ UniValue Run(const DepinRpcRequest& r, const JSONRPCRequest& original)
     Consume(r);result.pushKV("messages",messages);result.pushKV("has_more",UniValue(more));Chain(result,r);return result;
 }
 
-UniValue DepinRpcV3(const JSONRPCRequest& request)
+UniValue DepinRpcV4(const JSONRPCRequest& request)
 {
-    if (request.fHelp) throw std::runtime_error(request.strMethod+" request\nDePIN protocol 3. One JSON object; legacy signatures are rejected.\nSee doc/depin-request-signatures.md. Use depinsignrpc method request on the signing wallet.\n");
-    if (request.params.size()!=1 || !request.params[0].isObject()) throw DepinRpcError(RPC_INVALID_PARAMETER,"unsupported_protocol","DePIN unsupported_protocol: one protocol 3 request object required");
+    if (request.fHelp) throw std::runtime_error(request.strMethod+" request\nDePIN protocol 4. One JSON object; legacy signatures are rejected.\nSee doc/depin-request-signatures.md. Use depinsignrpc method request on the signing wallet.\n");
+    if (request.params.size()!=1 || !request.params[0].isObject()) throw DepinRpcError(RPC_INVALID_PARAMETER,"unsupported_protocol","DePIN unsupported_protocol: one protocol 4 request object required");
     const auto r=ParseDepinRpcRequest(request.strMethod,request.params[0]);
     LOCK(cs_main);const auto now=DepinRequestClockMillis();ObserveDepinRpcClock(now);const auto identity=GetDepinRpcIdentity();
     // Readiness precedes asset/public-key index work. Early unavailability is
@@ -189,9 +193,11 @@ UniValue DepinRpcV3(const JSONRPCRequest& request)
             throw JSONRPCError(RPC_INVALID_REQUEST,"request_expired: timestamp outside accepted window");
         if (r.kind) {
             std::string error;
-            if (r.kind>=2 && !g_depinChallenges.Matches(r.nonce,r.token,r.address,r.kind==3?DepinChallengeType::ADMIN:DepinChallengeType::RECEIVE,error,now/1000)) throw JSONRPCError(RPC_INVALID_REQUEST,error);
+            if (r.kind>=2 && r.target.membership.revision==identity.membership.revision && !g_depinChallenges.Matches(r.nonce,r.token,r.address,r.kind==3?DepinChallengeType::ADMIN:DepinChallengeType::RECEIVE,error,now/1000)) throw JSONRPCError(RPC_INVALID_REQUEST,error);
             if (!VerifyDepinChallengeSignature(r.address,r.signature,r.Preimage(),error)) throw JSONRPCError(RPC_INVALID_REQUEST,"signature_invalid: "+error);
             if (!client.IsFullyValid()) throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,"Address has no revealed public key");
+            if (r.target.membership.revision!=identity.membership.revision)
+                throw DepinRpcError(RPC_INVALID_REQUEST,"membership_stale","DePIN membership changed: refresh the directory and request a new challenge");
         }
         return FinishDepinRpcResponse(Run(r,request),r,r.kind?&client:nullptr);
     } catch (const UniValue& error) {
@@ -210,6 +216,10 @@ UniValue DepinRpcV3(const JSONRPCRequest& request)
             else if (code==RPC_INVALID_PARAMETER) reason="invalid_parameters";
             detail=DepinRpcError(code,reason,message);
         }
+        if (detail["data"]["depin_error"].isStr() && detail["data"]["depin_error"].get_str()=="membership_stale") {
+            auto data=detail["data"];data.pushKV("membership_revision",identity.membership.revision);
+            data.pushKV("refresh_recipients",UniValue(true));data.pushKV("renew_challenge",UniValue(true));detail.pushKV("data",data);
+        }
         UniValue result(UniValue::VOBJ);result.pushKV("error",detail);
         return FinishDepinRpcResponse(result,r,client.IsFullyValid()?&client:nullptr);
     }
@@ -218,7 +228,7 @@ UniValue DepinRpcV3(const JSONRPCRequest& request)
 #ifdef ENABLE_WALLET
 UniValue DepinSignRpc(const JSONRPCRequest& request)
 {
-    if (request.fHelp || request.params.size()!=2) throw std::runtime_error("depinsignrpc method request\nSign a complete protocol 3 request for the explicit remote destination. Returns request, preimage and request_hash.\n");
+    if (request.fHelp || request.params.size()!=2) throw std::runtime_error("depinsignrpc method request\nSign a complete protocol 4 request for the explicit remote destination. Returns request, preimage and request_hash.\n");
     auto* wallet=GetWalletForJSONRPCRequest(request);if (!EnsureWalletIsAvailable(wallet,request.fHelp)) return NullUniValue;
     const auto method=request.params[0].get_str();const auto object=request.params[1];const auto parsed=ParseDepinRpcRequest(method,object);
     if (!parsed.kind) throw JSONRPCError(RPC_INVALID_PARAMETER,"Public requests do not need a user signature");
@@ -236,16 +246,16 @@ UniValue DepinSignRpc(const JSONRPCRequest& request)
 void RegisterDepinRPCCommands(CRPCTable& table)
 {
     static const CRPCCommand commands[]={
-        {"depin messaging","depingetmsginfo",&DepinRpcV3,{"request"}},
-        {"depin messaging","depinchallenge",&DepinRpcV3,{"request"}},
-        {"depin messaging","depinpoolstats",&DepinRpcV3,{"request"}},
-        {"depin messaging","depinsubmitmsg",&DepinRpcV3,{"request"}},
-        {"depin messaging","depinreceiveseq",&DepinRpcV3,{"request"}},
-        {"depin messaging","depinreceivemsg",&DepinRpcV3,{"request"}},
-        {"depin messaging","depinmcpstatus",&DepinRpcV3,{"request"}},
-        {"depin messaging","depingetancestorrecipients",&DepinRpcV3,{"request"}},
-        {"depin messaging","depinlistsections",&DepinRpcV3,{"request"}},
-        {"depin messaging","depinclearmsg",&DepinRpcV3,{"request"}},
+        {"depin messaging","depingetmsginfo",&DepinRpcV4,{"request"}},
+        {"depin messaging","depinchallenge",&DepinRpcV4,{"request"}},
+        {"depin messaging","depinpoolstats",&DepinRpcV4,{"request"}},
+        {"depin messaging","depinsubmitmsg",&DepinRpcV4,{"request"}},
+        {"depin messaging","depinreceiveseq",&DepinRpcV4,{"request"}},
+        {"depin messaging","depinreceivemsg",&DepinRpcV4,{"request"}},
+        {"depin messaging","depinmcpstatus",&DepinRpcV4,{"request"}},
+        {"depin messaging","depingetancestorrecipients",&DepinRpcV4,{"request"}},
+        {"depin messaging","depinlistsections",&DepinRpcV4,{"request"}},
+        {"depin messaging","depinclearmsg",&DepinRpcV4,{"request"}},
 #ifdef ENABLE_WALLET
         {"depin messaging","depinsignrpc",&DepinSignRpc,{"method","request"}},
 #endif

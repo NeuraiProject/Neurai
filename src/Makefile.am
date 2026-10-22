@@ -221,6 +221,7 @@ NEURAI_CORE_H = \
   depinmsgpool.h \
   depinchallenge.h \
   depinrpc.h \
+  depinmembership.h \
   depinpoolkey.h \
   depinecies.h \
   depinserialization.h \
@@ -320,6 +321,7 @@ libneurai_server_a_SOURCES = \
   depinstate.cpp \
   depinchallenge.cpp \
   depinrpc.cpp \
+  depinmembership.cpp \
   depinpoolkey.cpp \
   depinecies.cpp \
   depinmcpclient.cpp \

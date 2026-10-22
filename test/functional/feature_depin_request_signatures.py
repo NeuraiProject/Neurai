@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 The Neurai developers
 # Distributed under the MIT software license, see COPYING.
-"""Protocol 3 signatures through real RPC: no re-signing of altered requests."""
+"""Protocol 4 signatures through real RPC: no re-signing of altered requests."""
 import base64
 import copy
 import http.client
@@ -49,16 +49,16 @@ class DepinRequestSignaturesTest(DepinMessagingPermissionsTest):
             node.depinsendmsg(TOKEN, name, owner)
         client = DepinClient(node)
         bootstrap, info = client.bootstrap()
-        assert_equal(info['accepted_protocols'], [3])
-        assert_equal(info['protocol'], 3)
+        assert_equal(info['accepted_protocols'], [4])
+        assert_equal(info['protocol'], 4)
 
         # Exercise the actual CLI as well as HTTP: both positional and named
         # requests must preserve the JSON object and its integer values.
-        cli_bootstrap = {'protocol': 3, 'request_id': os.urandom(32).hex(), 'timestamp_ms': 0}
+        cli_bootstrap = {'protocol': 4, 'request_id': os.urandom(32).hex(), 'timestamp_ms': 0}
         for response in [node.cli.depingetmsginfo(json.dumps(cli_bootstrap)),
                          node.cli.depingetmsginfo(request=json.dumps(cli_bootstrap))]:
             assert_equal(client.verify('depingetmsginfo', cli_bootstrap, response,
-                                       bootstrap['pool_pubkey'])['protocol'], 3)
+                                       bootstrap['pool_pubkey'])['protocol'], 4)
 
         self.log.info('Every clear parameter and service binding is signed, without consuming valid nonces')
         nonce = self.challenge(owner, 'admin')
@@ -73,7 +73,7 @@ class DepinRequestSignaturesTest(DepinMessagingPermissionsTest):
                   'request_hash': digest(request_bytes('depinclearmsg', original)).hex(),
                   'preimage': cli_signed['preimage'],
                   'signer_pubkey': node.validateaddress(owner)['pubkey']}
-        (Path(self.options.tmpdir) / 'depin-v3-interoperability.json').write_text(json.dumps(vector, indent=2) + '\n')
+        (Path(self.options.tmpdir) / 'depin-v4-interoperability.json').write_text(json.dumps(vector, indent=2) + '\n')
 
         def refuse(method, request, code=-32600, message=''):
             # Check a correlatable server error against the known real key,
@@ -88,7 +88,7 @@ class DepinRequestSignaturesTest(DepinMessagingPermissionsTest):
             changed = copy.deepcopy(original)
             changed['args'] = args
             refuse('depinclearmsg', changed, message='Signature does not match')
-        for field, value in [('network', '01'*32), ('instance_id', '02'*32), ('request_id', '03'*32),
+        for field, value in [('network', '01'*32), ('instance_id', '02'*32), ('membership_revision', '08'*32), ('request_id', '03'*32),
                              ('pool_root', TOKEN + '/OTHER'), ('token', TOKEN + '/OTHER'), ('address', reader),
                              ('challenge', '04'*32), ('timestamp_ms', original['timestamp_ms'] + 1)]:
             changed = copy.deepcopy(original)
@@ -97,9 +97,10 @@ class DepinRequestSignaturesTest(DepinMessagingPermissionsTest):
         changed = copy.deepcopy(original)
         changed['pool_pubkey'] = node.validateaddress(reader)['pubkey']
         refuse('depinclearmsg', changed)
-        changed = copy.deepcopy(original)
-        changed['protocol'] = 2
-        refuse('depinclearmsg', changed, -8, 'protocol 3')
+        for obsolete in (2, 3):
+            changed = copy.deepcopy(original)
+            changed['protocol'] = obsolete
+            refuse('depinclearmsg', changed, -8, 'protocol 4')
         changed = copy.deepcopy(original)
         changed['args'] = {'mode': 'hours', 'hours': '0'}
         refuse('depinclearmsg', changed, -8, 'integer')
@@ -107,7 +108,7 @@ class DepinRequestSignaturesTest(DepinMessagingPermissionsTest):
         changed = copy.deepcopy(original)
         changed['signature'] = node.signmessage(owner, 'DEPIN-CLEAR|{}|{}|{}'.format(TOKEN, owner, nonce))
         refuse('depinclearmsg', changed, message='Signature does not match')
-        assert_raises_rpc_error(-8, 'protocol 3', node.depinclearmsg,
+        assert_raises_rpc_error(-8, 'protocol 4', node.depinclearmsg,
                                 TOKEN, owner, nonce, changed['signature'], 'all')
         assert_equal(client.call_request('depinclearmsg', original)['removed'], 0)
         refuse('depinclearmsg', original)
