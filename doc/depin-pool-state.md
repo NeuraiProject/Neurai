@@ -2,7 +2,7 @@
 
 Node contract for P5, P4, P8 and P9b, 2026-10-22. Authorization follows
 [depin-authorization.md](depin-authorization.md). The user message and ECIES
-wire encodings stay unchanged. Remote RPCs now use protocol **4** and the
+wire encodings stay unchanged. Remote RPCs now use protocol **5** and the
 common request/signature contract in
 [depin-request-signatures.md](depin-request-signatures.md). Storage version 2
 and cursor version 1 are independent of the RPC version. Discover capabilities
@@ -17,8 +17,10 @@ integers must use their shortest encoding. ECIES must have:
 
 - Exactly one compressed, valid 33-byte secp256k1 ephemeral public key.
 - A payload of `12-byte nonce || nonempty ciphertext || 16-byte GCM tag`.
-- A nonempty recipient map, in ascending serialized hash160 byte order,
-  with no duplicate IDs. Each entry has a 20-byte ID and a vector of exactly
+- A nonempty recipient map, in ascending serialized destination byte order,
+  with no duplicate IDs. Legacy-only ECIES uses 20-byte IDs; mixed/strict
+  ECIES 2 uses a type byte and a 20-byte Legacy or 32-byte strict ECDSA ID.
+  See [the exact format and canonical rules](depin-ecdsa.md). Each entry has a vector of exactly
   60 bytes: `12-byte nonce || 32-byte wrapped key || 16-byte GCM tag`.
 - No trailing bytes.
 
@@ -30,7 +32,7 @@ need to decrypt content to enforce it. Recipient count is configured
 separately, default 20, maximum 50.
 
 For plaintext budget `P` and recipient budget `R`, the conservative ECIES
-wire budget is `80 + P + 81*R` bytes. Actual canonical encoding is usually
+wire budget is `82 + P + 94*R` bytes. Actual canonical encoding is usually
 smaller because the two CompactSize fields do not need nine bytes each.
 The signed inner `CDepinMessage` has an independent **16384-byte** total
 decode budget; token, sender and signature fields are bounded at 128, 64
@@ -41,7 +43,7 @@ the pool as recipient**. Its plaintext is ASCII hex of the serialized signed
 message, at most 32768 bytes. Before `ParseHex`, the RPC rejects hex longer
 than `2 * (80 + 32768 + 81)` characters, invalid hex and malformed ECIES.
 After decryption it bounds the hex again and rejects trailing inner bytes.
-The outer request `address` must match the signed sender and its protocol 4
+The outer request `address` must match the signed sender and its protocol 5
 operation signature must verify. That proof does not replace inner signature
 or current permission checks.
 
@@ -121,7 +123,7 @@ rejects admissions explicitly rather than wrapping.
 
 ### Request and response signatures
 
-Both sequence and timestamp reads use the complete protocol 4 signature in
+Both sequence and timestamp reads use the complete protocol 5 signature in
 [the RPC contract](depin-request-signatures.md). This covers method, network/pool
 identity, instance, unique request ID, timestamp, scope/address/nonce and every
 effective argument. The cursor's stream and sequence are signature-bound; its
@@ -135,7 +137,7 @@ page/cursor. Challenges are memory-only; restart changes the RPC instance and
 requires a fresh challenge even if the durable cursor survives.
 
 `depinreceivemsg` retains its timestamp/after_hash semantics **inside args**,
-but also requires the v4 common signature. Its anchor may disappear through
+but also requires the v5 common signature. Its anchor may disappear through
 expiry/deletion and its time cursor can miss late timestamps. Prefer the
 sequence method when updating libraries. Operators must add it to their proxy
 allowlist.
@@ -176,7 +178,7 @@ storage outcome of an I/O error can be uncertain: recovery may find the
 entire batch or none, never an intentionally acknowledged partial batch.
 Do not retry by discarding the state directory.
 
-Protocol 4 binds administrative mode and age to the exact operation.
+Protocol 5 binds administrative mode and age to the exact operation.
 Changing expired to all, or altering hours, cannot reuse the proof. A purge
 error is a signed/encrypted error body, never a success result. If the nonce
 was consumed before storage failed, obtain a new one explicitly; do not

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 The Neurai developers
 // Distributed under the MIT software license, see COPYING.
 
+#include "depinaddress.h"
 #include "depinmsgpool.h"
 #include "dbwrapper.h"
 #include "depinecies.h"
@@ -197,10 +198,8 @@ bool CDepinMsgPool::GetLegacyPage(const std::string& address, const std::string&
 {
     LOCK(cs_depinmsgpool);
     if (storageFault) { error = "DePIN storage unavailable"; return false; }
-    const auto destination = DecodeDestination(address);
-    const CKeyID* key = boost::get<CKeyID>(&destination);
-    if (!key) { error = "Legacy address required"; return false; }
-    const uint160 id = *key;
+    DepinRecipient id;
+    if (!DepinRecipient::FromAddress(address, id)) { error = "Legacy or strict ECDSA address required"; return false; }
     uint256 hash;
     if (!anchor.empty()) hash.SetHex(anchor);
     bool found = anchor.empty();
@@ -236,10 +235,8 @@ bool CDepinMsgPool::GetSequencePage(const std::string& address, const std::strin
     page = CDepinSequencePage();
     page.stream = streamId;
     page.after = after;
-    const auto destination = DecodeDestination(address);
-    const CKeyID* key = boost::get<CKeyID>(&destination);
-    if (!key) { error = "Legacy address required"; return false; }
-    const uint160 id = *key;
+    DepinRecipient id;
+    if (!DepinRecipient::FromAddress(address, id)) { error = "Legacy or strict ECDSA address required"; return false; }
     const int64_t now = GetTime();
     size_t bytes = 2048; // response metadata and chained nonce allowance
     for (auto it = mapBySequence.upper_bound(after); it != mapBySequence.end(); ++it) {
@@ -343,9 +340,7 @@ bool CDepinMsgPool::InitializeStorage(bool keepMessages, std::string& error, siz
                 } else if (message.IsExpired(GetTime(), GetMessageExpiryTime()) || message.timestamp < minimumTimestamp || tombstones.count(key.second)) {
                     batch.Erase(key);
                 } else {
-                    const auto destination = DecodeDestination(message.senderAddress);
-                    const CKeyID* sender = boost::get<CKeyID>(&destination);
-                    if (sender && record.senderKey.IsFullyValid() && record.senderKey.GetID() == *sender &&
+                    if (DepinPubKeyMatchesAddress(message.senderAddress, record.senderKey) &&
                         record.senderKey.Verify(message.GetHash(), message.signature)) {
                         message.verifiedSenderKey = record.senderKey;
                         if (!AddMessageInternal(message, validationError, true, true, nullptr, record.sequence)) {

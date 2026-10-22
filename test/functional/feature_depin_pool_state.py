@@ -63,21 +63,22 @@ def aes_gcm(key, nonce, plaintext):
         crypto.EVP_CIPHER_CTX_free(context)
 
 
-def encrypt(plaintext, pubkeys):
+def encrypt(plaintext, pubkeys, identities=None):
     ephemeral = ECKey()
     ephemeral.generate()
     content_key = sha256(ephemeral.get_bytes() + b'\x00\x00\x00\x01')
     payload = aes_gcm(content_key, os.urandom(12), plaintext)
     entries = []
-    for raw in pubkeys:
+    for index, raw in enumerate(pubkeys):
         public = ECPubKey()
         public.set(raw)
         point = SECP256K1.affine(SECP256K1.mul([(public.p, ephemeral.secret)]))
         compressed = bytes([2 + (point[1] & 1)]) + point[0].to_bytes(32, 'big')
         wrapping_key = sha256(sha256(compressed) + b'\x00\x00\x00\x01')
-        identity = hashlib.new('ripemd160', sha256(raw)).digest()
+        identity = identities[index] if identities is not None else hashlib.new('ripemd160', sha256(raw)).digest()
         entries.append((identity, aes_gcm(wrapping_key, os.urandom(12), content_key)))
-    return (vector(ephemeral.get_pubkey().get_bytes()) + vector(payload) + compact(len(entries)) +
+    return ((b'\x00\x02' if identities is not None else b'') +
+            vector(ephemeral.get_pubkey().get_bytes()) + vector(payload) + compact(len(entries)) +
             b''.join(identity + vector(wrapped) for identity, wrapped in sorted(entries)))
 
 

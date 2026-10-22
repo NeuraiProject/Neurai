@@ -50,7 +50,7 @@ BOOST_FIXTURE_TEST_SUITE(depinmsgpool_tests, BasicTestingSetup)
 
 // Mirrors the address -> hash160 decode that GetMessagesForAddress performs
 // once per call, so tests can build the same addressHash160 pointer callers pass in.
-static bool AddressToHash160(const std::string& address, uint160& hashOut)
+static bool AddressToHash160(const std::string& address, DepinRecipient& hashOut)
 {
     CTxDestination dest = DecodeDestination(address);
     const CKeyID* keyID = boost::get<CKeyID>(&dest);
@@ -105,7 +105,7 @@ BOOST_AUTO_TEST_CASE(group_message_recipient_is_delivered)
     CDepinMessage msg = BuildMessage(0x02, senderAddress, eciesMsg);
 
     for (const std::string& address : recipientAddresses) {
-        uint160 hash;
+        DepinRecipient hash;
         BOOST_REQUIRE(AddressToHash160(address, hash));
         BOOST_CHECK(ShouldDeliverDepinMessageToAddress(msg, address, &hash));
     }
@@ -135,7 +135,7 @@ BOOST_AUTO_TEST_CASE(group_message_non_recipient_is_not_delivered)
     // A holder who joined later / was never part of the recipient snapshot.
     CKey outsiderKey;
     std::string outsiderAddress = NewAddress(outsiderKey);
-    uint160 outsiderHash;
+    DepinRecipient outsiderHash;
     BOOST_REQUIRE(AddressToHash160(outsiderAddress, outsiderHash));
 
     BOOST_CHECK(!ShouldDeliverDepinMessageToAddress(msg, outsiderAddress, &outsiderHash));
@@ -172,7 +172,7 @@ BOOST_AUTO_TEST_CASE(malformed_input_is_rejected_without_throwing)
 
     CKey queryKey;
     std::string queryAddress = NewAddress(queryKey);
-    uint160 queryHash;
+    DepinRecipient queryHash;
     BOOST_REQUIRE(AddressToHash160(queryAddress, queryHash));
 
     // Payload is not a valid serialized CECIESEncryptedMessage.
@@ -195,7 +195,7 @@ BOOST_AUTO_TEST_CASE(malformed_input_is_rejected_without_throwing)
     BOOST_REQUIRE(ECIESEncryptMessage("hello", recipients, eciesMsg, error));
     CDepinMessage validMsg = BuildMessage(0x02, senderAddress, eciesMsg);
 
-    uint160 unusedHash;
+    DepinRecipient unusedHash;
     BOOST_CHECK(!AddressToHash160("not-a-valid-address", unusedHash));
     BOOST_CHECK(!ShouldDeliverDepinMessageToAddress(validMsg, "not-a-valid-address", nullptr));
 }
@@ -209,7 +209,7 @@ BOOST_AUTO_TEST_CASE(filter_keeps_only_deliverable_messages_in_order)
     // Two wallets: `mine` is the querying address, `other` is a stranger.
     CKey mineKey;
     std::string mineAddress = NewAddress(mineKey);
-    uint160 mineHash;
+    DepinRecipient mineHash;
     BOOST_REQUIRE(AddressToHash160(mineAddress, mineHash));
 
     CKey otherKey;

@@ -21,10 +21,9 @@
 #include "pubkey.h"
 #include "depinchallenge.h"
 #include "depinserialization.h"
+#include "depinaddress.h"
 
-#ifdef ENABLE_WALLET
 class CWallet;
-#endif
 
 class CDBWrapper;
 
@@ -95,7 +94,7 @@ static const size_t MAX_DEPIN_ANCESTOR_DEPTH = 64;
 // Uses a single CECIESEncryptedMessage shared by all recipients
 // The ECIES structure contains:
 //   - encryptedPayload: AES-256-GCM [nonce (12) || ciphertext || tag (16)]
-//   - recipientKeys: address_hash160 -> GCM-wrapped AES key (60 bytes:
+//   - recipientKeys: exact typed destination -> GCM-wrapped AES key (60 bytes:
 //     nonce (12) || encrypted_AES_key (32) || tag (16))
 // Each recipient can decrypt the AES key with their private key,
 // then decrypt the shared payload.
@@ -384,7 +383,7 @@ bool HasDepinSectionOwnerAccess(const std::string& address, const std::string& s
                                 const std::string& root, std::string& error);
 
 bool VerifyDepinMessageSignature(const CDepinMessage& message, CPubKey* verifiedKey = nullptr);
-bool SignDepinMessage(CDepinMessage& message, const std::string& senderAddress);
+bool SignDepinMessage(CDepinMessage& message, const std::string& senderAddress, CWallet* wallet = nullptr);
 bool CheckTokenOwnership(const std::string& address, const std::string& token, std::string& error);
 bool CheckAddressHasPublicKey(const std::string& address, CPubKey& pubkey, std::string& error);
 std::vector<std::string> GetTokenHolders(const std::string& token, unsigned int maxHolders, std::string& error);
@@ -479,7 +478,7 @@ bool GetDepinAncestorRecipients(const std::string& token,
 // Decide whether a given address should receive this message from the pool.
 // Sender always sees their own message; otherwise checks recipientKeys
 // membership by hash160 (no decryption attempted, no private key needed).
-// addressHash160 must be pre-decoded once by the caller (see GetMessagesForAddress).
+// The typed recipient identity must be pre-decoded once by the caller (see GetMessagesForAddress).
 //
 // scopeToken "" is byte-for-byte the historical behavior. Non-empty, the
 // message's token must be scopeToken or a section inside it; the check runs
@@ -488,7 +487,7 @@ bool GetDepinAncestorRecipients(const std::string& token,
 // expensive part). The scope separates tabs; it is NOT access control -- what
 // an address can decrypt is still fixed by recipientKeys.
 bool ShouldDeliverDepinMessageToAddress(const CDepinMessage& msg, const std::string& address,
-                                         const uint160* addressHash160,
+                                         const DepinRecipient* recipient,
                                          const std::string& scopeToken = "");
 
 // Apply ShouldDeliverDepinMessageToAddress over a collection, preserving order.
@@ -499,7 +498,7 @@ bool ShouldDeliverDepinMessageToAddress(const CDepinMessage& msg, const std::str
 // copied into the result. Null entries are skipped.
 std::vector<CDepinMessage> FilterDepinMessagesForAddress(const std::vector<const CDepinMessage*>& messages,
                                                          const std::string& address,
-                                                         const uint160* addressHash160,
+                                                         const DepinRecipient* recipient,
                                                          const std::string& scopeToken = "");
 
 // Encrypt message for ALL recipients at once (ECIES hybrid encryption)
@@ -517,7 +516,7 @@ bool EncryptMessageForAllRecipients(const std::string& message,
 bool DecryptMessageForAddress(const std::vector<unsigned char>& encryptedData,
                                const std::string& address,
                                std::string& decryptedMessage,
-                               std::string& error);
+                               std::string& error, CWallet* wallet = nullptr);
 
 
 

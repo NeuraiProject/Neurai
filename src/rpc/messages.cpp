@@ -545,7 +545,7 @@ UniValue depingetmsginfo(const JSONRPCRequest& request)
                 "  \"tip_age_seconds\": n,          (numeric) Active-tip age\n"
                 "  \"maxtipage\": n,                (numeric) Configured age bound in seconds\n"
                 "  \"maxheaderlag\": n,             (numeric) Configured header lead bound\n"
-                "  \"protocol\": 4,                  (numeric) DePIN RPC protocol version\n"
+                "  \"protocol\": 5,                  (numeric) DePIN RPC protocol version\n"
                 "  \"depinpoolpkey\": \"hex\",        (string) Pool public key: pin it on first use; encrypt depinsubmitmsg envelopes for it; verifies poolsig\n"
                 "  \"depinpoolkeyaddress\": \"addr\", (string) P2PKH address of the pool key (verifymessage-compatible)\n"
 
@@ -785,7 +785,7 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
               holders.size(), chatMsg.encryptedPayload.size());
 
     // The sender always signs; the pool re-verifies the signature on insert.
-    if (!SignDepinMessage(chatMsg, senderAddress)) {
+    if (!SignDepinMessage(chatMsg, senderAddress, pwallet)) {
         throw JSONRPCError(RPC_WALLET_ERROR, "Failed to sign message");
     }
 
@@ -847,11 +847,9 @@ UniValue depindecrypt(const JSONRPCRequest& request)
     const std::string address = request.params[0].get_str();
     const std::string& encryptedHex = request.params[1].get_str();
 
-    const CTxDestination dest = DecodeDestination(address);
-    const CKeyID* keyID = boost::get<CKeyID>(&dest);
-    if (!IsValidDestination(dest) || !keyID) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
-    }
+    DepinRecipient recipientID;
+    if (!DepinRecipient::FromAddress(address, recipientID))
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Legacy or strict ECDSA address required");
     if (encryptedHex.size() > 2 * DepinECIESWireLimit(MAX_DEPIN_REPLY_PLAINTEXT, MAX_DEPIN_RECIPIENTS) ||
         !IsHex(encryptedHex)) {
         throw JSONRPCError(RPC_INVALID_PARAMETER, "encrypted exceeds budget or is not hex");
@@ -861,13 +859,13 @@ UniValue depindecrypt(const JSONRPCRequest& request)
     EnsureWalletIsUnlocked(pwallet);
 
     CKey key;
-    if (!pwallet->GetKey(*keyID, key)) {
+    CKeyID keyID;
+    if (!GetDepinKeyID(*pwallet, address, keyID) || !pwallet->GetKey(keyID, key)) {
         throw JSONRPCError(RPC_WALLET_ERROR, strprintf("Private key for %s not in wallet", address));
     }
 
     CECIESEncryptedMessage ecies;
     std::string formatError;
-    const uint160 recipientID = *keyID;
     if (!DecodeDepinECIES(ParseHex(encryptedHex), MAX_DEPIN_REPLY_PLAINTEXT, MAX_DEPIN_RECIPIENTS,
                           ecies, formatError, &recipientID))
         throw JSONRPCError(RPC_DESERIALIZATION_ERROR, formatError);
@@ -1038,7 +1036,7 @@ UniValue depingetmsg(const JSONRPCRequest& request)
 
             // ECIES shared message contains an AES key encrypted for each holder
             // DecryptMessageForAddress will find and decrypt the key for myAddress
-            if (DecryptMessageForAddress(msg.encryptedPayload, myAddress, decryptedMessage, error)) {
+            if (DecryptMessageForAddress(msg.encryptedPayload, myAddress, decryptedMessage, error, pwallet)) {
                 UniValue msgObj(UniValue::VOBJ);
                 msgObj.push_back(Pair("recipient", myAddress));
                 msgObj.push_back(Pair("sender", msg.senderAddress));

@@ -1369,7 +1369,7 @@ UniValue getpubkey(const JSONRPCRequest& request)
     if (request.fHelp || request.params.size() != 1)
         throw std::runtime_error(
             "getpubkey \"address\"\n"
-            "\nReturns the public key for an address that has revealed it by spending (requires pubkeyindex to be enabled).\n"
+            "\nReturns the public key for a Legacy, AuthScript v1 or strict ECDSA address that has revealed it by spending (requires pubkeyindex to be enabled).\n"
             "\nArguments:\n"
             "1. \"address\"      (string, required) The Neurai address\n"
             "\nResult:\n"
@@ -1398,7 +1398,8 @@ UniValue getpubkey(const JSONRPCRequest& request)
 
     CDestinationIndexData addressData;
     if (!GetDestinationIndexData(dest, addressData) ||
-        (addressData.type != DEST_INDEX_KEY && addressData.type != DEST_INDEX_WITNESS_V1_AUTHSCRIPT)) {
+        (addressData.type != DEST_INDEX_KEY && addressData.type != DEST_INDEX_WITNESS_V1_AUTHSCRIPT &&
+         addressData.type != DEST_INDEX_WITNESS_V3_STRICT_ECDSA)) {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address does not refer to a key");
     }
     CPubKeyIndexValue value;

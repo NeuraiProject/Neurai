@@ -2,15 +2,16 @@
 
 This describes authorization for P9a, P1 and P3 (2026-10-21). For subsequent
 strict encoding, sequence reads and durable state, see
-[depin-pool-state.md](depin-pool-state.md). The signed user message and ECIES
-serialization remain unchanged; admission is stricter.
+[depin-pool-state.md](depin-pool-state.md). The signed user message framing remains unchanged. RPC 5 additionally supports
+strict ECDSA destinations with [typed ECIES recipients](depin-ecdsa.md);
+Legacy-only ECIES keeps its original bytes.
 
 ## Publications and recipients
 
 `AddMessage` is the admission boundary for remote submission, local wallet
 sending and MCP replies. Every new publication requires an active sender
-and an active Legacy P2PKH address for **every declared `recipientKeys`
-hash160**, for the message's token or an ancestor up to the configured pool
+and an active Legacy P2PKH or strict ECDSA address for **every declared
+`recipientKeys` destination**, for the message's token or an ancestor up to the configured pool
 root. A positive balance must also pass owner-freeze and self-revocation
 checks. An active ancestor still grants access when a child pair is frozen.
 Owner tokens grant administration, not readership.
@@ -115,7 +116,7 @@ truncated directory as complete. Preserve verification of signed wrappers.
 
 The node implements complete method/parameter signatures and
 [P7 membership context](depin-membership.md) under
-[RPC protocol 4](depin-request-signatures.md). Every relevant confirmed pool
+[RPC protocol 5](depin-request-signatures.md). Every relevant confirmed pool
 change invalidates RECEIVE/ADMIN challenges; stale operation proofs and sends
 require refresh. P3 still rechecks current permission. A reorganization never
 reactivates an invalidated nonce. External libraries remain pending.

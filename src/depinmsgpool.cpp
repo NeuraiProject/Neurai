@@ -281,7 +281,7 @@ bool CDepinMsgPool::AddMessageInternal(const CDepinMessage& message, std::string
     CECIESEncryptedMessage eciesProbe;
     if (!DecodeDepinECIES(message.encryptedPayload, nMaxMessageSize, nMaxRecipients, eciesProbe, error))
         return false;
-    std::vector<uint160> recipients;
+    std::vector<DepinRecipient> recipients;
     for (const auto& entry : eciesProbe.recipientKeys) recipients.push_back(entry.first);
 
     CDepinMessage admitted = message;
@@ -302,8 +302,8 @@ bool CDepinMsgPool::AddMessageInternal(const CDepinMessage& message, std::string
         if (!HasDepinSectionAccess(message.senderAddress, message.token, activeToken, error)) {
             return false;
         }
-        for (const uint160& id : recipients) {
-            const std::string address = EncodeDestination(CKeyID(id));
+        for (const DepinRecipient& id : recipients) {
+            const std::string address = id.Address();
             std::string accessError;
             if (!HasDepinSectionAccess(address, message.token, activeToken, accessError)) {
                 if (admissionError) *admissionError = DepinAdmissionError::RECIPIENT_NOT_AUTHORIZED;
@@ -389,7 +389,7 @@ bool CDepinMsgPool::GetDepinMessage(const uint256& hash, CDepinMessage& message)
 }
 
 bool ShouldDeliverDepinMessageToAddress(const CDepinMessage& msg, const std::string& address,
-                                         const uint160* addressHash160,
+                                         const DepinRecipient* recipient,
                                          const std::string& scopeToken) {
     // Scope first: BEFORE the sender shortcut (a sender's own message from
     // another section must not appear in the wrong tab) and before the ECIES
@@ -405,7 +405,7 @@ bool ShouldDeliverDepinMessageToAddress(const CDepinMessage& msg, const std::str
         return true;
     }
 
-    if (!addressHash160) {
+    if (!recipient) {
         return false;
     }
 
@@ -414,7 +414,7 @@ bool ShouldDeliverDepinMessageToAddress(const CDepinMessage& msg, const std::str
         std::string error;
         if (!DecodeDepinECIES(msg.encryptedPayload, MAX_DEPIN_MESSAGE_SIZE, MAX_DEPIN_RECIPIENTS, eciesMsg, error))
             return false;
-        return eciesMsg.recipientKeys.count(*addressHash160) > 0;
+        return eciesMsg.recipientKeys.count(*recipient) > 0;
     } catch (const std::exception& e) {
         LogPrint(BCLog::NET, "ShouldDeliverDepinMessageToAddress: Failed to deserialize ECIES message: %s\n", e.what());
         return false;
@@ -423,11 +423,11 @@ bool ShouldDeliverDepinMessageToAddress(const CDepinMessage& msg, const std::str
 
 std::vector<CDepinMessage> FilterDepinMessagesForAddress(const std::vector<const CDepinMessage*>& messages,
                                                          const std::string& address,
-                                                         const uint160* addressHash160,
+                                                         const DepinRecipient* recipient,
                                                          const std::string& scopeToken) {
     std::vector<CDepinMessage> result;
     for (const CDepinMessage* msg : messages) {
-        if (msg && ShouldDeliverDepinMessageToAddress(*msg, address, addressHash160, scopeToken)) {
+        if (msg && ShouldDeliverDepinMessageToAddress(*msg, address, recipient, scopeToken)) {
             result.push_back(*msg);
         }
     }
@@ -438,15 +438,8 @@ std::vector<CDepinMessage> CDepinMsgPool::GetMessagesForAddress(const std::strin
                                                                 const std::string& scopeToken) const {
     LOCK(cs_depinmsgpool);
 
-    // Decode the requesting address to hash160 once per call, not once per message.
-    CTxDestination dest = DecodeDestination(address);
-    const CKeyID* keyID = boost::get<CKeyID>(&dest);
-    uint160 addressHash160;
-    const uint160* hashPtr = nullptr;
-    if (keyID) {
-        addressHash160 = uint160(*keyID);
-        hashPtr = &addressHash160;
-    }
+    DepinRecipient recipient;
+    const DepinRecipient* hashPtr = DepinRecipient::FromAddress(address, recipient) ? &recipient : nullptr;
 
     // Collect pointers in chronological order (mapByTime, oldest first) rather
     // than hash order, then let the free function above apply the delivery
@@ -732,12 +725,11 @@ bool CheckAddressHasPublicKey(const std::string& address, CPubKey& pubkey, std::
         return false;
     }
 
-    // Decode address to get hash160
+    // Decode the exact indexed destination
     CTxDestination dest = DecodeDestination(address);
     CDestinationIndexData addressData;
-    if (!IsValidDestination(dest) || !GetDestinationIndexData(dest, addressData) ||
-        (addressData.type != DEST_INDEX_KEY && addressData.type != DEST_INDEX_WITNESS_V1_AUTHSCRIPT &&
-         addressData.type != DEST_INDEX_WITNESS_V2_STRICT_PQ && addressData.type != DEST_INDEX_WITNESS_V3_STRICT_ECDSA)) {
+    DepinRecipient recipient;
+    if (!DepinRecipient::FromAddress(address, recipient) || !GetDestinationIndexData(dest, addressData)) {
         error = strprintf("Invalid address format: %s", address);
         return false;
     }
@@ -750,7 +742,7 @@ bool CheckAddressHasPublicKey(const std::string& address, CPubKey& pubkey, std::
     }
 
     pubkey = value.pubkey;
-    if (!pubkey.IsValid()) {
+    if (!DepinPubKeyMatchesAddress(address, pubkey)) {
         error = strprintf("Invalid public key found for address %s", address);
         return false;
     }
@@ -777,9 +769,7 @@ bool VerifyDepinMessageSignature(const CDepinMessage& message, CPubKey* verified
     // doubleSHA256(token || senderAddress || timestamp || messageType || encryptedPayload)
     uint256 messageHash = message.GetHash();
 
-    const auto destination = DecodeDestination(message.senderAddress);
-    const CKeyID* senderId = boost::get<CKeyID>(&destination);
-    if (senderId && senderPubKey.GetID() == *senderId && senderPubKey.Verify(messageHash, message.signature)) {
+    if (DepinPubKeyMatchesAddress(message.senderAddress, senderPubKey) && senderPubKey.Verify(messageHash, message.signature)) {
         if (verifiedKey) *verifiedKey = senderPubKey;
         return true;
     }
@@ -797,26 +787,26 @@ bool VerifyDepinMessageSignature(const CDepinMessage& message, CPubKey* verified
     return false;
 }
 
-bool SignDepinMessage(CDepinMessage& message, const std::string& senderAddress) {
+bool SignDepinMessage(CDepinMessage& message, const std::string& senderAddress, CWallet* wallet) {
 #ifdef ENABLE_WALLET
     // Get wallet
-    if (vpwallets.empty()) {
+    if (!wallet && vpwallets.empty()) {
         LogPrintf("SignDepinMessage: Wallet not available\n");
         return false;
     }
-    CWallet* const pwallet = vpwallets[0];
+    CWallet* const pwallet = wallet ? wallet : vpwallets[0];
+    LOCK(pwallet->cs_wallet);
 
     // Decode address
-    CTxDestination dest = DecodeDestination(senderAddress);
-    const CKeyID* keyID = boost::get<CKeyID>(&dest);
-    if (!keyID) {
+    CKeyID keyID;
+    if (!GetDepinKeyID(*pwallet, senderAddress, keyID)) {
         LogPrintf("SignDepinMessage: Invalid sender address format\n");
         return false;
     }
 
     // Get private key from wallet
     CKey privKey;
-    if (!pwallet->GetKey(*keyID, privKey)) {
+    if (!pwallet->GetKey(keyID, privKey)) {
         LogPrintf("SignDepinMessage: Private key not found in wallet for address %s\n", senderAddress);
         return false;
     }
@@ -1118,28 +1108,6 @@ std::string GetDepinSectionLabel(const std::string& name, const std::string& roo
     return name.substr(root.size() + 1);
 }
 
-namespace {
-
-// Does `pubkey`, as stored in -pubkeyindex for `address`, actually belong to it?
-//
-// The index is keyed by destination, but a corrupted or hostile entry could
-// hand back a key that hashes elsewhere; encrypting for it would produce a
-// payload the holder cannot open. Only P2PKH destinations qualify: the DePIN
-// encryption layer keys recipients by uint160(CKeyID) (depinecies.cpp), so a
-// script or AuthScript address can never be a recipient regardless of what the
-// index holds.
-bool PubKeyMatchesAddress(const std::string& address, const CPubKey& pubkey)
-{
-    CTxDestination dest = DecodeDestination(address);
-    const CKeyID* keyID = boost::get<CKeyID>(&dest);
-    if (!keyID)
-        return false;
-
-    return pubkey.GetID() == *keyID;
-}
-
-} // namespace
-
 bool GetDepinAncestorRecipients(const std::string& token,
                                 size_t maxResults,
                                 CDepinAncestorRecipients& result,
@@ -1337,7 +1305,7 @@ bool GetDepinAncestorRecipients(const std::string& token,
         std::string pubkeyError;
         gDepinAncestorRecipientsStats.pubkeyQueries++;
         if (!CheckAddressHasPublicKey(address, pubkey, pubkeyError) ||
-            !PubKeyMatchesAddress(address, pubkey)) {
+            !DepinPubKeyMatchesAddress(address, pubkey)) {
             result.skippedNoPubKey++;
             continue;
         }
@@ -1409,26 +1377,26 @@ bool EncryptMessageForAllRecipients(const std::string& message,
 
 bool DecryptMessageForAddress(const std::vector<unsigned char>& encryptedData,
                                const std::string& address, std::string& decryptedMessage,
-                               std::string& error) {
+                               std::string& error, CWallet* wallet) {
 #ifdef ENABLE_WALLET
     // Get wallet
-    if (vpwallets.empty()) {
+    if (!wallet && vpwallets.empty()) {
         error = "Wallet not available";
         return false;
     }
-    CWallet* const pwallet = vpwallets[0];
+    CWallet* const pwallet = wallet ? wallet : vpwallets[0];
+    LOCK(pwallet->cs_wallet);
 
     // Decode address
-    CTxDestination dest = DecodeDestination(address);
-    const CKeyID* keyID = boost::get<CKeyID>(&dest);
-    if (!keyID) {
+    CKeyID keyID;
+    if (!GetDepinKeyID(*pwallet, address, keyID)) {
         error = "Invalid address format";
         return false;
     }
 
     // Get private key from wallet
     CKey privKey;
-    if (!pwallet->GetKey(*keyID, privKey)) {
+    if (!pwallet->GetKey(keyID, privKey)) {
         error = strprintf("Private key not found in wallet for address %s", address);
         return false;
     }

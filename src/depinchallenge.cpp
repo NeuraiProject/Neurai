@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include "depinaddress.h"
 #include "depinchallenge.h"
 
 #include "base58.h"
@@ -201,14 +202,17 @@ uint256 DepinChallengeSigningHash(const std::string& preimage)
 }
 
 bool SignDepinChallengePreimage(const CKey& key, const std::string& preimage,
-                                std::string& signatureBase64, std::string& error)
+                                std::string& signatureBase64, std::string& error,
+                                const std::string& address)
 {
     if (!key.IsValid()) {
         error = "Invalid private key";
         return false;
     }
     std::vector<unsigned char> vchSig;
-    if (!key.SignCompact(DepinChallengeSigningHash(preimage), vchSig)) {
+    const std::string signer = address.empty() ? EncodeDestination(key.GetPubKey().GetID()) : address;
+    if (!DepinPubKeyMatchesAddress(signer, key.GetPubKey()) ||
+        !SignMessageHash(key, DecodeDestination(signer), DepinChallengeSigningHash(preimage), vchSig)) {
         error = "Failed to sign challenge";
         return false;
     }
@@ -224,12 +228,6 @@ bool VerifyDepinChallengeSignature(const std::string& address, const std::string
         error = "Invalid address";
         return false;
     }
-    const CKeyID* keyID = boost::get<CKeyID>(&dest);
-    if (!keyID) {
-        error = "Address does not refer to a key";
-        return false;
-    }
-
     bool fInvalid = false;
     const std::vector<unsigned char> vchSig = DecodeBase64(signatureBase64.c_str(), &fInvalid);
     if (fInvalid || vchSig.empty()) {
@@ -237,12 +235,9 @@ bool VerifyDepinChallengeSignature(const std::string& address, const std::string
         return false;
     }
 
-    CPubKey pubkey;
-    if (!pubkey.RecoverCompact(DepinChallengeSigningHash(preimage), vchSig)) {
-        error = "Failed to recover public key from signature";
-        return false;
-    }
-    if (pubkey.GetID() != *keyID) {
+    DepinRecipient recipient;
+    if (!DepinRecipient::FromAddress(address, recipient) ||
+        !VerifyMessageHash(dest, DepinChallengeSigningHash(preimage), vchSig)) {
         error = "Signature does not match address";
         return false;
     }
@@ -419,18 +414,12 @@ bool AddressHasDepinAccess(DepinChallengeType type, const std::string& address,
     return HasDepinSectionAccess(address, token, poolRoot, error);
 }
 
-bool IsP2PKH(const std::string& address, std::string& error)
+bool IsDepinAddress(const std::string& address, std::string& error)
 {
-    const CTxDestination dest = DecodeDestination(address);
-    if (!IsValidDestination(dest)) {
-        error = "Invalid address";
-        return false;
-    }
-    if (!boost::get<CKeyID>(&dest)) {
-        error = "Address is not a P2PKH address";
-        return false;
-    }
-    return true;
+    DepinRecipient recipient;
+    if (DepinRecipient::FromAddress(address, recipient)) return true;
+    error = "Address must be canonical Legacy P2PKH or strict ECDSA";
+    return false;
 }
 
 } // namespace
@@ -443,7 +432,7 @@ bool CheckDepinChallengeRequest(const std::string& token, const std::string& add
         error = strprintf("Token '%s' is not configured token '%s' or a section inside it", token, poolRoot);
         return false;
     }
-    if (!IsP2PKH(address, error)) {
+    if (!IsDepinAddress(address, error)) {
         return false;
     }
     // The reply is encrypted for this key, and the signature check will need
@@ -479,7 +468,7 @@ bool CheckDepinChallengeAuth(DepinChallengeType type, const std::string& token,
     LOCK(cs_main);
     if (!CheckDepinServiceReady(error)) return false;
     // 1. Form. Nothing here touches the store.
-    if (!IsP2PKH(address, error)) {
+    if (!IsDepinAddress(address, error)) {
         return false;
     }
     if (nonce.size() != 64 || !IsHex(nonce)) {

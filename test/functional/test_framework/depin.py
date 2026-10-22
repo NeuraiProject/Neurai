@@ -1,6 +1,6 @@
 # Copyright (c) 2026 The Neurai developers
 # Distributed under the MIT software license, see COPYING.
-"""Independent protocol-4 test client; no project client libraries or C++ codec."""
+"""Independent protocol-5 test client; no project client libraries or C++ codec."""
 import copy
 import hashlib
 import json
@@ -57,14 +57,14 @@ def request_bytes(method, request):
     if method == 'depinclearmsg' and not r['token']:
         r['token'] = r['pool_root']
     kind, args = arguments(method, r)
-    return (text('Neurai/DePIN/RPC/request') + struct.pack('<H', 4) + text(method) + bytes([kind]) +
+    return (text('Neurai/DePIN/RPC/request') + struct.pack('<H', 5) + text(method) + bytes([kind]) +
             bytes.fromhex(r['network']) + blob(bytes.fromhex(r['pool_pubkey'])) + text(r['pool_root']) +
             bytes.fromhex(r['instance_id']) + bytes.fromhex(r['membership_revision']) + bytes.fromhex(r['request_id']) + struct.pack('<q', r['timestamp_ms']) +
             text(r['token']) + text(r['address']) + blob(bytes.fromhex(r['challenge'])) + blob(args))
 
 
 def preimage(method, request):
-    return 'DEPIN-RPC-REQUEST-v4|' + digest(request_bytes(method, request)).hex()
+    return 'DEPIN-RPC-REQUEST-v5|' + digest(request_bytes(method, request)).hex()
 
 
 def pool_address(pubkey):
@@ -82,19 +82,20 @@ def pool_address(pubkey):
 def response_preimage(method, response):
     kind = response['body_kind']
     body = bytes.fromhex(response['encrypted' if kind else 'body'])
-    q = (text('Neurai/DePIN/RPC/response') + struct.pack('<H', 4) + text(method) +
+    q = (text('Neurai/DePIN/RPC/response') + struct.pack('<H', 5) + text(method) +
          bytes.fromhex(response['network']) + blob(bytes.fromhex(response['pool_pubkey'])) + text(response['pool_root']) +
          bytes.fromhex(response['instance_id']) + bytes.fromhex(response['membership_revision']) +
          struct.pack('<q', response['membership_height']) + bytes.fromhex(response['membership_blockhash']) + bytes.fromhex(response['request_hash']) + bytes([kind]) + blob(body))
-    return 'DEPIN-RPC-RESPONSE-v4|' + digest(q).hex()
+    return 'DEPIN-RPC-RESPONSE-v5|' + digest(q).hex()
 
 
 class DepinClient:
-    def __init__(self, node):
+    def __init__(self, node, wallet=None):
         self.node = node
+        self.wallet = wallet or node
 
     def verify(self, method, request, response, pinned=None):
-        assert response['protocol'] == 4
+        assert response['protocol'] == 5
         assert response['body_kind'] in (0, 1)
         assert set(response) == {'protocol', 'network', 'pool_pubkey', 'pool_root', 'instance_id',
                                  'membership_revision', 'membership_height', 'membership_blockhash',
@@ -109,7 +110,7 @@ class DepinClient:
         assert len(body_hex) % 2 == 0 and re.fullmatch('[0-9a-f]+', body_hex)
         if response['body_kind']:
             assert 'body' not in response
-            result = self.node.depindecrypt(request['address'], response['encrypted'])
+            result = self.wallet.depindecrypt(request['address'], response['encrypted'])
         else:
             assert 'encrypted' not in response
             result = json.loads(bytes.fromhex(response['body']).decode())
@@ -125,7 +126,7 @@ class DepinClient:
         return result
 
     def bootstrap(self):
-        r = {'protocol': 4, 'request_id': os.urandom(32).hex(), 'timestamp_ms': int(time.time()*1000)}
+        r = {'protocol': 5, 'request_id': os.urandom(32).hex(), 'timestamp_ms': int(time.time()*1000)}
         response = self.node.depingetmsginfo(r)
         info = self.verify('depingetmsginfo', r, response)
         assert info['network'] == response['network'] and info['instance_id'] == response['instance_id']
@@ -139,12 +140,12 @@ class DepinClient:
         else:
             timestamp = int(time.time()*1000)
         r = {key: identity[key] for key in ['network', 'pool_pubkey', 'pool_root', 'instance_id', 'membership_revision']}
-        r.update(protocol=4, request_id=os.urandom(32).hex(), timestamp_ms=timestamp,
+        r.update(protocol=5, request_id=os.urandom(32).hex(), timestamp_ms=timestamp,
                  token=token, address=address, challenge=nonce, args=args or {}, signature='')
         if arguments(method, r)[0]:
             expected = preimage(method, r)
-            signature = self.node.signmessage(address, expected)
-            native = self.node.depinsignrpc(method, r)
+            signature = self.wallet.signmessage(address, expected)
+            native = self.wallet.depinsignrpc(method, r)
             assert native['preimage'] == expected
             assert native['request_hash'] == digest(request_bytes(method, r)).hex()
             assert native['request']['signature'] == signature

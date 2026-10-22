@@ -644,7 +644,7 @@ BOOST_AUTO_TEST_CASE(rpc_validates_and_serialises)
     const UniValue result = CallAncestorRecipientsRPC(params);
 
     BOOST_CHECK_EQUAL(find_value(result, "token").get_str(), LEAF_TOKEN);
-    // Protocol 4 signs and reports the effective boundary, including defaults.
+    // Protocol 5 signs and reports the effective boundary, including defaults.
     BOOST_CHECK_EQUAL(find_value(result, "stop_at").get_str(), ROOT_TOKEN);
     BOOST_CHECK_EQUAL(find_value(result, "max_results").get_int64(),
                       (int64_t)DEFAULT_DEPIN_ANCESTOR_RECIPIENTS_LIMIT);
@@ -698,7 +698,7 @@ BOOST_AUTO_TEST_CASE(rpc_validates_and_serialises)
     badToken.push_back("PLAINASSET");
     BOOST_CHECK_THROW(CallAncestorRecipientsRPC(badToken), UniValue);
 
-    // The CLI converts one v4 JSON object, preserving typed nested values.
+    // The CLI converts one v5 JSON object, preserving typed nested values.
     UniValue rawArgs(UniValue::VARR);rawArgs.push_back(LEAF_TOKEN);rawArgs.push_back(5);rawArgs.push_back(LEAF_TOKEN);
     const auto object=DepinTestRequest("depingetancestorrecipients",rawArgs);
     const auto converted=RPCConvertValues("depingetancestorrecipients",{object.write()});
@@ -1057,6 +1057,38 @@ BOOST_AUTO_TEST_CASE(address_restrictions_helper_covers_self_revocations)
     BOOST_REQUIRE_MESSAGE(GetDepinAncestorRecipients(LEAF_TOKEN, 100, result, error), error);
     BOOST_CHECK(result.recipients.empty());
     BOOST_CHECK_EQUAL(result.skippedRestricted, 1U);
+}
+
+
+BOOST_AUTO_TEST_CASE(strict_ecdsa_directory_and_signatures_use_exact_asset_address)
+{
+    CreateAsset(ROOT_TOKEN);
+    Holder holder = NewHolder();
+    const std::string legacy = holder.address;
+    WitnessStrictAuthScript strict;
+    BOOST_REQUIRE(GetStrictAuthScriptDestinationForPubKey(holder.pubkey, strict));
+    const std::string address = EncodeDestination(strict);
+    RevealPubKey(address, holder.pubkey);
+    SetBalance(ROOT_TOKEN, address, 1);
+    CDepinAncestorRecipients result; std::string error;
+    BOOST_REQUIRE(GetDepinAncestorRecipients(ROOT_TOKEN, 50, result, error, ROOT_TOKEN));
+    BOOST_REQUIRE_EQUAL(result.recipients.size(), 1U);
+    BOOST_CHECK_EQUAL(result.recipients[0].address, address);
+    BOOST_CHECK(!HasDepinSectionAccess(legacy, ROOT_TOKEN, ROOT_TOKEN, error));
+    BOOST_CHECK(HasDepinSectionAccess(address, ROOT_TOKEN, ROOT_TOKEN, error));
+    CDepinMessage message; message.token = ROOT_TOKEN; message.senderAddress = address;
+    message.timestamp = GetTime(); message.encryptedPayload = {1, 2, 3};
+    BOOST_REQUIRE(holder.key.Sign(message.GetHash(), message.signature));
+    BOOST_CHECK(VerifyDepinMessageSignature(message));
+    // Even an indexed key for the wrong commitment must never authenticate.
+    Holder other = NewHolder(); RevealPubKey(address, other.pubkey);
+    BOOST_CHECK(!VerifyDepinMessageSignature(message));
+    BOOST_REQUIRE(GetDepinAncestorRecipients(ROOT_TOKEN, 50, result, error, ROOT_TOKEN));
+    BOOST_CHECK(result.recipients.empty());
+    RevealPubKey(address, holder.pubkey);
+    SetBalance(ROOT_TOKEN, legacy, 1);
+    BOOST_REQUIRE(GetDepinAncestorRecipients(ROOT_TOKEN, 50, result, error, ROOT_TOKEN));
+    BOOST_CHECK_EQUAL(result.recipients.size(), 2U);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

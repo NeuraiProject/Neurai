@@ -1,11 +1,11 @@
-# DePIN pool membership context (P7 / RPC 4)
+# DePIN pool membership context (P7 / RPC 5)
 
-Implemented on the node, 2026-10-22, over `4c460b3`. The user chose pool-wide
+P7 was implemented over `4c460b3`; RPC 5 extends it to strict ECDSA over
+`d39ef51` on 2026-10-22. The user chose pool-wide
 renewal after membership changes, including RECEIVE and ADMIN challenges,
 plus a signed current-context requirement on remote submission. This extends
-P2 with **RPC protocol 4**, rejecting protocol 3 and older requests. Content
-ECIES/message signatures, persistence version 2 and cursor version 1 stay
-unchanged. External libraries remain for the later migration.
+P2 with **RPC protocol 5**, rejecting protocol 4 and older requests. Content cryptography/message signatures, persistence version 2 and cursor version 1
+stay unchanged. RPC 5 adds [typed ECIES 2 identities](depin-ecdsa.md). External libraries remain for the later migration.
 
 ## Context and confirmed transitions
 
@@ -30,7 +30,7 @@ conservative: an operation involving a served asset may renew even if its
 net usable-reader set is unchanged. Ancestors above the configured pool root
 are excluded, matching P3's permission boundary.
 
-A first valid Legacy key revelation for an address holding a served asset or
+A first valid Legacy or strict ECDSA key revelation for an address holding a served asset or
 owner token also renews the context. Repeated spends with the same already
 indexed key do not. The key index currently retains learned public keys when
 blocks disconnect; undo does not promise to erase this knowledge. Reorgs
@@ -74,7 +74,7 @@ Every response wrapper adds signed fields:
 - `membership_height`: integer reference height, -1 only without a chain tip.
 - `membership_blockhash`: displayed reference block hash, 32 decoded bytes.
 
-They enter the v4 response preimage after instance_id, before request_hash.
+They enter the v5 response preimage after instance_id, before request_hash.
 Bootstrap repeats them inside its body and advertises
 `membership_policy: "pool_challenges_and_signed_requests"`. P3 readiness
 still controls availability; a diagnostic context does not override ready=false.

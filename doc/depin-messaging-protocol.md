@@ -1,4 +1,4 @@
-# DePIN Messaging Protocol Specification (protocol 4)
+# DePIN Messaging Protocol Specification (protocol 5)
 
 This document specifies the DePIN messaging protocol of Neurai at the level an
 implementer needs to write an independent client or library in any language:
@@ -16,19 +16,19 @@ Companion documents:
 - [`README.md`](README.md) — operating a service node (configuration,
   indexes, wallet requirements).
 - `contrib/depin/regtest_walkthrough.sh` — an executable end-to-end run of
-  protocol 4 functional regressions against a disposable regtest node.
+  protocol 5 functional regressions against a disposable regtest node.
 
 Reference code: `src/depinmsgpool.{h,cpp}` (message, pool, access),
 `src/depinecies.{h,cpp}` (ECIES), `src/depinchallenge.{h,cpp}`
 (authentication), `src/depinpoolkey.{h,cpp}` (reply signing/encryption),
-`src/depinrpc.{h,cpp}` and `src/rpc/depin.cpp` (RPC 4 codec/dispatcher),
+`src/depinrpc.{h,cpp}` and `src/rpc/depin.cpp` (RPC 5 codec/dispatcher),
 `src/rpc/messages.cpp` (local wallet/query business logic). A JavaScript implementation of the message
 cryptography exists in the
 [DePIN-Messaging](https://github.com/NeuraiProject/DePIN-Messaging) repository.
 
 DePIN messaging is experimental and currently available on **testnet and
 regtest** only. Protocol **4** rejects old RPC formats/signatures. Clients
-MUST verify the bootstrap and require protocol 4. External SDKs are to be
+MUST verify the bootstrap and require protocol 5. External SDKs are to be
 updated after the node; no external implementation is certified here.
 
 ---
@@ -62,7 +62,7 @@ What is, and is not, confidential:
 - Public: token names, the section hierarchy, who holds what, which
   addresses have revealed keys — all of it is chain data. Sections protect
   content, not membership. The envelope metadata of a submission (sender,
-  token, timestamp, recipient hash160s) is visible to the node.
+  token, timestamp, recipient destination IDs) is visible to the node.
 
 ---
 
@@ -133,7 +133,7 @@ Query RPCs (all public, cacheable, no authentication):
 ### 2.3 Revealed public keys
 
 Every cryptographic operation that targets an address needs its public key,
-and the chain only exposes a hash160 until the address **spends** at least
+and the destination hides the public key until the address **spends** at least
 once. The node keeps a public-key index (`-pubkeyindex`) of keys recovered
 from spends. An address that has never spent:
 
@@ -146,9 +146,12 @@ user-facing condition and instruct the user to spend once from the address.
 
 ### 2.4 Address types
 
-Authentication and recipient encryption are defined for **P2PKH addresses
-backed by compressed secp256k1 keys** (`hash160(compressed pubkey)`). Other
-address types cannot authenticate and are not recipients.
+Authentication and recipient encryption support **Legacy P2PKH** (valid
+secp256k1 keys, compressed or uncompressed) and **strict ECDSA witness v3**
+(`nq1r…` / `tnq1r…`, compressed secp256k1 keys). Generic AuthScript v1,
+P2SH and strict PQ are not messaging identities. Each exact destination must
+hold its own required asset; sharing a public key does not share permissions.
+See [depin-ecdsa.md](depin-ecdsa.md) for commitment verification and wire rules.
 
 ---
 
@@ -169,7 +172,7 @@ address types cannot authenticate and are not recipients.
 
 ### 3.1 Serialization
 
-Message and ECIES structures use Bitcoin's serialization. RPC 4 uses the
+Message and ECIES structures use Bitcoin's serialization. RPC 5 uses the
 separate U32-length codec in the [request contract](depin-request-signatures.md):
 
 - integers little-endian (`int64` = 8 bytes, `uint8` = 1 byte);
@@ -196,7 +199,7 @@ order by the RPC codec; do not apply the message/uint256 reversal there.
 ### 3.3 Message signing (recoverable, `signmessage`-compatible)
 
 Used for complete RPC operation requests and response poolsig. The
-message-magic wrapper below is unchanged; the v4 signed texts are specified
+message-magic wrapper below is unchanged; the v5 signed texts are specified
 in [depin-request-signatures.md](depin-request-signatures.md).
 
 ```
@@ -207,9 +210,14 @@ where `ser_string` is `CompactSize(len) ‖ bytes`. The signature is a 65-byte
 **compact recoverable** ECDSA signature `header ‖ r ‖ s` with
 `header = 27 + recid + 4` (compressed keys), encoded in base64. Verification
 recovers the public key from the signature and checks
-`hash160(recovered) == address payload`. Signing is deterministic
+the recovered key against the exact destination: `hash160(recovered)` for
+Legacy, or the witness-v3 strict AuthScript commitment for ECDSA. Signing is deterministic
 (RFC 6979): the same key and text always give the same signature. Any
-wallet's `signmessage` / `verifymessage` is interoperable.
+wallet's `signmessage` / `verifymessage` is interoperable. Strict ECDSA first
+binds `msghash(text)` through `StrictAuthScriptMessageHash`: SHA256d of
+`ser_string("Neurai Strict AuthScript Message") || U8(3) || commitment_raw32 ||
+msghash(text)_raw32`. Compact recovery uses that bound hash, preventing
+cross-family reuse of a signature from the same key.
 
 ### 3.4 Message signatures (DER)
 
@@ -236,7 +244,16 @@ CECIESEncryptedMessage :=
   recipientKeys      map<uint160, vector<uint8>>  hash160 → nonce(12) ‖ wrappedKey(32) ‖ tag(16)
 ```
 
-Each recipient entry is exactly 60 bytes; `encryptedPayload` is
+This is ECIES 1, used for Legacy-only recipients. ECIES 2 prepends `00 02`
+and replaces every recipient ID with `00 || hash160` (Legacy) or
+`03 || commitment32` (strict ECDSA), retaining the same other fields. Its map
+must contain at least one strict destination. IDs sort by type then raw bytes;
+no duplicates, unknown types or trailing bytes are allowed. The commitment is
+stored in its raw 32-byte order, not the reversed display hex. The decoder
+accepts both formats, and the encoder selects ECIES 2 whenever needed.
+See [depin-ecdsa.md](depin-ecdsa.md) for the complete contract.
+
+Each wrapped key package is exactly 60 bytes; `encryptedPayload` is
 `28 + len(plaintext)` bytes. The hex of this serialization is what travels in
 `encrypted_payload_hex`, in `depinsubmitmsg.encrypted` and in every
 `encrypted` reply field.
@@ -250,12 +267,12 @@ n      ← random 12 bytes
 (C, t) = AES-256-GCM-Encrypt(key=K, nonce=n, plaintext)
 encryptedPayload = n ‖ C ‖ t
 
-for each recipient public key P (address = hash160(P)):
+for each verified (address, public key P):
     S      = ECDH(e, P)
     W      = KDF(S, 32)
     n_r    ← random 12 bytes
     (c, τ) = AES-256-GCM-Encrypt(key=W, nonce=n_r, plaintext=K)   # c is 32 bytes
-    recipientKeys[hash160(P)] = n_r ‖ c ‖ τ
+    recipientKeys[destination_id(address)] = n_r ‖ c ‖ τ
 ```
 
 Note the content key is the KDF of the ephemeral **private scalar**, not of a
@@ -265,7 +282,7 @@ encryption. Plaintext MUST be non-empty.
 ### 4.3 Decryption (recipient with private key `d`, address `A`)
 
 ```
-entry  = recipientKeys[hash160(d·G)]      # absent ⇒ "not encrypted for this recipient"
+entry  = recipientKeys[destination_id(A)]      # absent ⇒ "not encrypted for this recipient"
 S      = ECDH(d, ephemeralPubKey)
 W      = KDF(S, 32)
 K      = AES-256-GCM-Decrypt(key=W, nonce=entry[0:12], ct=entry[12:44], tag=entry[44:60])
@@ -284,7 +301,7 @@ issue.
 ```
 CDepinMessage :=
   token            string          e.g. "&NEWS/GENERAL"
-  senderAddress    string          base58 P2PKH address
+  senderAddress    string          canonical Legacy or strict ECDSA address
   timestamp        int64           Unix seconds, sender's clock
   messageType      uint8           0x01 private, 0x02 group
   encryptedPayload vector<uint8>   serialized CECIESEncryptedMessage (§4)
@@ -326,7 +343,7 @@ A message is stored only if **all** of the following hold, in this order:
    `80 + maxmessagesize + 81 * maxrecipients`;
 6. `encryptedPayload` passes the bounded strict ECIES decoder: valid compressed
    ephemeral key, minimal CompactSize, 1..`maxrecipients` entries in canonical
-   hash160 order without duplicates, exactly 60-byte wrapped keys and no
+   destination-ID order without duplicates, exactly 60-byte wrapped keys and no
    trailing bytes. Recipients still authenticate both GCM layers;
 7. the pool size limit is not exceeded;
 8. `signature` verifies against the sender's **revealed** public key (§2.3);
@@ -363,7 +380,7 @@ sequence read signatures, retention toggles, migration and recovery.
 
 ---
 
-## 6. RPC authentication and transport (protocol 4)
+## 6. RPC authentication and transport (protocol 5)
 
 [depin-request-signatures.md](depin-request-signatures.md) defines the exact
 common object, binary field order, single-SHA256 request/response domains,
@@ -421,7 +438,7 @@ structural decoder does not authenticate another user's content. Generate
 fresh ephemeral keys, content keys and GCM nonces; discard ephemeral scalars.
 The service learns sender, asset, timestamps and recipient IDs from the inner
 message. No anonymity or forward secrecy against theft of a recipient's
-static Legacy private key is provided. Revocation prevents authorized future
+static secp256k1 private key is provided. Revocation prevents authorized future
 downloads and does not erase ciphertext already downloaded. A newly added
 holder does not gain a recipient key for old messages automatically.
 
@@ -434,17 +451,17 @@ remain operator responsibilities; local wallet RPCs must stay private.
 
 ## 8. Executable vectors and tests
 
-The [15 canonical RPC request vectors](../src/test/data/depin_rpc_v4.json)
+The [15 canonical RPC request vectors](../src/test/data/depin_rpc_v5.json)
 come from an independent Python encoder in contrib/devtools. C++ checks the
 exact bytes/hash/preimage. The independent functional client reconstructs
 all request/response preimages, compares wallet signing with signmessage and
-verifies responses before decryption. The protocol 4 walkthrough also writes
+verifies responses before decryption. The protocol 5 walkthrough also writes
 public interoperability material (signed request and bootstrap response) in
 its disposable test directory, without wallet keys or RPC cookies.
 
 Run `contrib/depin/regtest_walkthrough.sh` after configuring/building the
 functional test environment. Permission and pool-state functional tests cover
 real connected chain changes, storage and process kills. The historical
-protocol 2 authentication vectors are not valid RPC 4 examples. P7 context
+protocol 2 authentication vectors are not valid RPC 5 examples. P7 context
 revision is implemented; external library migration remains future work; no node-only
 result certifies an external library or all production failure modes.

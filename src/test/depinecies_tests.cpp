@@ -11,13 +11,17 @@
 #include "key.h"
 #include "pubkey.h"
 #include "base58.h"
+#include "script/standard.h"
+#include "depinchallenge.h"
+#include "keystore.h"
 
 #include <boost/test/unit_test.hpp>
 #include <string>
 #include <vector>
 #include <set>
 
-BOOST_FIXTURE_TEST_SUITE(depinecies_tests, BasicTestingSetup)
+struct DepinECIESSetup : BasicTestingSetup { DepinECIESSetup() : BasicTestingSetup(CBaseChainParams::REGTEST) {} };
+BOOST_FIXTURE_TEST_SUITE(depinecies_tests, DepinECIESSetup)
 
 // Test 1: AES-256-GCM basic encryption/decryption
 BOOST_AUTO_TEST_CASE(aes256_gcm_basic_test)
@@ -393,7 +397,7 @@ BOOST_AUTO_TEST_CASE(strict_wire_decoder_bounds_and_canonical_form)
         return std::vector<unsigned char>(stream.begin(), stream.end());
     };
     const auto bytes = wire(valid);
-    const uint160 id = pubkey.GetID();
+    const DepinRecipient id(pubkey.GetID());
     BOOST_REQUIRE(DecodeDepinECIES(bytes, 5, 1, decoded, error, &id));
     BOOST_CHECK(!DecodeDepinECIES(bytes, 4, 1, decoded, error));
     for (size_t length = 0; length < bytes.size(); ++length) {
@@ -406,7 +410,7 @@ BOOST_AUTO_TEST_CASE(strict_wire_decoder_bounds_and_canonical_form)
     CDataStream duplicate(SER_NETWORK, PROTOCOL_VERSION);
     duplicate << valid.ephemeralPubKey << valid.encryptedPayload;
     WriteCompactSize(duplicate, 2);
-    duplicate << id << valid.recipientKeys.at(id) << id << valid.recipientKeys.at(id);
+    duplicate << id.LegacyID() << valid.recipientKeys.at(id) << id.LegacyID() << valid.recipientKeys.at(id);
     BOOST_CHECK(!DecodeDepinECIES(std::vector<unsigned char>(duplicate.begin(), duplicate.end()), 5, 2, decoded, error));
     // A declared huge payload cannot trigger a huge vector allocation.
     CDataStream oversized(SER_NETWORK, PROTOCOL_VERSION);
@@ -433,7 +437,7 @@ BOOST_AUTO_TEST_CASE(strict_wire_decoder_bounds_and_canonical_form)
     BOOST_CHECK(!DecodeDepinECIES(changed, 5, 1, decoded, error));
     CKey other;
     other.MakeNewKey(true);
-    const uint160 otherId = other.GetPubKey().GetID();
+    const DepinRecipient otherId(other.GetPubKey().GetID());
     malformed = valid;
     malformed.recipientKeys[otherId] = valid.recipientKeys.at(id);
     BOOST_REQUIRE(DecodeDepinECIES(wire(malformed), 5, 2, decoded, error));
@@ -442,7 +446,7 @@ BOOST_AUTO_TEST_CASE(strict_wire_decoder_bounds_and_canonical_form)
     unordered << valid.ephemeralPubKey << valid.encryptedPayload;
     WriteCompactSize(unordered, 2);
     for (auto it = malformed.recipientKeys.rbegin(); it != malformed.recipientKeys.rend(); ++it)
-        unordered << it->first << it->second;
+        unordered << it->first.LegacyID() << it->second;
     BOOST_CHECK(!DecodeDepinECIES(std::vector<unsigned char>(unordered.begin(), unordered.end()), 5, 2, decoded, error));
     BOOST_CHECK(!DecodeDepinECIES(bytes, 5, 1, decoded, error, &otherId));
     // Structurally sound authentication corruption remains the recipient's check.
@@ -455,6 +459,131 @@ BOOST_AUTO_TEST_CASE(strict_wire_decoder_bounds_and_canonical_form)
         std::vector<unsigned char> noise(n, static_cast<unsigned char>(n));
         BOOST_CHECK(!DecodeDepinECIES(noise, 1024, 50, decoded, error));
     }
+}
+
+
+BOOST_AUTO_TEST_CASE(strict_ecdsa_identity_and_wallet_key_resolution)
+{
+    CKey key, other; key.MakeNewKey(true); other.MakeNewKey(true);
+    WitnessStrictAuthScript strict;
+    BOOST_REQUIRE(GetStrictAuthScriptDestinationForPubKey(key.GetPubKey(), strict));
+    const auto legacy = EncodeDestination(key.GetPubKey().GetID());
+    const auto address = EncodeDestination(strict);
+    DepinRecipient a, b;
+    BOOST_REQUIRE(DepinRecipient::FromAddress(legacy, a));
+    BOOST_REQUIRE(DepinRecipient::FromAddress(address, b));
+    BOOST_CHECK(!(a == b));
+    BOOST_CHECK_EQUAL(a.Address(), legacy);
+    BOOST_CHECK_EQUAL(b.Address(), address);
+    BOOST_CHECK(DepinPubKeyMatchesAddress(address, key.GetPubKey()));
+    BOOST_CHECK(!DepinPubKeyMatchesAddress(address, other.GetPubKey()));
+    BOOST_CHECK(!DepinRecipient::FromAddress(EncodeDestination(CScriptID(uint160())), a));
+    BOOST_CHECK(!DepinRecipient::FromAddress(EncodeDestination(WitnessV1AuthScript(uint256())), a));
+    BOOST_CHECK(!DepinRecipient::FromAddress(EncodeDestination(WitnessStrictAuthScript(STRICT_AUTHSCRIPT_WITNESS_V2_PQ, uint256())), a));
+    std::string upper = address; std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+    BOOST_CHECK(!DepinRecipient::FromAddress(upper, a));
+
+    std::string signature, error;
+    BOOST_REQUIRE(SignDepinChallengePreimage(key, "a complete request", signature, error, address));
+    BOOST_CHECK(VerifyDepinChallengeSignature(address, signature, "a complete request", error));
+    BOOST_CHECK(!VerifyDepinChallengeSignature(address, signature, "a changed request", error));
+    BOOST_CHECK(!VerifyDepinChallengeSignature(legacy, signature, "a complete request", error));
+    BOOST_REQUIRE(SignDepinChallengePreimage(key, "a complete request", signature, error));
+    BOOST_CHECK(!VerifyDepinChallengeSignature(address, signature, "a complete request", error));
+    CBasicKeyStore store; CKeyID id;
+    BOOST_REQUIRE(store.AddKeyPubKey(key, key.GetPubKey()));
+    BOOST_CHECK(!GetDepinKeyID(store, address, id));
+    AuthScriptSpendData spend; spend.key_id = key.GetPubKey().GetID();
+    const CScript witnessScript = GetStrictAuthScriptTemplate();
+    spend.witnessScript = witnessScript;
+    BOOST_REQUIRE(store.AddAuthScriptSpendData(strict.version, strict.commitment, spend));
+    BOOST_REQUIRE(GetDepinKeyID(store, address, id));
+    BOOST_CHECK(id == key.GetPubKey().GetID());
+    spend.key_id = other.GetPubKey().GetID();
+    BOOST_REQUIRE(store.AddKeyPubKey(other, other.GetPubKey()));
+    BOOST_REQUIRE(store.AddAuthScriptSpendData(strict.version, strict.commitment, spend));
+    BOOST_CHECK(!GetDepinKeyID(store, address, id));
+}
+
+BOOST_AUTO_TEST_CASE(mixed_ecdsa_ecies_preserves_exact_destinations_and_legacy_bytes)
+{
+    CKey key; key.MakeNewKey(true);
+    WitnessStrictAuthScript strict;
+    BOOST_REQUIRE(GetStrictAuthScriptDestinationForPubKey(key.GetPubKey(), strict));
+    const auto legacy = EncodeDestination(key.GetPubKey().GetID()), address = EncodeDestination(strict);
+    DepinRecipient id; BOOST_REQUIRE(DepinRecipient::FromAddress(address, id));
+    CECIESEncryptedMessage message, decoded; std::string error, plain;
+    BOOST_REQUIRE(ECIESEncryptMessage("hello", {{legacy, key.GetPubKey()}}, message, error));
+    CDataStream v1(SER_NETWORK, PROTOCOL_VERSION); v1 << message;
+    CDataStream original(SER_NETWORK, PROTOCOL_VERSION);
+    original << message.ephemeralPubKey << message.encryptedPayload;
+    WriteCompactSize(original, 1); original << key.GetPubKey().GetID() << message.recipientKeys.begin()->second;
+    BOOST_CHECK(std::vector<unsigned char>(v1.begin(), v1.end()) == std::vector<unsigned char>(original.begin(), original.end()));
+    BOOST_CHECK(!ECIESDecryptMessage(message, key, address, plain, error));
+    BOOST_REQUIRE(ECIESEncryptMessage("hello", {{address, key.GetPubKey()}, {legacy, key.GetPubKey()}}, message, error));
+    BOOST_REQUIRE_EQUAL(message.recipientKeys.size(), 2U);
+    CDataStream v2(SER_NETWORK, PROTOCOL_VERSION); v2 << message;
+    const std::vector<unsigned char> bytes(v2.begin(), v2.end());
+    BOOST_CHECK_EQUAL(bytes[0], 0); BOOST_CHECK_EQUAL(bytes[1], 2);
+    BOOST_REQUIRE(DecodeDepinECIES(bytes, 5, 2, decoded, error, &id));
+    for (const auto& recipient : {legacy, address}) {
+        BOOST_REQUIRE(ECIESDecryptMessage(decoded, key, recipient, plain, error));
+        BOOST_CHECK_EQUAL(plain, "hello");
+    }
+    CDataStream stream(bytes, SER_NETWORK, PROTOCOL_VERSION); CECIESEncryptedMessage direct; stream >> direct;
+    BOOST_CHECK(direct.recipientKeys == decoded.recipientKeys);
+    BOOST_CHECK(!DecodeDepinECIES(bytes, 5, 1, decoded, error));
+    for (size_t n = 0; n < bytes.size(); ++n)
+        BOOST_CHECK(!DecodeDepinECIES({bytes.begin(), bytes.begin() + n}, 5, 2, decoded, error));
+    auto bad = bytes; bad[1] = 3;
+    BOOST_CHECK(!DecodeDepinECIES(bad, 5, 2, decoded, error));
+    bad = bytes; bad.push_back(0);
+    BOOST_CHECK(!DecodeDepinECIES(bad, 5, 2, decoded, error));
+    CDataStream unordered(SER_NETWORK, PROTOCOL_VERSION);
+    unordered << uint8_t(0) << uint8_t(2) << message.ephemeralPubKey << message.encryptedPayload;
+    WriteCompactSize(unordered, 2);
+    for (auto it = message.recipientKeys.rbegin(); it != message.recipientKeys.rend(); ++it) unordered << it->first << it->second;
+    BOOST_CHECK(!DecodeDepinECIES({unordered.begin(), unordered.end()}, 5, 2, decoded, error));
+    CDataStream duplicate(SER_NETWORK, PROTOCOL_VERSION);
+    duplicate << uint8_t(0) << uint8_t(2) << message.ephemeralPubKey << message.encryptedPayload;
+    WriteCompactSize(duplicate, 2);
+    duplicate << id << message.recipientKeys.at(id) << id << message.recipientKeys.at(id);
+    BOOST_CHECK(!DecodeDepinECIES({duplicate.begin(), duplicate.end()}, 5, 2, decoded, error));
+    CDataStream invalid(SER_NETWORK, PROTOCOL_VERSION);
+    invalid << uint8_t(0) << uint8_t(2) << message.ephemeralPubKey << message.encryptedPayload;
+    WriteCompactSize(invalid, 1); invalid << uint8_t(2); // unsupported destination tag
+    BOOST_CHECK(!DecodeDepinECIES({invalid.begin(), invalid.end()}, 5, 2, decoded, error));
+    CDataStream noncanonical(SER_NETWORK, PROTOCOL_VERSION);
+    noncanonical << uint8_t(0) << uint8_t(2) << message.ephemeralPubKey << message.encryptedPayload;
+    WriteCompactSize(noncanonical, 1); noncanonical << DepinRecipient(key.GetPubKey().GetID()) << message.recipientKeys.begin()->second;
+    BOOST_CHECK(!DecodeDepinECIES({noncanonical.begin(), noncanonical.end()}, 5, 2, decoded, error));
+    CKey wrong; wrong.MakeNewKey(true);
+    BOOST_CHECK(!ECIESEncryptMessage("hello", {{address, wrong.GetPubKey()}}, message, error));
+    BOOST_CHECK(message.recipientKeys.empty());
+}
+
+
+BOOST_AUTO_TEST_CASE(strict_ecdsa_recipient_and_plaintext_limits)
+{
+    std::map<std::string, CPubKey> recipients;
+    for (size_t i = 0; i < 51; ++i) {
+        CKey key; key.MakeNewKey(true);
+        WitnessStrictAuthScript strict;
+        BOOST_REQUIRE(GetStrictAuthScriptDestinationForPubKey(key.GetPubKey(), strict));
+        recipients.emplace(EncodeDestination(strict), key.GetPubKey());
+    }
+    CECIESEncryptedMessage message, decoded; std::string error;
+    const std::string plain(10240, 'x');
+    BOOST_REQUIRE(ECIESEncryptMessage(plain, recipients, message, error));
+    CDataStream tooMany(SER_NETWORK, PROTOCOL_VERSION); tooMany << message;
+    BOOST_CHECK(!DecodeDepinECIES({tooMany.begin(), tooMany.end()}, plain.size(), 50, decoded, error));
+    message.recipientKeys.erase(message.recipientKeys.begin());
+    CDataStream allowed(SER_NETWORK, PROTOCOL_VERSION); allowed << message;
+    const std::vector<unsigned char> bytes(allowed.begin(), allowed.end());
+    BOOST_CHECK(bytes.size() <= DepinECIESWireLimit(plain.size(), 50));
+    BOOST_REQUIRE(DecodeDepinECIES(bytes, plain.size(), 50, decoded, error));
+    BOOST_CHECK(!DecodeDepinECIES(bytes, plain.size() - 1, 50, decoded, error));
+    BOOST_CHECK(!DecodeDepinECIES(bytes, plain.size(), 49, decoded, error));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

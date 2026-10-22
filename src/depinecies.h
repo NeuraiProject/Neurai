@@ -10,6 +10,9 @@
 #include "key.h"
 #include "pubkey.h"
 #include "serialize.h"
+#include "depinaddress.h"
+#include "depinserialization.h"
+#include <map>
 
 /**
  * ECIES (Elliptic Curve Integrated Encryption Scheme) implementation for DePIN Messaging
@@ -37,49 +40,73 @@
  * Note: GCM provides authenticated encryption, eliminating the need for separate HMAC
  */
 
-// Estructura del mensaje cifrado con ECIES híbrido
-class CECIESEncryptedMessage {
-public:
-    // Clave pública efímera (33 bytes comprimida)
-    CPubKey ephemeralPubKey;
-
-    // Payload cifrado (AES-256-GCM)
-    // Contiene: [nonce (12 bytes) || encrypted_data || tag GCM (16 bytes)]
-    std::vector<unsigned char> encryptedPayload;
-
-    // Para cada destinatario: clave AES cifrada con ECDH
-    // Map: address_hash160 -> [nonce (12) || encrypted_aes_key (32) || tag GCM (16)]
-    // Cada paquete ocupa 60 bytes y usa la clave efímera común de arriba.
-    std::map<uint160, std::vector<unsigned char>> recipientKeys;
-
-    CECIESEncryptedMessage() {
-        SetNull();
-    }
-
-    void SetNull() {
-        ephemeralPubKey = CPubKey();
-        encryptedPayload.clear();
-        recipientKeys.clear();
-    }
-
-    ADD_SERIALIZE_METHODS;
-    template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream& s, Operation ser_action) {
-        READWRITE(ephemeralPubKey);
-        READWRITE(encryptedPayload);
-        READWRITE(recipientKeys);
-    }
-};
-
-// Strict wire decoder. The outer submission envelope has exactly one entry
-// for the pool; an inner message may contain any valid nonempty subset.
 static const size_t DEPIN_GCM_OVERHEAD = 28;
 static const size_t DEPIN_WRAPPED_KEY_SIZE = 60;
 static const size_t MAX_DEPIN_REPLY_PLAINTEXT = 4 * 1024 * 1024;
+
+// Legacy-only messages keep their original bytes. Mixed/strict messages use
+// 00 02 followed by the same key/payload and type-tagged destination ids.
+class CECIESEncryptedMessage {
+public:
+    CPubKey ephemeralPubKey;
+    std::vector<unsigned char> encryptedPayload;
+    std::map<DepinRecipient, std::vector<unsigned char>> recipientKeys;
+    CECIESEncryptedMessage() { SetNull(); }
+    void SetNull() { ephemeralPubKey = CPubKey(); encryptedPayload.clear(); recipientKeys.clear(); }
+
+    template <typename Stream> void Serialize(Stream& s) const {
+        bool extended = false;
+        for (const auto& entry : recipientKeys) if (!entry.first.IsLegacy()) extended = true;
+        if (extended) { s << uint8_t(0) << uint8_t(2); }
+        s << ephemeralPubKey << encryptedPayload;
+        WriteCompactSize(s, recipientKeys.size());
+        for (const auto& entry : recipientKeys) {
+            if (extended) s << entry.first;
+            else s << entry.first.LegacyID();
+            s << entry.second;
+        }
+    }
+    template <typename Stream> void Unserialize(Stream& s) { Read(s, MAX_DEPIN_REPLY_PLAINTEXT, 50); }
+    template <typename Stream> void Read(Stream& s, size_t maxPlaintext, size_t maxRecipients) {
+        SetNull();
+        uint8_t marker; s >> marker;
+        const bool extended = marker == 0;
+        std::vector<unsigned char> key;
+        if (extended) {
+            uint8_t version; s >> version;
+            if (version != 2) throw std::ios_base::failure("unsupported ECIES version");
+            key = ReadDepinBytes(s, 33, 33);
+        } else {
+            if (marker != 33) throw std::ios_base::failure("invalid ephemeral key length");
+            key.resize(33); s.read(reinterpret_cast<char*>(key.data()), key.size());
+        }
+        ephemeralPubKey = CPubKey(key);
+        if (!ephemeralPubKey.IsCompressed() || !ephemeralPubKey.IsFullyValid())
+            throw std::ios_base::failure("invalid compressed ephemeral key");
+        encryptedPayload = ReadDepinBytes(s, maxPlaintext + DEPIN_GCM_OVERHEAD, DEPIN_GCM_OVERHEAD + 1);
+        const uint64_t count = ReadCompactSize(s);
+        if (!count || count > maxRecipients) throw std::ios_base::failure("number of recipients out of range");
+        DepinRecipient previous;
+        bool hasStrict = false;
+        for (uint64_t i = 0; i < count; ++i) {
+            DepinRecipient id;
+            if (extended) s >> id;
+            else { uint160 legacy; s >> legacy; id = DepinRecipient(legacy); }
+            if (i && !(previous < id)) throw std::ios_base::failure("duplicate or unordered recipient");
+            hasStrict |= !id.IsLegacy();
+            recipientKeys.emplace(id, ReadDepinBytes(s, DEPIN_WRAPPED_KEY_SIZE, DEPIN_WRAPPED_KEY_SIZE));
+            previous = id;
+        }
+        if (extended && !hasStrict) throw std::ios_base::failure("noncanonical Legacy-only ECIES v2");
+    }
+};
+
+// The outer submission envelope has exactly one entry for the pool; an inner
+// message may contain any valid nonempty subset of either destination family.
 size_t DepinECIESWireLimit(size_t maxPlaintext, size_t maxRecipients);
 bool DecodeDepinECIES(const std::vector<unsigned char>& bytes, size_t maxPlaintext,
                       size_t maxRecipients, CECIESEncryptedMessage& message,
-                      std::string& error, const uint160* requiredRecipient = nullptr);
+                      std::string& error, const DepinRecipient* requiredRecipient = nullptr);
 
 /**
  * Encrypt a message for multiple recipients using hybrid ECIES

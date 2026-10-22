@@ -13,7 +13,7 @@
 // found by a functional walkthrough, not by the suite; these tests exist so the
 // next one is found here.
 //
-// Protocol 4 converts one complete request object. Field types and defaults
+// Protocol 5 converts one complete request object. Field types and defaults
 // are checked by its common parser; numeric strings are deliberately rejected.
 
 // amount.h first: assets/assetdb.h declares CAmount parameters without
@@ -292,7 +292,7 @@ BOOST_FIXTURE_TEST_SUITE(depin_rpc_params_tests, DepinRpcParamsSetup)
 BOOST_AUTO_TEST_CASE(cli_converts_complete_request_objects)
 {
     for (const auto* method:{"depingetmsginfo","depinchallenge","depinpoolstats","depinsubmitmsg","depinreceiveseq","depinreceivemsg","depinmcpstatus","depingetancestorrecipients","depinlistsections","depinclearmsg"}) {
-        const std::string json="{\"protocol\":4,\"args\":{\"limit\":10,\"label\":\"7\"}}";
+        const std::string json="{\"protocol\":5,\"args\":{\"limit\":10,\"label\":\"7\"}}";
         const auto positional=RPCConvertValues(method,{json});
         BOOST_REQUIRE_EQUAL(positional.size(),1U);BOOST_CHECK(positional[0].isObject());
         BOOST_CHECK(positional[0]["args"]["limit"].isNum());BOOST_CHECK(positional[0]["args"]["label"].isStr());
@@ -312,7 +312,7 @@ BOOST_AUTO_TEST_CASE(legacy_cli_arguments_and_signers_are_rejected)
     BOOST_CHECK_THROW(RPCConvertValues("depinclearmsg",{"&TEST","address","nonce","sig","all"}),std::exception);
     BOOST_CHECK(!tableRPC["depinsignchallenge"]);BOOST_CHECK(!tableRPC["depinsignrequest"]);BOOST_CHECK(!tableRPC["depinsignreadseq"]);
     BOOST_REQUIRE(tableRPC["depinsignrpc"]);
-    const auto p=RPCConvertValues("depinsignrpc",{"depinclearmsg","{\"protocol\":4}"});
+    const auto p=RPCConvertValues("depinsignrpc",{"depinclearmsg","{\"protocol\":5}"});
     BOOST_CHECK(p[0].isStr());BOOST_CHECK(p[1].isObject());
 }
 BOOST_AUTO_TEST_CASE(clearmsg_rejects_noninteger_hours_without_consuming_nonce)
@@ -327,7 +327,7 @@ BOOST_AUTO_TEST_CASE(clearmsg_rejects_noninteger_hours_without_consuming_nonce)
     }
     BOOST_CHECK_EQUAL(DepinTestOpen(CallRpc("depinclearmsg",DepinTestParams(object)),ownerAddress)["removed"].get_int(),0);
 }
-BOOST_AUTO_TEST_CASE(argnames_match_v4_objects_and_local_wallet_helpers)
+BOOST_AUTO_TEST_CASE(argnames_match_v5_objects_and_local_wallet_helpers)
 {
     for (const auto* method:{"depingetmsginfo","depinchallenge","depinpoolstats","depinsubmitmsg","depinreceiveseq","depinreceivemsg","depinmcpstatus","depingetancestorrecipients","depinlistsections","depinclearmsg"}) {
         BOOST_REQUIRE(tableRPC[method]);const auto& names=tableRPC[method]->argNames;

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 The Neurai developers
 // Distributed under the MIT software license, see COPYING.
+#include "depinaddress.h"
 #include "depinmembership.h"
 #include "amount.h"
 #include "assets/assetdb.h"
@@ -78,13 +79,20 @@ void CaptureDepinMembershipKeys(
     if (!IsDepinMembershipTracking() || !pblocktree) return;
     for (const auto& item : keys) {
         const auto& key = item.second.pubkey;
-        if (item.first.addressType != DEST_INDEX_KEY || !key.IsFullyValid()) continue;
+        CTxDestination dest;
+        if (item.first.addressType == DEST_INDEX_KEY) dest = key.GetID();
+        else if (item.first.addressType == DEST_INDEX_WITNESS_V3_STRICT_ECDSA) {
+            WitnessStrictAuthScript strict;
+            if (!GetStrictAuthScriptDestinationForPubKey(key, strict) || !strict.IsECDSA()) continue;
+            dest = strict;
+        } else continue;
+        const auto address = EncodeDestination(dest);
         CDestinationIndexData destination;
-        if (!GetDestinationIndexData(CTxDestination(key.GetID()), destination) ||
+        if (!DepinPubKeyMatchesAddress(address, key) || !GetDestinationIndexData(dest, destination) ||
             destination.payload != item.first.addressHash) continue;
         CPubKeyIndexValue previous;
         if (!pblocktree->ReadPubKeyIndex(destination, previous) || previous.pubkey != key)
-            revealed.insert(EncodeDestination(key.GetID()));
+            revealed.insert(address);
     }
 }
 
@@ -109,7 +117,7 @@ bool DepinMembershipAffected(const CAssetsCache& changes, const std::set<std::st
         scoped(changes.setNewSelfRestrictionToAdd) || scoped(changes.setNewSelfRestrictionToRemove) ||
         scoped(changes.setNewDepinStateToAdd) || scoped(changes.setNewDepinStateToRemove)) return true;
     if (revealed.empty()) return false;
-    // A first Legacy key reveal changes the usable directory only if that
+    // A first supported key reveal changes the usable directory only if that
     // address holds a served asset/owner token. Merge dirty balances without a
     // chainstate flush. A bounded/incomplete observation invalidates conservatively.
     if (!passets || !passetsdb) return true;

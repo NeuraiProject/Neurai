@@ -1,6 +1,7 @@
 // Copyright (c) 2026 The Neurai developers
 // Distributed under the MIT software license, see COPYING.
 #if defined(HAVE_CONFIG_H)
+#include "depinaddress.h"
 #include "config/neurai-config.h"
 #endif
 #include "depinrpc.h"
@@ -23,7 +24,7 @@
 #include <limits>
 #include <algorithm>
 
-// Public, non-authenticating business queries. Only the v4 dispatcher below is
+// Public, non-authenticating business queries. Only the v5 dispatcher below is
 // registered: their old positional forms are not reachable through the table.
 UniValue depingetmsginfo(const JSONRPCRequest&);
 UniValue depinpoolstats(const JSONRPCRequest&);
@@ -88,7 +89,11 @@ UniValue Run(const DepinRpcRequest& r, const JSONRPCRequest& original)
             info.pushKV("membership_revision",id.membership.revision);
             info.pushKV("membership_height",id.membership.height);
             info.pushKV("membership_blockhash",id.membership.block);
-            info.pushKV("membership_policy","pool_challenges_and_signed_requests");return info;
+            info.pushKV("membership_policy","pool_challenges_and_signed_requests");
+            UniValue families(UniValue::VARR);families.push_back("legacy");families.push_back("ecdsa");
+            info.pushKV("address_types",families);
+            UniValue formats(UniValue::VARR);formats.push_back(1);formats.push_back(2);
+            info.pushKV("ecies_formats",formats);return info;
         }
         return r.method=="depinpoolstats"?depinpoolstats(q):depinmcpstatus(q);
     }
@@ -107,10 +112,10 @@ UniValue Run(const DepinRpcRequest& r, const JSONRPCRequest& original)
     if (r.method=="depinsubmitmsg") {
         CKey key;CPubKey pub;std::string error;
         if (!GetDepinPoolKey(key,pub)) throw JSONRPCError(RPC_MISC_ERROR,"DePIN pool key unavailable");
-        CECIESEncryptedMessage envelope;const auto poolId=pub.GetID();
+        CECIESEncryptedMessage envelope;const DepinRecipient poolId(pub.GetID());
         if (!DecodeDepinECIES(ParseHex(r.args["encrypted"].get_str()),MAX_DEPIN_MESSAGE_WIRE_BYTES*2,1,envelope,error,&poolId)) throw JSONRPCError(RPC_DESERIALIZATION_ERROR,error);
         std::string inner;
-        if (!ECIESDecryptMessage(envelope,key,EncodeDestination(poolId),inner,error)) throw JSONRPCError(RPC_VERIFY_ERROR,"Failed to decrypt outer privacy shell: "+error);
+        if (!ECIESDecryptMessage(envelope,key,poolId.Address(),inner,error)) throw JSONRPCError(RPC_VERIFY_ERROR,"Failed to decrypt outer privacy shell: "+error);
         if (inner.empty() || inner.size()>MAX_DEPIN_MESSAGE_WIRE_BYTES*2 || !IsHex(inner)) throw JSONRPCError(RPC_INVALID_PARAMETER,"Message must be bounded hex");
         CDepinMessage message;
         if (!DecodeDepinMessage(ParseHex(inner),message,error)) throw JSONRPCError(RPC_DESERIALIZATION_ERROR,error);
@@ -174,8 +179,8 @@ UniValue Run(const DepinRpcRequest& r, const JSONRPCRequest& original)
 
 UniValue DepinRpcV4(const JSONRPCRequest& request)
 {
-    if (request.fHelp) throw std::runtime_error(request.strMethod+" request\nDePIN protocol 4. One JSON object; legacy signatures are rejected.\nSee doc/depin-request-signatures.md. Use depinsignrpc method request on the signing wallet.\n");
-    if (request.params.size()!=1 || !request.params[0].isObject()) throw DepinRpcError(RPC_INVALID_PARAMETER,"unsupported_protocol","DePIN unsupported_protocol: one protocol 4 request object required");
+    if (request.fHelp) throw std::runtime_error(request.strMethod+" request\nDePIN protocol 5. One JSON object; legacy signatures are rejected.\nSee doc/depin-request-signatures.md. Use depinsignrpc method request on the signing wallet.\n");
+    if (request.params.size()!=1 || !request.params[0].isObject()) throw DepinRpcError(RPC_INVALID_PARAMETER,"unsupported_protocol","DePIN unsupported_protocol: one protocol 5 request object required");
     const auto r=ParseDepinRpcRequest(request.strMethod,request.params[0]);
     LOCK(cs_main);const auto now=DepinRequestClockMillis();ObserveDepinRpcClock(now);const auto identity=GetDepinRpcIdentity();
     // Readiness precedes asset/public-key index work. Early unavailability is
@@ -228,14 +233,14 @@ UniValue DepinRpcV4(const JSONRPCRequest& request)
 #ifdef ENABLE_WALLET
 UniValue DepinSignRpc(const JSONRPCRequest& request)
 {
-    if (request.fHelp || request.params.size()!=2) throw std::runtime_error("depinsignrpc method request\nSign a complete protocol 4 request for the explicit remote destination. Returns request, preimage and request_hash.\n");
+    if (request.fHelp || request.params.size()!=2) throw std::runtime_error("depinsignrpc method request\nSign a complete protocol 5 request for the explicit remote destination. Returns request, preimage and request_hash.\n");
     auto* wallet=GetWalletForJSONRPCRequest(request);if (!EnsureWalletIsAvailable(wallet,request.fHelp)) return NullUniValue;
     const auto method=request.params[0].get_str();const auto object=request.params[1];const auto parsed=ParseDepinRpcRequest(method,object);
     if (!parsed.kind) throw JSONRPCError(RPC_INVALID_PARAMETER,"Public requests do not need a user signature");
     LOCK2(cs_main,wallet->cs_wallet);EnsureWalletIsUnlocked(wallet);
-    const auto dest=DecodeDestination(parsed.address);const auto* id=boost::get<CKeyID>(&dest);CKey key;
-    if (!id || !wallet->GetKey(*id,key)) throw JSONRPCError(RPC_WALLET_ERROR,"Legacy private key unavailable");
-    std::string sig,error;if (!SignDepinChallengePreimage(key,parsed.Preimage(),sig,error)) throw JSONRPCError(RPC_WALLET_ERROR,error);
+    CKeyID id;CKey key;
+    if (!GetDepinKeyID(*wallet,parsed.address,id) || !wallet->GetKey(id,key)) throw JSONRPCError(RPC_WALLET_ERROR,"Legacy or strict ECDSA private key unavailable");
+    std::string sig,error;if (!SignDepinChallengePreimage(key,parsed.Preimage(),sig,error,parsed.address)) throw JSONRPCError(RPC_WALLET_ERROR,error);
     UniValue signedRequest(UniValue::VOBJ);
     for (size_t n=0;n<object.size();++n) signedRequest.pushKV(object.getKeys()[n],object.getKeys()[n]=="signature"?UniValue(sig):object.getValues()[n]);
     UniValue result(UniValue::VOBJ);result.pushKV("request",signedRequest);result.pushKV("preimage",parsed.Preimage());result.pushKV("request_hash",parsed.Hash());return result;

@@ -15,6 +15,7 @@ JSON_TEST_FILES = \
   test/data/sph_compat.json \
   test/data/depin_rpc_v3.json \
   test/data/depin_rpc_v4.json \
+  test/data/depin_rpc_v5.json \
   test/data/c5_public_tree.json \
   test/data/c6_public_tree.json \
   test/data/nip043_b3_fixture.json \

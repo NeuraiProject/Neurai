@@ -561,8 +561,8 @@ BOOST_AUTO_TEST_CASE(root_message_is_unreachable_for_section_holder)
     const CDepinMessage sectionMsg =
         MakeEciesMessage(SECTION_A, sender, {rootHolder, sectionHolder}, "section for both");
 
-    const uint160 rootHash = Hash160Of(rootHolder.address);
-    const uint160 sectionHash = Hash160Of(sectionHolder.address);
+    const DepinRecipient rootHash = Hash160Of(rootHolder.address);
+    const DepinRecipient sectionHash = Hash160Of(sectionHolder.address);
 
     // Delivery: the root message never reaches the section holder.
     BOOST_CHECK(ShouldDeliverDepinMessageToAddress(rootMsg, rootHolder.address, &rootHash));
@@ -597,7 +597,7 @@ BOOST_AUTO_TEST_CASE(scope_filter_separates_tabs_and_runs_before_sender_shortcut
     messages.push_back(MakeEciesMessage(SECTION_A, sender, {holder}, "in A"));
     messages.push_back(MakeEciesMessage(SECTION_B, sender, {holder}, "in B"));
 
-    const uint160 holderHash = Hash160Of(holder.address);
+    const DepinRecipient holderHash = Hash160Of(holder.address);
 
     // Scope A shows only A's subtree.
     std::vector<CDepinMessage> scoped =
@@ -611,7 +611,7 @@ BOOST_AUTO_TEST_CASE(scope_filter_separates_tabs_and_runs_before_sender_shortcut
 
     // Sender shortcut ordering: the SENDER asking for tab A must not see their
     // own message from B. If the shortcut ran first, it would leak through.
-    const uint160 senderHash = Hash160Of(sender.address);
+    const DepinRecipient senderHash = Hash160Of(sender.address);
     scoped = FilterDepinMessagesForAddress(Pointers(messages), sender.address, &senderHash, SECTION_A);
     BOOST_REQUIRE_EQUAL(scoped.size(), 1U);
     BOOST_CHECK_EQUAL(scoped[0].token, SECTION_A);
@@ -627,7 +627,7 @@ BOOST_AUTO_TEST_CASE(empty_scope_is_byte_compatible)
     messages.push_back(MakeEciesMessage(ROOT, sender, {holder}, "one"));
     messages.push_back(MakeEciesMessage(SECTION_A, sender, {holder}, "two"));
 
-    const uint160 holderHash = Hash160Of(holder.address);
+    const DepinRecipient holderHash = Hash160Of(holder.address);
 
     const std::vector<CDepinMessage> unscoped =
         FilterDepinMessagesForAddress(Pointers(messages), holder.address, &holderHash);

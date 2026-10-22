@@ -841,7 +841,7 @@ BOOST_AUTO_TEST_CASE(freshness_gate_blocks_ibd_stale_tip_and_header_lag_without_
     BOOST_CHECK_EQUAL(nFullStateFlushes.load(), flushes);
 }
 
-BOOST_AUTO_TEST_CASE(v4_clear_binds_mode_hours_and_every_service_field)
+BOOST_AUTO_TEST_CASE(v5_clear_binds_mode_hours_and_every_service_field)
 {
     const auto owner=NewHolder(true,SECTION_A+OWNER_TAG,1);
     const auto sender=NewHolder(true,SECTION_A,1), reader=NewHolder(true,SECTION_A,1);
@@ -872,7 +872,7 @@ BOOST_AUTO_TEST_CASE(v4_clear_binds_mode_hours_and_every_service_field)
     BOOST_CHECK(Throws("depinclearmsg",DepinTestParams(object)));
 }
 
-BOOST_AUTO_TEST_CASE(v4_nonce_cannot_authorize_a_different_method_or_two_concurrent_reads)
+BOOST_AUTO_TEST_CASE(v5_nonce_cannot_authorize_a_different_method_or_two_concurrent_reads)
 {
     const auto holder=NewHolder(true,SECTION_A,1);
     const auto nonce=Challenge(SECTION_A,holder,DepinChallengeType::RECEIVE);
@@ -890,7 +890,7 @@ BOOST_AUTO_TEST_CASE(v4_nonce_cannot_authorize_a_different_method_or_two_concurr
     BOOST_CHECK(!g_depinChallenges.Peek(nonce,error));
 }
 
-BOOST_AUTO_TEST_CASE(v4_restart_and_clock_rollback_invalidate_old_requests)
+BOOST_AUTO_TEST_CASE(v5_restart_and_clock_rollback_invalidate_old_requests)
 {
     SetMockTime(1800000000);RefreshDepinTestTipTime();
     const auto holder=NewHolder(true,SECTION_A,1);const auto nonce=Challenge(SECTION_A,holder,DepinChallengeType::RECEIVE);
@@ -905,7 +905,7 @@ BOOST_AUTO_TEST_CASE(v4_restart_and_clock_rollback_invalidate_old_requests)
     BOOST_CHECK_NO_THROW(Challenge(SECTION_A,holder,DepinChallengeType::RECEIVE));
 }
 
-BOOST_AUTO_TEST_CASE(v4_signed_purge_failure_keeps_messages_and_never_reports_success)
+BOOST_AUTO_TEST_CASE(v5_signed_purge_failure_keeps_messages_and_never_reports_success)
 {
     const auto owner=NewHolder(true,SECTION_A+OWNER_TAG,1);
     const auto sender=NewHolder(true,SECTION_A,1), reader=NewHolder(true,SECTION_A,1);

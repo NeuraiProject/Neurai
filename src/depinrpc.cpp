@@ -1,5 +1,6 @@
 // Copyright (c) 2026 The Neurai developers
 // Distributed under the MIT software license, see COPYING.
+#include "depinaddress.h"
 #include "depinrpc.h"
 #include "base58.h"
 #include "chainparams.h"
@@ -30,7 +31,7 @@ void Fixed(Bytes& out, const std::string& hex) { const auto b=ParseHex(hex);out.
 std::string Digest(const Bytes& bytes) { unsigned char hash[32];CSHA256().Write(bytes.data(),bytes.size()).Finalize(hash);return HexStr(hash,hash+32); }
 [[noreturn]] void Bad(const std::string& reason)
 {
-    throw DepinRpcError(RPC_INVALID_PARAMETER,reason.find("unsupported_protocol")==0?"unsupported_protocol":"invalid_parameters","DePIN v4: "+reason);
+    throw DepinRpcError(RPC_INVALID_PARAMETER,reason.find("unsupported_protocol")==0?"unsupported_protocol":"invalid_parameters","DePIN v5: "+reason);
 }
 void Keys(const UniValue& o, const std::set<std::string>& allowed, const std::set<std::string>& required = {})
 {
@@ -92,13 +93,13 @@ std::vector<unsigned char> DepinRpcRequest::Bytes() const
     return out;
 }
 std::string DepinRpcRequest::Hash() const { return Digest(Bytes()); }
-std::string DepinRpcRequest::Preimage() const { return "DEPIN-RPC-REQUEST-v4|"+Hash(); }
+std::string DepinRpcRequest::Preimage() const { return "DEPIN-RPC-REQUEST-v5|"+Hash(); }
 
 DepinRpcRequest ParseDepinRpcRequest(const std::string& method, const UniValue& o)
 {
     DepinRpcRequest r;r.method=method;
     if (!o.isObject() || !o.exists("protocol") || !o["protocol"].isNum() || Integer(o["protocol"])!=DEPIN_RPC_PROTOCOL_VERSION)
-        Bad("unsupported_protocol: protocol 4 required; legacy signatures are not accepted");
+        Bad("unsupported_protocol: protocol 5 required; legacy signatures are not accepted");
     if (method=="depingetmsginfo") {
         Keys(o,{"protocol","request_id","timestamp_ms"},{"protocol","request_id","timestamp_ms"});
         r.bootstrap=true;r.target.network=r.target.instance=r.target.membership.revision=std::string(64,'0');
@@ -170,7 +171,7 @@ DepinRpcRequest ParseDepinRpcRequest(const std::string& method, const UniValue& 
         if (!r.address.empty() || !r.nonce.empty() || !r.signature.empty()) Bad("public query must not contain authentication fields");
         if (method!="depingetancestorrecipients" && r.token!=r.target.root) Bad("public query requires pool root");
     } else {
-        const auto dest=DecodeDestination(r.address);if (!IsValidDestination(dest) || !boost::get<CKeyID>(&dest)) Bad("address must be Legacy P2PKH");
+        DepinRecipient recipient;if (!DepinRecipient::FromAddress(r.address,recipient)) Bad("address must be canonical Legacy P2PKH or strict ECDSA");
         if (r.kind>=2 && r.nonce.empty()) Bad("challenge required");
         if (r.kind==1 && !r.nonce.empty()) Bad("timestamp request must not contain a challenge");
         if (method!="depinsubmitmsg" && !IsDepinSectionOrRoot(r.token,r.target.root)) Bad("token is outside pool scope");
@@ -238,7 +239,7 @@ std::string DepinRpcResponsePreimage(const DepinRpcIdentity& i, const std::strin
 {
     Bytes q;Text(q,"Neurai/DePIN/RPC/response");Number(q,DEPIN_RPC_PROTOCOL_VERSION,2);Text(q,method);
     Fixed(q,i.network);Blob(q,ParseHex(i.poolKey));Text(q,i.root);Fixed(q,i.instance);Fixed(q,i.membership.revision);Number(q,uint64_t(i.membership.height),8);Fixed(q,i.membership.block);Fixed(q,requestHash);Number(q,kind,1);Blob(q,body);
-    return "DEPIN-RPC-RESPONSE-v4|"+Digest(q);
+    return "DEPIN-RPC-RESPONSE-v5|"+Digest(q);
 }
 UniValue FinishDepinRpcResponse(const UniValue& result, const DepinRpcRequest& r, const CPubKey* clientKey)
 {

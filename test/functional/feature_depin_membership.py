@@ -27,7 +27,7 @@ class DepinMembershipTest(DepinPoolStateTest):
         node.depinsendmsg(TOKEN, 'history before membership changes', alice)
         client = DepinClient(node)
         initial = client.bootstrap()[0]
-        assert_equal(initial['protocol'], 4)
+        assert_equal(initial['protocol'], 5)
         key = private_key(node.dumpprivkey(alice))
         first_page = self.sequence_page(bob)
         original = first_page['messages'][0]

@@ -5,7 +5,7 @@
 #include "depinpoolkey.h"
 #include "test/depin_rpc_test_client.h"
 #include "test/test_neurai.h"
-#include "data/depin_rpc_v4.json.h"
+#include "data/depin_rpc_v5.json.h"
 #include "utilstrencodings.h"
 #include <boost/test/unit_test.hpp>
 #include <atomic>
@@ -16,7 +16,7 @@ struct DepinRpcCodecSetup : BasicTestingSetup { DepinRpcCodecSetup() : BasicTest
 BOOST_FIXTURE_TEST_SUITE(depinrpc_tests, DepinRpcCodecSetup)
 BOOST_AUTO_TEST_CASE(independent_canonical_byte_and_hash_vectors)
 {
-    UniValue data;BOOST_REQUIRE(data.read(std::string(json_tests::depin_rpc_v4,json_tests::depin_rpc_v4+sizeof(json_tests::depin_rpc_v4))));
+    UniValue data;BOOST_REQUIRE(data.read(std::string(json_tests::depin_rpc_v5,json_tests::depin_rpc_v5+sizeof(json_tests::depin_rpc_v5))));
     for (const auto& c:data["cases"].getValues()) {
         const auto r=ParseDepinRpcRequest(c["method"].get_str(),c["request"]);
         BOOST_CHECK_EQUAL(HexStr(r.Bytes()),c["bytes"].get_str());BOOST_CHECK_EQUAL(r.Hash(),c["hash"].get_str());BOOST_CHECK_EQUAL(r.Preimage(),c["preimage"].get_str());
@@ -28,13 +28,13 @@ BOOST_AUTO_TEST_CASE(independent_canonical_byte_and_hash_vectors)
 }
 BOOST_AUTO_TEST_CASE(strict_shapes_defaults_and_integer_precision)
 {
-    UniValue data;BOOST_REQUIRE(data.read(std::string(json_tests::depin_rpc_v4,json_tests::depin_rpc_v4+sizeof(json_tests::depin_rpc_v4))));
-    const auto legacy=DepinTestReplace(data["cases"][1]["request"],"protocol",UniValue(3));
+    UniValue data;BOOST_REQUIRE(data.read(std::string(json_tests::depin_rpc_v5,json_tests::depin_rpc_v5+sizeof(json_tests::depin_rpc_v5))));
+    const auto legacy=DepinTestReplace(data["cases"][1]["request"],"protocol",UniValue(4));
     BOOST_CHECK_THROW(ParseDepinRpcRequest("depinreceivemsg",legacy),UniValue);
     const auto object=data["cases"][1]["request"];const auto original=ParseDepinRpcRequest("depinreceivemsg",object);
     UniValue args(UniValue::VOBJ);args.pushKV("limit",NullUniValue);args.pushKV("timestamp",NullUniValue);args.pushKV("after_hash",NullUniValue);
     BOOST_CHECK_EQUAL(ParseDepinRpcRequest("depinreceivemsg",DepinTestReplace(object,"args",args)).Hash(),original.Hash());
-    auto duplicate=object;duplicate.__pushKV("protocol",UniValue(4));BOOST_CHECK_THROW(ParseDepinRpcRequest("depinreceivemsg",duplicate),UniValue);
+    auto duplicate=object;duplicate.__pushKV("protocol",UniValue(5));BOOST_CHECK_THROW(ParseDepinRpcRequest("depinreceivemsg",duplicate),UniValue);
     for (const auto& bad:{UniValue("10"),UniValue(true),UniValue(int64_t(-1)),UniValue(int64_t(1001))}) {
         UniValue a(UniValue::VOBJ);a.pushKV("limit",bad);BOOST_CHECK_THROW(ParseDepinRpcRequest("depinreceivemsg",DepinTestReplace(object,"args",a)),UniValue);
     }
@@ -53,7 +53,7 @@ BOOST_AUTO_TEST_CASE(replay_capacity_concurrency_and_clock_rollback)
 {
     CKey key;key.MakeNewKey(true);SetDepinPoolKey(key,"unit");ResetDepinRpcInstance();ObserveDepinRpcClock(100000);
     const auto epoch=GetDepinRpcIdentity().instance;
-    UniValue data;BOOST_REQUIRE(data.read(std::string(json_tests::depin_rpc_v4,json_tests::depin_rpc_v4+sizeof(json_tests::depin_rpc_v4))));
+    UniValue data;BOOST_REQUIRE(data.read(std::string(json_tests::depin_rpc_v5,json_tests::depin_rpc_v5+sizeof(json_tests::depin_rpc_v5))));
     auto r=ParseDepinRpcRequest("depinchallenge",data["cases"][0]["request"]);r.timestamp=100000;
     std::atomic<unsigned> accepted{0};std::vector<std::future<void>> work;
     for (unsigned i=0;i<12;++i) work.emplace_back(std::async(std::launch::async,[&]{std::string e;if(RememberDepinRpcRequest(r,e))++accepted;}));

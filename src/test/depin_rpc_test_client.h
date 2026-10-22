@@ -19,9 +19,9 @@
 #include <set>
 
 // Test-only migration adapter. Existing permission/storage scenarios retain
-// their compact positional builders. This converts them to real v4 requests
+// their compact positional builders. This converts them to real v5 requests
 // and signs only when the old fixture proof matches its stated identity/scope.
-// Raw v4 requests are NEVER re-signed: mutation/replay tests use that path.
+// Raw v5 requests are NEVER re-signed: mutation/replay tests use that path.
 inline std::map<std::string,CKey>& DepinTestKeys() { static std::map<std::string,CKey> keys;return keys; }
 inline std::map<std::string,DepinRpcRequest>& DepinTestRequests() { static std::map<std::string,DepinRpcRequest> requests;return requests; }
 inline void RememberDepinTestKey(const CKey& key) { DepinTestKeys()[EncodeDestination(key.GetPubKey().GetID())]=key; }

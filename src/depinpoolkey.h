@@ -33,7 +33,7 @@
  */
 
 /** Bumped whenever the DePIN RPC contract changes incompatibly. */
-static const int DEPIN_RPC_PROTOCOL_VERSION = 4;
+static const int DEPIN_RPC_PROTOCOL_VERSION = 5;
 
 /** Installs the pool key for the process. `walletName` is informational (depingetmsginfo). */
 void SetDepinPoolKey(const CKey& key, const std::string& walletName);

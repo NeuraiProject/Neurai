@@ -96,7 +96,7 @@ std::string DepinChallengePreimage(DepinChallengeType type, const std::string& t
                                    const std::string& address, const std::string& nonce);
 
 /**
- * Legacy fixture encoder. RPC 4 signs the full request instead:
+ * Legacy fixture encoder. RPC 5 signs the full request instead:
  * "DEPIN-REQ|receive|token|address|timestamp" (or "admin"). The timestamp is
  * Unix MILLISECONDS from the client's clock.
  */
@@ -111,10 +111,11 @@ uint256 DepinChallengeSigningHash(const std::string& preimage);
 
 /** Compact signature of `preimage` with `key`, base64-encoded (signmessage-compatible). */
 bool SignDepinChallengePreimage(const CKey& key, const std::string& preimage,
-                                std::string& signatureBase64, std::string& error);
+                                std::string& signatureBase64, std::string& error,
+                                const std::string& address = "");
 
 /**
- * Verifies a base64 compact signature of `preimage` against a P2PKH address.
+ * Verifies a base64 compact signature of `preimage` against a Legacy or strict ECDSA address.
  * Pure computation: it never touches the challenge store.
  */
 bool VerifyDepinChallengeSignature(const std::string& address, const std::string& signatureBase64,
@@ -245,7 +246,7 @@ bool CheckDepinChallengeRequestAuth(DepinChallengeType type, const std::string& 
 /**
  * The checks that make challenge issuance safe against abuse, without
  * issuing anything: `token` must be `poolRoot` or a section inside it,
- * `address` must be P2PKH with a revealed public key, and must hold the token
+ * `address` must be Legacy or strict ECDSA with a revealed public key, and must hold the token
  * or an ancestor (RECEIVE) or the owner token of it or an ancestor (ADMIN).
  * On success `pubkeyOut` (to encrypt the reply) is set. The RPC runs this
  * first, applies the rate limit, and only then issues: a request that fails
@@ -269,7 +270,7 @@ bool IssueDepinChallengeForAddress(const std::string& token, const std::string& 
  *   1. form (address, nonce, signature are well-formed)
  *   2. the nonce exists and has not expired (read-only)
  *   3. the signature over the explicit operation preimage verifies for address;
- *      RPC callers pass the complete parsed v4 request preimage
+ *      RPC callers pass the complete parsed v5 request preimage
  *   4. access is re-validated (a freeze, self-revoke or transfer between
  *      issuance and use invalidates the challenge)
  *   5. the nonce is consumed atomically for exactly these bindings
