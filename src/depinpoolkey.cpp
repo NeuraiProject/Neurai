@@ -129,7 +129,10 @@ UniValue FinishDepinResponse(const UniValue& result, const std::string& method,
 
         CECIESEncryptedMessage ecies;
         std::string error;
-        if (!ECIESEncryptMessage(result.write(), recipients, ecies, error)) {
+        const std::string plaintext = result.write();
+        if (plaintext.size() > MAX_DEPIN_REPLY_PLAINTEXT)
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "DePIN response exceeds 4 MiB plaintext budget; use smaller pages");
+        if (!ECIESEncryptMessage(plaintext, recipients, ecies, error)) {
             throw JSONRPCError(RPC_INTERNAL_ERROR, strprintf("Failed to encrypt response: %s", error));
         }
         CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
@@ -140,6 +143,8 @@ UniValue FinishDepinResponse(const UniValue& result, const std::string& method,
         // Hex of the canonical JSON: the exact bytes the signature covers, so
         // the client hashes the string it received instead of re-serialising.
         const std::string json = result.write();
+        if (json.size() > MAX_DEPIN_REPLY_PLAINTEXT)
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "DePIN response exceeds 4 MiB plaintext budget");
         body = HexStr(json.begin(), json.end());
         out.push_back(Pair("body", body));
     }

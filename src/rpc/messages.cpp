@@ -17,6 +17,8 @@
 #include "amount.h"
 #include "base58.h"
 #include "chain.h"
+#include "chainparams.h"
+#include "hash.h"
 #include "consensus/validation.h"
 #include "core_io.h"
 #include "httpserver.h"
@@ -616,6 +618,13 @@ UniValue depingetmsginfo(const JSONRPCRequest& request)
     obj.push_back(Pair("tip_age_seconds", status.tipAge));
     obj.push_back(Pair("maxtipage", gArgs.GetArg("-depinmaxtipage", DEFAULT_DEPIN_MAX_TIP_AGE)));
     obj.push_back(Pair("maxheaderlag", gArgs.GetArg("-depinmaxheaderlag", DEFAULT_DEPIN_MAX_HEADER_LAG)));
+    obj.push_back(Pair("stream_id", pDepinMsgPool->GetStreamId().ToString()));
+    obj.push_back(Pair("admission_sequence", int64_t(pDepinMsgPool->GetHighWater())));
+    obj.push_back(Pair("tombstones", int64_t(pDepinMsgPool->GetTombstoneCount())));
+    obj.push_back(Pair("state_format", 2));
+    obj.push_back(Pair("sequence_rpc", "depinreceiveseq"));
+    obj.push_back(Pair("max_message_wire_bytes", int64_t(MAX_DEPIN_MESSAGE_WIRE_BYTES)));
+    obj.push_back(Pair("max_reply_plaintext_bytes", int64_t(MAX_DEPIN_REPLY_PLAINTEXT)));
     obj.push_back(Pair("protocol", DEPIN_RPC_PROTOCOL_VERSION));
     CKey poolKey;
     CPubKey poolPubKey;
@@ -1081,15 +1090,16 @@ UniValue depindecrypt(const JSONRPCRequest& request)
     }
 
     const std::string address = request.params[0].get_str();
-    const std::string encryptedHex = request.params[1].get_str();
+    const std::string& encryptedHex = request.params[1].get_str();
 
     const CTxDestination dest = DecodeDestination(address);
     const CKeyID* keyID = boost::get<CKeyID>(&dest);
     if (!IsValidDestination(dest) || !keyID) {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
     }
-    if (!IsHex(encryptedHex)) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER, "encrypted must be hex");
+    if (encryptedHex.size() > 2 * DepinECIESWireLimit(MAX_DEPIN_REPLY_PLAINTEXT, MAX_DEPIN_RECIPIENTS) ||
+        !IsHex(encryptedHex)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "encrypted exceeds budget or is not hex");
     }
 
     LOCK2(cs_main, pwallet->cs_wallet);
@@ -1101,12 +1111,11 @@ UniValue depindecrypt(const JSONRPCRequest& request)
     }
 
     CECIESEncryptedMessage ecies;
-    try {
-        CDataStream ss(ParseHex(encryptedHex), SER_NETWORK, PROTOCOL_VERSION);
-        ss >> ecies;
-    } catch (const std::exception& e) {
-        throw JSONRPCError(RPC_DESERIALIZATION_ERROR, strprintf("Failed to deserialize encrypted reply: %s", e.what()));
-    }
+    std::string formatError;
+    const uint160 recipientID = *keyID;
+    if (!DecodeDepinECIES(ParseHex(encryptedHex), MAX_DEPIN_REPLY_PLAINTEXT, MAX_DEPIN_RECIPIENTS,
+                          ecies, formatError, &recipientID))
+        throw JSONRPCError(RPC_DESERIALIZATION_ERROR, formatError);
 
     std::string plaintext;
     std::string error;
@@ -1171,8 +1180,9 @@ UniValue depinsubmitmsg(const JSONRPCRequest& request)
     if (!wrapped.exists("sender") || !wrapped.exists("encrypted")) {
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Wrapped message must contain 'sender' and 'encrypted'");
     }
-    const std::string wrappedSender = wrapped["sender"].get_str();
-    const std::string encryptedHex = wrapped["encrypted"].get_str();
+    const std::string& wrappedSender = wrapped["sender"].get_str();
+    const std::string& encryptedHex = wrapped["encrypted"].get_str();
+    if (wrappedSender.size() > 64) throw JSONRPCError(RPC_INVALID_PARAMETER, "Wrapped sender exceeds budget");
 
     CKey poolPrivKey;
     CPubKey poolPubKey;
@@ -1180,16 +1190,16 @@ UniValue depinsubmitmsg(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_MISC_ERROR, "DePIN pool key not loaded: the service is not available on this node");
     }
 
-    if (!IsHex(encryptedHex)) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER, "Encrypted data must be hex-encoded");
+    const size_t outerLimit = DepinECIESWireLimit(MAX_DEPIN_MESSAGE_WIRE_BYTES * 2, 1);
+    if (encryptedHex.size() > outerLimit * 2 || !IsHex(encryptedHex)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Encrypted wrapper exceeds budget or is not hex");
     }
-
     CECIESEncryptedMessage eciesMsg;
-    try {
-        CDataStream ss(ParseHex(encryptedHex), SER_NETWORK, PROTOCOL_VERSION);
-        ss >> eciesMsg;
-    } catch (const std::exception& e) {
-        throw JSONRPCError(RPC_DESERIALIZATION_ERROR, strprintf("Failed to deserialize ECIES wrapper: %s", e.what()));
+    std::string formatError;
+    const uint160 poolID = poolPubKey.GetID();
+    if (!DecodeDepinECIES(ParseHex(encryptedHex), MAX_DEPIN_MESSAGE_WIRE_BYTES * 2, 1,
+                          eciesMsg, formatError, &poolID)) {
+        throw JSONRPCError(RPC_DESERIALIZATION_ERROR, formatError);
     }
 
     std::string hexMessage;
@@ -1199,7 +1209,7 @@ UniValue depinsubmitmsg(const JSONRPCRequest& request)
     }
 
     // Decode hex
-    if (!IsHex(hexMessage)) {
+    if (hexMessage.size() > MAX_DEPIN_MESSAGE_WIRE_BYTES * 2 || !IsHex(hexMessage)) {
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Message must be hex-encoded");
     }
 
@@ -1210,13 +1220,8 @@ UniValue depinsubmitmsg(const JSONRPCRequest& request)
 
     // Deserialize CDepinMessage
     CDepinMessage chatMsg;
-    try {
-        CDataStream ss(msgData, SER_NETWORK, PROTOCOL_VERSION);
-        ss >> chatMsg;
-    } catch (const std::exception& e) {
-        throw JSONRPCError(RPC_DESERIALIZATION_ERROR,
-                          strprintf("Failed to deserialize message: %s", e.what()));
-    }
+    if (!DecodeDepinMessage(msgData, chatMsg, formatError))
+        throw JSONRPCError(RPC_DESERIALIZATION_ERROR, formatError);
 
     // Verify the token is the configured token or a section inside its
     // subtree. Exact equality here used to reject section messages before they
@@ -1388,7 +1393,7 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
     const std::string signature = request.params[3].get_str();
     std::string authError;
     if (!CheckDepinChallengeAuth(DepinChallengeType::RECEIVE, token, address, challenge, signature,
-                                 pDepinMsgPool->GetActiveToken(), authError)) {
+                                 pDepinMsgPool->GetActiveToken(), authError, "", false)) {
         throw JSONRPCError(RPC_INVALID_REQUEST, strprintf("Challenge authentication failed: %s", authError));
     }
 
@@ -1433,38 +1438,18 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
     // are filtered by recipientKeys membership; the sender always sees their own
     // messages. The requested token is the scope: asking for a section returns
     // only that section's subtree, asking for the root returns everything.
-    std::vector<CDepinMessage> messages = pDepinMsgPool->GetMessagesForAddress(address, token);
-
-    UniValue resultArray(UniValue::VARR);
-    bool foundAnchor = afterHash.empty();  // If no hash, start from beginning
+    std::vector<CDepinMessage> messages;
     bool hasMore = false;
-
-    // Convert afterHash string to uint256 if provided
-    uint256 afterHashObj;
-    if (!afterHash.empty()) {
-        afterHashObj.SetHex(afterHash);
+    std::string selectionError;
+    if (!pDepinMsgPool->GetLegacyPage(address, token, fromTimestamp, afterHash, size_t(limit),
+                                     messages, hasMore, selectionError)) {
+        EnsureDepinServiceReady();
+        throw JSONRPCError(RPC_INVALID_PARAMETER, selectionError);
     }
-
-    for (const CDepinMessage& msg : messages) {
-        // Filter 1: Timestamp (existing logic)
-        if (msg.timestamp < fromTimestamp) {
-            continue;
-        }
-
-        // Filter 2: Pagination cursor (after_hash)
-        if (!foundAnchor) {
-            if (msg.GetHash() == afterHashObj) {
-                foundAnchor = true;  // Found the anchor, NEXT messages go to result
-            }
-            continue;  // Skip this message and all previous ones
-        }
-
-        // Filter 3: Limit (pagination size)
-        if (limit > 0 && resultArray.size() >= (size_t)limit) {
-            hasMore = true;  // An additional eligible message exists.
-            break;
-        }
-
+    if (!g_depinChallenges.Consume(challenge, token, address, DepinChallengeType::RECEIVE, authError))
+        throw JSONRPCError(RPC_INVALID_REQUEST, authError);
+    UniValue resultArray(UniValue::VARR);
+    for (const auto& msg : messages) {
         // Build message JSON object (existing logic)
         UniValue msgObj(UniValue::VOBJ);
         msgObj.push_back(Pair("hash", msg.GetHash().ToString()));
@@ -1478,14 +1463,8 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
         resultArray.push_back(msgObj);
     }
 
-    // Validate that after_hash was found if specified
-    if (!afterHash.empty() && !foundAnchor) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER,
-            strprintf("after_hash '%s' not found in available messages", afterHash));
-    }
-
     // Build the response: always an object, so the chained challenge has a
-    // place to ride. has_more is only meaningful with a limit.
+    // place to ride. The byte budget may also set has_more without a count limit.
     UniValue result(UniValue::VOBJ);
     result.push_back(Pair("messages", resultArray));
     result.push_back(Pair("has_more", hasMore));
@@ -1509,6 +1488,146 @@ UniValue depinreceivemsg(const JSONRPCRequest& request)
     // public key, then signed with the pool key (encrypt-then-sign).
     return FinishDepinResponse(result, "depinreceivemsg", token, address, challenge, &clientPubKey);
 }
+
+namespace {
+struct SequenceArgs {
+    bool continuation = false;
+    uint256 stream;
+    uint64_t after = 0;
+    int64_t limit = 100;
+    int64_t from = 0;
+};
+
+SequenceArgs ParseSequenceArgs(const UniValue& params, size_t first, const std::string& token,
+                              const std::string& address)
+{
+    try {
+    SequenceArgs args;
+    if (params.size() > first + 1 && !params[first + 1].isNull()) args.limit = params[first + 1].get_int64();
+    if (params.size() > first + 2 && !params[first + 2].isNull()) args.from = params[first + 2].get_int64();
+    if (args.limit < 1 || args.limit > 1000 || args.from < 0)
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "limit must be 1..1000; from_timestamp must be nonnegative");
+    if (params.size() > first && !params[first].isNull()) {
+        const auto& cursor = params[first];
+        if (!cursor.isObject() || cursor.size() != 6 || cursor["version"].get_int() != 1 ||
+            cursor["scope"].get_str() != token || cursor["address"].get_str() != address ||
+            cursor["from_timestamp"].get_int64() != args.from)
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Cursor does not match version, scope, address or timestamp filter");
+        const auto& id = cursor["stream_id"].get_str();
+        const int64_t after = cursor["after_seq"].get_int64();
+        if (id.size() != 64 || !IsHex(id) || after < 0)
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid sequence cursor");
+        args.stream.SetHex(id);
+        args.after = uint64_t(after);
+        args.continuation = true;
+    }
+    return args;
+    } catch (const std::exception&) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid sequence parameter or cursor type");
+    }
+}
+
+std::string SequencePreimage(const std::string& token, const std::string& address,
+                            const std::string& nonce, const SequenceArgs& args)
+{
+    CKey key;
+    CPubKey pubkey;
+    if (!GetDepinPoolKey(key, pubkey)) throw JSONRPCError(RPC_MISC_ERROR, "DePIN pool key unavailable");
+    CHashWriter hash(SER_GETHASH, 0);
+    hash << std::string("depinreceiveseq/v1") << GetParams().GenesisBlock().GetHash()
+         << pubkey << pDepinMsgPool->GetActiveToken() << token << address << nonce
+         << uint8_t(args.continuation) << args.stream << args.after << args.limit << args.from;
+    return "DEPIN-READ-SEQUENCE-v1|" + hash.GetHash().ToString();
+}
+}
+
+UniValue depinreceiveseq(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 4 || request.params.size() > 7)
+        throw std::runtime_error("depinreceiveseq token address challenge signature (cursor limit from_timestamp)\n"
+            "Read by admission sequence; sign all normalized parameters with depinsignreadseq.\n"
+            "cursor is null for a new scan, otherwise the previous reply's cursor object.\n"
+            "limit defaults to 100 (1..1000); responses also have a 4 MiB plaintext budget.\n");
+    if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) throw JSONRPCError(RPC_MISC_ERROR, "DePIN messaging disabled");
+    const std::string& token = request.params[0].get_str();
+    const std::string& address = request.params[1].get_str();
+    const std::string& nonce = request.params[2].get_str();
+    const std::string& signature = request.params[3].get_str();
+    if (token.size() > 128 || address.size() > 64 || nonce.size() > 64 || signature.size() > 128)
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Sequence request field exceeds budget");
+    const SequenceArgs args = ParseSequenceArgs(request.params, 4, token, address);
+    LOCK(cs_main);
+    EnsureDepinServiceReady();
+    std::string error;
+    if (!CheckDepinChallengeAuth(DepinChallengeType::RECEIVE, token, address, nonce, signature,
+                                 pDepinMsgPool->GetActiveToken(), error, SequencePreimage(token, address, nonce, args), false))
+        throw JSONRPCError(RPC_INVALID_REQUEST, error);
+    CPubKey pubkey;
+    if (!CheckAddressHasPublicKey(address, pubkey, error)) throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, error);
+    CDepinSequencePage page;
+    if (!pDepinMsgPool->GetSequencePage(address, token, args.continuation ? args.stream : pDepinMsgPool->GetStreamId(),
+                                      args.after, size_t(args.limit), args.from, page, error))
+        { EnsureDepinServiceReady(); throw JSONRPCError(RPC_INVALID_PARAMETER, error); }
+    if (!g_depinChallenges.Consume(nonce, token, address, DepinChallengeType::RECEIVE, error))
+        throw JSONRPCError(RPC_INVALID_REQUEST, error);
+    UniValue messages(UniValue::VARR);
+    for (const auto& entry : page.messages) {
+        const auto& message = entry.message;
+        UniValue item(UniValue::VOBJ);
+        item.pushKV("sequence", int64_t(entry.sequence));
+        item.pushKV("hash", message.GetHash().ToString());
+        item.pushKV("token", message.token);
+        item.pushKV("sender", message.senderAddress);
+        item.pushKV("timestamp", message.timestamp);
+        item.pushKV("message_type", message.messageType == 1 ? "private" : "group");
+        item.pushKV("encrypted_payload_hex", HexStr(message.encryptedPayload));
+        item.pushKV("signature_hex", HexStr(message.signature));
+        messages.push_back(item);
+    }
+    UniValue cursor(UniValue::VOBJ);
+    cursor.pushKV("version", 1);
+    cursor.pushKV("stream_id", page.stream.ToString());
+    cursor.pushKV("after_seq", int64_t(page.after));
+    cursor.pushKV("scope", token);
+    cursor.pushKV("address", address);
+    cursor.pushKV("from_timestamp", args.from);
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("messages", messages);
+    result.pushKV("cursor", cursor);
+    result.pushKV("has_more", page.hasMore);
+    std::string chainError;
+    const auto next = g_depinChallenges.Issue(token, address, DepinChallengeType::RECEIVE, chainError,
+                                             DEPIN_CHAINED_CHALLENGE_TIMEOUT);
+    if (!next.empty()) { result.pushKV("next_challenge", next); result.pushKV("next_expires_in", DEPIN_CHAINED_CHALLENGE_TIMEOUT); }
+    return FinishDepinResponse(result, "depinreceiveseq", token, address, nonce, &pubkey);
+}
+
+#ifdef ENABLE_WALLET
+UniValue depinsignreadseq(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 3 || request.params.size() > 6)
+        throw std::runtime_error("depinsignreadseq address token challenge (cursor limit from_timestamp)\n"
+                                "Sign all normalized parameters for depinreceiveseq with a wallet Legacy key.\n");
+    CWallet* const wallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(wallet, request.fHelp)) return NullUniValue;
+    if (!pDepinMsgPool) throw JSONRPCError(RPC_MISC_ERROR, "DePIN messaging disabled");
+    const auto address = request.params[0].get_str(), token = request.params[1].get_str(), nonce = request.params[2].get_str();
+    const auto args = ParseSequenceArgs(request.params, 3, token, address);
+    LOCK2(cs_main, wallet->cs_wallet);
+    EnsureWalletIsUnlocked(wallet);
+    const auto destination = DecodeDestination(address);
+    const CKeyID* id = boost::get<CKeyID>(&destination);
+    CKey key;
+    if (!id || !wallet->GetKey(*id, key)) throw JSONRPCError(RPC_WALLET_ERROR, "Legacy private key unavailable");
+    const auto preimage = SequencePreimage(token, address, nonce, args);
+    std::string signature, error;
+    if (!SignDepinChallengePreimage(key, preimage, signature, error)) throw JSONRPCError(RPC_WALLET_ERROR, error);
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("signature", signature);
+    result.pushKV("preimage", preimage);
+    return result;
+}
+#endif
 
 #ifdef ENABLE_WALLET
 UniValue depingetmsg(const JSONRPCRequest& request)
@@ -1779,26 +1898,18 @@ UniValue depinclearmsg(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_REQUEST, strprintf("Challenge authentication failed: %s", authError));
     }
 
-    const size_t sizeBefore = pDepinMsgPool->Size();
     const int64_t currentTime = GetTime();
-    const std::string purgeScope = wholePool ? std::string() : scopeToken;
-
-    if (mode == MODE_EXPIRED) {
-        pDepinMsgPool->RemoveExpiredMessages(currentTime, purgeScope);
-    } else if (mode == MODE_ALL) {
-        if (wholePool) {
-            pDepinMsgPool->Clear();
-        } else {
-            pDepinMsgPool->ClearScope(scopeToken);
-        }
-    } else {
-        pDepinMsgPool->RemoveMessagesOlderThan(currentTime, hoursThreshold * 3600, purgeScope);
+    size_t removed = 0;
+    std::string storageError;
+    const int64_t age = mode == MODE_EXPIRED ? pDepinMsgPool->GetMessageExpiryTime() : hoursThreshold * 3600;
+    if (!pDepinMsgPool->Purge(wholePool ? "" : scopeToken, currentTime, mode == MODE_ALL, age,
+                             removed, storageError)) {
+        throw JSONRPCError(RPC_DATABASE_ERROR, storageError);
     }
-
     const size_t sizeAfter = pDepinMsgPool->Size();
 
     UniValue result(UniValue::VOBJ);
-    result.push_back(Pair("removed", (int)(sizeBefore - sizeAfter)));
+    result.push_back(Pair("removed", (int)removed));
     result.push_back(Pair("remaining", (int)sizeAfter));
 
     return FinishDepinResponse(result, "depinclearmsg", scopeToken, address, challenge, &clientPubKey);
@@ -2325,6 +2436,7 @@ static const CRPCCommand commands[] =
             { "depin messaging",          "depinchallenge",             &depinchallenge,             {"token", "address", "timestamp", "signature", "type"}},
             { "depin messaging",          "depinpoolstats",             &depinpoolstats,             {}},
             { "depin messaging",          "depinsubmitmsg",             &depinsubmitmsg,             {"message"}},
+            { "depin messaging",          "depinreceiveseq",            &depinreceiveseq,            {"token", "address", "challenge", "signature", "cursor", "limit", "from_timestamp"}},
             { "depin messaging",          "depinreceivemsg",            &depinreceivemsg,            {"token", "address", "challenge", "signature", "timestamp", "after_hash", "limit"}},
             { "depin messaging",          "depinmcpstatus",             &depinmcpstatus,             {}},
             { "depin messaging",          "depingetancestorrecipients", &depingetancestorrecipients, {"token", "max_results", "stop_at"}},
@@ -2332,6 +2444,7 @@ static const CRPCCommand commands[] =
             { "depin messaging",          "depinclearmsg",              &depinclearmsg,              {"scope", "address", "challenge", "signature", "mode"}},
 #ifdef ENABLE_WALLET
             { "depin messaging",          "depinpoolpkey",              &depinpoolpkey,              {}},
+            { "depin messaging",          "depinsignreadseq",            &depinsignreadseq,            {"address", "token", "challenge", "cursor", "limit", "from_timestamp"}},
             { "depin messaging",          "depinsignchallenge",         &depinsignchallenge,         {"address", "token", "challenge", "type"}},
             { "depin messaging",          "depinsignrequest",           &depinsignrequest,           {"address", "token", "type"}},
             { "depin messaging",          "depindecrypt",               &depindecrypt,               {"address", "encrypted"}},

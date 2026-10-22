@@ -169,6 +169,11 @@ public:
         return true;
     }
 
+    unsigned int GetKeySize() const { return piter->key().size(); }
+    void CheckStatus() const {
+        if (!piter->status().ok()) dbwrapper_private::HandleError(piter->status());
+    }
+
     unsigned int GetValueSize() {
         return piter->value().size();
     }

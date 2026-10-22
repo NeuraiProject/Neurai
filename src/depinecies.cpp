@@ -3,6 +3,9 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "depinecies.h"
+#include "depinserialization.h"
+#include "streams.h"
+#include "version.h"
 #include "hash.h"
 #include "random.h"
 #include "crypto/aes.h"
@@ -19,6 +22,50 @@
 #include <openssl/ec.h>
 #include <openssl/obj_mac.h>
 #include <openssl/bn.h>
+
+size_t DepinECIESWireLimit(size_t maxPlaintext, size_t maxRecipients)
+{
+    // 34 byte compressed key, at most 9 bytes per CompactSize, 20 byte ids.
+    return 34 + 9 + DEPIN_GCM_OVERHEAD + maxPlaintext + 9 +
+           maxRecipients * (20 + 1 + DEPIN_WRAPPED_KEY_SIZE);
+}
+
+bool DecodeDepinECIES(const std::vector<unsigned char>& bytes, size_t maxPlaintext,
+                      size_t maxRecipients, CECIESEncryptedMessage& message,
+                      std::string& error, const uint160* requiredRecipient)
+{
+    message.SetNull();
+    try {
+        if (bytes.size() > DepinECIESWireLimit(maxPlaintext, maxRecipients))
+            throw std::ios_base::failure("wire size exceeds budget");
+        CDataStream stream(bytes, SER_NETWORK, PROTOCOL_VERSION);
+        CECIESEncryptedMessage decoded;
+        const auto key = ReadDepinBytes(stream, 33, 33);
+        decoded.ephemeralPubKey = CPubKey(key.begin(), key.end());
+        if (!decoded.ephemeralPubKey.IsCompressed() || !decoded.ephemeralPubKey.IsFullyValid())
+            throw std::ios_base::failure("invalid compressed ephemeral key");
+        decoded.encryptedPayload = ReadDepinBytes(stream, maxPlaintext + DEPIN_GCM_OVERHEAD,
+                                                  DEPIN_GCM_OVERHEAD + 1);
+        const uint64_t count = ReadCompactSize(stream);
+        if (!count || count > maxRecipients) throw std::ios_base::failure("number of recipients out of range");
+        uint160 previous;
+        for (uint64_t i = 0; i < count; ++i) {
+            uint160 id;
+            stream >> id;
+            if (i && !(previous < id)) throw std::ios_base::failure("duplicate or unordered recipient");
+            decoded.recipientKeys.emplace(id, ReadDepinBytes(stream, DEPIN_WRAPPED_KEY_SIZE, DEPIN_WRAPPED_KEY_SIZE));
+            previous = id;
+        }
+        if (!stream.empty()) throw std::ios_base::failure("trailing bytes");
+        if (requiredRecipient && !decoded.recipientKeys.count(*requiredRecipient))
+            throw std::ios_base::failure("required recipient missing");
+        message = std::move(decoded);
+        return true;
+    } catch (const std::exception& e) {
+        error = std::string("Invalid ECIES message payload: ") + e.what();
+        return false;
+    }
+}
 
 // HMAC-SHA256
 std::vector<unsigned char> HMAC_SHA256(const std::vector<unsigned char>& key,

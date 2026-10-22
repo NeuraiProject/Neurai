@@ -1,8 +1,9 @@
 # DePIN message authorization
 
-This describes the node changes for P9a, P1 and P3 (2026-10-21). The wire
-message, signed preimages, ECIES serialization, RPC wrappers and protocol
-number `2` remain compatible. Authorization is stricter.
+This describes authorization for P9a, P1 and P3 (2026-10-21). For subsequent
+strict encoding, sequence reads and durable state, see
+[depin-pool-state.md](depin-pool-state.md). The signed user message and ECIES
+serialization remain unchanged; admission is stricter.
 
 ## Publications and recipients
 
@@ -84,7 +85,7 @@ signed plain `body` adds `ready`, `not_ready_reason`, `authorization_height`,
 ## Restoring historical messages (P9a)
 
 `-depinpoolpersist` remains **off by default**. With it enabled, startup uses a
-private restoration path. It checks signatures, ECIES deserializability,
+private restoration path. It checks signatures, strict ECIES encoding,
 type, scope, timestamps/expiry, existing size/count budgets and duplicates,
 without requiring historical senders or recipients to retain their assets.
 Current reader permissions are still checked at download time, including for
@@ -95,11 +96,13 @@ Restoration does not provide an RPC import bypass. A new submission of the
 same old message goes through current admission checks. A bad magic header
 is preserved for inspection rather than deleting the only source file.
 
-This keeps file version 1: it does not add robust framing, tombstones,
-sequences or crash durability. Those remain P9b/P8/cursor work. The loader
-also cannot prove that an operator-controlled file was originally admitted
-under an earlier chainstate. Disabling persistence neither loads nor saves
-the pool; clients must retain their own history.
+P9b now stores retained messages, sequences and durable moderation in state
+version 2; version 1 is imported explicitly, preserving its original. A
+saved, verified sender key permits signature checking after a reorg removes
+the key-reveal transaction. The loader cannot prove an operator-controlled
+file was originally admitted under an earlier chainstate. Disabling message
+retention leaves new messages volatile; moderation remains durable. See the
+state contract for retention toggles, migration and failure handling.
 
 ## Client and library changes
 
@@ -110,7 +113,7 @@ still appropriate. Replaying the old ciphertext does not update its keys.
 Use bounded retries; never silently discard an intended recipient or treat a
 truncated directory as complete. Preserve verification of signed wrappers.
 
-These node changes do not implement external library updates, method/parameter
-signature redesign (P2), a new pagination cursor, strict canonical ECIES
-validation or global challenge invalidation (P7). Correct current-state
-checks already prevent an old nonce from overriding a confirmed revocation.
+External library updates, the full method/parameter signature redesign (P2)
+and context revision/challenge invalidation (P7) remain separate work. The
+additive sequence read binds all its own parameters. Current-state checks
+already prevent an old nonce from overriding a confirmed revocation.

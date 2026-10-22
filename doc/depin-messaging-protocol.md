@@ -8,6 +8,8 @@ where it says MUST/SHOULD; the node source is the reference implementation.
 
 Companion documents:
 
+- [`depin-pool-state.md`](depin-pool-state.md) — strict wire budgets, signed
+  admission-sequence reads, durable moderation and state v2 migration.
 - [`depinreceivemsg.md`](depinreceivemsg.md) — the RPC-by-RPC integration
   guide (argument semantics, examples, paging). This specification defers to
   it for parameter details and does not repeat them.
@@ -307,22 +309,25 @@ A message is stored only if **all** of the following hold, in this order:
 3. `timestamp ≤ now + 60` (seconds);
 4. `now − timestamp ≤ expiry` (default 168 h; `messageexpiryhours` in
    `depingetmsginfo`);
-5. `encryptedPayload` is non-empty and `≤ maxmessagesize × maxrecipients`
-   bytes (defaults 1024 × 20);
-6. `encryptedPayload` deserializes as a `CECIESEncryptedMessage`, and its
-   `recipientKeys` has at most `maxrecipients` entries (default 20, hard
-   cap 50). A deserialization failure rejects the message. This minimum check
-   does not enforce canonical encoding, reject duplicate map keys or trailing
-   bytes, or validate every ECIES field. Producers MUST emit well-formed
-   payloads; recipients still verify GCM authentication when decrypting;
+5. content ciphertext is nonempty and its plaintext length is at most
+   `maxmessagesize` (default 1024 bytes, maximum 10240), excluding GCM and
+   key overhead; the conservative ECIES wire bound is
+   `80 + maxmessagesize + 81 * maxrecipients`;
+6. `encryptedPayload` passes the bounded strict ECIES decoder: valid compressed
+   ephemeral key, minimal CompactSize, 1..`maxrecipients` entries in canonical
+   hash160 order without duplicates, exactly 60-byte wrapped keys and no
+   trailing bytes. Recipients still authenticate both GCM layers;
 7. the pool size limit is not exceeded;
 8. `signature` verifies against the sender's **revealed** public key (§2.3);
 9. `senderAddress` has inherited access to `token` (§2.2);
-10. `hash` is not already in the pool.
+10. every declared recipient has current inherited access to the message
+    token (a valid subset is allowed; rejection code `-26`);
+11. `hash` is neither in the pool nor covered by a durable moderation mark,
+    and the timestamp is above the durable retention floor.
 
-The node does **not** check that `recipientKeys` matches the legitimate
-holder set: the sender chooses its readers, and a sender can always add an
-extra reader (it knows the plaintext anyway). Receivers filter what they can
+The node checks that every declared recipient is enabled; it does not require
+the complete holder set or prove that a malicious sender has not shared the
+plaintext elsewhere. Receivers filter what they can
 see by `recipientKeys` membership — an address sees a message when it is the
 sender or has an entry in `recipientKeys` — and decryption is the final
 boundary.
@@ -335,12 +340,15 @@ MCP polling exclude expired entries using one reference time per snapshot,
 even before cleanup and even for the sender. At exactly `timestamp + expiry`
 a message is still eligible. Section counters exclude expired entries;
 physical pool statistics can include them until cleanup releases storage.
-Expiry cannot erase copies already downloaded. Nothing is
+Expiry cannot erase copies already downloaded. Messages are not
 persistent unless the operator enables `-depinpoolpersist`; clients MUST NOT
 assume a message is retrievable later. When enabled, restoration validates
 historical signatures and format without requiring all historical participants
 to retain access; every new read still requires the reader's current permission.
-File version 1 and its existing recovery/durability limits remain unchanged.
+Moderation marks persist independently. State v2 synchronously stores retained
+admissions and moderation; it explicitly migrates v1 without deleting the
+original. See [the state contract](depin-pool-state.md) for exact limits,
+sequence read signatures, retention toggles, migration and recovery.
 
 ---
 
@@ -550,7 +558,9 @@ Argument semantics and examples are in [`depinreceivemsg.md`](depinreceivemsg.md
 | RPC | Challenge | Decrypted result |
 |---|---|---|
 | `depinchallenge token address timestamp signature (type)` | — (signed request, §7.1) | `challenge, expires_in, type` |
-| `depinreceivemsg token address challenge signature (timestamp "after_hash" limit)` | `receive` for `token` | `{messages: [{hash, token, sender, timestamp, message_type, encrypted_payload_hex, signature_hex}], has_more, next_challenge, next_expires_in}`, oldest first; `limit ≤ 1000`; `timestamp` filters `≥ timestamp − 1`; `after_hash` is an exclusive cursor that MUST be a hash visible to the address |
+| `depinreceivemsg token address challenge signature (timestamp "after_hash" limit)` | `receive` for `token` | `{messages: [{hash, token, sender, timestamp, message_type, encrypted_payload_hex, signature_hex}], has_more, next_challenge, next_expires_in}`, oldest first; `limit ≤ 1000`; `timestamp` filters `≥ timestamp − 1`; `after_hash` is an exclusive cursor that MUST be a hash visible to the address; 4 MiB reply budget also applies without a count limit |
+| `depinreceiveseq token address challenge signature (cursor limit from_timestamp)` | `receive` for `token`, signature over all normalized parameters | Admission order, independent durable cursor, 1..1000 entries (default 100), 4 MiB reply budget; exact signature and cursor in [the extension contract](depin-pool-state.md) |
+| `depinsignreadseq address token challenge (cursor limit from_timestamp)` | Local unlocked Legacy wallet | `{preimage, signature}` for the new sequence read; does not issue or consume a challenge |
 | `depinlistsections address scope challenge signature` | `receive` for `scope` | `{sections: [{name, label, depth, access, messages?}], next_challenge, next_expires_in}` limited to `scope`'s subtree |
 
 Visibility in `depinreceivemsg`: messages in the requested subtree whose
@@ -691,10 +701,10 @@ SHOULD branch on `code` and show `message`.
 | Issuance / submission quota | 20 per address and minute (node default) |
 | Challenge nonce | 32 random bytes, 64 hex |
 | Recipients | default 20, hard maximum 50 |
-| Content size | default 1024 bytes (`-depinmsgsize`, max 10 240); payload cap = size × recipients |
+| Content size | default 1024 plaintext bytes (`-depinmsgsize`, max 10 240), excluding GCM/key overhead; signed message decode cap 16 384 bytes |
 | Expiry | default 168 h (max 720 h) |
 | Timestamp skew accepted on submit | +60 s |
-| Page size | `limit ≤ 1000` |
+| Page size | `limit ≤ 1000`; 4 MiB plaintext reply budget even with legacy `limit=0`; additive `depinreceiveseq` defaults to 100 |
 | Pool key derivation | `m/44'/<coin>'/200'/<change>/0` of the service wallet (coin = 1900 on mainnet, 1 on testnet/regtest; change = 1 on testnet, 0 on regtest/mainnet) |
 
 ---

@@ -71,6 +71,16 @@ public:
     }
 };
 
+// Strict wire decoder. The outer submission envelope has exactly one entry
+// for the pool; an inner message may contain any valid nonempty subset.
+static const size_t DEPIN_GCM_OVERHEAD = 28;
+static const size_t DEPIN_WRAPPED_KEY_SIZE = 60;
+static const size_t MAX_DEPIN_REPLY_PLAINTEXT = 4 * 1024 * 1024;
+size_t DepinECIESWireLimit(size_t maxPlaintext, size_t maxRecipients);
+bool DecodeDepinECIES(const std::vector<unsigned char>& bytes, size_t maxPlaintext,
+                      size_t maxRecipients, CECIESEncryptedMessage& message,
+                      std::string& error, const uint160* requiredRecipient = nullptr);
+
 /**
  * Encrypt a message for multiple recipients using hybrid ECIES
  *

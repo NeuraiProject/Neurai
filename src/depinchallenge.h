@@ -277,6 +277,6 @@ bool IssueDepinChallengeForAddress(const std::string& token, const std::string& 
 bool CheckDepinChallengeAuth(DepinChallengeType type, const std::string& token,
                              const std::string& address, const std::string& nonce,
                              const std::string& signatureBase64, const std::string& poolRoot,
-                             std::string& error);
+                             std::string& error, const std::string& operationPreimage = "", bool consume = true);
 
 #endif // NEURAI_DEPINCHALLENGE_H

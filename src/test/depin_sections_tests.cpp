@@ -34,6 +34,12 @@
 #include "depinchallenge.h"
 #include "depinecies.h"
 #include "clientversion.h"
+#include "dbwrapper.h"
+#include <cstdlib>
+#ifndef WIN32
+#include <sys/statvfs.h>
+#endif
+#include "random.h"
 #include "util.h"
 #include "depinpoolkey.h"
 #include "hash.h"
@@ -56,6 +62,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <set>
 #include <string>
@@ -69,6 +76,28 @@ const std::string ROOT = "&TEST";
 const std::string SECTION_A = "&TEST/GENERAL";
 const std::string SECTION_B = "&TEST/OTHERS";
 const std::string SECTION_A_SUB = "&TEST/GENERAL/SUB";
+
+struct StateMetaFixture {
+    uint32_t version = 2;
+    uint256 stream;
+    uint64_t high = 0;
+    int64_t floor = 0;
+    template <typename Stream> void Serialize(Stream& s) const {
+        s << version << ROOT << stream << high << uint8_t(1) << floor << uint8_t(1);
+    }
+};
+struct StateRecordFixture {
+    uint64_t sequence;
+    std::vector<unsigned char> bytes;
+    template <typename Stream> void Serialize(Stream& s) const { s << sequence << bytes << CPubKey(); }
+};
+
+struct RawStateFixture {
+    std::vector<unsigned char> bytes;
+    template <typename Stream> void Serialize(Stream& stream) const {
+        stream.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    }
+};
 
 struct Holder {
     CKey key;
@@ -1237,6 +1266,462 @@ BOOST_AUTO_TEST_CASE(admission_cost_and_concurrent_pool_readers)
                 << " reader_max_us=" << maxReadMicros.load() << " reads=" << reads.load());
         }
     }
+}
+
+BOOST_AUTO_TEST_CASE(sequence_pages_survive_anchor_deletion_and_late_timestamps)
+{
+    ScopedInitializedPool pool(ROOT);
+    const Holder sender = NewHolder(true), receiver = NewHolder(true);
+    SetBalance(ROOT, sender.address, 10);
+    SetBalance(ROOT, receiver.address, 10);
+    std::string error;
+    CDepinMessage first = MakeEciesMessage(ROOT, sender, {receiver}, "first");
+    SignMessageWithKey(first, sender.key);
+    BOOST_REQUIRE(pDepinMsgPool->AddMessage(first, error));
+    const auto stream = pDepinMsgPool->GetStreamId();
+    CDepinSequencePage page;
+    BOOST_REQUIRE(pDepinMsgPool->GetSequencePage(receiver.address, ROOT, stream, 0, 1, 0, page, error));
+    BOOST_CHECK_EQUAL(page.after, 1U);
+    BOOST_CHECK(!page.hasMore);
+    size_t removed = 0;
+    BOOST_REQUIRE(pDepinMsgPool->Purge(ROOT, GetTime(), true, 0, removed, error));
+    BOOST_CHECK_EQUAL(removed, 1U);
+    CDepinMessage late = MakeEciesMessage(ROOT, sender, {receiver}, "late clock");
+    late.timestamp -= 60;
+    SignMessageWithKey(late, sender.key);
+    BOOST_REQUIRE(pDepinMsgPool->AddMessage(late, error));
+    BOOST_REQUIRE(pDepinMsgPool->GetSequencePage(receiver.address, ROOT, stream, page.after, 1, 0, page, error));
+    BOOST_REQUIRE_EQUAL(page.messages.size(), 1U);
+    BOOST_CHECK(page.messages[0].message.GetHash() == late.GetHash());
+    BOOST_CHECK_EQUAL(page.messages[0].sequence, 2U);
+    BOOST_CHECK(!pDepinMsgPool->AddMessage(first, error));
+    BOOST_CHECK(error.find("administratively deleted") != std::string::npos);
+    BOOST_CHECK(!pDepinMsgPool->GetSequencePage(receiver.address, ROOT, GetRandHash(), 0, 1, 0, page, error));
+    BOOST_CHECK(!pDepinMsgPool->GetSequencePage(receiver.address, ROOT, stream, 3, 1, 0, page, error));
+}
+
+BOOST_AUTO_TEST_CASE(durable_sequences_and_marks_with_message_persistence_toggle)
+{
+    ScopedInitializedPool pool(ROOT);
+    const Holder sender = NewHolder(true), receiver = NewHolder(true);
+    SetBalance(ROOT, sender.address, 10);
+    SetBalance(ROOT, receiver.address, 10);
+    std::string error;
+    BOOST_REQUIRE_MESSAGE(pDepinMsgPool->InitializeStorage(true, error), error);
+    CDepinMessage first = MakeEciesMessage(ROOT, sender, {receiver}, "retained first");
+    CDepinMessage second = MakeEciesMessage(ROOT, sender, {receiver}, "retained second");
+    SignMessageWithKey(first, sender.key);
+    SignMessageWithKey(second, sender.key);
+    BOOST_REQUIRE(pDepinMsgPool->AddMessage(first, error));
+    BOOST_REQUIRE(pDepinMsgPool->AddMessage(second, error));
+    const auto stream = pDepinMsgPool->GetStreamId();
+    BOOST_REQUIRE(pDepinMsgPool->InitializeStorage(true, error)); // crash-safe admission, no shutdown save
+    BOOST_CHECK(pDepinMsgPool->GetStreamId() == stream);
+    CDepinSequencePage page;
+    BOOST_REQUIRE(pDepinMsgPool->GetSequencePage(receiver.address, ROOT, stream, 1, 1, 0, page, error));
+    BOOST_REQUIRE_EQUAL(page.messages.size(), 1U);
+    BOOST_CHECK(page.messages[0].message.GetHash() == second.GetHash());
+    BOOST_REQUIRE(pDepinMsgPool->InitializeStorage(false, error));
+    const auto volatileStream = pDepinMsgPool->GetStreamId();
+    BOOST_CHECK(volatileStream != stream);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->Size(), 0U);
+    BOOST_REQUIRE(pDepinMsgPool->AddMessage(first, error));
+    size_t removed = 0;
+    BOOST_REQUIRE(pDepinMsgPool->Purge(ROOT, GetTime(), true, 0, removed, error));
+    BOOST_CHECK_EQUAL(removed, 2U); // includes the inactive retained checkpoint
+    BOOST_REQUIRE(pDepinMsgPool->InitializeStorage(false, error));
+    BOOST_CHECK(pDepinMsgPool->GetStreamId() != volatileStream);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetTombstoneCount(), 2U);
+    BOOST_CHECK(!pDepinMsgPool->AddMessage(first, error));
+    BOOST_REQUIRE(pDepinMsgPool->InitializeStorage(true, error));
+    BOOST_CHECK(pDepinMsgPool->GetStreamId() != stream);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->Size(), 0U);
+    BOOST_CHECK(!pDepinMsgPool->AddMessage(second, error));
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetHighWater(), 2U);
+}
+
+BOOST_AUTO_TEST_CASE(tombstone_capacity_and_expiry_never_silently_drop_live_marks)
+{
+    ScopedInitializedPool pool(ROOT);
+    const Holder sender = NewHolder(true), receiver = NewHolder(true);
+    SetBalance(ROOT, sender.address, 10);
+    SetBalance(ROOT, receiver.address, 10);
+    std::string error;
+    BOOST_REQUIRE(pDepinMsgPool->InitializeStorage(false, error, 1));
+    CDepinMessage first = MakeEciesMessage(ROOT, sender, {receiver}, "capacity first");
+    CDepinMessage second = MakeEciesMessage(ROOT, sender, {receiver}, "capacity second");
+    SignMessageWithKey(first, sender.key);
+    SignMessageWithKey(second, sender.key);
+    BOOST_REQUIRE(pDepinMsgPool->AddMessage(first, error));
+    size_t removed = 0;
+    BOOST_REQUIRE(pDepinMsgPool->Purge(ROOT, GetTime(), true, 0, removed, error));
+    BOOST_REQUIRE(pDepinMsgPool->AddMessage(second, error));
+    BOOST_CHECK(!pDepinMsgPool->Purge(ROOT, GetTime(), true, 0, removed, error));
+    BOOST_CHECK_EQUAL(removed, 0U);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->Size(), 1U);
+    BOOST_CHECK(pDepinMsgPool->StorageHealthy()); // capacity exhaustion is recoverable
+    BOOST_CHECK(!pDepinMsgPool->AddMessage(first, error));
+    SetMockTime(GetTime() + int64_t(MAX_DEPIN_MESSAGE_EXPIRY_HOURS) * 3600);
+    RefreshDepinTestTipTime();
+    BOOST_CHECK(!pDepinMsgPool->AddMessage(first, error));
+    SetMockTime(GetTime() + 1);
+    RefreshDepinTestTipTime();
+    BOOST_REQUIRE(pDepinMsgPool->Purge(ROOT, GetTime(), false, pDepinMsgPool->GetMessageExpiryTime(), removed, error));
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetTombstoneCount(), 0U);
+    BOOST_CHECK(!pDepinMsgPool->AddMessage(first, error)); // date now rejects it, not its old mark
+    SetMockTime(0);
+    RefreshDepinTestTipTime();
+    BOOST_REQUIRE(pDepinMsgPool->InitializeStorage(false, error));
+    BOOST_CHECK(!pDepinMsgPool->AddMessage(first, error)); // no replay after the wall clock rolls back
+}
+
+BOOST_AUTO_TEST_CASE(durable_purge_respects_scope_age_and_inactive_checkpoint)
+{
+    ScopedInitializedPool pool(ROOT);
+    const auto now = GetTime();
+    SetMockTime(now);
+    const Holder sender = NewHolder(true);
+    SetBalance(ROOT, sender.address, 10);
+    std::string error;
+    BOOST_REQUIRE(pDepinMsgPool->InitializeStorage(true, error));
+    std::vector<CDepinMessage> messages;
+    const std::vector<std::pair<std::string, int64_t>> samples{
+        {ROOT, now - 7201}, {SECTION_A, now - 3601}, {SECTION_A, now - 3600},
+        {SECTION_A, now + 1}, {SECTION_B, now - 7201}};
+    for (const auto& sample : samples) {
+        auto message = MakeEciesMessage(sample.first, sender, {sender}, "scope/age");
+        message.timestamp = sample.second;
+        SignMessageWithKey(message, sender.key);
+        BOOST_REQUIRE_MESSAGE(pDepinMsgPool->AddMessage(message, error), error);
+        messages.push_back(message);
+    }
+    BOOST_REQUIRE(pDepinMsgPool->InitializeStorage(false, error));
+    size_t removed = 0;
+    BOOST_REQUIRE(pDepinMsgPool->Purge(SECTION_A, now, false, 3600, removed, error));
+    BOOST_CHECK_EQUAL(removed, 1U); // strictly older: equality survives
+    BOOST_REQUIRE(pDepinMsgPool->InitializeStorage(true, error));
+    BOOST_CHECK_EQUAL(pDepinMsgPool->Size(), 4U);
+    BOOST_CHECK(!pDepinMsgPool->AddMessage(messages[1], error));
+    BOOST_REQUIRE(pDepinMsgPool->Purge(SECTION_A, now, false, 0, removed, error));
+    BOOST_CHECK_EQUAL(removed, 1U); // 0 hours is not "all": future survives
+    BOOST_REQUIRE(pDepinMsgPool->Purge(SECTION_A, now, true, 0, removed, error));
+    BOOST_CHECK_EQUAL(removed, 1U);
+    BOOST_REQUIRE(pDepinMsgPool->InitializeStorage(true, error));
+    BOOST_CHECK_EQUAL(pDepinMsgPool->Size(), 2U); // parent and sibling untouched
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetHighWater(), 5U);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetTombstoneCount(), 3U);
+    SetMockTime(0);
+}
+
+BOOST_AUTO_TEST_CASE(v1_migration_preserves_original_and_rejects_truncation)
+{
+    ScopedInitializedPool pool(ROOT);
+    const Holder sender = NewHolder(true);
+    CDepinMessage message = MakeEciesMessage(ROOT, sender, {sender}, "legacy");
+    SignMessageWithKey(message, sender.key);
+    CDataStream data(SER_DISK, CLIENT_VERSION);
+    data << DEPINPOOL_MAGIC_BYTES << uint32_t(1) << GetTime() << uint64_t(1) << message;
+    const auto path = GetDataDir() / "depinpool.dat";
+    {
+        std::ofstream file(path.string(), std::ios::binary);
+        file.write(data.data(), data.size() - 1);
+    }
+    std::string error;
+    BOOST_CHECK(!pDepinMsgPool->InitializeStorage(true, error));
+    BOOST_CHECK(!pDepinMsgPool->StorageHealthy());
+    BOOST_CHECK_EQUAL(fs::file_size(path), data.size() - 1);
+    {
+        std::ofstream file(path.string(), std::ios::binary);
+        file.write(data.data(), data.size());
+    }
+    BOOST_REQUIRE_MESSAGE(pDepinMsgPool->InitializeStorage(true, error), error);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->Size(), 1U); // historical sender no longer needs holdings
+    BOOST_CHECK(fs::exists(path.string() + ".v1.bak"));
+    BOOST_CHECK_EQUAL(fs::file_size(path), data.size());
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetHighWater(), 1U);
+}
+
+BOOST_AUTO_TEST_CASE(legacy_import_can_be_enabled_after_a_volatile_start)
+{
+    ScopedInitializedPool pool(ROOT);
+    const Holder sender = NewHolder(true);
+    auto message = MakeEciesMessage(ROOT, sender, {sender}, "deferred migration");
+    SignMessageWithKey(message, sender.key);
+    CDataStream data(SER_DISK, CLIENT_VERSION);
+    data << DEPINPOOL_MAGIC_BYTES << uint32_t(1) << GetTime() << uint64_t(1) << message;
+    {
+        std::ofstream file((GetDataDir() / "depinpool.dat").string(), std::ios::binary);
+        file.write(data.data(), data.size());
+    }
+    std::string error;
+    BOOST_REQUIRE(pDepinMsgPool->InitializeStorage(false, error));
+    BOOST_CHECK_EQUAL(pDepinMsgPool->Size(), 0U);
+    BOOST_REQUIRE_MESSAGE(pDepinMsgPool->InitializeStorage(true, error), error);
+    BOOST_REQUIRE_EQUAL(pDepinMsgPool->Size(), 1U);
+    // Saved verification metadata remains valid if the chain loses key reveal.
+    CDestinationIndexData addressData;
+    BOOST_REQUIRE(GetDestinationIndexData(DecodeDestination(sender.address), addressData));
+    BOOST_REQUIRE(pblocktree->ErasePubKeyIndex({CPubKeyIndexKey(addressData)}));
+    BOOST_REQUIRE_MESSAGE(pDepinMsgPool->InitializeStorage(true, error), error);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->Size(), 1U);
+}
+
+BOOST_AUTO_TEST_CASE(legacy_complete_invalid_records_are_skipped_but_bad_framing_is_fatal)
+{
+    ScopedInitializedPool pool(ROOT);
+    const Holder sender = NewHolder(true);
+    auto valid = MakeEciesMessage(ROOT, sender, {sender}, "valid after invalid");
+    SignMessageWithKey(valid, sender.key);
+    auto invalid = valid;
+    // Larger than the new wire limit but inside the old payload bound. Its
+    // record is complete, so the migration must still find the next message.
+    invalid.encryptedPayload.resize(MAX_DEPIN_MESSAGE_WIRE_BYTES + 1);
+    CDataStream records(SER_DISK, CLIENT_VERSION);
+    records << invalid << valid;
+    auto write = [&](uint32_t magic, uint32_t version, bool trailing) {
+        CDataStream data(SER_DISK, CLIENT_VERSION);
+        data << magic << version << GetTime() << uint64_t(2);
+        data.write(records.data(), records.size());
+        if (trailing) data << uint8_t(42);
+        std::ofstream file((GetDataDir() / "depinpool.dat").string(), std::ios::binary);
+        file.write(data.data(), data.size());
+    };
+    std::string error;
+    write(0, 1, false);
+    BOOST_CHECK(!pDepinMsgPool->InitializeStorage(true, error));
+    write(DEPINPOOL_MAGIC_BYTES, 99, false);
+    BOOST_CHECK(!pDepinMsgPool->InitializeStorage(true, error));
+    write(DEPINPOOL_MAGIC_BYTES, 1, true);
+    BOOST_CHECK(!pDepinMsgPool->InitializeStorage(true, error));
+    BOOST_CHECK_EQUAL(pDepinMsgPool->Size(), 0U);
+    write(DEPINPOOL_MAGIC_BYTES, 1, false);
+    BOOST_REQUIRE_MESSAGE(pDepinMsgPool->InitializeStorage(true, error), error);
+    BOOST_REQUIRE_EQUAL(pDepinMsgPool->Size(), 1U);
+    BOOST_CHECK(pDepinMsgPool->GetAllMessages()[0].GetHash() == valid.GetHash());
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetHighWater(), 1U);
+}
+
+BOOST_AUTO_TEST_CASE(corrupt_tombstone_fails_closed_without_erasing_evidence)
+{
+    ScopedInitializedPool pool(ROOT);
+    std::string error;
+    BOOST_REQUIRE(pDepinMsgPool->InitializeStorage(false, error));
+    const uint256 hash = GetRandHash();
+    CHashWriter directory(SER_GETHASH, 0);
+    directory << ROOT;
+    const auto path = GetDataDir() / "depinstate-v2" / directory.GetHash().ToString();
+    pDepinMsgPool.reset();
+    {
+        CDBWrapper db(path, 1 << 20);
+        BOOST_REQUIRE(db.Write(std::make_pair('T', hash), std::vector<unsigned char>{1}, true));
+    }
+    pDepinMsgPool.reset(new CDepinMsgPool());
+    BOOST_REQUIRE(pDepinMsgPool->Initialize(ROOT, 20, DEFAULT_DEPIN_MESSAGE_SIZE, DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS, DEFAULT_DEPIN_POOL_SIZE_MB));
+    BOOST_CHECK(!pDepinMsgPool->InitializeStorage(false, error));
+    BOOST_CHECK(error.find("corrupt tombstone") != std::string::npos);
+    BOOST_CHECK(!pDepinMsgPool->StorageHealthy());
+    pDepinMsgPool.reset();
+    {
+        CDBWrapper db(path, 1 << 20);
+        BOOST_CHECK(db.Exists(std::make_pair('T', hash)));
+    }
+}
+
+BOOST_AUTO_TEST_CASE(critical_metadata_and_sequence_exhaustion_fail_explicitly)
+{
+    ScopedInitializedPool pool(ROOT);
+    const Holder sender = NewHolder(true);
+    SetBalance(ROOT, sender.address, 10);
+    std::string error;
+    BOOST_REQUIRE(pDepinMsgPool->InitializeStorage(true, error));
+    const auto stream = pDepinMsgPool->GetStreamId();
+    CHashWriter directory(SER_GETHASH, 0);
+    directory << ROOT;
+    const auto path = GetDataDir() / "depinstate-v2" / directory.GetHash().ToString();
+    pDepinMsgPool.reset();
+    for (int scenario = 0; scenario < 4; ++scenario) {
+        StateMetaFixture meta;
+        meta.stream = stream;
+        if (scenario == 0) meta.version = 99;
+        if (scenario == 1) meta.high = std::numeric_limits<uint64_t>::max();
+        if (scenario == 2) meta.floor = -1;
+        if (scenario == 3) meta.high = std::numeric_limits<int64_t>::max();
+        {
+            CDBWrapper db(path, 1 << 20);
+            BOOST_REQUIRE(db.Write('V', meta, true));
+        }
+        pDepinMsgPool.reset(new CDepinMsgPool());
+        BOOST_REQUIRE(pDepinMsgPool->Initialize(ROOT, 20, DEFAULT_DEPIN_MESSAGE_SIZE, DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS, DEFAULT_DEPIN_POOL_SIZE_MB));
+        if (scenario < 3) {
+            BOOST_CHECK(!pDepinMsgPool->InitializeStorage(true, error));
+            BOOST_CHECK(!pDepinMsgPool->StorageHealthy());
+        } else {
+            BOOST_REQUIRE_MESSAGE(pDepinMsgPool->InitializeStorage(true, error), error);
+            auto message = MakeEciesMessage(ROOT, sender, {sender}, "exhausted sequence");
+            SignMessageWithKey(message, sender.key);
+            BOOST_CHECK(!pDepinMsgPool->AddMessage(message, error));
+            BOOST_CHECK(error.find("exhausted") != std::string::npos);
+            BOOST_CHECK_EQUAL(pDepinMsgPool->GetHighWater(), uint64_t(std::numeric_limits<int64_t>::max()));
+        }
+        pDepinMsgPool.reset();
+    }
+}
+
+BOOST_AUTO_TEST_CASE(complete_invalid_v2_record_is_quarantined_and_rotates_stream)
+{
+    ScopedInitializedPool pool(ROOT);
+    const Holder sender = NewHolder(true);
+    SetBalance(ROOT, sender.address, 10);
+    std::string error;
+    BOOST_REQUIRE(pDepinMsgPool->InitializeStorage(true, error));
+    auto first = MakeEciesMessage(ROOT, sender, {sender}, "invalidated record");
+    auto second = MakeEciesMessage(ROOT, sender, {sender}, "valid record");
+    SignMessageWithKey(first, sender.key);
+    SignMessageWithKey(second, sender.key);
+    BOOST_REQUIRE(pDepinMsgPool->AddMessage(first, error));
+    BOOST_REQUIRE(pDepinMsgPool->AddMessage(second, error));
+    const auto stream = pDepinMsgPool->GetStreamId();
+    CHashWriter directory(SER_GETHASH, 0);
+    directory << ROOT;
+    const auto path = GetDataDir() / "depinstate-v2" / directory.GetHash().ToString();
+    pDepinMsgPool.reset();
+    {
+        CDBWrapper db(path, 1 << 20);
+        BOOST_REQUIRE(db.Write(std::make_pair('M', first.GetHash()), StateRecordFixture{1, {1}}, true));
+    }
+    pDepinMsgPool.reset(new CDepinMsgPool());
+    BOOST_REQUIRE(pDepinMsgPool->Initialize(ROOT, 20, DEFAULT_DEPIN_MESSAGE_SIZE, DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS, DEFAULT_DEPIN_POOL_SIZE_MB));
+    BOOST_REQUIRE_MESSAGE(pDepinMsgPool->InitializeStorage(true, error), error);
+    BOOST_CHECK(pDepinMsgPool->GetStreamId() != stream);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->Size(), 1U);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetHighWater(), 2U);
+    CDepinSequencePage page;
+    BOOST_CHECK(!pDepinMsgPool->GetSequencePage(sender.address, ROOT, stream, 0, 10, 0, page, error));
+    BOOST_REQUIRE(pDepinMsgPool->GetSequencePage(sender.address, ROOT, pDepinMsgPool->GetStreamId(), 0, 10, 0, page, error));
+    BOOST_CHECK_EQUAL(page.messages[0].sequence, 2U);
+    pDepinMsgPool.reset();
+    {
+        CDBWrapper db(path, 1 << 20);
+        BOOST_CHECK(db.Exists(std::make_pair('Q', first.GetHash())));
+        BOOST_CHECK(!db.Exists(std::make_pair('M', first.GetHash())));
+    }
+}
+
+BOOST_AUTO_TEST_CASE(v2_bad_framing_missing_metadata_and_duplicate_sequences_fail_closed)
+{
+    ScopedInitializedPool pool(ROOT);
+    const Holder sender = NewHolder(true);
+    SetBalance(ROOT, sender.address, 10);
+    std::string error;
+    BOOST_REQUIRE(pDepinMsgPool->InitializeStorage(true, error));
+    auto first = MakeEciesMessage(ROOT, sender, {sender}, "first framed record");
+    auto second = MakeEciesMessage(ROOT, sender, {sender}, "second framed record");
+    SignMessageWithKey(first, sender.key);
+    SignMessageWithKey(second, sender.key);
+    BOOST_REQUIRE(pDepinMsgPool->AddMessage(first, error));
+    BOOST_REQUIRE(pDepinMsgPool->AddMessage(second, error));
+    StateMetaFixture meta;
+    meta.stream = pDepinMsgPool->GetStreamId();
+    meta.high = 2;
+    CHashWriter directory(SER_GETHASH, 0);
+    directory << ROOT;
+    const auto path = GetDataDir() / "depinstate-v2" / directory.GetHash().ToString();
+    pDepinMsgPool.reset();
+    for (int scenario = 0; scenario < 4; ++scenario) {
+        CDataStream record(SER_DISK, CLIENT_VERSION);
+        record << uint64_t(scenario == 2 ? 2 : 1);
+        if (scenario == 0) record << uint8_t(10) << uint8_t(1); // incomplete vector
+        else if (scenario == 1) WriteCompactSize(record, uint64_t(32) * 1024 * 1024);
+        else record << std::vector<unsigned char>{1} << CPubKey();
+        {
+            CDBWrapper db(path, 1 << 20);
+            BOOST_REQUIRE(db.Write('V', meta, true));
+            BOOST_REQUIRE(db.Write(std::make_pair('M', first.GetHash()),
+                RawStateFixture{std::vector<unsigned char>(record.begin(), record.end())}, true));
+            if (scenario == 3) BOOST_REQUIRE(db.Erase('V', true));
+        }
+        pDepinMsgPool.reset(new CDepinMsgPool());
+        BOOST_REQUIRE(pDepinMsgPool->Initialize(ROOT, 20, DEFAULT_DEPIN_MESSAGE_SIZE, DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS, DEFAULT_DEPIN_POOL_SIZE_MB));
+        BOOST_CHECK(!pDepinMsgPool->InitializeStorage(true, error));
+        BOOST_CHECK(!pDepinMsgPool->StorageHealthy());
+        BOOST_CHECK_EQUAL(pDepinMsgPool->Size(), 0U);
+        pDepinMsgPool.reset();
+        CDBWrapper db(path, 1 << 20);
+        BOOST_CHECK(db.Exists(std::make_pair('M', first.GetHash())));
+        BOOST_CHECK(db.Exists(std::make_pair('M', second.GetHash())));
+        BOOST_CHECK(!db.Exists(std::make_pair('Q', first.GetHash()))); // no partial recovery commit
+    }
+}
+
+BOOST_AUTO_TEST_CASE(wal_checksum_corruption_fails_without_resetting_state)
+{
+    ScopedInitializedPool pool(ROOT);
+    std::string error;
+    BOOST_REQUIRE(pDepinMsgPool->InitializeStorage(false, error));
+    CHashWriter directory(SER_GETHASH, 0);
+    directory << ROOT;
+    const auto path = GetDataDir() / "depinstate-v2" / directory.GetHash().ToString();
+    pDepinMsgPool.reset();
+    bool damaged = false;
+    for (const auto& entry : fs::directory_iterator(path)) {
+        if (entry.path().extension() != ".log" || fs::file_size(entry.path()) < 8) continue;
+        std::fstream file(entry.path().string(), std::ios::binary | std::ios::in | std::ios::out);
+        char byte;
+        BOOST_REQUIRE(bool(file.get(byte)));
+        byte ^= 1; // damage CRC, without replacing the record through LevelDB
+        file.seekp(0);
+        file.put(byte);
+        BOOST_REQUIRE(bool(file));
+        damaged = true;
+        break;
+    }
+    BOOST_REQUIRE(damaged);
+    pDepinMsgPool.reset(new CDepinMsgPool());
+    BOOST_REQUIRE(pDepinMsgPool->Initialize(ROOT, 20, DEFAULT_DEPIN_MESSAGE_SIZE, DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS, DEFAULT_DEPIN_POOL_SIZE_MB));
+    BOOST_CHECK(!pDepinMsgPool->InitializeStorage(false, error));
+    BOOST_CHECK(!pDepinMsgPool->StorageHealthy());
+    BOOST_CHECK(fs::exists(path));
+}
+
+BOOST_AUTO_TEST_CASE(real_disk_full_does_not_acknowledge_or_partially_apply_deletion)
+{
+#ifdef WIN32
+    BOOST_CHECK(true);
+#else
+    if (!std::getenv("DEPIN_DISK_FULL_TEST")) { BOOST_CHECK(true); return; }
+    struct statvfs capacity;
+    BOOST_REQUIRE(statvfs(GetDataDir().string().c_str(), &capacity) == 0);
+    BOOST_REQUIRE(uint64_t(capacity.f_blocks) * capacity.f_frsize <= uint64_t(1024) * 1024 * 1024);
+    ScopedInitializedPool pool(ROOT);
+    const Holder sender = NewHolder(true);
+    SetBalance(ROOT, sender.address, 10);
+    std::string error;
+    BOOST_REQUIRE(pDepinMsgPool->InitializeStorage(false, error));
+    auto message = MakeEciesMessage(ROOT, sender, {sender}, "disk full");
+    const int64_t submittedAt = GetTime();
+    for (int i = 0; i < 5000; ++i) {
+        message.timestamp = submittedAt - i;
+        BOOST_REQUIRE_MESSAGE(pDepinMsgPool->AddMessage(message, error, true), error);
+    }
+    const auto filler = GetDataDir() / "test-disk-filler";
+    {
+        std::ofstream file(filler.string(), std::ios::binary);
+        std::string chunk(128 * 1024, 'x');
+        while (file.good()) file.write(chunk.data(), chunk.size());
+    }
+    size_t removed = 0;
+    const bool deleted = pDepinMsgPool->Purge(ROOT, GetTime(), true, 0, removed, error);
+    fs::remove(filler);
+    BOOST_CHECK(!deleted);
+    BOOST_CHECK(!pDepinMsgPool->StorageHealthy());
+    BOOST_CHECK_EQUAL(removed, 0U);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->Size(), 5000U);
+    BOOST_CHECK(!pDepinMsgPool->AddMessage(message, error, true));
+    BOOST_REQUIRE_MESSAGE(pDepinMsgPool->InitializeStorage(false, error), error);
+    // A sync error has an uncertain outcome; a whole committed batch or none
+    // is recoverable, but an acknowledged partial deletion is never allowed.
+    BOOST_CHECK(pDepinMsgPool->GetTombstoneCount() == 0 || pDepinMsgPool->GetTombstoneCount() == 5000);
+#endif
 }
 
 BOOST_AUTO_TEST_SUITE_END()

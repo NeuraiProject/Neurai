@@ -81,6 +81,12 @@ static const CRPCConvertParam vRPCConvertParams[] =
     // rpc/messages.cpp).
     { "depingetancestorrecipients", 1, "max_results" },
     { "depinchallenge", 2, "timestamp" },
+    { "depinreceiveseq", 4, "cursor" },
+    { "depinreceiveseq", 5, "limit" },
+    { "depinreceiveseq", 6, "from_timestamp" },
+    { "depinsignreadseq", 3, "cursor" },
+    { "depinsignreadseq", 4, "limit" },
+    { "depinsignreadseq", 5, "from_timestamp" },
     { "depinreceivemsg", 4, "timestamp" },
     { "depinreceivemsg", 6, "limit" },
     { "setmocktime", 0, "timestamp" },

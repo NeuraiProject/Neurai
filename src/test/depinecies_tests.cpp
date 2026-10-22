@@ -3,6 +3,8 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "depinecies.h"
+#include "streams.h"
+#include "version.h"
 #include "random.h"
 #include "utilstrencodings.h"
 #include "test/test_neurai.h"
@@ -374,6 +376,85 @@ BOOST_AUTO_TEST_CASE(ecies_gcm_wrong_recipient_test)
     BOOST_CHECK(!ECIESDecryptMessage(encryptedMsg, recipient2PrivKey,
                                      recipient2Address, decrypted, error));
     BOOST_CHECK(!error.empty());
+}
+
+BOOST_AUTO_TEST_CASE(strict_wire_decoder_bounds_and_canonical_form)
+{
+    CKey key;
+    key.MakeNewKey(true);
+    const auto pubkey = key.GetPubKey();
+    const std::string address = EncodeDestination(pubkey.GetID());
+    std::string error;
+    CECIESEncryptedMessage valid, decoded;
+    BOOST_REQUIRE(ECIESEncryptMessage("hello", {{address, pubkey}}, valid, error));
+    auto wire = [](const CECIESEncryptedMessage& value) {
+        CDataStream stream(SER_NETWORK, PROTOCOL_VERSION);
+        stream << value;
+        return std::vector<unsigned char>(stream.begin(), stream.end());
+    };
+    const auto bytes = wire(valid);
+    const uint160 id = pubkey.GetID();
+    BOOST_REQUIRE(DecodeDepinECIES(bytes, 5, 1, decoded, error, &id));
+    BOOST_CHECK(!DecodeDepinECIES(bytes, 4, 1, decoded, error));
+    for (size_t length = 0; length < bytes.size(); ++length) {
+        BOOST_CHECK(!DecodeDepinECIES(std::vector<unsigned char>(bytes.begin(), bytes.begin() + length),
+                                      5, 1, decoded, error));
+    }
+    auto changed = bytes;
+    changed.push_back(0);
+    BOOST_CHECK(!DecodeDepinECIES(changed, 5, 1, decoded, error));
+    CDataStream duplicate(SER_NETWORK, PROTOCOL_VERSION);
+    duplicate << valid.ephemeralPubKey << valid.encryptedPayload;
+    WriteCompactSize(duplicate, 2);
+    duplicate << id << valid.recipientKeys.at(id) << id << valid.recipientKeys.at(id);
+    BOOST_CHECK(!DecodeDepinECIES(std::vector<unsigned char>(duplicate.begin(), duplicate.end()), 5, 2, decoded, error));
+    // A declared huge payload cannot trigger a huge vector allocation.
+    CDataStream oversized(SER_NETWORK, PROTOCOL_VERSION);
+    oversized << valid.ephemeralPubKey;
+    WriteCompactSize(oversized, uint64_t(32) * 1024 * 1024);
+    BOOST_CHECK(!DecodeDepinECIES(std::vector<unsigned char>(oversized.begin(), oversized.end()), 5, 1, decoded, error));
+    CECIESEncryptedMessage malformed = valid;
+    malformed.recipientKeys[id].resize(59);
+    BOOST_CHECK(!DecodeDepinECIES(wire(malformed), 5, 1, decoded, error));
+    malformed = valid;
+    malformed.recipientKeys.clear();
+    BOOST_CHECK(!DecodeDepinECIES(wire(malformed), 5, 1, decoded, error));
+    malformed = valid;
+    malformed.encryptedPayload.resize(28);
+    BOOST_CHECK(!DecodeDepinECIES(wire(malformed), 5, 1, decoded, error));
+    malformed = valid;
+    std::vector<unsigned char> invalidKey(33, 0xff);
+    invalidKey[0] = 2; // compressed, but x is outside the field
+    malformed.ephemeralPubKey = CPubKey(invalidKey.begin(), invalidKey.end());
+    BOOST_CHECK(!DecodeDepinECIES(wire(malformed), 5, 1, decoded, error));
+    changed = bytes;
+    changed.erase(changed.begin());
+    changed.insert(changed.begin(), {253, 33, 0}); // nonminimal CompactSize
+    BOOST_CHECK(!DecodeDepinECIES(changed, 5, 1, decoded, error));
+    CKey other;
+    other.MakeNewKey(true);
+    const uint160 otherId = other.GetPubKey().GetID();
+    malformed = valid;
+    malformed.recipientKeys[otherId] = valid.recipientKeys.at(id);
+    BOOST_REQUIRE(DecodeDepinECIES(wire(malformed), 5, 2, decoded, error));
+    BOOST_CHECK(!DecodeDepinECIES(wire(malformed), 5, 1, decoded, error));
+    CDataStream unordered(SER_NETWORK, PROTOCOL_VERSION);
+    unordered << valid.ephemeralPubKey << valid.encryptedPayload;
+    WriteCompactSize(unordered, 2);
+    for (auto it = malformed.recipientKeys.rbegin(); it != malformed.recipientKeys.rend(); ++it)
+        unordered << it->first << it->second;
+    BOOST_CHECK(!DecodeDepinECIES(std::vector<unsigned char>(unordered.begin(), unordered.end()), 5, 2, decoded, error));
+    BOOST_CHECK(!DecodeDepinECIES(bytes, 5, 1, decoded, error, &otherId));
+    // Structurally sound authentication corruption remains the recipient's check.
+    malformed = valid;
+    malformed.encryptedPayload.back() ^= 1;
+    BOOST_REQUIRE(DecodeDepinECIES(wire(malformed), 5, 1, decoded, error));
+    std::string plaintext;
+    BOOST_CHECK(!ECIESDecryptMessage(decoded, key, address, plaintext, error));
+    for (unsigned int n = 0; n < 256; ++n) {
+        std::vector<unsigned char> noise(n, static_cast<unsigned char>(n));
+        BOOST_CHECK(!DecodeDepinECIES(noise, 1024, 50, decoded, error));
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()

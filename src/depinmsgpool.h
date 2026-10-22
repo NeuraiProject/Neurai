@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <memory>
 #include <set>
 #include "sync.h"
 #include "uint256.h"
@@ -19,10 +20,13 @@
 // here; a forward declaration would not do.
 #include "pubkey.h"
 #include "depinchallenge.h"
+#include "depinserialization.h"
 
 #ifdef ENABLE_WALLET
 class CWallet;
 #endif
+
+class CDBWrapper;
 
 // Configuration defaults
 static const unsigned int DEFAULT_MAX_DEPIN_RECIPIENTS = 20;
@@ -64,6 +68,7 @@ static const unsigned int MAX_DEPIN_POOL_SIZE_MB = 1000;  // 1GB max
 // DePIN pool persistence
 static const bool DEFAULT_DEPINPOOL_PERSIST = false;
 static const uint32_t DEPINPOOL_MAGIC_BYTES = 0xD0D1D2D3;
+// Legacy flat file only; current transactional state is version 2.
 static const uint32_t DEPINPOOL_FILE_VERSION = 1;
 
 // Ancestor-recipient queries (GetDepinAncestorRecipients, below).
@@ -117,7 +122,13 @@ public:
         messageType = 0x02;  // Default: group (for backward compatibility)
         signature.clear();
         encryptedPayload.clear();
+        verifiedSenderKey = CPubKey();
     }
+
+    // Verified sender key retained only as service metadata, never serialized
+    // into the user's signed wire message. Allows historical verification after
+    // a reorg removes the original key-reveal transaction from the index.
+    CPubKey verifiedSenderKey;
 
     // Helper methods to check message type
     bool IsPrivateMessage() const { return messageType == 0x01; }
@@ -139,7 +150,34 @@ public:
     }
 };
 
+// The serialized user message remains unchanged. Only its decoder is bounded.
+static const size_t MAX_DEPIN_MESSAGE_WIRE_BYTES = 16384;
+template <typename Stream>
+void ReadDepinMessageBounded(Stream& stream, CDepinMessage& message,
+                             size_t maxPayload = MAX_DEPIN_MESSAGE_WIRE_BYTES)
+{
+    message.token = ReadDepinString(stream, 128);
+    message.senderAddress = ReadDepinString(stream, 64);
+    stream >> message.timestamp >> message.messageType;
+    message.encryptedPayload = ReadDepinBytes(stream, maxPayload);
+    message.signature = ReadDepinBytes(stream, 80);
+}
+bool DecodeDepinMessage(const std::vector<unsigned char>& bytes, CDepinMessage& message, std::string& error);
+
 enum class DepinAdmissionError { NONE, RECIPIENT_NOT_AUTHORIZED };
+
+static const size_t DEFAULT_DEPIN_TOMBSTONE_LIMIT = 100000;
+static const size_t MAX_DEPIN_TOMBSTONE_LIMIT = 1000000;
+struct CDepinSequenceMessage {
+    uint64_t sequence;
+    CDepinMessage message;
+};
+struct CDepinSequencePage {
+    uint256 stream;
+    uint64_t after = 0;
+    bool hasMore = false;
+    std::vector<CDepinSequenceMessage> messages;
+};
 
 // Chat message mempool
 class CDepinMsgPool {
@@ -154,6 +192,26 @@ private:
     std::map<uint256, CDepinMessage> mapMessages; // Hash -> Message
     std::multimap<int64_t, uint256> mapByTime;  // Timestamp -> Hash (for expiry)
 
+    std::map<uint64_t, uint256> mapBySequence;
+    std::map<uint256, uint64_t> sequenceByHash;
+    uint256 streamId;
+    uint64_t highWater = 0;
+    int64_t minimumTimestamp = 0;
+    uint256 checkpointStream;
+    uint64_t checkpointHigh = 0;
+    bool checkpointKeep = false;
+    bool legacyImported = false;
+    std::map<uint256, int64_t> tombstones;
+    std::unique_ptr<CDBWrapper> store;
+    bool persistMessages = false;
+    bool storageFault = false;
+    size_t tombstoneLimit = DEFAULT_DEPIN_TOMBSTONE_LIMIT;
+    bool CommitAdmission(const CDepinMessage& message, uint64_t sequence, std::string& error);
+    bool CommitErase(const std::vector<uint256>& hashes, bool moderation, int64_t now, std::string& error,
+                     const std::map<uint256, int64_t>* retainedTimestamps = nullptr);
+    void ApplyErase(const std::vector<uint256>& hashes);
+    bool FailStorage(const std::string& reason, std::string& error);
+
     bool fEnabled;
     unsigned int nMaxRecipients;
     unsigned int nMaxMessageSize;       // Maximum message size in bytes
@@ -167,7 +225,7 @@ private:
     uint256 sectionSnapshotTip;
     std::vector<std::string> sectionSnapshot;
 
-    // Erase `hashes` from both indexes. Caller holds cs_depinmsgpool.
+    // Erase `hashes` durably, then from all four indexes. Caller holds pool lock.
     void EraseMessages(const std::vector<uint256>& hashes);
 
     // Only LoadFromDisk may restore an already stored message without applying
@@ -175,10 +233,24 @@ private:
     // validations, including the signature, still apply to restoration.
     bool AddMessageInternal(const CDepinMessage& message, std::string& error,
                             bool skipSignatureCheck, bool restoring,
-                            DepinAdmissionError* admissionError = nullptr);
+                            DepinAdmissionError* admissionError = nullptr, uint64_t restoreSequence = 0);
 
 public:
     CDepinMsgPool();
+    ~CDepinMsgPool();
+    bool InitializeStorage(bool keepMessages, std::string& error, size_t maxTombstones = DEFAULT_DEPIN_TOMBSTONE_LIMIT);
+    bool StorageHealthy() const;
+    uint256 GetStreamId() const;
+    uint64_t GetHighWater() const;
+    size_t GetTombstoneCount() const;
+    bool Purge(const std::string& scope, int64_t now, bool all, int64_t olderThan,
+               size_t& removed, std::string& error);
+    bool GetLegacyPage(const std::string& address, const std::string& scope, int64_t from,
+                       const std::string& anchor, size_t limit, std::vector<CDepinMessage>& messages,
+                       bool& hasMore, std::string& error) const;
+    bool GetSequencePage(const std::string& address, const std::string& scope,
+                         const uint256& stream, uint64_t after, size_t limit, int64_t fromTimestamp,
+                         CDepinSequencePage& page, std::string& error) const;
 
     // Configuration
     bool Initialize(const std::string& token, unsigned int maxRecipients,
@@ -237,7 +309,9 @@ public:
     int64_t GetOldestMessageTime() const;
     int64_t GetNewestMessageTime() const;
 
-    // Persistence
+    // State v2 uses synchronous LevelDB batches for retained admissions and
+    // moderation. SaveToDisk is a shutdown checkpoint, not the durability
+    // boundary. LoadFromDisk is the retained-storage initialization facade.
     bool SaveToDisk();
     bool LoadFromDisk();
 };
@@ -309,7 +383,7 @@ bool HasDepinSectionAccess(const std::string& address, const std::string& sectio
 bool HasDepinSectionOwnerAccess(const std::string& address, const std::string& sectionToken,
                                 const std::string& root, std::string& error);
 
-bool VerifyDepinMessageSignature(const CDepinMessage& message);
+bool VerifyDepinMessageSignature(const CDepinMessage& message, CPubKey* verifiedKey = nullptr);
 bool SignDepinMessage(CDepinMessage& message, const std::string& senderAddress);
 bool CheckTokenOwnership(const std::string& address, const std::string& token, std::string& error);
 bool CheckAddressHasPublicKey(const std::string& address, CPubKey& pubkey, std::string& error);

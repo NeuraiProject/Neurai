@@ -11,6 +11,9 @@
 #include "txdb.h"
 #include "pubkeyindex.h"
 #include "hash.h"
+#include "random.h"
+#include "dbwrapper.h"
+#include <limits>
 #include "utiltime.h"
 #include "key.h"
 #include "pubkey.h"
@@ -48,6 +51,8 @@ CDepinServiceStatus GetDepinServiceStatus()
         status.reason = "active tip is too old";
     } else if (int64_t(status.headers) - status.height > maxLag) {
         status.reason = "active chain is behind known headers";
+    } else if (pDepinMsgPool && !pDepinMsgPool->StorageHealthy()) {
+        status.reason = "durable storage unavailable; restart required";
     } else if (IsInitialBlockDownload()) {
         status.reason = "initial block download";
     } else {
@@ -66,6 +71,22 @@ bool CheckDepinServiceReady(std::string& error)
     return true;
 }
 
+bool DecodeDepinMessage(const std::vector<unsigned char>& bytes, CDepinMessage& message, std::string& error)
+{
+    try {
+        if (bytes.size() > MAX_DEPIN_MESSAGE_WIRE_BYTES) throw std::ios_base::failure("message exceeds wire budget");
+        CDataStream stream(bytes, SER_NETWORK, PROTOCOL_VERSION);
+        CDepinMessage decoded;
+        ReadDepinMessageBounded(stream, decoded);
+        if (!stream.empty()) throw std::ios_base::failure("trailing message bytes");
+        message = std::move(decoded);
+        return true;
+    } catch (const std::exception& e) {
+        error = std::string("Invalid DePIN message: ") + e.what();
+        return false;
+    }
+}
+
 // CDepinMessage implementation
 
 uint256 CDepinMessage::GetHash() const {
@@ -75,7 +96,8 @@ uint256 CDepinMessage::GetHash() const {
 }
 
 bool CDepinMessage::IsExpired(int64_t currentTime, int64_t expiryTimeSeconds) const {
-    return (currentTime - timestamp) > expiryTimeSeconds;
+    return expiryTimeSeconds < 0 || (currentTime >= timestamp &&
+        uint64_t(currentTime) - uint64_t(timestamp) > uint64_t(expiryTimeSeconds));
 }
 
 std::string CDepinMessage::ToString() const {
@@ -91,7 +113,10 @@ CDepinMsgPool::CDepinMsgPool()
       nMaxMessageSize(DEFAULT_DEPIN_MESSAGE_SIZE),
       nMessageExpiryHours(DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS),
       nMaxPoolSizeMB(DEFAULT_DEPIN_POOL_SIZE_MB) {
+    streamId = GetRandHash();
 }
+
+CDepinMsgPool::~CDepinMsgPool() = default;
 
 bool IsValidDepinMessagingToken(const std::string& token, std::string& error)
 {
@@ -150,6 +175,10 @@ bool CDepinMsgPool::Initialize(const std::string& token, unsigned int maxRecipie
     // size cap multiplies by it and the recipientKeys count check rejects
     // anything >= 1 recipient. Reject the misconfiguration at startup instead
     // of booting a pool that silently drops everything.
+    if (maxMessageSize == 0 || messageExpiryHours == 0 || maxPoolSizeMB == 0) {
+        LogPrintf("ERROR: DePIN size, expiry and pool limits must be positive\n");
+        return false;
+    }
     if (maxRecipients == 0) {
         LogPrintf("ERROR: -depinmsgmaxusers must be at least 1\n");
         return false;
@@ -185,7 +214,7 @@ bool CDepinMsgPool::AddMessage(const CDepinMessage& message, std::string& error,
 
 bool CDepinMsgPool::AddMessageInternal(const CDepinMessage& message, std::string& error,
                                       bool skipSignatureCheck, bool restoring,
-                                      DepinAdmissionError* admissionError) {
+                                      DepinAdmissionError* admissionError, uint64_t restoreSequence) {
     if (!fEnabled) {
         error = "Chat mempool is not enabled";
         return false;
@@ -193,6 +222,16 @@ bool CDepinMsgPool::AddMessageInternal(const CDepinMessage& message, std::string
 
     // Restoration bypasses current membership, never token syntax/type.
     if (!IsValidDepinMessagingToken(message.token, error)) return false;
+
+    int64_t timestampFloor;
+    {
+        LOCK(cs_depinmsgpool);
+        if (storageFault) { error = "DePIN storage unavailable"; return false; }
+        timestampFloor = minimumTimestamp;
+    }
+    if (message.token.size() > 128 || message.senderAddress.size() > 64 || message.signature.size() > 80) {
+        error = "DePIN message field exceeds size budget"; return false;
+    }
 
     // Verify that the token is the active token or a section (sub-asset)
     // inside its subtree. The root itself always qualifies, so a pre-sections
@@ -212,8 +251,9 @@ bool CDepinMsgPool::AddMessageInternal(const CDepinMessage& message, std::string
 
     // Verify timestamp (do not accept messages from the future)
     int64_t currentTime = GetTime();
-    if (message.timestamp > currentTime + 60) { // +60s tolerance
-        error = "Message timestamp is too far in the future";
+    if (message.timestamp < timestampFloor || message.timestamp < 0 ||
+        (message.timestamp > currentTime && uint64_t(message.timestamp) - uint64_t(currentTime) > 60)) {
+        error = "Message timestamp is invalid, below the durable retention floor, or too far in the future";
         return false;
     }
 
@@ -229,38 +269,25 @@ bool CDepinMsgPool::AddMessageInternal(const CDepinMessage& message, std::string
         return false;
     }
 
-    // Verify message size (ECIES message includes encrypted payload + all recipient keys)
-    // Maximum size is generous to accommodate multiple recipient keys
-    const size_t MAX_TOTAL_SIZE = nMaxMessageSize * nMaxRecipients;
+    // Bound ECIES wire bytes, then enforce the configured plaintext length
+    // and per-recipient overhead separately during strict decoding.
+    const size_t MAX_TOTAL_SIZE = DepinECIESWireLimit(nMaxMessageSize, nMaxRecipients);
     if (message.encryptedPayload.size() > MAX_TOTAL_SIZE) {
         error = strprintf("Message payload too large (%d bytes), maximum is %d",
                          message.encryptedPayload.size(), MAX_TOTAL_SIZE);
         return false;
     }
 
-    // Reject undecodable ECIES before storing it, and cap the sender-chosen
-    // recipient count. This is not a full structural or canonical validator.
-    std::vector<uint160> recipients;
-    try {
-        CECIESEncryptedMessage eciesProbe;
-        CDataStream ssProbe(message.encryptedPayload, SER_NETWORK, PROTOCOL_VERSION);
-        ssProbe >> eciesProbe;
-        if (eciesProbe.recipientKeys.size() > nMaxRecipients) {
-            error = strprintf("Message addresses %d recipients, maximum is %d",
-                             eciesProbe.recipientKeys.size(), nMaxRecipients);
-            return false;
-        }
-        for (const auto& entry : eciesProbe.recipientKeys) {
-            recipients.push_back(entry.first);
-        }
-    } catch (const std::exception&) {
-        error = "Invalid ECIES message payload: failed to deserialize";
+    CECIESEncryptedMessage eciesProbe;
+    if (!DecodeDepinECIES(message.encryptedPayload, nMaxMessageSize, nMaxRecipients, eciesProbe, error))
         return false;
-    }
+    std::vector<uint160> recipients;
+    for (const auto& entry : eciesProbe.recipientKeys) recipients.push_back(entry.first);
 
-    // Verify signature (skip if pre-authenticated by DePIN server)
+    CDepinMessage admitted = message;
+    // Restored v2 messages have already been checked against their saved key.
     if (!skipSignatureCheck) {
-        if (!VerifyDepinMessageSignature(message)) {
+        if (!VerifyDepinMessageSignature(message, &admitted.verifiedSenderKey)) {
             error = "Invalid message signature";
             return false;
         }
@@ -293,9 +320,15 @@ bool CDepinMsgPool::AddMessageInternal(const CDepinMessage& message, std::string
     LOCK(cs_depinmsgpool);
     const int64_t poolStart = GetTimeMicros();
     gDepinAdmissionStats.poolWaitMicros += poolStart - poolWaitStart;
+    // Cleanup may encounter an I/O failure while signature/permission work
+    // runs outside the pool lock. Recheck before any admission or disk write.
+    if (storageFault) { error = "DePIN storage unavailable"; return false; }
+    if (message.timestamp < minimumTimestamp) { error = "Message timestamp below retention floor"; return false; }
     const size_t currentPoolSize = DynamicMemoryUsage();
     const size_t maxPoolSizeBytes = (size_t)nMaxPoolSizeMB * 1024 * 1024;
-    if (currentPoolSize + message.encryptedPayload.size() > maxPoolSizeBytes) {
+    const size_t incomingSize = sizeof(CDepinMessage) + message.token.size() + message.senderAddress.size() +
+                                message.signature.size() + message.encryptedPayload.size() + 320;
+    if (currentPoolSize + incomingSize > maxPoolSizeBytes) {
         error = strprintf("Pool size limit exceeded (current: %d MB, limit: %d MB). Message rejected.",
                          currentPoolSize / (1024 * 1024), nMaxPoolSizeMB);
         return false;
@@ -310,8 +343,33 @@ bool CDepinMsgPool::AddMessageInternal(const CDepinMessage& message, std::string
         return false;
     }
 
-    mapMessages[hash] = message;
-    mapByTime.insert(std::make_pair(message.timestamp, hash));
+    auto tombstone = tombstones.find(hash);
+    if (tombstone != tombstones.end() && GetTime() <= tombstone->second) {
+        error = "Message was administratively deleted";
+        return false;
+    }
+    if (!restoreSequence && highWater >= uint64_t(std::numeric_limits<int64_t>::max())) {
+        error = "DePIN admission sequence exhausted"; return false;
+    }
+    const uint64_t sequence = restoring && restoreSequence ? restoreSequence : highWater + 1;
+    // Allocate all index nodes before the durable write. The pool lock keeps
+    // provisional entries invisible; every failure rolls them back together.
+    const std::vector<uint256> rollback{hash};
+    auto undo = [&] {
+        mapBySequence.erase(sequence);
+        sequenceByHash.erase(hash);
+        ApplyErase(rollback);
+    };
+    try {
+        mapMessages.emplace(hash, std::move(admitted));
+        mapByTime.emplace(message.timestamp, hash);
+        mapBySequence.emplace(sequence, hash);
+        sequenceByHash.emplace(hash, sequence);
+        if (!restoring && !CommitAdmission(mapMessages.at(hash), sequence, error)) {
+            undo(); return false;
+        }
+    } catch (...) { undo(); throw; }
+    highWater = std::max(highWater, sequence);
 
     LogPrint(BCLog::MEMPOOL, "DePIN message added: hash=%s, sender=%s, payload_size=%d\n",
              hash.ToString(), message.senderAddress, message.encryptedPayload.size());
@@ -353,8 +411,9 @@ bool ShouldDeliverDepinMessageToAddress(const CDepinMessage& msg, const std::str
 
     try {
         CECIESEncryptedMessage eciesMsg;
-        CDataStream ss(msg.encryptedPayload, SER_NETWORK, PROTOCOL_VERSION);
-        ss >> eciesMsg;
+        std::string error;
+        if (!DecodeDepinECIES(msg.encryptedPayload, MAX_DEPIN_MESSAGE_SIZE, MAX_DEPIN_RECIPIENTS, eciesMsg, error))
+            return false;
         return eciesMsg.recipientKeys.count(*addressHash160) > 0;
     } catch (const std::exception& e) {
         LogPrint(BCLog::NET, "ShouldDeliverDepinMessageToAddress: Failed to deserialize ECIES message: %s\n", e.what());
@@ -435,10 +494,24 @@ size_t CDepinMsgPool::GetMessageCount() const {
 }
 
 void CDepinMsgPool::EraseMessages(const std::vector<uint256>& hashes) {
+    std::string error;
+    if (!CommitErase(hashes, false, GetTime(), error)) {
+        LogPrintf("DePIN cleanup failed: %s\n", error);
+        return;
+    }
+    ApplyErase(hashes);
+}
+
+void CDepinMsgPool::ApplyErase(const std::vector<uint256>& hashes) {
     for (const auto& hash : hashes) {
         auto it = mapMessages.find(hash);
         if (it != mapMessages.end()) {
             int64_t timestamp = it->second.timestamp;
+            auto sequence = sequenceByHash.find(hash);
+            if (sequence != sequenceByHash.end()) {
+                mapBySequence.erase(sequence->second);
+                sequenceByHash.erase(sequence);
+            }
             mapMessages.erase(it);
 
             // Remove from mapByTime
@@ -486,8 +559,7 @@ void CDepinMsgPool::RemoveMessagesOlderThan(int64_t currentTime, int64_t ageThre
         if (!scopeToken.empty() && !IsDepinSectionOrRoot(entry.second.token, scopeToken)) {
             continue;
         }
-        int64_t messageAge = currentTime - entry.second.timestamp;
-        if (messageAge > ageThresholdSeconds) {
+        if (entry.second.IsExpired(currentTime, ageThresholdSeconds)) {
             toRemove.push_back(entry.first);
         }
     }
@@ -504,6 +576,8 @@ void CDepinMsgPool::Clear() {
     LOCK(cs_depinmsgpool);
     mapMessages.clear();
     mapByTime.clear();
+    mapBySequence.clear();
+    sequenceByHash.clear();
     LogPrint(BCLog::MEMPOOL, "Chat mempool cleared\n");
 }
 
@@ -549,7 +623,7 @@ size_t CDepinMsgPool::DynamicMemoryUsage() const {
     size_t total = 0;
     for (const auto& entry : mapMessages) {
         const CDepinMessage& msg = entry.second;
-        total += sizeof(CDepinMessage);
+        total += sizeof(CDepinMessage) + 320; // conservative charge for four tree indexes
         total += msg.token.size();
         total += msg.senderAddress.size();
         total += msg.signature.size();
@@ -684,7 +758,7 @@ bool CheckAddressHasPublicKey(const std::string& address, CPubKey& pubkey, std::
     return true;
 }
 
-bool VerifyDepinMessageSignature(const CDepinMessage& message) {
+bool VerifyDepinMessageSignature(const CDepinMessage& message, CPubKey* verifiedKey) {
     if (message.signature.empty()) {
         LogPrintf("VerifyDepinMessageSignature: Signature is empty (size=%d)\n", message.signature.size());
         return false;
@@ -703,7 +777,10 @@ bool VerifyDepinMessageSignature(const CDepinMessage& message) {
     // doubleSHA256(token || senderAddress || timestamp || messageType || encryptedPayload)
     uint256 messageHash = message.GetHash();
 
-    if (senderPubKey.Verify(messageHash, message.signature)) {
+    const auto destination = DecodeDestination(message.senderAddress);
+    const CKeyID* senderId = boost::get<CKeyID>(&destination);
+    if (senderId && senderPubKey.GetID() == *senderId && senderPubKey.Verify(messageHash, message.signature)) {
+        if (verifiedKey) *verifiedKey = senderPubKey;
         return true;
     }
 
@@ -1364,8 +1441,8 @@ bool DecryptMessageForAddress(const std::vector<unsigned char>& encryptedData,
     // Deserialize ECIES message
     CECIESEncryptedMessage eciesMsg;
     try {
-        CDataStream ss(encryptedData, SER_NETWORK, PROTOCOL_VERSION);
-        ss >> eciesMsg;
+        if (!DecodeDepinECIES(encryptedData, MAX_DEPIN_MESSAGE_SIZE, MAX_DEPIN_RECIPIENTS, eciesMsg, error))
+            return false;
     } catch (const std::exception& e) {
         error = strprintf("Failed to deserialize encrypted message: %s", e.what());
         return false;
@@ -1419,161 +1496,3 @@ bool SignDepinChallenge(CWallet* pwallet,
                                       signature, error);
 }
 #endif
-
-// Persistence: Save DePIN pool to disk
-bool CDepinMsgPool::SaveToDisk()
-{
-    LOCK(cs_depinmsgpool);
-
-    int64_t start = GetTimeMillis();
-    fs::path filepath = GetDataDir() / "depinpool.dat";
-    fs::path filepathTmp = GetDataDir() / "depinpool.dat.new";
-
-    try {
-        FILE* file = fsbridge::fopen(filepathTmp, "wb");
-        if (!file) {
-            LogPrintf("ERROR: CDepinMsgPool::SaveToDisk(): Failed to open file %s\n",
-                     filepathTmp.string());
-            return false;
-        }
-
-        CAutoFile fileout(file, SER_DISK, CLIENT_VERSION);
-
-        // Write magic bytes
-        fileout << DEPINPOOL_MAGIC_BYTES;
-
-        // Write version
-        fileout << DEPINPOOL_FILE_VERSION;
-
-        // Write current timestamp
-        int64_t now = GetTime();
-        fileout << now;
-
-        // Get all messages
-        std::vector<CDepinMessage> messages;
-        for (const auto& entry : mapMessages) {
-            messages.push_back(entry.second);
-        }
-
-        // Write message count
-        uint64_t count = messages.size();
-        fileout << count;
-
-        // Write each message
-        for (const auto& msg : messages) {
-            fileout << msg;
-        }
-
-        FileCommit(fileout.Get());
-        fileout.fclose();
-
-        // Rename to final file
-        if (!RenameOver(filepathTmp, filepath)) {
-            LogPrintf("ERROR: CDepinMsgPool::SaveToDisk(): Failed to rename file\n");
-            return false;
-        }
-
-        LogPrintf("DePIN Pool: Saved %d messages to disk in %dms\n",
-                 count, GetTimeMillis() - start);
-        return true;
-
-    } catch (const std::exception& e) {
-        LogPrintf("ERROR: CDepinMsgPool::SaveToDisk(): %s\n", e.what());
-        return false;
-    }
-}
-
-// Persistence: Load DePIN pool from disk
-bool CDepinMsgPool::LoadFromDisk()
-{
-    LOCK(cs_depinmsgpool);
-
-    int64_t start = GetTimeMillis();
-    fs::path filepath = GetDataDir() / "depinpool.dat";
-
-    // Check if file exists
-    if (!fs::exists(filepath)) {
-        LogPrintf("DePIN Pool: No persisted pool file found (first run)\n");
-        return true;  // Not an error
-    }
-
-    try {
-        FILE* file = fsbridge::fopen(filepath, "rb");
-        if (!file) {
-            LogPrintf("ERROR: CDepinMsgPool::LoadFromDisk(): Failed to open file %s\n",
-                     filepath.string());
-            return false;
-        }
-
-        CAutoFile filein(file, SER_DISK, CLIENT_VERSION);
-
-        // Read and verify magic bytes
-        uint32_t magic;
-        filein >> magic;
-        if (magic != DEPINPOOL_MAGIC_BYTES) {
-            LogPrintf("ERROR: CDepinMsgPool::LoadFromDisk(): Invalid magic bytes (file corrupted)\n");
-            filein.fclose();
-            // Preserve the only copy for diagnosis or recovery.
-            return false;
-        }
-
-        // Read and verify version
-        uint32_t version;
-        filein >> version;
-        if (version != DEPINPOOL_FILE_VERSION) {
-            LogPrintf("ERROR: CDepinMsgPool::LoadFromDisk(): Incompatible version %d (expected %d)\n",
-                     version, DEPINPOOL_FILE_VERSION);
-            filein.fclose();
-            return false;
-        }
-
-        // Read save timestamp
-        int64_t saveTime;
-        filein >> saveTime;
-
-        // Read message count
-        uint64_t count;
-        filein >> count;
-
-        // Read messages
-        int64_t now = GetTime();
-        size_t loadedCount = 0;
-        size_t expiredCount = 0;
-
-        for (uint64_t i = 0; i < count; i++) {
-            CDepinMessage msg;
-            filein >> msg;
-
-            // Check if expired
-            if (msg.IsExpired(now, GetMessageExpiryTime())) {
-                expiredCount++;
-                continue;
-            }
-
-            // Add to pool
-            std::string error;
-            if (AddMessageInternal(msg, error, /*skipSignatureCheck=*/false, /*restoring=*/true)) {
-                loadedCount++;
-            } else {
-                LogPrintf("WARNING: CDepinMsgPool::LoadFromDisk(): Failed to add message: %s\n", error);
-            }
-        }
-
-        filein.fclose();
-
-        LogPrintf("DePIN Pool: Loaded %d messages from disk (%d expired, skipped) in %dms\n",
-                 loadedCount, expiredCount, GetTimeMillis() - start);
-
-        // Auto-compact if more than 50% were expired
-        if (expiredCount > loadedCount && loadedCount > 0) {
-            LogPrintf("DePIN Pool: Auto-compacting (removed %d expired messages)\n", expiredCount);
-            SaveToDisk();
-        }
-
-        return true;
-
-    } catch (const std::exception& e) {
-        LogPrintf("ERROR: CDepinMsgPool::LoadFromDisk(): %s\n", e.what());
-        return false;
-    }
-}

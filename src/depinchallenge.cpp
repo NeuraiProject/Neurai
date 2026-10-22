@@ -459,7 +459,7 @@ bool IssueDepinChallengeForAddress(const std::string& token, const std::string& 
 bool CheckDepinChallengeAuth(DepinChallengeType type, const std::string& token,
                              const std::string& address, const std::string& nonce,
                              const std::string& signatureBase64, const std::string& poolRoot,
-                             std::string& error)
+                             std::string& error, const std::string& operationPreimage, bool consume)
 {
     // Callers retain cs_main through selection or mutation; this also makes
     // standalone verification and nonce consumption one coherent operation.
@@ -489,7 +489,8 @@ bool CheckDepinChallengeAuth(DepinChallengeType type, const std::string& token,
 
     // 3. Signature over exactly these bindings.
     if (!VerifyDepinChallengeSignature(address, signatureBase64,
-                                       DepinChallengePreimage(type, token, address, nonce), error)) {
+                                       operationPreimage.empty() ? DepinChallengePreimage(type, token, address, nonce)
+                                                                 : operationPreimage, error)) {
         return false;
     }
 
@@ -499,5 +500,5 @@ bool CheckDepinChallengeAuth(DepinChallengeType type, const std::string& token,
     }
 
     // 5. Consume, atomically and only for matching bindings.
-    return g_depinChallenges.Consume(nonce, token, address, type, error);
+    return !consume || g_depinChallenges.Consume(nonce, token, address, type, error);
 }

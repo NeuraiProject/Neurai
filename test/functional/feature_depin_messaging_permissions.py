@@ -100,7 +100,7 @@ class DepinMessagingPermissionsTest(NeuraiTestFramework):
         second = node.depinsendmsg(TOKEN, "after recipient freeze", sender)["hash"]
         messages = self.receive(remaining)
         fresh = next(m for m in messages if m["hash"] == second)
-        assert_raises_rpc_error(-25, "Failed to decrypt", node.depindecrypt,
+        assert_raises_rpc_error(-22, "required recipient missing", node.depindecrypt,
                                 revoked, fresh["encrypted_payload_hex"])
         # Copies delivered before revocation remain decryptable with that key.
         assert_equal(node.depindecrypt(revoked, original[0]["encrypted_payload_hex"]),

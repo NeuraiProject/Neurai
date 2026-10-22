@@ -530,10 +530,11 @@ std::string HelpMessage(HelpMessageMode mode)
     strUsage += HelpMessageOpt("-depinwallet=<file>", _("Wallet the DePIN pool key is derived from (required only when more than one wallet is loaded). Must be an unencrypted legacy BIP44 wallet"));
     strUsage += HelpMessageOpt("-depinratelimit=<n>", strprintf(_("Maximum DePIN challenges issued and messages accepted per address and minute, 0 = unlimited (default: %u)"), DEFAULT_DEPIN_RATE_LIMIT));
     strUsage += HelpMessageOpt("-depinmsgmaxusers=<n>", strprintf(_("Maximum number of DePIN message recipients (default: %u)"), DEFAULT_MAX_DEPIN_RECIPIENTS));
-    strUsage += HelpMessageOpt("-depinpoolpersist", strprintf(_("Whether to save the DePIN message pool on shutdown and load on restart (default: %u)"), DEFAULT_DEPINPOOL_PERSIST));
+    strUsage += HelpMessageOpt("-depinpoolpersist", strprintf(_("Synchronously retain DePIN messages across restarts; moderation hashes are always durable (default: %u)"), DEFAULT_DEPINPOOL_PERSIST));
+    strUsage += HelpMessageOpt("-depintombstonelimit=<n>", strprintf(_("Maximum retained DePIN moderation hashes; a full store rejects further deletions (default: %u, max: %u)"), DEFAULT_DEPIN_TOMBSTONE_LIMIT, MAX_DEPIN_TOMBSTONE_LIMIT));
     strUsage += HelpMessageOpt("-depinmaxtipage=<n>", strprintf(_("Maximum active-tip age in seconds for DePIN authorization (positive; default: %d)"), DEFAULT_DEPIN_MAX_TIP_AGE));
     strUsage += HelpMessageOpt("-depinmaxheaderlag=<n>", strprintf(_("Maximum known header lead in blocks for DePIN authorization (nonnegative; default: %d)"), DEFAULT_DEPIN_MAX_HEADER_LAG));
-    strUsage += HelpMessageOpt("-depinmsgsize=<n>", strprintf(_("Maximum DePIN message size in bytes (default: %u, max: %u)"), DEFAULT_DEPIN_MESSAGE_SIZE, MAX_DEPIN_MESSAGE_SIZE));
+    strUsage += HelpMessageOpt("-depinmsgsize=<n>", strprintf(_("Maximum DePIN content plaintext bytes, excluding ECIES/key overhead (default: %u, max: %u)"), DEFAULT_DEPIN_MESSAGE_SIZE, MAX_DEPIN_MESSAGE_SIZE));
     strUsage += HelpMessageOpt("-depinmsgexpire=<n>", strprintf(_("DePIN message expiry time in hours (default: %u, max: %u)"), DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS, MAX_DEPIN_MESSAGE_EXPIRY_HOURS));
     strUsage += HelpMessageOpt("-depinpoolsize=<n>", strprintf(_("Maximum DePIN pool size in MB (default: %u, max: %u)"), DEFAULT_DEPIN_POOL_SIZE_MB, MAX_DEPIN_POOL_SIZE_MB));
     strUsage += HelpMessageOpt("-depinmsgcleanupinterval=<n>", _("Interval in seconds to automatically remove expired DePIN messages (default: 300)"));
@@ -2230,10 +2231,14 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
             gArgs.GetArg("-depinmaxheaderlag", DEFAULT_DEPIN_MAX_HEADER_LAG) < 0) {
             return InitError(_("Invalid DePIN freshness limits: depinmaxtipage must be positive and depinmaxheaderlag nonnegative"));
         }
-        unsigned int maxRecipients = gArgs.GetArg("-depinmsgmaxusers", DEFAULT_MAX_DEPIN_RECIPIENTS);
-        unsigned int maxMessageSize = gArgs.GetArg("-depinmsgsize", DEFAULT_DEPIN_MESSAGE_SIZE);
-        unsigned int messageExpiryHours = gArgs.GetArg("-depinmsgexpire", DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS);
-        unsigned int maxPoolSizeMB = gArgs.GetArg("-depinpoolsize", DEFAULT_DEPIN_POOL_SIZE_MB);
+        auto depinLimit = [](const std::string& name, int64_t fallback, unsigned int maximum) {
+            const int64_t value = gArgs.GetArg(name, fallback);
+            return value > 0 ? static_cast<unsigned int>(std::min<int64_t>(value, maximum)) : 0U;
+        };
+        unsigned int maxRecipients = depinLimit("-depinmsgmaxusers", DEFAULT_MAX_DEPIN_RECIPIENTS, MAX_DEPIN_RECIPIENTS);
+        unsigned int maxMessageSize = depinLimit("-depinmsgsize", DEFAULT_DEPIN_MESSAGE_SIZE, MAX_DEPIN_MESSAGE_SIZE);
+        unsigned int messageExpiryHours = depinLimit("-depinmsgexpire", DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS, MAX_DEPIN_MESSAGE_EXPIRY_HOURS);
+        unsigned int maxPoolSizeMB = depinLimit("-depinpoolsize", DEFAULT_DEPIN_POOL_SIZE_MB, MAX_DEPIN_POOL_SIZE_MB);
 
         // The pool key comes from the node's dedicated legacy wallet: without
         // it there is no service, so fail here rather than serve unsigned or
@@ -2283,11 +2288,14 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
             }
         }
 
-        // Load persisted DePIN pool if enabled
-        if (gArgs.GetBoolArg("-depinpoolpersist", DEFAULT_DEPINPOOL_PERSIST)) {
-            if (!pDepinMsgPool->LoadFromDisk()) {
-                LogPrintf("WARNING: Failed to load DePIN pool from disk\n");
-            }
+        // Moderation state is always durable, independently of message retention.
+        std::string storageError;
+        const int64_t markLimit = gArgs.GetArg("-depintombstonelimit", int64_t(DEFAULT_DEPIN_TOMBSTONE_LIMIT));
+        if (markLimit <= 0 || uint64_t(markLimit) > MAX_DEPIN_TOMBSTONE_LIMIT)
+            return InitError("Invalid -depintombstonelimit: must be 1..1000000");
+        if (!pDepinMsgPool->InitializeStorage(gArgs.GetBoolArg("-depinpoolpersist", DEFAULT_DEPINPOOL_PERSIST),
+                                              storageError, size_t(markLimit))) {
+            return InitError("Cannot initialize DePIN state: " + storageError);
         }
 
         // Schedule automatic cleanup of expired messages

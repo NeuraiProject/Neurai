@@ -248,6 +248,12 @@ always an object:
 oldest to newest. It is true only when another message passes the same
 scope, recipient, timestamp, cursor and expiry filters after the page fills.
 With `limit = 0`, all eligible messages are returned and `has_more` is false.
+Both receive methods also have a 4 MiB plaintext response budget. Even a
+legacy call without a count limit may return `has_more=true`.
+For the new admission-sequence cursor, parameter-bound signatures and durable
+moderation, see [depin-pool-state.md](depin-pool-state.md). External libraries
+must adopt that extension explicitly; the following describes the legacy RPC.
+
 Save the last returned `hash` and use it as `after_hash`
 for the next page; sign `next_challenge` for that call. Supplying a hash that
 is not in the address's visible result is an error.

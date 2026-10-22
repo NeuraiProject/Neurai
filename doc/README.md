@@ -40,6 +40,12 @@ Is a private and temporary messaging system for Neurai that enables encrypted co
 - Recipient keys are a snapshot at send time. A later holder cannot decrypt
   historic content that was not encrypted for that key.
 
+Strict ECIES bounds, the additive `depinreceiveseq` API, durable moderation
+and state v2 migration are specified in
+[depin-pool-state.md](depin-pool-state.md). Message plaintext size and the
+4 MiB receive-response budget are independent. External library updates
+remain a later integration step.
+
 ### 2. No Transaction Costs
 - No network fees required
 - Does not consume blockchain space
