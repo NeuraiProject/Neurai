@@ -12,6 +12,7 @@ TEST_SRCDIR = test
 TEST_BINARY=test/test_neurai$(EXEEXT)
 
 JSON_TEST_FILES = \
+  test/data/sph_compat.json \
   test/data/c5_public_tree.json \
   test/data/c6_public_tree.json \
   test/data/nip043_b3_fixture.json \
@@ -94,6 +95,8 @@ NEURAI_TESTS =\
   test/DoS_tests.cpp \
   test/getarg_tests.cpp \
   test/hash_tests.cpp \
+  test/sph_tests.cpp \
+  test/scoped_block_network.h \
   test/keccak256_tests.cpp \
   test/blake2b_tests.cpp \
   test/blake3_tests.cpp \

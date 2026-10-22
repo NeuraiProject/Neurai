@@ -37,6 +37,7 @@
 #include "rpc/server.h"
 #include "script/standard.h"
 #include "test/test_neurai.h"
+#include "test/scoped_block_network.h"
 #include "utiltime.h"
 #include "validation.h"
 #include "wallet/coincontrol.h"
@@ -52,14 +53,14 @@ namespace {
 const std::string PARENT_ASSET = "&PADRE";
 const std::string CHILD_ASSET = "&PADRE/HIJO";
 
-struct DepinSectionsWalletSetup : public TestingSetup {
+struct DepinSectionsWalletSetup : private ScopedTestBlockNetwork, public TestingSetup {
     CKey coinbaseKey;
     std::unique_ptr<CWallet> wallet;
     bool prevAssetIndex;
     bool prevPubKeyIndex;
     CKey poolKey;
 
-    DepinSectionsWalletSetup() : TestingSetup(CBaseChainParams::TESTNET)
+    DepinSectionsWalletSetup() : ScopedTestBlockNetwork(CBaseChainParams::TESTNET), TestingSetup(CBaseChainParams::TESTNET)
     {
         prevAssetIndex = fAssetIndex;
         prevPubKeyIndex = fPubKeyIndex;

@@ -90,8 +90,19 @@ static const s32 alpha_tab[] = {
  *   REDS1: from -32768..98302 to -383..383
  *   REDS2: from -2^31..2^31-1 to -32768..98302
  */
-#define REDS1(x)    (((x) & 0xFF) - ((x) >> 8))
-#define REDS2(x)    (((x) & 0xFFFF) + ((x) >> 16))
+/* Explicit arithmetic right shift, including negative inputs. Division is
+ * defined to truncate toward zero; this form rounds down without negating
+ * the minimum signed value. Only the positive shifts 8 and 16 are used. */
+static SPH_INLINE s32
+simd_asr(s32 value, unsigned shift)
+{
+	const s32 divisor = (s32)1 << shift;
+	return value >= 0 ? value / divisor
+		: -1 - ((-1 - value) / divisor);
+}
+
+#define REDS1(x)    ((s32)((u32)(x) & 0xFFU) - simd_asr((x), 8))
+#define REDS2(x)    ((s32)((u32)(x) & 0xFFFFU) + simd_asr((x), 16))
 
 /*
  * If, upon entry, the values of q[] are all in the -N..N range (where
@@ -171,6 +182,8 @@ static const s32 alpha_tab[] = {
  * When k=16, we have alpha=2. Multiplication by alpha^i is then reduced
  * to some shifting.
  *
+ * FFT8 bounds above imply |d2_i * 2^i| <= 554496, so these signed
+ * multiplications cannot overflow a 32-bit s32, even for negative values.
  * Output: within -591471..591723
  */
 #define FFT16(xb, xs, rb)   do { \
@@ -179,21 +192,21 @@ static const s32 alpha_tab[] = {
 		FFT8(xb, (xs) << 1, d1_); \
 		FFT8((xb) + (xs), (xs) << 1, d2_); \
 		q[(rb) +  0] = d1_0 + d2_0; \
-		q[(rb) +  1] = d1_1 + (d2_1 << 1); \
-		q[(rb) +  2] = d1_2 + (d2_2 << 2); \
-		q[(rb) +  3] = d1_3 + (d2_3 << 3); \
-		q[(rb) +  4] = d1_4 + (d2_4 << 4); \
-		q[(rb) +  5] = d1_5 + (d2_5 << 5); \
-		q[(rb) +  6] = d1_6 + (d2_6 << 6); \
-		q[(rb) +  7] = d1_7 + (d2_7 << 7); \
+		q[(rb) +  1] = d1_1 + (d2_1 * 2); \
+		q[(rb) +  2] = d1_2 + (d2_2 * 4); \
+		q[(rb) +  3] = d1_3 + (d2_3 * 8); \
+		q[(rb) +  4] = d1_4 + (d2_4 * 16); \
+		q[(rb) +  5] = d1_5 + (d2_5 * 32); \
+		q[(rb) +  6] = d1_6 + (d2_6 * 64); \
+		q[(rb) +  7] = d1_7 + (d2_7 * 128); \
 		q[(rb) +  8] = d1_0 - d2_0; \
-		q[(rb) +  9] = d1_1 - (d2_1 << 1); \
-		q[(rb) + 10] = d1_2 - (d2_2 << 2); \
-		q[(rb) + 11] = d1_3 - (d2_3 << 3); \
-		q[(rb) + 12] = d1_4 - (d2_4 << 4); \
-		q[(rb) + 13] = d1_5 - (d2_5 << 5); \
-		q[(rb) + 14] = d1_6 - (d2_6 << 6); \
-		q[(rb) + 15] = d1_7 - (d2_7 << 7); \
+		q[(rb) +  9] = d1_1 - (d2_1 * 2); \
+		q[(rb) + 10] = d1_2 - (d2_2 * 4); \
+		q[(rb) + 11] = d1_3 - (d2_3 * 8); \
+		q[(rb) + 12] = d1_4 - (d2_4 * 16); \
+		q[(rb) + 13] = d1_5 - (d2_5 * 32); \
+		q[(rb) + 14] = d1_6 - (d2_6 * 64); \
+		q[(rb) + 15] = d1_7 - (d2_7 * 128); \
 	} while (0)
 
 /*

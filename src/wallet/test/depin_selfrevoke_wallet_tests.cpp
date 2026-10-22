@@ -29,6 +29,7 @@
 #include "net.h" // g_connman
 #include "rpc/server.h"
 #include "test/test_neurai.h"
+#include "test/scoped_block_network.h"
 #include "validation.h"
 #include "wallet/coincontrol.h"
 #include "wallet/test/wallet_test_fixture.h"
@@ -47,11 +48,11 @@ const std::string PARENT_ASSET = "&PADRE";
 // DumpCacheToDatabase dereferences prestricteddb and passetsRestrictionCache
 // unguarded once a block carries a self-restriction, so mining a self-revoke
 // without them would crash rather than fail.
-struct DepinSelfRevokeWalletSetup : public TestingSetup {
+struct DepinSelfRevokeWalletSetup : private ScopedTestBlockNetwork, public TestingSetup {
     CKey coinbaseKey;
     std::unique_ptr<CWallet> wallet;
 
-    DepinSelfRevokeWalletSetup() : TestingSetup(CBaseChainParams::TESTNET)
+    DepinSelfRevokeWalletSetup() : ScopedTestBlockNetwork(CBaseChainParams::TESTNET), TestingSetup(CBaseChainParams::TESTNET)
     {
         passetsdb = new CAssetsDB(1 << 20, true, true);
         passetsCache = new CLRUCache<std::string, CDatabasedAssetData>(MAX_CACHE_ASSETS_SIZE);

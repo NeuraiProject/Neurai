@@ -1,0 +1,506 @@
+{
+  "upstream_java_commit": "15b6b8d8f3e4a43c58ba102d712fa6b8a3317035",
+  "corpus_sha256": "630b93108948a8eed675a840c7fabfa2a2eb7f370352b060ccc9c2d2149ae28a",
+  "cases": [
+    {
+      "key": [
+        9,
+        "boundary",
+        0
+      ],
+      "algorithm": 9,
+      "input": "",
+      "expected": "51a5af7e243cd9a5989f7792c880c4c3168c3d60c4518725fe5757d1f7a69c6366977eaba7905ce2da5d7cfd07773725f0935b55f3efb954996689a49b6d29e0"
+    },
+    {
+      "key": [
+        9,
+        "boundary",
+        1
+      ],
+      "algorithm": 9,
+      "input": "00",
+      "expected": "3c444468c30c9963edb3591c9d94c9372331dafde5891dee579f85d8ac7f5e46df274f12e8686592e41159dd87b70145a0425a3b24260a835b3b20fb84fc4934"
+    },
+    {
+      "key": [
+        9,
+        "boundary",
+        63
+      ],
+      "algorithm": 9,
+      "input": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expected": "a65987b86978b6fe2ef03412e3e78fc9fa72f2b4834d37b43187963dabb4b91914b26b2f4dfeb816d285191c980bbc54d6870264c34251771b32f7e19b2bb345"
+    },
+    {
+      "key": [
+        9,
+        "boundary",
+        64
+      ],
+      "algorithm": 9,
+      "input": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expected": "6e126736de2303233016911810d61d7d1535f39b196d73d5081937592308bd6eeb706d473be432faae47cff201c67ba6e0a00ac90722fbd477a005ee065ea151"
+    },
+    {
+      "key": [
+        9,
+        "boundary",
+        65
+      ],
+      "algorithm": 9,
+      "input": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expected": "227803eda7a5d98833111454b023068fdd329fac04dc01af3a7af3cf92c6960894949d18774eee95d09464a0910bab21009a10280f228237a6024a5edea29e17"
+    },
+    {
+      "key": [
+        9,
+        "boundary",
+        127
+      ],
+      "algorithm": 9,
+      "input": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expected": "fa7b044742cc92b33b03f706aeb3dd8e805b68978ce29b4b55204884165e7d831e839ba0b707f1866b25c88e8804ff9c24a4663fdaf00b2cd216cbab7afa1e93"
+    },
+    {
+      "key": [
+        9,
+        "boundary",
+        128
+      ],
+      "algorithm": 9,
+      "input": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expected": "ee37a8b2dfc5d72321bb1542d4536af343b6fa924ef0882a4212b9de29b5b5cf80e879c1027652b74d9766566bba1b34b8ccf3c0ceeaa90b596a18d56ced9e4f"
+    },
+    {
+      "key": [
+        9,
+        "boundary",
+        129
+      ],
+      "algorithm": 9,
+      "input": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expected": "925379e569a0815414a550528131ae6475cf23aa00e4512b19fb8e04fb2d6c94b21ac200b52ba4d733157c969ad8484c3d6b3ade39d8aab6de0876c94ac0186d"
+    },
+    {
+      "key": [
+        12,
+        "boundary",
+        0
+      ],
+      "algorithm": 12,
+      "input": "",
+      "expected": "3124f0cbb5a1c2fb3ce747ada63ed2ab3bcd74795cef2b0e805d5319fcc360b4617b6a7eb631d66f6d106ed0724b56fa8c1110f9b8df1c6898e7ca3c2dfccf79"
+    },
+    {
+      "key": [
+        12,
+        "boundary",
+        1
+      ],
+      "algorithm": 12,
+      "input": "00",
+      "expected": "a824b9966cce3ea0935cb3a39e1a1a29d49df02f50a0dbd5e07afb1408cd605b208b833cd2fd46d8f1ea489e33df305ba09c7e448e5bc59c260049d58514e442"
+    },
+    {
+      "key": [
+        12,
+        "boundary",
+        63
+      ],
+      "algorithm": 12,
+      "input": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expected": "c2dcd539505469432a91451db1482e9c93d7ef093bb0bd98c447d19e7ea198d581bf282d769b11a74f2555165736a2b01b68a93bb618be75de282c483cca0c90"
+    },
+    {
+      "key": [
+        12,
+        "boundary",
+        64
+      ],
+      "algorithm": 12,
+      "input": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expected": "1f5b458fb5fc6539380f80b5ef49c0a53ad160fb38c33dc6886ebea5b2f0d1c1577461422e5ea183f28b5d930c65958343992a0511022fba672ec1641c5cc52f"
+    },
+    {
+      "key": [
+        12,
+        "boundary",
+        65
+      ],
+      "algorithm": 12,
+      "input": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expected": "b7bc3027b049c1bc0485692203c43cd85ed164aa0203254fdb7f3c553a67ed9779de80c45eb823dce2c02d268594191230eb0257c8e56a1d24d65a9304505b67"
+    },
+    {
+      "key": [
+        12,
+        "boundary",
+        127
+      ],
+      "algorithm": 12,
+      "input": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expected": "44dcdbd99b2b1120d3a182ddb57cffe4d55f277b0b1cb942b465b6d4ec4b9691bfca48519c29b41937a105511e3ae74200f9ce673749250e8b9490720f5f6361"
+    },
+    {
+      "key": [
+        12,
+        "boundary",
+        128
+      ],
+      "algorithm": 12,
+      "input": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expected": "8d43ed0ee0cabae92811a68478fbe4ef684fe729ec4e8b627db54010115506fcd2bfa9193302a77fb7f9a30525cebfff27fa7aed19002433ed5b7dbf02d3206a"
+    },
+    {
+      "key": [
+        12,
+        "boundary",
+        129
+      ],
+      "algorithm": 12,
+      "input": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expected": "fb29f48fd38afa8913f8ea13b45184a31f1fed749475510248de5e4d5626dcf6c5644015aa32847002e9f7ec8896ca624c300bb14bee65f80fece49da1fca75d"
+    },
+    {
+      "key": [
+        16,
+        "selector-0",
+        80
+      ],
+      "algorithm": 16,
+      "input": "f114e1e50000000000000000a5175cc69736c99f2ef86fe560d53df5e25be54b285adb97c6fbd5bf9d006abba95b6eac93e05beb64980dd68d959c16dc52682fcc53d6f8809994235fe427824d5980df",
+      "expected": "28fd00c013da329f26fdff8d9641d4cbce7fd6a426e31273a098d12b7f5a4db5"
+    },
+    {
+      "key": [
+        16,
+        "selector-1",
+        80
+      ],
+      "algorithm": 16,
+      "input": "d23580af1111111111111111676548662d9f46a54dee38c3f916479e5c736d0f1210ef223f0b080c0c597351b9be2cd83e363ec742a1a787f3e0c5a7bbd7fefe84faef94c5ab528337d46a6b2eea1c30",
+      "expected": "a3bcfcd5fb2c84f3f77b16066938b1b00342f2d40f4eebcd2febe794018ac150"
+    },
+    {
+      "key": [
+        16,
+        "selector-2",
+        80
+      ],
+      "algorithm": 16,
+      "input": "76976f0e2222222222222222e2b5e6aa8a9284974bf75f2439227cb36abffc5297f44471bb259ec48f810478980f34362be1a3d60de7b15f44f2033179c4be11807082c4d48b0039fe8a303c0ae0d95d",
+      "expected": "5a56b889d3a217a6c3ca8afa5a2d6747e3309da7f473a098c57780ba6dbc7ed8"
+    },
+    {
+      "key": [
+        16,
+        "selector-3",
+        80
+      ],
+      "algorithm": 16,
+      "input": "3a59fc2333333333333333337d0575623ebc50208917a63698dd8c77c25615853cf3d7fe972c5969eed33b5b630a08c303202d24cf9ba23a6818a278e784ce881d80daf0d58c22400d47d640362c5ff7",
+      "expected": "044376a7d83351e8a3cfeb2e714facae0d68c01ba962e8b05bcde10f716c7a70"
+    },
+    {
+      "key": [
+        16,
+        "selector-4",
+        80
+      ],
+      "algorithm": 16,
+      "input": "933fd3c7444444444444444421f8388557d3ff48e16003f1bfa492841022ecf4c328c4752b71db4811527a97c1b287a2f2e55a0d47f1b7ba8dd62d831134cd585385ebdcbbec4799b9620b60c5a5eab7",
+      "expected": "c143d82c63c91704876fa9fd0be4b46db4c09dee734da6e3d097c0dda728ae47"
+    },
+    {
+      "key": [
+        16,
+        "selector-5",
+        80
+      ],
+      "algorithm": 16,
+      "input": "b07e5f415555555555555555eff93695e714f8dd4af90bb111c4692c0a7e4dc3f2e30a97fb9dceaffaf363b456359a066d084c76d69b7c636075660e5c129d6653cc7f05db7716c660fc611357906965",
+      "expected": "dd4187eb21e88be9ae973b670470fd87ebad5f5cf13e2f51a639636b60342e1d"
+    },
+    {
+      "key": [
+        16,
+        "selector-6",
+        80
+      ],
+      "algorithm": 16,
+      "input": "245a91516666666666666666f0c29588ef70e633f6be0ba8b56a3be579323b264fb73eee2d8b38ff8241aa6c6621f274e902ac3575c8d182866bbd84118d5e5d45d7b4c14f65d8674e1737aeac9e2640",
+      "expected": "cd9f9d678b5a7b40cb36ed9f93819ac28e36b61242bc26a10c35d1e4f9f925c4"
+    },
+    {
+      "key": [
+        16,
+        "selector-7",
+        80
+      ],
+      "algorithm": 16,
+      "input": "8661d1a27777777777777777fa9e7be4941a1ac9f578f90b0a6a1c8b3c962b5f887eac0b18b1946574911caf16caeac48a9d475d60293dd4580a78dd560b63fffb1c7df401d7ff79d2762f8f943b25ba",
+      "expected": "d23ab0e8fd8fee24957c36a8d9a3e904f58d82b38390f298815892ecbed3a2ec"
+    },
+    {
+      "key": [
+        16,
+        "selector-8",
+        80
+      ],
+      "algorithm": 16,
+      "input": "6ec8c2bc88888888888888880c79738de7db2d10f7344493328c54cd8f9ab3a2934a210a0fcd0b10a26efaaddb223a05c70d21eaa4d2e7a5b6febcd7945bcebf6c3dee39795f2671d071eb8bb7d2e27a",
+      "expected": "27310d526a3c93b6b1b5ebe088497aca3eb327a20b3c5fb3bc437784c71961f0"
+    },
+    {
+      "key": [
+        16,
+        "selector-9",
+        80
+      ],
+      "algorithm": 16,
+      "input": "cbd1a5d59999999999999999104e928d47c6080f6a8f2b59feaf951136e602bb1eefe9eee338be5e2b78a0031425f67c83e441a19aaab8537f7395b3151789fbba59a51476697df0f44ac04f2da3539c",
+      "expected": "b59900411f0aaa16ed939ffce6c478b62f84f58151ddddc0fa9e6b55d0d13be0"
+    },
+    {
+      "key": [
+        16,
+        "selector-10",
+        80
+      ],
+      "algorithm": 16,
+      "input": "734bc59faaaaaaaaaaaaaaaad279728992546c43e7f9bf6b177c0b4401f94e64e939f5e447dfdf9eac26f61208d9eeda9331d46261f722cfdb523cca234a286e400462c087e80d0dac3046f4413304e8",
+      "expected": "e8b1cf07c8eb11ab996e108f9d4cbad944e34c0a9f0b56ce46e4d652a96ad48a"
+    },
+    {
+      "key": [
+        16,
+        "selector-11",
+        80
+      ],
+      "algorithm": 16,
+      "input": "30a1a6c8bbbbbbbbbbbbbbbbf5d18e6d969de09d6ab3e20baa799b55c05b1c15d06cb88a6c81cd8dc171cb1a1b2150a57a76995fa4710ee0cf77729c703174e3df53b16f379b17820208c81800f40841",
+      "expected": "689cb58f1d978ad5852c2fdb5b238f2d5aa22692b79800d54e966776b58a32ba"
+    },
+    {
+      "key": [
+        16,
+        "selector-12",
+        80
+      ],
+      "algorithm": 16,
+      "input": "b25e1e8dcccccccccccccccc2105b4a5cb54a643cdf86888637d8ade738c91a081a8064362046414429293b7eba97b611a034ca2d71c34dc6acc96c63922828a194b40a814f73b93ca71638be195efa6",
+      "expected": "730d7807e9b6c95d8b0f721c3b58562662a94b9cc69ebb1a84f72bab424fe720"
+    },
+    {
+      "key": [
+        16,
+        "selector-13",
+        80
+      ],
+      "algorithm": 16,
+      "input": "2fcdf915dddddddddddddddd554b58b3fc727672253d0020602218fc3ee23cb7b233fa7ea2b906925e59821a24749e810acfe7cc9963cb62e47815a09a647d0b4c7b29a3b6a1cef7fca65d29f8441316",
+      "expected": "a374a1b1db2b2dc5c045b8da0e5a263511848b986e6382b86dafc36e50d1c021"
+    },
+    {
+      "key": [
+        16,
+        "selector-14",
+        80
+      ],
+      "algorithm": 16,
+      "input": "269e54feeeeeeeeeeeeeeeeebc45eda361f88f613e34a5f9951283c1247297ef53a6cdaccef0d876471a334847f1abf164d04750633abae9517ed583ce5c68840650883b4e8b5d2b115c8616fb81ebbc",
+      "expected": "361197fd1294d65c98fae7a8ba751cfd73cf6f27e1f692a5691a96c52b332abf"
+    },
+    {
+      "key": [
+        16,
+        "selector-15",
+        80
+      ],
+      "algorithm": 16,
+      "input": "d970bb78ffffffffffffffff5be7dba98432e6393f3125aa4849dbdff7803d1560ff441f23226d50826a7b08faf2052624e9c8af30623d02cc89f621add88ce055ed0830bd9d7d68f5950fcd7583d72a",
+      "expected": "60b0c4118d03af699ccea1eb632400b2d5c031d1ed5251ff8a10e52452229884"
+    },
+    {
+      "key": [
+        17,
+        "selector-0",
+        80
+      ],
+      "algorithm": 17,
+      "input": "6b85ebb90000000000000000d2053412012c3a0494b1d4d502e7e6f708374e2084a6e73d10f0dde1ea46e5e39b0e2fbd710478fe482882c846c0d821b78642ccae48431a0dc16652751a4e4188683059",
+      "expected": "dbd0172a9177767120d0df36289f4cc65e28fa55760830a5573add6a7b949d52"
+    },
+    {
+      "key": [
+        17,
+        "selector-1",
+        80
+      ],
+      "algorithm": 17,
+      "input": "646ec65111111111111111111b95ba834660d80bc2d0d495d39838767593b69a5aaf9292cfe2a28fa1f4f452f5b7218604b96b9976f5952aa4c0a64ea1769a99bf225c9b26897595924740fa3f7f50d6",
+      "expected": "98dc6140e87ff07088be8ae88187c60c71614544f57f171617a498da926703d5"
+    },
+    {
+      "key": [
+        17,
+        "selector-2",
+        80
+      ],
+      "algorithm": 17,
+      "input": "79ee196b22222222222222227c59be5ddfac428d9024ab4e356ea1dea3bbdc152d266ef6614b1881919f1f70d020c094cd47dfeb67e64e438414eb5bef6e22fff30ba590de53a8a7f4315c0db9ff1486",
+      "expected": "a8a5f683d168e5b3dc11f0183d22a4cbb8780c1117eb77d64dabd78bb99feaf5"
+    },
+    {
+      "key": [
+        17,
+        "selector-3",
+        80
+      ],
+      "algorithm": 17,
+      "input": "566b8af93333333333333333a5472298959d6656a967d479fac786c3064579f4db24dcccdbe4397c968e6697bae517343dbf1f0913834926efa202ca7a2c8d6837e0058470f9d541c574233ce197d537",
+      "expected": "179c4b251055fbcc6918fcec092f588e08893006458e736623b0af96d9a33a7e"
+    },
+    {
+      "key": [
+        17,
+        "selector-4",
+        80
+      ],
+      "algorithm": 17,
+      "input": "bfc3639c444444444444444431c52dfed6ea8c57dd98da16fe1a8e8d35bb5db924fe263cbfa37c1a058e618c6ae44bbc6a58d536a82c2f8d90279ebdfecb3b567dad32fcde2071053e283e2f3235458b",
+      "expected": "67eb6860cf2266c6cdbc3ad4d3609a0a8e754a0ee0b80ae57edbbacd283bc044"
+    },
+    {
+      "key": [
+        17,
+        "selector-5",
+        80
+      ],
+      "algorithm": 17,
+      "input": "6faf72d75555555555555555f547d5b189cd6a4d0568d13730911008c7f7c3528ff453d78c482b472b6150afa28cc9a89273c24e7246505db548fb0625e811cc39b0dfdd9dfba61f79d986deb2e19e83",
+      "expected": "cfa20e33d2eb7593dbf780cb7dec98bfa28e55d30de22a59b15ac3d843fe51f7"
+    },
+    {
+      "key": [
+        17,
+        "selector-6",
+        80
+      ],
+      "algorithm": 17,
+      "input": "1138b7d4666666666666666611c30d9eb11f60044faea4407d26943d1ca80a195a617ed1026fc316e0fec8e204035e514a9ad3e3f25d7b44538fc0929be0ad359184587dbca41cc8121bb9872072b6f5",
+      "expected": "b748f2e6b6e0bfb5c713cdcf1002b6ff13f78aef267d015c4be478cedfc5500f"
+    },
+    {
+      "key": [
+        17,
+        "selector-7",
+        80
+      ],
+      "algorithm": 17,
+      "input": "c4dfd2b8777777777777777713c6c13008e0f0a1d49c272c8512ed131c6387c4fb05cf41a77e611522fce458cb1ef1e0e9f9818d318a595ba6b546ba8c50b10e2cc205845739f972647d92d161134eb6",
+      "expected": "6a7927b6f052f45f6fb6cf64f691de4dc03424b54b844e05b0b76ea332b5c48f"
+    },
+    {
+      "key": [
+        17,
+        "selector-8",
+        80
+      ],
+      "algorithm": 17,
+      "input": "6d9a865d888888888888888893858de30afea115be9dcb2dd92f729208fa2ff26997cebe7557715f96db918f2e5c63defcce888f289a3f4e6ce87620bfdfe4403429a4b2af3eb993d7c730ad8ce42093",
+      "expected": "a3047e337d70bed17283ced325d9aa80c257686a4d03c3ab1ed3043f8f46b4ad"
+    },
+    {
+      "key": [
+        17,
+        "selector-9",
+        80
+      ],
+      "algorithm": 17,
+      "input": "2b5f819099999999999999992be0209cb2654d63aa70696725a20965854590990b8a6412444f46c14ede0bff6fe8c6033f675177a43364be640f9e26a90e1ac2df2d34231e6a213735d684ebe75c45c1",
+      "expected": "017281628622e73d98ae74f7325ba861f34e43ec0ad5d0f16b0a4f7497b42609"
+    },
+    {
+      "key": [
+        17,
+        "selector-10",
+        80
+      ],
+      "algorithm": 17,
+      "input": "811bbf6faaaaaaaaaaaaaaaa81228dd530f308a63e33dd0fc511204d197d1f5964334ac578ee6c29d3966da538b283f9b990a5d44715ae994d213b9cac07d4ccaa00d1e327bb14f4f773eb798174283a",
+      "expected": "7e43c24782de681f4a6c7f1f7eb199241b4f75ed0b3aa8a46d24ae966c7a7253"
+    },
+    {
+      "key": [
+        17,
+        "selector-11",
+        80
+      ],
+      "algorithm": 17,
+      "input": "e766fabdbbbbbbbbbbbbbbbb901b4cab23f303bf5f6662952cb3d3e0377d3af8b06998b5c94d17be8bf84b1b7fe373dc6cabfa5e690cd103196d8b21095663e4dd66e7ae172996dd420566a6f185ab1b",
+      "expected": "f51116ec0ca03dee5228d7769dc9bfd4458acdf1051e57389313d561c2fd0388"
+    },
+    {
+      "key": [
+        17,
+        "selector-12",
+        80
+      ],
+      "algorithm": 17,
+      "input": "983418efcccccccccccccccc595c3314df9e735d83ae5bdfd564a8c43ec883953ba6b919c72ae24137311fd2dad5c9c707b3c6ac3e0cdaec0b1db86453957a4bb133072b1644810448ceb7329f1837dc",
+      "expected": "f7a5a0a4f0c6e549dfc93151e1529cf4f805ed762181edc085b09780bdc9eda2"
+    },
+    {
+      "key": [
+        17,
+        "selector-13",
+        80
+      ],
+      "algorithm": 17,
+      "input": "4d39ae6dddddddddddddddddd6be03634bcdce96587515836c607d0a062fea6100591c879bead7c210d5742de7a72dd7170da4054a6f27c187d66d5dfb79f3b363403fa11e3c89ac1187fcbb1d234cc3",
+      "expected": "a45fbb69515701e38d98527ac613ff112ccedc9489f53b722c01eb69ebf8d78d"
+    },
+    {
+      "key": [
+        17,
+        "selector-14",
+        80
+      ],
+      "algorithm": 17,
+      "input": "7169e0cbeeeeeeeeeeeeeeee8fd9ab98daeab303c5d0da8ac4b448757ff4f5fa5ab5d001d5f3f2a0e64716972c62973c5d456c0badf39ed9576ce506c4a5e92f0d5f11ee2773703fa0118cfcc9523998",
+      "expected": "296ee40b62faf560e2bd8783dbc1a014fe49bbe3c064f9dc0c53efb79bd61c5b"
+    },
+    {
+      "key": [
+        17,
+        "selector-15",
+        80
+      ],
+      "algorithm": 17,
+      "input": "1b7f4234ffffffffffffffff2893ca6322d096bf8af583cc8a2a9fca6faff88a610e44486696922e6b2944bb47a3d35949ea96bf703f8dfcc96c1984b3c21ad11877b22d3bbc59d138b9807460eafdac",
+      "expected": "5ef14e354368d006506cf4ac7e3d3d28f442cf63cb56c2a46e01eeb4557b8a4b"
+    },
+    {
+      "key": [
+        16,
+        "mainnet-genesis",
+        80
+      ],
+      "algorithm": 16,
+      "input": "04000000000000000000000000000000000000000000000000000000000000000000000051595fe1fb519173c0bd75904e460872585a1d38579788d183cd60d993bf284b08063d64ffff001e92cf6c00",
+      "expected": "00000044d33c0c0ba019be5c0249730424a69cb4c222153322f68c6104484806"
+    },
+    {
+      "key": [
+        17,
+        "mainnet-genesis",
+        80
+      ],
+      "algorithm": 17,
+      "input": "04000000000000000000000000000000000000000000000000000000000000000000000051595fe1fb519173c0bd75904e460872585a1d38579788d183cd60d993bf284b08063d64ffff001e92cf6c00",
+      "expected": "00000044d33c0c0ba019be5c0249730424a69cb4c222153322f68c6104484806"
+    }
+  ]
+}
