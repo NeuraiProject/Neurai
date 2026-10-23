@@ -8,10 +8,15 @@ multiplication per record, whatever the number of addresses. The construction is
 (diversified addresses, ZIP 212 style `epk` check) over ristretto255. Consensus does not change. The C6 note
 commitment, nullifier and ownership relations (CP1) stay as they are.
 
-This directory is the public reference. It contains the byte-level specification below, an independent Python
-implementation (`c7_ref.py`), the vector generator (`gen_c7_vectors.py`, writing
-`src/test/data/privacy_c7_vectors.json`) and cross-checks against libsodium and the Zcash `fpe` crate. The node's C++
-implementation is `src/privacy/c7.{h,cpp}`, tested by `src/test/privacy_c7_tests.cpp` with the same vectors.
+This directory is the public reference. It contains:
+- the byte-level specification below;
+- an independent Python implementation (`c7_ref.py`);
+- the vector generator (`gen_c7_vectors.py`, writing `src/test/data/privacy_c7_vectors.json`);
+- cross-checks against libsodium and the Zcash `fpe` crate;
+- the contract framing (`c7_contract.py`) and the birth tool (`deploy_c7.py`).
+
+The node's C++ implementation is `src/privacy/c7.{h,cpp}`, used by the Qt wallet through `src/privacy/c6_*`. It is
+tested by `src/test/privacy_c7_tests.cpp` with the same vectors.
 
 ## Notation
 
@@ -117,6 +122,45 @@ rho ‖ cm)`.
 The profile 3 predicate (`src/crypto/portable_tree_transition.cpp`) does not read note records. C7 circuits must keep:
 - the public input and transcript layout of every form (D, T1–T4, W, J2);
 - the withdrawal-without-publication constant `PoseidonBytes("NeuraiPoolC6/no-publication" ‖ 01)`.
+
+## Contract, keys and deployment
+
+C7 reuses the C6 circuits, verifying keys and proving files unchanged. The circuits only see the note bytes, and a
+canonical ristretto255 `pk_d` satisfies the C6 view-field constraint. The withdrawal dummy note is never published.
+The contract changes only the publication framing (`c7_contract.py`):
+- note records are 230 bytes;
+- the first byte of each record is fixed to `0x02`;
+- J2 carries its record at `[98, 328)`.
+
+`c7_contract.py` builds on the C6 constructors of a checkout (`scripts/pool_c6_*.py` and
+`NIP/bench/nip043_v3_scripts.py`). These are not published yet.
+
+`deploy_c7.py` makes a verifiable birth on testnet or regtest. It needs a node with a funded wallet: on testnet, about
+1013 XNA (1000 for the root asset, 10 for the UNIQUE, and a 2 XNA birth coin, 1.9 of which comes back).
+
+```sh
+python3 deploy_c7.py --rpc-config rpc.json --name C7TEST1023A --out out/
+```
+
+It prints the pin `{identity, emission, commitment}` and writes `c7-testnet.json`. For neurai-qt, the `privacy-c7`
+folder holds that config and the C6 proving files (`D`, `T1`, `T2`, `T3`, `W` `.wasm` and `.zkey`). Until the pin is
+added to `C7Pins()` in `src/privacy/c6_config.cpp`, the wallet loads the instance only with `-privacypoolunpinned`,
+and shows that it is not pinned.
+
+## Testnet instance
+
+| Field | Value |
+|---|---|
+| Identity | `C7TEST1023A#POOL` (owner token `C7TEST1023A!` burned at the birth output 1) |
+| Emission | `8bc6445bb44d6adb2e9c5d59b5ed1e7f6971662a8a571888bc1120060901e3a2:3` |
+| Birth | `8336537aab139fa78e9a219affaefa7f2c86eb8787c36600c6a270babd8763fa:0`, height 75836 |
+| Domain | `8d3b692f54fdd047b0cbf011dcdace31935e7e3cd63ac606aa3a6ee59e674142` |
+| Context | `017622c8fc4f395c371b25584a670112e73760ee1da24cbcb1e3821885f4944d` |
+| Commitment | `a90ce546a03d4b6a83ba8d7680eced7f8adaf1ff7cf71c4fa9f35badcd158be2` (pinned in `C7Pins()`) |
+
+`c7-testnet.json` is its config. neurai-qt uses this folder as `privacy-c7` once the C6 proving files are copied into
+it (`D`, `T1`, `T2`, `T3`, `W` `.wasm` and `.zkey`, the same files and digests as `../privacy-c6`). They are not stored
+in git, and the wallet checks each one against the digests in the config.
 
 ## Running the checks
 

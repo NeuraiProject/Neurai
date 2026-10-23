@@ -6,6 +6,7 @@
 #define NEURAI_PRIVACY_C6_CONFIG_H
 
 #include "privacy/primitives.h"
+#include "privacy/publication.h"
 
 #include <map>
 #include <string>
@@ -26,9 +27,14 @@ struct C6Artifact {
     uint64_t wasmBytes = 0, zkeyBytes = 0;
 };
 
-/** Pinned C6 XNA pool instance (the web wallet's c6-testnet.json). */
+/** Pinned XNA pool instance: C6 (the web wallet's c6-testnet.json) or C7
+ *  (c7-<network>.json from contrib/privacypool/privacy-c7/deploy_c7.py). Both
+ *  share circuits, state, contract structure and transactions; C7 changes the
+ *  addresses, the note records and the instance derivation. */
 struct C6Config {
     std::string profile;
+    bool c7 = false;        //!< profile C7-XNA-TEST-v1
+    bool pinned = false;    //!< C7: identity, emission and commitment are pinned in this build
     std::string identity;   //!< state thread identity, e.g. C6TEST261004A#POOL
     std::string network;    //!< "testnet"
     Bytes32 genesis{};      //!< genesis hash, internal byte order (manifest.network)
@@ -47,6 +53,11 @@ struct C6Config {
     Bytes anchorOpening;
     Bytes anchorScript;
     std::vector<C6Leaf> leaves;
+
+    Bytes32 emissionTxid{};   //!< C7: emission of the UNIQUE identity, internal byte order
+    uint32_t emissionVout = 0;
+
+    RecordFormat Format() const { return c7 ? RecordFormat::C7 : RecordFormat::HPKE_CP1; }
 
     const C6Leaf* Leaf(const std::string& form) const;
     /** State output script committing to a 145-byte opening. */

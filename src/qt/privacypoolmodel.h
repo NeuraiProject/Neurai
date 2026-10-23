@@ -46,7 +46,7 @@ struct PrivacySnapshot {
     QList<QString> pending; //!< txids of broadcast operations not confirmed yet
 };
 
-/** C6 XNA privacy pool for one wallet (testnet). Scanning and proving run on a
+/** C6 or C7 XNA privacy pool for one wallet (testnet; C7 also on regtest). Scanning and proving run on a
  *  worker thread; the private keys stay in memory until close(). */
 class PrivacyPoolModel : public QObject
 {
@@ -65,6 +65,8 @@ public:
     /** Why the pool cannot be used, when state() is Unavailable. */
     QString unavailableReason() const { return m_unavailable; }
     QString poolName() const { return m_poolName; }
+    /** "C7 XNA · NAME#POOL · testnet" (or C6), for the page header. */
+    QString poolLabel() const { return m_poolLabel; }
     QString activity() const { return m_activity; }
     const PrivacySnapshot& snapshot() const { return m_snapshot; }
     QList<CAmount> feeLevels(const QString& operation) const;
@@ -119,9 +121,11 @@ private:
     int m_lastHeight = -1;
     QString m_unavailable;
     QString m_poolName;
+    QString m_poolLabel;
     std::array<uint8_t, 32> m_domain{};
     std::array<uint8_t, 32> m_assetId{};
     std::string m_hrp;
+    bool m_c7 = false;
     QString m_activity;
     PrivacySnapshot m_snapshot;
 };

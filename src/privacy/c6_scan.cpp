@@ -4,6 +4,7 @@
 
 #include "privacy/c6_scan.h"
 
+#include "privacy/c7.h"
 #include "privacy/notes.h"
 #include "privacy/publication.h"
 
@@ -78,8 +79,12 @@ bool ParseC6Transition(const C6Config& config, const CTransaction& tx, C6Event& 
         Bytes blob = args["chunk1"];
         Append(blob, args["chunk2"]);
         if (join) {
-            if (blob.size() != PUBLICATION_SIZE || blob[0] != 3 || blob[1] != 1 || blob[98] != 1 || blob[99] != 217 ||
-                blob[100] != 0 || std::any_of(blob.begin() + 318, blob.end(), [](uint8_t b) { return b != 0; })) {
+            // 03 01 || nf0 || nf1 || cm || one record || zero padding
+            const size_t recordEnd = 98 + PublishedRecordSize(config.Format());
+            const bool header = blob.size() == PUBLICATION_SIZE && blob[0] == 3 && blob[1] == 1;
+            const bool framed = config.c7 ? header && blob[98] == c7::RECORD_VERSION
+                                          : header && blob[98] == 1 && blob[99] == 217 && blob[100] == 0;
+            if (!framed || std::any_of(blob.begin() + recordEnd, blob.end(), [](uint8_t b) { return b != 0; })) {
                 error = "J2 publication";
                 return false;
             }
@@ -90,13 +95,13 @@ bool ParseC6Transition(const C6Config& config, const CTransaction& tx, C6Event& 
                 }
             }
             event.cms.push_back(Slice32(blob, 66));
-            Bytes record(RECORD_SIZE, 0);
-            std::copy(blob.begin() + 98, blob.begin() + 318, record.begin());
+            Bytes record(config.c7 ? c7::RECORD_SIZE : RECORD_SIZE, 0);
+            std::copy(blob.begin() + 98, blob.begin() + recordEnd, record.begin());
             records.push_back(std::move(record));
         } else {
             Publication publication;
             const std::string pubForm = deposit ? "D0" : form == "W_partial_change" ? "T1" : form;
-            if (!DecodePublication(pubForm, blob, publication, error)) return false;
+            if (!DecodePublication(pubForm, blob, publication, error, config.Format())) return false;
             if (!deposit && (!publication.nf || *publication.nf != event.nfs[0])) {
                 error = "publication nullifier";
                 return false;

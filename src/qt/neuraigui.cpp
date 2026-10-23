@@ -95,10 +95,12 @@ using namespace boost::placeholders;
 #endif
 
 namespace {
-/** The privacy pool page serves the pinned testnet pool instance only. */
+/** The privacy pool page serves testnet pool instances, and C7 test instances on
+ *  regtest; the model rejects any other config. */
 bool PrivacyPoolNetwork()
 {
-    return GetParams().NetworkIDString() == CBaseChainParams::TESTNET;
+    const std::string network = GetParams().NetworkIDString();
+    return network == CBaseChainParams::TESTNET || network == CBaseChainParams::REGTEST;
 }
 } // namespace
 
@@ -394,7 +396,7 @@ void NeuraiGUI::createActions()
     depinAssetAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_9));
     tabGroup->addAction(depinAssetAction);
 
-    // Privacy pool (C6 XNA): testnet only for now
+    // Privacy pool (C6/C7 XNA): testnet, and C7 on regtest for testing
     privacyAction = new QAction(platformStyle->NavigationIcon(":/icons/nav_privacy"), tr("&Privacy"), this);
     privacyAction->setStatusTip(PrivacyPoolNetwork() ? tr("Private XNA notes in the privacy pool") : tr("Privacy pool: available on testnet only"));
     privacyAction->setToolTip(privacyAction->statusTip());

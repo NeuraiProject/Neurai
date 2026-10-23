@@ -3,6 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "privacy/publication.h"
+#include "privacy/c7.h"
 
 #include "privacy/notes.h"
 
@@ -15,10 +16,11 @@ struct Layout {
     bool deposit = false;
     size_t count = 0;
     size_t recordsAt = 0;
+    size_t record = 0;
     size_t end = 0;
 };
 
-bool GetLayout(const std::string& form, Layout& layout, std::string& error)
+bool GetLayout(const std::string& form, RecordFormat format, Layout& layout, std::string& error)
 {
     layout.deposit = form == "D0" || form == "D1";
     if (layout.deposit) {
@@ -29,8 +31,9 @@ bool GetLayout(const std::string& form, Layout& layout, std::string& error)
         error = "unsupported publication form";
         return false;
     }
+    layout.record = PublishedRecordSize(format);
     layout.recordsAt = 34 + layout.count * 32;
-    layout.end = 34 + layout.count * 252;
+    layout.end = 34 + layout.count * (32 + layout.record);
     return true;
 }
 
@@ -39,13 +42,20 @@ bool AllZero(Bytes::const_iterator begin, Bytes::const_iterator end)
     return std::all_of(begin, end, [](uint8_t b) { return b == 0; });
 }
 
-bool CanonicalRecord(const Bytes& record)
+
+} // namespace
+
+size_t PublishedRecordSize(RecordFormat format)
 {
+    return format == RecordFormat::C7 ? c7::RECORD_SIZE : RECORD_USED;
+}
+
+bool CanonicalRecord(const Bytes& record, RecordFormat format)
+{
+    if (format == RecordFormat::C7) return record.size() == c7::RECORD_SIZE && record[0] == c7::RECORD_VERSION;
     return record.size() == RECORD_SIZE && record[0] == 1 && record[1] == 217 && record[2] == 0 &&
            AllZero(record.begin() + RECORD_USED, record.end());
 }
-
-} // namespace
 
 bool PoolContext(const Bytes32& domain, const Bytes32& assetId, uint64_t unit, Bytes32& ctx, std::string& error,
                  const Bytes32& registryRoot)
@@ -71,10 +81,11 @@ bool PoolContext(const Bytes32& domain, const Bytes32& assetId, uint64_t unit, B
     return true;
 }
 
-bool DecodePublication(const std::string& form, const Bytes& blob, Publication& publication, std::string& error)
+bool DecodePublication(const std::string& form, const Bytes& blob, Publication& publication, std::string& error,
+                       RecordFormat format)
 {
     Layout layout;
-    if (!GetLayout(form, layout, error)) return false;
+    if (!GetLayout(form, format, layout, error)) return false;
     if (blob.size() != PUBLICATION_SIZE) {
         error = "publication must be 4096 bytes";
         return false;
@@ -111,10 +122,10 @@ bool DecodePublication(const std::string& form, const Bytes& blob, Publication& 
             return false;
         }
         publication.cms.push_back(cm);
-        Bytes record(RECORD_SIZE, 0);
-        const auto at = blob.begin() + layout.recordsAt + i * RECORD_USED;
-        std::copy(at, at + RECORD_USED, record.begin());
-        if (!CanonicalRecord(record)) {
+        Bytes record(format == RecordFormat::C7 ? layout.record : RECORD_SIZE, 0);
+        const auto at = blob.begin() + layout.recordsAt + i * layout.record;
+        std::copy(at, at + layout.record, record.begin());
+        if (!CanonicalRecord(record, format)) {
             error = "noncanonical note record";
             return false;
         }
@@ -123,10 +134,11 @@ bool DecodePublication(const std::string& form, const Bytes& blob, Publication& 
     return true;
 }
 
-bool EncodePublication(const std::string& form, const Publication& publication, Bytes& blob, std::string& error)
+bool EncodePublication(const std::string& form, const Publication& publication, Bytes& blob, std::string& error,
+                       RecordFormat format)
 {
     Layout layout;
-    if (!GetLayout(form, layout, error)) return false;
+    if (!GetLayout(form, format, layout, error)) return false;
     if (publication.cms.size() != layout.count || publication.records.size() != layout.count) {
         error = "wrong note count";
         return false;
@@ -141,21 +153,21 @@ bool EncodePublication(const std::string& form, const Publication& publication, 
     if (publication.nf) std::copy(publication.nf->begin(), publication.nf->end(), blob.begin() + 2);
     for (size_t i = 0; i < layout.count; ++i) {
         std::copy(publication.cms[i].begin(), publication.cms[i].end(), blob.begin() + 34 + i * 32);
-        if (!CanonicalRecord(publication.records[i])) {
+        if (!CanonicalRecord(publication.records[i], format)) {
             error = "noncanonical note record";
             return false;
         }
-        std::copy(publication.records[i].begin(), publication.records[i].begin() + RECORD_USED,
-                  blob.begin() + layout.recordsAt + i * RECORD_USED);
+        std::copy(publication.records[i].begin(), publication.records[i].begin() + layout.record,
+                  blob.begin() + layout.recordsAt + i * layout.record);
     }
     Publication check;
-    return DecodePublication(form, blob, check, error);
+    return DecodePublication(form, blob, check, error, format);
 }
 
-bool PublicationHash(const std::string& form, const Bytes& blob, Bytes32& hash, std::string& error)
+bool PublicationHash(const std::string& form, const Bytes& blob, Bytes32& hash, std::string& error, RecordFormat format)
 {
     Publication check;
-    if (!DecodePublication(form, blob, check, error)) return false;
+    if (!DecodePublication(form, blob, check, error, format)) return false;
     Bytes tag;
     Append(tag, std::string("NIP045/dat\x03"));
     Bytes first;

@@ -5,6 +5,7 @@
 #include "privacy/c6_ops.h"
 
 #include "crypto/groth16_bn254.h"
+#include "privacy/c7.h"
 #include "privacy/publication.h"
 #include "script/script.h"
 #include "streams.h"
@@ -127,6 +128,57 @@ Recipient OwnerOf(const Note& note)
     return own;
 }
 
+/** Where the change of a spent note goes: its own address. */
+bool ChangeRecipient(const C6Config& config, const C6Spend& spend, const Note& note, Recipient& out, std::string& error)
+{
+    if (spend.changeTo) {
+        out = *spend.changeTo;
+    } else if (config.c7) {
+        error = "internal error: the C7 change address is unknown";
+        return false;
+    } else {
+        out = OwnerOf(note);
+    }
+    if (out.owner != note.owner || out.viewPub != note.viewPub) {
+        error = "internal error: the change address does not hold the spent note";
+        return false;
+    }
+    return true;
+}
+
+/** Seals a new note: HPKE CP1 record for a C6 pool, 230-byte C7 record (to the
+ *  recipient's diversified address) for a C7 pool. */
+bool SealFor(const C6Config& config, const Recipient& recipient, uint64_t amount, SealedNote& out, std::string& error)
+{
+    if (recipient.domain != config.domain || recipient.assetId != config.assetId) {
+        error = "recipient belongs to another pool instance";
+        return false;
+    }
+    if (recipient.v3 != config.c7) {
+        error = config.c7 ? "this C7 pool needs a version 3 private address" : "this C6 pool needs a version 1 private address";
+        return false;
+    }
+    if (!config.c7) return SealNote(recipient, amount, out, error);
+    c7::Recipient to;
+    to.owner = recipient.owner;
+    to.d = recipient.diversifier;
+    to.pkd = recipient.viewPub;
+    const c7::Instance instance{"", config.domain, config.assetId};
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        // rho is fresh and secret: it fixes esk, the nullifier and the commitment.
+        const Bytes32 rho = RandomBytes32();
+        c7::SealedNote sealed;
+        if (c7::SealNote(to, amount, rho, instance, sealed, error)) {
+            out.note = sealed.note;
+            out.cm = sealed.cm;
+            out.record = sealed.record;
+            return true;
+        }
+        if (error != "esk-zero") return false;
+    }
+    return false;
+}
+
 } // namespace
 
 bool IsC6Destination(const Bytes& script)
@@ -149,18 +201,14 @@ bool PrepareC6Deposit(const C6Config& config, const Recipient& self, uint64_t am
         error = "funding coin must equal amount plus fee";
         return false;
     }
-    if (self.domain != config.domain || self.assetId != config.assetId) {
-        error = "recipient belongs to another pool instance";
-        return false;
-    }
     SealedNote created;
-    if (!SealNote(self, amount, created, error)) return false;
+    if (!SealFor(config, self, amount, created, error)) return false;
     Publication publication;
     publication.cms = {created.cm};
     publication.records = {created.record};
     Bytes32 data;
-    if (!EncodePublication("D0", publication, out.publication, error) ||
-        !PublicationHash("D0", out.publication, data, error)) {
+    if (!EncodePublication("D0", publication, out.publication, error, config.Format()) ||
+        !PublicationHash("D0", out.publication, data, error, config.Format())) {
         return false;
     }
     Bytes depBytes;
@@ -213,13 +261,14 @@ bool PrepareC6Withdrawal(const C6Config& config, const C6Spend& spend, const Byt
     Bytes32 data{}, cmChange{};
     if (left) {
         SealedNote created;
-        if (!SealNote(OwnerOf(note), left, created, error)) return false;
+        Recipient back;
+        if (!ChangeRecipient(config, spend, note, back, error) || !SealFor(config, back, left, created, error)) return false;
         Publication publication;
         publication.cms = {created.cm};
         publication.records = {created.record};
         publication.nf = nf;
-        if (!EncodePublication("T1", publication, out.publication, error) ||
-            !PublicationHash("T1", out.publication, data, error)) {
+        if (!EncodePublication("T1", publication, out.publication, error, config.Format()) ||
+            !PublicationHash("T1", out.publication, data, error, config.Format())) {
             return false;
         }
         cmChange = created.cm;
@@ -268,7 +317,8 @@ bool PrepareC6Transfer(const C6Config& config, const C6Spend& spend, const Bytes
     if (!DecodeNote(spend.note, note, error)) return false;
     uint64_t total = fee;
     for (const C6Payment& payment : payments) {
-        if (payment.recipient.domain != config.domain || payment.recipient.assetId != config.assetId) {
+        if (payment.recipient.domain != config.domain || payment.recipient.assetId != config.assetId ||
+            payment.recipient.v3 != config.c7) {
             error = "recipient belongs to another pool instance";
             return false;
         }
@@ -290,7 +340,9 @@ bool PrepareC6Transfer(const C6Config& config, const C6Spend& spend, const Bytes
     std::vector<C6Payment> outputs = payments;
     std::vector<bool> change(payments.size(), false);
     if (note.amount > total) {
-        outputs.push_back({OwnerOf(note), note.amount - total});
+        Recipient back;
+        if (!ChangeRecipient(config, spend, note, back, error)) return false;
+        outputs.push_back({back, note.amount - total});
         change.push_back(true);
     }
     if (outputs.size() > 3) {
@@ -308,7 +360,7 @@ bool PrepareC6Transfer(const C6Config& config, const C6Spend& spend, const Bytes
     std::vector<FieldLE> amounts, cms, flags;
     for (size_t i = 0; i < outputs.size(); ++i) {
         SealedNote created;
-        if (!SealNote(outputs[i].recipient, outputs[i].amount, created, error)) return false;
+        if (!SealFor(config, outputs[i].recipient, outputs[i].amount, created, error)) return false;
         if (created.cm == cm || std::find(out.cms.begin(), out.cms.end(), created.cm) != out.cms.end()) {
             error = "output commitments must be fresh and distinct";
             return false;
@@ -323,7 +375,8 @@ bool PrepareC6Transfer(const C6Config& config, const C6Spend& spend, const Bytes
         out.created.push_back(std::move(created));
     }
     Bytes32 data;
-    if (!EncodePublication(op, publication, out.publication, error) || !PublicationHash(op, out.publication, data, error)) {
+    if (!EncodePublication(op, publication, out.publication, error, config.Format()) ||
+        !PublicationHash(op, out.publication, data, error, config.Format())) {
         return false;
     }
     Input(out.inputs, "data_hash", LE(data));

@@ -12,6 +12,7 @@
 #include "privacy/notes.h"
 
 #include <functional>
+#include <optional>
 
 namespace privacy {
 
@@ -42,6 +43,10 @@ struct C6Spend {
     uint32_t index = 0;
     std::vector<Bytes32> path;
     Bytes32 root{};
+    /** Descriptor of the address that holds the note, where change goes back.
+     *  Required for C7 (the note does not carry the diversifier); C6 derives it
+     *  from the note when absent. */
+    std::optional<Recipient> changeTo;
 };
 
 bool PrepareC6Deposit(const C6Config& config, const Recipient& self, uint64_t amount, uint64_t fee,

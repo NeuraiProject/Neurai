@@ -4,6 +4,7 @@
 
 #include "privacy/c6_scan.h"
 
+#include "assets/assets.h"
 #include "chain.h"
 #include "chainparams.h"
 #include "spentindex.h"
@@ -23,6 +24,29 @@ uint256 ToUint256(const Bytes32& bytes)
 }
 
 Bytes ScriptBytes(const CScript& script) { return Bytes(script.begin(), script.end()); }
+
+/** C7 verifiable birth: the transaction spends the UNIQUE emission and sends the
+ *  owner token NAME! to the network's global burn address, so the creator keeps
+ *  no power over the name. */
+bool CheckC7Birth(const C6Config& config, const CTransaction& birth, std::string& error)
+{
+    const COutPoint emission(ToUint256(config.emissionTxid), config.emissionVout);
+    if (std::none_of(birth.vin.begin(), birth.vin.end(), [&](const CTxIn& in) { return in.prevout == emission; })) {
+        error = "C7 birth does not spend the pinned emission";
+        return false;
+    }
+    const std::string owner = config.identity.substr(0, config.identity.find('#')) + "!";
+    for (const CTxOut& out : birth.vout) {
+        CAssetTransfer transfer;
+        std::string address;
+        if (TransferAssetFromScript(out.scriptPubKey, transfer, address) && transfer.strName == owner &&
+            address == GetParams().GlobalBurnAddress()) {
+            return true;
+        }
+    }
+    error = "C7 birth does not burn the owner token " + owner;
+    return false;
+}
 
 } // namespace
 
@@ -51,6 +75,7 @@ bool C6ChainScanner::Reset(std::string& error)
         error = "pool birth output not found";
         return false;
     }
+    if (m_config.c7 && !CheckC7Birth(m_config, **found, error)) return false;
     if (m_state.world.Opening() != m_config.anchorOpening) {
         error = "pool birth must be an empty state";
         return false;

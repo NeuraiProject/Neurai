@@ -64,6 +64,33 @@ private:
     std::vector<C6OwnedNote> m_notes;
 };
 
+/** Keys and note recovery of one private account in one pool, whatever its
+ *  generation: C6 (NeuraiZK/v2, trial decryption per address of the window) or
+ *  C7 (NeuraiZK/v3, one viewing key per account, diversified addresses). */
+class PoolAccount
+{
+public:
+    virtual ~PoolAccount() = default;
+    /** Processes new records; restarts when the record list was replaced (reorg). */
+    virtual void Update(const std::vector<C6Record>& records) = 0;
+    virtual const std::vector<C6OwnedNote>& Notes() const = 0;
+    /** Receiving address to show: the first after the highest used one. */
+    virtual std::string ReceiveAddress(const std::string& hrp) const = 0;
+    /** The wallet's own descriptor for deposits (change address, index 0). */
+    virtual bool SelfRecipient(Recipient& self, std::string& error) const = 0;
+    /** Spend secret of the address that received a note, and that address for its change. */
+    virtual bool SpendKeysFor(const C6OwnedNote& note, Bytes32& spendSecret, Recipient& changeTo, std::string& error) const = 0;
+};
+
+/** Opens the account of `family` (account 0) for the pool of `config` from the
+ *  private root R. Fails, without retrying, if the root yields a zero key. */
+std::unique_ptr<PoolAccount> OpenPoolAccount(const C6Config& config, const uint8_t root[64], NzkFamily family,
+                                             std::string& error);
+
+/** Decodes a private address of this pool: version 1 for C6, version 3 for C7. */
+bool DecodePoolAddress(bool c7, const std::string& text, const std::string& hrp, const Bytes32& domain,
+                       const Bytes32& assetId, Recipient& recipient, std::string& error);
+
 } // namespace privacy
 
 #endif // NEURAI_PRIVACY_C6_WALLET_H

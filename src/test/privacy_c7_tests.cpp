@@ -7,7 +7,9 @@
 // instance derivation, every intermediate value of keys, addresses and
 // records, both scanners, and the negative cases with their reason.
 
+#include "privacy/c6_wallet.h"
 #include "privacy/c7.h"
+#include "privacy/publication.h"
 
 #include "data/privacy_c7_vectors.json.h"
 #include "test/test_neurai.h"
@@ -16,6 +18,7 @@
 #include <boost/test/unit_test.hpp>
 #include <univalue.h>
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <set>
@@ -371,6 +374,97 @@ BOOST_AUTO_TEST_CASE(receive_only_scanner_never_claims_ownership)
     BOOST_CHECK_EQUAL(FullOutcome(sealed.record, sealed.cm, a), "owner-mismatch");
     BOOST_REQUIRE(SealNote(mine, 10, rho, instance, sealed, reason));
     BOOST_CHECK_EQUAL(FullOutcome(sealed.record, sealed.cm, a), "owned");
+}
+
+BOOST_AUTO_TEST_CASE(c7_publication_round_trip)
+{
+    const UniValue v = ReadVectors();
+    std::vector<Bytes> records;
+    std::vector<Bytes32> cms;
+    for (const UniValue& n : v["notes"].getValues()) {
+        records.push_back(FromHex(n["record"]));
+        cms.push_back(Fixed<Bytes32>(n["cm"]));
+    }
+    Bytes32 nf{};
+    nf[31] = 7;
+    for (const auto& form : std::vector<std::pair<std::string, size_t>>{{"D0", 1}, {"T2", 2}, {"T3", 3}}) {
+        privacy::Publication publication;
+        publication.cms.assign(cms.begin(), cms.begin() + form.second);
+        publication.records.assign(records.begin(), records.begin() + form.second);
+        if (form.first != "D0") publication.nf = nf;
+        Bytes blob;
+        std::string error;
+        BOOST_REQUIRE_MESSAGE(privacy::EncodePublication(form.first, publication, blob, error, privacy::RecordFormat::C7), error);
+        BOOST_CHECK_EQUAL(blob.size(), privacy::PUBLICATION_SIZE);
+        // Version byte of each record and zero padding after 34 + n * (32 + 230) bytes.
+        for (size_t i = 0; i < form.second; ++i) BOOST_CHECK_EQUAL(blob[34 + 32 * form.second + 230 * i], 2);
+        BOOST_CHECK(std::all_of(blob.begin() + 34 + 262 * form.second, blob.end(), [](uint8_t b) { return b == 0; }));
+        privacy::Publication decoded;
+        BOOST_REQUIRE(privacy::DecodePublication(form.first, blob, decoded, error, privacy::RecordFormat::C7));
+        BOOST_CHECK(decoded.records == publication.records && decoded.cms == publication.cms);
+        // The same blob is not a C6 publication.
+        BOOST_CHECK(!privacy::DecodePublication(form.first, blob, decoded, error));
+    }
+}
+
+BOOST_AUTO_TEST_CASE(c7_pool_account_recovers_notes)
+{
+    const UniValue v = ReadVectors();
+    const Instance instance = VectorInstance(v);
+    privacy::C6Config config;
+    config.c7 = true;
+    config.domain = instance.domain;
+    config.assetId = instance.assetId;
+    const UniValue& a = v["accounts"][0];
+    BOOST_REQUIRE_EQUAL(a["name"].get_str(), "A");
+    const Bytes root = FromHex(a["R"]);
+    std::string error;
+    auto pool = privacy::OpenPoolAccount(config, root.data(), NzkFamily::ECDSA, error);
+    BOOST_REQUIRE_MESSAGE(pool, error);
+
+    std::vector<privacy::C6Record> records;
+    std::set<std::string> mine;
+    for (const UniValue& n : v["notes"].getValues()) {
+        privacy::C6Record record;
+        record.cm = Fixed<Bytes32>(n["cm"]);
+        record.record = FromHex(n["record"]);
+        record.index = records.size();
+        records.push_back(record);
+        if (n["to"]["account"].get_str() == "A") mine.insert(n["full_scan"]["nf"].get_str());
+    }
+    pool->Update(records);
+    std::set<std::string> found;
+    for (const privacy::C6OwnedNote& note : pool->Notes()) {
+        found.insert(HexOf(note.nf));
+        Bytes32 spendSecret;
+        privacy::Recipient changeTo;
+        BOOST_REQUIRE_MESSAGE(pool->SpendKeysFor(note, spendSecret, changeTo, error), error);
+        for (const UniValue& address : v["addresses"].getValues()) {
+            if (address["account"].get_str() == "A" && address["branch"].get_int() == (int)note.chain &&
+                address["index"].get_int64() == note.address) {
+                BOOST_CHECK_EQUAL(HexOf(spendSecret), address["spend_secret"].get_str());
+                BOOST_CHECK_EQUAL(HexOf(changeTo.viewPub), address["pk_d"].get_str());
+                BOOST_CHECK_EQUAL(HexOf(changeTo.diversifier), address["d"].get_str());
+            }
+        }
+    }
+    BOOST_CHECK(found == mine);
+    // Receiving index after the highest used one (A received at (0, 2^31 - 1)).
+    privacy::Recipient parsed;
+    BOOST_CHECK(pool->ReceiveAddress("tnzk").empty() || privacy::DecodePoolAddress(true, pool->ReceiveAddress("tnzk"), "tnzk",
+                                                                                   instance.domain, instance.assetId, parsed, error));
+    privacy::Recipient self;
+    BOOST_REQUIRE(pool->SelfRecipient(self, error));
+    BOOST_CHECK(self.v3);
+    const std::string selfText = v["addresses"][2]["text"].get_str(); // A, branch 1, index 0
+    BOOST_REQUIRE(privacy::DecodePoolAddress(true, selfText, "tnzk", instance.domain, instance.assetId, parsed, error));
+    BOOST_CHECK(parsed.viewPub == self.viewPub && parsed.diversifier == self.diversifier && parsed.owner == self.owner);
+    // A C7 address is not a C6 one, and the other way round.
+    BOOST_CHECK(!privacy::DecodePoolAddress(false, selfText, "tnzk", instance.domain, instance.assetId, parsed, error));
+    // Records replaced (reorg): recovery starts again.
+    records.resize(2);
+    pool->Update(records);
+    BOOST_CHECK_EQUAL(pool->Notes().size(), 2U);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

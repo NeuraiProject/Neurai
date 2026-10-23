@@ -5,6 +5,7 @@
 #include "privacy/c6_config.h"
 
 #include "privacy/c6_world.h"
+#include "privacy/c7.h"
 #include "privacy/publication.h"
 
 #include <univalue.h>
@@ -16,6 +17,29 @@ namespace privacy {
 namespace {
 
 const char* const PROFILE = "C6-XNA-TEST-J2-v2";
+const char* const PROFILE_C7 = "C7-XNA-TEST-v1";
+
+/** C7 instances pinned in this build (plan C7 section 5.1): a config for any
+ *  other instance loads unpinned, and the wallet decides whether to accept it.
+ *  Hashes in display order, as the deployment report prints them. */
+struct C7Pin {
+    const char* network;
+    const char* identity;
+    const char* emission; //!< "txid:vout"
+    const char* commitment;
+};
+const std::vector<C7Pin>& C7Pins()
+{
+    static const std::vector<C7Pin> pins = {
+        // Born on testnet at height 75836, birth 8336537aab139fa78e9a219affaefa7f2c86eb8787c36600c6a270babd8763fa.
+        {"testnet", "C7TEST1023A#POOL", "8bc6445bb44d6adb2e9c5d59b5ed1e7f6971662a8a571888bc1120060901e3a2:3",
+         "a90ce546a03d4b6a83ba8d7680eced7f8adaf1ff7cf71c4fa9f35badcd158be2"},
+    };
+    return pins;
+}
+
+/** Parses "txid:vout" with the txid in display order. */
+bool ParseOutpoint(const std::string& point, Bytes32& txid, uint32_t& vout);
 const char* const OPERATIONS[] = {"D", "T1", "T2", "T3", "W", "J2"};
 
 int Nibble(char c)
@@ -104,6 +128,18 @@ bool Str(const UniValue& object, const std::string& key, std::string& out)
     return true;
 }
 
+bool ParseOutpoint(const std::string& point, Bytes32& txid, uint32_t& vout)
+{
+    if (point.size() < 66 || point.size() > 75 || point[64] != ':' || !Hex32Reversed(point.substr(0, 64), txid) ||
+        !std::all_of(point.begin() + 65, point.end(), ::isdigit)) {
+        return false;
+    }
+    const unsigned long n = std::stoul(point.substr(65));
+    if (n > 0xffffffffUL) return false;
+    vout = static_cast<uint32_t>(n);
+    return true;
+}
+
 } // namespace
 
 Bytes32 TaggedHash(const std::string& tag, const Bytes& data)
@@ -171,8 +207,8 @@ bool LoadC6Config(const std::string& json, C6Config& config, std::string& error)
     }
     config = C6Config{};
     std::string text, genesisDisplay, expectedGenesis, expectedCommitment, deploymentCommitment, kind;
-    if (!Str(manifest, "profile", config.profile) || config.profile != PROFILE || !Str(deployment, "kind", kind) ||
-        kind != "xna") {
+    if (!Str(manifest, "profile", config.profile) || (config.profile != PROFILE && config.profile != PROFILE_C7) ||
+        !Str(deployment, "kind", kind) || kind != "xna") {
         error = "unsupported privacy pool profile";
         return false;
     }
@@ -197,6 +233,24 @@ bool LoadC6Config(const std::string& json, C6Config& config, std::string& error)
     if (!PoolContext(config.domain, config.assetId, 1, ctx, error) || ctx != config.context) {
         error = "privacy pool context does not match domain and asset";
         return false;
+    }
+    config.c7 = config.profile == PROFILE_C7;
+    if (config.c7) {
+        // The instance is derived, not trusted: genesis, emission and name give the domain.
+        std::string emission;
+        Bytes32 domain;
+        if (!Str(deployment, "emission", emission) || !ParseOutpoint(emission, config.emissionTxid, config.emissionVout) ||
+            !c7::PoolDomain(config.genesis, config.emissionTxid, config.emissionVout, config.identity, domain) ||
+            domain != config.domain || config.assetId != c7::XnaAssetId()) {
+            error = "C7 pool domain or asset does not derive from its genesis, emission and name";
+            return false;
+        }
+        for (const C7Pin& pin : C7Pins()) {
+            if (config.network == pin.network && config.identity == pin.identity && emission == pin.emission &&
+                Hex(config.commitment) == pin.commitment) {
+                config.pinned = true;
+            }
+        }
     }
 
     const UniValue& vks = find_value(manifest, "vks");

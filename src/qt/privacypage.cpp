@@ -564,7 +564,7 @@ void PrivacyPage::updateView()
     using State = PrivacyPoolModel::State;
     const State state = m_pool ? m_pool->state() : State::Unavailable;
     const bool busy = m_pool && m_pool->busy();
-    m_poolChip->setText(m_pool && !m_pool->poolName().isEmpty() ? tr("C6 XNA · %1 · testnet").arg(m_pool->poolName()) : QString());
+    m_poolChip->setText(m_pool ? m_pool->poolLabel() : QString());
     m_unavailableCard->setVisible(state == State::Unavailable);
     m_unavailableText->setText(m_pool ? m_pool->unavailableReason() : tr("Open a wallet first."));
     m_openCard->setVisible(state == State::Closed || state == State::Opening);

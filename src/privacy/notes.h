@@ -22,7 +22,9 @@ struct Recipient {
     Bytes32 domain{};
     Bytes32 assetId{};
     Bytes32 owner{};
-    Bytes32 viewPub{};
+    Bytes32 viewPub{}; //!< X25519 view key (C6) or pk_d (C7): the note's view field either way
+    bool v3 = false;   //!< C7 (NeuraiZK/v3) address: notes are sealed to (diversifier, pk_d)
+    std::array<uint8_t, 11> diversifier{};
 };
 
 struct Note {

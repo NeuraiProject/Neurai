@@ -36,6 +36,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 
 #include <map>
 #include <optional>
@@ -45,7 +46,6 @@ namespace privacy {
 
 namespace {
 
-const char* const CONFIG_FILE = "c6-testnet.json";
 
 bool ReadFile(const QString& path, std::vector<uint8_t>& out)
 {
@@ -58,21 +58,32 @@ bool ReadFile(const QString& path, std::vector<uint8_t>& out)
 
 /** Where the pool config and proving artifacts live: -privacypooldir, the
  *  network data directory, or next to the executable (on macOS, next to the
- *  application bundle). */
-QString FindPoolDirectory()
+ *  application bundle). A C7 pool (privacy-c7/c7-<network>.json) is preferred
+ *  to the C6 one (privacy-c6/c6-testnet.json). Returns the config file path. */
+QString FindPoolConfig(const std::string& network)
 {
-    QStringList candidates;
+    const QString c7File = QString::fromStdString("c7-" + std::string(network == CBaseChainParams::REGTEST ? "regtest" : "testnet") + ".json");
+    const QList<QPair<QString, QString>> kinds = {{"privacy-c7", c7File}, {"privacy-c6", "c6-testnet.json"}};
     const std::string arg = gArgs.GetArg("-privacypooldir", "");
-    if (!arg.empty()) candidates << QString::fromStdString(arg);
-    candidates << QString::fromStdString((GetDataDir() / "privacy-c6").string());
+    if (!arg.empty()) {
+        for (const auto& kind : kinds) {
+            const QString path = QString::fromStdString(arg) + "/" + kind.second;
+            if (QFile::exists(path)) return path;
+        }
+        return QString();
+    }
     const QString appDir = QCoreApplication::applicationDirPath();
+    for (const auto& kind : kinds) {
+        QStringList candidates;
+        candidates << QString::fromStdString((GetDataDir() / kind.first.toStdString()).string());
 #ifdef Q_OS_MACOS
-    // The executable is in Neurai-Qt.app/Contents/MacOS; look beside the bundle.
-    candidates << QDir::cleanPath(appDir + "/../../../privacy-c6");
+        // The executable is in Neurai-Qt.app/Contents/MacOS; look beside the bundle.
+        candidates << QDir::cleanPath(appDir + "/../../../" + kind.first);
 #endif
-    candidates << appDir + "/privacy-c6";
-    for (const QString& dir : candidates) {
-        if (QFile::exists(dir + "/" + CONFIG_FILE)) return dir;
+        candidates << appDir + "/" + kind.first;
+        for (const QString& dir : candidates) {
+            if (QFile::exists(dir + "/" + kind.second)) return dir + "/" + kind.second;
+        }
     }
     return QString();
 }
@@ -129,9 +140,9 @@ public:
             error = "cannot derive the private wallet (out of memory?)";
             return false;
         }
-        m_account = std::make_unique<NzkAccount>(root, family, 0, m_config.domain, m_config.assetId);
+        m_pool = OpenPoolAccount(m_config, root, family, error);
         Wipe(root, sizeof(root));
-        m_recovery = std::make_unique<C6Recovery>(*m_account);
+        if (!m_pool) return false;
         m_scanner = std::make_unique<C6ChainScanner>(m_config);
         m_reserved.clear();
         m_pending.clear();
@@ -140,14 +151,13 @@ public:
 
     void Close()
     {
-        m_recovery.reset();
-        m_account.reset();
+        m_pool.reset();
         m_scanner.reset();
         m_reserved.clear();
         m_pending.clear();
     }
 
-    bool IsOpen() const { return m_account != nullptr; }
+    bool IsOpen() const { return m_pool != nullptr; }
 
     bool Refresh(std::string& error, const std::function<bool(int, int)>& progress)
     {
@@ -156,7 +166,7 @@ public:
             return false;
         }
         if (!m_scanner->Update(error, progress)) return false;
-        m_recovery->Update(m_scanner->State().records);
+        m_pool->Update(m_scanner->State().records);
         // Settle broadcast operations: confirmed, still in the mempool, or dropped.
         for (auto it = m_pending.begin(); it != m_pending.end();) {
             const bool confirmed = m_scanner->State().transitionTxids.count(it->txid) > 0;
@@ -179,7 +189,7 @@ public:
         snapshot.poolReserve = state.reserve;
         const int eligible = m_scanner->EligibleRoot();
         const uint32_t mature = eligible >= 0 ? state.world.RootCounts()[eligible] : 0;
-        for (const C6OwnedNote& note : m_recovery->Notes()) {
+        for (const C6OwnedNote& note : m_pool->Notes()) {
             if (state.world.IsSpent(note.nf)) continue;
             PrivacyNoteRow row;
             row.index = note.index;
@@ -192,8 +202,7 @@ public:
             snapshot.notes << row;
         }
         const std::string hrp = NzkHrp(GetParams().NetworkIDString());
-        snapshot.receiveAddress = QString::fromStdString(
-            EncodeNzkAddress(m_account->RecipientAt(NZK_CHAIN_RECEIVING, m_recovery->CurrentIndex()), hrp));
+        snapshot.receiveAddress = QString::fromStdString(m_pool->ReceiveAddress(hrp));
         for (const Pending& op : m_pending) snapshot.pending << QString::fromStdString(op.txid.GetHex());
         return snapshot;
     }
@@ -207,7 +216,8 @@ public:
             return false;
         }
         C6Prepared prepared;
-        const Recipient self = m_account->RecipientAt(NZK_CHAIN_CHANGE, 0);
+        Recipient self;
+        if (!m_pool->SelfRecipient(self, error)) return false;
         if (!PrepareC6Deposit(m_config, self, amount, fee, funding, amount + fee, prepared, error) ||
             !CheckNetworkFee(prepared, &fundingScript, error)) {
             return false;
@@ -247,28 +257,24 @@ public:
                   const std::function<void(const std::string&)>& stage)
     {
         C6Spend spend;
-        NzkAddressKeys keys;
-        Bytes32 nf;
+        Bytes32 spendSecret, nf;
         C6Prepared prepared;
-        if (!SpendNote(index, spend, keys, nf, error) ||
-            !PrepareC6Withdrawal(m_config, spend, keys.spendSecret, amount, fee, Bytes(payout.begin(), payout.end()), prepared, error)) {
-            return false;
-        }
-        return ProveAndSend(prepared, nf, txid, error, stage);
+        const bool ok = SpendNote(index, spend, spendSecret, nf, error) &&
+                        PrepareC6Withdrawal(m_config, spend, spendSecret, amount, fee, Bytes(payout.begin(), payout.end()), prepared, error);
+        Wipe(spendSecret);
+        return ok && ProveAndSend(prepared, nf, txid, error, stage);
     }
 
     bool Transfer(uint32_t index, const std::vector<C6Payment>& payments, CAmount fee, std::string& txid, std::string& error,
                   const std::function<void(const std::string&)>& stage)
     {
         C6Spend spend;
-        NzkAddressKeys keys;
-        Bytes32 nf;
+        Bytes32 spendSecret, nf;
         C6Prepared prepared;
-        if (!SpendNote(index, spend, keys, nf, error) ||
-            !PrepareC6Transfer(m_config, spend, keys.spendSecret, payments, fee, prepared, error)) {
-            return false;
-        }
-        return ProveAndSend(prepared, nf, txid, error, stage);
+        const bool ok = SpendNote(index, spend, spendSecret, nf, error) &&
+                        PrepareC6Transfer(m_config, spend, spendSecret, payments, fee, prepared, error);
+        Wipe(spendSecret);
+        return ok && ProveAndSend(prepared, nf, txid, error, stage);
     }
 
 private:
@@ -278,11 +284,11 @@ private:
     };
 
     /** An owned, mature, unreserved note with its membership path and keys. */
-    bool SpendNote(uint32_t index, C6Spend& spend, NzkAddressKeys& keys, Bytes32& nf, std::string& error)
+    bool SpendNote(uint32_t index, C6Spend& spend, Bytes32& spendSecret, Bytes32& nf, std::string& error)
     {
         const C6PoolState& state = m_scanner->State();
         const C6OwnedNote* owned = nullptr;
-        for (const C6OwnedNote& note : m_recovery->Notes()) {
+        for (const C6OwnedNote& note : m_pool->Notes()) {
             if (note.index == index && !state.world.IsSpent(note.nf) && !m_reserved.count(note.nf)) owned = &note;
         }
         if (!owned) {
@@ -301,10 +307,9 @@ private:
             error = "internal error: membership root mismatch";
             return false;
         }
-        if (!m_recovery->KeysFor(*owned, keys)) {
-            error = "cannot derive the note's spending key";
-            return false;
-        }
+        Recipient changeTo;
+        if (!m_pool->SpendKeysFor(*owned, spendSecret, changeTo, error)) return false;
+        spend.changeTo = changeTo;
         nf = owned->nf;
         return true;
     }
@@ -432,8 +437,7 @@ private:
     CWallet* m_wallet;
     QString m_dir;
     C6Config m_config;
-    std::unique_ptr<NzkAccount> m_account;
-    std::unique_ptr<C6Recovery> m_recovery;
+    std::unique_ptr<PoolAccount> m_pool;
     std::unique_ptr<C6ChainScanner> m_scanner;
     std::map<std::string, Artifacts> m_artifacts;
     std::set<Bytes32> m_reserved;
@@ -452,22 +456,32 @@ PrivacyPoolModel::PrivacyPoolModel(WalletModel* walletModel, QObject* parent)
     : QObject(parent), m_walletModel(walletModel), m_cancel(std::make_shared<std::atomic<bool>>(false))
 {
     const std::string network = GetParams().NetworkIDString();
-    if (network != CBaseChainParams::TESTNET) {
+    if (network != CBaseChainParams::TESTNET && network != CBaseChainParams::REGTEST) {
         m_unavailable = tr("The privacy pool is available on testnet only.");
         return;
     }
-    const QString dir = privacy::FindPoolDirectory();
-    if (dir.isEmpty()) {
-        m_unavailable = tr("Privacy pool files not found. Copy the privacy-c6 folder (pool config and proving files) "
-                           "next to the executable or into the testnet data directory.");
+    const QString path = privacy::FindPoolConfig(network);
+    if (path.isEmpty()) {
+        m_unavailable = tr("Privacy pool files not found. Copy the privacy-c7 (or privacy-c6) folder (pool config and "
+                           "proving files) next to the executable or into the testnet data directory.");
         return;
     }
+    const QString dir = QFileInfo(path).absolutePath();
     std::vector<uint8_t> json;
     privacy::C6Config config;
     std::string error;
-    if (!privacy::ReadFile(dir + "/" + privacy::CONFIG_FILE, json) ||
-        !privacy::LoadC6Config(std::string(json.begin(), json.end()), config, error)) {
+    if (!privacy::ReadFile(path, json) || !privacy::LoadC6Config(std::string(json.begin(), json.end()), config, error)) {
         m_unavailable = tr("Invalid privacy pool config: %1").arg(QString::fromStdString(error));
+        return;
+    }
+    if (network == CBaseChainParams::REGTEST && !config.c7) {
+        m_unavailable = tr("The C6 privacy pool is available on testnet only.");
+        return;
+    }
+    // C7 instances are pinned in the code; others need an explicit TEST option.
+    if (config.c7 && !config.pinned && !gArgs.GetBoolArg("-privacypoolunpinned", false)) {
+        m_unavailable = tr("The privacy pool %1 is not pinned in this build. Start with -privacypoolunpinned to use "
+                           "it for testing.").arg(QString::fromStdString(config.identity));
         return;
     }
     if (config.genesis != privacy::Bytes32{} &&
@@ -476,6 +490,9 @@ PrivacyPoolModel::PrivacyPoolModel(WalletModel* walletModel, QObject* parent)
         return;
     }
     m_poolName = QString::fromStdString(config.identity);
+    m_poolLabel = tr("%1 XNA · %2 · %3").arg(config.c7 ? QStringLiteral("C7") : QStringLiteral("C6"), m_poolName, QString::fromStdString(config.network));
+    if (config.c7 && !config.pinned) m_poolLabel += tr(" · TEST, not pinned in this build");
+    m_c7 = config.c7;
     m_domain = config.domain;
     m_assetId = config.assetId;
     m_hrp = privacy::NzkHrp(network);
@@ -792,7 +809,7 @@ bool PrivacyPoolModel::validatePrivateAddress(const QString& address, QString& e
     privacy::Recipient recipient;
     std::string err;
     if (m_state == State::Unavailable ||
-        !privacy::DecodeNzkAddress(address.trimmed().toStdString(), m_hrp, m_domain, m_assetId, recipient, err)) {
+        !privacy::DecodePoolAddress(m_c7, address.trimmed().toStdString(), m_hrp, m_domain, m_assetId, recipient, err)) {
         error = QString::fromStdString(err);
         return false;
     }
@@ -806,7 +823,8 @@ void PrivacyPoolModel::transfer(quint32 noteIndex, const QList<QPair<QString, CA
     for (const auto& row : recipients) {
         privacy::C6Payment payment;
         std::string error;
-        if (!privacy::DecodeNzkAddress(row.first.trimmed().toStdString(), m_hrp, m_domain, m_assetId, payment.recipient, error)) {
+        if (!privacy::DecodePoolAddress(m_c7, row.first.trimmed().toStdString(), m_hrp, m_domain, m_assetId, payment.recipient,
+                                        error)) {
             Q_EMIT operationFinished(false, tr("Invalid private address: %1").arg(QString::fromStdString(error)));
             return;
         }
