@@ -3,6 +3,7 @@ Jenkinsfile
 *.tar.gz
 scripts
 contrib/nip045_wallet
+tmp/
 
 *.exe
 src/neurai
