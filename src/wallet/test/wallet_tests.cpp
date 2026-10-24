@@ -8,6 +8,7 @@
 #include "chainparams.h"
 #include "base58.h"
 #include "wallet/walletdb.h"
+#include "assets/assettypes.h"
 
 #include <set>
 #include <stdint.h>
@@ -15,6 +16,7 @@
 #include <vector>
 
 #include "consensus/validation.h"
+#include "consensus/tx_verify.h"
 #include "rpc/server.h"
 #include "test/test_neurai.h"
 #include "validation.h"
@@ -643,6 +645,97 @@ BOOST_FIXTURE_TEST_SUITE(wallet_tests, WalletTestingSetup)
         }
         BOOST_CHECK_EQUAL(loaded.GetDestValues("rr").size(), 2U);
         BOOST_CHECK(!IsStrictAuthScriptActiveInContext());
+    }
+
+    static CMutableTransaction StrictAssetWalletTransaction(int version)
+    {
+        CScript script = CScript() << CScript::EncodeOP_N(version) << std::vector<unsigned char>(32, 0x42);
+        CAssetTransfer("STRICTLOAD", COIN).ConstructTransaction(script, AssetMarker::NEURAI_XNA);
+        CMutableTransaction tx;
+        tx.vin.emplace_back(COutPoint(uint256S("01"), 0));
+        tx.vout.emplace_back(0, script);
+        return tx;
+    }
+
+    BOOST_AUTO_TEST_CASE(LoadStrictAssetTransactions_Test)
+    {
+        for (int version : {2, 3}) {
+            const std::string filename = strprintf("strict_asset_v%d.dat", version);
+            CWalletDBWrapper dbw(&bitdb, filename);
+            CWalletTx original(nullptr, MakeTransactionRef(StrictAssetWalletTransaction(version)));
+            original.nTimeReceived = 1234567890;
+            original.nTimeSmart = 1234567800;
+            original.nOrderPos = 7;
+            original.fFromMe = true;
+            original.mapValue["comment"] = "Preserve across reindex";
+            original.vOrderForm.emplace_back("memo", "strict asset payment");
+            {
+                CStrictAuthScriptContext active(true);
+                CValidationState state;
+                BOOST_REQUIRE(CheckTransaction(original, state));
+                CWalletDB db(dbw, "cr+");
+                BOOST_REQUIRE(db.WriteTx(original));
+            }
+
+            // The same record must load both normally and below activation,
+            // including an unconfirmed transaction that a rescan cannot recover.
+            for (bool active : {false, true}) {
+                CStrictAuthScriptContext context(active);
+                CWallet loaded(std::unique_ptr<CWalletDBWrapper>(new CWalletDBWrapper(&bitdb, filename)));
+                bool firstRun;
+                BOOST_REQUIRE_EQUAL(loaded.LoadWallet(firstRun), DB_LOAD_OK);
+                BOOST_CHECK_EQUAL(IsStrictAuthScriptActiveInContext(), active);
+                BOOST_REQUIRE_EQUAL(loaded.mapWallet.size(), 1U);
+                BOOST_REQUIRE_EQUAL(loaded.mapWallet.count(original.GetHash()), 1U);
+                const CWalletTx& restored = loaded.mapWallet.at(original.GetHash());
+                BOOST_CHECK_EQUAL(restored.nTimeReceived, original.nTimeReceived);
+                BOOST_CHECK_EQUAL(restored.nTimeSmart, original.nTimeSmart);
+                BOOST_CHECK_EQUAL(restored.nOrderPos, original.nOrderPos);
+                BOOST_CHECK_EQUAL(restored.fFromMe, original.fFromMe);
+                BOOST_CHECK(restored.mapValue == original.mapValue);
+                BOOST_CHECK(restored.vOrderForm == original.vOrderForm);
+
+                // Loading a wallet must not enable strict asset validation in
+                // the caller's inactive context.
+                CValidationState state;
+                BOOST_CHECK_EQUAL(CheckTransaction(restored, state), active);
+                if (!active) {
+                    BOOST_CHECK_EQUAL(state.GetRejectReason(),
+                                      "bad-txns-op-xna-asset-not-in-right-script-location");
+                }
+            }
+        }
+    }
+
+    BOOST_AUTO_TEST_CASE(LoadStrictAssetTransactionsRejectInvalid_Test)
+    {
+        struct RestoreRescan {
+            const std::string previous = gArgs.GetArg("-rescan", "0");
+            ~RestoreRescan() { gArgs.ForceSetArg("-rescan", previous); }
+        } restoreRescan;
+
+        for (int version : {2, 3}) {
+            for (const std::string failure : {"asset-value", "duplicate-input", "hash-mismatch"}) {
+                const std::string filename = strprintf("strict_asset_v%d_%s.dat", version, failure);
+                CWalletDBWrapper dbw(&bitdb, filename);
+                CMutableTransaction tx = StrictAssetWalletTransaction(version);
+                if (failure == "asset-value") tx.vout[0].nValue = 1;
+                if (failure == "duplicate-input") tx.vin.push_back(tx.vin.front());
+                const CWalletTx invalid(nullptr, MakeTransactionRef(tx));
+                const uint256 hash = failure == "hash-mismatch" ? uint256S("02") : invalid.GetHash();
+                {
+                    CDB batch(dbw, "cr+");
+                    BOOST_REQUIRE(batch.Write(std::make_pair(std::string("tx"), hash), invalid));
+                }
+
+                CStrictAuthScriptContext below(false);
+                CWallet loaded(std::unique_ptr<CWalletDBWrapper>(new CWalletDBWrapper(&bitdb, filename)));
+                bool firstRun;
+                BOOST_CHECK_EQUAL(loaded.LoadWallet(firstRun), DB_NONCRITICAL_ERROR);
+                BOOST_CHECK(loaded.mapWallet.empty());
+                BOOST_CHECK(!IsStrictAuthScriptActiveInContext());
+            }
+        }
     }
 
     BOOST_AUTO_TEST_CASE(LoadReceiveRequests_Test)
