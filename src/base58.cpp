@@ -569,6 +569,12 @@ CTxDestination DecodeDestination(const std::string& str)
         if (version != 1 && !IsStrictAuthScriptActiveInContext()) {
             return CNoDestination();
         }
+        // Generic v1 is just as unprotected on a network that has not scheduled
+        // AuthScript at all (mainnet today). Where it is scheduled, relay policy
+        // refuses v1 outputs until their activation height instead.
+        if (version == 1 && !GetParams().GetConsensus().nPQWitnessEnabled && !IsStrictAuthScriptActiveInContext()) {
+            return CNoDestination();
+        }
         std::vector<uint8_t> conv;
         std::vector<uint8_t> payload(dec.data.begin() + 1, dec.data.end());
         if (!bech32::ConvertBits<5, 8, false>(payload, conv) || conv.size() != 32) {

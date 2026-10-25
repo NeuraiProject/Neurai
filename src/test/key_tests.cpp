@@ -211,6 +211,10 @@ BOOST_FIXTURE_TEST_SUITE(key_tests, BasicTestingSetup)
         // Mainnet PQ witness-v1 addresses use HRP "nc" (bech32m). Testnet and
         // regtest = "tnc". BasicTestingSetup defaults to MAIN.
         BOOST_CHECK(encoded.rfind("nc1p", 0) == 0);
+        // Mainnet has not scheduled AuthScript, so the address only decodes
+        // where the rules apply (see strict_authscript_tests).
+        BOOST_CHECK(!IsValidDestination(DecodeDestination(encoded)));
+        CStrictAuthScriptContext active(true);
         BOOST_CHECK(DecodeDestination(encoded) == authScriptDest);
     }
 

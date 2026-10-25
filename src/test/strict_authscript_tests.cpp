@@ -1096,4 +1096,72 @@ BOOST_AUTO_TEST_CASE(wallet_never_owns_generic_v1)
     BOOST_CHECK(IsMine(keystore, GetScriptForDestination(strict)) == ISMINE_SPENDABLE);
 }
 
+// Mainnet has not scheduled AuthScript. Consensus leaves an OP_1/OP_2/OP_3 <32>
+// output spendable by anyone until its family activates, so such outputs must
+// never be relayed there (origin/main treated them as non-standard). Networks
+// that schedule AuthScript keep their height-based schedule.
+BOOST_AUTO_TEST_CASE(unscheduled_network_refuses_authscript_outputs)
+{
+    const auto mainnet = CreateChainParams(CBaseChainParams::MAIN);
+    const auto testnet = CreateChainParams(CBaseChainParams::TESTNET);
+    const Consensus::Params& mainParams = mainnet->GetConsensus();
+    const Consensus::Params& testParams = testnet->GetConsensus();
+    BOOST_REQUIRE(!mainParams.nPQWitnessEnabled);
+    BOOST_REQUIRE(testParams.nPQWitnessEnabled);
+
+    const std::vector<unsigned char> program(32, 0x42);
+    for (int version : {1, 2, 3}) {
+        const CScript native = CScript() << CScript::EncodeOP_N(version) << program;
+        CScript wrapped = native;
+        CAssetTransfer("UNSCHEDULED", COIN).ConstructTransaction(wrapped, AssetMarker::NEURAI_XNA);
+        for (int height : {0, 1, 10, 2000000, std::numeric_limits<int>::max() - 1}) {
+            BOOST_CHECK_MESSAGE(IsInactiveAuthScriptOutput(native, mainParams, height),
+                "mainnet relays a witness v" << version << " output at height " << height);
+            BOOST_CHECK_MESSAGE(IsInactiveAuthScriptOutput(wrapped, mainParams, height),
+                "mainnet relays a witness v" << version << " asset output at height " << height);
+        }
+        // Testnet: refused below block 10, relayed from it.
+        BOOST_CHECK(IsInactiveAuthScriptOutput(native, testParams, 9));
+        BOOST_CHECK(!IsInactiveAuthScriptOutput(native, testParams, 10));
+    }
+
+    // Ordinary outputs are not affected.
+    const CScript p2pkh = GetScriptForDestination(CKeyID(uint160()));
+    const CScript v0 = CScript() << OP_0 << std::vector<unsigned char>(20, 0x11);
+    for (const CScript& spk : {p2pkh, v0}) {
+        BOOST_CHECK(!IsInactiveAuthScriptOutput(spk, mainParams, 1000));
+        BOOST_CHECK(!IsInactiveAuthScriptOutput(spk, testParams, 1000));
+    }
+}
+
+// Generic v1 addresses (nc1p...) do not decode on a network that has not
+// scheduled AuthScript, so no payment can create one of those unprotected
+// outputs. Stored records decode in an active context; a network that
+// schedules AuthScript leaves v1 to the height-based relay policy above.
+BOOST_AUTO_TEST_CASE(unscheduled_network_refuses_v1_addresses)
+{
+    struct RestoreNetwork {
+        const std::string previous = GetParams().NetworkIDString();
+        ~RestoreNetwork() { SelectParams(previous); }
+    } restore;
+
+    const WitnessV1AuthScript v1(uint256S("4242424242424242424242424242424242424242424242424242424242424242"));
+
+    SelectParams(CBaseChainParams::MAIN);
+    BOOST_REQUIRE(!IsStrictAuthScriptActiveInContext());
+    const std::string mainnetAddress = EncodeDestination(v1);
+    BOOST_CHECK_EQUAL(mainnetAddress.substr(0, 4), "nc1p");
+    BOOST_CHECK(!IsValidDestination(DecodeDestination(mainnetAddress)));
+    {
+        CStrictAuthScriptContext active(true);
+        BOOST_CHECK(DecodeDestination(mainnetAddress) == CTxDestination(v1));
+    }
+
+    SelectParams(CBaseChainParams::TESTNET);
+    {
+        CStrictAuthScriptContext below(false);
+        BOOST_CHECK(DecodeDestination(EncodeDestination(v1)) == CTxDestination(v1));
+    }
+}
+
 BOOST_AUTO_TEST_SUITE_END()

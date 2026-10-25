@@ -630,8 +630,10 @@ static bool CheckInputsFromMempoolAndCache(const CTransaction& tx, CValidationSt
 
 bool IsInactiveAuthScriptOutput(const CScript& scriptPubKey, const Consensus::Params& consensus, int nHeight)
 {
-    if (!consensus.nPQWitnessEnabled)
-        return false; // the network does not schedule AuthScript: policy unchanged
+    // Before a family activates, consensus leaves its OP_1/OP_2/OP_3 <32>
+    // outputs spendable by anyone. A network that has not scheduled AuthScript
+    // (nPQWitnessEnabled false, mainnet today) has every family inactive at any
+    // height, so none of these outputs is relayed there, as on origin/main.
     const bool fV1Active = consensus.IsPQWitnessActive(nHeight);
     const bool fStrictActive = fV1Active && consensus.IsStrictAuthScriptActive(nHeight);
     if (fStrictActive)
