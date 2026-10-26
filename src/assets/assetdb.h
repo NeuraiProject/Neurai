@@ -57,6 +57,31 @@ struct CBlockAssetUndo
     }
 };
 
+/** Restriction state of a (DEPIN asset, address) before a block changed it.
+ *  Disconnecting the block restores exactly this state, whatever the order and
+ *  number of operations the block applied to the pair. */
+struct CDepinRestrictionUndo
+{
+    std::string assetName;
+    std::string address;
+    bool fOwnerFrozen;
+    bool fSelfRevoked;
+
+    CDepinRestrictionUndo() : fOwnerFrozen(false), fSelfRevoked(false) {}
+    CDepinRestrictionUndo(const std::string& assetNameIn, const std::string& addressIn, bool fOwnerFrozenIn, bool fSelfRevokedIn)
+        : assetName(assetNameIn), address(addressIn), fOwnerFrozen(fOwnerFrozenIn), fSelfRevoked(fSelfRevokedIn) {}
+
+    ADD_SERIALIZE_METHODS;
+
+    template <typename Stream, typename Operation>
+    inline void SerializationOp(Stream& s, Operation ser_action) {
+        READWRITE(assetName);
+        READWRITE(address);
+        READWRITE(fOwnerFrozen);
+        READWRITE(fSelfRevoked);
+    }
+};
+
 /** Access to the block database (blocks/index/) */
 class CAssetsDB : public CDBWrapper
 {
@@ -71,6 +96,7 @@ public:
     bool WriteAssetAddressQuantity(const std::string& assetName, const std::string& address, const CAmount& quantity);
     bool WriteAddressAssetQuantity( const std::string& address, const std::string& assetName, const CAmount& quantity);
     bool WriteBlockUndoAssetData(const uint256& blockhash, const std::vector<std::pair<std::string, CBlockAssetUndo> >& assetUndoData);
+    bool WriteBlockUndoDepinRestrictions(const uint256& blockhash, const std::vector<CDepinRestrictionUndo>& depinUndoData);
     bool WriteReissuedMempoolState();
 
     // Read from database functions
@@ -78,6 +104,8 @@ public:
     bool ReadAssetAddressQuantity(const std::string& assetName, const std::string& address, CAmount& quantity);
     bool ReadAddressAssetQuantity(const std::string& address, const std::string& assetName, CAmount& quantity);
     bool ReadBlockUndoAssetData(const uint256& blockhash, std::vector<std::pair<std::string, CBlockAssetUndo> >& assetUndoData);
+    //! False when the record is missing or cannot be deserialized
+    bool ReadBlockUndoDepinRestrictions(const uint256& blockhash, std::vector<CDepinRestrictionUndo>& depinUndoData);
     bool ReadReissuedMempoolState();
 
     // Erase from database functions

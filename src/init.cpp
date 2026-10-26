@@ -332,6 +332,9 @@ void PrepareShutdown()
         delete passetsRestrictionCache;
         passetsRestrictionCache = nullptr;
 
+        delete passetsSelfRestrictionCache;
+        passetsSelfRestrictionCache = nullptr;
+
         delete passetsGlobalRestrictionCache;
         passetsGlobalRestrictionCache = nullptr;
 
@@ -1861,6 +1864,7 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
                     delete passetsVerifierCache;
                     delete passetsQualifierCache;
                     delete passetsRestrictionCache;
+                    delete passetsSelfRestrictionCache;
                     delete passetsGlobalRestrictionCache;
                     delete passetsDepinTransferStateCache;
 
@@ -1890,6 +1894,7 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
                             MAX_CACHE_ASSETS_SIZE);
                     passetsQualifierCache = new CLRUCache<std::string, int8_t>(MAX_CACHE_ASSETS_SIZE);
                     passetsRestrictionCache = new CLRUCache<std::string, int8_t>(MAX_CACHE_ASSETS_SIZE);
+                    passetsSelfRestrictionCache = new CLRUCache<std::string, int8_t>(MAX_CACHE_ASSETS_SIZE);
                     passetsGlobalRestrictionCache = new CLRUCache<std::string, int8_t>(MAX_CACHE_ASSETS_SIZE);
                     passetsDepinTransferStateCache = new CLRUCache<std::string, int8_t>(MAX_CACHE_ASSETS_SIZE);
 
@@ -1985,6 +1990,22 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
                         destinationIndexSchemaVersion != DESTINATION_INDEX_SCHEMA_VERSION) {
                         strLoadError = _("This testnet build changes the internal address, spent, and pubkey index format for full PQ support. Rebuild the indexes using -reindex.");
                         break;
+                    }
+                }
+
+                // Blocks connected by older builds have no DEPIN restriction undo
+                // record and could not be disconnected. Rebuilding the chainstate
+                // reconnects every block; mainnet has no DEPIN assets.
+                {
+                    int depinUndoSchemaVersion = 0;
+                    if (!pblocktree->ReadIntFlag(DEPIN_RESTRICTION_UNDO_SCHEMA_FLAG, depinUndoSchemaVersion) ||
+                        depinUndoSchemaVersion != DEPIN_RESTRICTION_UNDO_SCHEMA_VERSION) {
+                        if (fReindexChainState || chainparams.NetworkIDString() == CBaseChainParams::MAIN) {
+                            pblocktree->WriteIntFlag(DEPIN_RESTRICTION_UNDO_SCHEMA_FLAG, DEPIN_RESTRICTION_UNDO_SCHEMA_VERSION);
+                        } else {
+                            strLoadError = _("This build records the DEPIN restriction state that each block changes. Rebuild the chainstate using -reindex-chainstate.");
+                            break;
+                        }
                     }
                 }
 

@@ -137,6 +137,7 @@ TestChain100Setup::TestChain100Setup() : TestingSetup(CBaseChainParams::REGTEST)
     passetsVerifierCache = new CLRUCache<std::string, CNullAssetTxVerifierString>(100);
     passetsQualifierCache = new CLRUCache<std::string, int8_t>(100);
     passetsRestrictionCache = new CLRUCache<std::string, int8_t>(100);
+    passetsSelfRestrictionCache = new CLRUCache<std::string, int8_t>(100);
     passetsGlobalRestrictionCache = new CLRUCache<std::string, int8_t>(100);
     passetsDepinTransferStateCache = new CLRUCache<std::string, int8_t>(100);
 }
@@ -226,6 +227,7 @@ TestChain100Setup::~TestChain100Setup()
 {
     delete passetsDepinTransferStateCache; passetsDepinTransferStateCache = nullptr;
     delete passetsGlobalRestrictionCache; passetsGlobalRestrictionCache = nullptr;
+    delete passetsSelfRestrictionCache; passetsSelfRestrictionCache = nullptr;
     delete passetsRestrictionCache; passetsRestrictionCache = nullptr;
     delete passetsQualifierCache; passetsQualifierCache = nullptr;
     delete passetsVerifierCache; passetsVerifierCache = nullptr;

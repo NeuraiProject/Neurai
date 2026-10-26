@@ -652,6 +652,10 @@ extern CLRUCache<std::string, int8_t> *passetsQualifierCache; // hash(address,qu
 /** Global variable that points to the asset address restriction LRU Cache (protected by cs_main) */
 extern CLRUCache<std::string, int8_t> *passetsRestrictionCache; // hash(address,qualifier_name) ->int8_t
 
+/** Global variable that points to the DEPIN self-revocation LRU Cache (protected by cs_main).
+ *  Kept apart from passetsRestrictionCache: both key on hash(asset,address). */
+extern CLRUCache<std::string, int8_t> *passetsSelfRestrictionCache;
+
 /** Global variable that points to the global asset restriction LRU Cache (protected by cs_main) */
 extern CLRUCache<std::string, int8_t> *passetsGlobalRestrictionCache;
 

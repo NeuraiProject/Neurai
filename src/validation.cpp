@@ -340,6 +340,7 @@ CDistributeSnapshotRequestDB *pDistributeSnapshotDb = nullptr;
 CLRUCache<std::string, CNullAssetTxVerifierString> *passetsVerifierCache = nullptr;
 CLRUCache<std::string, int8_t> *passetsQualifierCache = nullptr;
 CLRUCache<std::string, int8_t> *passetsRestrictionCache = nullptr;
+CLRUCache<std::string, int8_t> *passetsSelfRestrictionCache = nullptr;
 CLRUCache<std::string, int8_t> *passetsGlobalRestrictionCache = nullptr;
 CLRUCache<std::string, int8_t> *passetsDepinTransferStateCache = nullptr;
 CRestrictedDB *prestricteddb = nullptr;
@@ -2549,6 +2550,23 @@ int ApplyTxInUndo(Coin&& undo, CCoinsViewCache& view, const COutPoint& out, CAss
  *  updateSpentIndex erases the block's spent index entries. Only DisconnectTip sets it:
  *  VerifyDB works on a scratch view, and ReplayBlocks must not erase entries that the
  *  new branch already rewrote before the interrupted flush. */
+/** The (DEPIN asset, address) pairs whose restriction state a transaction
+ *  changes: owner freezes and unfreezes, and holder self-revocations. */
+static void GetDepinRestrictionPairs(const CTransaction& tx, std::set<std::pair<std::string, std::string>>& setPairs)
+{
+    for (const CTxOut& out : tx.vout) {
+        if (!out.scriptPubKey.IsNullAssetTxDataScript())
+            continue;
+        CNullAssetTxData data;
+        std::string address;
+        if (!AssetNullDataFromScript(out.scriptPubKey, data, address))
+            continue;
+        AssetType type;
+        if (IsAssetNameValid(data.asset_name, type) && type == AssetType::DEPIN)
+            setPairs.emplace(data.asset_name, address);
+    }
+}
+
 static DisconnectResult DisconnectBlock(const CBlock& block, const CBlockIndex* pindex, CCoinsViewCache& view, CAssetsCache* assetsCache = nullptr, bool ignoreAddressIndex = false, bool databaseMessaging = true, bool updateSpentIndex = false)
 {
     // Undo the block under the activation context it was connected with, so
@@ -2578,6 +2596,39 @@ static DisconnectResult DisconnectBlock(const CBlock& block, const CBlockIndex* 
         error("DisconnectBlock(): block asset undo data inconsistent");
         return DISCONNECT_FAILED;
     }
+
+    /** XNA START */
+    // DEPIN: the restriction state each changed (asset, address) had before the
+    // block, checked before anything is undone. Without a record that lists
+    // exactly the block's pairs the state cannot be rebuilt: fail rather than
+    // guess.
+    std::vector<CDepinRestrictionUndo> vDepinUndo;
+    if (assetsCache) {
+        std::set<std::pair<std::string, std::string>> setDepinPairs;
+        for (const auto& ptx : block.vtx)
+            GetDepinRestrictionPairs(*ptx, setDepinPairs);
+        if (!setDepinPairs.empty()) {
+            if (!passetsdb->ReadBlockUndoDepinRestrictions(block.GetHash(), vDepinUndo)) {
+                error("DisconnectBlock(): DEPIN restriction undo data missing or unreadable for block %s, rebuild it with -reindex-chainstate",
+                      block.GetHash().ToString());
+                return DISCONNECT_FAILED;
+            }
+            std::set<std::pair<std::string, std::string>> setUndoPairs;
+            for (const auto& undo : vDepinUndo) {
+                if (!setUndoPairs.emplace(undo.assetName, undo.address).second) {
+                    error("DisconnectBlock(): DEPIN restriction undo data of block %s lists %s %s twice",
+                          block.GetHash().ToString(), undo.assetName, undo.address);
+                    return DISCONNECT_FAILED;
+                }
+            }
+            if (setUndoPairs != setDepinPairs) {
+                error("DisconnectBlock(): DEPIN restriction undo data of block %s does not match its transactions",
+                      block.GetHash().ToString());
+                return DISCONNECT_FAILED;
+            }
+        }
+    }
+    /** XNA END */
     
     std::vector<std::pair<CAddressIndexKey, CAmount> > addressIndex;
     std::vector<std::pair<CAddressUnspentKey, CAddressUnspentValue> > addressUnspentIndex;
@@ -2859,25 +2910,10 @@ static DisconnectResult DisconnectBlock(const CBlock& block, const CBlockIndex* 
                                           __func__, data.asset_name, data.flag, address);
                                     return DISCONNECT_FAILED;
                                 }
-                            // Handle DEPIN self-restrictions
-                            } else if (type == AssetType::DEPIN) {
-                                if (TxContainsDEPINOwnerTokenTransfer(tx, data.asset_name)) {
-                                    if (!assetsCache->RemoveRestrictedAddress(data.asset_name, address, data.flag ? RestrictedType::FREEZE_ADDRESS : RestrictedType::UNFREEZE_ADDRESS)) {
-                                        error("%s : Failed to remove DEPIN owner restriction from address, Asset : %s, Flag Removing : %d, Address : %s",
-                                              __func__, data.asset_name, data.flag, address);
-                                        return DISCONNECT_FAILED;
-                                    }
-                                    if (!data.flag && !assetsCache->RemoveSelfRestriction(data.asset_name, address, false)) {
-                                        error("%s : Failed to remove DEPIN owner un-revoke state from address, Asset : %s, Address : %s",
-                                              __func__, data.asset_name, address);
-                                        return DISCONNECT_FAILED;
-                                    }
-                                } else if (!assetsCache->RemoveSelfRestriction(data.asset_name, address, true)) {
-                                    error("%s : Failed to remove DEPIN self-restriction from address, Asset : %s, Flag Removing : %d, Address : %s",
-                                          __func__, data.asset_name, data.flag, address);
-                                    return DISCONNECT_FAILED;
-                                }
                             }
+                            // DEPIN owner freezes, unfreezes and self-revocations are not
+                            // reversed one by one: the block's recorded prior state is
+                            // restored once, after this loop.
                         } else if (script.IsNullGlobalRestrictionAssetTxDataScript()) {
                             CNullAssetTxData data;
                             std::string address;
@@ -2966,6 +3002,19 @@ static DisconnectResult DisconnectBlock(const CBlock& block, const CBlockIndex* 
         }
     }
 
+
+    /** XNA START */
+    // DEPIN: restore the recorded state. Reversing each operation instead would
+    // bring back restrictions the pair never had, since an owner unfreeze
+    // clears both kinds.
+    for (const auto& undo : vDepinUndo) {
+        // An undone UNFREEZE leaves the owner freeze in place, an undone FREEZE removes it
+        assetsCache->RemoveRestrictedAddress(undo.assetName, undo.address,
+                                             undo.fOwnerFrozen ? RestrictedType::UNFREEZE_ADDRESS : RestrictedType::FREEZE_ADDRESS);
+        // An undone un-revoke leaves the self-revocation in place, an undone self-revoke removes it
+        assetsCache->RemoveSelfRestriction(undo.assetName, undo.address, !undo.fSelfRevoked);
+    }
+    /** XNA END */
 
     // move best block pointer to prevout block
     view.SetBestBlock(pindex->pprev->GetBlockHash());
@@ -3260,6 +3309,25 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
 
     CBlockUndo blockundo;
     std::vector<std::pair<std::string, CBlockAssetUndo> > vUndoAssetData;
+
+    /** XNA START */
+    // DEPIN: the restriction state of every (asset, address) this block changes,
+    // read from assetsCache before any of the block's transactions is applied to
+    // it. This is the state before the block in every caller, including
+    // VerifyDB, whose cache already holds the blocks it disconnected.
+    // DisconnectBlock restores exactly this state.
+    std::vector<CDepinRestrictionUndo> vDepinRestrictionUndo;
+    if (assetsCache) {
+        std::set<std::pair<std::string, std::string>> setDepinPairs;
+        for (const auto& ptx : block.vtx)
+            GetDepinRestrictionPairs(*ptx, setDepinPairs);
+        for (const auto& pair : setDepinPairs) {
+            vDepinRestrictionUndo.emplace_back(pair.first, pair.second,
+                                               assetsCache->CheckForAddressRestriction(pair.first, pair.second, false),
+                                               assetsCache->CheckForDEPINSelfRestriction(pair.first, pair.second, false));
+        }
+    }
+    /** XNA END */
 
     auto blockExecutionStatus = std::make_shared<ScriptExecutionStatus>();
     ScriptExecutionStatusGuard localFailureGuard(blockExecutionStatus, state);
@@ -3567,14 +3635,24 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
             pindex->nStatus |= BLOCK_HAVE_UNDO;
         }
 
-        if (vUndoAssetData.size()) {
-            if (!passetsdb->WriteBlockUndoAssetData(block.GetHash(), vUndoAssetData))
-                return AbortNode(state, "Failed to write asset undo data");
-        }
-
         pindex->RaiseValidity(BLOCK_VALID_SCRIPTS);
         setDirtyBlockIndex.insert(pindex);
     }
+
+    /** XNA START */
+    // The asset undo records live in the assets database, which
+    // -reindex-chainstate wipes while the block undo files are kept: write them
+    // on every connection, not only the first one. Their content only depends
+    // on the state before the block.
+    if (vUndoAssetData.size()) {
+        if (!passetsdb->WriteBlockUndoAssetData(block.GetHash(), vUndoAssetData))
+            return AbortNode(state, "Failed to write asset undo data");
+    }
+    if (!vDepinRestrictionUndo.empty()) {
+        if (!passetsdb->WriteBlockUndoDepinRestrictions(block.GetHash(), vDepinRestrictionUndo))
+            return AbortNode(state, "Failed to write DEPIN restriction undo data");
+    }
+    /** XNA END */
 
     if (fTxIndex)
         if (!pblocktree->WriteTxIndex(vPos))
@@ -4222,7 +4300,7 @@ bool static ConnectTip(CValidationState& state, const CChainParams& chainparams,
         int64_t nTimeAssetsStart = GetTimeMicros();
         /** XNA START */
         // Get the newly created assets, from the connectblock assetCache so we can remove the correct assets from the mempool
-        assetDataFromBlock = {assetCache.setNewAssetsToAdd, assetCache.setNewRestrictedVerifierToAdd, assetCache.setNewRestrictedAddressToAdd, assetCache.setNewRestrictedGlobalToAdd, assetCache.setNewQualifierAddressToAdd, assetCache.setNewDepinStateToAdd};
+        assetDataFromBlock = {assetCache.setNewAssetsToAdd, assetCache.setNewRestrictedVerifierToAdd, assetCache.setNewRestrictedAddressToAdd, assetCache.setNewRestrictedGlobalToAdd, assetCache.setNewQualifierAddressToAdd, assetCache.setNewDepinStateToAdd, assetCache.setNewSelfRestrictionToAdd};
 
         // Remove all tx hashes, that were marked as reissued script from the mapReissuedTx.
         // Without this check, you wouldn't be able to reissue for those assets again, as this maps block it
@@ -6647,6 +6725,9 @@ bool LoadBlockIndex(const CChainParams& chainparams, std::string* powError)
 
         pblocktree->WriteIntFlag(DESTINATION_INDEX_SCHEMA_FLAG, DESTINATION_INDEX_SCHEMA_VERSION);
         LogPrintf("%s: destination index schema version %d\n", __func__, DESTINATION_INDEX_SCHEMA_VERSION);
+
+        // Every block connected into this new index writes its DEPIN restriction undo record
+        pblocktree->WriteIntFlag(DEPIN_RESTRICTION_UNDO_SCHEMA_FLAG, DEPIN_RESTRICTION_UNDO_SCHEMA_VERSION);
 
     }
     return true;

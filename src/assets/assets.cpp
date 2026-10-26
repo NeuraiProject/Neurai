@@ -2518,14 +2518,16 @@ bool CAssetsCache::DumpCacheToDatabase()
         for (const auto& selfRestriction : setNewSelfRestrictionToAdd) {
             if (selfRestriction.isSelfRevoke) {
                 // Holder is self-revoking
-                passetsRestrictionCache->Put(selfRestriction.GetHash().GetHex(), 1);
+                if (passetsSelfRestrictionCache)
+                    passetsSelfRestrictionCache->Put(selfRestriction.GetHash().GetHex(), 1);
                 if (!prestricteddb->WriteSelfRestriction(selfRestriction.address, selfRestriction.assetName)) {
                     dirty = true;
                     message = "_Failed writing self-restriction to database";
                 }
             } else {
                 // Owner is un-revoking a self-restriction
-                passetsRestrictionCache->Erase(selfRestriction.GetHash().GetHex());
+                if (passetsSelfRestrictionCache)
+                    passetsSelfRestrictionCache->Erase(selfRestriction.GetHash().GetHex());
                 if (!prestricteddb->EraseSelfRestriction(selfRestriction.address, selfRestriction.assetName)) {
                     dirty = true;
                     message = "_Failed erasing self-restriction from database";
@@ -2541,14 +2543,16 @@ bool CAssetsCache::DumpCacheToDatabase()
         for (const auto& selfRestriction : setNewSelfRestrictionToRemove) {
             if (selfRestriction.isSelfRevoke) {
                 // Undoing a self-revoke, we need to erase it
-                passetsRestrictionCache->Erase(selfRestriction.GetHash().GetHex());
+                if (passetsSelfRestrictionCache)
+                    passetsSelfRestrictionCache->Erase(selfRestriction.GetHash().GetHex());
                 if (!prestricteddb->EraseSelfRestriction(selfRestriction.address, selfRestriction.assetName)) {
                     dirty = true;
                     message = "_Failed undoing a self-restriction from database";
                 }
             } else {
                 // Undoing an un-revoke, we need to write it back
-                passetsRestrictionCache->Put(selfRestriction.GetHash().GetHex(), 1);
+                if (passetsSelfRestrictionCache)
+                    passetsSelfRestrictionCache->Put(selfRestriction.GetHash().GetHex(), 1);
                 if (!prestricteddb->WriteSelfRestriction(selfRestriction.address, selfRestriction.assetName)) {
                     dirty = true;
                     message = "_Failed undoing an un-self-restriction to database";
@@ -5121,27 +5125,41 @@ bool CAssetsCache::CheckForDEPINRestriction(const std::string &assetName, const 
 
 bool CAssetsCache::CheckForDEPINSelfRestriction(const std::string &assetName, const std::string& address, bool fSkipTempCache)
 {
-    if (!fSkipTempCache) {
-        CAssetCacheSelfRestriction selfCache(assetName, address, true);
+    // Same lookup order as CheckForAddressRestriction: pending undo entries,
+    // then pending additions, then the LRU and the database. An undo pending a
+    // flush must win over the database, which still holds the old state.
+    CAssetCacheSelfRestriction selfCache(assetName, address, true);
 
-        auto it = setNewSelfRestrictionToAdd.find(selfCache);
-        if (it != setNewSelfRestrictionToAdd.end()) {
-            return it->isSelfRevoke;
-        }
+    auto it = setNewSelfRestrictionToRemove.find(selfCache);
+    if (!fSkipTempCache && it != setNewSelfRestrictionToRemove.end()) {
+        // Undoing an un-revoke brings the self-revocation back
+        return !it->isSelfRevoke;
     }
 
-    CAssetCacheSelfRestriction selfCacheGlobal(assetName, address, true);
-    auto itGlobal = passets->setNewSelfRestrictionToAdd.find(selfCacheGlobal);
-    if (itGlobal != passets->setNewSelfRestrictionToAdd.end()) {
-        return itGlobal->isSelfRevoke;
+    it = passets->setNewSelfRestrictionToRemove.find(selfCache);
+    if (it != passets->setNewSelfRestrictionToRemove.end()) {
+        return !it->isSelfRevoke;
+    }
+
+    it = setNewSelfRestrictionToAdd.find(selfCache);
+    if (!fSkipTempCache && it != setNewSelfRestrictionToAdd.end()) {
+        return it->isSelfRevoke;
+    }
+
+    it = passets->setNewSelfRestrictionToAdd.find(selfCache);
+    if (it != passets->setNewSelfRestrictionToAdd.end()) {
+        return it->isSelfRevoke;
+    }
+
+    // Its own LRU: owner freezes key passetsRestrictionCache on the same hash
+    if (passetsSelfRestrictionCache && passetsSelfRestrictionCache->Exists(selfCache.GetHash().GetHex())) {
+        return true;
     }
 
     if (prestricteddb) {
         if (prestricteddb->ReadSelfRestriction(address, assetName)) {
-            if (passetsRestrictionCache) {
-                CAssetCacheSelfRestriction cacheEntry(assetName, address, true);
-                passetsRestrictionCache->Put(cacheEntry.GetHash().GetHex(), 1);
-            }
+            if (passetsSelfRestrictionCache)
+                passetsSelfRestrictionCache->Put(selfCache.GetHash().GetHex(), 1);
             return true;
         }
     }

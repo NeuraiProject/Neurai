@@ -897,13 +897,19 @@ void CTxMemPool::removeForDepinStateTip(CAssetsCache* assetCache, int nSpendHeig
 
     setEntries txToRemove;
 
-    // Holder transfers are only minable while the asset is OPEN at the tip
+    // Holder transfers, re-judged against the new tip: the state may no longer
+    // be OPEN, and an undone unfreeze or self-revocation changes what an address
+    // may send. Self-revocations are valid in every state and stay.
+    CCoinsViewMemPool mempoolView(pcoinsTip, *this);
+    CCoinsViewCache assetView(&mempoolView);
     for (const auto& item : mapDepinHolderTransfers) {
-        if (assetCache->GetDepinTransferState(item.first, true) == DepinTransferState::OPEN)
-            continue;
         for (const uint256& hash : item.second) {
             indexed_transaction_set::iterator i = mapTx.find(hash);
-            if (i != mapTx.end())
+            if (i == mapTx.end() || txToRemove.count(i))
+                continue;
+            CValidationState state;
+            std::vector<std::pair<std::string, uint256>> reissues;
+            if (!Consensus::CheckTxAssets(i->GetTx(), state, assetView, assetCache, nSpendHeight, false, reissues))
                 txToRemove.insert(i);
         }
     }
@@ -1133,24 +1139,32 @@ void CTxMemPool::removeForBlock(const std::vector<CTransactionRef>& vtx, unsigne
         }
     }
 
+    // Pending DEPIN holder transfers (transfers of &X without the owner escort)
+    // of an asset the block changed, re-judged against the new tip. Only the
+    // invalid ones go: the map also holds self-revocations, valid in every
+    // state, and a transfer can survive the change.
+    const auto evictInvalidDepinHolderTransfers = [&](const std::string& assetName) {
+        auto itTransfers = mapDepinHolderTransfers.find(assetName);
+        if (itTransfers == mapDepinHolderTransfers.end())
+            return;
+        for (const uint256& hash : itTransfers->second) {
+            indexed_transaction_set::iterator i = mapTx.find(hash);
+            if (i != mapTx.end() && !setAlreadyRemoving.count(hash) && !assetsStillValid(i->GetTx())) {
+                entries.push_back(&*i);
+                trans.emplace_back(i->GetTx());
+                setAlreadyRemoving.insert(hash);
+            }
+        }
+    };
+
     // DEPIN transfer state changes connected by this block:
-    //  (a) CLOSED or SEALED evicts every pending holder transfer of the asset
-    //      (a holder transfer is only valid while the asset is OPEN);
+    //  (a) CLOSED or SEALED invalidates the pending holder transfers of the
+    //      asset (a holder transfer is only valid while the asset is OPEN);
     //  (b) any new state evicts every pending state operation of the same
     //      asset, since the transition it was built on may no longer hold.
     for (auto it : connectedBlockData.newDepinStatesToAdd) {
-        if (it.state != DepinTransferState::OPEN) {
-            if (mapDepinHolderTransfers.count(it.assetName)) {
-                for (auto hash : mapDepinHolderTransfers.at(it.assetName)) {
-                    indexed_transaction_set::iterator i = mapTx.find(hash);
-                    if (i != mapTx.end() && !setAlreadyRemoving.count(hash)) {
-                        entries.push_back(&*i);
-                        trans.emplace_back(i->GetTx());
-                        setAlreadyRemoving.insert(hash);
-                    }
-                }
-            }
-        }
+        if (it.state != DepinTransferState::OPEN)
+            evictInvalidDepinHolderTransfers(it.assetName);
 
         if (mapDepinStateChanges.count(it.assetName)) {
             for (auto hash : mapDepinStateChanges.at(it.assetName)) {
@@ -1166,6 +1180,10 @@ void CTxMemPool::removeForBlock(const std::vector<CTransactionRef>& vtx, unsigne
 
     for (auto it : connectedBlockData.newAddressRestrictionsToAdd) {
         if (it.type == RestrictedType::FREEZE_ADDRESS) {
+            // A DEPIN owner freeze invalidates the holder transfers from that address
+            if (IsAssetNameADEPIN(it.assetName))
+                evictInvalidDepinHolderTransfers(it.assetName);
+
             // Output indexing also covers transfers spending unconfirmed
             // parents, which the confirmed-input freeze index cannot see.
             if (mapAssetVerifierChanged.count(it.assetName)) {
@@ -1181,6 +1199,12 @@ void CTxMemPool::removeForBlock(const std::vector<CTransactionRef>& vtx, unsigne
                 }
             }
         }
+    }
+
+    // A confirmed self-revocation invalidates the other holder transfers from that address
+    for (const auto& it : connectedBlockData.newSelfRestrictionsToAdd) {
+        if (it.isSelfRevoke)
+            evictInvalidDepinHolderTransfers(it.assetName);
     }
     /** XNA END */
 

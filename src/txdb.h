@@ -44,6 +44,9 @@ static const int64_t nMaxBlockDBAndTxIndexCache = 1024;
 static const int64_t nMaxCoinsDBCache = 8;
 static constexpr int DESTINATION_INDEX_SCHEMA_VERSION = 1;
 static constexpr const char* DESTINATION_INDEX_SCHEMA_FLAG = "destinationindexschema";
+//! Set when every connected block has its DEPIN restriction undo record
+static constexpr int DEPIN_RESTRICTION_UNDO_SCHEMA_VERSION = 1;
+static constexpr const char* DEPIN_RESTRICTION_UNDO_SCHEMA_FLAG = "depinrestrictionundo";
 
 struct CDiskTxPos : public CDiskBlockPos
 {

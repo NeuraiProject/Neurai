@@ -122,6 +122,7 @@ BASE_SCRIPTS= [
     'feature_rawassettransactions.py',
     'feature_nip040_marker_migration.py',
     'feature_depin_transfer_state.py',
+    'feature_depin_restriction_undo.py',
     'feature_depin_messaging_permissions.py',
     'feature_depin_request_signatures.py',
     'feature_depin_membership.py',

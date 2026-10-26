@@ -897,6 +897,7 @@ struct ConnectedBlockAssetData
     std::set<CAssetCacheRestrictedGlobal> newGlobalRestrictionsToAdd;
     std::set<CAssetCacheQualifierAddress> newQualifiersToAdd;
     std::set<CAssetCacheDepinState> newDepinStatesToAdd;
+    std::set<CAssetCacheSelfRestriction> newSelfRestrictionsToAdd;
 };
 
 #endif // NEURAI_TXMEMPOOL_H

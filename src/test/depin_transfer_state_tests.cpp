@@ -46,6 +46,7 @@
 
 #include <limits>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -245,6 +246,34 @@ struct DepinStateChainSetup : public TestChain100Setup {
         Sign(mut, extra);
         return mut;
     }
+
+    // Owner freeze (flag 1) or unfreeze (flag 0) of `addr`, escorting the owner
+    // token at `ownerOut` back to ownerAddr (output 0).
+    CMutableTransaction OwnerRestriction(const COutPoint& ownerOut, int flag, const std::string& addr,
+                                         const std::map<COutPoint, CTxOut>& extra = {})
+    {
+        CMutableTransaction mut;
+        mut.vin.emplace_back(ownerOut);
+        mut.vout.emplace_back(0, OwnerTransferScript(ownerAddr));
+        mut.vout.emplace_back(0, NullDataScript(ASSET, flag, addr));
+        Sign(mut, extra);
+        return mut;
+    }
+
+    // Self-revocation by `addr`, which holds `amount` of ASSET at `assetOut`.
+    CMutableTransaction SelfRevoke(const COutPoint& assetOut, CAmount amount, const std::string& addr,
+                                   const std::map<COutPoint, CTxOut>& extra = {})
+    {
+        CMutableTransaction mut;
+        mut.vin.emplace_back(assetOut);
+        mut.vout.emplace_back(0, TransferScript(ASSET, amount, addr));
+        mut.vout.emplace_back(0, NullDataScript(ASSET, 1, addr));
+        Sign(mut, extra);
+        return mut;
+    }
+
+    bool OwnerFrozen(const std::string& addr) const { return passets->CheckForAddressRestriction(ASSET, addr); }
+    bool SelfRevoked(const std::string& addr) const { return passets->CheckForDEPINSelfRestriction(ASSET, addr); }
 
     // Consensus verdict of a transaction for the next block, against the
     // connected tip and the live asset cache.
@@ -1178,6 +1207,441 @@ BOOST_AUTO_TEST_CASE(activation_frontier_in_blocks)
     BOOST_CHECK_MESSAGE(ToMempool(StateOp(ownerOut, 1), reason, true), reason);
     BOOST_REQUIRE(Mine({StateOp(ownerOut, 1)}));
     BOOST_CHECK_EQUAL((int)State(), (int)DepinTransferState::OPEN);
+}
+
+// Regressions from an external review of DEPIN freezes and self-revocations:
+// cache-dependent verdicts, inexact undo and stale mempool entries.
+BOOST_AUTO_TEST_CASE(review_self_restriction_cache_cannot_change_owner_freeze_verdict)
+{
+    BOOST_REQUIRE(prestricteddb->WriteSelfRestriction(holderAddr, ASSET));
+    BOOST_REQUIRE(!passets->CheckForAddressRestriction(ASSET, holderAddr));
+    std::string coldError, warmError;
+    const COutPoint ownerOut = Seed(OwnerTransferScript(ownerAddr));
+    CMutableTransaction freeze;
+    freeze.vin.emplace_back(ownerOut);
+    freeze.vout.emplace_back(0, OwnerTransferScript(ownerAddr));
+    freeze.vout.emplace_back(0, NullDataScript(ASSET, 1, holderAddr));
+    Sign(freeze);
+    const bool cold = Verdict(freeze, coldError);
+    BOOST_REQUIRE(passets->CheckForDEPINSelfRestriction(ASSET, holderAddr));
+    const bool warm = Verdict(freeze, warmError);
+    BOOST_CHECK_MESSAGE(cold == warm, "cache changed consensus verdict: cold=" << cold << " warm=" << warm << " error=" << warmError);
+    BOOST_CHECK_MESSAGE(!passets->CheckForAddressRestriction(ASSET, holderAddr), "self revocation became an owner freeze through the shared LRU");
+}
+
+BOOST_AUTO_TEST_CASE(review_persisted_self_revoke_is_undone_immediately)
+{
+    const COutPoint holderOut = Seed(IssuanceScript(ASSET, COIN, holderAddr));
+    CMutableTransaction revoke;
+    revoke.vin.emplace_back(holderOut);
+    revoke.vout.emplace_back(0, TransferScript(ASSET, COIN, holderAddr));
+    revoke.vout.emplace_back(0, NullDataScript(ASSET, 1, holderAddr));
+    Sign(revoke);
+    BOOST_REQUIRE(Mine({revoke}));
+    FlushStateToDisk();
+    BOOST_REQUIRE(prestricteddb->ReadSelfRestriction(holderAddr, ASSET));
+    UndoTip();
+    mempool.clear();
+    BOOST_CHECK_MESSAGE(!passets->CheckForDEPINSelfRestriction(ASSET, holderAddr), "persisted self revocation survived its block disconnect before a disk flush");
+    FlushStateToDisk();
+    BOOST_CHECK(!passets->CheckForDEPINSelfRestriction(ASSET, holderAddr));
+}
+
+BOOST_AUTO_TEST_CASE(review_undo_unfreeze_preserves_owner_only_restriction)
+{
+    COutPoint ownerOut = Seed(OwnerTransferScript(ownerAddr));
+    CMutableTransaction freeze;
+    freeze.vin.emplace_back(ownerOut);
+    freeze.vout.emplace_back(0, OwnerTransferScript(ownerAddr));
+    freeze.vout.emplace_back(0, NullDataScript(ASSET, 1, holderAddr));
+    Sign(freeze);
+    BOOST_REQUIRE(Mine({freeze}));
+    ownerOut = COutPoint(freeze.GetHash(), 0);
+    FlushStateToDisk();
+    BOOST_REQUIRE(prestricteddb->ReadRestrictedAddress(holderAddr, ASSET));
+    BOOST_REQUIRE(!prestricteddb->ReadSelfRestriction(holderAddr, ASSET));
+    CMutableTransaction unfreeze;
+    unfreeze.vin.emplace_back(ownerOut);
+    unfreeze.vout.emplace_back(0, OwnerTransferScript(ownerAddr));
+    unfreeze.vout.emplace_back(0, NullDataScript(ASSET, 0, holderAddr));
+    Sign(unfreeze);
+    BOOST_REQUIRE(Mine({unfreeze}));
+    FlushStateToDisk();
+    BOOST_REQUIRE(!passets->CheckForDEPINRestriction(ASSET, holderAddr));
+    UndoTip();
+    mempool.clear();
+    FlushStateToDisk();
+    BOOST_CHECK(prestricteddb->ReadRestrictedAddress(holderAddr, ASSET));
+    BOOST_CHECK_MESSAGE(!prestricteddb->ReadSelfRestriction(holderAddr, ASSET), "undo of an owner-only unfreeze invented a self revocation");
+    UndoTip();
+    mempool.clear();
+    FlushStateToDisk();
+    BOOST_CHECK_MESSAGE(!passets->CheckForDEPINRestriction(ASSET, holderAddr), "address is still blocked after undoing both freeze and unfreeze");
+}
+
+BOOST_AUTO_TEST_CASE(review_undo_unfreeze_preserves_self_only_restriction)
+{
+    const COutPoint ownerOut = Seed(OwnerTransferScript(ownerAddr));
+    const COutPoint holderOut = Seed(IssuanceScript(ASSET, COIN, holderAddr));
+    CMutableTransaction revoke;
+    revoke.vin.emplace_back(holderOut);
+    revoke.vout.emplace_back(0, TransferScript(ASSET, COIN, holderAddr));
+    revoke.vout.emplace_back(0, NullDataScript(ASSET, 1, holderAddr));
+    Sign(revoke);
+    BOOST_REQUIRE(Mine({revoke}));
+    FlushStateToDisk();
+    BOOST_REQUIRE(!prestricteddb->ReadRestrictedAddress(holderAddr, ASSET));
+    BOOST_REQUIRE(prestricteddb->ReadSelfRestriction(holderAddr, ASSET));
+    CMutableTransaction unfreeze;
+    unfreeze.vin.emplace_back(ownerOut);
+    unfreeze.vout.emplace_back(0, OwnerTransferScript(ownerAddr));
+    unfreeze.vout.emplace_back(0, NullDataScript(ASSET, 0, holderAddr));
+    Sign(unfreeze);
+    BOOST_REQUIRE(Mine({unfreeze}));
+    FlushStateToDisk();
+    BOOST_REQUIRE(!passets->CheckForDEPINRestriction(ASSET, holderAddr));
+    UndoTip();
+    mempool.clear();
+    FlushStateToDisk();
+    BOOST_CHECK_MESSAGE(!prestricteddb->ReadRestrictedAddress(holderAddr, ASSET), "undo of a self-only unfreeze invented an owner freeze");
+    BOOST_CHECK(prestricteddb->ReadSelfRestriction(holderAddr, ASSET));
+}
+
+BOOST_AUTO_TEST_CASE(review_freeze_evicts_pending_open_holder_transfer)
+{
+    // Observe the stale entry rather than aborting in the fixture's sanity check.
+    mempool.setSanityCheck(0.0);
+    COutPoint ownerOut = Seed(OwnerTransferScript(ownerAddr));
+    const COutPoint holderOut = Seed(IssuanceScript(ASSET, COIN, holderAddr));
+    const CMutableTransaction open = StateOp(ownerOut, 1);
+    BOOST_REQUIRE(Mine({open}));
+    ownerOut = COutPoint(open.GetHash(), 0);
+    const CMutableTransaction move = HolderTransfer(holderOut, COIN, recipientAddr);
+    std::string reason;
+    BOOST_REQUIRE_MESSAGE(ToMempool(move, reason), reason);
+    BOOST_REQUIRE(mempool.exists(move.GetHash()));
+    CMutableTransaction freeze;
+    freeze.vin.emplace_back(ownerOut);
+    freeze.vout.emplace_back(0, OwnerTransferScript(ownerAddr));
+    freeze.vout.emplace_back(0, NullDataScript(ASSET, 1, holderAddr));
+    Sign(freeze);
+    BOOST_REQUIRE(Mine({freeze}));
+    BOOST_REQUIRE(passets->CheckForDEPINRestriction(ASSET, holderAddr));
+    BOOST_CHECK_MESSAGE(!mempool.exists(move.GetHash()), "confirmed freeze left a now-invalid holder transfer in the mempool");
+}
+
+// Two operations on one address inside a block keep the result they have
+// always had, and undoing the block restores the state before it exactly.
+BOOST_AUTO_TEST_CASE(same_block_successive_restrictions_undo_exactly)
+{
+    std::string reason;
+    const COutPoint ownerOut = Seed(OwnerTransferScript(ownerAddr));
+    BOOST_REQUIRE(Mine({SelfRevoke(Seed(IssuanceScript(ASSET, COIN, holderAddr)), COIN, holderAddr)}));
+    BOOST_REQUIRE(SelfRevoked(holderAddr) && !OwnerFrozen(holderAddr));
+
+    // Both are judged against the tip: the freeze because the owner has not
+    // frozen the address, the unfreeze because the address is self-revoked
+    const CMutableTransaction freeze = OwnerRestriction(ownerOut, 1, holderAddr);
+    const COutPoint freezeOwnerOut(freeze.GetHash(), 0);
+    const CMutableTransaction unfreeze = OwnerRestriction(freezeOwnerOut, 0, holderAddr, {{freezeOwnerOut, freeze.vout[0]}});
+    BOOST_REQUIRE_MESSAGE(BlockVerdict({freeze, unfreeze}, reason), reason);
+    BOOST_REQUIRE(Mine({freeze, unfreeze}));
+    // The unfreeze, applied last, clears both kinds
+    BOOST_CHECK(!OwnerFrozen(holderAddr));
+    BOOST_CHECK(!SelfRevoked(holderAddr));
+
+    UndoTip();
+    mempool.clear();
+    BOOST_CHECK(!OwnerFrozen(holderAddr));
+    BOOST_CHECK(SelfRevoked(holderAddr));
+    FlushStateToDisk();
+    BOOST_CHECK(!prestricteddb->ReadRestrictedAddress(holderAddr, ASSET));
+    BOOST_CHECK(prestricteddb->ReadSelfRestriction(holderAddr, ASSET));
+}
+
+// A self-revoked address frozen and unfrozen in one block, in both orders: the
+// result follows the order, the undo restores the self-revocation only.
+BOOST_AUTO_TEST_CASE(same_block_order_and_exact_undo)
+{
+    std::string reason;
+    const COutPoint ownerOut = Seed(OwnerTransferScript(ownerAddr));
+    BOOST_REQUIRE(Mine({SelfRevoke(Seed(IssuanceScript(ASSET, COIN, holderAddr)), COIN, holderAddr)}));
+    BOOST_REQUIRE(SelfRevoked(holderAddr) && !OwnerFrozen(holderAddr));
+
+    // Unfreeze first: it clears the self-revocation, then the freeze stays
+    const CMutableTransaction unfreeze = OwnerRestriction(ownerOut, 0, holderAddr);
+    const COutPoint unfreezeOwnerOut(unfreeze.GetHash(), 0);
+    const CMutableTransaction freeze = OwnerRestriction(unfreezeOwnerOut, 1, holderAddr, {{unfreezeOwnerOut, unfreeze.vout[0]}});
+    BOOST_REQUIRE_MESSAGE(BlockVerdict({unfreeze, freeze}, reason), reason);
+    BOOST_REQUIRE(Mine({unfreeze, freeze}));
+    BOOST_CHECK(OwnerFrozen(holderAddr));
+    BOOST_CHECK(!SelfRevoked(holderAddr));
+    UndoTip();
+    mempool.clear();
+    BOOST_CHECK(!OwnerFrozen(holderAddr));
+    BOOST_CHECK(SelfRevoked(holderAddr));
+
+    // Freeze first: the unfreeze, applied last, clears both
+    const CMutableTransaction freeze2 = OwnerRestriction(ownerOut, 1, holderAddr);
+    const COutPoint freezeOwnerOut(freeze2.GetHash(), 0);
+    const CMutableTransaction unfreeze2 = OwnerRestriction(freezeOwnerOut, 0, holderAddr, {{freezeOwnerOut, freeze2.vout[0]}});
+    BOOST_REQUIRE(Mine({freeze2, unfreeze2}));
+    BOOST_CHECK(!OwnerFrozen(holderAddr));
+    BOOST_CHECK(!SelfRevoked(holderAddr));
+    UndoTip();
+    mempool.clear();
+    BOOST_CHECK(!OwnerFrozen(holderAddr));
+    BOOST_CHECK(SelfRevoked(holderAddr));
+}
+
+// Frozen and self-revoked: the unfreeze clears both, its undo brings both back.
+BOOST_AUTO_TEST_CASE(undo_unfreeze_restores_both_restrictions)
+{
+    const CMutableTransaction freeze = OwnerRestriction(Seed(OwnerTransferScript(ownerAddr)), 1, holderAddr);
+    BOOST_REQUIRE(Mine({freeze, SelfRevoke(Seed(IssuanceScript(ASSET, COIN, holderAddr)), COIN, holderAddr)}));
+    FlushStateToDisk();
+    BOOST_REQUIRE(OwnerFrozen(holderAddr) && SelfRevoked(holderAddr));
+
+    BOOST_REQUIRE(Mine({OwnerRestriction(COutPoint(freeze.GetHash(), 0), 0, holderAddr)}));
+    BOOST_CHECK(!OwnerFrozen(holderAddr));
+    BOOST_CHECK(!SelfRevoked(holderAddr));
+    UndoTip();
+    mempool.clear();
+    BOOST_CHECK(OwnerFrozen(holderAddr));
+    BOOST_CHECK(SelfRevoked(holderAddr));
+    FlushStateToDisk();
+    BOOST_CHECK(prestricteddb->ReadRestrictedAddress(holderAddr, ASSET));
+    BOOST_CHECK(prestricteddb->ReadSelfRestriction(holderAddr, ASSET));
+}
+
+// The record lists exactly the pairs the block changes, each once.
+BOOST_AUTO_TEST_CASE(several_addresses_in_one_block_undo_exactly)
+{
+    const CMutableTransaction freeze = OwnerRestriction(Seed(OwnerTransferScript(ownerAddr)), 1, holderAddr);
+    const CMutableTransaction revoke = SelfRevoke(Seed(IssuanceScript(ASSET, COIN, holder2Addr)), COIN, holder2Addr);
+    BOOST_REQUIRE(Mine({freeze, revoke}));
+    BOOST_CHECK(OwnerFrozen(holderAddr) && !SelfRevoked(holderAddr));
+    BOOST_CHECK(!OwnerFrozen(holder2Addr) && SelfRevoked(holder2Addr));
+
+    std::vector<CDepinRestrictionUndo> undo;
+    BOOST_REQUIRE(passetsdb->ReadBlockUndoDepinRestrictions(chainActive.Tip()->GetBlockHash(), undo));
+    std::set<std::string> addresses;
+    for (const auto& item : undo) {
+        BOOST_CHECK_EQUAL(item.assetName, ASSET);
+        BOOST_CHECK(!item.fOwnerFrozen && !item.fSelfRevoked);
+        addresses.insert(item.address);
+    }
+    BOOST_CHECK_EQUAL(undo.size(), 2U);
+    BOOST_CHECK(addresses == std::set<std::string>({holderAddr, holder2Addr}));
+
+    UndoTip();
+    mempool.clear();
+    for (const std::string& addr : {holderAddr, holder2Addr}) {
+        BOOST_CHECK(!OwnerFrozen(addr));
+        BOOST_CHECK(!SelfRevoked(addr));
+    }
+}
+
+// Without a record that lists exactly the block's pairs the block is not
+// disconnected, and nothing is restored by default.
+BOOST_AUTO_TEST_CASE(missing_or_corrupt_restriction_undo_refuses_disconnect)
+{
+    BOOST_REQUIRE(Mine({OwnerRestriction(Seed(OwnerTransferScript(ownerAddr)), 1, holderAddr)}));
+    const uint256 hash = chainActive.Tip()->GetBlockHash();
+    // Key of BLOCK_DEPIN_RESTRICTION_UNDO_DATA in assetdb.cpp
+    const auto key = std::make_pair('D', hash);
+    std::vector<CDepinRestrictionUndo> good;
+    BOOST_REQUIRE(passetsdb->ReadBlockUndoDepinRestrictions(hash, good));
+    BOOST_REQUIRE_EQUAL(good.size(), 1U);
+
+    auto disconnectRefused = [&]() {
+        CValidationState state;
+        bool ok;
+        {
+            LOCK(cs_main);
+            ok = InvalidateBlock(state, GetParams(), chainActive.Tip());
+        }
+        return !ok && chainActive.Tip()->GetBlockHash() == hash && OwnerFrozen(holderAddr);
+    };
+
+    BOOST_REQUIRE(passetsdb->Erase(key));
+    BOOST_CHECK_MESSAGE(disconnectRefused(), "missing record");
+
+    BOOST_REQUIRE(passetsdb->Write(key, std::string("not a restriction undo record")));
+    BOOST_CHECK_MESSAGE(disconnectRefused(), "unreadable record");
+
+    BOOST_REQUIRE(passetsdb->WriteBlockUndoDepinRestrictions(hash, {}));
+    BOOST_CHECK_MESSAGE(disconnectRefused(), "record without the block's pair");
+
+    BOOST_REQUIRE(passetsdb->WriteBlockUndoDepinRestrictions(hash, {good[0], good[0]}));
+    BOOST_CHECK_MESSAGE(disconnectRefused(), "record listing the pair twice");
+
+    BOOST_REQUIRE(passetsdb->WriteBlockUndoDepinRestrictions(hash, good));
+    UndoTip();
+    mempool.clear();
+    BOOST_CHECK(!OwnerFrozen(holderAddr));
+}
+
+// The record is written on every real connection, so a rebuilt chainstate gets
+// it back; a TestBlockValidity check computes it without writing it.
+BOOST_AUTO_TEST_CASE(restriction_undo_written_on_every_connection)
+{
+    const CMutableTransaction freeze = OwnerRestriction(Seed(OwnerTransferScript(ownerAddr)), 1, holderAddr);
+    std::vector<CDepinRestrictionUndo> undo;
+
+    const CBlock checked = BuildBlock({freeze});
+    {
+        CValidationState state;
+        LOCK(cs_main);
+        BOOST_REQUIRE(TestBlockValidity(state, GetParams(), checked, chainActive.Tip(), false, true));
+    }
+    BOOST_CHECK(!passetsdb->ReadBlockUndoDepinRestrictions(checked.GetHash(), undo));
+
+    BOOST_REQUIRE(Mine({freeze}));
+    CBlockIndex* pindex = chainActive.Tip();
+    UndoTip();
+    mempool.clear();
+    // As -reindex-chainstate does, wipe the record while the block undo stays
+    BOOST_REQUIRE(passetsdb->Erase(std::make_pair('D', pindex->GetBlockHash())));
+    {
+        LOCK(cs_main);
+        ResetBlockFailureFlags(pindex);
+    }
+    CValidationState state;
+    BOOST_REQUIRE(ActivateBestChain(state, GetParams()));
+    BOOST_REQUIRE(chainActive.Tip() == pindex);
+    BOOST_CHECK(passetsdb->ReadBlockUndoDepinRestrictions(pindex->GetBlockHash(), undo));
+    BOOST_CHECK(OwnerFrozen(holderAddr));
+    UndoTip();
+    mempool.clear();
+    BOOST_CHECK(!OwnerFrozen(holderAddr));
+}
+
+// Undo entries pending a flush, across several disconnected blocks.
+BOOST_AUTO_TEST_CASE(several_disconnects_before_a_flush)
+{
+    const COutPoint ownerOut = Seed(OwnerTransferScript(ownerAddr));
+    BOOST_REQUIRE(Mine({SelfRevoke(Seed(IssuanceScript(ASSET, COIN, holderAddr)), COIN, holderAddr)}));
+    FlushStateToDisk();
+    const CMutableTransaction unfreeze = OwnerRestriction(ownerOut, 0, holderAddr);
+    BOOST_REQUIRE(Mine({unfreeze}));
+    BOOST_REQUIRE(Mine({OwnerRestriction(COutPoint(unfreeze.GetHash(), 0), 1, holderAddr)}));
+    BOOST_REQUIRE(OwnerFrozen(holderAddr) && !SelfRevoked(holderAddr));
+
+    UndoTip();
+    UndoTip();
+    mempool.clear();
+    BOOST_CHECK(!OwnerFrozen(holderAddr));
+    BOOST_CHECK(SelfRevoked(holderAddr));
+    UndoTip();
+    mempool.clear();
+    BOOST_CHECK(!SelfRevoked(holderAddr));
+    FlushStateToDisk();
+    BOOST_CHECK(!prestricteddb->ReadSelfRestriction(holderAddr, ASSET));
+    BOOST_CHECK(!prestricteddb->ReadRestrictedAddress(holderAddr, ASSET));
+}
+
+// The unfreeze counterpart of the first review regression.
+BOOST_AUTO_TEST_CASE(self_restriction_cache_cannot_change_owner_unfreeze_verdict)
+{
+    BOOST_REQUIRE(prestricteddb->WriteSelfRestriction(holderAddr, ASSET));
+    const CMutableTransaction unfreeze = OwnerRestriction(Seed(OwnerTransferScript(ownerAddr)), 0, holderAddr);
+    std::string coldError, warmError;
+    const bool cold = Verdict(unfreeze, coldError);
+    BOOST_REQUIRE(passets->CheckForDEPINSelfRestriction(ASSET, holderAddr));
+    const bool warm = Verdict(unfreeze, warmError);
+    BOOST_CHECK_MESSAGE(cold && warm, "cold=" << cold << " " << coldError << " warm=" << warm << " " << warmError);
+    BOOST_CHECK(!passets->CheckForAddressRestriction(ASSET, holderAddr));
+}
+
+// A confirmed freeze evicts a holder transfer whose input comes from an
+// unconfirmed parent, and keeps the parent, which is still valid.
+BOOST_AUTO_TEST_CASE(freeze_evicts_transfer_with_unconfirmed_parent)
+{
+    std::string reason;
+    const COutPoint holderOut = Seed(IssuanceScript(ASSET, COIN, holderAddr));
+    const CMutableTransaction open = StateOp(Seed(OwnerTransferScript(ownerAddr)), 1);
+    BOOST_REQUIRE(Mine({open}));
+
+    const CMutableTransaction parent = HolderTransfer(holderOut, COIN, holder2Addr);
+    BOOST_REQUIRE_MESSAGE(ToMempool(parent, reason), reason);
+    const COutPoint parentOut(parent.GetHash(), 0);
+    const CMutableTransaction child = HolderTransfer(parentOut, COIN, recipientAddr, {{parentOut, parent.vout[0]}});
+    BOOST_REQUIRE_MESSAGE(ToMempool(child, reason), reason);
+
+    BOOST_REQUIRE(Mine({OwnerRestriction(COutPoint(open.GetHash(), 0), 1, holder2Addr)}));
+    BOOST_REQUIRE(OwnerFrozen(holder2Addr));
+    BOOST_CHECK(mempool.exists(parent.GetHash()));
+    BOOST_CHECK(!mempool.exists(child.GetHash()));
+}
+
+// The owner may still move the asset from an address it froze: a confirmed
+// freeze keeps such an escorted transfer in the mempool.
+BOOST_AUTO_TEST_CASE(freeze_keeps_escorted_transfer)
+{
+    std::string reason;
+    const COutPoint holderOut = Seed(IssuanceScript(ASSET, COIN, holderAddr));
+    const CMutableTransaction freeze = OwnerRestriction(Seed(OwnerTransferScript(ownerAddr)), 1, holderAddr);
+    BOOST_REQUIRE_MESSAGE(ToMempool(freeze, reason), reason);
+
+    const COutPoint freezeOwnerOut(freeze.GetHash(), 0);
+    CMutableTransaction escorted;
+    escorted.vin.emplace_back(freezeOwnerOut);
+    escorted.vin.emplace_back(holderOut);
+    escorted.vout.emplace_back(0, OwnerTransferScript(ownerAddr));
+    escorted.vout.emplace_back(0, TransferScript(ASSET, COIN, recipientAddr));
+    Sign(escorted, {{freezeOwnerOut, freeze.vout[0]}});
+    BOOST_REQUIRE_MESSAGE(ToMempool(escorted, reason), reason);
+
+    BOOST_REQUIRE(Mine({freeze}));
+    BOOST_REQUIRE(OwnerFrozen(holderAddr));
+    BOOST_CHECK(mempool.exists(escorted.GetHash()));
+    BOOST_CHECK_MESSAGE(Verdict(escorted, reason), reason);
+}
+
+// Self-revocations are valid in every state: neither a reorg with the asset
+// CLOSED nor a confirmed CLOSE or SEAL evicts a pending one.
+BOOST_AUTO_TEST_CASE(state_changes_and_reorgs_keep_pending_self_revocation)
+{
+    std::string reason;
+    COutPoint ownerOut = Seed(OwnerTransferScript(ownerAddr));
+    const CMutableTransaction revoke = SelfRevoke(Seed(IssuanceScript(ASSET, COIN, holderAddr)), COIN, holderAddr);
+    BOOST_REQUIRE_MESSAGE(ToMempool(revoke, reason), reason);
+    BOOST_REQUIRE_EQUAL(HolderTransfersTracked(), 1U);
+
+    BOOST_REQUIRE(Mine({}));
+    UndoTip();
+    BOOST_CHECK(mempool.exists(revoke.GetHash()));
+
+    const CMutableTransaction open = StateOp(ownerOut, 1);
+    BOOST_REQUIRE(Mine({open}));
+    const CMutableTransaction close = StateOp(COutPoint(open.GetHash(), 0), 0);
+    BOOST_REQUIRE(Mine({close}));
+    BOOST_CHECK(mempool.exists(revoke.GetHash()));
+
+    BOOST_REQUIRE(Mine({StateOp(COutPoint(close.GetHash(), 0), 2)}));
+    BOOST_REQUIRE_EQUAL((int)State(), (int)DepinTransferState::SEALED);
+    BOOST_CHECK(mempool.exists(revoke.GetHash()));
+}
+
+// Undoing an unfreeze freezes the address again: the reorg evicts the holder
+// transfers that became invalid.
+BOOST_AUTO_TEST_CASE(reorg_undoing_unfreeze_evicts_holder_transfer)
+{
+    std::string reason;
+    const COutPoint holderOut = Seed(IssuanceScript(ASSET, COIN, holderAddr));
+    const CMutableTransaction open = StateOp(Seed(OwnerTransferScript(ownerAddr)), 1);
+    BOOST_REQUIRE(Mine({open}));
+    const CMutableTransaction freeze = OwnerRestriction(COutPoint(open.GetHash(), 0), 1, holderAddr);
+    BOOST_REQUIRE(Mine({freeze}));
+    BOOST_REQUIRE(Mine({OwnerRestriction(COutPoint(freeze.GetHash(), 0), 0, holderAddr)}));
+    BOOST_REQUIRE(!OwnerFrozen(holderAddr));
+
+    const CMutableTransaction move = HolderTransfer(holderOut, COIN, recipientAddr);
+    BOOST_REQUIRE_MESSAGE(ToMempool(move, reason), reason);
+    UndoTip();
+    BOOST_CHECK(OwnerFrozen(holderAddr));
+    BOOST_CHECK(!mempool.exists(move.GetHash()));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

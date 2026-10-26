@@ -21,6 +21,7 @@ static const char ASSET_ADDRESS_QUANTITY_FLAG = 'B';
 static const char ADDRESS_ASSET_QUANTITY_FLAG = 'C';
 static const char MY_ASSET_FLAG = 'M';
 static const char BLOCK_ASSET_UNDO_DATA = 'U';
+static const char BLOCK_DEPIN_RESTRICTION_UNDO_DATA = 'D';
 static const char MEMPOOL_REISSUED_TX = 'Z';
 
 static size_t MAX_DATABASE_RESULTS = 50000;
@@ -122,6 +123,18 @@ bool CAssetsDB::ReadBlockUndoAssetData(const uint256 &blockhash, std::vector<std
 
     // If it doesn't exist, we just return true because we don't want to fail just because it didn't exist in the db
     return true;
+}
+
+bool CAssetsDB::WriteBlockUndoDepinRestrictions(const uint256& blockhash, const std::vector<CDepinRestrictionUndo>& depinUndoData)
+{
+    return Write(std::make_pair(BLOCK_DEPIN_RESTRICTION_UNDO_DATA, blockhash), depinUndoData);
+}
+
+bool CAssetsDB::ReadBlockUndoDepinRestrictions(const uint256& blockhash, std::vector<CDepinRestrictionUndo>& depinUndoData)
+{
+    // Unlike the asset undo data, a missing record is an error for the caller:
+    // the block's restriction changes cannot be undone without it.
+    return Read(std::make_pair(BLOCK_DEPIN_RESTRICTION_UNDO_DATA, blockhash), depinUndoData);
 }
 
 bool CAssetsDB::WriteReissuedMempoolState()

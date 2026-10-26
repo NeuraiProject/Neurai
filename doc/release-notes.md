@@ -114,6 +114,10 @@ tags):
 - Generic AuthScript (witness v1) addresses are encoded as `nc1p…` /
   `tnc1p…`; the former `nq1p…` / `tnq1p…` strings are rejected.
 - `-pqwallet` is refused at startup; use `-addresstype=pq` for a new wallet.
+- Restart testnet and regtest nodes once with `-reindex-chainstate` (or
+  `-reindex`). Blocks connected by earlier builds have no DEPIN restriction
+  undo record, and the node refuses to start until it rebuilds them. Mainnet
+  nodes need no action.
 
 Downgrading warning
 -------------------
@@ -338,12 +342,26 @@ regtest only**.
 
 **Assets.** A DEPIN asset (`&NAME`, sections `&NAME/SUB`, owner tokens
 `&NAME!`) is soulbound: only the owner can move it, freeze or unfreeze a
-holder (`freezedepin`, `unfreezedepin`), and a holder can only burn its own
-holding (`selfrevokedepin`). From the DEPIN transfer state height the owner
+holder (`freezedepin`, `unfreezedepin`), and a holder can revoke its own
+holding (`selfrevokedepin`), which stays at the address but is no longer
+valid. From the DEPIN transfer state height the owner
 can open transfers (`opendepin`), close them again (`closedepin`) or seal the
 asset irreversibly (`sealdepin`); `createrawtransaction` accepts the matching
 `open_depin`, `close_depin` and `seal_depin` outputs. Queries:
 `checkdepinvalidity`, `listdepinholders`, `listdepinaddresses`.
+
+Freezes and self-revocations are consistent across nodes and
+reorganizations:
+
+- The self-revocation lookup has its own cache. It used to share the
+  owner-freeze cache key, so the contents of a node's cache could change
+  whether a freeze was valid.
+- It also sees undo entries that are still pending a flush.
+- Undoing a block restores exactly the restriction state the block changed,
+  from a record written whenever the block is connected.
+- A confirmed freeze, self-revocation or close evicts only the pending holder
+  transfers it makes invalid; self-revocations and transfers escorted by the
+  owner token stay in the mempool.
 
 **Messaging.** An off-chain, encrypted and expiring message pool for the
 holders of one token subtree (`-depinmsgtoken`), served over the node's

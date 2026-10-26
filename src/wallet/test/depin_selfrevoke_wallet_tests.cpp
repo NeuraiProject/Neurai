@@ -58,6 +58,7 @@ struct DepinSelfRevokeWalletSetup : private ScopedTestBlockNetwork, public Testi
         passetsCache = new CLRUCache<std::string, CDatabasedAssetData>(MAX_CACHE_ASSETS_SIZE);
         prestricteddb = new CRestrictedDB(1 << 20, true, true);
         passetsRestrictionCache = new CLRUCache<std::string, int8_t>(MAX_CACHE_ASSETS_SIZE);
+        passetsSelfRestrictionCache = new CLRUCache<std::string, int8_t>(MAX_CACHE_ASSETS_SIZE);
         passetsGlobalRestrictionCache = new CLRUCache<std::string, int8_t>(MAX_CACHE_ASSETS_SIZE);
 
         coinbaseKey.MakeNewKey(true);
@@ -90,6 +91,8 @@ struct DepinSelfRevokeWalletSetup : private ScopedTestBlockNetwork, public Testi
         passetsGlobalRestrictionCache = nullptr;
         delete passetsRestrictionCache;
         passetsRestrictionCache = nullptr;
+        delete passetsSelfRestrictionCache;
+        passetsSelfRestrictionCache = nullptr;
         delete prestricteddb;
         prestricteddb = nullptr;
         delete passetsCache;
