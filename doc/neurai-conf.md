@@ -2,7 +2,7 @@
 
 The configuration file is used by `neuraid`, `neurai-qt` and `neurai-cli`.
 
-All command-line options (except for `-?`, `-help`, `-version` and `-conf`) may be specified in a configuration file, and all configuration file options (except for `includeconf`) may also be specified on the command line. Command-line options override values set in the configuration file and configuration file options override values set in the GUI.
+All command-line options (except for `-?`, `-help`, `-version` and `-conf`) may be specified in a configuration file, and all configuration file options may also be specified on the command line. Command-line options override values set in the configuration file.
 
 ## Configuration File Format
 
@@ -26,29 +26,17 @@ Comments may appear in two ways:
 
 ### Network specific options
 
-Network specific options can be:
-- prefixed with a chain name; e.g., `regtest.maxmempool=100`.
-
-Network specific options take precedence over non-network specific options.
-If multiple values for the same option are found with the same precedence, the
-first one is generally chosen.
-
-This means that given the following configuration, `regtest.rpcport` is set to `3000`:
-
-```
-regtest=1
-rpcport=2000
-regtest.rpcport=3000
-
-[regtest]
-rpcport=4000
-```
+Network-specific options are **not** supported: there is no `regtest.` /
+`test.` prefix and no `[regtest]` / `[test]` section. Such lines are read as
+unknown options and ignored. Every option in the file applies to whichever
+network is selected, so use a separate data directory (`-datadir`) or
+configuration file (`-conf`) per network. Note that testnet and regtest
+already store their data in the `testnet` and `regtest` subdirectories, but
+they read the same `neurai.conf` from the base data directory.
 
 ## Configuration File Path
 
 The configuration file is not automatically created; you can create it using your favorite text editor. By default, the configuration file name is `neurai.conf` and it is located in the Neurai data directory, but both the Neurai data directory and the configuration file path may be changed using the `-datadir` and `-conf` command-line options.
-
-The `includeconf=<file>` option in the `neurai.conf` file can be used to include additional configuration files.
 
 ### Default configuration file locations
 
@@ -56,6 +44,6 @@ Operating System | Data Directory | Example Path
 -- | -- | --
 Windows | `%APPDATA%\Neurai\` | `C:\Users\username\AppData\Roaming\Neurai\neurai.conf`
 Linux | `$HOME/.neurai/` | `/home/username/.neurai/neurai.conf`
-macOS | `$HOME/Library/Application Support/Rave /` | `/Users/username/Library/Application Support/Neurai/neurai.conf`
+macOS | `$HOME/Library/Application Support/Neurai/` | `/Users/username/Library/Application Support/Neurai/neurai.conf`
 
-You can find an example neurai.conf file in [share/examples/neurai.conf](../share/examples/neurai.conf).
+You can find an example neurai.conf file in [contrib/debian/examples/neurai.conf](../contrib/debian/examples/neurai.conf).

@@ -1,0 +1,42 @@
+# docker build -t neurai-win64-bin -f doc/docker/Dockerfile-Win64-bin-v2 .
+#
+# Cross-compiles neuraid, neurai-cli and neurai-qt for Windows x64 with the
+# same steps as the CI "windows" job (.github/scripts). neurai-tx is not built:
+# it does not link for Windows yet.
+
+FROM ubuntu:24.04
+
+LABEL maintainer="Asimov"
+
+LABEL version="2.0.0"
+
+LABEL description="Neurai 2.0.0 | Docker for windows x64 bin + neurai-qt (C++20, Qt6)"
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y ca-certificates git
+
+WORKDIR /root
+
+RUN git clone --branch DePIN-Test --single-branch https://github.com/NeuraiProject/Neurai.git
+
+WORKDIR /root/Neurai
+
+# MinGW-w64 (posix thread model), NSIS, cmake and ninja for depends
+RUN .github/scripts/00-install-deps.sh windows
+
+WORKDIR /root/Neurai/depends
+
+RUN make HOST=x86_64-w64-mingw32 -j"$(nproc)"
+
+WORKDIR /root/Neurai
+
+RUN ./autogen.sh
+
+RUN CONFIG_SITE=$PWD/depends/x86_64-w64-mingw32/share/config.site ./configure \
+    --prefix=/ --disable-maintainer-mode --enable-reduce-exports \
+    --disable-bench --disable-tests --disable-gui-tests --enable-shared=no
+
+RUN make -j"$(nproc)"
+
+CMD ["tail", "-f", "/dev/null"]

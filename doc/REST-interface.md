@@ -9,7 +9,7 @@ testnet and port 19201 for regtest.
 REST Interface consistency guarantees
 -------------------------------------
 
-The [same guarantees as for the RPC Interface](/doc/JSON-RPC-interface.md#rpc-consistency-guarantees)
+The [same guarantees as for the RPC Interface](JSON-RPC-interface.md#rpc-consistency-guarantees)
 apply.
 
 Supported API

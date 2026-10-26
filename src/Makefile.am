@@ -687,7 +687,7 @@ neurai_cli_LDADD += $(BOOST_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(EVENT_LIBS) $(OQS
 #
 
 # neurai-tx binary #
-neurai_tx_SOURCES = neurai-tx.cpp
+neurai_tx_SOURCES = neurai-tx.cpp server_stubs.cpp
 neurai_tx_CPPFLAGS = $(AM_CPPFLAGS) $(NEURAI_INCLUDES)
 neurai_tx_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 neurai_tx_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS)

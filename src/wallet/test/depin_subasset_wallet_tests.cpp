@@ -82,7 +82,7 @@ struct DepinWalletSetup : public TestingSetup {
         // freshly mined block position (and therefore the depth) unset.
         wallet->ScanForWalletTransactions(chainActive.Genesis(), nullptr, true);
 
-        // VerifyWalletHasAsset() resolves the wallet through vpwallets[0].
+        // Other asset helpers still resolve the wallet through vpwallets[0].
         vpwallets.insert(vpwallets.begin(), wallet.get());
     }
 
@@ -213,7 +213,7 @@ BOOST_AUTO_TEST_CASE(subdepin_issuance_attaches_parent_owner)
 
     // Precondition: the wallet really does see the owner token.
     std::pair<int, std::string> verifyError;
-    BOOST_REQUIRE_MESSAGE(VerifyWalletHasAsset(PARENT_ASSET + OWNER_TAG, verifyError),
+    BOOST_REQUIRE_MESSAGE(VerifyWalletHasAsset(wallet.get(), PARENT_ASSET + OWNER_TAG, verifyError),
                           verifyError.second);
 
     // Which UTXO holds it, so we can assert the child issuance spends that one.
@@ -261,7 +261,7 @@ BOOST_AUTO_TEST_CASE(subdepin_issuance_without_parent_owner_is_refused)
 
     // Deliberately no IssueAssetAndConfirm(PARENT_ASSET) call here.
     std::pair<int, std::string> verifyError;
-    BOOST_REQUIRE(!VerifyWalletHasAsset(PARENT_ASSET + OWNER_TAG, verifyError));
+    BOOST_REQUIRE(!VerifyWalletHasAsset(wallet.get(), PARENT_ASSET + OWNER_TAG, verifyError));
 
     std::pair<int, std::string> error;
     bool ok = true;
@@ -274,6 +274,30 @@ BOOST_AUTO_TEST_CASE(subdepin_issuance_without_parent_owner_is_refused)
 
     // No usable transaction was left behind.
     BOOST_CHECK(wtxNew.tx == nullptr || wtxNew.tx->vout.empty());
+}
+
+// The owner token is looked up in the issuing wallet, not in whichever wallet
+// happens to be loaded first.
+BOOST_AUTO_TEST_CASE(subdepin_issuance_uses_issuing_wallet)
+{
+    BOOST_REQUIRE(AreAssetsDeployed());
+    IssueAssetAndConfirm(PARENT_ASSET, CAmount(1000 * COIN));
+
+    std::unique_ptr<CWallet> other(new CWallet(std::unique_ptr<CWalletDBWrapper>(new CWalletDBWrapper(&bitdb, "depin_subasset_wallet_other.dat"))));
+    bool firstRun = false;
+    other->LoadWallet(firstRun);
+    vpwallets.insert(vpwallets.begin(), other.get());
+
+    std::pair<int, std::string> verifyError;
+    BOOST_CHECK_MESSAGE(VerifyWalletHasAsset(wallet.get(), PARENT_ASSET + OWNER_TAG, verifyError), verifyError.second);
+    BOOST_CHECK(!VerifyWalletHasAsset(other.get(), PARENT_ASSET + OWNER_TAG, verifyError));
+
+    std::pair<int, std::string> error;
+    bool ok = false;
+    BuildIssuance(CHILD_ASSET, CAmount(100 * COIN), error, ok);
+    BOOST_CHECK_MESSAGE(ok, error.second);
+
+    vpwallets.erase(std::remove(vpwallets.begin(), vpwallets.end(), other.get()), vpwallets.end());
 }
 
 // A root DEPIN token has no parent, so it must still issue with no owner token

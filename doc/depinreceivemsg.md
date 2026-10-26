@@ -3,7 +3,8 @@
 The node accepts RPC protocol **5** only for remote messaging calls. Upgrade
 the node first, then libraries/applications. Positional protocol 2/3 calls and
 GET/CLEAR/REQ/READ-SEQUENCE-v1 proofs are rejected. The content wire format,
-ECIES, storage version 2 and cursor version 1 remain unchanged.
+Legacy-only ECIES, storage version 2 and cursor version 1 remain unchanged;
+RPC 5 adds typed ECIES 2 destinations ([depin-ecdsa.md](depin-ecdsa.md)).
 
 The byte-exact request/response contract, field types, defaults and limits
 are in [depin-request-signatures.md](depin-request-signatures.md). Content
@@ -106,7 +107,7 @@ service and unavailable-key errors can be ordinary JSON-RPC errors before
 a wrapper can be constructed. Treat these as unauthenticated transport
 failures; they do not authorize repinning or changing the requested operation.
 
-## Membership changes (P7)
+## Membership changes
 
 Each wrapper signs membership_revision, membership_height and membership_blockhash.
 Every complete request includes the required membership_revision. All confirmed
@@ -137,7 +138,7 @@ See [depin-membership.md](depin-membership.md) for exact events and semantics.
 - `depinlistsections`: a public request has empty address/challenge/signature
   and token equal to the root; a personal request requires a receive nonce
   and is scoped to its token, with current counters/access.
-- `depingetancestorrecipients`: public, but sign the response against your
+- `depingetancestorrecipients`: public, but verify the response against your
   actual max_results and stop_at query. Default stop_at is the serving root.
   A valid pool signature proves the service answered; verify eligibility
   through independent sources and your own recipient policy.
@@ -187,5 +188,5 @@ but stealing a recipient's static secp256k1 key can expose captured historical
 ciphertexts. A freeze denies future authorized downloads; it cannot revoke
 ciphertext or plaintext already obtained. A malicious directory can cause
 senders to encrypt for an unintended key unless clients verify recipients.
-P7 pool renewal is implemented; external library/proxy migration remains pending.
+Pool-wide membership renewal is implemented; external library/proxy migration remains pending.
 See [the membership contract](depin-membership.md) for refresh and mandatory challenges.

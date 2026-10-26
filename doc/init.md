@@ -9,6 +9,7 @@ can be found in the contrib/init folder.
     contrib/init/neuraid.openrcconf: OpenRC conf.d file
     contrib/init/neuraid.conf:       Upstart service configuration file
     contrib/init/neuraid.init:       CentOS compatible SysV style init script
+    contrib/init/org.neurai.neuraid.plist: macOS launchd agent
 
 Service User
 ---------------------------------
@@ -20,15 +21,10 @@ The OS X configuration assumes neuraid will be set up for the current user.
 Configuration
 ---------------------------------
 
-At a bare minimum, neuraid requires that the rpcpassword setting be set
-when running as a daemon.  If the configuration file does not exist or this
-setting is not set, neuraid will shutdown promptly after startup.
-
-This password does not have to be remembered or typed as it is mostly used
-as a fixed token that neuraid and client programs read from the configuration
-file, however it is recommended that a strong and secure password be used
-as this password is security critical to securing the wallet should the
-wallet be enabled.
+neuraid needs no RPC credentials in its configuration file: without
+`rpcpassword` it uses cookie authentication (see below). If you do set
+`rpcuser`/`rpcpassword` (or `rpcauth`), use a strong password, as it protects
+the wallet when the wallet is enabled.
 
 If neuraid is run with the "-server" flag (set by default), and no rpcpassword is set,
 it will use a special cookie file for authentication. The cookie is generated with random

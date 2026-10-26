@@ -765,8 +765,8 @@ bool CreateTransferAssetTransaction(CWallet* pwallet, const CCoinControl& coinCo
 //! Send any type of asset transaction to the network
 bool SendAssetTransaction(CWallet* pwallet, CWalletTx& transaction, CReserveKey& reserveKey, std::pair<int, std::string>& error, std::string& txid);
 
-/** Verifies that this wallet owns the give asset */
-bool VerifyWalletHasAsset(const std::string& asset_name, std::pair<int, std::string>& pairError);
+/** Verifies that the given wallet owns the given asset */
+bool VerifyWalletHasAsset(CWallet* pwallet, const std::string& asset_name, std::pair<int, std::string>& pairError);
 #endif
 
 /** Helper method for extracting address bytes, asset name and amount from an asset script */

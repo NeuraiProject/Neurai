@@ -21,8 +21,8 @@ LABEL description="Neurai DePIN | native x64 Qt build (multi-stage)"
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Build deps: toolchain + autotools + xcb/xkb -dev headers needed by Qt5's
-# xcb platform plugin (depends/ builds Qt5 from source against system xcb).
+# Build deps: toolchain + autotools + xcb/xkb -dev headers needed by Qt6's
+# xcb platform plugin (depends/ builds Qt6 from source against system xcb).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     autoconf \
     automake \
@@ -72,7 +72,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /root
 COPY . /root/Neurai
 
-# Build depends/ (boost, libevent, miniupnpc, Qt5, etc.) for native x64.
+# Build depends/ (boost, libevent, miniupnpc, liboqs, Qt6, etc.) for native x64.
 WORKDIR /root/Neurai/depends
 RUN make HOST=x86_64-pc-linux-gnu -j"$(nproc)"
 
@@ -90,7 +90,7 @@ RUN CONFIG_SITE=$PWD/depends/x86_64-pc-linux-gnu/share/config.site \
       --disable-tests \
       --disable-bench \
       --disable-gui-tests \
-      --with-gui=qt5 \
+      --with-gui=qt6 \
       --with-pic \
       LDFLAGS="-L${BDB_PREFIX}/lib/" \
       CPPFLAGS="-I${BDB_PREFIX}/include/"
@@ -136,7 +136,8 @@ RUN mkdir -p /root/Neurai/src/qt && \
 
 VOLUME ["/data"]
 
-# P2P, RPC, ZMQ (mainnet). Override at `docker run -p` time for testnet.
+# Testnet P2P and RPC ports (mainnet: 19000/19001), and a ZMQ port.
+# Map them at `docker run -p` time.
 EXPOSE 19100 19101 28332
 
 CMD ["tail", "-f", "/dev/null"]

@@ -1,7 +1,15 @@
 TOR SUPPORT IN NEURAI
 ======================
 
-It is possible to run Neurai as a Tor hidden service, and connect to such services.
+It is possible to run Neurai behind a Tor proxy.
+
+**Limitation:** Neurai only supports the old Tor v2 onion addresses (16
+characters). The Tor network removed v2 onion services in 2021 (Tor 0.4.6),
+so creating or connecting to `.onion` services as described in sections 2 and
+3 no longer works with a current Tor; the automatic service of section 3
+requests `NEW:RSA1024` and will be refused, so it is disabled by default
+(`-listenonion=0`). Using Tor as an outgoing proxy (section 1, to reach
+clearnet peers) still works.
 
 The following directions assume you have a Tor proxy running on port 9050. Many distributions default to having a SOCKS proxy listening on port 9050, but others may not. In particular, the Tor Browser Bundle defaults to listening on port 9150. See [Tor Project FAQ:TBBSocksPort](https://www.torproject.org/docs/faq.html.en#TBBSocksPort) for how to properly
 configure Tor.
@@ -31,7 +39,7 @@ outgoing connections be anonymized, but more is possible.
 
 In a typical situation, this suffices to run behind a Tor proxy:
 
-	./neurai -proxy=127.0.0.1:9050
+	./neuraid -proxy=127.0.0.1:9050
 
 
 2. Run a neurai hidden server
@@ -42,11 +50,11 @@ reachable from the Tor network. Add these lines to your /etc/tor/torrc (or equiv
 config file):
 
 	HiddenServiceDir /var/lib/tor/neurai-service/
-	HiddenServicePort 8767 127.0.0.1:8767
-	HiddenServicePort 18767 127.0.0.1:18767
+	HiddenServicePort 19000 127.0.0.1:19000
+	HiddenServicePort 19100 127.0.0.1:19100
 
 The directory can be different of course, but (both) port numbers should be equal to
-your neuraid's P2P listen port (8767 by default).
+your neuraid's P2P listen port (19000 by default, 19100 on testnet).
 
 	-externalip=X   You can tell neurai about its publicly reachable address using
 	                this option, and this can be a .onion address. Given the above
@@ -81,12 +89,12 @@ as well, use `discover` instead:
 
 	./neuraid ... -discover
 
-and open port 8767 on your firewall (or use -upnp).
+and open port 19000 on your firewall (or use -upnp).
 
 If you only want to use Tor to reach onion addresses, but not use it as a proxy
 for normal IPv4/IPv6 communication, use:
 
-	./neurai -onion=127.0.0.1:9050 -externalip=57qr3yd1nyntf5k.onion -discover
+	./neuraid -onion=127.0.0.1:9050 -externalip=57qr3yd1nyntf5k.onion -discover
 
 3. Automatically listen on Tor
 --------------------------------
@@ -99,9 +107,9 @@ This means that if Tor is running (and proper authentication has been configured
 Neurai automatically creates a hidden service to listen on. This will positively 
 affect the number of available .onion nodes.
 
-This new feature is enabled by default if Neurai is listening (`-listen`), and
-requires a Tor connection to work. It can be explicitly disabled with `-listenonion=0`
-and, if not disabled, configured using the `-torcontrol` and `-torpassword` settings.
+This feature is disabled by default (see the limitation above). It is enabled
+with `-listenonion=1`, requires Neurai to be listening (`-listen`) and a Tor
+connection, and is configured using the `-torcontrol` and `-torpassword` settings.
 To show verbose debugging information, pass `-debug=tor`.
 
 Connecting to Tor's control socket API requires one of two authentication methods to be 

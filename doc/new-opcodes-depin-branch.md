@@ -1,6 +1,6 @@
 # New OP_Codes in the DePIN-Test Branch
 
-This document describes all new and re-enabled opcodes introduced in the `DePIN-Test` branch compared to `main`. Each opcode is documented with its byte value, stack effects, parameters, activation flag, error codes, and intended use. Opcodes are grouped by functional similarity.
+This document describes the first set of new and re-enabled opcodes introduced in the `DePIN-Test` branch compared to `main`; later opcodes are listed in the [summary table](#summary-table) and described in [covenants.md](covenants.md). Each opcode is documented with its byte value, stack effects, parameters, activation flag, error codes, and intended use. Opcodes are grouped by functional similarity.
 
 ---
 
@@ -70,7 +70,8 @@ OP_CHECKTEMPLATEVERIFY verifies that the spending transaction matches a pre-comm
 5. Hash of all input sequences (single SHA256)
 6. Number of outputs (4 bytes LE)
 7. Hash of all serialized outputs (single SHA256)
-8. Input index being evaluated (4 bytes LE)
+8. Transaction version 3 only: number of reference inputs (4 bytes LE), then, if non-zero, the hash of their serialized outpoints (single SHA256)
+9. Input index being evaluated (4 bytes LE)
 
 **Behavior:**
 
@@ -172,7 +173,7 @@ OP_TXHASH computes `TaggedHash("NeuraiTxHash", mask_le16 || fields)` over a conf
 - List sub-hashes use double-SHA256; the final tagged hash uses single-SHA256.
 - Non-v3 transactions and empty reference lists contribute `SHA256d("")` for bit 8.
 - Reuses `PrecomputedTransactionData` caches for prevouts, sequences, outputs and references. Without the relevant cache, each opcode execution hashes the selected list again.
-- Activation: reset testnet at block 1, regtest at block 0 by default, mainnet unscheduled. The old composition is removed. See [the full format and examples](covenants.md#op_txhash--flexible-commitments-nip-042).
+- Activation: reset testnet at block 10, regtest at block 0 by default, mainnet unscheduled. The old composition is removed. See [the full format and examples](covenants.md#op_txhash--flexible-commitments-nip-042).
 
 **Use Cases:**
 
@@ -206,14 +207,16 @@ Unlike OP_TXHASH (which returns a hash), OP_TXFIELD returns raw bytes of a singl
 |----------|-------|------|
 | `0x01` | `nValue` of the spent UTXO | 8 bytes (int64 LE) |
 | `0x02` | 32-byte AuthScript commitment from the spent scriptPubKey | 32 bytes |
-| `0x03` | Full `scriptPubKey` of the spent UTXO | Variable (max 520 bytes) |
+| `0x03` | Full `scriptPubKey` of the spent UTXO | Variable (up to the effective element cap) |
+| `0x04` | Destination `version \|\| program` (NIP-041, needs `SCRIPT_VERIFY_AUTHDEST`) | 33 bytes |
 
 **Behavior:**
 
 - If the flag is not set, behaves as `OP_NOP7`.
+- Selector `0x01` is always raw 8-byte LE, even with 64-bit integers active; under standard policy (`MINIMALDATA`) it cannot be used in arithmetic. Use `OP_INPUTVALUE` for a script number.
 - Selector must be exactly 1 byte.
 - Selector `0x02` requires the spent scriptPubKey to start with `OP_1 0x20 <32 bytes>` (witness v1 format).
-- Selector `0x03` fails if the scriptPubKey exceeds the effective per-element cap: `MAX_SCRIPT_ELEMENT_SIZE` (520 B) under normal flags, or `MAX_PQ_SCRIPT_ELEMENT_SIZE` (3072 B) when `SCRIPT_VERIFY_CHECKSIGFROMSTACK` is set (NIP-018).
+- Selector `0x03` fails if the scriptPubKey exceeds the effective per-element cap: `MAX_SCRIPT_ELEMENT_SIZE` (520 B) by default, or `MAX_PQ_SCRIPT_ELEMENT_SIZE` (3072 B) when `SCRIPT_VERIFY_CHECKSIGFROMSTACK`, `CHECKSIGADD`, `MERKLE_INCLUSION` or `ZKVERIFY` is set (NIP-018).
 
 **Use Cases:**
 
@@ -241,13 +244,12 @@ After:  <4-byte nLockTime>
 
 **Description:**
 
-OP_TXLOCKTIME pushes the transaction's `nLockTime` field onto the stack as raw 4-byte little-endian data. Unlike `OP_CHECKLOCKTIMEVERIFY` (which compares against a threshold), this opcode provides the raw value for arbitrary arithmetic and comparison in script.
+OP_TXLOCKTIME pushes the transaction's `nLockTime` field onto the stack as raw 4-byte little-endian data. Unlike `OP_CHECKLOCKTIMEVERIFY`, it enforces nothing: the spender chooses `nLockTime`, which consensus only enforces when an input has a non-final sequence. Use `OP_CHECKLOCKTIMEVERIFY`/`OP_CHECKSEQUENCEVERIFY` to enforce time. The value is not a minimally encoded number, so under standard policy (`MINIMALDATA`) compare it as bytes rather than with numeric opcodes.
 
 **Use Cases:**
 
-- Time-dependent logic in covenants
-- Comparison-based branching on lock time values
-- Combining with arithmetic opcodes for expiry calculations
+- Committing to, or copying, the transaction's `nLockTime` (byte comparison)
+- Combined with `OP_CHECKLOCKTIMEVERIFY`, checking the exact locktime chosen
 
 ---
 
@@ -303,12 +305,12 @@ After:  <scriptPubKey bytes>
 
 **Description:**
 
-OP_OUTPUTSCRIPT pushes the raw `scriptPubKey` of the specified output onto the stack.
+OP_OUTPUTSCRIPT pushes the raw `scriptPubKey` of the specified output onto the stack, including the `OP_XNA_ASSET <payload> OP_DROP` suffix of an asset output. To check only the destination, use `OP_OUTPUTAUTHDEST` (NIP-041).
 
 **Behavior:**
 
 - The output index must be non-negative and within range.
-- The resulting scriptPubKey must not exceed the effective per-element cap: `MAX_SCRIPT_ELEMENT_SIZE` (520 B) under normal flags, or `MAX_PQ_SCRIPT_ELEMENT_SIZE` (3072 B) under `SCRIPT_VERIFY_CHECKSIGFROMSTACK` (NIP-018). Oversize values fail with `SCRIPT_ERR_OUTPUTSCRIPT`.
+- The resulting scriptPubKey must not exceed the effective per-element cap: `MAX_SCRIPT_ELEMENT_SIZE` (520 B) by default, or `MAX_PQ_SCRIPT_ELEMENT_SIZE` (3072 B) when `SCRIPT_VERIFY_CHECKSIGFROMSTACK`, `CHECKSIGADD`, `MERKLE_INCLUSION` or `ZKVERIFY` is set (NIP-018). Oversize values fail with `SCRIPT_ERR_OUTPUTSCRIPT`.
 
 **Use Cases:**
 
@@ -341,8 +343,8 @@ OP_INPUTCOUNT pushes the number of inputs in the spending transaction onto the s
 **Use Cases:**
 
 - Enforce transaction structure (e.g., "exactly 2 inputs required")
-- Loop bounds for introspection patterns
-- Anti-fee-sniping constraints
+- Single-input spends, so that `0 OP_INPUTVALUE` is the covenant's own value
+- Limiting double satisfaction of output checks by several covenant inputs
 
 ---
 
@@ -411,10 +413,12 @@ OP_OUTPUTASSETFIELD extracts a specific field from the asset payload attached to
 | `0x05` | Has IPFS flag | New | 1 byte (0 or 1) |
 | `0x06` | IPFS hash | New (if hasIPFS), Reissue (if set) | Variable bytes |
 | `0x07` | Asset type | All | 1 byte (enum) |
+| `0x08` | Transfer message (NIP-043, needs `SCRIPT_VERIFY_ASSETMESSAGEFIELD`) | Transfer | 32 bytes, or 34-byte IPFS multihash |
 
 **Behavior:**
 
-- Selector `0x00` and `>= 0x08` are invalid.
+- Selector `0x00` and `> 0x08` are invalid; `0x08` is invalid without `SCRIPT_VERIFY_ASSETMESSAGEFIELD`.
+- With the flag off, the opcode fails with `SCRIPT_ERR_BAD_OPCODE`.
 - If the output does not contain an asset payload, the script fails.
 - When `SCRIPT_VERIFY_64BIT_INTEGERS` is active and selector is `0x02` (amount), the raw 8-byte value is converted to `CScriptNum` encoding.
 - Recognizes all asset operation types: Transfer, New (including MsgChannel, Qualifier, Restricted), Reissue, and Owner.
@@ -466,7 +470,7 @@ OP_INPUTASSETFIELD is the input-side counterpart to OP_OUTPUTASSETFIELD. It read
 
 These opcodes allow scripts to read fields from **reference inputs** — UTXOs declared in the transaction's `vrefin` vector that are inspected but **not spent**. Reference inputs are the foundation for oracle-fed covenants, cross-UTXO order matching, DePIN state feeds, and any pattern where a script needs to read external state without consuming it.
 
-All three opcodes are gated by `SCRIPT_VERIFY_REFINPUTS` (bit 31, consensus parameter `nREFINPUTSEnabled`). When the flag is not active they behave as NOPs, with `DISCOURAGE_UPGRADABLE_NOPS` support.
+All three opcodes are gated by `SCRIPT_VERIFY_REFINPUTS` (bit 31, consensus parameter `nREFINPUTSEnabled`). They occupy previously unassigned bytes, so when the flag is not active they fail with `SCRIPT_ERR_BAD_OPCODE` (they are not NOPs).
 
 Reference inputs are transported in a dedicated `vrefin` vector alongside `vin` and `vout` in the transaction serialization. Unlike regular inputs, they do not require signatures and do not consume the referenced UTXOs; their sole purpose is to make external state available for introspection during script evaluation. The `OP_REFINPUT*` family provides the primitives to read values, commitments, scripts, and asset fields from those referenced outputs.
 
@@ -494,14 +498,13 @@ OP_REFINPUTCOUNT pushes the number of reference inputs declared in `vrefin` for 
 
 **Behavior:**
 
-- If the flag is not set, behaves as a NOP.
+- If the flag is not set, fails with `SCRIPT_ERR_BAD_OPCODE`.
 - If reference outputs are unavailable to the signature checker (e.g., the transaction was not validated with `vrefin` resolution), the script fails.
 - Returns `0` when the transaction has no reference inputs.
 
 **Use Cases:**
 
 - Gate script branches on the presence of reference inputs (e.g., "oracle data required").
-- Loop bounds for scripts that iterate over multiple reference inputs.
 - Distinguish between covenant variants that consult external state and those that do not.
 
 ---
@@ -530,15 +533,16 @@ OP_REFINPUTFIELD reads a field from the resolved output referenced by entry `ref
 |----------|-------|------|
 | `0x01` | `nValue` of the referenced output | 8 bytes (int64 LE) |
 | `0x02` | 32-byte AuthScript commitment from the referenced `scriptPubKey` | 32 bytes |
-| `0x03` | Full `scriptPubKey` of the referenced output | Variable (max 520 bytes) |
+| `0x03` | Full `scriptPubKey` of the referenced output | Variable (up to the effective element cap) |
+| `0x04` | Destination `version \|\| program` (NIP-041, needs `SCRIPT_VERIFY_AUTHDEST`) | 33 bytes |
 
 **Behavior:**
 
-- If the flag is not set, behaves as a NOP.
-- The selector must be exactly 1 byte; selector `0x00` and `>= 0x04` are invalid.
+- If the flag is not set, fails with `SCRIPT_ERR_BAD_OPCODE`.
+- The selector must be exactly 1 byte; selector `0x00` and `> 0x04` are invalid, and `0x04` is invalid without `SCRIPT_VERIFY_AUTHDEST`.
 - `ref_index` must be non-negative and within the range of `vrefin`.
 - Selector `0x02` requires the referenced `scriptPubKey` to start with `OP_1 0x20 <32 bytes>` (witness v1 format); otherwise the script fails.
-- Selector `0x03` fails if the referenced `scriptPubKey` exceeds the effective per-element cap: `MAX_SCRIPT_ELEMENT_SIZE` (520 B) under normal flags, or `MAX_PQ_SCRIPT_ELEMENT_SIZE` (3072 B) under `SCRIPT_VERIFY_CHECKSIGFROMSTACK` (NIP-018). Failure returns `SCRIPT_ERR_REFINPUTFIELD`.
+- Selector `0x03` fails if the referenced `scriptPubKey` exceeds the effective per-element cap: `MAX_SCRIPT_ELEMENT_SIZE` (520 B) by default, or `MAX_PQ_SCRIPT_ELEMENT_SIZE` (3072 B) when `SCRIPT_VERIFY_CHECKSIGFROMSTACK`, `CHECKSIGADD`, `MERKLE_INCLUSION` or `ZKVERIFY` is set (NIP-018). Failure returns `SCRIPT_ERR_REFINPUTFIELD`.
 - When `SCRIPT_VERIFY_64BIT_INTEGERS` is active and selector is `0x01`, the raw 8-byte value is converted to `CScriptNum` encoding for direct use with arithmetic opcodes.
 
 **Use Cases:**
@@ -579,11 +583,12 @@ OP_REFINPUTASSETFIELD extracts a field from the asset payload of the output refe
 | `0x05` | Has IPFS flag | New | 1 byte (0 or 1) |
 | `0x06` | IPFS hash | New (if hasIPFS), Reissue (if set) | Variable bytes |
 | `0x07` | Asset type | All | 1 byte (enum) |
+| `0x08` | Transfer message (NIP-043, needs `SCRIPT_VERIFY_ASSETMESSAGEFIELD`) | Transfer | 32 or 34 bytes |
 
 **Behavior:**
 
-- If the flag is not set, behaves as a NOP.
-- The selector must be exactly 1 byte; selector `0x00` and `>= 0x08` are invalid.
+- If the flag is not set, fails with `SCRIPT_ERR_BAD_OPCODE`.
+- The selector must be exactly 1 byte; selector `0x00` and `> 0x08` are invalid, and `0x08` is invalid without `SCRIPT_VERIFY_ASSETMESSAGEFIELD`.
 - `ref_index` must be non-negative and within the range of `vrefin`.
 - If the referenced output does not contain an asset payload recognized by any of the seven parsers, the script fails.
 - When `SCRIPT_VERIFY_64BIT_INTEGERS` is active and selector is `0x02` (amount), the raw 8-byte value is converted to `CScriptNum` encoding.
@@ -626,7 +631,7 @@ OP_CAT concatenates the top two stack elements. This opcode was disabled in Bitc
 **Behavior:**
 
 - Requires at least 2 stack elements.
-- The combined size must not exceed the effective per-element cap: `MAX_SCRIPT_ELEMENT_SIZE` (520 B) under normal flags, or `MAX_PQ_SCRIPT_ELEMENT_SIZE` (3072 B) under `SCRIPT_VERIFY_CHECKSIGFROMSTACK` (NIP-018). Oversize fails with `SCRIPT_ERR_PUSH_SIZE`.
+- The combined size must not exceed the effective per-element cap: `MAX_SCRIPT_ELEMENT_SIZE` (520 B) by default, or `MAX_PQ_SCRIPT_ELEMENT_SIZE` (3072 B) when `SCRIPT_VERIFY_CHECKSIGFROMSTACK`, `CHECKSIGADD`, `MERKLE_INCLUSION` or `ZKVERIFY` is set (NIP-018). Oversize fails with `SCRIPT_ERR_PUSH_SIZE`.
 - `vch2` is appended to `vch1` in-place, then `vch2` is removed from the stack.
 - When the `SCRIPT_VERIFY_CAT` flag is not set, OP_CAT returns `SCRIPT_ERR_DISABLED_OPCODE` (original behavior).
 
@@ -695,15 +700,17 @@ OP_REVERSEBYTES reverses the byte order of the top stack element in place.
 
 **Behavior:**
 
+- If the flag is not set, fails with `SCRIPT_ERR_BAD_OPCODE` (`0xbc` was unassigned).
 - Requires at least 1 stack element.
 - The reversal is done in-place on the stack (no new allocation needed).
 - Works on any length, including empty byte strings.
 
 **Use Cases:**
 
-- Endianness conversion (little-endian to big-endian and vice versa)
-- Hash byte-order normalization (e.g., converting txid display order)
-- Data format interoperability
+- Byte comparison of raw little-endian fields (e.g. `OP_TXFIELD 0x01`) with big-endian data from outside Neurai, such as an authenticated oracle message
+- Converting a hash between internal and display byte order when both values are only known at run time
+
+Numeric opcodes read little-endian script numbers, so a reversed value cannot be used in arithmetic.
 
 ---
 
@@ -845,20 +852,44 @@ The unary opcodes `OP_NOT` and `OP_0NOTEQUAL` also operate on 64-bit values but 
 | `OP_MUL` | `0x95` | (re-enabled) | 28 | 64-Bit Arithmetic |
 | `OP_DIV` | `0x96` | (re-enabled) | 28 | 64-Bit Arithmetic |
 | `OP_MOD` | `0x97` | (re-enabled) | 28 | 64-Bit Arithmetic |
+| `OP_KECCAK256` | `0xba` | — | 35 | Hash (NIP-030) |
+| `OP_BLAKE2B` | `0xbb` | — | 35 | Hash (NIP-030) |
+| `OP_CHECKMERKLEINCLUSION` | `0xc1` | — | 36 | Proof (NIP-031) |
+| `OP_BLAKE3` | `0xc8` | — | 37 | Hash (NIP-034a) |
+| `OP_SHA3_256` | `0xca` | — | 37 | Hash (NIP-034a) |
+| `OP_SHA512` | `0xcb` | — | 37 | Hash (NIP-034a) |
+| `OP_POSEIDON` | `0xc9` | — | 38 | Hash (NIP-036) |
+| `OP_CHECKSIG_ED25519` | `0xdd` | — | 39 | Signature (NIP-035) |
+| `OP_CHECKSIGADD` | `0xde` | — | 40 | Signature (NIP-039) |
+| `OP_OUTPUTAUTHDEST` | `0xc2` | — | 42 | TX Introspection (NIP-041) |
+| `OP_ZKVERIFY` | `0xc3` | — | 43 (+50 for profile 2) | Proof (NIP-016) |
+| `OP_INPUTFIELD` | `0xc4` | — | 46 | TX Introspection (NIP-043) |
 
 ---
 
 ## Activation Status
 
-All opcodes listed above are controlled by individual consensus parameters in `Consensus::Params`. As of this branch:
+All opcodes listed above are controlled by consensus parameters in
+`Consensus::Params`, applied from `nOptInFeaturesHeight` (and, for CSFS,
+Ed25519 and CHECKSIGADD, also from `nSignatureOpcodesHeight`):
 
-- **Testnet / Regtest**: All opcodes are **enabled** (`true`).
-- **Mainnet**: All opcodes are **disabled** (`false`) pending future activation via consensus upgrade.
+- **Reset testnet**: active from block 10.
+- **Regtest**: active from height 0 by default.
+- **Mainnet**: unscheduled (`INT_MAX` heights), pending a future consensus
+  upgrade.
 
-Each opcode degrades gracefully when its flag is not set — NOP-replacing opcodes behave as their original NOP, while re-enabled opcodes return `SCRIPT_ERR_DISABLED_OPCODE`.
-
-**Exception: OP_CHAINCONTEXT (NIP-026).** Because `0xd7` is a newly-allocated opcode byte (not a repurposed NOP) and the opcode mutates the stack, its flag-off path returns `SCRIPT_ERR_BAD_OPCODE` instead of falling through to a NOP. This keeps upgraded-but-not-yet-activated nodes byte-for-byte compatible with pre-upgrade nodes when a tx containing `0xd7` appears before activation. `SCRIPT_VERIFY_CHAINCONTEXT` is co-set with `SCRIPT_VERIFY_64BIT_INTEGERS` in `ApplyConsensusOptIns`, because the opcode pushes `CScriptNum` values that can exceed 4 bytes (MTP after 2038). See NIP-026 §3.4 and §3.7.
+When its flag is not set, each opcode behaves as the byte did on older nodes:
+NOP-replacing opcodes (CTV, CSFS, TXHASH, TXFIELD, SPLIT) behave as their
+original NOP (rejected by policy through `DISCOURAGE_UPGRADABLE_NOPS`);
+re-enabled opcodes (`OP_CAT`, `OP_MUL`, `OP_DIV`, `OP_MOD`) return
+`SCRIPT_ERR_DISABLED_OPCODE`; and every opcode in a previously unassigned byte
+(`OP_REVERSEBYTES`, `OP_TXLOCKTIME`, `OP_OUTPUTVALUE`, the asset and
+reference-input opcodes, `OP_CHAINCONTEXT` and all later ones) returns
+`SCRIPT_ERR_BAD_OPCODE`. This keeps upgraded-but-not-yet-activated nodes
+compatible with pre-upgrade nodes. `SCRIPT_VERIFY_CHAINCONTEXT` is co-set with
+`SCRIPT_VERIFY_64BIT_INTEGERS` in `ApplyConsensusOptIns`, because the opcode
+pushes `CScriptNum` values that can exceed 4 bytes (MTP after 2038).
 
 ### Policy-layer flag propagation (NIP-020)
 
-Non-consensus verification paths (`signrawtransactionwithkey`'s post-sign verify, the internal `SignSignature` check, and the `neurai-tx` CLI) all read their flags through the single helper `GetStandardScriptVerifyFlagsWithConsensusOptIns(consensus)` declared in `policy.h`. The helper returns `STANDARD_SCRIPT_VERIFY_FLAGS` plus every consensus-activated opt-in for the current chain, so signing behaves consistently with block-level consensus on the chain the node is running against.
+Non-consensus verification paths (the internal `SignSignature` check and the `neurai-tx` CLI) read their flags through the helper `GetStandardScriptVerifyFlagsWithConsensusOptIns(consensus)` declared in `policy.h`. The helper returns `STANDARD_SCRIPT_VERIFY_FLAGS` plus every consensus-activated opt-in for the current chain, so signing behaves consistently with block-level consensus on the chain the node is running against. The `signrawtransaction` RPC computes the same set for the tip height plus one. `neurai-tx` has no chain tip and uses height 0. See [covenants.md](covenants.md#policy-layer-signing-verification-nip-020).

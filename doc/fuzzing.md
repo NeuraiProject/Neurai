@@ -8,7 +8,8 @@ use it with AFL.
 Building AFL
 -------------
 
-It is recommended to always use the latest version of afl:
+The original AFL is no longer maintained; [AFL++](https://github.com/AFLplusplus/AFLplusplus)
+is its maintained successor and accepts the same commands. To use the original AFL:
 ```
 wget http://lcamtuf.coredump.cx/afl/releases/afl-latest.tgz
 tar -zxvf afl-latest.tgz
@@ -53,12 +54,10 @@ mkdir outputs
 AFLOUT=$PWD/outputs
 ```
 
-Example inputs are available from:
-
-- https://download.visucore.com/bitcoin/bitcoin_fuzzy_in.tar.xz
-- http://strateman.ninja/fuzzing.tar.xz
-
-Extract these (or other starting inputs) into the `inputs` directory before starting fuzzing.
+There is no published corpus of example inputs for `test_neurai_fuzzy`; the
+old Bitcoin corpora once linked here are no longer available. Start from a few
+small valid serialized objects (for example, raw transactions or blocks from
+regtest) placed in the `inputs` directory.
 
 Fuzzing
 --------

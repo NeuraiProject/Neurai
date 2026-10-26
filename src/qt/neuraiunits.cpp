@@ -59,7 +59,7 @@ QString NeuraiUnits::description(int unit)
     case XNA: return QString("Neurais");
     case mXNA: return QString("Milli-Neurais (1 / 1" THIN_SP_UTF8 "000)");
     case uXNA: return QString("Micro-Neurais (1 / 1" THIN_SP_UTF8 "000" THIN_SP_UTF8 "000)");
-    case Neuron: return QString("Micro-Neurais (1 / 1" THIN_SP_UTF8 "000" THIN_SP_UTF8 "000)");
+    case Neuron: return QString("Neurons (1 / 100" THIN_SP_UTF8 "000" THIN_SP_UTF8 "000)");
     default: return QString("???");
     }
 }

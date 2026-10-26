@@ -63,6 +63,10 @@ Currently, the following notifications are supported:
     -zmqpubhashblock=address
     -zmqpubrawblock=address
     -zmqpubrawtx=address
+    -zmqpubrawmessage=address
+
+`-zmqpubrawmessage` (topic `rawmessage`) publishes asset messages (message
+channels) as they are received.
 
 The socket type is PUB and the address must be a valid ZeroMQ socket
 address. The same address can be used in more than one notification.
@@ -105,8 +109,8 @@ a reorganisation may occur and just the tip will be notified.
 It is up to the subscriber to retrieve the chain from the last known
 block to the new tip. Also note that no notification will occur if the tip
 was in the active chain--as would be the case after calling invalidateblock RPC.
-In contrast, the `sequence` topic publishes all block connections and
-disconnections.
+There is no `sequence` topic in Neurai to report every connection and
+disconnection.
 
 There are several possibilities that ZMQ notification can get lost
 during transmission depending on the communication type your are

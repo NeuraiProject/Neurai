@@ -1,10 +1,10 @@
-# DePIN pool membership context (P7 / RPC 5)
+# DePIN pool membership context (RPC 5)
 
-P7 was implemented over `4c460b3`; RPC 5 extends it to strict ECDSA over
-`d39ef51` on 2026-10-22. The user chose pool-wide
-renewal after membership changes, including RECEIVE and ADMIN challenges,
+The membership context was implemented over `4c460b3`; RPC 5 extends it to strict ECDSA over
+`d39ef51` on 2026-10-22. Renewal after membership changes is
+pool-wide, including RECEIVE and ADMIN challenges,
 plus a signed current-context requirement on remote submission. This extends
-P2 with **RPC protocol 5**, rejecting protocol 4 and older requests. Content cryptography/message signatures, persistence version 2 and cursor version 1
+request signing with **RPC protocol 5**, rejecting protocol 4 and older requests. Content cryptography/message signatures, persistence version 2 and cursor version 1
 stay unchanged. RPC 5 adds [typed ECIES 2 identities](depin-ecdsa.md). External libraries remain for the later migration.
 
 ## Context and confirmed transitions
@@ -28,7 +28,7 @@ and transfer-state changes. Thus an ancestor operation renews its dependent
 sections; a child event also renews other sections in that pool. Events are
 conservative: an operation involving a served asset may renew even if its
 net usable-reader set is unchanged. Ancestors above the configured pool root
-are excluded, matching P3's permission boundary.
+are excluded, matching the current-permission boundary.
 
 A first valid Legacy or strict ECDSA key revelation for an address holding a served asset or
 owner token also renews the context. Repeated spends with the same already
@@ -76,7 +76,7 @@ Every response wrapper adds signed fields:
 
 They enter the v5 response preimage after instance_id, before request_hash.
 Bootstrap repeats them inside its body and advertises
-`membership_policy: "pool_challenges_and_signed_requests"`. P3 readiness
+`membership_policy: "pool_challenges_and_signed_requests"`. Permission-check readiness
 still controls availability; a diagnostic context does not override ready=false.
 
 Public queries accept an old revision so clients can refresh their directory.
@@ -108,12 +108,12 @@ wrap it for the pool and sign the operation with the directory's revision.
 A new member invalidates old prepared sends even if all previously selected
 recipients remain eligible. After a verified refresh, explicit subsets/private
 messages remain allowed. A current revision does not prove that the client
-actually downloaded or displayed the complete directory: P1 checks each
-declared recipient, and recipient selection remains client policy.
+actually downloaded or displayed the complete directory: recipient
+authorization checks each declared recipient, and recipient selection remains client policy.
 
-P1 rejects the whole message if one declared recipient is disabled; the node
-does not strip individual wrapped keys from a sender-signed payload. P3 checks
-current permissions on download as well as issuance/use. Membership renewal
+Recipient authorization rejects the whole message if one declared recipient is disabled; the node
+does not strip individual wrapped keys from a sender-signed payload. Current permissions are
+checked on download as well as issuance/use. Membership renewal
 does not revoke downloaded ciphertext/plaintext or an already authorized
 response, provide forward secrecy, or reset message cursors. Retain the cursor
 through context renewal; restart the scan only if its stream changes.
@@ -129,9 +129,7 @@ The permission regression now requires fresh nonces after reorganizations.
 C++ cases cover observer scope, read-only bounded index reads, unchanged
 quotas/replay on stale failures and response metadata/signature tampering.
 
-[Evidence and exact results](../NIP/NIP_SIN_NUMERO/actualizacion-depin-evidencias-20261021/p7/README.md)
-identify source inputs and sanitizer limitations. External SDK/application
-refresh handling, C1 independent sources/allowlists, deployment proxy policy
-and production load remain separate work. The service makes no guarantee
+External SDK/application refresh handling, client-side independent sources/allowlists,
+deployment proxy policy and production load remain separate work. The service makes no guarantee
 against an isolated/malicious chain view, arbitrary operator database edits,
 full live-process snapshot rollback or exhausted entropy/storage resources.

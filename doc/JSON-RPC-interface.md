@@ -69,7 +69,7 @@ RPC interface will be abused.
     need to expose the RPC port to the host system.  The default way to
     do this in Docker also exposes the port to the public Internet.
     Instead, expose it only on the host system's localhost, for example:
-    `-p 127.0.0.1:8332:8332`
+    `-p 127.0.0.1:19001:19001` (mainnet RPC port; 19101 on testnet, 19201 on regtest)
 
 - **Secure authentication:** By default, Neurai generates unique
   login credentials each time it restarts and puts them into a file
@@ -79,7 +79,7 @@ RPC interface will be abused.
   configuration directory, and using these credentials is the preferred
   RPC authentication method.  If you need to generate static login
   credentials for your programs, you can use the script in the
-  `share/rpcauth` directory in the Neurai source tree.  As a final
+  `share/rpcuser` directory in the Neurai source tree.  As a final
   fallback, you can directly use manually-chosen `rpcuser` and
   `rpcpassword` configuration parameters---but you must ensure that you
   choose a strong and unique passphrase (and still don't use insecure

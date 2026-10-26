@@ -1,8 +1,10 @@
 # DePIN strict encoding, sequence reads and durable moderation
 
-Node contract for P5, P4, P8 and P9b, 2026-10-22. Authorization follows
-[depin-authorization.md](depin-authorization.md). The user message and ECIES
-wire encodings stay unchanged. Remote RPCs now use protocol **5** and the
+Node contract for strict encoding, sequence reads, durable moderation and
+durable pool state, 2026-10-22. Authorization follows
+[depin-authorization.md](depin-authorization.md). The user message and
+Legacy-only ECIES wire encodings stay unchanged; RPC 5 adds typed ECIES 2
+destinations ([depin-ecdsa.md](depin-ecdsa.md)). Remote RPCs now use protocol **5** and the
 common request/signature contract in
 [depin-request-signatures.md](depin-request-signatures.md). Storage version 2
 and cursor version 1 are independent of the RPC version. Discover capabilities
@@ -10,7 +12,7 @@ through the verified `depingetmsginfo` body: `sequence_rpc`, `state_format: 2`,
 `stream_id`, `admission_sequence`, `tombstones`, `max_message_wire_bytes` and
 `max_reply_plaintext_bytes`.
 
-## Strict encoding and resource budgets (P5)
+## Strict encoding and resource budgets
 
 The dedicated decoder checks lengths before allocating vectors. CompactSize
 integers must use their shortest encoding. ECIES must have:
@@ -41,7 +43,7 @@ and 80 bytes. Every accepted configuration fits within that total.
 The submission transport is a separate ECIES envelope. It must have **only
 the pool as recipient**. Its plaintext is ASCII hex of the serialized signed
 message, at most 32768 bytes. Before `ParseHex`, the RPC rejects hex longer
-than `2 * (80 + 32768 + 81)` characters, invalid hex and malformed ECIES.
+than `2 * (82 + 32768 + 94)` characters, invalid hex and malformed ECIES.
 After decryption it bounds the hex again and rejects trailing inner bytes.
 The outer request `address` must match the signed sender and its protocol 5
 operation signature must verify. That proof does not replace inner signature
@@ -56,14 +58,16 @@ strict decoder, including the required recipient ID.
 
 Malformed submission errors retain existing classes: `-8` for invalid
 outer parameters/size, `-22` for decoding/structure errors (including a
-missing recipient in local decryption), `-25` for failed transport decryption, `-1` for
+missing recipient in local decryption), `-25` for failed transport decryption,
+an invalid inner signature or missing sender permission, `-5` for a sender
+without a revealed public key, `-1` for other
 invalid decoded messages/admission, and `-26` for unauthorized recipients.
 Local decryption authenticates both GCM layers. The pool cannot authenticate
 users' content tags or wrapped keys without their private keys: a correctly
 shaped but cryptographically bad content payload can still be admitted.
 Recipients must reject it, never display unauthenticated plaintext.
 
-## Reading by admission sequence (P4)
+## Reading by admission sequence
 
 ```
 depinreceiveseq request
@@ -142,7 +146,7 @@ expiry/deletion and its time cursor can miss late timestamps. Prefer the
 sequence method when updating libraries. Operators must add it to their proxy
 allowlist.
 
-## Durable moderation (P8)
+## Durable moderation
 
 Authorized `depinclearmsg` operations write a hash tombstone and erase the
 matching stored message in **one synchronous LevelDB batch before success**.
@@ -184,7 +188,7 @@ error is a signed/encrypted error body, never a success result. If the nonce
 was consumed before storage failed, obtain a new one explicitly; do not
 automatically repeat an administrative action after a lost response.
 
-## Persistence and migration (P9b)
+## Persistence and migration
 
 State lives at `depinstate-v2/<hash(serialized pool root)>` under the selected
 network datadir. It reuses the node's LevelDB wrapper: WAL framing/checksums,
@@ -223,7 +227,8 @@ On first retained startup, `depinpool.dat` version 1 is imported once using
 bounded reads. It checks magic, version, count, file budget and trailing
 data. Complete semantically invalid records can be skipped; truncation or a
 length that prevents framing aborts migration. Historical permission rules
-remain those of P9a. A new stream and new local sequences are assigned in
+remain those of historical message restoration
+([depin-authorization.md](depin-authorization.md#restoring-historical-messages)). A new stream and new local sequences are assigned in
 file order; v1 never recorded admission order, so it cannot be reconstructed.
 The original remains untouched; a `.v1.bak` copy is also kept on successful
 import. Migration completion and imported entries commit together. An
@@ -257,5 +262,5 @@ External libraries have deliberately not been changed. Their final migration
 must check canonical encoding, explicit size semantics, strict decryption,
 signed service identity, cursor storage/recovery, proxy allowlisting and
 bounded handling of `-8`, `-10` and `-26`. No passing node test certifies an
-untested external client. Full method signing P2 is implemented in the node;
-P7 pool renewal is implemented; external migrations remain pending.
+untested external client. Complete request signing is implemented in the node;
+pool-wide membership renewal is implemented; external migrations remain pending.

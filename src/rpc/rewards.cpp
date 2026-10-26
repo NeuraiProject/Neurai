@@ -381,7 +381,7 @@ UniValue distributereward(const JSONRPCRequest& request) {
             throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid distribution_asset_name: OWNER, UNQIUE, MSGCHANNEL assets are not allowed for this call"));
 
         std::pair<int, std::string> errorPair;
-        if (!VerifyWalletHasAsset(distribution_asset_name + OWNER_TAG, errorPair))
+        if (!VerifyWalletHasAsset(walletPtr, distribution_asset_name + OWNER_TAG, errorPair))
             throw JSONRPCError(RPC_INVALID_REQUEST, std::string("Wallet doesn't have the ownership token(!) for the distribution asset"));
     }
 

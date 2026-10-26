@@ -1,30 +1,27 @@
 Benchmarking
 ============
 
-Neurai has an internal benchmarking framework, with benchmarks
-for cryptographic algorithms such as SHA1, SHA256, SHA512 and RIPEMD160. As well as the rolling bloom filter.
+Neurai has an internal benchmarking framework (`src/bench/`). It is built by
+default; `./configure --disable-bench` skips it. It covers, among others:
 
-After compiling neurai-core, the benchmarks can be run with:
+- hashing (`crypto_hash.cpp`: RIPEMD160, SHA1, SHA256, SHA512, ...) and Base58
+- the rolling bloom filter, prevector, the locked memory pool and check queues
+- script verification (`verify_script.cpp`), `OP_CHECKSIGADD`
+  (`bench_checksigadd.cpp`), Ed25519 (`bench_ed25519.cpp`) and Poseidon
+  (`bench_poseidon.cpp`)
+- block checks (`checkblock.cpp`), coins cache (`ccoins_caching.cpp`), mempool
+  eviction and wallet coin selection
+
+After compiling Neurai, the benchmarks can be run with:
 `src/bench/bench_neurai`
 
-The output will look similar to:
+The output is CSV, one line per benchmark:
 ```
-#Benchmark,count,min,max,average
-RIPEMD160,448,0.001245033173334,0.002638196945190,0.002461894814457
-RollingBloom-refresh,1,0.000635000000000,0.000635000000000,0.000635000000000
-RollingBloom-refresh,1,0.000108000000000,0.000108000000000,0.000108000000000
-RollingBloom-refresh,1,0.000107000000000,0.000107000000000,0.000107000000000
-RollingBloom-refresh,1,0.000204000000000,0.000204000000000,0.000204000000000
-SHA1,640,0.000909024336207,0.001938136418660,0.001843086257577
-SHA256,256,0.002209486499909,0.008500099182129,0.004300644621253
-SHA512,384,0.001319904176016,0.002813005447388,0.002615700786312
-Sleep100ms,10,0.205592155456543,0.210056066513062,0.104166316986084
-Trig,67108864,0.000000014997003,0.000000015448112,0.000000015188842
+#Benchmark,count,min,max,average,min_cycles,max_cycles,average_cycles
+RIPEMD160,448,0.001245033173334,0.002638196945190,0.002461894814457,...
+SHA256,256,0.002209486499909,0.008500099182129,0.004300644621253,...
+...
 ```
 
-More benchmarks are needed for, in no particular order:
-- Script Validation
-- CCoinDBView caching
-- Coins database
-- Memory pool
-- Wallet coin selection
+Times are in seconds; the cycle columns are filled in only where the platform
+provides a cycle counter.

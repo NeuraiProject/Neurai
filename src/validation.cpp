@@ -1689,33 +1689,33 @@ CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
         return fPostReduction ? (v >> 1) : v;
     };
 
-    // Go zero after 383 micro-halvings (10 years) Mined 20993999270 XNA
+    // Go zero after 383 micro-halvings (10 years) Mined 21106329307 XNA
     // (mainnet figures; testnet emission diverges from block 10 per NIP-028)
 
     if (halvings >= 383)
         return 0;
 
-    // Force block reward to 500 after 216 micro-halvings. Mined 19791599270 XNA
+    // Force block reward to 500 after 216 micro-halvings. Mined 19903929307 XNA
     if (halvings >= 216)
         return half(500 * COIN);
 
-    // Force block reward to 1000 after 180 micro-halvings. Mined 19280399270 XNA
+    // Force block reward to 1000 after 180 micro-halvings. Mined 19385529307 XNA
     if (halvings >= 180)
         return half(1000 * COIN);
 
-    // Force block reward to 2000 after 144 micro-halvings. Mined 18257999270 XNA
+    // Force block reward to 2000 after 144 micro-halvings. Mined 18348729307 XNA
     if (halvings >= 144)
         return half(2000 * COIN);
 
-    // Force block reward to 3000 after 108 micro-halvings. Mined 16717199270 XNA
+    // Force block reward to 3000 after 108 micro-halvings. Mined 16793529307 XNA
     if (halvings >= 108)
         return half(3000 * COIN);
 
-    // Force block reward to 4000 after 72 micro-halvings. Mined 14657999270 XNA
+    // Force block reward to 4000 after 72 micro-halvings. Mined 14719929307 XNA
     if (halvings >= 72)
         return half(4000 * COIN);
 
-    // Force block reward to 5000 after 36 micro-halvings. Mined 12080399270 XNA
+    // Force block reward to 5000 after 36 micro-halvings. Mined 12127929307 XNA
     if (halvings >= 36)
         return half(5000 * COIN);
 

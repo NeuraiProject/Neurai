@@ -13,21 +13,22 @@ Companion documents:
 - [`depinreceivemsg.md`](depinreceivemsg.md) — the RPC-by-RPC integration
   guide (argument semantics, examples, paging). This specification defers to
   it for parameter details and does not repeat them.
-- [`README.md`](README.md) — operating a service node (configuration,
+- [`depin-guide.md`](depin-guide.md) — operating a service node (configuration,
   indexes, wallet requirements).
 - `contrib/depin/regtest_walkthrough.sh` — an executable end-to-end run of
   protocol 5 functional regressions against a disposable regtest node.
 
 Reference code: `src/depinmsgpool.{h,cpp}` (message, pool, access),
 `src/depinecies.{h,cpp}` (ECIES), `src/depinchallenge.{h,cpp}`
-(authentication), `src/depinpoolkey.{h,cpp}` (reply signing/encryption),
-`src/depinrpc.{h,cpp}` and `src/rpc/depin.cpp` (RPC 5 codec/dispatcher),
+(authentication), `src/depinpoolkey.{h,cpp}` (pool key),
+`src/depinrpc.{h,cpp}` (RPC 5 codec, reply signing/encryption) and
+`src/rpc/depin.cpp` (RPC 5 dispatcher),
 `src/rpc/messages.cpp` (local wallet/query business logic). A JavaScript implementation of the message
 cryptography exists in the
 [DePIN-Messaging](https://github.com/NeuraiProject/DePIN-Messaging) repository.
 
 DePIN messaging is experimental and currently available on **testnet and
-regtest** only. Protocol **4** rejects old RPC formats/signatures. Clients
+regtest** only. Protocol **5** rejects old RPC formats/signatures. Clients
 MUST verify the bootstrap and require protocol 5. External SDKs are to be
 updated after the node; no external implementation is certified here.
 
@@ -52,7 +53,7 @@ Parties:
 The chain defines eligibility, the holder key authenticates and decrypts,
 and a pinned pool key authenticates the service response. A malicious pool
 can lie about its directory or withhold data: clients must independently
-validate intended recipients. Neither a signature nor P1 proves an arbitrary
+validate intended recipients. Neither a signature nor recipient authorization proves an arbitrary
 server follows authorization rules.
 
 What is, and is not, confidential:
@@ -109,7 +110,8 @@ ancestor of `T`.
 A service node serves one **pool root** `R` (`-depinmsgtoken`) and the
 subtree below it. Ancestors *above* `R` are outside the pool: holders of
 `&A` are not recipients of a pool rooted at `&A/B`, and recipient resolution
-for publishing stops at `R` (§8.3).
+for publishing stops at `R` (`depingetancestorrecipients` in
+[the client guide](depinreceivemsg.md#methods-and-operational-recovery)).
 
 New publications validate the sender and every declared recipient against
 current connected-chain permissions. Private subsets are allowed; any invalid
@@ -128,7 +130,7 @@ Query RPCs (all public, cacheable, no authentication):
 | `listdepinholders "asset"` | every holder with `valid` |
 | `listdepinaddresses "asset" (count) (start)` | holders with a revealed pubkey: `address, pubkey, valid` |
 | `getpubkey "address"` | `pubkey`, `revealed`, `height`, `txid` |
-| `depingetancestorrecipients "token" (max) ("stop_at")` | active holders with revealed keys over the ancestor chain (§8.3) |
+| `depingetancestorrecipients request` (`token`, `args.max_results`, `args.stop_at`) | active holders with revealed keys over the ancestor chain ([client guide](depinreceivemsg.md#methods-and-operational-recovery)) |
 
 ### 2.3 Revealed public keys
 
@@ -159,7 +161,7 @@ See [depin-ecdsa.md](depin-ecdsa.md) for commitment verification and wire rules.
 
 | Primitive | Definition |
 |---|---|
-| Curve | secp256k1. Public keys are **compressed** (33 bytes, `02`/`03` prefix). |
+| Curve | secp256k1. Public keys are **compressed** (33 bytes, `02`/`03` prefix), except that a Legacy P2PKH identity may reveal an uncompressed key (65 bytes, `04` prefix; §2.4). |
 | `SHA256(x)` | FIPS 180-4 SHA-256. |
 | `SHA256d(x)` | `SHA256(SHA256(x))` (Bitcoin "hash256"). |
 | `hash160(x)` | `RIPEMD160(SHA256(x))`. The P2PKH payload of an address is `hash160(pubkey)`. |
@@ -208,7 +210,8 @@ msghash(text) = SHA256d( ser_string("Neurai Signed Message:\n") ‖ ser_string(t
 
 where `ser_string` is `CompactSize(len) ‖ bytes`. The signature is a 65-byte
 **compact recoverable** ECDSA signature `header ‖ r ‖ s` with
-`header = 27 + recid + 4` (compressed keys), encoded in base64. Verification
+`header = 27 + recid + 4` for compressed keys (`27 + recid` for an uncompressed
+Legacy key), encoded in base64. Verification
 recovers the public key from the signature and checks
 the recovered key against the exact destination: `hash160(recovered)` for
 Legacy, or the witness-v3 strict AuthScript commitment for ECDSA. Signing is deterministic
@@ -231,8 +234,9 @@ but producers SHOULD emit low-`s`). Typically 70–72 bytes.
 ## 4. ECIES envelope (`CECIESEncryptedMessage`)
 
 One construction serves three purposes: the message content (§5), the
-submission envelope for the pool key (§8.3), and every reply bound to an
-address (§6.2). It encrypts a plaintext once for **N recipients** identified
+submission envelope for the pool key (`depinsubmitmsg`, see
+[the client guide](depinreceivemsg.md#methods-and-operational-recovery)), and
+every reply bound to an address (§6). It encrypts a plaintext once for **N recipients** identified
 by address.
 
 ### 4.1 Wire format
@@ -255,7 +259,7 @@ See [depin-ecdsa.md](depin-ecdsa.md) for the complete contract.
 
 Each wrapped key package is exactly 60 bytes; `encryptedPayload` is
 `28 + len(plaintext)` bytes. The hex of this serialization is what travels in
-`encrypted_payload_hex`, in `depinsubmitmsg.encrypted` and in every
+`encrypted_payload_hex`, in `depinsubmitmsg`'s `args.encrypted` and in every
 `encrypted` reply field.
 
 ### 4.2 Encryption
@@ -334,24 +338,23 @@ A message is stored only if **all** of the following hold, in this order:
 
 1. `token` is the pool root or inside its subtree;
 2. `messageType ∈ {0x01, 0x02}`;
-3. `timestamp ≤ now + 60` (seconds);
+3. `timestamp ≤ now + 60` (seconds) and not below the durable retention floor;
 4. `now − timestamp ≤ expiry` (default 168 h; `messageexpiryhours` in
    `depingetmsginfo`);
 5. content ciphertext is nonempty and its plaintext length is at most
    `maxmessagesize` (default 1024 bytes, maximum 10240), excluding GCM and
    key overhead; the conservative ECIES wire bound is
-   `80 + maxmessagesize + 81 * maxrecipients`;
+   `82 + maxmessagesize + 94 * maxrecipients`;
 6. `encryptedPayload` passes the bounded strict ECIES decoder: valid compressed
    ephemeral key, minimal CompactSize, 1..`maxrecipients` entries in canonical
    destination-ID order without duplicates, exactly 60-byte wrapped keys and no
    trailing bytes. Recipients still authenticate both GCM layers;
-7. the pool size limit is not exceeded;
-8. `signature` verifies against the sender's **revealed** public key (§2.3);
-9. `senderAddress` has inherited access to `token` (§2.2);
-10. every declared recipient has current inherited access to the message
-    token (a valid subset is allowed; rejection code `-26`);
-11. `hash` is neither in the pool nor covered by a durable moderation mark,
-    and the timestamp is above the durable retention floor.
+7. `signature` verifies against the sender's **revealed** public key (§2.3);
+8. `senderAddress` has inherited access to `token` (§2.2);
+9. every declared recipient has current inherited access to the message
+   token (a valid subset is allowed; rejection code `-26`);
+10. the pool size limit is not exceeded;
+11. `hash` is neither in the pool nor covered by a durable moderation mark.
 
 The node checks that every declared recipient is enabled; it does not require
 the complete holder set or prove that a malicious sender has not shared the
@@ -442,7 +445,7 @@ static secp256k1 private key is provided. Revocation prevents authorized future
 downloads and does not erase ciphertext already downloaded. A newly added
 holder does not gain a recipient key for old messages automatically.
 
-The recipient list is fixed by the sender. P1 rejects unauthorized declared
+The recipient list is fixed by the sender. Recipient authorization rejects unauthorized declared
 recipients on an honest node, but cannot constrain a malicious server/sender
 or plaintext sharing. Comparing independent RPC sources and a local allowlist
 is client policy still to implement. A poolsig authenticates the response,
@@ -462,6 +465,6 @@ its disposable test directory, without wallet keys or RPC cookies.
 Run `contrib/depin/regtest_walkthrough.sh` after configuring/building the
 functional test environment. Permission and pool-state functional tests cover
 real connected chain changes, storage and process kills. The historical
-protocol 2 authentication vectors are not valid RPC 5 examples. P7 context
+protocol 2 authentication vectors are not valid RPC 5 examples. The membership context
 revision is implemented; external library migration remains future work; no node-only
 result certifies an external library or all production failure modes.

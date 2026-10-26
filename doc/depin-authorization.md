@@ -1,6 +1,7 @@
 # DePIN message authorization
 
-This describes authorization for P9a, P1 and P3 (2026-10-21). For subsequent
+This describes historical message restoration, recipient authorization and
+current-permission checks (2026-10-21). For subsequent
 strict encoding, sequence reads and durable state, see
 [depin-pool-state.md](depin-pool-state.md). The signed user message framing remains unchanged. RPC 5 additionally supports
 strict ECDSA destinations with [typed ECIES recipients](depin-ecdsa.md);
@@ -83,7 +84,7 @@ stats), local signing and decryption remain available. `depingetmsginfo`'s
 signed plain `body` adds `ready`, `not_ready_reason`, `authorization_height`,
 `known_headers`, `tip_age_seconds`, `maxtipage` and `maxheaderlag`.
 
-## Restoring historical messages (P9a)
+## Restoring historical messages
 
 `-depinpoolpersist` remains **off by default**. With it enabled, startup uses a
 private restoration path. It checks signatures, strict ECIES encoding,
@@ -97,7 +98,7 @@ Restoration does not provide an RPC import bypass. A new submission of the
 same old message goes through current admission checks. A bad magic header
 is preserved for inspection rather than deleting the only source file.
 
-P9b now stores retained messages, sequences and durable moderation in state
+The durable pool state now stores retained messages, sequences and durable moderation in state
 version 2; version 1 is imported explicitly, preserving its original. A
 saved, verified sender key permits signature checking after a reorg removes
 the key-reveal transaction. The loader cannot prove an operator-controlled
@@ -115,8 +116,8 @@ Use bounded retries; never silently discard an intended recipient or treat a
 truncated directory as complete. Preserve verification of signed wrappers.
 
 The node implements complete method/parameter signatures and
-[P7 membership context](depin-membership.md) under
+[membership context](depin-membership.md) under
 [RPC protocol 5](depin-request-signatures.md). Every relevant confirmed pool
 change invalidates RECEIVE/ADMIN challenges; stale operation proofs and sends
-require refresh. P3 still rechecks current permission. A reorganization never
+require refresh. Current permission is still rechecked. A reorganization never
 reactivates an invalidated nonce. External libraries remain pending.

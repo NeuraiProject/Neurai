@@ -44,10 +44,10 @@ These dependencies are required:
 
  Library     | Purpose          | Description
  ------------|------------------|----------------------
- libssl      | Crypto           | Random Number Generation, Elliptic Curve Cryptography
+ libssl      | Crypto           | OpenSSL (libcrypto) for random number generation and hashing helpers
+ liboqs      | Crypto           | Post-quantum signatures (ML-DSA-44); version 0.16.0, see below
  libboost    | Utility          | Library for threading, data structures, etc
  libevent    | Networking       | OS independent asynchronous networking
- libdb++     | Utility          | Contains headers and static libraries for the Berkeley DB library
 
 Optional dependencies:
 
@@ -55,13 +55,28 @@ Optional dependencies:
  ------------|------------------|----------------------
  miniupnpc   | UPnP Support     | Firewall-jumping support
  libdb4.8    | Berkeley DB      | Wallet storage (only needed when wallet enabled)
- qt          | GUI              | GUI toolkit (only needed when GUI enabled)
+ qt          | GUI              | Qt 6 GUI toolkit (only needed when GUI enabled)
  protobuf    | Payments in GUI  | Data interchange format used for payment protocol (only needed when GUI enabled)
  libqrencode | QR codes in GUI  | Optional for generating QR codes (only needed when GUI enabled)
  univalue    | Utility          | JSON parsing and encoding (bundled version will be used unless --with-system-univalue passed to configure)
  libzmq3     | ZMQ notification | Optional, allows generating ZMQ notifications (requires ZMQ version >= 4.x)
 
-For the versions used, see [dependencies.md](dependencies.md)
+For the versions used, see [dependencies.md](dependencies.md). A C++20
+compiler is required (GCC 12+ or Clang 14+, see dependencies.md).
+
+liboqs
+------
+liboqs 0.16.0 is required; `configure` fails without it. Distribution packages
+are usually a different version, so build it from source:
+
+    git clone --branch 0.16.0 --depth 1 https://github.com/open-quantum-safe/liboqs.git
+    cmake -S liboqs -B liboqs/build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+          -DOQS_BUILD_ONLY_LIB=ON -DOQS_USE_OPENSSL=OFF -DOQS_DIST_BUILD=ON \
+          -DCMAKE_INSTALL_PREFIX=/usr/local
+    cmake --build liboqs/build -j4
+    sudo cmake --install liboqs/build
+
+The depends system builds it automatically.
 
 
 ## Linux Distribution Specific Instructions
@@ -77,7 +92,10 @@ Ubuntu/Debian specific instructions, see [build-ubuntu.md](build-ubuntu.md))
 
 Build requirements:
 
-    sudo dnf install gcc-c++ libtool make autoconf automake openssl-devel libevent-devel boost-devel libdb4-devel libdb4-cxx-devel python3
+    sudo dnf install gcc-c++ libtool make autoconf automake cmake openssl-devel libevent-devel boost-devel python3
+
+Fedora no longer packages Berkeley DB 4.8; build it with `contrib/install_db4.sh`
+(see below) or use `--disable-wallet`.
 
 Optional:
 
@@ -87,9 +105,9 @@ ZMQ dependencies (provides ZMQ API):
 
     sudo dnf install zeromq-devel
 
-To build with Qt 5 you need the following:
+To build the GUI with Qt 6 you need the following:
 
-    sudo dnf install qt5-qttools-devel qt5-qtbase-devel protobuf-devel
+    sudo dnf install qt6-qttools-devel qt6-qtbase-devel protobuf-devel
 
 libqrencode (optional) can be installed with:
 
@@ -156,7 +174,7 @@ Hardening enables the following features:
 
     To test that you have built PIE executable, install scanelf, part of paxutils, and use:
 
-    	scanelf -e ./neurai
+    	scanelf -e ./src/neuraid
 
     The output should contain:
 
@@ -171,7 +189,7 @@ Hardening enables the following features:
     executable without the non-executable stack protection.
 
     To verify that the stack is non-executable after compiling use:
-    `scanelf -e ./neurai`
+    `scanelf -e ./src/neuraid`
 
     the output should contain:
 	STK/REL/PTL
@@ -202,17 +220,17 @@ Setup and Build Example: Arch Linux
 -----------------------------------
 This example lists the steps necessary to setup and build a command line only, non-wallet distribution of the latest changes on Arch Linux:
 
-    pacman -S git base-devel boost libevent python
+    pacman -S git base-devel boost libevent python cmake openssl
     git clone https://github.com/NeuraiProject/Neurai.git
-    cd neurai/
+    cd Neurai/
+    # build and install liboqs 0.16.0 first (see "liboqs" above)
     ./autogen.sh
     ./configure --disable-wallet --without-gui --without-miniupnpc
     make check
 
 Note:
 Enabling wallet support requires either compiling against a Berkeley DB newer than 4.8 (package `db`) using `--with-incompatible-bdb`,
-or building and depending on a local version of Berkeley DB 4.8. The readily available Arch Linux packages are currently built using
-`--with-incompatible-bdb` according to the [PKGBUILD](https://projects.archlinux.org/svntogit/community.git/tree/neurai/trunk/PKGBUILD).
+or building and depending on a local version of Berkeley DB 4.8.
 As mentioned above, when maintaining portability of the wallet between the standard Neurai distributions and independently built
 node software is desired, Berkeley DB 4.8 must be used.
 
@@ -226,23 +244,19 @@ installing the toolchain will be different.
 Make sure you install the build requirements mentioned above.
 Then, install the toolchain and curl:
 
-    sudo apt-get install g++-arm-linux-gnueabihf curl
+    sudo apt-get install g++-aarch64-linux-gnu curl
 
-To build executables for ARM:
+To build executables for 64-bit ARM (32-bit ARM is not supported: `configure`
+accepts only x86-64 and ARM64 for the NIP-018 `mcl` backend):
 
     cd depends
-    make HOST=arm-linux-gnueabihf NO_QT=1
+    make HOST=aarch64-linux-gnu NO_QT=1
     cd ..
     ./autogen.sh
-    ./configure --prefix=$PWD/depends/arm-linux-gnueabihf --enable-glibc-back-compat --enable-reduce-exports LDFLAGS=-static-libstdc++
+    ./configure --prefix=$PWD/depends/aarch64-linux-gnu --enable-glibc-back-compat --enable-reduce-exports LDFLAGS=-static-libstdc++
     make
 
 
 For further documentation on the depends system see [README.md](../depends/README.md) in the depends directory.
 
-Building on FreeBSD and OpenBSD
---------------------
-
-FreeBSD specific instructions, see [build-freebsd.md](build-freebsd.md))
-
-OpenBSD specific instructions, see [build-openbsd.md](build-openbsd.md))
+FreeBSD and OpenBSD are not tested by the maintainers and have no build notes.

@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 
 TOPDIR=${TOPDIR:-$(git rev-parse --show-toplevel)}
 SRCDIR=${SRCDIR:-$TOPDIR/src}
@@ -12,7 +12,8 @@ NEURAIQT=${NEURAIQT:-$SRCDIR/qt/neurai-qt}
 [ ! -x $NEURAID ] && echo "$NEURAID not found or not executable." && exit 1
 
 # The autodetected version git tag can screw up manpage output a little bit
-XNAVER=($($NEURAICLI --version | head -n1 | awk -F'[ -]' '{ print $6, $7 }'))
+# "Neurai RPC client version v2.0.0.0-<commit>": the version is field 5.
+XNAVER=($($NEURAICLI --version | head -n1 | awk -F'[ -]' '{ print $5, $6 }'))
 
 # Create a footer file with copyright content.
 # This gets autodetected fine for neuraid if --version-string is not set,

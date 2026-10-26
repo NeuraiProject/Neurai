@@ -4073,7 +4073,7 @@ bool CreateAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, const s
     if (assetType == AssetType::SUB || assetType == AssetType::UNIQUE || assetType == AssetType::MSGCHANNEL || fIsSubDepin) {
         // Verify that this wallet is the owner for the asset, and get the owner asset outpoint
         for (auto asset : assets) {
-            if (!VerifyWalletHasAsset(parentName + OWNER_TAG, error)) {
+            if (!VerifyWalletHasAsset(pwallet, parentName + OWNER_TAG, error)) {
                 return false;
             }
         }
@@ -4083,7 +4083,7 @@ bool CreateAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, const s
     if (assetType == AssetType::SUB_QUALIFIER) {
         // Verify that this wallet is the owner for the asset, and get the owner asset outpoint
         for (auto asset : assets) {
-            if (!VerifyWalletHasAsset(parentName, error)) {
+            if (!VerifyWalletHasAsset(pwallet, parentName, error)) {
                 return false;
             }
         }
@@ -4097,7 +4097,7 @@ bool CreateAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, const s
         std::string strStripped = parentName.substr(1, parentName.size() - 1);
 
         // Verify that this wallet is the owner for the asset, and get the owner asset outpoint
-        if (!VerifyWalletHasAsset(strStripped + OWNER_TAG, error)) {
+        if (!VerifyWalletHasAsset(pwallet, strStripped + OWNER_TAG, error)) {
             return false;
         }
 
@@ -4219,12 +4219,12 @@ bool CreateReissueAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, 
     // If we are reissuing a restricted asset, check to see if we have the root owner token $TOKEN check for TOKEN!
     if (asset_type == AssetType::RESTRICTED) {
         // Verify that this wallet is the owner for the asset, and get the owner asset outpoint
-        if (!VerifyWalletHasAsset(stripped_asset_name + OWNER_TAG, error)) {
+        if (!VerifyWalletHasAsset(pwallet, stripped_asset_name + OWNER_TAG, error)) {
             return false;
         }
     } else {
         // Verify that this wallet is the owner for the asset, and get the owner asset outpoint
-        if (!VerifyWalletHasAsset(asset_name + OWNER_TAG, error)) {
+        if (!VerifyWalletHasAsset(pwallet, asset_name + OWNER_TAG, error)) {
             return false;
         }
     }
@@ -4466,7 +4466,7 @@ bool CreateTransferAssetTransaction(CWallet* pwallet, const CCoinControl& coinCo
             return false;
         }
 
-        if (!VerifyWalletHasAsset(asset_name, error)) // Sets error if it fails
+        if (!VerifyWalletHasAsset(pwallet, asset_name, error)) // Sets error if it fails
             return false;
 
         // If it is an ownership transfer, make a quick check to make sure the amount is 1
@@ -4622,12 +4622,9 @@ bool SendAssetTransaction(CWallet* pwallet, CWalletTx& transaction, CReserveKey&
     return true;
 }
 
-bool VerifyWalletHasAsset(const std::string& asset_name, std::pair<int, std::string>& pairError)
+bool VerifyWalletHasAsset(CWallet* pwallet, const std::string& asset_name, std::pair<int, std::string>& pairError)
 {
-    CWallet* pwallet;
-    if (vpwallets.size() > 0)
-        pwallet = vpwallets[0];
-    else {
+    if (!pwallet) {
         pairError = std::make_pair(RPC_WALLET_ERROR, strprintf("Wallet not found. Can't verify if it contains: %s", asset_name));
         return false;
     }

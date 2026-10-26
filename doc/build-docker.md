@@ -5,15 +5,21 @@ These notes describe how to build Neurai binaries inside Docker containers and h
 Overview
 ---------------------
 - Install a recent Docker Engine (24.x or newer recommended).
-- Clone the Neurai source tree locally so the Docker build context includes the repository files.
-- The Dockerfiles live under `doc/docker/` and currently target Linux (`Dockerfile-Linux64-bin`) and Windows (`Dockerfile-Win64-bin`) artifacts.
+- These two images do **not** build your local checkout: each Dockerfile runs
+  `git clone` of the `DePIN-Test` branch of the public repository and builds
+  it. Run `docker build` from the
+  repository root only so the Dockerfile path resolves.
+- The Dockerfiles live under `doc/docker/`. This guide covers Linux
+  (`Dockerfile-Linux64-bin-v2`) and Windows (`Dockerfile-Win64-bin-v2`)
+  artifacts; see [docker/README.md](docker/README.md) for the images that build
+  the local checkout.
 - The images compile Neurai inside `/root/Neurai` and leave the build products in that directory. The container keeps running (`tail -f /dev/null`) so you can copy files out after the build completes.
 
 Building Linux x86_64 binaries
 ---------------------
 1. From the repository root, build the image:
    ```bash
-docker build -f doc/docker/Dockerfile-Linux64-bin -t neurai-linux64-build .
+docker build -f doc/docker/Dockerfile-Linux64-bin-v2 -t neurai-linux64-build .
 ```
 2. Create a stopped container from that image:
    ```bash
@@ -46,7 +52,7 @@ Building Windows x86_64 binaries
 ---------------------
 1. Build the cross-compilation image:
    ```bash
-docker build -f doc/docker/Dockerfile-Win64-bin -t neurai-win64-build .
+docker build -f doc/docker/Dockerfile-Win64-bin-v2 -t neurai-win64-build .
 ```
 2. Create a container from the image:
    ```bash
@@ -58,7 +64,6 @@ mkdir -p build-out/win64
 # Daemon and command-line tools
 docker cp neurai-win64-out:/root/Neurai/src/neuraid.exe build-out/win64/ || true
 docker cp neurai-win64-out:/root/Neurai/src/neurai-cli.exe build-out/win64/ || true
-docker cp neurai-win64-out:/root/Neurai/src/neurai-tx.exe build-out/win64/ || true
 # GUI wallet (if Qt build succeeded)
 docker cp neurai-win64-out:/root/Neurai/src/qt/neurai-qt.exe build-out/win64/ || true
 # Copy the entire directory if you plan to package everything
@@ -80,7 +85,10 @@ Inspecting or customizing builds
 docker run --rm -it neurai-linux64-build /bin/bash
 ```
   From there you can rerun `make`, adjust `-j` flags, or tweak configuration options.
-- To rebuild with local source modifications, edit the repository and re-run `docker build`. Docker’s layer cache will reuse previously completed steps when possible.
+- Local source modifications are not picked up, because the image clones the
+  repository. To build a different branch or your own changes, change the
+  `git clone` line (for example, `git clone -b <branch>`, or replace it with
+  `COPY . /root/Neurai`) and re-run `docker build --no-cache`.
 - Adjust the Dockerfiles if you need different configure flags (for example, enabling tests or indexing).
 
 Extracting artifacts with running containers
@@ -107,4 +115,4 @@ Troubleshooting
 - Ensure the host has enough RAM and disk space; the images compile the full dependency tree, which can take several gigabytes.
 - If Docker is running on Windows or macOS, make sure file sharing is enabled for the drive that hosts the repository, otherwise the `docker build` context may be empty.
 
-With these steps you can produce reproducible Linux and Windows binaries without installing the complete toolchain on your host.
+With these steps you can produce Linux and Windows binaries without installing the complete toolchain on your host. The builds are not reproducible: they depend on the state of the cloned branch and of the distribution packages at build time.

@@ -1,213 +1,30 @@
-Build instructions for Neurai 
+Build instructions for Neurai
 =================================
 
-This will install most of the dependencies from ubuntu.
-The only one we build, is Berkeley DB 4.8.
+This will install most of the dependencies from Ubuntu.
+The ones we build are Berkeley DB 4.8 and liboqs 0.16.0.
 
-Ubuntu 22.04 - Jammy Jellyfish - Install dependencies:
+Neurai needs a C++20 compiler (GCC 12 or newer), Boost 1.81 or newer and
+Qt 6 for the GUI (see [dependencies.md](dependencies.md)), so these
+instructions target Ubuntu 24.04 (Noble Numbat) or newer. Older releases are
+not supported; on them, build with Docker instead (see
+[build-docker.md](build-docker.md)).
+
+Install dependencies
 ---------------------------
-`$ sudo apt install 
-build-essential
-libssl-dev
-libboost-chrono-dev
-libboost-filesystem-dev
-libboost-program-options-dev
-libboost-system-dev
-libboost-thread-dev
-libboost-test-dev
-qtbase5-dev
-qttools5-dev
-bison
-libexpat1-dev
-libdbus-1-dev
-libfontconfig-dev
-libfreetype6-dev
-libice-dev
-libsm-dev
-libx11-dev
-libxau-dev
-libxext-dev
-libevent-dev
-libxcb1-dev
-libxkbcommon-dev
-libminiupnpc-dev
-libprotobuf-dev
-libqrencode-dev
-xcb-proto
-x11proto-xext-dev
-x11proto-dev
-xtrans-dev
-zlib1g-dev
-libczmq-dev
-autoconf
-automake
-libtool
-protobuf-compiler
-`
+```
+sudo apt install build-essential autoconf automake libtool pkg-config cmake git \
+    python3 bsdmainutils libssl-dev \
+    libevent-dev libboost-chrono-dev libboost-filesystem-dev \
+    libboost-program-options-dev libboost-system-dev libboost-thread-dev \
+    libboost-test-dev libminiupnpc-dev libzmq3-dev
+```
 
-Ubuntu 21.10 - Impish Indri - Install dependencies:
----------------------------
-`$ sudo apt install 
-build-essential
-libssl-dev
-libboost-chrono1.74-dev
-libboost-filesystem1.74-dev
-libboost-program-options1.74-dev
-libboost-system1.74-dev
-libboost-thread1.74-dev
-libboost-test1.74-dev
-qtbase5-dev
-qttools5-dev
-bison
-libexpat1-dev
-libdbus-1-dev
-libfontconfig-dev
-libfreetype-dev
-libice-dev
-libsm-dev
-libx11-dev
-libxau-dev
-libxext-dev
-libevent-dev
-libxcb1-dev
-libxkbcommon-dev
-libminiupnpc-dev
-libprotobuf-dev
-libqrencode-dev
-xcb-proto
-x11proto-xext-dev
-x11proto-dev
-xtrans-dev
-zlib1g-dev
-libczmq-dev
-autoconf
-automake
-libtool
-protobuf-compiler
-`
-
-Ubuntu 21.04 - Hirsute Hippo - Install dependencies:
-----------------------------
-`$ sudo apt install 
-build-essential
-libssl-dev
-libboost-chrono1.71-dev
-libboost-filesystem1.71-dev
-libboost-program-options1.71-dev
-libboost-system1.71-dev
-libboost-thread1.71-dev
-libboost-test1.71-dev
-qtbase5-dev
-qttools5-dev
-bison
-libexpat1-dev
-libdbus-1-dev
-libfontconfig-dev
-libfreetype-dev
-libice-dev
-libsm-dev
-libx11-dev
-libxau-dev
-libxext-dev
-libevent-dev
-libxcb1-dev
-libxkbcommon-dev
-libminiupnpc-dev
-libprotobuf-dev
-libqrencode-dev
-xcb-proto
-x11proto-xext-dev
-x11proto-dev
-xtrans-dev
-zlib1g-dev
-libczmq-dev
-autoconf
-automake
-libtool
-protobuf-compiler
-`
-
-Ubuntu 20.04 - Focal Fossa - Install dependencies:
----------------------------
-`$ sudo apt install 
-build-essential
-libssl-dev
-libboost-chrono-dev
-libboost-filesystem-dev
-libboost-program-options-dev
-libboost-system-dev
-libboost-thread-dev
-libboost-test-dev
-qtbase5-dev
-qttools5-dev
-bison
-libexpat1-dev
-libdbus-1-dev
-libfontconfig-dev
-libfreetype6-dev
-libice-dev
-libsm-dev
-libx11-dev
-libxau-dev
-libxext-dev
-libevent-dev
-libxcb1-dev
-libxkbcommon-dev
-libminiupnpc-dev
-libprotobuf-dev
-libqrencode-dev
-xcb-proto
-x11proto-xext-dev
-x11proto-dev
-xtrans-dev
-zlib1g-dev
-libczmq-dev
-autoconf
-automake
-libtool
-protobuf-compiler
-`
-
-Ubuntu 18.04 - Bionic Beaver - Install dependencies:
-----------------------------
-`$ sudo apt install 
-build-essential
-libssl-dev
-libboost-chrono-dev
-libboost-filesystem-dev
-libboost-program-options-dev
-libboost-system-dev
-libboost-thread-dev
-libboost-test-dev
-qtbase5-dev
-qttools5-dev
-bison
-libexpat1-dev
-libdbus-1-dev
-libfontconfig-dev
-libfreetype6-dev
-libice-dev
-libsm-dev
-libx11-dev
-libxau-dev
-libxext-dev
-libevent-dev
-libxcb1-dev
-libxkbcommon-dev
-libminiupnpc-dev
-libprotobuf-dev
-libqrencode-dev
-xcb-proto
-x11proto-xext-dev
-x11proto-dev
-xtrans-dev
-zlib1g-dev
-libczmq-dev
-autoconf
-automake
-libtool
-protobuf-compiler
-`
+For the GUI (optional):
+```
+sudo apt install qt6-base-dev qt6-tools-dev qt6-tools-dev-tools qt6-l10n-tools \
+    libgl-dev libqrencode-dev libprotobuf-dev protobuf-compiler
+```
 
 Directory structure
 ------------------
@@ -233,7 +50,25 @@ __Download Neurai source.__
 
 `cd Neurai`
 
-`git checkout develop` # this checks out the develop branch.
+`git checkout <tag>` # the release tag you want to build, e.g. `2.0.0` (see `git tag`)
+
+__Build liboqs 0.16.0 (required)__
+
+The post-quantum signatures (ML-DSA-44) need liboqs 0.16.0; `configure` fails
+without it. Build it as a static library:
+
+```
+git clone --branch 0.16.0 --depth 1 https://github.com/open-quantum-safe/liboqs.git
+cmake -S liboqs -B liboqs/build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+      -DOQS_BUILD_ONLY_LIB=ON -DOQS_USE_OPENSSL=OFF -DOQS_DIST_BUILD=ON \
+      -DCMAKE_INSTALL_PREFIX=/usr/local
+cmake --build liboqs/build -j4
+sudo cmake --install liboqs/build
+```
+
+If you install it elsewhere, pass `CPPFLAGS="-I<prefix>/include"` and
+`LDFLAGS="-L<prefix>/lib"` to `configure`. The depends system builds liboqs
+automatically.
 
 __Download and build Berkeley DB 4.8__
 
@@ -273,6 +108,8 @@ __Only Daemon:__
 `git clone https://github.com/NeuraiProject/Neurai`
 
 `cd Neurai`
+
+Build liboqs as described above, then:
 
 `contrib/install_db4.sh ../`
 

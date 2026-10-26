@@ -96,6 +96,7 @@ guard. Compare the preserved base and patched GCC `-O2` binaries in alternating
 rounds after other builds/tests finish. Guards must match. Timings from a shared
 Docker host are diagnostic, not a mining throughput guarantee.
 
-The historical mainnet genesis has a fixed expected X16R hash. Subsequent mainnet
+The historical mainnet genesis has a fixed expected hash (the node computes it
+through X16RV2; with a null previous-block hash X16R gives the same value). Subsequent mainnet
 blocks use KAWPOW, whose code and activation are unchanged. Synthetic headers
 exercise X16R/X16RV2 compositions; they are not a replay of the historical chain.

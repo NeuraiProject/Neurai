@@ -3,8 +3,8 @@ Reduce Traffic
 
 Some node operators need to deal with bandwidth caps imposed by their ISPs.
 
-By default, neurai-core allows up to 125 connections to different peers, 12 of
-which are outbound. You can therefore, have at most 117 inbound connections.
+By default, neuraid allows up to 256 connections to different peers, 12 of
+which are outbound. You can therefore have at most 244 inbound connections.
 
 The default settings can result in relatively significant traffic consumption.
 
@@ -21,12 +21,12 @@ longer serving historic blocks (blocks older than one week).
 Keep in mind that new nodes require other nodes that are willing to serve
 historic blocks.
 
-Peers with the `download` permission will never be disconnected, although their traffic counts for
+Whitelisted peers (`-whitelist`) will never be disconnected, although their traffic counts for
 calculating the target.
 
 ## 2. Disable "listening" (`-listen=0`)
 
-Disabling listening will result in fewer nodes connected (remember the maximum of 10
+Disabling listening will result in fewer nodes connected (remember the maximum of 12
 outbound peers). Fewer nodes will result in less traffic usage as you are relaying
 blocks and transactions to fewer nodes.
 
@@ -44,11 +44,10 @@ with other peers, you can disable transaction relay.
 Be reminded of the effects of this setting.
 
 - Fee estimation will no longer work.
-- It sets the flag "-walletbroadcast" to be "0", only if it is currently unset.
-  Doing so disables the automatic broadcasting of transactions from wallet. Not
-  relaying other's transactions could hurt your privacy if used while a wallet
-  is loaded or if you use the node to broadcast transactions.
-- If a peer has the forcerelay permission, we will still receive and relay
-  their transactions.
+- It does not change `-walletbroadcast`: the wallet still broadcasts its own
+  transactions, which then stand out because the node relays no others. Set
+  `-walletbroadcast=0` yourself if privacy matters.
+- It sets `-whitelistrelay=0` unless set explicitly; peers whitelisted with
+  `-whitelistforcerelay` still have their transactions received and relayed.
 - It makes block propagation slower because compact block relay can only be
   used when transaction relay is enabled.

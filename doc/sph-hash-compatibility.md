@@ -1,125 +1,77 @@
-# Compatibilidad de hashes SPH — 2026-10-22
+# SPH hash compatibility
 
-Corregidos los accesos desalineados y los desplazamientos de negativos detectados
-por UBSan durante las pruebas de wallet DePIN. Los resultados comprobados se
-conservan byte por byte, incluido el hash X16R del génesis de mainnet. Entrega
-sobre `10675d82c90ae641be26e086940535aad300ccdb`, sin nuevo commit ni despliegue.
+Introduced in `1320936`. It fixes misaligned accesses and shifts of negative
+values in the SPH hash code (used by X16R/X16RV2), found by UBSan. All hash
+outputs are preserved byte for byte, including the mainnet genesis hash. No
+consensus rule, DePIN format, signature, key, RPC or persistence format changes,
+and the KAWPOW code and parameters are unchanged.
 
-## Cambios
+## Changes
 
-- `src/algo/sph_types.h` y su copia idéntica `src/crypto/sph_types.h` cargan y
-  guardan representaciones de enteros mediante `memcpy`. Se conservan los swaps,
-  las ramas de endian y los fallbacks por bytes. Esto elimina desreferencias de
-  punteros convertidos con alineación o tipo efectivo incompatibles, también en
-  los helpers `_aligned`; los tamaños y bytes de salida no cambian.
-- `src/algo/simd.c` sustituye los 14 desplazamientos de valores potencialmente
-  negativos de FFT16 por multiplicaciones acotadas. Las cotas de FFT8 dan
-  `|d2_i * 2^i| <= 554496`, dentro de `s32`. REDS1/REDS2 expresan el antiguo
-  desplazamiento aritmético a la derecha con división que redondea hacia menos
-  infinito, sin negar el mínimo entero. Las máscaras se aplican a valores sin
-  signo. No se depende del desplazamiento de un negativo de C.
-- Las fixtures de `depin_sections_wallet_tests` y
-  `depin_selfrevoke_wallet_tests` seleccionan explícitamente la ruta SHA256d de
-  testnet antes de construir `TestingSetup`, y restauran las banderas de red y
-  la activación KAWPOW al destruirse. `SelectParams` por sí solo deja
-  intencionadamente esas banderas intactas en las pruebas. Se comprueba el
-  génesis fijo de testnet y la restauración de ámbitos anidados. No cambia la
-  selección de red de producción ni la activación de algoritmos.
+- `src/algo/sph_types.h` and its identical copy `src/crypto/sph_types.h` load
+  and store integer representations through `memcpy`. The swaps, endian branches
+  and byte-wise fallbacks are retained. This removes dereferences of cast
+  pointers with incompatible alignment or effective type, also in the
+  `_aligned` helpers; output sizes and bytes do not change.
+- `src/algo/simd.c` replaces the 14 shifts of potentially negative values in
+  FFT16 with bounded multiplications. The FFT8 bounds give
+  `|d2_i * 2^i| <= 554496`, within `s32`. REDS1/REDS2 express the former
+  arithmetic right shift as a division rounding towards negative infinity,
+  without negating the minimum integer. Masks are applied to unsigned values.
+  Nothing depends on C's shift of a negative value.
+- The `depin_sections_wallet_tests` and `depin_selfrevoke_wallet_tests`
+  fixtures explicitly select the testnet SHA256d path before constructing
+  `TestingSetup`, and restore the network flags and the KAWPOW activation when
+  destroyed. `SelectParams` alone intentionally leaves those flags untouched in
+  tests. Production network selection and algorithm activation do not change.
 
-Los formatos DePIN, firmas, claves, RPC y persistencia no cambian con esta
-corrección. El código KAWPOW y sus parámetros tampoco cambian.
+## Independent reference
 
-## Referencia independiente
+The expected values come from the **Java** implementation by the SPH author,
+[sphlib](https://github.com/pornin/sphlib), pinned to commit
+`15b6b8d8f3e4a43c58ba102d712fa6b8a3317035`. The Java code does not share the C
+helpers being fixed, and the expected values were frozen from Java, not from
+the fixed C code. The original node C/C++ code was compared with Java before the
+fix was applied.
 
-Se utilizó la implementación **Java** del autor de SPH,
-[sphlib](https://github.com/pornin/sphlib), fijada al commit
-`15b6b8d8f3e4a43c58ba102d712fa6b8a3317035`. El código Java no comparte los
-helpers C que se corrigen. La versión original del C/C++ del nodo se compiló y
-comparó con Java antes de copiar la corrección al entorno remoto. Los valores
-esperados se congelaron desde Java, no desde el C corregido.
+The reproducible corpus has 4516 cases: the 16 X16 components, edge lengths and
+random messages, long SIMD/Fugue inputs, every X16R/X16RV2 selector, mixed
+compositions and the historical genesis header. 50 Java cases are kept in
+`src/test/data/sph_compat.json` for the regular test suite. The checked mainnet
+genesis hash is
+`00000044d33c0c0ba019be5c0249730424a69cb4c222153322f68c6104484806`. The node
+computes it through the X16RV2 path (its `nTime` is after the X16RV2
+activation); with a null `hashPrevBlock` every selector is BLAKE and X16R gives
+the same value, as both vectors check.
 
-El corpus reproducible contiene **4516 casos**: los 16 componentes de X16,
-longitudes de borde y mensajes aleatorios, SIMD/Fugue largos, todos los
-selectores de X16R/X16RV2, composiciones mixtas y el encabezado histórico del
-génesis. Se conservan 50 casos de Java en `src/test/data/sph_compat.json` para la
-suite habitual. El hash X16R de mainnet comprobado es
-`00000044d33c0c0ba019be5c0249730424a69cb4c222153322f68c6104484806`.
+The Java adaptation reproduces the X16 composition and the zero padding after
+Tiger in X16RV2; its cryptographic components are independent. The published
+bit-length vectors of sphlib give a second check for the 224, 256, 384 and
+512-bit SIMD/Fugue variants.
 
-La adaptación Java reproduce la composición X16 y el relleno con ceros tras
-Tiger en X16RV2; sus componentes criptográficos son independientes. Los
-vectores publicados de bit-longitud de sphlib proporcionan una segunda
-comprobación para las variantes SIMD/Fugue de 224, 256, 384 y 512 bits.
+## Testing
 
-## Validación en Docker remoto
+The tools and commands are in [contrib/devtools/sph](../contrib/devtools/sph/README.md).
+Besides the corpus comparison, run:
 
-Todas las ejecuciones de comparación y pruebas se hicieron en `dev128`, en el
-contenedor privado `depin-p9p1p3-20261021`, con red `none`, todas las capacidades
-retiradas, `no-new-privileges`, 8 CPU y 16 GiB. Se reutilizaron fuentes y
-compilaciones de diagnóstico separadas; las cadenas y wallets son desechables.
-No se utilizó una wallet ni cadena de producción.
+- the `sph_tests` unit suite (unaligned streaming outputs, the 50 frozen Java
+  vectors and scoped restoration of wallet test network globals);
+- the complete unit suite, also with `--enable-debug` (`DEBUG_LOCKORDER`);
+- the DePIN functional tests `feature_depin_pool_state.py` and
+  `feature_depin_messaging_permissions.py` on regtest.
 
-| Comprobación | Resultado |
-|---|---|
-| C/C++ original GCC `-O2` frente a Java | 4516/4516 idénticos |
-| Corregido GCC `-O0`, `-O2`, `-O3` | 4516/4516 idénticos en cada configuración |
-| GCC portátil, `SPH_UNALIGNED=0`, `SPH_NO_ASM=1` | 4516/4516 idénticos |
-| GCC y Clang ASan/UBSan `-O1` | 4516/4516 idénticos, sin diagnósticos |
-| Clang `-O2` y `-O3` | 4516/4516 idénticos en cada configuración |
-| Ejecutable ARM64 GCC `-O2` bajo QEMU | 4516/4516 idénticos |
-| Helper `test_neurai_hash` del build normal | 354/354 encabezados X16R/X16RV2 coinciden con Java |
-| Vectores publicados SIMD/Fugue, GCC, Clang y GCC ASan/UBSan | 16384 por configuración, aprobados; también pasan los tests de tipos de sphlib |
-| Orden de bytes, offsets 0–15 y canarios, ambas copias de `sph_types.h` | 20800 comprobaciones por ejecución; 10 ejecuciones GCC, sanitizadores GCC/Clang y ARM64 normal/portátil aprobadas |
-| Nuevas pruebas unitarias `sph_tests` | 3 casos / 30476 aserciones aprobados |
-| Suite completa normal, `DEBUG_LOCKORDER` | **1462 casos / 6688137 aserciones aprobados** |
-| Selección conjunta SPH, hash, criptografía y DePIN con ASan/UBSan | **160 casos / 233291 aserciones aprobados**, incluidos los 13 casos de las dos fixtures de wallet |
-| Regtest `feature_depin_pool_state.py` | Aprobado: cursores, moderación, almacenamiento, caída abrupta y reinicios |
-| Regtest `feature_depin_messaging_permissions.py` | Aprobado: permisos, reorganizaciones y concurrencia |
+The fix was checked with GCC and Clang at several optimization levels, with
+ASan/UBSan (`UBSAN_OPTIONS=halt_on_error=1`, without excluding SPH or the shift
+and alignment checks), with `SPH_UNALIGNED=0` and `SPH_NO_ASM=1`, and with an
+ARM64 executable under QEMU; every configuration matched all 4516 cases.
 
-GCC 12.2, Clang 14, Java 17 y QEMU 7.2; las versiones completas, dependencias y
-hashes figuran en las evidencias. Los paquetes de Clang, Java y cross-compilación
-se prepararon mediante repositorios Debian firmados y se instalaron dentro de
-este contenedor. No se habilitó su red ni se ampliaron capacidades. Se conserva
-el manifiesto SHA-256 de esos paquetes.
+## Limits
 
-Los dos fallos originales se reproducen separadamente con las fuentes previas:
-una escritura de 32 bits en un offset desalineado y el desplazamiento de un
-negativo de SIMD con una entrada no nula. Las ejecuciones finales usan
-`UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1`, sin excluir SPH ni desactivar
-el diagnóstico de desplazamiento o alineación.
-
-Una ejecución inicial de los tests publicados encontró además
-`memcpy(dst, NULL, 0)` en el **harness externo** para su vector vacío. El runner
-copia ese harness y condiciona únicamente esa llamada a longitud distinta de
-cero. Los vectores y el código del algoritmo permanecen intactos; no se suprime
-la comprobación UBSan. También se conservan los intentos de enlace del runner
-`-O0`: se resolvieron eliminando secciones no utilizadas de Ethash, sin stubs.
-
-## Rendimiento y límites
-
-Once rondas alternas de los binarios original/corregido GCC `-O2`, fijadas a una
-CPU y después de terminar las demás pruebas, conservan los mismos guards de
-salida. Las medianas de SIMD/Fugue varían entre **−1,59 % y +0,94 %**; X16R,
-**+5,35 %** y X16RV2, **+0,41 %**. Los hashes X16 se midieron en lotes cortos de
-1000 iteraciones en un host compartido. Estos datos se registran como
-microbenchmark diagnóstico y no acreditan el rendimiento de un minero real.
-
-Las herramientas y los comandos están en
-[contrib/devtools/sph](../contrib/devtools/sph/README.md). La instrumentación del
-runner independiente incluye todos los componentes SPH y Tiger. La compilación
-del nodo con sanitizadores conserva las limitaciones ya registradas: secp256k1
-portátil, ensamblador manual SHA256 sin instrumentar, dependencias estáticas de
-la imagen sin certificación y LeakSanitizer desactivado. El enlace sin PIE y
-`ASAN_OPTIONS=handle_segv=0:detect_leaks=0` evitan el problema de arranque del
-manejador ASan observado en este entorno. No se declara instrumentado todo el
-nodo ni aprobada toda su suite con sanitizadores.
-
-ARM64 se comprobó mediante emulación del ejecutable de hashes; no se compiló
-un nodo ARM64 completo ni se probó hardware ARM físico o una máquina big-endian.
-Se verificó el génesis histórico y las suites existentes de KAWPOW y encabezados,
-pero **no se reprodujo la cadena histórica completa**. El corpus y los
-sanitizadores aportan evidencia y regresiones reproducibles, no una prueba
-exhaustiva de todas las entradas posibles.
-
-El hallazgo **F-SAN-1** del plan DePIN queda cerrado en este alcance. Las tareas
-P2, P7 y la adaptación posterior de librerías externas mantienen su seguimiento
-independiente.
+ARM64 was checked by emulating the hash executable; no complete ARM64 node was
+built and no physical ARM or big-endian hardware was tested. The historical
+genesis and the existing KAWPOW and header suites were verified, but the
+complete historical chain was not replayed. The corpus and sanitizers give
+reproducible evidence and regressions, not an exhaustive proof over every
+possible input. In microbenchmarks the fixed code changed SIMD/Fugue medians
+by between -1.6% and +0.9%, X16R by +5.4% and X16RV2 by +0.4%; these are
+diagnostic and do not measure real mining throughput.

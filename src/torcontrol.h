@@ -13,7 +13,9 @@
 #include "scheduler.h"
 
 extern const std::string DEFAULT_TOR_CONTROL;
-static const bool DEFAULT_LISTEN_ONION = true;
+// Off by default: the hidden service is requested as NEW:RSA1024 (onion v2),
+// which Tor no longer supports.
+static const bool DEFAULT_LISTEN_ONION = false;
 
 void StartTorControl(boost::thread_group& threadGroup, CScheduler& scheduler);
 void InterruptTorControl();

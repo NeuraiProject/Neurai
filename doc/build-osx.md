@@ -147,16 +147,6 @@ Then run the complete unit suite and open `Neurai-Qt.app` from the GUI ZIP.
 The unit-test executable is in the CLI archive. Record the macOS version,
 processor and test output when checking the build on a real Mac.
 
-ARM64 backend validation on Linux can execute the existing 1,857-case
-differential corpus and concurrent-initialization test under `qemu-aarch64`,
-with UBSan enabled, and compare against the existing external reference and
-Intel results. This tests the portable backend; it does not execute the macOS
-application or replace the real Mac tests above.
-The Linux ARM64 Boost.Test runner failed before listing tests under the
-available QEMU version; the unchanged concurrent test body passed with a
-lightweight assertion runner. The complete macOS test executable still needs
-to be run on Apple Silicon.
-
 Packages are not signed with an Apple Developer certificate or notarized.
 The ARM64 linker signature is ad-hoc. Developer signing and notarization
 are subsequent release steps. GitHub CI builds and packages each macOS

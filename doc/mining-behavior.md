@@ -89,5 +89,6 @@ python3 test/functional/standalone/block_work_admission.py \
   --neuraid src/neuraid --network main --tmpdir /tmp/neurai-work-test
 ```
 
-Use a new empty output directory for each run. Repeat with `--network test` and
+Use a new output directory that does not exist yet for each run; the script
+creates it and fails if it already exists. Repeat with `--network test` and
 `--network regtest` when validating either maintained branch.

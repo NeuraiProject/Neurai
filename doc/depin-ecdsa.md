@@ -40,7 +40,8 @@ contract. Strict ECDSA additionally binds the message-magic hash through
 Legacy signatures never verify for a strict identity, even for the same key;
 there is no fallback to an unbound strict signature.
 Internal DER message signatures and historical saved sender keys use the same
-binding check. Wallet helpers resolve strict keys through versioned AuthScript
+exact key-to-destination check; the DER signature itself covers the unbound
+content digest, which already contains the sender address. Wallet helpers resolve strict keys through versioned AuthScript
 spend data, verify the public key against the destination, and use the selected
 wallet. This supports an ECDSA client wallet alongside the separate service
 wallet; it does not require sharing client private keys with a remote relay.
@@ -89,10 +90,10 @@ every decoded destination without rewriting the sender's signed bytes.
 
 ## Membership, history and clients
 
-P7 observes first valid key revelations for both families. Relevant confirmed
+The membership observer records first valid key revelations for both families. Relevant confirmed
 membership changes renew the pool revision and invalidate all RECEIVE/ADMIN
-challenges. P3 still checks current authorization on every operation; P1 rejects
-an entire publication containing a disabled destination with `-26`.
+challenges. Current permissions are still checked on every operation, and recipient
+authorization rejects an entire publication containing a disabled destination with `-26`.
 
 Message framing, hashes, storage version 2 and cursor version 1 are unchanged.
 Historical Legacy ECIES decodes as before. Mixed/strict messages persist their
@@ -108,9 +109,4 @@ sequence cursors, restart and durable tombstones. See
 
 ## Validation limits
 
-Node tests do not certify external SDKs or all wallet configurations. During
-validation two pre-existing issues were recorded: cross-wallet lock ordering
-while publishing asset transactions, and misaligned references in the packed
-`prevector::swap` used by script moves. The final remote messaging test keeps
-one wallet per node. See [the retained findings and reproductions](../NIP/NIP_SIN_NUMERO/actualizacion-depin-evidencias-20261021/ecdsa/known-findings.md);
-these issues remain separate follow-up work.
+Node tests do not certify external SDKs or all wallet configurations.

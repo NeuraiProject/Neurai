@@ -3,9 +3,9 @@ Release Process
 
 Before every release candidate:
 
-* Update translations see [translation_process.md](https://github.com/NeuraiProject/Neurai/blob/master/doc/translation_process.md#synchronising-translations).
+* Update translations see [translation_process.md](translation_process.md#synchronising-translations).
 
-* Update manpages, see [gen-manpages.sh](https://github.com/NeuraiProject/Neurai/blob/master/contrib/devtools/README.md#gen-manpagessh).
+* Update manpages, see [gen-manpages.sh](../contrib/devtools/README.md#gen-manpagessh).
 
 Before every minor and major release:
 
@@ -21,8 +21,8 @@ Before every minor and major release:
 
 Before every major release:
 
-* Update hardcoded [seeds](/contrib/seeds/README.md), see [this pull request](https://github.com/bitcoin/bitcoin/pull/7415) for an example.
-* Update [`BLOCK_CHAIN_SIZE`](/src/qt/intro.cpp) to the current size plus some overhead.
+* Update hardcoded [seeds](../contrib/seeds/README.md), see [this pull request](https://github.com/bitcoin/bitcoin/pull/7415) for an example.
+* Update [`BLOCK_CHAIN_SIZE` and `CHAIN_STATE_SIZE`](../src/qt/intro.cpp) to the current size plus some overhead.
 * Update `src/chainparams.cpp` chainTxData with statistics about the transaction count and rate.
 
 ### First time / New builders
@@ -45,27 +45,28 @@ Tag version (or release candidate) in git
     git tag -s v(new version, e.g. 0.8.0)
 
 
-### Build binaries. 
+### Build binaries.
 
-TODO: describe process.
+Release binaries are built with the depends system. The CI workflow
+([build-neurai.yml](../.github/workflows/build-neurai.yml)) builds `windows`,
+`linux`, `linux-disable-wallet` and `osx` (`x86_64` and `arm64`) with the
+scripts in [`.github/scripts/`](../.github/scripts/): `00-install-deps.sh <os>`,
+then `02`…`06` (copy dependencies, export paths, configure and build, binary
+checks, package). The macOS stages use `contrib/mac-cross`; see
+[build-osx.md](build-osx.md). See also [build-docker.md](build-docker.md).
 
 
-Codesigner only: Create Windows/OS X detached signatures:
+Codesigner only: Create Windows detached signatures:
 - Only one person handles codesigning. Everyone else should skip to the next step.
-- Only once the Windows/OS X builds each have 3 matching signatures may they be signed with their respective release keys.
+- Only sign builds that other builders have reproduced and confirmed.
 
-Codesigner only: Sign the osx binary:
-
-    transfer neurai-osx-unsigned.tar.gz to osx for signing
-    tar xf neurai-osx-unsigned.tar.gz
-    ./detached-sig-create.sh -s "Key ID"
-    Enter the keychain password and authorize the signature
-    Move signature-osx.tar.gz back to the gitian host
+macOS packages are not signed with an Apple Developer certificate or
+notarized (the ARM64 linker signature is ad-hoc); see [build-osx.md](build-osx.md).
 
 Codesigner only: Sign the windows binaries:
 
-    tar xf neurai-win-unsigned.tar.gz
-    ./detached-sig-create.sh -key /path/to/codesign.key
+    tar xf neurai-${VERSION}-win64-unsigned.tar.gz
+    ./detached-sig-create.sh -key /path/to/codesign.key   # contrib/windeploy/detached-sig-create.sh
     Enter the passphrase for the key when prompted
     signature-win.tar.gz will be created
 
@@ -79,14 +80,14 @@ sha256sum * > SHA256SUMS
 
 The list of files should be:
 ```
-neurai-${VERSION}-aarch64-linux-gnu.tar.gz
-neurai-${VERSION}-arm-linux-gnueabihf.tar.gz
 neurai-${VERSION}-x86_64-linux-gnu.tar.gz
-neurai-${VERSION}-osx64.tar.gz
-neurai-${VERSION}-osx.dmg
-neurai-${VERSION}.tar.gz
+neurai-${VERSION}-macos-x86_64.tar.gz
+neurai-${VERSION}-macos-x86_64-unsigned.zip
+neurai-${VERSION}-macos-arm64.tar.gz
+neurai-${VERSION}-macos-arm64-unsigned.zip
 neurai-${VERSION}-win64-setup.exe
 neurai-${VERSION}-win64.zip
+```
 
 - GPG-sign it, delete the unsigned file:
 ```
@@ -102,11 +103,9 @@ Note: check that SHA256SUMS itself doesn't end up in SHA256SUMS, which is a spur
 
 - Announce the release:
 
-  - neuraicore.org blog post
-
   - Optionally twitter, reddit /r/Neurai, ... but this will usually sort out itself
 
-  - Archive release notes for the new version to `doc/release-notes/` (branch `master` and branch of the release)
+  - Archive release notes for the new version to `doc/release-notes/` (main branch and branch of the release)
 
   - Create a [new GitHub release](https://github.com/NeuraiProject/Neurai/releases/new) with a link to the archived release notes.
 

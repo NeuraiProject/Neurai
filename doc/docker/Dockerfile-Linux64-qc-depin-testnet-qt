@@ -1,10 +1,10 @@
-# Native x64 build of neuraid + neurai-cli with PQ support, based on the
+# Native x64 build of neuraid, neurai-cli, neurai-tx and neurai-qt with PQ support, based on the
 # official Dockerfile-Linux64-qc but using debian:12 (bookworm) instead of
 # debian:11 (bullseye). Bullseye ships gcc-10 and lacks gcc-12 / cross-compile
 # toolchains that scripts/00-install-deps.sh expects.
 #
 # Build:
-#   docker build -f doc/docker/Dockerfile-Linux64-qc-bookworm -t neurai-pq .
+#   docker build -f doc/docker/Dockerfile-Linux64-qc-depin-testnet-qt -t neurai-pq .
 
 FROM debian:12
 

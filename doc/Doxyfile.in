@@ -862,7 +862,8 @@ RECURSIVE              = YES
 # run.
 
 EXCLUDE                = src/leveldb \
-                         src/json \
+                         src/secp256k1 \
+                         src/univalue \
                          src/test \
                          src/qt/test
 

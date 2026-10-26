@@ -20,13 +20,13 @@ The size of some in-memory caches can be reduced. As caches trade off memory usa
 
   - Do not use this when using the client to broadcast transactions as any transaction sent will stick out like a sore thumb, affecting privacy. When used with the wallet it should be combined with `-walletbroadcast=0` and `-spendzeroconfchange=0`. Another mechanism for broadcasting outgoing transactions (if any) should be used.
 
-- Since bitcoin `0.14.0`, unused memory allocated to the mempool (default: 300MB) is shared with the UTXO cache, so when trying to reduce memory usage you should limit the mempool, with the `-maxmempool` command line argument.
+- Unused memory allocated to the mempool (default: 300MB) is shared with the UTXO cache, so when trying to reduce memory usage you should limit the mempool, with the `-maxmempool` command line argument.
 
 ## Number of peers
 
-- `-maxconnections=<n>` - the maximum number of connections, this defaults to 125. Each active connection takes up some
+- `-maxconnections=<n>` - the maximum number of connections, this defaults to 256. Each active connection takes up some
   memory. This option applies only if incoming connections are enabled, otherwise the number of connections will never
-  be more than 10. Of the 10 outbound peers, there can be 8 full-relay connections and 2 block-relay-only ones.
+  be more than 12 (the maximum number of outbound peers).
 
 ## Thread configuration
 
@@ -34,7 +34,7 @@ For each thread a thread stack needs to be allocated. By default on Linux,
 threads take up 8MiB for the thread stack on a 64-bit system, and 4MiB in a
 32-bit system.
 
-- `-par=<n>` - the number of script verification threads, defaults to the number of cores in the system minus one.
+- `-par=<n>` - the number of script verification threads; the default (`0`) uses one per available core.
 - `-rpcthreads=<n>` - the number of threads used for processing RPC requests, defaults to `4`.
 
 ## Linux specific

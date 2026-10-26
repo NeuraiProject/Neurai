@@ -2,7 +2,7 @@
 
 This issue tracker is only for technical issues related to Neurai.
 
-General Neurai questions and/or support requests and are best directed to the [Neurai Discord](https://discord.gg/jn6uhur)).
+General Neurai questions and/or support requests and are best directed to the [Neurai Discord](https://discord.gg/j2WgJjgj8t)).
 
 For reporting security issues, please direct message one of the core developers in discord.
 

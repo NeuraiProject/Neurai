@@ -11,11 +11,11 @@ The interface is defined in the C header `neuraiconsensus.h` located in  `src/sc
 
 #### Version
 
-`neuraiconsensus_version` returns an `unsigned int` with the API version *(currently at an experimental `0`)*.
+`neuraiconsensus_version` returns an `unsigned int` with the API version *(currently `1`, `NEURAICONSENSUS_API_VER`)*.
 
 #### Script Validation
 
-`neuraiconsensus_verify_script` returns an `int` with the status of the verification. It will be `1` if the input script correctly spends the previous output `scriptPubKey`.
+`neuraiconsensus_verify_script` and `neuraiconsensus_verify_script_with_amount` (which adds `int64_t amount`, the value of the spent output, required with `WITNESS`) return an `int` with the status of the verification. It will be `1` if the input script correctly spends the previous output `scriptPubKey`.
 
 ##### Parameters
 - `const unsigned char *scriptPubKey` - The previous output script that encumbers spending.
@@ -34,16 +34,18 @@ The interface is defined in the C header `neuraiconsensus.h` located in  `src/sc
 - `neuraiconsensus_SCRIPT_FLAGS_VERIFY_CHECKLOCKTIMEVERIFY` - Enable CHECKLOCKTIMEVERIFY ([BIP65](https://github.com/bitcoin/bips/blob/master/bip-0065.mediawiki))
 - `neuraiconsensus_SCRIPT_FLAGS_VERIFY_CHECKSEQUENCEVERIFY` - Enable CHECKSEQUENCEVERIFY ([BIP112](https://github.com/bitcoin/bips/blob/master/bip-0112.mediawiki))
 - `neuraiconsensus_SCRIPT_FLAGS_VERIFY_WITNESS` - Enable WITNESS ([BIP141](https://github.com/bitcoin/bips/blob/master/bip-0141.mediawiki))
+- `neuraiconsensus_SCRIPT_FLAGS_VERIFY_CAT`, `_CHECKTEMPLATEVERIFY`, `_CHECKSIGFROMSTACK`, `_TXHASH`, `_OUTPUTVALUE`, `_TXLOCKTIME`, `_OUTPUTSCRIPT`, `_OUTPUTASSETFIELD`, `_64BIT_INTEGERS`, `_INPUTASSETFIELD`, `_INPUTOUTPUTCOUNT` - Enable the corresponding covenant opcodes (see [covenants.md](covenants.md))
+
+The `flags` argument is 32 bits wide, so the library cannot express the newer
+flags (bit 32 and above: AuthScript strict families, NIP-041/043/044/046,
+`OP_ZKVERIFY`, hashes, Ed25519, CHECKSIGADD, ...); scripts that need them
+cannot be verified with this API. Some opcodes also need data the library does
+not receive (all prevouts, reference inputs, chain context) and fail closed.
 
 ##### Errors
 - `neuraiconsensus_ERR_OK` - No errors with input parameters *(see the return value of `neuraiconsensus_verify_script` for the verification status)*
 - `neuraiconsensus_ERR_TX_INDEX` - An invalid index for `txTo`
 - `neuraiconsensus_ERR_TX_SIZE_MISMATCH` - `txToLen` did not match with the size of `txTo`
-- `neuraiconsensus_ERR_DESERIALIZE` - An error deserializing `txTo`
+- `neuraiconsensus_ERR_TX_DESERIALIZE` - An error deserializing `txTo`
 - `neuraiconsensus_ERR_AMOUNT_REQUIRED` - Input amount is required if WITNESS is used
-
-### Example Implementations
-- [NNeurai](https://github.com/NicolasDorier/NNeurai/blob/master/NNeurai/Script.cs#L814) (.NET Bindings)
-- [node-libneuraiconsensus](https://github.com/bitpay/node-libneuraiconsensus) (Node.js Bindings)
-- [java-libneuraiconsensus](https://github.com/dexX7/java-libneuraiconsensus) (Java Bindings)
-- [neuraiconsensus-php](https://github.com/Bit-Wasp/neuraiconsensus-php) (PHP Bindings)
+- `neuraiconsensus_ERR_INVALID_FLAGS` - `flags` contains bits outside `neuraiconsensus_SCRIPT_FLAGS_VERIFY_ALL`
