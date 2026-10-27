@@ -84,6 +84,10 @@ DePIN messaging (testnet and regtest)
 - [Legacy and strict ECDSA messaging / ECIES 2](depin-ecdsa.md)
 - [Pool state](depin-pool-state.md)
 
+Asset services
+---------------------
+- [Asset rewards, snapshots and channel messages](asset-rewards-and-messages.md)
+
 Node behaviour
 ---------------------
 - [Header synchronisation](header-sync-validation.md)

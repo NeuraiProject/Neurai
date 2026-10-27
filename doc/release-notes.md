@@ -458,7 +458,9 @@ Indexes and REST
   `/rest/channelmessages/<FROM-HEIGHT>/<CHANNEL>.json`. Expiry is decided at
   query time, so nodes with the same chain answer alike; records of blocks
   that leave the active chain are ignored, not deleted. Enabling it on a
-  synced node indexes the missing blocks at startup; it needs unpruned blocks.
+  synced node indexes the missing blocks at startup; it needs unpruned blocks. See
+  [asset-rewards-and-messages.md](asset-rewards-and-messages.md), which also
+  covers reward plans, snapshots and eligibility.
 - New address, spent and public-key index format (see
   [How to Upgrade](#indexes-that-need-a-reindex)).
 - Spent index entries of disconnected blocks are now erased, so
