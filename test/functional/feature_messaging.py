@@ -15,7 +15,7 @@ class MessagingTest(NeuraiTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 3
-        self.extra_args = [['-assetindex'], ['-assetindex'], ['-assetindex']]
+        self.extra_args = [['-assetindex', '-assetmessages=1'] for _ in range(self.num_nodes)]
 
     def activate_messaging(self):
         self.log.info("Generating XNA for node[0] and activating messaging...")

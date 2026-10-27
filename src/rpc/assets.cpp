@@ -3269,10 +3269,17 @@ UniValue getsnapshot(const JSONRPCRequest& request)
                 "{\n"
                 "  name: (string),\n"
                 "  height: (number),\n"
+                "  block_hash: (string) the block the snapshot was captured on; empty for a legacy snapshot\n"
+                "  snapshot_hash: (string) commitment to the snapshot content (NIP-048); empty for a legacy snapshot\n"
+                "  format: (number) 0 legacy, 1 bound to its block, 2 also with holder state (NIP-048 D3)\n"
+                "  global_frozen: (bool, format 2) the asset was globally frozen\n"
                 "  owners: [\n"
                 "    {\n"
                 "      address: (string),\n"
                 "      amount_owned: (number),\n"
+                "      frozen: (bool, format 2) frozen for the asset (restricted asset or DEPIN owner freeze)\n"
+                "      self_revoked: (bool, format 2) a DEPIN holder that revoked itself\n"
+                "      tags: [ (string), ... ] (format 2) qualifier tags of the address\n"
                 "    }\n"
                 "}\n"
 
@@ -3285,7 +3292,7 @@ UniValue getsnapshot(const JSONRPCRequest& request)
     int block_height = request.params[1].get_int();
 
     if (!pAssetSnapshotDb)
-        throw JSONRPCError(RPC_DATABASE_ERROR, std::string("Asset Snapshot database is not setup. Please restart wallet to try again"));
+        throw JSONRPCError(RPC_DATABASE_ERROR, REWARDS_INACTIVE_ERROR);
 
     LOCK(cs_main);
     UniValue result (UniValue::VOBJ);
@@ -3295,6 +3302,12 @@ UniValue getsnapshot(const JSONRPCRequest& request)
     if (pAssetSnapshotDb->RetrieveOwnershipSnapshot(asset_name, block_height, snapshotDbEntry)) {
         result.push_back(Pair("name", snapshotDbEntry.assetName));
         result.push_back(Pair("height", snapshotDbEntry.height));
+        const bool fLegacy = snapshotDbEntry.IsLegacy();
+        result.push_back(Pair("block_hash", fLegacy ? "" : snapshotDbEntry.blockHash.GetHex()));
+        result.push_back(Pair("snapshot_hash", fLegacy ? "" : HexStr(snapshotDbEntry.snapshotHash.begin(), snapshotDbEntry.snapshotHash.end())));
+        result.push_back(Pair("format", fLegacy ? 0 : snapshotDbEntry.fHasState ? 2 : 1));
+        if (snapshotDbEntry.fHasState)
+            result.push_back(Pair("global_frozen", snapshotDbEntry.fGlobalFrozen));
 
         UniValue entries(UniValue::VARR);
         for (auto const & ownerAndAmt : snapshotDbEntry.ownersAndAmounts) {
@@ -3302,6 +3315,18 @@ UniValue getsnapshot(const JSONRPCRequest& request)
 
             entry.push_back(Pair("address", ownerAndAmt.first));
             entry.push_back(Pair("amount_owned", UnitValueFromAmount(ownerAndAmt.second, snapshotDbEntry.assetName)));
+            if (snapshotDbEntry.fHasState) {
+                const auto state = snapshotDbEntry.states.find(ownerAndAmt.first);
+                const bool fHas = state != snapshotDbEntry.states.end();
+                entry.push_back(Pair("frozen", fHas && state->second.fFrozen));
+                entry.push_back(Pair("self_revoked", fHas && state->second.fSelfRevoked));
+                UniValue tagList(UniValue::VARR);
+                if (fHas) {
+                    for (const auto& tag : state->second.tags)
+                        tagList.push_back(tag);
+                }
+                entry.push_back(Pair("tags", tagList));
+            }
 
             entries.push_back(entry);
         }
@@ -3345,7 +3370,7 @@ UniValue purgesnapshot(const JSONRPCRequest& request)
     }
 
     if (!pAssetSnapshotDb)
-        throw JSONRPCError(RPC_DATABASE_ERROR, std::string("Asset Snapshot database is not setup. Please restart wallet to try again"));
+        throw JSONRPCError(RPC_DATABASE_ERROR, REWARDS_INACTIVE_ERROR);
 
     LOCK(cs_main);
     UniValue result (UniValue::VOBJ);

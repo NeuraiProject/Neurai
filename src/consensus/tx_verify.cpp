@@ -1102,7 +1102,6 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
                                     CMessage message(out, transfer.strName, transfer.message,
                                                      transfer.nExpireTime, nBlocktime);
                                     setMessages->insert(message);
-                                    LogPrintf("Got message: %s\n", message.ToString()); // TODO remove after testing
                                 }
                             }
                         }

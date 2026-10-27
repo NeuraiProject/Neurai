@@ -32,7 +32,8 @@ JSON_TEST_FILES = \
   test/data/ed25519_vectors.json \
   test/data/wycheproof_ed25519.json \
   test/data/silentpayment_index_vectors.json \
-  test/data/privacy_c7_vectors.json
+  test/data/privacy_c7_vectors.json \
+  test/data/nip048_vectors.json
 
 RAW_TEST_FILES =
 
@@ -55,6 +56,7 @@ NEURAI_TESTS =\
   test/assets/cache_tests.cpp \
   test/assets/asset_reissue_tests.cpp \
   test/assets/messaging_tests.cpp \
+  test/assets/rewards_plan_tests.cpp \
   test/assets/null_asset_data_tests.cpp \
   test/assets/restricted_tests.cpp \
   test/assets/qualifier_tests.cpp \

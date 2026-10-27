@@ -452,6 +452,13 @@ Indexes and REST
   (bin, hex, json). Records are checked at startup;
   `-checksilentpaymentindex` sets how many of the last blocks are rebuilt and
   compared (default 6). See [REST-interface.md](REST-interface.md).
+- New `-channelmessageindex` (NIP-048): every message carried by an owner
+  token or a message channel token back to its own address, whatever the
+  wallet, served by `getchannelmessages` and
+  `/rest/channelmessages/<FROM-HEIGHT>/<CHANNEL>.json`. Expiry is decided at
+  query time, so nodes with the same chain answer alike; records of blocks
+  that leave the active chain are ignored, not deleted. Enabling it on a
+  synced node indexes the missing blocks at startup; it needs unpruned blocks.
 - New address, spent and public-key index format (see
   [How to Upgrade](#indexes-that-need-a-reindex)).
 - Spent index entries of disconnected blocks are now erased, so
@@ -502,7 +509,8 @@ Configuration option changes
 New options:
 
 - Indexes: `-pubkeyindex`, `-silentpaymentindex`,
-  `-checksilentpaymentindex=<n>`.
+  `-checksilentpaymentindex=<n>`, `-channelmessageindex` (NIP-048; not with
+  `-prune`).
 - Wallet: `-addresstype=<type>` (`legacy`, `pq` or `ecdsa`; default
   `legacy`), `-mixsilentpayments` (default 0).
 - DePIN service: `-depinmsg`, `-depinmsgtoken=<token>`, `-depinwallet=<file>`,
@@ -529,6 +537,9 @@ New options:
   `-privacypoolunpinned`.
 - `neurai-tx`: new command `refin=TXID:VOUT` adds a reference input (and
   forces a version 3 transaction).
+- Legacy asset modules (NIP-048): `-assetmessages`, `-assetrewards`,
+  `-minsnapshotnotice=<n>` (default 60 blocks); `-minrewardheight`, which
+  already existed, is now listed in the help.
 
 Changed defaults:
 
@@ -540,13 +551,24 @@ Changed defaults:
 - `-maxreorg`: 120 on testnet from the NIP-028 height (60 before it, and on
   mainnet).
 
+Changed behavior:
+
+- A new data directory no longer gets the legacy `messages/` and `rewards/`
+  stores unless asked: `-assetmessages=1` for messages, `-assetrewards=1` or
+  `-assetindex` for rewards. A data directory that already has a store keeps
+  using it, and turning a module off never deletes its store.
+- `-disablemessaging` is now the same as `-assetmessages=0`, and combining it
+  with `-assetmessages=1` is refused at startup. A bare `-disablemessaging`
+  now disables legacy asset messaging; it used to leave it enabled. Neither
+  option affects DePIN messaging (`-depinmsg`).
+
 Removed options: none. `-pqwallet`, which only existed in development
 builds, is refused at startup with a pointer to `-addresstype=pq`.
 
 Low-level RPC changes
 ----------------------
 
-New RPCs (43):
+New RPCs (52):
 
 - DePIN messaging, remote protocol 5, one `request` argument each:
   `depingetmsginfo`, `depinchallenge`, `depinreceivemsg`, `depinreceiveseq`,
@@ -569,6 +591,36 @@ New RPCs (43):
 - Privacy pool: `getprivacypoolinfo pool ( limit )`,
   `getprivacypoolupdates pool ( cursor limit )`.
 - Other: `getpubkey "address"` (needs `-pubkeyindex`), `getibdstatus`.
+- Reward plans (NIP-048): `getdistributionplan "asset_name" snapshot_height
+  "distribution_asset_name" amount ( "exception_addresses" {options} )`
+  computes, without spending, how an amount is split among the holders in a
+  snapshot, in whole units of the distribution asset, and returns a plan hash
+  that commits to the snapshot, the parameters and every payment.
+  `getdistributionproof {plan} "address"` returns a recipient's Merkle
+  inclusion proof, `getdistributionbatches {plan} ( {options} )` splits the
+  payments into batches, and `verifydistribution {plan} [batches] ( {options} )`
+  classifies each batch from the operator's records (confirmed, confirming,
+  pending, conflicting or unknown). In the wallet, `createdistributionbatch
+  "plan_hash" {plan} batch_index ( {options} )` builds, funds and signs one
+  batch bound to the approved plan hash, locks its inputs and returns it
+  without broadcasting. `getsnapshotannouncement "asset_name" height` returns
+  the message the owner token carries to announce a snapshot height in
+  advance, so other nodes request the same snapshot; a plan that names the
+  announcement commits to it. `replaysnapshot "asset_name" height` rebuilds a
+  snapshot from the blocks and their undo data and returns its hash, for nodes
+  that did not capture it.
+- Reward eligibility (NIP-048): snapshots record, per holder, freezes, DEPIN
+  self-revocations and qualifier tags at their height; plans exclude frozen
+  and self-revoked holders and accept a `qualifier` filter and the `weights`
+  of a work report anchored on the owner token (`report`).
+  `getsnapshotrecipients "asset_name" height` lists the holders with what an
+  encrypted bulletin to them needs (public key revealed or not, address type
+  supported or not).
+- Channel message index (NIP-048): `getchannelmessages "channel" ( {options} )`
+  returns every message of an owner token or message channel from
+  `-channelmessageindex`, with its authority, payload, expiry and any
+  `OP_RETURN` data of the same transaction, optionally with the raw
+  transaction and a `gettxoutproof` proof.
 
 Changed RPCs (arguments and request format):
 
@@ -582,6 +634,11 @@ Changed RPCs (arguments and request format):
   named argument.
 - `getblock`: new verbosity 3.
 - `getaddressdeltas`: `assetName` accepts `"*"`.
+- `distributereward` no longer sends payments: it fails with error -32 and
+  points to `getdistributionplan`. The node no longer builds or retries reward
+  payments on new blocks, so a distribution never pays by itself when funds
+  arrive. `getdistributestatus` still reads the records of earlier
+  distributions.
 
 Result changes:
 
@@ -595,6 +652,19 @@ Result changes:
   information.
 - `getnetworkinfo`: `protocolversion` is the version of the selected network
   (70030 on testnet and regtest).
+- `getblockchaininfo`: new `asset_services` with the state of the legacy
+  messages and rewards stores.
+- `getsnapshot`: new `block_hash`, `snapshot_hash`, `format` and, for
+  snapshots with holder state, `global_frozen` and per owner `frozen`,
+  `self_revoked` and `tags`. A snapshot is now bound
+  to the block it was captured on; if that block is disconnected the snapshot
+  is dropped and captured again when a block at that height is connected.
+- `viewallmessages`, `viewallmessagechannels`: with messaging disabled or its
+  database unavailable they return the explanatory message; they used to
+  return an empty string.
+- Reward and snapshot RPCs: with the reward stores closed they fail with error
+  -20 and a message naming `-assetrewards` (`getdistributestatus` used to
+  return -32600).
 
 Removed RPCs: none.
 

@@ -23,6 +23,7 @@
 #include "core_io.h"
 #include "httpserver.h"
 #include "validation.h"
+#include "channelmessageindex.h"
 #include "net.h"
 #include "policy/feerate.h"
 #include "policy/fees.h"
@@ -85,17 +86,12 @@ UniValue viewallmessages(const JSONRPCRequest& request) {
                 + HelpExampleRpc("viewallmessages", "")
         );
 
-    if (!fMessaging) {
-        UniValue ret(UniValue::VSTR);
-        ret.push_back("Messaging is disabled. To enable messaging, run the wallet without -disablemessaging or remove disablemessaging from your neurai.conf");
-        return ret;
-    }
+    // push_back() is a no-op on a VSTR value; return the strings directly.
+    if (!fMessaging)
+        return MESSAGING_INACTIVE_ERROR;
 
-    if (!pMessagesCache || !pmessagedb) {
-        UniValue ret(UniValue::VSTR);
-        ret.push_back("Messaging database and cache are having problems (a wallet restart might fix this issue)");
-        return ret;
-    }
+    if (!pMessagesCache || !pmessagedb)
+        return "Messaging database and cache are having problems (a wallet restart might fix this issue)";
 
     std::set<CMessage> setMessages;
 
@@ -160,17 +156,11 @@ UniValue viewallmessagechannels(const JSONRPCRequest& request) {
                 + HelpExampleRpc("viewallmessagechannels", "")
         );
 
-    if (!fMessaging) {
-        UniValue ret(UniValue::VSTR);
-        ret.push_back("Messaging is disabled. To enable messaging, run the wallet without -disablemessaging or remove disablemessaging from your neurai.conf");
-        return ret;
-    }
+    if (!fMessaging)
+        return MESSAGING_INACTIVE_ERROR;
 
-    if (!pMessageSubscribedChannelsCache || !pmessagechanneldb) {
-        UniValue ret(UniValue::VSTR);
-        ret.push_back("Messaging channel database and cache are having problems (a wallet restart might fix this issue)");
-        return ret;
-    }
+    if (!pMessageSubscribedChannelsCache || !pmessagechanneldb)
+        return "Messaging channel database and cache are having problems (a wallet restart might fix this issue)";
 
     std::set<std::string> setChannels;
 
@@ -213,7 +203,7 @@ UniValue subscribetochannel(const JSONRPCRequest& request) {
         );
 
     if (!fMessaging) {
-        throw JSONRPCError(RPC_DATABASE_ERROR, "Messaging is disabled. To enable messaging, run the wallet without -disablemessaging or remove disablemessaging from your neurai.conf");
+        throw JSONRPCError(RPC_DATABASE_ERROR, MESSAGING_INACTIVE_ERROR);
     }
 
     if (!pMessageSubscribedChannelsCache || !pmessagechanneldb) {
@@ -263,7 +253,7 @@ UniValue unsubscribefromchannel(const JSONRPCRequest& request) {
         );
 
     if (!fMessaging) {
-        throw JSONRPCError(RPC_DATABASE_ERROR, "Messaging is disabled. To enable messaging, run the wallet without -disablemessaging or remove disablemessaging from your neurai.conf");
+        throw JSONRPCError(RPC_DATABASE_ERROR, MESSAGING_INACTIVE_ERROR);
     }
 
     if (!pMessageSubscribedChannelsCache || !pmessagechanneldb) {
@@ -310,7 +300,7 @@ UniValue clearmessages(const JSONRPCRequest& request) {
         );
 
     if (!fMessaging) {
-        throw JSONRPCError(RPC_DATABASE_ERROR, "Messaging is disabled. To enable messaging, run the wallet without -disablemessaging or remove disablemessaging from your neurai.conf");
+        throw JSONRPCError(RPC_DATABASE_ERROR, MESSAGING_INACTIVE_ERROR);
     }
 
     if (!pMessagesCache || !pmessagedb) {
@@ -1413,6 +1403,95 @@ UniValue depinpoolpkey(const JSONRPCRequest& request)
 }
 #endif
 
+UniValue getchannelmessages(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 2)
+        throw std::runtime_error(
+                "getchannelmessages \"channel\" ( {options} )\n"
+                "\nReturns the messages of an asset channel from the chain-wide index (-channelmessageindex, NIP-048): every\n"
+                "message an owner token (NAME!) or message channel token (NAME~CHANNEL) carried back to the address it came\n"
+                "from, whatever the wallet. Expiry is decided at query time against reference_time, so nodes with the same\n"
+                "chain answer alike.\n"
+
+                "\nArguments:\n"
+                "1. \"channel\"                    (string, required) The owner token or message channel\n"
+                "2. options                      (object, optional)\n"
+                "   {\n"
+                "     \"from_height\": n,            (number, default 0)\n"
+                "     \"to_height\": n,              (number, default the tip)\n"
+                "     \"include_expired\": bool,     (boolean, default false)\n"
+                "     \"reference_time\": n,         (number, default the median time past of the tip) expiry reference\n"
+                "     \"message\": \"hash\",          (string, optional) only messages with this payload\n"
+                "     \"include_tx\": bool,          (boolean, default false) add the raw transaction\n"
+                "     \"include_proof\": bool        (boolean, default false) add a gettxoutproof-style proof\n"
+                "   }\n"
+
+                "\nResult:\n"
+                "{\n"
+                "  \"channel\": \"name\",\n"
+                "  \"synced_height\": n,\n"
+                "  \"reference_time\": n,\n"
+                "  \"messages\": [                   (array) in chain order\n"
+                "    {\n"
+                "      \"channel\": \"name\",\n"
+                "      \"authority\": \"owner\"|\"channel\",  (string) the token that carried the message\n"
+                "      \"txid\": \"hex\", \"vout\": n,\n"
+                "      \"height\": n, \"block_hash\": \"hash\", \"block_time\": n,\n"
+                "      \"expire_time\": n,             (number) 0: never expires\n"
+                "      \"expired\": true|false,\n"
+                "      \"message\": \"hash\",            (string) IPFS hash or 64-hex hash\n"
+                "      \"address\": \"address\",         (string) the address that sent it to itself\n"
+                "      \"op_return\": \"hex\",           (string, optional) data of the transaction's OP_RETURN output\n"
+                "      \"op_return_matches\": bool,     (boolean, with op_return) the message is the SHA-256 of that data, so\n"
+                "                                   the data is content the token holder published in full (NIP-048 D1)\n"
+                "      \"tx\": \"hex\",                  (string, optional)\n"
+                "      \"proof\": \"hex\"                (string, optional) checked with verifytxoutproof\n"
+                "    }, ...\n"
+                "  ]\n"
+                "}\n"
+
+                "\nExamples:\n"
+                + HelpExampleCli("getchannelmessages", "\"ASSET!\"")
+                + HelpExampleCli("getchannelmessages", "\"ASSET~NEWS\" '{\"from_height\":1000,\"include_expired\":true}'")
+        );
+
+    channelmessages::QueryOptions options;
+    options.channel = request.params[0].get_str();
+    if (request.params.size() > 1 && !request.params[1].isNull()) {
+        const UniValue& opts = request.params[1].get_obj();
+        RPCTypeCheckObj(opts, {
+                {"from_height", UniValueType(UniValue::VNUM)},
+                {"to_height", UniValueType(UniValue::VNUM)},
+                {"include_expired", UniValueType(UniValue::VBOOL)},
+                {"reference_time", UniValueType(UniValue::VNUM)},
+                {"message", UniValueType(UniValue::VSTR)},
+                {"include_tx", UniValueType(UniValue::VBOOL)},
+                {"include_proof", UniValueType(UniValue::VBOOL)},
+            }, true, true);
+        if (!find_value(opts, "from_height").isNull())
+            options.fromHeight = find_value(opts, "from_height").get_int();
+        if (!find_value(opts, "to_height").isNull())
+            options.toHeight = find_value(opts, "to_height").get_int();
+        if (!find_value(opts, "include_expired").isNull())
+            options.fIncludeExpired = find_value(opts, "include_expired").get_bool();
+        if (!find_value(opts, "reference_time").isNull())
+            options.referenceTime = find_value(opts, "reference_time").get_int64();
+        if (!find_value(opts, "message").isNull())
+            options.messageFilter = find_value(opts, "message").get_str();
+        if (!find_value(opts, "include_tx").isNull())
+            options.fIncludeTx = find_value(opts, "include_tx").get_bool();
+        if (!find_value(opts, "include_proof").isNull())
+            options.fIncludeProof = find_value(opts, "include_proof").get_bool();
+    }
+
+    LOCK(cs_main);
+    UniValue result;
+    std::string error;
+    if (!channelmessages::QueryChannelJSON(options, result, error))
+        throw JSONRPCError(fChannelMessageIndex ? RPC_INVALID_PARAMETER : RPC_MISC_ERROR, error);
+    return result;
+}
+
 static const CRPCCommand commands[] =
     {           //  category    name                          actor (function)             argNames
                 //  ----------- ------------------------      -----------------------      ----------
@@ -1420,6 +1499,7 @@ static const CRPCCommand commands[] =
             { "messages",       "viewallmessagechannels",     &viewallmessagechannels,     {}},
             { "messages",       "subscribetochannel",         &subscribetochannel,         {"channel_name"}},
             { "messages",       "unsubscribefromchannel",     &unsubscribefromchannel,     {"channel_name"}},
+            { "messages",       "getchannelmessages",         &getchannelmessages,         {"channel", "options"}},
 #ifdef ENABLE_WALLET
             { "messages",       "sendmessage",                &sendmessage,                {"channel", "ipfs_hash", "expire_time"}},
             {"restricted",        "viewmytaggedaddresses",      &viewmytaggedaddresses,       {}},

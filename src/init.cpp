@@ -40,6 +40,7 @@
 #include "script/sigcache.h"
 #include "scheduler.h"
 #include "silentpaymentindex.h"
+#include "channelmessageindex.h"
 #include "timedata.h"
 #include "txdb.h"
 #include "txmempool.h"
@@ -295,6 +296,8 @@ void PrepareShutdown()
         delete pblocktree;
         pblocktree = nullptr;
 
+        channelmessages::ShutdownIndex();
+
         /** XNA START */
         delete passets;
         passets = nullptr;
@@ -485,7 +488,7 @@ std::string HelpMessage(HelpMessageMode mode)
         strUsage += HelpMessageOpt("-dbbatchsize", strprintf("Maximum database write batch size in bytes (default: %u)", nDefaultDbBatchSize));
     }
     strUsage += HelpMessageOpt("-dbcache=<n>", strprintf(_("Set database cache size in megabytes (%d to %d, default: %d)"), nMinDbCache, nMaxDbCache, nDefaultDbCache));
-    strUsage += HelpMessageOpt("-disablemessaging", strprintf(_("Turn off the databasing the messages sent with assets (default: %u)"), false));
+    strUsage += HelpMessageOpt("-disablemessaging", strprintf(_("Same as -assetmessages=0, kept for compatibility. DePIN messaging is controlled by -depinmsg (default: %u)"), false));
     if (showDebug)
         strUsage += HelpMessageOpt("-feefilter", strprintf("Tell other nodes to filter invs to us by our mempool min fee (default: %u)", DEFAULT_FEEFILTER));
     strUsage += HelpMessageOpt("-loadblock=<file>", _("Imports blocks from external blk000??.dat file on startup"));
@@ -519,12 +522,17 @@ std::string HelpMessage(HelpMessageMode mode)
 #endif
     strUsage += HelpMessageOpt("-txindex", strprintf(_("Maintain a full transaction index, used by the getrawtransaction rpc call (default: %u)"), DEFAULT_TXINDEX));
     strUsage += HelpMessageOpt("-assetindex", _("Keep an index of assets, used by the requestsnapshot rpc call. Requires a -reindex."));
+    strUsage += HelpMessageOpt("-assetmessages", _("Store the legacy asset messages of the wallet's channels (default: 1 if the data directory already has a messages store, 0 otherwise)"));
+    strUsage += HelpMessageOpt("-assetrewards", _("Keep the snapshot stores used by requestsnapshot and the reward RPCs (default: 1 with -assetindex or if the data directory already has a rewards store, 0 otherwise)"));
+    strUsage += HelpMessageOpt("-minrewardheight=<n>", strprintf(_("Blocks the chain must be past a snapshot before a distribution plan is computed (default: %u)"), MINIMUM_REWARDS_PAYOUT_HEIGHT));
+    strUsage += HelpMessageOpt("-minsnapshotnotice=<n>", strprintf(_("Blocks a snapshot height must be announced in advance for a plan to count as independently verifiable (default: %u)"), DEFAULT_MIN_SNAPSHOT_NOTICE));
 
     strUsage += HelpMessageOpt("-addressindex", strprintf(_("Maintain a full address index, used to query for the balance, txids and unspent outputs for addresses (default: %u)"), DEFAULT_ADDRESSINDEX));
     strUsage += HelpMessageOpt("-timestampindex", strprintf(_("Maintain a timestamp index for block hashes, used to query blocks hashes by a range of timestamps (default: %u)"), DEFAULT_TIMESTAMPINDEX));
     strUsage += HelpMessageOpt("-spentindex", strprintf(_("Maintain a full spent index, used to query the spending txid and input index for an outpoint (default: %u)"), DEFAULT_SPENTINDEX));
     strUsage += HelpMessageOpt("-pubkeyindex", strprintf(_("Maintain an index of revealed public keys from spending transactions, used for encryption purposes (default: %u)"), DEFAULT_PUBKEYINDEX));
     strUsage += HelpMessageOpt("-silentpaymentindex", strprintf(_("Maintain the NIP-047 silent payment index for light clients: public tweaks and v3 outputs of eligible transactions, served by getsilentpaymenttweaks and REST (default: %u)"), DEFAULT_SILENTPAYMENTINDEX));
+    strUsage += HelpMessageOpt("-channelmessageindex", strprintf(_("Maintain an index of every asset channel message (owner and message channel tokens), independent of the wallet, served by getchannelmessages and REST (default: %u)"), DEFAULT_CHANNELMESSAGEINDEX));
     strUsage += HelpMessageOpt("-checksilentpaymentindex=<n>", strprintf(_("How many of the last blocks the startup check of -silentpaymentindex rebuilds and compares byte by byte (default: %u)"), DEFAULT_CHECKSILENTPAYMENTINDEX));
 
     strUsage += HelpMessageGroup(_("DePIN options:"));
@@ -1128,6 +1136,10 @@ bool AppInitParameterInteraction()
             return InitError(_("Prune mode is incompatible with -txindex."));
     }
 
+    // -disablemessaging means -assetmessages=0; refuse the contradiction (NIP-048 A2)
+    if (gArgs.GetBoolArg("-disablemessaging", false) && gArgs.GetBoolArg("-assetmessages", false))
+        return InitError(_("-disablemessaging cannot be combined with -assetmessages=1."));
+
     // -bind and -whitebind can't be set when not listening
     size_t nUserBind = gArgs.GetArgs("-bind").size() + gArgs.GetArgs("-whitebind").size();
     if (nUserBind != 0 && !gArgs.GetBoolArg("-listen", DEFAULT_LISTEN)) {
@@ -1523,6 +1535,17 @@ bool AppInitParameterInteraction()
     return true;
 }
 
+/** NIP-048 A2: whether a legacy asset module opens its stores. An explicit
+ *  option wins; otherwise the module is active when its default says so or when
+ *  the data directory already has its store, so existing nodes keep working and
+ *  fresh nodes do not create stores they never use. Disabling never deletes. */
+static bool LegacyAssetModuleActive(const std::string& strArg, bool fDefault, const char* pszDir)
+{
+    if (gArgs.IsArgSet(strArg))
+        return gArgs.GetBoolArg(strArg, false);
+    return fDefault || fs::exists(GetDataDir() / pszDir);
+}
+
 static bool LockDataDirectory(bool probeOnly)
 {
     std::string strDataDir = GetDataDir().string();
@@ -1790,6 +1813,9 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
     const int nCheckSilentPaymentIndex = gArgs.GetArg("-checksilentpaymentindex", DEFAULT_CHECKSILENTPAYMENTINDEX);
     if (nCheckSilentPaymentIndex < 0)
         return InitError(_("-checksilentpaymentindex must not be negative"));
+    fChannelMessageIndex = gArgs.GetBoolArg("-channelmessageindex", DEFAULT_CHANNELMESSAGEINDEX);
+    if (fChannelMessageIndex && gArgs.GetArg("-prune", 0))
+        return InitError(_("Prune mode is incompatible with -channelmessageindex."));
 
     // block tree db settings
     size_t dbMaxFileSize = gArgs.GetArg("-dbmaxfilesize", DEFAULT_DB_MAX_FILE_SIZE) << 20;
@@ -1878,12 +1904,23 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
                     passets = new CAssetsCache();
                     passetsCache = new CLRUCache<std::string, CDatabasedAssetData>(MAX_CACHE_ASSETS_SIZE);
 
-                    // Messaging assets
-                    pMessagesCache = new CLRUCache<std::string, CMessage>(1000);
-                    pMessageSubscribedChannelsCache = new CLRUCache<std::string, int>(1000);
-                    pMessagesSeenAddressCache = new CLRUCache<std::string, int>(1000);
-                    pmessagedb = new CMessageDB(nBlockTreeDBCache, false, false);
-                    pmessagechanneldb = new CMessageChannelDB(nBlockTreeDBCache, false, false);
+                    // Messaging assets. Inactive: no stores and fMessaging off, which
+                    // every messaging path already checks.
+                    pmessagedb = nullptr;
+                    pmessagechanneldb = nullptr;
+                    pMessagesCache = nullptr;
+                    pMessagesSeenAddressCache = nullptr;
+                    pMessageSubscribedChannelsCache = nullptr;
+                    fMessaging = !gArgs.GetBoolArg("-disablemessaging", false) &&
+                                 LegacyAssetModuleActive("-assetmessages", false, "messages");
+                    if (fMessaging) {
+                        pMessagesCache = new CLRUCache<std::string, CMessage>(1000);
+                        pMessageSubscribedChannelsCache = new CLRUCache<std::string, int>(1000);
+                        pMessagesSeenAddressCache = new CLRUCache<std::string, int>(1000);
+                        pmessagedb = new CMessageDB(nBlockTreeDBCache, false, false);
+                        pmessagechanneldb = new CMessageChannelDB(nBlockTreeDBCache, false, false);
+                    }
+                    LogPrintf("Messaging is %s\n", fMessaging ? "enabled" : "disabled");
 
                     // My restricted assets
                     pmyrestricteddb = new CMyRestrictedDB(nBlockTreeDBCache, false, false);
@@ -1898,10 +1935,19 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
                     passetsGlobalRestrictionCache = new CLRUCache<std::string, int8_t>(MAX_CACHE_ASSETS_SIZE);
                     passetsDepinTransferStateCache = new CLRUCache<std::string, int8_t>(MAX_CACHE_ASSETS_SIZE);
 
-                    // Rewards
-                    pSnapshotRequestDb = new CSnapshotRequestDB(nBlockTreeDBCache, false, false);
-                    pAssetSnapshotDb = new CAssetSnapshotDB(nBlockTreeDBCache, false, false);
-                    pDistributeSnapshotDb = new CDistributeSnapshotRequestDB(nBlockTreeDBCache, false, false);
+                    // Rewards. Inactive: null stores, which the snapshot step in
+                    // ConnectTip and every reward RPC already check.
+                    pSnapshotRequestDb = nullptr;
+                    pAssetSnapshotDb = nullptr;
+                    pDistributeSnapshotDb = nullptr;
+                    const bool fRewards = LegacyAssetModuleActive("-assetrewards",
+                            gArgs.GetBoolArg("-assetindex", DEFAULT_ASSETINDEX), "rewards");
+                    if (fRewards) {
+                        pSnapshotRequestDb = new CSnapshotRequestDB(nBlockTreeDBCache, false, false);
+                        pAssetSnapshotDb = new CAssetSnapshotDB(nBlockTreeDBCache, false, false);
+                        pDistributeSnapshotDb = new CDistributeSnapshotRequestDB(nBlockTreeDBCache, false, false);
+                    }
+                    LogPrintf("Asset rewards are %s\n", fRewards ? "enabled" : "disabled");
 
                     // Read for fAssetIndex to make sure that we only load asset address balances if it if true
                     pblocktree->ReadFlag("assetindex", fAssetIndex);
@@ -1917,14 +1963,6 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
 
                     LogPrintf("Successfully loaded assets from database.\nCache of assets size: %d\n",
                               passetsCache->Size());
-
-                    // Check for changed -disablemessaging state
-                    if (gArgs.GetArg("-disablemessaging", false)) {
-                        LogPrintf("Messaging is disabled\n");
-                        fMessaging = false;
-                    } else {
-                        LogPrintf("Messaging is enabled\n");
-                    }
                 }
                 /** XNA END */
 
@@ -2122,6 +2160,11 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
                 // NIP-047 light client index: option transitions, verification
                 // and repair, before the first prune of this session.
                 if (!silentpayments::InitIndex(chainparams, nCheckSilentPaymentIndex, strLoadError)) {
+                    break;
+                }
+
+                // NIP-048 C: channel message index, caught up to the loaded chain
+                if (!channelmessages::InitIndex(chainparams, strLoadError)) {
                     break;
                 }
             } catch (const std::exception& e) {

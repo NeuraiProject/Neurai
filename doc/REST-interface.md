@@ -144,6 +144,14 @@ NIP-047 context. A block is `hash[32] prev[32] height:u32 n_entries entry* n_spe
 `snapshot_height:u32 snapshot_hash[32] synced_height:u32 next_height:u32 status:u8 n_blocks` before its blocks.
 Test vectors: `src/test/data/silentpayment_index_vectors.json`.
 
+#### Channel messages (NIP-048)
+`GET /rest/channelmessages/<FROM-HEIGHT>/<CHANNEL>.json`
+
+Needs `-channelmessageindex`. The messages of an owner token (`NAME!`) or message channel (`NAME~CHANNEL`) from
+`<FROM-HEIGHT>` to the tip, in chain order, as `getchannelmessages "<CHANNEL>" {"from_height": <FROM-HEIGHT>}`
+returns them: expired messages are left out, judged against the median time past of the tip. The channel goes
+last because sub-asset names contain `/`. HTTP 503 when the index is disabled.
+
 Risks
 -------------
 Running a web browser on the same node with a REST enabled neuraid can be a risk. Accessing prepared XSS websites could read out tx/block data of your node by placing links like `<script src="http://127.0.0.1:19001/rest/tx/1234567890.json">` which might break the nodes privacy.

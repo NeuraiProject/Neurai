@@ -6,6 +6,7 @@
 
 """Testing rewards use cases"""
 
+from test_framework.nip048 import pay_plan, plan_amounts, verify_plan
 from test_framework.test_framework import NeuraiTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error, assert_contains, Decimal
 
@@ -16,6 +17,13 @@ class RewardsTest(NeuraiTestFramework):
         self.num_nodes = 4
         self.extra_args = [["-assetindex", "-debug=rewards"], ["-assetindex", "-minrewardheight=15"], ["-assetindex"],
                            ["-assetindex"]]
+
+    def plan_and_pay(self, node, **kwargs):
+        """NIP-048: the node computes and commits to the plan; the wallet pays it."""
+        plan = node.getdistributionplan(**kwargs)
+        verify_plan(node, plan)
+        pay_plan(node, plan)
+        return plan
 
     def activate_assets(self):
         self.log.info("Generating XNA for node[0] and activating assets...")
@@ -179,7 +187,7 @@ class RewardsTest(NeuraiTestFramework):
         # assert_equal(n0.listassetbalancesbyaddress(shareholder_addr4)["STOCK1"], 700)
 
         self.log.info("Initiating reward payout")
-        n0.distributereward(asset_name="STOCK1", snapshot_height=tgt_block_height, distribution_asset_name="XNA",
+        self.plan_and_pay(n0, asset_name="STOCK1", snapshot_height=tgt_block_height, distribution_asset_name="XNA",
                             gross_distribution_amount=2000, exception_addresses=dist_addr0)
         n0.generate(10)
         self.sync_all()
@@ -326,7 +334,7 @@ class RewardsTest(NeuraiTestFramework):
         # assert_equal(n0.listassetbalancesbyaddress(shareholder_addr4)["STOCK2"], 700)
 
         self.log.info("Initiating reward payout")
-        n0.distributereward(asset_name="STOCK2", snapshot_height=tgt_block_height, distribution_asset_name="PAYOUT1",
+        self.plan_and_pay(n0, asset_name="STOCK2", snapshot_height=tgt_block_height, distribution_asset_name="PAYOUT1",
                             gross_distribution_amount=2000, exception_addresses=dist_addr0)
         n0.generate(10)
         self.sync_all()
@@ -366,8 +374,8 @@ class RewardsTest(NeuraiTestFramework):
         self.sync_all()
 
         self.log.info("Initiating failing reward payout")
-        assert_raises_rpc_error(-32600, "Snapshot request not found",
-                                n0.distributereward, "STOCK3", tgt_block_height, "XNA", 2000, owner_addr0)
+        assert_raises_rpc_error(-32600, "Snapshot not found",
+                                n0.getdistributionplan, "STOCK3", tgt_block_height, "XNA", 2000, owner_addr0)
 
     # Attempts a payout for an invalid ownership asset
     def payout_with_invalid_ownership_asset(self):
@@ -390,8 +398,8 @@ class RewardsTest(NeuraiTestFramework):
         self.sync_all()
 
         self.log.info("Initiating failing reward payout")
-        assert_raises_rpc_error(-32600, "The asset hasn't been created: STOCK4",
-                                n0.distributereward, "STOCK4", tgt_block_height, "XNA", 2000, owner_addr0)
+        assert_raises_rpc_error(-8, "Invalid asset_name: asset does not exist",
+                                n0.getdistributionplan, "STOCK4", tgt_block_height, "XNA", 2000, owner_addr0)
 
     # Attempts a payout for an invalid payout asset
     def payout_with_invalid_payout_asset(self):
@@ -419,8 +427,8 @@ class RewardsTest(NeuraiTestFramework):
         self.sync_all()
 
         self.log.info("Initiating failing reward payout")
-        assert_raises_rpc_error(-32600, "Wallet doesn't have the ownership token(!) for the distribution asset",
-                                n0.distributereward, "STOCK5", tgt_block_height, "PAYOUT2", 2000, owner_addr0)
+        assert_raises_rpc_error(-8, "Invalid distribution_asset_name: asset does not exist",
+                                n0.getdistributionplan, "STOCK5", tgt_block_height, "PAYOUT2", 2000, owner_addr0)
 
     # Attempts a payout for an invalid payout asset
     def payout_before_minimum_height_is_reached(self):
@@ -453,8 +461,8 @@ class RewardsTest(NeuraiTestFramework):
         self.log.info(
             "Initiating failing reward payout because we are only 15 block ahead of the snapshot instead of 60")
         assert_raises_rpc_error(-32600,
-                                "For security of the rewards payout, it is recommended to wait until chain is 60 blocks ahead of the snapshot height. You can modify this by using the -minrewardsheight.",
-                                n0.distributereward, "STOCK6", tgt_block_height, "XNA", 2000, owner_addr0)
+                                "The chain must be 60 blocks ahead of the snapshot height before planning a distribution",
+                                n0.getdistributionplan, "STOCK6", tgt_block_height, "XNA", 2000, owner_addr0)
 
     # Attempts a payout using a custom rewards height of 15, and they have low xna balance
     def payout_custom_height_set_with_low_funds(self):
@@ -493,21 +501,23 @@ class RewardsTest(NeuraiTestFramework):
         n1.generate(31)
         self.sync_all()
 
-        self.log.info("Initiating reward payout should succeed because -minrewardheight=15 on node1")
-        n1.distributereward("STOCK7", tgt_block_height, "XNA", 2000, owner_addr0)
+        self.log.info("Planning succeeds because -minrewardheight=15 on node1")
+        plan = n1.getdistributionplan("STOCK7", tgt_block_height, "XNA", 2000, owner_addr0)
+        verify_plan(n1, plan)
+        assert_equal(plan_amounts(plan), {shareholder_addr0: 2000})
 
-        n1.generate(2)
-        self.sync_all()
-
-        assert_equal(n1.getdistributestatus("STOCK7", tgt_block_height, "XNA", 2000, owner_addr0)['Status'], 3)
-
+        self.log.info("Neither planning nor new funds trigger a payment (NIP-048 B0)")
         n0.sendtoaddress(n1.getnewaddress(), 3000)
         n0.generate(5)
         self.sync_all()
-
         n1.generate(10)
         self.sync_all()
+        assert_equal(n2.getreceivedbyaddress(shareholder_addr0, 0), 0)
 
+        self.log.info("The operator pays the plan")
+        pay_plan(n1, plan)
+        n1.generate(1)
+        self.sync_all()
         assert_equal(n2.getreceivedbyaddress(shareholder_addr0, 1), 2000)
 
     # Attempts a payout using a custom rewards height of 15, and they have low xna balance
@@ -550,23 +560,25 @@ class RewardsTest(NeuraiTestFramework):
         n1.generate(61)
         self.sync_all()
 
-        self.log.info("Initiating reward payout")
-        n1.distributereward("STOCK_7.1", tgt_block_height, "LOW_ASSET_AMOUNT", 2000, owner_addr0)
+        self.log.info("Planning works without holding the distribution asset")
+        plan = n1.getdistributionplan("STOCK_7.1", tgt_block_height, "LOW_ASSET_AMOUNT", 2000, owner_addr0)
+        verify_plan(n1, plan)
+        assert_equal(plan_amounts(plan), {shareholder_addr0: 2000})
 
-        n1.generate(2)
-        self.sync_all()
+        self.log.info("The wallet holds 1000 of the 2000 units the plan needs")
+        assert n1.listmyassets("LOW_ASSET_AMOUNT")["LOW_ASSET_AMOUNT"] < plan["distributed"]
 
-        assert_equal(
-            n1.getdistributestatus("STOCK_7.1", tgt_block_height, "LOW_ASSET_AMOUNT", 2000, owner_addr0)['Status'], 5)
-
-        # node0 transfer back the assets to node1, now the distribution transaction should get created successfully. when the next block is mined
+        # node0 sends the assets back; that alone pays nobody (NIP-048 B0)
         n0.transfer(asset_name="LOW_ASSET_AMOUNT", qty=9000, to_address=owner_addr0, message="", expire_time=0, change_address="")
         n0.generate(5)
         self.sync_all()
-
         n1.generate(10)
         self.sync_all()
+        assert "LOW_ASSET_AMOUNT" not in n2.listassetbalancesbyaddress(shareholder_addr0)
 
+        pay_plan(n1, plan)
+        n1.generate(1)
+        self.sync_all()
         assert_equal(n2.listassetbalancesbyaddress(shareholder_addr0)["LOW_ASSET_AMOUNT"], 2000)
 
     def list_snapshot_requests(self):
@@ -574,7 +586,8 @@ class RewardsTest(NeuraiTestFramework):
         n0, n1 = self.nodes[0], self.nodes[1]
 
         self.log.info("Providing funding")
-        self.nodes[0].sendtoaddress(n1.getnewaddress(), 1000)
+        # Two root issues burn 1000 XNA each on every Neurai network
+        self.nodes[0].sendtoaddress(n1.getnewaddress(), 2100)
         n0.generate(5)
         self.sync_all()
 
@@ -704,7 +717,7 @@ class RewardsTest(NeuraiTestFramework):
         assert_equal(owner2, True)
 
         self.log.info("Initiating reward payout")
-        n0.distributereward(asset_name="STOCK8", snapshot_height=tgt_block_height, distribution_asset_name="PAYOUT8",
+        self.plan_and_pay(n0, asset_name="STOCK8", snapshot_height=tgt_block_height, distribution_asset_name="PAYOUT8",
                             gross_distribution_amount=10, exception_addresses=dist_addr0)
         n0.generate(10)
         self.sync_all()
@@ -807,7 +820,7 @@ class RewardsTest(NeuraiTestFramework):
         assert_equal(owner2, True)
 
         self.log.info("Initiating reward payout")
-        n0.distributereward(asset_name="STOCK9", snapshot_height=tgt_block_height, distribution_asset_name="PAYOUT9",
+        self.plan_and_pay(n0, asset_name="STOCK9", snapshot_height=tgt_block_height, distribution_asset_name="PAYOUT9",
                             gross_distribution_amount=10, exception_addresses=dist_addr0)
         n0.generate(10)
         self.sync_all()
@@ -911,7 +924,7 @@ class RewardsTest(NeuraiTestFramework):
         assert_equal(owner2, True)
 
         self.log.info("Initiating reward payout")
-        n0.distributereward(asset_name="STOCK10", snapshot_height=tgt_block_height, distribution_asset_name="PAYOUT10",
+        self.plan_and_pay(n0, asset_name="STOCK10", snapshot_height=tgt_block_height, distribution_asset_name="PAYOUT10",
                             gross_distribution_amount=10, exception_addresses=dist_addr0)
         n0.generate(10)
         self.sync_all()
@@ -1022,7 +1035,7 @@ class RewardsTest(NeuraiTestFramework):
         assert_equal(owner2, True)
 
         self.log.info("Initiating reward payout")
-        n0.distributereward(asset_name="STOCK11", snapshot_height=tgt_block_height, distribution_asset_name="PAYOUT11",
+        self.plan_and_pay(n0, asset_name="STOCK11", snapshot_height=tgt_block_height, distribution_asset_name="PAYOUT11",
                             gross_distribution_amount=10, exception_addresses=dist_addr0)
         n0.generate(10)
         self.sync_all()
@@ -1129,7 +1142,7 @@ class RewardsTest(NeuraiTestFramework):
         assert_equal(owner2, True)
 
         self.log.info("Initiating reward payout")
-        n0.distributereward(asset_name="STOCK12", snapshot_height=tgt_block_height, distribution_asset_name="PAYOUT12",
+        self.plan_and_pay(n0, asset_name="STOCK12", snapshot_height=tgt_block_height, distribution_asset_name="PAYOUT12",
                             gross_distribution_amount=10, exception_addresses=dist_addr0)
         n0.generate(10)
         self.sync_all()
@@ -1233,7 +1246,7 @@ class RewardsTest(NeuraiTestFramework):
             assert_equal(ownerAddr["amount_owned"], 10)
 
         self.log.info("Initiating reward payout")
-        n0.distributereward(asset_name="BULK1", snapshot_height=tgt_block_height,
+        self.plan_and_pay(n0, asset_name="BULK1", snapshot_height=tgt_block_height,
                             distribution_asset_name="TTTTTTTTTTTTTTTTTTTTTTTTTTTTT1", gross_distribution_amount=100000,
                             exception_addresses=dist_addr0, change_address="", dry_run=False)
         # print(result)
@@ -1247,6 +1260,70 @@ class RewardsTest(NeuraiTestFramework):
             assert_equal(n2.listassetbalancesbyaddress(address_list[i + 1])['TTTTTTTTTTTTTTTTTTTTTTTTTTTTT1'], Decimal(str(10.0010)))
             assert_equal(n3.listassetbalancesbyaddress(address_list[i + 2])['TTTTTTTTTTTTTTTTTTTTTTTTTTTTT1'], Decimal(str(10.0010)))
 
+    def distributereward_is_retired(self):
+        self.log.info("distributereward no longer pays (NIP-048 B0)")
+        assert_raises_rpc_error(-32, "distributereward no longer sends payments",
+                                self.nodes[0].distributereward, "STOCK1", 1, "XNA", 1)
+
+    def plan_remainder_exceptions_and_reorg(self):
+        self.log.info("Plan: remainder policies, exceptions and a reorg of the snapshot block (NIP-048 B1-B2)")
+        n0, n1, n2 = self.nodes[0], self.nodes[1], self.nodes[2]
+
+        owner_addr0 = n0.getnewaddress()
+        n0.issue(asset_name="STOCK13", qty=400, to_address=owner_addr0, change_address="", units=0, reissuable=True, has_ipfs=False)
+        n0.issue(asset_name="PAYOUT13", qty=10, to_address=owner_addr0, change_address="", units=0, reissuable=True, has_ipfs=False)
+        n0.generate(1)
+        self.sync_all()
+
+        # Three equal holders; the owner keeps 100 and is excluded
+        for address in [n1.getnewaddress(), n1.getnewaddress(), n2.getnewaddress()]:
+            n0.transfer(asset_name="STOCK13", qty=100, to_address=address, message="", expire_time=0, change_address="", asset_change_address=owner_addr0)
+        n0.generate(1)
+        self.sync_all()
+
+        tgt_block_height = n0.getblockcount() + 1
+        n0.requestsnapshot(asset_name="STOCK13", block_height=tgt_block_height)
+        n0.generate(1)
+        self.sync_all()
+        first = n0.getsnapshot("STOCK13", tgt_block_height)
+        assert_equal(first["block_hash"], n0.getblockhash(tgt_block_height))
+
+        self.log.info("A reorg of the snapshot block drops the snapshot; the new block gets a new one")
+        n0.invalidateblock(first["block_hash"])
+        assert_equal(n0.getsnapshot("STOCK13", tgt_block_height), None)
+        n0.generate(61)
+        self.sync_all()
+        snapshot = n0.getsnapshot("STOCK13", tgt_block_height)
+        assert_equal(snapshot["block_hash"], n0.getblockhash(tgt_block_height))
+        assert snapshot["block_hash"] != first["block_hash"]
+        assert snapshot["snapshot_hash"] != first["snapshot_hash"]
+
+        self.log.info("Remainder policies and exceptions")
+        payer = n0.getdistributionplan("STOCK13", tgt_block_height, "PAYOUT13", 10, owner_addr0)
+        verify_plan(n0, payer)
+        assert_equal(payer["snapshot"]["block_hash"], snapshot["block_hash"])
+        assert_equal(sorted(plan_amounts(payer).values()), [3, 3, 3])
+        assert_equal(payer["remainder"], 1)
+        assert_equal([(e["address"], e["reason"]) for e in payer["excluded"]], [(owner_addr0, "exception")])
+
+        largest = n0.getdistributionplan("STOCK13", tgt_block_height, "PAYOUT13", 10, owner_addr0, {"remainder": "largest"})
+        verify_plan(n0, largest)
+        assert_equal([r["amount"] for r in largest["recipients"]], [4, 3, 3])
+        assert_equal(largest["remainder"], 0)
+        assert payer["plan_hash"] != largest["plan_hash"]
+
+        assert_raises_rpc_error(-8, "smallest unit", n0.getdistributionplan,
+                                "STOCK13", tgt_block_height, "PAYOUT13", Decimal("10.5"), owner_addr0)
+        assert_raises_rpc_error(-8, "remainder must be", n0.getdistributionplan,
+                                "STOCK13", tgt_block_height, "PAYOUT13", 10, owner_addr0, {"remainder": "first"})
+
+        self.log.info("The largest-remainder plan is payable")
+        pay_plan(n0, largest)
+        n0.generate(1)
+        self.sync_all()
+        for recipient in largest["recipients"]:
+            assert_equal(n0.listassetbalancesbyaddress(recipient["address"])["PAYOUT13"], recipient["amount"])
+
     def run_test(self):
         self.activate_assets()
         self.basic_test_xna()
@@ -1256,6 +1333,7 @@ class RewardsTest(NeuraiTestFramework):
         self.payout_with_invalid_payout_asset()
         self.payout_before_minimum_height_is_reached()
         self.list_snapshot_requests()
+        self.distributereward_is_retired()
         self.payout_custom_height_set_with_low_funds()
         self.payout_with_insufficient_asset_amount()
         self.basic_test_asset_uneven_distribution()
@@ -1263,6 +1341,7 @@ class RewardsTest(NeuraiTestFramework):
         self.basic_test_asset_round_down_uneven_distribution()
         self.basic_test_asset_round_down_uneven_distribution_2()
         self.basic_test_asset_round_down_uneven_distribution_3()
+        self.plan_remainder_exceptions_and_reorg()
         # self.test_asset_bulk()
 
 

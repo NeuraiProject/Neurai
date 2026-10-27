@@ -64,7 +64,11 @@ class RESTTest (NeuraiTestFramework):
         self.nodes[2].generate(100)
         self.sync_all()
 
-        assert_equal(self.nodes[0].getbalance(), 5000)
+        # node0 owns the matured coinbase of block 1, whatever the subsidy
+        coinbase = self.nodes[0].getblock(self.nodes[0].getblockhash(1), 2)['tx'][0]
+        mined = sum(out['value'] for out in coinbase['vout']
+                    if any(self.nodes[0].validateaddress(a)['ismine'] for a in out['scriptPubKey'].get('addresses', [])))
+        assert_equal(self.nodes[0].getbalance(), mined)
 
         txid = self.nodes[0].sendtoaddress(self.nodes[1].getnewaddress(), 0.1)
         self.sync_all()

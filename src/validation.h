@@ -671,6 +671,10 @@ extern CAssetSnapshotDB *pAssetSnapshotDb;
 
 extern CDistributeSnapshotRequestDB *pDistributeSnapshotDb;
 
+/** NIP-048 A2: RPC errors when a legacy asset module has no open stores */
+static const char* const MESSAGING_INACTIVE_ERROR = "Messaging is disabled. To enable it, start the node with -assetmessages=1 and without -disablemessaging";
+static const char* const REWARDS_INACTIVE_ERROR = "Reward stores are not open. Start the node with -assetrewards=1 (the default with -assetindex)";
+
 /** XNA END */
 
 /**

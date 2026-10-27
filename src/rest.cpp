@@ -14,6 +14,7 @@
 #include "httpserver.h"
 #include "rpc/blockchain.h"
 #include "rpc/server.h"
+#include "channelmessageindex.h"
 #include "silentpaymentindex.h"
 #include "streams.h"
 #include "sync.h"
@@ -707,6 +708,35 @@ static bool rest_sp_index_info(HTTPRequest* req, const std::string& strURIPart)
     return true;
 }
 
+// NIP-048 C: messages of an asset channel, from -channelmessageindex. The
+// channel goes last because sub-asset names contain '/'.
+static bool rest_channel_messages(HTTPRequest* req, const std::string& strURIPart)
+{
+    if (!CheckWarmup(req))
+        return false;
+    std::string param;
+    if (ParseDataFormat(param, strURIPart) != RF_JSON)
+        return RESTERR(req, HTTP_NOT_FOUND, "output format not found (available: json)");
+    const std::string::size_type slash = param.find('/');
+    int fromHeight = 0;
+    if (slash == std::string::npos || !ParseInt32(param.substr(0, slash), &fromHeight) || fromHeight < 0)
+        return RESTERR(req, HTTP_BAD_REQUEST, "Use /rest/channelmessages/<from_height>/<channel>.json");
+
+    channelmessages::QueryOptions options;
+    options.channel = param.substr(slash + 1);
+    options.fromHeight = fromHeight;
+    UniValue result;
+    std::string error;
+    {
+        LOCK(cs_main);
+        if (!channelmessages::QueryChannelJSON(options, result, error))
+            return RESTERR(req, fChannelMessageIndex ? HTTP_BAD_REQUEST : HTTP_SERVICE_UNAVAILABLE, error);
+    }
+    req->WriteHeader("Content-Type", "application/json");
+    req->WriteReply(HTTP_OK, result.write() + "\n");
+    return true;
+}
+
 static const struct {
     const char* prefix;
     bool (*handler)(HTTPRequest* req, const std::string& strReq);
@@ -722,6 +752,7 @@ static const struct {
       {"/rest/sptweaks/v1/", rest_sp_tweaks},
       {"/rest/sptweaksrange/v1/", rest_sp_tweaks_range},
       {"/rest/spindexinfo", rest_sp_index_info},
+      {"/rest/channelmessages/", rest_channel_messages},
 };
 
 bool StartREST()

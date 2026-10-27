@@ -94,22 +94,14 @@ public:
     CDistributeSnapshotRequestDB(const CDistributeSnapshotRequestDB&) = delete;
     CDistributeSnapshotRequestDB& operator=(const CDistributeSnapshotRequestDB&) = delete;
 
-    // Schedule a asset snapshot
-    bool AddDistributeSnapshot(const uint256& hash, const CRewardSnapshot& p_rewardSnapshot);
-    bool OverrideDistributeSnapshot(const uint256& hash, const CRewardSnapshot& p_rewardSnapshot);
+    // Read-only since NIP-048 B0: the records of the retired in-node payer stay
+    // readable, and nothing loads or resumes them.
 
     //  Find a snapshot request using its ID
     bool RetrieveDistributeSnapshotRequest(const uint256& hash, CRewardSnapshot& p_rewardSnapshot);
 
     // Remove a snapshot request
     bool RemoveDistributeSnapshotRequest(const uint256& hash);
-
-    bool AddDistributeTransaction(const uint256& hash, const int& nBatchNumber, const uint256& txid);
-    bool GetDistributeTransaction(const uint256& hash, const int& nBatchNumber, uint256& txid);
-
-    void LoadAllDistributeSnapshot(std::map<uint256, CRewardSnapshot>& mapRewardSnapshots);
-
-
 };
 
 

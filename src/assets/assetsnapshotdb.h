@@ -9,6 +9,10 @@
 
 #include <dbwrapper.h>
 #include "amount.h"
+#include "assets/rewards.h"
+#include "uint256.h"
+
+#include <map>
 
 class CAssetSnapshotDBEntry
 {
@@ -19,6 +23,18 @@ public:
 
     //  Used as the DB key for the snapshot
     std::string heightAndName;
+
+    // NIP-048 B1: the block the snapshot was captured on and a hash of its
+    // content. Not part of the legacy serialization; null for a snapshot
+    // captured before B1.
+    uint256 blockHash;
+    uint256 snapshotHash;
+
+    // NIP-048 D3: restriction and tag state at the snapshot height. Holders
+    // without any state are absent from `states`.
+    bool fHasState;
+    bool fGlobalFrozen;
+    std::map<std::string, SnapshotHolderState> states;
 
     CAssetSnapshotDBEntry();
     CAssetSnapshotDBEntry(
@@ -33,7 +49,14 @@ public:
         ownersAndAmounts.clear();
 
         heightAndName = "";
+        blockHash.SetNull();
+        snapshotHash.SetNull();
+        fHasState = false;
+        fGlobalFrozen = false;
+        states.clear();
     }
+
+    bool IsLegacy() const { return blockHash.IsNull(); }
 
     bool operator<(const CAssetSnapshotDBEntry &rhs) const
     {
@@ -60,16 +83,16 @@ public:
     CAssetSnapshotDB(const CAssetSnapshotDB&) = delete;
     CAssetSnapshotDB& operator=(const CAssetSnapshotDB&) = delete;
 
-    //  Add an entry to the snapshot at the specified height
+    //  Capture the owners of an asset at the block just connected
     bool AddAssetOwnershipSnapshot(
-        const std::string & p_assetName, int p_height);
+        const std::string & p_assetName, int p_height, const uint256 & p_blockHash);
 
-    //  Read all of the entries at a specified height
+    //  Read the snapshot of an asset at a height, block-bound or legacy
     bool RetrieveOwnershipSnapshot(
         const std::string & p_assetName, int p_height,
         CAssetSnapshotDBEntry & p_snapshotEntry);
 
-    //  Remove the asset snapshot at the specified height
+    //  Remove the asset snapshot at the specified height, both formats
     bool RemoveOwnershipSnapshot(
         const std::string & p_assetName, int p_height);
 };

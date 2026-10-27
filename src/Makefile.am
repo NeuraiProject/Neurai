@@ -202,6 +202,7 @@ NEURAI_CORE_H = \
   script/sigcache.h \
   script/sign.h \
   script/standard.h \
+  channelmessageindex.h \
   silentpaymentindex.h \
   silentpayments.h \
   script/ismine.h \
@@ -313,6 +314,7 @@ libneurai_server_a_SOURCES = \
   rpc/silentpaymentindex.cpp \
   script/sigcache.cpp \
   script/ismine.cpp \
+  channelmessageindex.cpp \
   silentpaymentindex.cpp \
   timedata.cpp \
   torcontrol.cpp \

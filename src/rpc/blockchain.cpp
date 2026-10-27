@@ -1534,6 +1534,17 @@ UniValue getblockchaininfo(const JSONRPCRequest& request)
             "        }\n"
             "     }\n"
             "  }\n"
+            "  \"asset_services\": {          (object) legacy asset modules (NIP-048)\n"
+            "     \"messages\": {\n"
+            "        \"active\": xx,          (boolean) legacy asset messaging stores are open\n"
+            "        \"store_on_disk\": xx    (boolean) the data directory has a messages store\n"
+            "     },\n"
+            "     \"rewards\": {\n"
+            "        \"active\": xx,          (boolean) reward snapshot stores are open\n"
+            "        \"store_on_disk\": xx,   (boolean) the data directory has a rewards store\n"
+            "        \"assetindex\": xx       (boolean) -assetindex, which the reward RPCs require\n"
+            "     }\n"
+            "  },\n"
             "  \"warnings\" : \"...\",         (string) any network and blockchain warnings.\n"
             "}\n"
             "\nExamples:\n"
@@ -1623,6 +1634,18 @@ UniValue getblockchaininfo(const JSONRPCRequest& request)
     BIP9SoftForkDescPushBack(bip9_softforks, "coinbase", consensusParams, Consensus::DEPLOYMENT_COINBASE_ASSETS);
     obj.push_back(Pair("softforks",             softforks));
     obj.push_back(Pair("bip9_softforks", bip9_softforks));
+
+    UniValue messagesInfo(UniValue::VOBJ);
+    messagesInfo.push_back(Pair("active", fMessaging));
+    messagesInfo.push_back(Pair("store_on_disk", fs::exists(GetDataDir() / "messages")));
+    UniValue rewardsInfo(UniValue::VOBJ);
+    rewardsInfo.push_back(Pair("active", pSnapshotRequestDb != nullptr));
+    rewardsInfo.push_back(Pair("store_on_disk", fs::exists(GetDataDir() / "rewards")));
+    rewardsInfo.push_back(Pair("assetindex", fAssetIndex));
+    UniValue assetServices(UniValue::VOBJ);
+    assetServices.push_back(Pair("messages", messagesInfo));
+    assetServices.push_back(Pair("rewards", rewardsInfo));
+    obj.push_back(Pair("asset_services", assetServices));
 
     obj.push_back(Pair("warnings", GetWarnings("statusbar")));
     return obj;

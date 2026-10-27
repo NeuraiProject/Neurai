@@ -10,7 +10,6 @@
 static const char SNAPSHOTREQUEST_FLAG = 'S';
 
 static const char DISTRIBUTEREQUEST_FLAG = 'D';
-static const char DISTRIBUTETRANSACTION_FLAG = 'T';
 
 CSnapshotRequestDBEntry::CSnapshotRequestDBEntry()
 {
@@ -161,31 +160,6 @@ CDistributeSnapshotRequestDB::CDistributeSnapshotRequestDB(
         : CDBWrapper(GetDataDir() / "rewards" / "distributerequests", nCacheSize, fMemory, fWipe) {
 }
 
-// Schedule a distribution to occur
-bool CDistributeSnapshotRequestDB::AddDistributeSnapshot(const uint256& hash, const CRewardSnapshot& p_rewardSnapshot)
-{
-    return Write(std::make_pair(DISTRIBUTEREQUEST_FLAG, hash), p_rewardSnapshot);
-}
-
-bool CDistributeSnapshotRequestDB::OverrideDistributeSnapshot(const uint256& hash, const CRewardSnapshot& p_rewardSnapshot)
-{
-    return  Write(std::make_pair(DISTRIBUTEREQUEST_FLAG, hash), p_rewardSnapshot);
-}
-
-bool OverrideDistributeSnapshot(const uint256& hash, const CRewardSnapshot& p_rewardSnapshot);
-
-// Add a new distribution transaction
-bool CDistributeSnapshotRequestDB::AddDistributeTransaction(const uint256& hash, const int& nBatchNumber, const uint256& txid)
-{
-    return Write(std::make_pair(DISTRIBUTETRANSACTION_FLAG, std::make_pair(hash, nBatchNumber)), txid);
-}
-
-// Find a distribution transaction from the database
-bool CDistributeSnapshotRequestDB::GetDistributeTransaction(const uint256& hash, const int& nBatchNumber, uint256& txid)
-{
-    return Read(std::make_pair(DISTRIBUTETRANSACTION_FLAG, std::make_pair(hash, nBatchNumber)), txid);
-}
-
 //  Find a distribute snapshot request
 bool CDistributeSnapshotRequestDB::RetrieveDistributeSnapshotRequest(const uint256& hash, CRewardSnapshot& p_rewardSnapshot)
 {
@@ -196,41 +170,4 @@ bool CDistributeSnapshotRequestDB::RetrieveDistributeSnapshotRequest(const uint2
 bool CDistributeSnapshotRequestDB::RemoveDistributeSnapshotRequest(const uint256& hash)
 {
     return Erase(std::make_pair(DISTRIBUTEREQUEST_FLAG, hash));
-}
-
-// Load all distribute snapshot from database
-void CDistributeSnapshotRequestDB::LoadAllDistributeSnapshot(std::map<uint256, CRewardSnapshot>& mapRewardSnapshots)
-{
-    std::unique_ptr<CDBIterator> pcursor(NewIterator());
-
-    pcursor->Seek(std::make_pair(DISTRIBUTEREQUEST_FLAG, uint256()));
-
-    // Load all pending rewards
-    while (pcursor->Valid()) {
-        boost::this_thread::interruption_point();
-        std::pair<char, uint256> key;
-
-        //  Only retrieve entries at the provided block height
-        if (pcursor->GetKey(key) && key.first == DISTRIBUTEREQUEST_FLAG) {
-            CRewardSnapshot distributeDbEntry;
-
-            if (pcursor->GetValue(distributeDbEntry)) {
-                mapRewardSnapshots[key.second] = distributeDbEntry;
-            } else {
-                LogPrint(BCLog::REWARDS, "%s: Failed to read snapshot distribution for key: %s\n", __func__, key.second.GetHex());
-            }
-        }
-
-        pcursor->Next();
-    }
-
-    for (auto const & item : mapRewardSnapshots) {
-        LogPrint(BCLog::REWARDS, "%s : Found snapshot distribution request for Owner: %s,  Distribution: %s, Exception: %s, Height: %d, Status: %d\n",
-                 __func__,
-                 item.second.strOwnershipAsset,
-                 item.second.strDistributionAsset,
-                 item.second.strExceptionAddresses,
-                 item.second.nHeight,
-                 item.second.nStatus);
-    }
 }

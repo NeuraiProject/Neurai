@@ -35,6 +35,7 @@
 #include "script/sigcache.h"
 #include "script/standard.h"
 #include "silentpaymentindex.h"
+#include "channelmessageindex.h"
 #include "timedata.h"
 #include "tinyformat.h"
 #include "txdb.h"
@@ -3708,6 +3709,13 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
             return AbortNode(state, "Failed to write silent payment index");
     }
 
+    // NIP-048 C: chain-wide channel message index, from the block and its undo data
+    if (!ignoreAddressIndex && fChannelMessageIndex &&
+        pindex->nHeight >= channelmessages::IndexStartHeight(chainparams)) {
+        if (!channelmessages::IndexConnectedBlock(block, blockundo, pindex))
+            return AbortNode(state, "Failed to write channel message index");
+    }
+
     if (AreMessagesDeployed() && fMessaging && setMessages.size()) {
         LOCK(cs_messaging);
         for (auto message : setMessages) {
@@ -4131,6 +4139,17 @@ bool static DisconnectTip(CValidationState& state, const CChainParams& chainpara
         }
     }
 
+    // NIP-048 B1: a snapshot captured on the disconnected block no longer
+    // describes the active chain. Drop it; its request stays, so connecting a
+    // block at that height captures a new one bound to the new block.
+    if (pSnapshotRequestDb && pAssetSnapshotDb) {
+        std::set<CSnapshotRequestDBEntry> snapshotRequests;
+        if (pSnapshotRequestDb->RetrieveSnapshotRequestsForHeight("", pindexDelete->nHeight, snapshotRequests)) {
+            for (const auto& snapshotRequest : snapshotRequests)
+                pAssetSnapshotDb->RemoveOwnershipSnapshot(snapshotRequest.assetName, pindexDelete->nHeight);
+        }
+    }
+
     // Update chainActive and related variables.
     UpdateTip(pindexDelete->pprev, chainparams);
     NotifyDepinMembershipTip(pindexDelete->GetBlockHash(), depinMembershipChanged);
@@ -4377,8 +4396,8 @@ bool static ConnectTip(CValidationState& state, const CChainParams& chainparams,
         if (pSnapshotRequestDb->RetrieveSnapshotRequestsForHeight("", pindexNew->nHeight, assetsToSnapshot)) {
             //  Loop through them
             for (auto const & assetEntry : assetsToSnapshot) {
-                //  Add a snapshot entry for the target asset ownership
-                if (!pAssetSnapshotDb->AddAssetOwnershipSnapshot(assetEntry.assetName, pindexNew->nHeight)) {
+                //  Add a snapshot entry for the target asset ownership, bound to this block
+                if (!pAssetSnapshotDb->AddAssetOwnershipSnapshot(assetEntry.assetName, pindexNew->nHeight, pindexNew->GetBlockHash())) {
                    LogPrint(BCLog::REWARDS, "ConnectTip: Failed to snapshot owners for '%s' at height %d!\n",
                        assetEntry.assetName.c_str(), pindexNew->nHeight);
                 }
@@ -4388,12 +4407,7 @@ bool static ConnectTip(CValidationState& state, const CChainParams& chainparams,
             LogPrint(BCLog::REWARDS, "ConnectTip: Failed to load payable Snapshot Requests at height %d!\n", pindexNew->nHeight);
         }
     }
-
-#ifdef ENABLE_WALLET
-    if (vpwallets.size()) {
-        CheckRewardDistributions(vpwallets[0]);
-    }
-#endif
+    // NIP-048 B0: the node no longer builds or sends reward payments here.
     /** XNA END */
 
     return true;
