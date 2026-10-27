@@ -627,13 +627,14 @@ int main(int argc, char *argv[])
     QApplication::setAttribute(Qt::AA_DontShowIconsInMenus);
 #endif
 
+    // This should be after the attributes.
+    NeuraiApplication app;
+
+    // Qt's TLS backend loader needs an existing application instance.
     // Qt6: TlsV1_0OrLater removed; enforce TLS 1.2+ (POODLE mitigation).
     QSslConfiguration sslconf = QSslConfiguration::defaultConfiguration();
     sslconf.setProtocol(QSsl::TlsV1_2OrLater);
     QSslConfiguration::setDefaultConfiguration(sslconf);
-
-    // This should be after the attributes.
-    NeuraiApplication app;
 
     // Register meta types used for QMetaObject::invokeMethod
     qRegisterMetaType< bool* >();

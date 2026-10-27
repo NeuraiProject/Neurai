@@ -1,0 +1,28 @@
+# syntax=docker/dockerfile:1
+FROM ubuntu:24.04 AS builder
+
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    autoconf automake autotools-dev binutils bison bsdextrautils \
+    build-essential ca-certificates cmake curl file git libssl-dev libtool \
+    g++-mingw-w64-x86-64-posix ninja-build patch pkg-config python3 unzip xz-utils \
+    && update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix \
+    && update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG REPOSITORY=https://github.com/NeuraiProject/Neurai.git
+ARG BRANCH=DePIN-Test
+ARG SOURCE_COMMIT
+ARG BUILD_TYPE=user
+ARG JOBS=2
+COPY --chmod=755 build-release.sh /usr/local/bin/build-release
+RUN --mount=type=cache,id=neurai-release-windows-sources,target=/cache/sources,sharing=locked \
+    --mount=type=cache,id=neurai-release-windows-built,target=/cache/built,sharing=locked \
+    build-release windows
+
+FROM busybox:1.37.0-musl AS release
+COPY --from=builder /binaries/ /binaries/
+COPY --chmod=755 export-binaries.sh /usr/local/bin/export-binaries
+WORKDIR /output
+ENTRYPOINT ["/usr/local/bin/export-binaries"]
+CMD ["/output"]

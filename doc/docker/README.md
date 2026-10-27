@@ -2,8 +2,12 @@ Neurai - Docker
 ==============
 
 Dockerfiles and helpers to build Neurai binaries or run a node in containers.
-Run every `docker build` from the repository root. See
+For the images listed below, run `docker build` from the repository root. See
 [../build-docker.md](../build-docker.md) for a step-by-step guide.
+
+For release binaries with a selectable branch, `user`/`server` profiles, and
+automatic extraction to `create-bin/tests/output`, see [create-bin/README.md](create-bin/README.md).
+Those Linux, Windows and macOS builds use `doc/docker/create-bin` as their build context.
 
 Images
 ---------------------

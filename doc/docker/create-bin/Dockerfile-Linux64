@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1
+FROM debian:12-slim AS builder
+
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    autoconf automake autotools-dev binutils bison bsdextrautils \
+    build-essential ca-certificates cmake curl file git libssl-dev libtool \
+    meson ninja-build patch pkg-config python3 unzip xkb-data xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG REPOSITORY=https://github.com/NeuraiProject/Neurai.git
+ARG BRANCH=DePIN-Test
+ARG SOURCE_COMMIT
+ARG BUILD_TYPE=user
+ARG JOBS=2
+COPY --chmod=755 build-release.sh /usr/local/bin/build-release
+RUN --mount=type=cache,id=neurai-release-linux-sources,target=/cache/sources,sharing=locked \
+    --mount=type=cache,id=neurai-release-linux-built,target=/cache/built,sharing=locked \
+    build-release linux
+
+# Only the exporter and the finished binaries remain in the final image.
+FROM busybox:1.37.0-musl AS release
+COPY --from=builder /binaries/ /binaries/
+COPY --chmod=755 export-binaries.sh /usr/local/bin/export-binaries
+WORKDIR /output
+ENTRYPOINT ["/usr/local/bin/export-binaries"]
+CMD ["/output"]

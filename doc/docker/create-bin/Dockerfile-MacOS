@@ -1,0 +1,31 @@
+# syntax=docker/dockerfile:1
+FROM ubuntu:24.04 AS builder
+
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    autoconf automake binutils bison bsdextrautils build-essential ca-certificates \
+    clang-18 cmake curl file flex gettext git libbz2-dev libclang-18-dev \
+    libssl-dev libtool libxml2-dev lld-18 llvm-18 llvm-18-dev ninja-build \
+    patch perl pkg-config python3 unzip uuid-dev xz-utils zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+ENV LANG=C.UTF-8
+ENV PATH=/usr/lib/llvm-18/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+ARG REPOSITORY=https://github.com/NeuraiProject/Neurai.git
+ARG BRANCH=DePIN-Test
+ARG SOURCE_COMMIT
+ARG BUILD_TYPE=user
+ARG JOBS=2
+ARG MAC_ARCH=x86_64
+ARG OSX_MIN_VERSION=12.0
+COPY --chmod=755 build-release.sh /usr/local/bin/build-release
+RUN --mount=type=cache,id=neurai-release-macos-sources,target=/cache/sources,sharing=locked \
+    --mount=type=cache,id=neurai-release-macos-built,target=/cache/built,sharing=locked \
+    build-release macos
+
+FROM busybox:1.37.0-musl AS release
+COPY --from=builder /binaries/ /binaries/
+COPY --chmod=755 export-binaries.sh /usr/local/bin/export-binaries
+WORKDIR /output
+ENTRYPOINT ["/usr/local/bin/export-binaries"]
+CMD ["/output"]

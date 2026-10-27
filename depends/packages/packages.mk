@@ -2,6 +2,9 @@ packages:=boost openssl libevent zeromq liboqs
 native_packages := native_ccache native_b2
 
 qt_native_packages = native_protobuf
+ifeq ($(host_os),linux)
+qt_native_packages += native_gperf
+endif
 # qt.mk depends on native_qt (moc, rcc, uic... for the build machine) when the
 # target runs on another architecture or system: Windows, macOS, ARM. Without
 # it here, make has no rule for native_qt.
