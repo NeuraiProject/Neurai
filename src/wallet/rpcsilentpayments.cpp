@@ -125,9 +125,9 @@ UniValue sendsilentpayments(const JSONRPCRequest& request)
     if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
         return NullUniValue;
     }
-    if (request.fHelp || request.params.size() < 1 || request.params.size() > 4)
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 3)
         throw std::runtime_error(
-            "sendsilentpayments [{\"code\":\"str\",\"amount\":x},...] ( conf_target \"estimate_mode\" replaceable )\n"
+            "sendsilentpayments [{\"code\":\"str\",\"amount\":x},...] ( conf_target \"estimate_mode\" )\n"
             "\nPays one or more silent payment codes from strict ECDSA (v3) coins only.\n"
             "Several payments to the same code are allowed (up to 16 per code); the change\n"
             "returns to a new internal v3 address."
@@ -136,7 +136,6 @@ UniValue sendsilentpayments(const JSONRPCRequest& request)
             "1. payments        (array, required) [{\"code\": payment code, \"amount\": amount in " + CURRENCY_UNIT + "}, ...]\n"
             "2. conf_target     (numeric, optional) Confirmation target (in blocks)\n"
             "3. \"estimate_mode\" (string, optional, default=UNSET) UNSET, ECONOMICAL or CONSERVATIVE\n"
-            "4. replaceable     (boolean, optional) Signal BIP125 replaceability\n"
             "\nResult:\n"
             "{\n"
             "  \"txid\": \"hex\",\n"
@@ -182,9 +181,6 @@ UniValue sendsilentpayments(const JSONRPCRequest& request)
         if (!FeeModeFromString(request.params[2].get_str(), coin_control.m_fee_mode)) {
             throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid estimate_mode parameter");
         }
-    }
-    if (!request.params[3].isNull()) {
-        coin_control.signalRbf = request.params[3].get_bool();
     }
 
     EnsureWalletIsUnlocked(pwallet);
@@ -513,7 +509,7 @@ static const CRPCCommand commands[] =
     //  --------------------- ------------------------------ ------------------------------ ----------
     { "wallet",             "getsilentpaymentcode",         &getsilentpaymentcode,         {} },
     { "wallet",             "decodesilentpaymentcode",      &decodesilentpaymentcode,      {"code"} },
-    { "wallet",             "sendsilentpayments",           &sendsilentpayments,           {"payments", "conf_target", "estimate_mode", "replaceable"} },
+    { "wallet",             "sendsilentpayments",           &sendsilentpayments,           {"payments", "conf_target", "estimate_mode"} },
     { "wallet",             "listsilentpayments",           &listsilentpayments,           {"include_spent"} },
     { "wallet",             "getsilentpaymentinfo",         &getsilentpaymentinfo,         {} },
     { "wallet",             "rescansilentpayments",         &rescansilentpayments,         {"start_height"} },

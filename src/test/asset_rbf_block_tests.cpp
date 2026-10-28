@@ -2,8 +2,10 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-// NIP025-patch1: asset protection is policy, not a sequence restriction.
-// CheckTxInputs does not replace BIP68/CSV or full asset validation.
+// NIP025-patch1: CheckTxInputs places no restriction on sequences, so BIP68/CSV
+// keep their meaning for asset spends. The no-RBF sequence rule is a separate,
+// height-gated contextual check (see norbf_sequence_tests.cpp), and
+// transaction replacement no longer exists in the mempool.
 
 #include "chainparams.h"
 #include "coins.h"
@@ -13,7 +15,6 @@
 #include "script/script.h"
 #include "test/test_neurai.h"
 #include "assets/assettypes.h"
-#include "policy/rbf.h"
 
 #include <boost/test/unit_test.hpp>
 
@@ -231,7 +232,7 @@ BOOST_AUTO_TEST_CASE(P2PKHAssetTransfer_RBF_Accepted)
 
     auto mtx = MakeSpendingTx({ { srcHash, 0, 0xfffffffdU } });
     auto r = RunCheck(mtx, coins);
-    BOOST_CHECK(r.ok); // consensus accepts; policy separately protects this asset
+    BOOST_CHECK(r.ok); // CheckTxInputs accepts any sequence
 }
 
 BOOST_AUTO_TEST_CASE(BareAuthScript_RBF_Accepted)
@@ -263,10 +264,9 @@ BOOST_AUTO_TEST_CASE(PlainP2PKH_RBF_Accepted)
 
     auto mtx = MakeSpendingTx({ { srcHash, 0, 0xfffffffdU } });
     auto r = RunCheck(mtx, coins);
-    BOOST_CHECK(r.ok); // baseline — ordinary tx keeps BIP125 RBF
+    BOOST_CHECK(r.ok); // CheckTxInputs accepts any sequence
 }
 
-// The old rejection is now exercised by replacement policy instead.
 BOOST_AUTO_TEST_CASE(OneAssetAuthScriptPlusOneXnaRBF_ConsensusAccepted)
 {
     RegtestParamsScope scope;
@@ -345,61 +345,6 @@ BOOST_AUTO_TEST_CASE(Mainnet_AnySequence_ConsensusAccepted)
     BOOST_CHECK(r.ok); // no consensus sequence restriction
 }
 
-// Classification uses real asset builders, but does not claim that these
-// synthetic transactions satisfy asset balance/authorization consensus.
-BOOST_AUTO_TEST_CASE(policy_all_asset_forms_and_context)
-{
-    RegtestParamsScope scope;
-    CStrictAuthScriptContext active(true);
-    CCoinsView base; CCoinsViewCache coins(&base);
-    const auto source=AddDummyCoins(coins,{CTxOut(100000,MakeP2PKHSpk(4))});
-    CMutableTransaction plain=MakeSpendingTx({{source,0,1440}});
-    BOOST_CHECK(!InvolvesAssets(CTransaction(plain),coins));
-    BOOST_CHECK(SignalsOptInRBF(CTransaction(plain))); // meaning of BIP125 unchanged
-    for (auto marker : {AssetMarker::LEGACY_RVN,AssetMarker::NEURAI_XNA}) {
-        for (int family : {0,1,2,3}) {
-            const CScript prefix=family ? CScript()<<CScript::EncodeOP_N(family)<<std::vector<unsigned char>(32,5) : MakeP2PKHSpk(5);
-            for (const std::string name : {"CAT","CAT#UNIQUE","CAT!","#QUALIFIER","$RESTRICTED"}) {
-                CScript transfer=prefix; CAssetTransfer(name,COIN).ConstructTransaction(transfer,marker);
-                auto tx=plain; tx.vout[0].scriptPubKey=transfer;
-                BOOST_CHECK(InvolvesAssets(CTransaction(tx),coins));
-                CCoinsView inputBase; CCoinsViewCache inputCoins(&inputBase);
-                auto input=AddDummyCoins(inputCoins,{CTxOut(10000,transfer)});
-                auto spend=MakeSpendingTx({{input,0,1440}});
-                BOOST_CHECK(InvolvesAssets(CTransaction(spend),inputCoins));
-            }
-            CNewAsset asset("NEW",COIN,0,1,0,"");
-            CScript issue=prefix; asset.ConstructTransaction(issue,marker);
-            CScript owner=prefix; asset.ConstructOwnerTransaction(owner,marker);
-            CScript reissue=prefix; CReissueAsset("NEW",COIN,-1,0,"").ConstructTransaction(reissue,marker);
-            for(const auto& output:{issue,owner,reissue}) {
-                auto tx=plain; tx.vout[0].scriptPubKey=output;
-                BOOST_CHECK(InvolvesAssets(CTransaction(tx),coins));
-            }
-            auto bare=plain; bare.vout[0].scriptPubKey=prefix;
-            BOOST_CHECK(!InvolvesAssets(CTransaction(bare),coins));
-        }
-    }
-    CScript tag=CScript()<<OP_XNA_ASSET<<std::vector<unsigned char>(20,5); CNullAssetTxData("#TAG",1).ConstructTransaction(tag);
-    CScript global; CNullAssetTxData("$CAT",1).ConstructGlobalRestrictionTransaction(global);
-    CScript verifier; CNullAssetTxVerifierString("true").ConstructTransaction(verifier);
-    for(const auto& script:{tag,global,verifier}) {
-        auto tx=plain; tx.vout[0].scriptPubKey=script;
-        BOOST_CHECK(InvolvesAssets(CTransaction(tx),coins));
-    }
-    auto data=plain; data.vout[0].scriptPubKey=CScript()<<OP_RETURN<<std::vector<unsigned char>{0xc0,'x','n','a','t'};
-    BOOST_CHECK(!InvolvesAssets(CTransaction(data),coins));
-    data.nVersion=3; data.vrefin.emplace_back(uint256S("1234"),0);
-    BOOST_CHECK(!InvolvesAssets(CTransaction(data),coins));
-    auto missing=plain; missing.vin[0].prevout.n=9;
-    BOOST_CHECK(InvolvesAssets(CTransaction(missing),coins)); // cannot bypass on missing coins
-    CScript strict=CScript()<<OP_2<<std::vector<unsigned char>(32,5);
-    CAssetTransfer("CAT",COIN).ConstructTransaction(strict,AssetMarker::NEURAI_XNA);
-    auto tx=plain; tx.vout[0].scriptPubKey=strict;
-    { CStrictAuthScriptContext inactive(false); BOOST_CHECK(!InvolvesAssets(CTransaction(tx),coins)); }
-    BOOST_CHECK(InvolvesAssets(CTransaction(tx),coins)); // no stale metadata
-}
-
 BOOST_AUTO_TEST_CASE(sequence_restriction_removed_on_mainnet_and_regtest)
 {
     for (const auto& network : {CBaseChainParams::MAIN,CBaseChainParams::REGTEST}) {
@@ -411,42 +356,6 @@ BOOST_AUTO_TEST_CASE(sequence_restriction_removed_on_mainnet_and_regtest)
         }
     }
     SelectParams(CBaseChainParams::MAIN);
-}
-
-BOOST_AUTO_TEST_CASE(policy_eviction_graph_live_coins)
-{
-    RegtestParamsScope scope;
-    CCoinsView base; CCoinsViewCache chain(&base);
-    const auto source=AddDummyCoins(chain,{CTxOut(100000,MakeP2PKHSpk(1))});
-    CTxMemPool pool; TestMemPoolEntryHelper entry;
-    auto parent=MakeSpendingTx({{source,0,0xfffffffdU}});
-    parent.vout[0].nValue=90000;
-    const CTransaction parentTx(parent);
-    pool.addUnchecked(parentTx.GetHash(),entry.FromTx(parentTx));
-    auto child=MakeSpendingTx({{parentTx.GetHash(),0,0xfffffffdU}});
-    child.vout[0].nValue=80000;
-    const CTransaction childTx(child);
-    pool.addUnchecked(childTx.GetHash(),entry.FromTx(childTx));
-    auto grandchild=MakeSpendingTx({{childTx.GetHash(),0,0xfffffffdU}});
-    grandchild.vout[0].scriptPubKey=MakeAssetP2PKHSpk("CAT",COIN,3);
-    const CTransaction grandTx(grandchild);
-    pool.addUnchecked(grandTx.GetHash(),entry.FromTx(grandTx));
-    CCoinsViewMemPool overlay(&chain,pool); CCoinsViewCache view(&overlay);
-    auto candidate=parent; candidate.vout[0].nValue=50000;
-    CTxMemPool::setEntries all,direct;
-    LOCK(pool.cs);
-    auto it=pool.mapTx.find(parentTx.GetHash());direct.insert(it);
-    pool.CalculateDescendants(it,all);
-    BOOST_REQUIRE_EQUAL(all.size(),3);
-    BOOST_CHECK(!ReplacementInvolvesAssets(CTransaction(candidate),direct,view));
-    BOOST_CHECK(ReplacementInvolvesAssets(CTransaction(candidate),all,view));
-    candidate.vout[0].scriptPubKey=MakeAssetAuthScriptSpk("CAT",COIN,4);
-    BOOST_CHECK(ReplacementInvolvesAssets(CTransaction(candidate),direct,view));
-    BOOST_CHECK_EQUAL(pool.size(),3); // decisions do not remove anything
-    pool.removeRecursive(grandTx,MemPoolRemovalReason::EXPIRY);
-    CCoinsViewCache fresh(&overlay);all.clear();pool.CalculateDescendants(it,all);
-    candidate.vout[0].scriptPubKey=MakeP2PKHSpk(1);
-    BOOST_CHECK(!ReplacementInvolvesAssets(CTransaction(candidate),all,fresh));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

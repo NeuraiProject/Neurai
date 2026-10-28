@@ -126,6 +126,7 @@ BASE_SCRIPTS= [
     'feature_rawassettransactions.py',
     'feature_nip040_marker_migration.py',
     'feature_depin_transfer_state.py',
+    'feature_norbf.py',
     'feature_depin_restriction_undo.py',
     'feature_depin_messaging_permissions.py',
     'feature_depin_request_signatures.py',
@@ -201,7 +202,6 @@ SKIPPED_TESTS = [
     'feature_op_poseidon.py',       # NIP-036
     'feature_nulldummy.py',         #TODO - fix mininode rehash methods to use X16R
     'feature_pruning.py',
-    'feature_rbf.py',
     'feature_segwit.py',            #TODO - fix mininode rehash methods to use X16R
     'mempool_packages.py',
     'mining_basic.py',              #TODO - fix mininode rehash methods to use X16R
@@ -210,7 +210,6 @@ SKIPPED_TESTS = [
     'p2p_segwit.py',                #TODO - refactor to assume segwit is always active
     'p2p_sendheaders.py',           #TODO - fix mininode rehash methods to use X16R
     'p2p_unrequested_blocks.py',
-    'wallet_bumpfee.py',            #TODO - Now fails because we removed RBF
 ]
 
 # Place EXTENDED_SCRIPTS first since it has the 3 longest running tests

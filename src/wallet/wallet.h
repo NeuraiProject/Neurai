@@ -44,7 +44,6 @@ extern std::vector<CWalletRef> vpwallets;
 extern CFeeRate payTxFee;
 extern unsigned int nTxConfirmTarget;
 extern bool bSpendZeroConfChange;
-extern bool fWalletRbf;
 
 extern std::string my_words;
 extern std::string my_passphrase;
@@ -79,8 +78,6 @@ static const bool DEFAULT_WALLET_REJECT_LONG_CHAINS = false;
 static const bool DEFAULT_MIX_SILENT_PAYMENTS = false;
 //! -txconfirmtarget default
 static const unsigned int DEFAULT_TX_CONFIRM_TARGET = 6;
-//! -walletrbf default
-static const bool DEFAULT_WALLET_RBF = false;
 static const bool DEFAULT_WALLETBROADCAST = true;
 static const bool DEFAULT_DISABLE_WALLET = false;
 

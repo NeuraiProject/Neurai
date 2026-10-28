@@ -661,6 +661,7 @@ std::string HelpMessage(HelpMessageMode mode)
         strUsage += HelpMessageOpt("-blocktimereductionheight=<n>", "Schedule the NIP-028 block-time reduction (60s -> 30s, halved subsidy) at this height (regtest-only)");
         strUsage += HelpMessageOpt("-strictauthscriptheight=<n>", "Override the strict AuthScript (witness v2/v3) activation height (regtest-only)");
         strUsage += HelpMessageOpt("-depinstateheight=<n>", "Override the DEPIN transfer state (open/close/seal) activation height (regtest-only)");
+        strUsage += HelpMessageOpt("-rbfbanheight=<n>", "Override the no-RBF sequence rule activation height (regtest-only)");
     }
     strUsage += HelpMessageOpt("-debug=<category>", strprintf(_("Output debugging information (default: %u, supplying <category> is optional)"), 0) + ". " +
         _("If <category> is not supplied or if <category> = 1, output all debugging information.") + " " + _("<category> can be:") + " " + ListLogCategories() + ".");
@@ -689,13 +690,12 @@ std::string HelpMessage(HelpMessageMode mode)
     strUsage += HelpMessageGroup(_("Node relay options:"));
     if (showDebug) {
         strUsage += HelpMessageOpt("-acceptnonstdtxn", strprintf("Relay and mine \"non-standard\" transactions (%sdefault: %u)", "testnet/regtest only; ", !testnetChainParams->RequireStandard()));
-        strUsage += HelpMessageOpt("-incrementalrelayfee=<amt>", strprintf("Fee rate (in %s/kB) used to define cost of relay, used for mempool limiting and BIP 125 replacement. (default: %s)", CURRENCY_UNIT, FormatMoney(DEFAULT_INCREMENTAL_RELAY_FEE)));
+        strUsage += HelpMessageOpt("-incrementalrelayfee=<amt>", strprintf("Fee rate (in %s/kB) used to define cost of relay, used for mempool limiting. (default: %s)", CURRENCY_UNIT, FormatMoney(DEFAULT_INCREMENTAL_RELAY_FEE)));
         strUsage += HelpMessageOpt("-dustrelayfee=<amt>", strprintf("Fee rate (in %s/kB) used to defined dust, the value of an output such that it will cost more than its value in fees at this fee rate to spend it. (default: %s)", CURRENCY_UNIT, FormatMoney(DUST_RELAY_TX_FEE)));
     }
     strUsage += HelpMessageOpt("-bytespersigop", strprintf(_("Equivalent bytes per sigop in transactions for relay and mining (default: %u)"), DEFAULT_BYTES_PER_SIGOP));
     strUsage += HelpMessageOpt("-datacarrier", strprintf(_("Relay and mine data carrier transactions (default: %u)"), DEFAULT_ACCEPT_DATACARRIER));
     strUsage += HelpMessageOpt("-datacarriersize", strprintf(_("Maximum size of data in data carrier transactions we relay and mine (default: %u mainnet, %u testnet)"), MAX_OP_RETURN_RELAY, MAX_OP_RETURN_RELAY_TESTNET));
-    strUsage += HelpMessageOpt("-mempoolreplacement", strprintf(_("Enable transaction replacement in the memory pool (default: %u)"), DEFAULT_ENABLE_REPLACEMENT));
     strUsage += HelpMessageOpt("-minrelaytxfee=<amt>", strprintf(_("Fees (in %s/kB) smaller than this are considered zero fee for relaying, mining and transaction creation (default: %s)"),
         CURRENCY_UNIT, FormatMoney(DEFAULT_MIN_RELAY_TX_FEE)));
     strUsage += HelpMessageOpt("-whitelistrelay", strprintf(_("Accept relayed transactions received from whitelisted peers even when not relaying transactions (default: %d)"), DEFAULT_WHITELISTRELAY));
@@ -1241,8 +1241,8 @@ bool AppInitParameterInteraction()
     int64_t nMempoolSizeMin = gArgs.GetArg("-limitdescendantsize", DEFAULT_DESCENDANT_SIZE_LIMIT) * 1000 * 40;
     if (nMempoolSizeMax < 0 || nMempoolSizeMax < nMempoolSizeMin)
         return InitError(strprintf(_("-maxmempool must be at least %d MB"), std::ceil(nMempoolSizeMin / 1000000.0)));
-    // incremental relay fee sets the minimum feerate increase necessary for BIP 125 replacement in the mempool
-    // and the amount the mempool min fee increases above the feerate of txs evicted due to mempool limiting.
+    // incremental relay fee sets the amount the mempool min fee increases above the feerate of txs evicted
+    // due to mempool limiting.
     if (gArgs.IsArgSet("-incrementalrelayfee"))
     {
         CAmount n = 0;
@@ -1350,13 +1350,18 @@ bool AppInitParameterInteraction()
 
     nMaxTipAge = gArgs.GetArg("-maxtipage", DEFAULT_MAX_TIP_AGE);
 
-    fEnableReplacement = gArgs.GetBoolArg("-mempoolreplacement", DEFAULT_ENABLE_REPLACEMENT);
-    if ((!fEnableReplacement) && gArgs.IsArgSet("-mempoolreplacement")) {
-        // Minimal effort at forwards compatibility
-        std::string strReplacementModeList = gArgs.GetArg("-mempoolreplacement", "");  // default is impossible
+    // Transaction replacement (BIP 125) was removed, and from nNoRbfHeight the
+    // consensus rejects replaceability signals. Refuse a configuration that
+    // asks for it, with the former syntax ("1" or a mode list naming "fee");
+    // "0" is accepted and ignored so existing configuration files still load.
+    if (gArgs.IsArgSet("-mempoolreplacement")) {
+        const std::string strReplacementModeList = gArgs.GetArg("-mempoolreplacement", "");
         std::vector<std::string> vstrReplacementModes;
         boost::split(vstrReplacementModes, strReplacementModeList, boost::is_any_of(","));
-        fEnableReplacement = (std::find(vstrReplacementModes.begin(), vstrReplacementModes.end(), "fee") != vstrReplacementModes.end());
+        if (gArgs.GetBoolArg("-mempoolreplacement", false) ||
+            std::find(vstrReplacementModes.begin(), vstrReplacementModes.end(), "fee") != vstrReplacementModes.end()) {
+            return InitError(_("Transaction replacement (-mempoolreplacement) is no longer supported: conflicting transactions are always rejected."));
+        }
     }
 
     if (gArgs.IsArgSet("-vbparams")) {
@@ -1532,6 +1537,18 @@ bool AppInitParameterInteraction()
         }
         UpdateDepinTransferStateHeight(static_cast<int>(nHeight));
         LogPrintf("Setting DEPIN transfer state activation height to %ld\n", nHeight);
+    }
+
+    if (gArgs.IsArgSet("-rbfbanheight")) {
+        if (!chainparams.MineBlocksOnDemand()) {
+            return InitError("The no-RBF sequence rule height may only be overridden on regtest.");
+        }
+        int64_t nHeight;
+        if (!ParseInt64(gArgs.GetArg("-rbfbanheight", ""), &nHeight) || nHeight < 0 || nHeight > std::numeric_limits<int>::max()) {
+            return InitError(strprintf("Invalid -rbfbanheight (%s)", gArgs.GetArg("-rbfbanheight", "")));
+        }
+        UpdateNoRbfHeight(static_cast<int>(nHeight));
+        LogPrintf("Setting no-RBF sequence rule activation height to %ld\n", nHeight);
     }
     return true;
 }
@@ -2130,6 +2147,12 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
                         strLoadError = _("Unable to rewind the database to a pre-fork state. You will need to redownload the blockchain");
                         break;
                     }
+                }
+
+                // Before VerifyDB, which at -checklevel=4 would reconnect a
+                // breaking block and only report a corrupted database.
+                if (!CheckNoRbfChainstate(chainparams, strLoadError)) {
+                    break;
                 }
 
                 if (!is_coinsview_empty) {

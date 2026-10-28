@@ -232,6 +232,15 @@ struct Params {
      *  soulbound (CLOSED). std::numeric_limits<int>::max() on chains that
      *  have not scheduled the fork (mainnet). See NIP/plan-nodo-depin-estado-transferencia.md. */
     int nDepinTransferStateHeight;
+    /** No-RBF sequence rule: from this height every input of a non-coinbase
+     *  transaction must use sequence 0xffffffff, 0xfffffffe or, in a
+     *  transaction of version 2 or higher, a BIP 68 relative lock (see
+     *  CTxIn::IsNoRbfSequenceAllowed). Values that only signal BIP 125
+     *  replaceability make the transaction invalid. Block 10 of the reset
+     *  testnet, 0 on regtest (override with -rbfbanheight), INT_MAX on mainnet
+     *  until the unified fork. */
+    int nNoRbfHeight{std::numeric_limits<int>::max()};
+    bool IsNoRbfActive(int nHeight) const { return nHeight >= nNoRbfHeight; }
     /** Enable the height-based shortcut in AreAssetsDeployed()/IsRip5Active()
      *  (assets/RIP5 active once the tip reaches nAssetActivationHeight /
      *  nMessagingActivationBlock). This is meant for fresh test networks. On

@@ -42,7 +42,6 @@ MAX_INV_SZ = 50000
 MAX_BLOCK_BASE_SIZE = 1000000
 
 COIN = 100000000  # 1 xna in Corbies
-BIP125_SEQUENCE_NUMBER = 0xfffffffd  # Sequence number that is BIP 125 opt-in and BIP 68-opt-out
 
 NODE_NETWORK = (1 << 0)
 NODE_WITNESS = (1 << 3)
@@ -318,7 +317,10 @@ class COutPoint:
 class CTxIn:
     __slots__ = ("nSequence", "prevout", "scriptSig")
 
-    def __init__(self, outpoint=None, script_sig=b"", n_sequence=0):
+    # 0xfffffffe keeps nLockTime enforced, as the former default 0 did, but is
+    # not a replaceability signal: under the no-RBF sequence rule (active from
+    # genesis on regtest) a version 1 transaction with sequence 0 is invalid.
+    def __init__(self, outpoint=None, script_sig=b"", n_sequence=0xfffffffe):
         if outpoint is None:
             self.prevout = COutPoint()
         else:

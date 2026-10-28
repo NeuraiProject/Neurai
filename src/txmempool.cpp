@@ -974,6 +974,29 @@ void CTxMemPool::removeForAssetMarkerTransition(bool fNip040Active)
     RemoveStaged(setAllRemoves, false, MemPoolRemovalReason::REORG);
 }
 
+void CTxMemPool::removeForNoRbfTransition()
+{
+    // Entries admitted for a candidate height below the rule may carry a
+    // replaceability signal; no block at the new target height can include
+    // them, so drop them with their descendants.
+    LOCK(cs);
+    setEntries txToRemove;
+    for (indexed_transaction_set::const_iterator it = mapTx.begin(); it != mapTx.end(); it++) {
+        const CTransaction& tx = it->GetTx();
+        for (const CTxIn& txin : tx.vin) {
+            if (!CTxIn::IsNoRbfSequenceAllowed(tx.nVersion, txin.nSequence)) {
+                txToRemove.insert(it);
+                break;
+            }
+        }
+    }
+    setEntries setAllRemoves;
+    for (txiter it : txToRemove) {
+        CalculateDescendants(it, setAllRemoves);
+    }
+    RemoveStaged(setAllRemoves, false, MemPoolRemovalReason::REORG);
+}
+
 void CTxMemPool::removeForStrictAuthScriptTransition(std::function<bool(const CTxMemPoolEntry&)> isAffected)
 {
     LOCK(cs);

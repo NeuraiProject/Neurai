@@ -122,6 +122,24 @@ bool Consensus::CheckXnaAssetStrictPlacement(const CTransaction& tx, CValidation
     return true;
 }
 
+bool Consensus::CheckNoRbfSequences(const CTransaction& tx, CValidationState& state)
+{
+    // The coinbase input has no previous output and BIP 68 does not apply to
+    // it; pool software fills its sequence freely.
+    if (tx.IsCoinBase())
+        return true;
+
+    for (size_t i = 0; i < tx.vin.size(); ++i) {
+        const uint32_t nSequence = tx.vin[i].nSequence;
+        if (!CTxIn::IsNoRbfSequenceAllowed(tx.nVersion, nSequence)) {
+            return state.DoS(100, false, REJECT_INVALID, "bad-txns-rbf-sequence", false,
+                             strprintf("input %u has sequence 0x%08x, which only signals replaceability", i, nSequence),
+                             tx.GetHash());
+        }
+    }
+    return true;
+}
+
 namespace {
 
 bool GetAssetMetadataFromNewAssetTx(const CTransaction& tx, const std::string& assetName, CNewAsset& asset)
@@ -833,8 +851,9 @@ bool Consensus::CheckTxInputs(const CTransaction& tx, CValidationState& state, c
         }
     }
 
-    // NIP025-patch1: sequence numbers retain their normal BIP68/CSV meaning.
-    // Protection of asset operations against replacement is mempool policy.
+    // NIP025-patch1: sequence numbers retain their normal BIP68/CSV meaning
+    // here. The no-RBF sequence rule (CheckNoRbfSequences) is applied by the
+    // callers that know the block height.
 
     const CAmount value_out = tx.GetValueOut(AreEnforcedValuesDeployed());
     if (nValueIn < value_out) {

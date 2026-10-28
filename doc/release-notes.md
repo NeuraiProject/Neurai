@@ -114,6 +114,13 @@ tags):
 - Generic AuthScript (witness v1) addresses are encoded as `nc1p…` /
   `tnc1p…`; the former `nq1p…` / `tnq1p…` strings are rejected.
 - `-pqwallet` is refused at startup; use `-addresstype=pq` for a new wallet.
+- `-mempoolreplacement=1` and `-walletrbf=1` are refused at startup: remove
+  them from `neurai.conf`. Transactions are no longer replaced, and on
+  testnet and regtest a sequence that only signals replaceability is invalid
+  (no-RBF sequence rule, block 10 of testnet). Tools that set `0xfffffffd`
+  must use `0xfffffffe`, `0xffffffff` or a BIP 68 relative lock. The first
+  start checks the blocks the node already has against the rule (see
+  [No-RBF sequence rule](#no-rbf-sequence-rule)).
 - Restart testnet and regtest nodes once with `-reindex-chainstate` (or
   `-reindex`). Blocks connected by earlier builds have no DEPIN restriction
   undo record, and the node refuses to start until it rebuilds them. Mainnet
@@ -188,6 +195,7 @@ height revalidates the mempool.
 | Poseidon work budget: at most 200,000 permutations per block (20,000 per standard transaction) | — | not scheduled | 10 | 0, `-poseidonworkheight` |
 | Asset payload marker `rvn` → `xna` for new asset outputs; existing `rvn` outputs stay spendable | NIP-040 | not scheduled | 10 | 1, `-nip040height` |
 | DEPIN transfer state (open, close, seal) | — | not scheduled | 10 | 1, `-depinstateheight` |
+| No-RBF sequence rule: every non-coinbase input uses sequence `0xffffffff`, `0xfffffffe` or, in a version 2 or 3 transaction, a BIP 68 relative lock; a value that only signals BIP 125 replaceability makes the transaction invalid (`bad-txns-rbf-sequence`). See [No-RBF sequence rule](#no-rbf-sequence-rule) | — | not scheduled | 10 | 0, `-rbfbanheight` |
 | Block time 60 s → 30 s, subsidy halved with the halving interval doubled to 28,800 blocks, 120-block reorganization limit, block version bit `0x40000000` required | NIP-028 | not scheduled | 10 | not scheduled, `-blocktimereductionheight` |
 
 <!-- TODO: confirm the NIP numbers. No NIP is given in doc/ for AuthScript,
@@ -196,6 +204,30 @@ C5/C6 profiles, the Poseidon work budget or the DEPIN transfer state. The
 docs call OP_ZKVERIFY NIP-016; src/script/interpreter.h labels
 SCRIPT_VERIFY_ZKVERIFY "NIP-018". Profile 03 (C6) is not described in
 covenants.md. -->
+
+### No-RBF sequence rule
+
+Replace-by-fee is prohibited by consensus from the activation height. A
+sequence below `0xfffffffe` must be a relative lock that BIP 68 enforces (bit
+31 clear in a transaction of version 2 or higher), so `OP_CHECKSEQUENCEVERIFY`
+and `OP_CHECKLOCKTIMEVERIFY` keep working; a value with no consensus meaning,
+such as `0xfffffffd`, is invalid. The coinbase input is exempt. On the running
+testnet the rule is retroactive from block 10: a scan of blocks 10 to 91,005
+found no input that breaks it.
+
+A node checks the rule whenever it connects a block, including blocks read
+back from disk by `-reindex-chainstate`, `reconsiderblock` or
+`verifychain`. At startup it also checks, once, the blocks of its active chain
+that it connected without the rule (with an earlier build, or with a higher
+`-rbfbanheight` on regtest). If one of them breaks the rule, the node refuses
+to start until the chainstate is rebuilt with `-reindex-chainstate`, which
+rejects that block. A pruned node that no longer has the block needs
+`-reindex`.
+
+A rule on blocks cannot decide which of two conflicting transactions is
+mined; a miner can still choose either. What the rule removes is the
+replaceability signal from the protocol, and the node no longer replaces
+transactions at all (see the relay policy under [P2P and network](#p2p-and-network)).
 
 Rules that depend on the network rather than on a height:
 
@@ -246,11 +278,16 @@ Relay policy:
 - The default mempool package limits were raised: `-limitancestorcount` and
   `-limitdescendantcount` from 200 to 500, `-limitancestorsize` and
   `-limitdescendantsize` from 250 to 750 kB.
-- With `-mempoolreplacement=1` (the default is still 0), a replacement that
-  involves asset inputs, asset outputs or administrative asset outputs,
-  directly or through an evicted ancestor, is rejected with
-  `replacement-involves-assets` (NIP-025 patch 1). Ordinary XNA replacements
-  keep the opt-in RBF rules.
+- Transaction replacement (BIP 125) was removed on every network: a
+  transaction that conflicts with one in the mempool is always rejected
+  (`txn-mempool-conflict`), whatever its fee and sequences.
+  `replacement-involves-assets` no longer exists. A stuck transaction is
+  raised with a child that spends one of its outputs (CPFP) or abandoned in
+  the wallet once it leaves the mempool (`-mempoolexpiry`, 14 days by
+  default).
+- Where the no-RBF sequence rule applies to the next block, the mempool
+  refuses replaceability signals, and the transactions admitted before with a
+  signal are evicted, with their descendants, when the rule activates.
 - `-datacarriersize` defaults to 512 bytes on testnet and regtest (83 on
   mainnet).
 - Where the new rules are active (testnet, regtest): outputs to an AuthScript
@@ -534,11 +571,15 @@ New options:
   `-assetmessageheight`, `-inputfieldheight`, `-merkleposeidonheight`,
   `-authscripttreeheight`, `-authscriptbudgetheight`, `-zkverifyheight`,
   `-zkpublictreeheight`, `-zkportabletreeheight`, `-poseidonworkheight`,
-  `-nip040height`, `-depinstateheight`, `-blocktimereductionheight`.
+  `-nip040height`, `-depinstateheight`, `-rbfbanheight`,
+  `-blocktimereductionheight`.
 - GUI only: `-privacypooldir=<dir>` and, with `-help-debug`,
   `-privacypoolunpinned`.
 - `neurai-tx`: new command `refin=TXID:VOUT` adds a reference input (and
-  forces a version 3 transaction).
+  forces a version 3 transaction). The `replaceable` command was removed, and
+  a sequence that only signals replaceability is reported on stderr as a
+  warning (`neurai-tx` cannot know whether the no-RBF sequence rule applies
+  yet).
 - Legacy asset modules (NIP-048): `-assetmessages`, `-assetrewards`,
   `-minsnapshotnotice=<n>` (default 60 blocks), `-maxsnapshotrequests=<n>`
   (different assets whose snapshot can be requested at one height, default
@@ -572,8 +613,12 @@ Changed behavior:
   scan every 100 holders, which made the capture grow with the square of the
   holder count while the block connected.
 
-Removed options: none. `-pqwallet`, which only existed in development
-builds, is refused at startup with a pointer to `-addresstype=pq`.
+Removed options: `-mempoolreplacement` and `-walletrbf`. Asking for
+replacement (`-mempoolreplacement=1`, `-mempoolreplacement=fee` or
+`-walletrbf=1`) is refused at startup; `0` is accepted and ignored so existing
+configuration files still load. `-pqwallet`, which only existed in
+development builds, is refused at startup with a pointer to
+`-addresstype=pq`.
 
 Low-level RPC changes
 ----------------------
@@ -648,6 +693,9 @@ Changed RPCs (arguments and request format):
   `close_depin` and `seal_depin` outputs. `refinputs` can also be passed as a
   named argument.
 - `getblock`: new verbosity 3.
+- `createrawtransaction`: an explicit input `sequence` that only signals
+  replaceability is refused once the no-RBF sequence rule applies to the next
+  block.
 - `getaddressdeltas`: `assetName` accepts `"*"`.
 - `distributereward` no longer sends payments: it fails with error -32 and
   points to `getdistributionplan`. The node no longer builds or retries reward
@@ -680,8 +728,11 @@ Result changes:
 - Reward and snapshot RPCs: with the reward stores closed they fail with error
   -20 and a message naming `-assetrewards` (`getdistributestatus` used to
   return -32600).
+- `listtransactions`, `listsinceblock`, `gettransaction`: the
+  `bip125-replaceable` field was removed (it always said `"no"`).
 
-Removed RPCs: none.
+Removed RPCs: `bumpfee`, which already failed on every call ("bumpfee has
+been deprecated").
 
 For users of DePIN-Test development builds: `depinsignchallenge`,
 `depinsignrequest` and `depinsignreadseq` were removed in favour of

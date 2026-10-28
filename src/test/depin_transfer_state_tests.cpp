@@ -380,7 +380,7 @@ struct DepinStateChainSetup : public TestChain100Setup {
         {
             // AcceptToMemoryPool() requires cs_main.
             LOCK(cs_main);
-            ok = AcceptToMemoryPool(mempool, state, MakeTransactionRef(mut), nullptr, nullptr,
+            ok = AcceptToMemoryPool(mempool, state, MakeTransactionRef(mut), nullptr,
                                     true /* bypass_limits */, 0, test_accept);
         }
         reason = state.GetRejectReason();
@@ -1039,7 +1039,7 @@ BOOST_AUTO_TEST_CASE(reorg_restores_previous_state_and_persists)
 // (11) Mempool: holder transfers are tracked from the mempool view (an
 // input from an unconfirmed ancestor counts), one pending state operation
 // per asset (a chained second one is rejected without being inserted, also
-// under test_accept; asset replacement is prohibited), and a connected CLOSE
+// under test_accept; conflicts are always rejected), and a connected CLOSE
 // evicts the holder transfers and leaves no references behind.
 BOOST_AUTO_TEST_CASE(mempool_bookkeeping_and_eviction)
 {
@@ -1112,29 +1112,24 @@ BOOST_AUTO_TEST_CASE(mempool_bookkeeping_and_eviction)
     BOOST_CHECK(reason.find(kNotByOwner) == 0);
 }
 
-// (11b) NIP025-patch1 rejects replacement of a pending asset operation
-// even with the same owner input and a higher fee. A disconnected OPEN evicts holder transfers
-// that were admitted on the strength of it.
+// (11b) A pending asset operation cannot be replaced. Transaction replacement
+// was removed: a conflicting operation is rejected even with the same owner
+// input and a higher fee, and a replaceability signal is rejected by the
+// no-RBF sequence rule. A disconnected OPEN evicts holder transfers that were
+// admitted on the strength of it.
 BOOST_AUTO_TEST_CASE(mempool_replacement_and_reorg_eviction)
 {
-    // Replacement is off by default on this node; the scenario needs it on
-    struct ReplacementGuard {
-        bool saved;
-        ReplacementGuard() : saved(fEnableReplacement) { fEnableReplacement = true; }
-        ~ReplacementGuard() { fEnableReplacement = saved; }
-    } replacementGuard;
-
     std::string reason;
     COutPoint ownerOut = Seed(OwnerTransferScript(ownerAddr));
     const COutPoint holderOut = Seed(IssuanceScript(ASSET, 10 * COIN, holderAddr));
 
-    // Fees come from a mature coinbase; both candidates signal BIP125
+    // Fees come from a mature coinbase
     const COutPoint coinbaseOut(coinbaseTxns[0].GetHash(), 0);
     const CAmount coinbaseValue = coinbaseTxns[0].vout[0].nValue;
-    auto feeOp = [&](int flag, CAmount fee) {
+    auto feeOp = [&](int flag, CAmount fee, uint32_t nSequence) {
         CMutableTransaction mut;
-        mut.vin.emplace_back(ownerOut, CScript(), 0xfffffffd);
-        mut.vin.emplace_back(coinbaseOut, CScript(), 0xfffffffd);
+        mut.vin.emplace_back(ownerOut, CScript(), nSequence);
+        mut.vin.emplace_back(coinbaseOut, CScript(), nSequence);
         mut.vout.emplace_back(0, OwnerTransferScript(ownerAddr));
         mut.vout.emplace_back(0, StateScript(ASSET, flag));
         mut.vout.emplace_back(coinbaseValue - fee, GetScriptForDestination(coinbaseKey.GetPubKey().GetID()));
@@ -1142,17 +1137,21 @@ BOOST_AUTO_TEST_CASE(mempool_replacement_and_reorg_eviction)
         return mut;
     };
 
-    CMutableTransaction first = feeOp(1, COIN);
+    CMutableTransaction first = feeOp(1, COIN, CTxIn::SEQUENCE_FINAL - 1);
     BOOST_REQUIRE_MESSAGE(ToMempool(first, reason), reason);
     BOOST_CHECK_EQUAL(StateOpsTracked(), 1U);
 
-    CMutableTransaction replacement = feeOp(2, 2 * COIN);
-    BOOST_CHECK(!ToMempool(replacement, reason, true));
-    BOOST_CHECK_EQUAL(reason, "replacement-involves-assets");
-    BOOST_CHECK(!ToMempool(replacement, reason));
-    BOOST_CHECK_EQUAL(reason, "replacement-involves-assets");
+    CMutableTransaction conflicting = feeOp(2, 2 * COIN, CTxIn::SEQUENCE_FINAL - 1);
+    BOOST_CHECK(!ToMempool(conflicting, reason, true));
+    BOOST_CHECK_EQUAL(reason, "txn-mempool-conflict");
+    BOOST_CHECK(!ToMempool(conflicting, reason));
+    BOOST_CHECK_EQUAL(reason, "txn-mempool-conflict");
+    CMutableTransaction signaling = feeOp(2, 2 * COIN, 0xfffffffd);
+    BOOST_CHECK(!ToMempool(signaling, reason));
+    BOOST_CHECK_EQUAL(reason, "bad-txns-rbf-sequence");
     BOOST_CHECK(mempool.exists(first.GetHash()));
-    BOOST_CHECK(!mempool.exists(replacement.GetHash()));
+    BOOST_CHECK(!mempool.exists(conflicting.GetHash()));
+    BOOST_CHECK(!mempool.exists(signaling.GetHash()));
     BOOST_CHECK_EQUAL(StateOpsTracked(), 1U);
     mempool.clear();
 

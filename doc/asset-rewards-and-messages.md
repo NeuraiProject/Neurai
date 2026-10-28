@@ -108,11 +108,10 @@ Records passed to `verifydistribution` are signed versions, as hex or as
 confirmed version whose outputs were all spent needs `-txindex` or the block
 hash. A version that does not pay its batch exactly is reported and ignored.
 
-Batches do not rely on replace-by-fee, which is off by default and never
-accepted for asset transactions. Fees are estimated by the wallet (`max_fee`
-sets a ceiling); a stuck batch can be bumped with a child transaction that
-spends its XNA change, or rebuilt with the same anchor once its version has
-left the mempool.
+Batches do not rely on replace-by-fee, which the node no longer supports.
+Fees are estimated by the wallet (`max_fee` sets a ceiling); a stuck batch can
+be bumped with a child transaction that spends its XNA change, or rebuilt with
+the same anchor once its version has left the mempool.
 
 `distributereward` no longer pays and fails with error -32; the node never
 builds or retries payments by itself. `getdistributestatus` still reads the

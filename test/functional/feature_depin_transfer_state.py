@@ -9,9 +9,10 @@ DEPIN transfer state (closed / open / sealed) on real nodes.
 Node 0 issues and owns the DEPIN asset, node 1 is a plain holder. The test
 walks the state machine through the wallet RPCs (opendepin / closedepin /
 sealdepin), checks holder transfers in every state, the mempool rules (one
-pending operation per asset, never inserted when rejected, no replacement
-of asset transactions, eviction on close), reorgs after every transition with
-invalidateblock, and the activation frontier with -depinstateheight.
+pending operation per asset, never inserted when rejected, conflicts always
+rejected and replaceability signals refused, eviction on close), reorgs after
+every transition with invalidateblock, and the activation frontier with
+-depinstateheight.
 """
 
 from test_framework.test_framework import NeuraiTestFramework
@@ -32,10 +33,7 @@ class DepinTransferStateTest(NeuraiTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 2
-        # Enable BIP125 replacement generally to prove that the asset-specific
-        # NIP-025 policy still rejects replacement of a DEPIN state operation.
-        self.extra_args = [['-assetindex', '-walletrbf=1', '-mempoolreplacement=1',
-                            '-depinstateheight=' + str(FORK_HEIGHT)]] * self.num_nodes
+        self.extra_args = [['-assetindex', '-depinstateheight=' + str(FORK_HEIGHT)]] * self.num_nodes
 
     # ----------------------------------------------------------------- helpers
     def state(self, node):
@@ -194,7 +192,7 @@ class DepinTransferStateTest(NeuraiTestFramework):
         """Build, sign and send a state operation as a raw transaction: the
         owner token input plus one XNA input for the fee, the owner token and
         the state output at a fresh address, XNA change at another. `sequence`
-        lets the transaction signal BIP125 (the wallet never does)."""
+        sets every input's sequence explicitly."""
         utxo = next(u for u in node.listunspent(1) if u['amount'] >= 10)
         inputs = [{"txid": owner_txid, "vout": owner_vout},
                   {"txid": utxo['txid'], "vout": utxo['vout']}]
@@ -214,10 +212,13 @@ class DepinTransferStateTest(NeuraiTestFramework):
         assert_equal("closed", self.state(n0))
         assert_equal([], n0.getrawmempool())
 
-        # The pending OPEN signals BIP125. Asset transactions still cannot be
-        # replaced under NIP-025, even when general replacement is enabled.
+        # A replaceability signal is refused by the no-RBF sequence rule
+        # (active from genesis on regtest) before anything is built; the
+        # pending OPEN uses 0xfffffffe instead.
         owner_txid, owner_vout = self.owner_outpoint(n0)
-        open_txid = self.raw_state_operation(n0, "open_depin", owner_txid, owner_vout, 1, sequence=0xfffffffd)
+        assert_raises_rpc_error(-8, "only signals replaceability", self.raw_state_operation,
+                                n0, "open_depin", owner_txid, owner_vout, 1, sequence=0xfffffffd)
+        open_txid = self.raw_state_operation(n0, "open_depin", owner_txid, owner_vout, 1, sequence=0xfffffffe)
         assert_equal([open_txid], n0.getrawmempool())
 
         # A second operation, chained on the pending owner output, is rejected and
@@ -237,10 +238,10 @@ class DepinTransferStateTest(NeuraiTestFramework):
         assert_raises_rpc_error(-26, "bad-txns-depin-state-change-already-in-mempool", n0.sendrawtransaction, signed)
         assert_equal([open_txid], n0.getrawmempool())
 
-        # A replacement of the pending operation (same inputs, higher fee) is
-        # rejected because the eviction set contains an asset transaction.
+        # A conflicting operation (same inputs, higher fee) is rejected:
+        # transaction replacement no longer exists.
         original = n0.decoderawtransaction(n0.getrawtransaction(open_txid))
-        inputs = [{"txid": vin['txid'], "vout": vin['vout'], "sequence": 0xfffffffd} for vin in original['vin']]
+        inputs = [{"txid": vin['txid'], "vout": vin['vout'], "sequence": 0xfffffffe} for vin in original['vin']]
         xna_change = [vout for vout in original['vout']
                       if vout['value'] > 0 and 'asset' not in vout['scriptPubKey']]
         assert_equal(1, len(xna_change))
@@ -249,7 +250,7 @@ class DepinTransferStateTest(NeuraiTestFramework):
             xna_change[0]['scriptPubKey']['addresses'][0]: round(xna_change[0]['value'] - 1, 8),
         })
         signed_bumped = n0.signrawtransaction(bumped)['hex']
-        assert_raises_rpc_error(-26, "replacement-involves-assets",
+        assert_raises_rpc_error(-26, "txn-mempool-conflict",
                                 n0.sendrawtransaction, signed_bumped)
         assert_equal([open_txid], n0.getrawmempool())
 

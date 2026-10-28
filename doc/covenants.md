@@ -1276,34 +1276,40 @@ is unsupported and does not fall back to the historical domain.
 
 The design is specified in NIP-044 v2.
 
-## Asset replacement policy (NIP025-patch1)
+## Transaction replacement and the no-RBF sequence rule
 
-Asset operations may use ordinary BIP68/CSV sequence numbers. The former
-consensus requirement that every input use a sequence of at least `0xfffffffe`
-has been removed for the reset-network deployment; such a removal is a
-consensus relaxation on a network that enforced the old rule. Do not deploy
-this revision as an uncoordinated update to that network.
+Transaction replacement (BIP 125) was removed from the node: a transaction
+that conflicts with one already in the mempool is always rejected
+(`txn-mempool-conflict`), whatever its fee or sequences. There is no
+`-mempoolreplacement`, `-walletrbf` or `bumpfee` any more.
 
-Transaction replacement is disabled by default (`-mempoolreplacement=0`), as
-before. When enabled, ordinary XNA replacements retain the existing opt-in RBF
-rules. A replacement involving asset inputs, asset outputs or administrative
-asset outputs is rejected with `replacement-involves-assets`. This includes a
-replacement that would evict an asset operation indirectly through an ordinary
-ancestor. The bounded eviction set is classified from live chain/mempool coins;
-no protection metadata is persisted. Read-only reference inputs alone do not
-trigger protection.
+From `nNoRbfHeight` (block 10 of the reset testnet, 0 on regtest, not
+scheduled on mainnet) a consensus rule also removes the replaceability
+signal. Every input of a non-coinbase transaction must use one of:
 
-Initial admission of a valid asset operation remains possible even if its
-CSV sequence signals BIP125. That signal does not promise effective
-replaceability under local policy. The wallet's `bumpfee` RPC remains deprecated;
-this change does not enable it or redefine BIP125 reporting.
+| `nSequence` | Transaction version | Meaning |
+|---|---|---|
+| `0xffffffff` | any | final |
+| `0xfffffffe` | any | enables `nLockTime` (and so `OP_CHECKLOCKTIMEVERIFY`) |
+| bit 31 clear | 2 or higher | BIP 68 relative lock (`OP_CHECKSEQUENCEVERIFY`) |
 
-This policy does not confer finality, prevent conflicting valid blocks, or
-prevent expiry/eviction. It also prevents legitimate replacement fee bumps and
-allows a protected child to pin an ordinary parent. Applications must account
-for these limits; CPFP is an option only where outputs, package limits and miner
-support allow it. Asset balances, permission checks and signatures remain
-consensus requirements independent of this replacement policy.
+Any other value only signalled replaceability and makes the transaction
+invalid (`bad-txns-rbf-sequence`): `0x80000000` to `0xfffffffd` in every
+version, and any value below `0xfffffffe` in a version 0 or 1 transaction.
+The version test is the one BIP 68 uses, so a value allowed below
+`0xfffffffe` is always a relative lock the consensus enforces. A relative
+lock still counts as replaceable for BIP 125 software, but no node replaces
+it. The coinbase input is exempt.
+
+This keeps the lesson of NIP-025 patch 1: covenants that need CSV (vault
+recovery paths, escrow timeouts, payment channels) keep working, because the
+rule only forbids values without consensus meaning. Asset operations need no
+special treatment any more.
+
+The rule does not confer finality. Consensus validates blocks, and a miner
+can still include either of two conflicting transactions. Contracts that
+chain transactions in the mempool must keep that in mind; fee bumping is done
+with a child transaction (CPFP).
 
 ## NIP-046: AuthScript execution budgets
 

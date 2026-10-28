@@ -13,7 +13,6 @@
 #include "consensus/consensus.h"
 #include <init.h> // ShutdownRequested (src/init.h, not wallet/init.h)
 #include "policy/policy.h"
-#include "policy/rbf.h"
 #include "random.h"
 #include "scheduler.h"
 #include "script/standard.h"
@@ -1041,7 +1040,7 @@ bool CWallet::CreateSilentPaymentTransaction(const std::vector<silentpayments::R
         txNew.nVersion = 2;
         // Same anti-fee-sniping policy as ordinary sends (no own fingerprint).
         txNew.nLockTime = GetAntiFeeSnipingLockTime();
-        const uint32_t nSequence = coin_control.signalRbf ? MAX_BIP125_RBF_SEQUENCE : CTxIn::SEQUENCE_FINAL - 1;
+        const uint32_t nSequence = CTxIn::SEQUENCE_FINAL - 1;
         for (const COutPoint& outpoint : outpoints) {
             txNew.vin.push_back(CTxIn(outpoint, CScript(), nSequence));
         }

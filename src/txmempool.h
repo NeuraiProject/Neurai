@@ -336,7 +336,6 @@ enum class MemPoolRemovalReason {
     REORG,       //!< Removed for reorganization
     BLOCK,       //!< Removed for block
     CONFLICT,    //!< Removed for conflict with in-block transaction
-    REPLACED,    //!< Removed for replacement
     REFINPUT_SPENT, //!< NIP-014: referenced UTXO spent by confirmed tx
 };
 
@@ -634,6 +633,12 @@ public:
      *  that are no longer OPEN at the tip and pending state operations whose
      *  transition is no longer valid at nSpendHeight. */
     void removeForDepinStateTip(CAssetsCache* assetCache, int nSpendHeight);
+
+    /** No-RBF sequence rule became active for the mempool's candidate height:
+     *  evict every entry with an input sequence that only signals BIP 125
+     *  replaceability (see CTxIn::IsNoRbfSequenceAllowed), with its
+     *  descendants. */
+    void removeForNoRbfTransition();
 
     void clear();
     void _clear(); //lock free

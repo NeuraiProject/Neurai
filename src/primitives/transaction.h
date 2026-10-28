@@ -99,6 +99,19 @@ public:
      * 9 bits. */
     static const int SEQUENCE_LOCKTIME_GRANULARITY = 9;
 
+    /* No-RBF sequence rule (consensus from Consensus::Params::nNoRbfHeight):
+     * a sequence must mean something other than a BIP 125 replaceability
+     * signal. SEQUENCE_FINAL and SEQUENCE_FINAL - 1 (which enables nLockTime)
+     * are always allowed; any other value only as a relative lock that BIP 68
+     * enforces, i.e. with the disable flag clear in a transaction of version 2
+     * or higher (the same version test as CalculateSequenceLocks). */
+    static bool IsNoRbfSequenceAllowed(int32_t nTxVersion, uint32_t nSequenceIn)
+    {
+        if (nSequenceIn >= SEQUENCE_FINAL - 1)
+            return true;
+        return static_cast<uint32_t>(nTxVersion) >= 2 && !(nSequenceIn & SEQUENCE_LOCKTIME_DISABLE_FLAG);
+    }
+
     CTxIn()
     {
         nSequence = SEQUENCE_FINAL;

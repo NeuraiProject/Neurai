@@ -47,6 +47,8 @@ static constexpr const char* DESTINATION_INDEX_SCHEMA_FLAG = "destinationindexsc
 //! Set when every connected block has its DEPIN restriction undo record
 static constexpr int DEPIN_RESTRICTION_UNDO_SCHEMA_VERSION = 1;
 static constexpr const char* DEPIN_RESTRICTION_UNDO_SCHEMA_FLAG = "depinrestrictionundo";
+//! No-RBF activation height that the connected blocks were checked with
+static constexpr const char* NO_RBF_HEIGHT_FLAG = "norbfheight";
 
 struct CDiskTxPos : public CDiskBlockPos
 {

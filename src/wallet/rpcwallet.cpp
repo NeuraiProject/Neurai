@@ -16,17 +16,16 @@
 #include "policy/feerate.h"
 #include "policy/fees.h"
 #include "policy/policy.h"
-#include "policy/rbf.h"
 #include "rpc/mining.h"
 #include "rpc/safemode.h"
 #include "rpc/server.h"
 #include "script/sign.h"
 #include "timedata.h"
+#include "txmempool.h"
 #include "util.h"
 #include "utiltime.h"
 #include "utilmoneystr.h"
 #include "wallet/coincontrol.h"
-#include "wallet/feebumper.h"
 #include "wallet/wallet.h"
 #include "wallet/walletdb.h"
 
@@ -107,18 +106,6 @@ void WalletTxToJSON(const CWalletTx& wtx, UniValue& entry)
     entry.push_back(Pair("walletconflicts", conflicts));
     entry.push_back(Pair("time", wtx.GetTxTime()));
     entry.push_back(Pair("timereceived", (int64_t)wtx.nTimeReceived));
-
-    // Add opt-in RBF status
-    std::string rbfStatus = "no";
-//    if (confirms <= 0) {
-//        LOCK(mempool.cs);
-//        RBFTransactionState rbfState = IsRBFOptIn(wtx, mempool);
-//        if (rbfState == RBF_TRANSACTIONSTATE_UNKNOWN)
-//            rbfStatus = "unknown";
-//        else if (rbfState == RBF_TRANSACTIONSTATE_REPLACEABLE_BIP125)
-//            rbfStatus = "yes";
-//    }
-    entry.push_back(Pair("bip125-replaceable", rbfStatus));
 
     for (const std::pair<std::string, std::string>& item : wtx.mapValue)
         entry.push_back(Pair(item.first, item.second));
@@ -528,7 +515,7 @@ UniValue sendtoaddress(const JSONRPCRequest& request)
 
     if (request.fHelp || request.params.size() < 2 || request.params.size() > 7)
         throw std::runtime_error(
-            "sendtoaddress \"address\" amount ( \"comment\" \"comment_to\" subtractfeefromamount replaceable conf_target \"estimate_mode\")\n"
+            "sendtoaddress \"address\" amount ( \"comment\" \"comment_to\" subtractfeefromamount conf_target \"estimate_mode\")\n"
             "\nSend an amount to a given address.\n"
             + HelpRequiringPassphrase(pwallet) +
             "\nArguments:\n"
@@ -541,7 +528,6 @@ UniValue sendtoaddress(const JSONRPCRequest& request)
             "                             transaction, just kept in your wallet.\n"
             "5. subtractfeefromamount  (boolean, optional, default=false) The fee will be deducted from the amount being sent.\n"
             "                             The recipient will receive less neurais than you enter in the amount field.\n"
-//            "6. replaceable            (boolean, optional) Allow this transaction to be replaced by a transaction with higher fees via BIP 125\n"
             "6. conf_target            (numeric, optional) Confirmation target (in blocks)\n"
             "7. \"estimate_mode\"      (string, optional, default=UNSET) The fee estimate mode, must be one of:\n"
             "       \"UNSET\"\n"
@@ -582,9 +568,6 @@ UniValue sendtoaddress(const JSONRPCRequest& request)
     }
 
     CCoinControl coin_control;
-//    if (!request.params[5].isNull()) {
-//        coin_control.signalRbf = request.params[5].get_bool();
-//    }
 
     if (!request.params[5].isNull()) {
         coin_control.m_confirm_target = ParseConfirmTarget(request.params[6]);
@@ -613,7 +596,7 @@ UniValue sendfromaddress(const JSONRPCRequest& request)
 
     if (request.fHelp || request.params.size() < 3 || request.params.size() > 8)
         throw std::runtime_error(
-            "sendfromaddress \"from_address\" \"to_address\" amount ( \"comment\" \"comment_to\" subtractfeefromamount replaceable conf_target \"estimate_mode\")\n"
+            "sendfromaddress \"from_address\" \"to_address\" amount ( \"comment\" \"comment_to\" subtractfeefromamount conf_target \"estimate_mode\")\n"
             "\nSend an amount from a specific address to a given address. All xna change will get sent back to the from_address\n"
             + HelpRequiringPassphrase(pwallet) +
             "\nArguments:\n"
@@ -1196,7 +1179,7 @@ UniValue sendmany(const JSONRPCRequest& request)
 
     if (request.fHelp || request.params.size() < 2 || request.params.size() > 8)
         throw std::runtime_error(
-            "sendmany \"fromaccount\" {\"address\":amount,...} ( minconf \"comment\" [\"address\",...] replaceable conf_target \"estimate_mode\")\n"
+            "sendmany \"fromaccount\" {\"address\":amount,...} ( minconf \"comment\" [\"address\",...] conf_target \"estimate_mode\")\n"
             "\nSend multiple times. Amounts are double-precision floating point numbers."
             + HelpRequiringPassphrase(pwallet) + "\n"
             "\nArguments:\n"
@@ -1216,7 +1199,6 @@ UniValue sendmany(const JSONRPCRequest& request)
             "      \"address\"          (string) Subtract fee from this address\n"
             "      ,...\n"
             "    ]\n"
-//            "6. replaceable            (boolean, optional) Allow this transaction to be replaced by a transaction with higher fees via BIP 125\n"
             "6. conf_target            (numeric, optional) Confirmation target (in blocks)\n"
             "7. \"estimate_mode\"      (string, optional, default=UNSET) The fee estimate mode, must be one of:\n"
             "       \"UNSET\"\n"
@@ -1259,9 +1241,6 @@ UniValue sendmany(const JSONRPCRequest& request)
         subtractFeeFromAmount = request.params[4].get_array();
 
     CCoinControl coin_control;
-//    if (!request.params[5].isNull()) {
-//        coin_control.signalRbf = request.params[5].get_bool();
-//    }
 
     if (!request.params[5].isNull()) {
         coin_control.m_confirm_target = ParseConfirmTarget(request.params[6]);
@@ -1943,8 +1922,6 @@ UniValue listtransactions(const JSONRPCRequest& request)
             "    \"otheraccount\": \"accountname\",  (string) DEPRECATED. For the 'move' category of transactions, the account the funds came \n"
             "                                          from (for receiving funds, positive amounts), or went to (for sending funds,\n"
             "                                          negative amounts).\n"
-            "    \"bip125-replaceable\": \"yes|no|unknown\",  (string) Whether this transaction could be replaced due to BIP125 (replace-by-fee);\n"
-            "                                                     may be unknown for unconfirmed transactions not in the mempool\n"
             "    \"abandoned\": xxx          (bool) 'true' if the transaction has been abandoned (inputs are respendable). Only available for the \n"
             "                                         'send' category of transactions.\n"
             "  }\n"
@@ -2143,8 +2120,6 @@ UniValue listsinceblock(const JSONRPCRequest& request)
             "    \"txid\": \"transactionid\",  (string) The transaction id. Available for 'send' and 'receive' category of transactions.\n"
             "    \"time\": xxx,              (numeric) The transaction time in seconds since epoch (Jan 1 1970 GMT).\n"
             "    \"timereceived\": xxx,      (numeric) The time received in seconds since epoch (Jan 1 1970 GMT). Available for 'send' and 'receive' category of transactions.\n"
-            "    \"bip125-replaceable\": \"yes|no|unknown\",  (string) Whether this transaction could be replaced due to BIP125 (replace-by-fee);\n"
-            "                                                   may be unknown for unconfirmed transactions not in the mempool\n"
             "    \"abandoned\": xxx,         (bool) 'true' if the transaction has been abandoned (inputs are respendable). Only available for the 'send' category of transactions.\n"
             "    \"comment\": \"...\",       (string) If a comment is associated with the transaction.\n"
             "    \"label\" : \"label\"       (string) A comment for the address/transaction, if any\n"
@@ -2274,8 +2249,6 @@ UniValue gettransaction(const JSONRPCRequest& request)
             "  \"txid\" : \"transactionid\",   (string) The transaction id.\n"
             "  \"time\" : ttt,            (numeric) The transaction time in seconds since epoch (1 Jan 1970 GMT)\n"
             "  \"timereceived\" : ttt,    (numeric) The time received in seconds since epoch (1 Jan 1970 GMT)\n"
-            "  \"bip125-replaceable\": \"yes|no|unknown\",  (string) Whether this transaction could be replaced due to BIP125 (replace-by-fee);\n"
-            "                                                   may be unknown for unconfirmed transactions not in the mempool\n"
             "  \"details\" : [\n"
             "    {\n"
             "      \"account\" : \"accountname\",      (string) DEPRECATED. The account name involved in the transaction, can be \"\" for the default account.\n"
@@ -3197,8 +3170,6 @@ UniValue fundrawtransaction(const JSONRPCRequest& request)
                             "                              Those recipients will receive less neurais than you enter in their corresponding amount field.\n"
                             "                              If no outputs are specified here, the sender pays the fee.\n"
                             "                                  [vout_index,...]\n"
-//                            "     \"replaceable\"            (boolean, optional) Marks this transaction as BIP125 replaceable.\n"
-                            "                              Allows this transaction to be replaced by a transaction with higher fees\n"
                             "     \"conf_target\"            (numeric, optional) Confirmation target (in blocks)\n"
                             "     \"estimate_mode\"          (string, optional, default=UNSET) The fee estimate mode, must be one of:\n"
                             "         \"UNSET\"\n"
@@ -3251,7 +3222,6 @@ UniValue fundrawtransaction(const JSONRPCRequest& request)
                 {"reserveChangeKey", UniValueType(UniValue::VBOOL)}, // DEPRECATED (and ignored), should be removed in 0.16 or so.
                 {"feeRate", UniValueType()}, // will be checked below
                 {"subtractFeeFromOutputs", UniValueType(UniValue::VARR)},
-//                {"replaceable", UniValueType(UniValue::VBOOL)},
                 {"conf_target", UniValueType(UniValue::VNUM)},
                 {"estimate_mode", UniValueType(UniValue::VSTR)},
             },
@@ -3285,9 +3255,6 @@ UniValue fundrawtransaction(const JSONRPCRequest& request)
         if (options.exists("subtractFeeFromOutputs"))
             subtractFeeFromOutputs = options["subtractFeeFromOutputs"].get_array();
 
-//        if (options.exists("replaceable")) {
-//            coinControl.signalRbf = options["replaceable"].get_bool();
-//        }
         if (options.exists("conf_target")) {
             if (options.exists("feeRate")) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Cannot specify both conf_target and feeRate");
@@ -3340,148 +3307,6 @@ UniValue fundrawtransaction(const JSONRPCRequest& request)
     result.push_back(Pair("fee", ValueFromAmount(nFeeOut)));
 
     return result;
-}
-
-UniValue bumpfee(const JSONRPCRequest& request)
-{
-    throw std::runtime_error("bumpfee has been deprecated on the XNA Wallet.");
-
-//    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
-//
-//    if (!EnsureWalletIsAvailable(pwallet, request.fHelp))
-//        return NullUniValue;
-//
-//    if (request.fHelp || request.params.size() < 1 || request.params.size() > 2) {
-//        throw std::runtime_error(
-//            "bumpfee \"txid\" ( options ) \n"
-//            "\nBumps the fee of an opt-in-RBF transaction T, replacing it with a new transaction B.\n"
-//            "An opt-in RBF transaction with the given txid must be in the wallet.\n"
-//            "The command will pay the additional fee by decreasing (or perhaps removing) its change output.\n"
-//            "If the change output is not big enough to cover the increased fee, the command will currently fail\n"
-//            "instead of adding new inputs to compensate. (A future implementation could improve this.)\n"
-//            "The command will fail if the wallet or mempool contains a transaction that spends one of T's outputs.\n"
-//            "By default, the new fee will be calculated automatically using estimatefee.\n"
-//            "The user can specify a confirmation target for estimatefee.\n"
-//            "Alternatively, the user can specify totalFee, or use RPC settxfee to set a higher fee rate.\n"
-//            "At a minimum, the new fee rate must be high enough to pay an additional new relay fee (incrementalfee\n"
-//            "returned by getnetworkinfo) to enter the node's mempool.\n"
-//            "\nArguments:\n"
-//            "1. txid                  (string, required) The txid to be bumped\n"
-//            "2. options               (object, optional)\n"
-//            "   {\n"
-//            "     \"confTarget\"        (numeric, optional) Confirmation target (in blocks)\n"
-//            "     \"totalFee\"          (numeric, optional) Total fee (NOT feerate) to pay, in satoshis.\n"
-//            "                         In rare cases, the actual fee paid might be slightly higher than the specified\n"
-//            "                         totalFee if the tx change output has to be removed because it is too close to\n"
-//            "                         the dust threshold.\n"
-//            "     \"replaceable\"       (boolean, optional, default true) Whether the new transaction should still be\n"
-//            "                         marked bip-125 replaceable. If true, the sequence numbers in the transaction will\n"
-//            "                         be left unchanged from the original. If false, any input sequence numbers in the\n"
-//            "                         original transaction that were less than 0xfffffffe will be increased to 0xfffffffe\n"
-//            "                         so the new transaction will not be explicitly bip-125 replaceable (though it may\n"
-//            "                         still be replaceable in practice, for example if it has unconfirmed ancestors which\n"
-//            "                         are replaceable).\n"
-//            "     \"estimate_mode\"     (string, optional, default=UNSET) The fee estimate mode, must be one of:\n"
-//            "         \"UNSET\"\n"
-//            "         \"ECONOMICAL\"\n"
-//            "         \"CONSERVATIVE\"\n"
-//            "   }\n"
-//            "\nResult:\n"
-//            "{\n"
-//            "  \"txid\":    \"value\",   (string)  The id of the new transaction\n"
-//            "  \"origfee\":  n,         (numeric) Fee of the replaced transaction\n"
-//            "  \"fee\":      n,         (numeric) Fee of the new transaction\n"
-//            "  \"errors\":  [ str... ] (json array of strings) Errors encountered during processing (may be empty)\n"
-//            "}\n"
-//            "\nExamples:\n"
-//            "\nBump the fee, get the new transaction\'s txid\n" +
-//            HelpExampleCli("bumpfee", "<txid>"));
-//    }
-//
-//    RPCTypeCheck(request.params, {UniValue::VSTR, UniValue::VOBJ});
-//    uint256 hash;
-//    hash.SetHex(request.params[0].get_str());
-//
-//    // optional parameters
-//    CAmount totalFee = 0;
-//    CCoinControl coin_control;
-//    coin_control.signalRbf = true;
-//    if (!request.params[1].isNull()) {
-//        UniValue options = request.params[1];
-//        RPCTypeCheckObj(options,
-//            {
-//                {"confTarget", UniValueType(UniValue::VNUM)},
-//                {"totalFee", UniValueType(UniValue::VNUM)},
-//                {"replaceable", UniValueType(UniValue::VBOOL)},
-//                {"estimate_mode", UniValueType(UniValue::VSTR)},
-//            },
-//            true, true);
-//
-//        if (options.exists("confTarget") && options.exists("totalFee")) {
-//            throw JSONRPCError(RPC_INVALID_PARAMETER, "confTarget and totalFee options should not both be set. Please provide either a confirmation target for fee estimation or an explicit total fee for the transaction.");
-//        } else if (options.exists("confTarget")) { // TODO: alias this to conf_target
-//            coin_control.m_confirm_target = ParseConfirmTarget(options["confTarget"]);
-//        } else if (options.exists("totalFee")) {
-//            totalFee = options["totalFee"].get_int64();
-//            if (totalFee <= 0) {
-//                throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Invalid totalFee %s (must be greater than 0)", FormatMoney(totalFee)));
-//            }
-//        }
-//
-//        if (options.exists("replaceable")) {
-//            coin_control.signalRbf = options["replaceable"].get_bool();
-//        }
-//        if (options.exists("estimate_mode")) {
-//            if (!FeeModeFromString(options["estimate_mode"].get_str(), coin_control.m_fee_mode)) {
-//                throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid estimate_mode parameter");
-//            }
-//        }
-//    }
-//
-//    LOCK2(cs_main, pwallet->cs_wallet);
-//    EnsureWalletIsUnlocked(pwallet);
-//
-//    CFeeBumper feeBump(pwallet, hash, coin_control, totalFee);
-//    BumpFeeResult res = feeBump.getResult();
-//    if (res != BumpFeeResult::OK)
-//    {
-//        switch(res) {
-//            case BumpFeeResult::INVALID_ADDRESS_OR_KEY:
-//                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, feeBump.getErrors()[0]);
-//                break;
-//            case BumpFeeResult::INVALID_REQUEST:
-//                throw JSONRPCError(RPC_INVALID_REQUEST, feeBump.getErrors()[0]);
-//                break;
-//            case BumpFeeResult::INVALID_PARAMETER:
-//                throw JSONRPCError(RPC_INVALID_PARAMETER, feeBump.getErrors()[0]);
-//                break;
-//            case BumpFeeResult::WALLET_ERROR:
-//                throw JSONRPCError(RPC_WALLET_ERROR, feeBump.getErrors()[0]);
-//                break;
-//            default:
-//                throw JSONRPCError(RPC_MISC_ERROR, feeBump.getErrors()[0]);
-//                break;
-//        }
-//    }
-//
-//    // sign bumped transaction
-//    if (!feeBump.signTransaction(pwallet)) {
-//        throw JSONRPCError(RPC_WALLET_ERROR, "Can't sign transaction.");
-//    }
-//    // commit the bumped transaction
-//    if(!feeBump.commit(pwallet)) {
-//        throw JSONRPCError(RPC_WALLET_ERROR, feeBump.getErrors()[0]);
-//    }
-//    UniValue result(UniValue::VOBJ);
-//    result.push_back(Pair("txid", feeBump.getBumpedTxId().GetHex()));
-//    result.push_back(Pair("origfee", ValueFromAmount(feeBump.getOldFee())));
-//    result.push_back(Pair("fee", ValueFromAmount(feeBump.getNewFee())));
-//    UniValue errors(UniValue::VARR);
-//    for (const std::string& err: feeBump.getErrors())
-//        errors.push_back(err);
-//    result.push_back(Pair("errors", errors));
-//
-//    return result;
 }
 
 UniValue generate(const JSONRPCRequest& request)
@@ -3758,7 +3583,6 @@ static const CRPCCommand commands[] =
     { "wallet",             "addmultisigaddress",       &addmultisigaddress,       {"nrequired","keys","account"} },
     { "wallet",             "addwitnessaddress",        &addwitnessaddress,        {"address"} },
     { "wallet",             "backupwallet",             &backupwallet,             {"destination"} },
-    { "wallet",             "bumpfee",                  &bumpfee,                  {"txid", "options"} },
     { "wallet",             "dumpprivkey",              &dumpprivkey,              {"address"}  },
     { "wallet",             "dumpextkeypq",             &dumpextkeypq,             {} },
     { "wallet",             "exportxpqpub",             &exportxpqpub,             {"count","chain","offset"} },

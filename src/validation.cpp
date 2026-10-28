@@ -25,7 +25,6 @@
 #include "init.h"
 #include "policy/fees.h"
 #include "policy/policy.h"
-#include "policy/rbf.h"
 #include "pow.h"
 #include "primitives/block.h"
 #include "primitives/transaction.h"
@@ -118,7 +117,6 @@ bool fCheckpointsEnabled = DEFAULT_CHECKPOINTS_ENABLED;
 size_t nCoinCacheUsage = 5000 * 300;
 uint64_t nPruneTarget = 0;
 int64_t nMaxTipAge = DEFAULT_MAX_TIP_AGE;
-bool fEnableReplacement = DEFAULT_ENABLE_REPLACEMENT;
 
 bool fUnitTest = false;
 
@@ -552,7 +550,7 @@ void UpdateMempoolForReorg(DisconnectedBlockTransactions &disconnectpool, bool f
         CValidationState stateDummy;
         if (!fAddToMempool || (*it)->IsCoinBase() ||
             !AcceptToMemoryPool(mempool, stateDummy, *it, nullptr /* pfMissingInputs */,
-                                nullptr /* plTxnReplaced */, true /* bypass_limits */, 0 /* nAbsurdFee */)) {
+                                true /* bypass_limits */, 0 /* nAbsurdFee */)) {
             // If the transaction doesn't make it in to the mempool, remove any
             // transactions that depend on it (which would now be orphans).
             mempool.removeRecursive(**it, MemPoolRemovalReason::REORG);
@@ -660,7 +658,7 @@ static bool CreatesInactiveAuthScriptOutput(const CTransaction& tx, const Consen
 }
 
 static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool& pool, CValidationState& state, const CTransactionRef& ptx,
-                              bool* pfMissingInputs, int64_t nAcceptTime, std::list<CTransactionRef>* plTxnReplaced,
+                              bool* pfMissingInputs, int64_t nAcceptTime,
                               bool bypass_limits, const CAmount& nAbsurdFee, std::vector<COutPoint>& coins_to_uncache, bool test_accept)
 {
     const CTransaction& tx = *ptx;
@@ -691,6 +689,17 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         CValidationState placementState;
         if (!Consensus::CheckXnaAssetStrictPlacement(tx, placementState))
             return state.DoS(0, false, REJECT_INVALID, placementState.GetRejectReason());
+    }
+
+    // No-RBF sequence rule for the next block, with no peer penalty for the
+    // same reason. It does not depend on fRequireStandard: testnet and regtest
+    // accept non-standard transactions, and a template must never contain a
+    // transaction the next block rejects.
+    if (chainparams.GetConsensus().IsNoRbfActive(chainActive.Height() + 1)) {
+        CValidationState sequenceState;
+        if (!Consensus::CheckNoRbfSequences(tx, sequenceState))
+            return state.DoS(0, false, REJECT_INVALID, sequenceState.GetRejectReason(), false,
+                             sequenceState.GetDebugMessage());
     }
 
     // Coinbase is only valid in a block, not as a loose transaction
@@ -730,48 +739,15 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         return state.Invalid(false, REJECT_DUPLICATE, "txn-already-in-mempool");
     }
 
-    // Check for conflicts with in-memory transactions
-    std::set<uint256> setConflicts;
+    // Check for conflicts with in-memory transactions. Transaction replacement
+    // was removed: the first transaction seen keeps its inputs, whatever fee or
+    // sequence the newcomer uses.
     {
     LOCK(pool.cs); // protect pool.mapNextTx
     for (const CTxIn &txin : tx.vin)
     {
-        auto itConflicting = pool.mapNextTx.find(txin.prevout);
-        if (itConflicting != pool.mapNextTx.end())
-        {
-            const CTransaction *ptxConflicting = itConflicting->second;
-            if (!setConflicts.count(ptxConflicting->GetHash()))
-            {
-                // Allow opt-out of transaction replacement by setting
-                // nSequence > MAX_BIP125_RBF_SEQUENCE (SEQUENCE_FINAL-2) on all inputs.
-                //
-                // SEQUENCE_FINAL-1 is picked to still allow use of nLockTime by
-                // non-replaceable transactions. All inputs rather than just one
-                // is for the sake of multi-party protocols, where we don't
-                // want a single party to be able to disable replacement.
-                //
-                // The opt-out ignores descendants as anyone relying on
-                // first-seen mempool behavior should be checking all
-                // unconfirmed ancestors anyway; doing otherwise is hopelessly
-                // insecure.
-                bool fReplacementOptOut = true;
-                if (fEnableReplacement)
-                {
-                    for (const CTxIn &_txin : ptxConflicting->vin)
-                    {
-                        if (_txin.nSequence <= MAX_BIP125_RBF_SEQUENCE)
-                        {
-                            fReplacementOptOut = false;
-                            break;
-                        }
-                    }
-                }
-                if (fReplacementOptOut) {
-                    return state.Invalid(false, REJECT_DUPLICATE, "txn-mempool-conflict");
-                }
-
-                setConflicts.insert(ptxConflicting->GetHash());
-            }
+        if (pool.mapNextTx.count(txin.prevout)) {
+            return state.Invalid(false, REJECT_DUPLICATE, "txn-mempool-conflict");
         }
     }
     }
@@ -952,158 +928,9 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
             return state.DoS(0, false, REJECT_NONSTANDARD, "too-long-mempool-chain", false, errString);
         }
 
-        // A transaction that spends outputs that would be replaced by it is invalid. Now
-        // that we have the set of all ancestors we can detect this
-        // pathological case by making sure setConflicts and setAncestors don't
-        // intersect.
-        for (CTxMemPool::txiter ancestorIt : setAncestors)
-        {
-            const uint256 &hashAncestor = ancestorIt->GetTx().GetHash();
-            if (setConflicts.count(hashAncestor))
-            {
-                return state.DoS(10, false,
-                                 REJECT_INVALID, "bad-txns-spends-conflicting-tx", false,
-                                 strprintf("%s spends conflicting transaction %s",
-                                           hash.ToString(),
-                                           hashAncestor.ToString()));
-            }
-        }
-
-        // Check if it's economically rational to mine this transaction rather
-        // than the ones it replaces.
-        CAmount nConflictingFees = 0;
-        size_t nConflictingSize = 0;
-        uint64_t nConflictingCount = 0;
-        CTxMemPool::setEntries allConflicting;
-
-        // If we don't hold the lock allConflicting might be incomplete; the
-        // subsequent RemoveStaged() and addUnchecked() calls don't guarantee
-        // mempool consistency for us.
+        // Hold pool.cs from here to the insertion, so that the checks below
+        // and addUnchecked() see a consistent mempool.
         LOCK(pool.cs);
-        const bool fReplacementTransaction = setConflicts.size();
-        if (fReplacementTransaction)
-        {
-            CFeeRate newFeeRate(nModifiedFees, nSize);
-            std::set<uint256> setConflictsParents;
-            const int maxDescendantsToVisit = 100;
-            CTxMemPool::setEntries setIterConflicting;
-            for (const uint256 &hashConflicting : setConflicts)
-            {
-                CTxMemPool::txiter mi = pool.mapTx.find(hashConflicting);
-                if (mi == pool.mapTx.end())
-                    continue;
-
-                // Save these to avoid repeated lookups
-                setIterConflicting.insert(mi);
-
-                // Don't allow the replacement to reduce the feerate of the
-                // mempool.
-                //
-                // We usually don't want to accept replacements with lower
-                // feerates than what they replaced as that would lower the
-                // feerate of the next block. Requiring that the feerate always
-                // be increased is also an easy-to-reason about way to prevent
-                // DoS attacks via replacements.
-                //
-                // The mining code doesn't (currently) take children into
-                // account (CPFP) so we only consider the feerates of
-                // transactions being directly replaced, not their indirect
-                // descendants. While that does mean high feerate children are
-                // ignored when deciding whether or not to replace, we do
-                // require the replacement to pay more overall fees too,
-                // mitigating most cases.
-                CFeeRate oldFeeRate(mi->GetModifiedFee(), mi->GetTxSize());
-                if (newFeeRate <= oldFeeRate)
-                {
-                    return state.DoS(0, false,
-                            REJECT_INSUFFICIENTFEE, "insufficient fee", false,
-                            strprintf("rejecting replacement %s; new feerate %s <= old feerate %s",
-                                  hash.ToString(),
-                                  newFeeRate.ToString(),
-                                  oldFeeRate.ToString()));
-                }
-
-                for (const CTxIn &txin : mi->GetTx().vin)
-                {
-                    setConflictsParents.insert(txin.prevout.hash);
-                }
-
-                nConflictingCount += mi->GetCountWithDescendants();
-            }
-            // This potentially overestimates the number of actual descendants
-            // but we just want to be conservative to avoid doing too much
-            // work.
-            if (nConflictingCount <= maxDescendantsToVisit) {
-                // If not too many to replace, then calculate the set of
-                // transactions that would have to be evicted
-                for (CTxMemPool::txiter it : setIterConflicting) {
-                    pool.CalculateDescendants(it, allConflicting);
-                }
-                for (CTxMemPool::txiter it : allConflicting) {
-                    nConflictingFees += it->GetModifiedFee();
-                    nConflictingSize += it->GetTxSize();
-                }
-            } else {
-                return state.DoS(0, false,
-                        REJECT_NONSTANDARD, "too many potential replacements", false,
-                        strprintf("rejecting replacement %s; too many potential replacements (%d > %d)\n",
-                            hash.ToString(),
-                            nConflictingCount,
-                            maxDescendantsToVisit));
-            }
-
-            // NIP025-patch1: resolve the complete bounded eviction set against
-            // live chain + mempool coins. No cached classification can become
-            // stale after reorg/reload, and no removal has happened yet.
-            CCoinsViewMemPool assetViewMemPool(pcoinsTip, pool);
-            CCoinsViewCache assetView(&assetViewMemPool);
-            if (ReplacementInvolvesAssets(tx, allConflicting, assetView)) {
-                return state.Invalid(false, REJECT_NONSTANDARD, "replacement-involves-assets");
-            }
-
-            for (unsigned int j = 0; j < tx.vin.size(); j++)
-            {
-                // We don't want to accept replacements that require low
-                // feerate junk to be mined first. Ideally we'd keep track of
-                // the ancestor feerates and make the decision based on that,
-                // but for now requiring all new inputs to be confirmed works.
-                if (!setConflictsParents.count(tx.vin[j].prevout.hash))
-                {
-                    // Rather than check the UTXO set - potentially expensive -
-                    // it's cheaper to just check if the new input refers to a
-                    // tx that's in the mempool.
-                    if (pool.mapTx.find(tx.vin[j].prevout.hash) != pool.mapTx.end())
-                        return state.DoS(0, false,
-                                         REJECT_NONSTANDARD, "replacement-adds-unconfirmed", false,
-                                         strprintf("replacement %s adds unconfirmed input, idx %d",
-                                                  hash.ToString(), j));
-                }
-            }
-
-            // The replacement must pay greater fees than the transactions it
-            // replaces - if we did the bandwidth used by those conflicting
-            // transactions would not be paid for.
-            if (nModifiedFees < nConflictingFees)
-            {
-                return state.DoS(0, false,
-                                 REJECT_INSUFFICIENTFEE, "insufficient fee", false,
-                                 strprintf("rejecting replacement %s, less fees than conflicting txs; %s < %s",
-                                          hash.ToString(), FormatMoney(nModifiedFees), FormatMoney(nConflictingFees)));
-            }
-
-            // Finally in addition to paying more fees than the conflicts the
-            // new transaction must pay for its own bandwidth.
-            CAmount nDeltaFees = nModifiedFees - nConflictingFees;
-            if (nDeltaFees < ::incrementalRelayFee.GetFee(nSize))
-            {
-                return state.DoS(0, false,
-                        REJECT_INSUFFICIENTFEE, "insufficient fee", false,
-                        strprintf("rejecting replacement %s, not enough additional fees to relay; %s < %s",
-                              hash.ToString(),
-                              FormatMoney(nDeltaFees),
-                              FormatMoney(::incrementalRelayFee.GetFee(nSize))));
-            }
-        }
 
         script_verify_flags scriptVerifyFlags = STANDARD_SCRIPT_VERIFY_FLAGS;
         if (!chainparams.RequireStandard()) {
@@ -1218,26 +1045,14 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         entry.SetPoseidonWork(consensusPoseidonWork ? consensusPoseidonWork->Used() : 0);
 
         // DEPIN: at most one pending transfer state operation per asset in
-        // the mempool. Checked here, under pool.cs, after allConflicting is
-        // known and before anything is inserted: a replacement of the
-        // pending operation is allowed, anything else is rejected without
-        // mutating the pool (so a rejected second operation never sits in
-        // the mempool, and test_accept never inserts).
+        // the mempool. Checked here, under pool.cs, before anything is
+        // inserted: a second operation is rejected without mutating the pool
+        // (so it never sits in the mempool, and test_accept never inserts).
         for (const auto& depinAsset : setDepinStateOps) {
             auto pendingIt = pool.mapDepinStateChanges.find(depinAsset);
             if (pendingIt == pool.mapDepinStateChanges.end())
                 continue;
             for (const uint256& pendingHash : pendingIt->second) {
-                bool fReplaced = false;
-                for (const CTxMemPool::txiter conflictIt : allConflicting) {
-                    if (conflictIt->GetTx().GetHash() == pendingHash) {
-                        fReplaced = true;
-                        break;
-                    }
-                }
-                if (fReplaced)
-                    continue;
-
                 // A pending operation that spends an output of THIS
                 // transaction is its own descendant, met out of order while
                 // a reorg resurrects the disconnected parent. It is not a
@@ -1267,25 +1082,11 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
             return true;
         }
 
-        // Remove conflicting transactions from the mempool
-        for (const CTxMemPool::txiter it : allConflicting)
-        {
-            LogPrint(BCLog::MEMPOOL, "replacing tx %s with %s for %s XNA additional fees, %d delta bytes\n",
-                    it->GetTx().GetHash().ToString(),
-                    hash.ToString(),
-                    FormatMoney(nModifiedFees - nConflictingFees),
-                    (int)nSize - (int)nConflictingSize);
-            if (plTxnReplaced)
-                plTxnReplaced->push_back(it->GetSharedTx());
-        }
-        pool.RemoveStaged(allConflicting, false, MemPoolRemovalReason::REPLACED);
-
         // This transaction should only count for fee estimation if:
-        // - it isn't a BIP 125 replacement transaction (may not be widely supported)
         // - it's not being readded during a reorg which bypasses typical mempool fee limits
         // - the node is not behind
         // - the transaction is not dependent on any other transactions in the mempool
-        bool validForFeeEstimation = !fReplacementTransaction && !bypass_limits && IsCurrentForFeeEstimation() && pool.HasNoInputsOf(tx);
+        bool validForFeeEstimation = !bypass_limits && IsCurrentForFeeEstimation() && pool.HasNoInputsOf(tx);
 
         // NIP-026: record whether any script in this tx exercised
         // OP_CHAINCONTEXT. Drives re-validation in removeForNewTip.
@@ -1435,11 +1236,11 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
 
 /** (try to) add transaction to memory pool with a specified acceptance time **/
 static bool AcceptToMemoryPoolWithTime(const CChainParams& chainparams, CTxMemPool& pool, CValidationState &state, const CTransactionRef &tx,
-                        bool* pfMissingInputs, int64_t nAcceptTime, std::list<CTransactionRef>* plTxnReplaced,
+                        bool* pfMissingInputs, int64_t nAcceptTime,
                         bool bypass_limits, const CAmount nAbsurdFee, bool test_accept)
 {
     std::vector<COutPoint> coins_to_uncache;
-    bool res = AcceptToMemoryPoolWorker(chainparams, pool, state, tx, pfMissingInputs, nAcceptTime, plTxnReplaced, bypass_limits, nAbsurdFee, coins_to_uncache, test_accept);
+    bool res = AcceptToMemoryPoolWorker(chainparams, pool, state, tx, pfMissingInputs, nAcceptTime, bypass_limits, nAbsurdFee, coins_to_uncache, test_accept);
     if (!res) {
         for (const COutPoint& hashTx : coins_to_uncache)
             pcoinsTip->Uncache(hashTx);
@@ -1451,11 +1252,11 @@ static bool AcceptToMemoryPoolWithTime(const CChainParams& chainparams, CTxMemPo
 }
 
 bool AcceptToMemoryPool(CTxMemPool& pool, CValidationState &state, const CTransactionRef &tx,
-                        bool* pfMissingInputs, std::list<CTransactionRef>* plTxnReplaced,
+                        bool* pfMissingInputs,
                         bool bypass_limits, const CAmount nAbsurdFee, bool test_accept)
 {
     const CChainParams& chainparams = GetParams();
-    return AcceptToMemoryPoolWithTime(chainparams, pool, state, tx, pfMissingInputs, GetTime(), plTxnReplaced, bypass_limits, nAbsurdFee, test_accept);
+    return AcceptToMemoryPoolWithTime(chainparams, pool, state, tx, pfMissingInputs, GetTime(), bypass_limits, nAbsurdFee, test_accept);
 }
 
 bool GetTimestampIndex(const unsigned int &high, const unsigned int &low, const bool fActiveOnly, std::vector<std::pair<uint256, unsigned int> > &hashes)
@@ -2265,6 +2066,22 @@ static void MempoolCheckAssetMarkerTransition(CTxMemPool& pool,
     if (fWasActive == fIsActive)
         return;
     pool.removeForAssetMarkerTransition(fIsActive);
+}
+
+// No-RBF sequence rule: connecting block H-1 makes the mempool's candidate
+// block enforce the rule, so entries admitted earlier with a replaceability
+// signal become unminable (and would make CreateNewBlock fail
+// TestBlockValidity). Moving the candidate height back below H only relaxes
+// the rule, and re-added block transactions go through AcceptToMemoryPool.
+static void MempoolCheckNoRbfTransition(CTxMemPool& pool,
+                                        int nOldCandidateHeight,
+                                        int nNewCandidateHeight,
+                                        const Consensus::Params& params)
+{
+    AssertLockHeld(cs_main);
+    if (params.IsNoRbfActive(nOldCandidateHeight) || !params.IsNoRbfActive(nNewCandidateHeight))
+        return;
+    pool.removeForNoRbfTransition();
 }
 
 /**
@@ -3177,6 +2994,32 @@ static int64_t nTimeCallbacks = 0;
 static int64_t nTimeTotal = 0;
 static int64_t nBlocksTotal = 0;
 
+/** Height-dependent transaction rules that the context-free CheckTransaction
+ *  cannot apply: strict OP_XNA_ASSET placement (NIP revision 010) and the
+ *  no-RBF sequence rule. ContextualCheckBlock runs them before a block is
+ *  stored and ConnectBlock again on every connection, because a stored block
+ *  that a reindex, reconsiderblock or VerifyDB reconnects never goes back
+ *  through AcceptBlock. */
+static bool CheckBlockHeightTxRules(const CBlock& block, CValidationState& state, const Consensus::Params& consensusParams, int nHeight)
+{
+    if (consensusParams.IsXnaAssetStrictActive(nHeight)) {
+        for (const auto& tx : block.vtx) {
+            if (!Consensus::CheckXnaAssetStrictPlacement(*tx, state))
+                return false;
+        }
+    }
+
+    // No transaction may carry a sequence that only signals BIP 125
+    // replaceability.
+    if (consensusParams.IsNoRbfActive(nHeight)) {
+        for (const auto& tx : block.vtx) {
+            if (!Consensus::CheckNoRbfSequences(*tx, state))
+                return false;
+        }
+    }
+    return true;
+}
+
 /** Apply the effects of this block (with given index) on the UTXO set represented by coins.
  *  Validity checks that depend on the UTXO set are also done; ConnectBlock()
  *  can fail if those validity checks fail (among other reasons). */
@@ -3304,6 +3147,9 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
             }
         }
     }
+
+    if (!CheckBlockHeightTxRules(block, state, chainparams.GetConsensus(), pindex->nHeight))
+        return error("%s: %s", __func__, FormatStateMessage(state));
 
     int64_t nTime2 = GetTimeMicros(); nTimeForks += nTime2 - nTime1;
     LogPrint(BCLog::BENCH, "    - Fork checks: %.2fms [%.2fs (%.2fms/blk)]\n", MILLI * (nTime2 - nTime1), nTimeForks * MICRO, nTimeForks * MILLI / nBlocksTotal);
@@ -4369,6 +4215,9 @@ bool static ConnectTip(CValidationState& state, const CChainParams& chainparams,
     MempoolCheckAssetMarkerTransition(mempool, pindexNew->nHeight,
                                       pindexNew->nHeight + 1,
                                       chainparams.GetConsensus());
+    MempoolCheckNoRbfTransition(mempool, pindexNew->nHeight,
+                                pindexNew->nHeight + 1,
+                                chainparams.GetConsensus());
     MempoolCheckScriptRuleTransition(mempool, pindexNew->nHeight,
                                            pindexNew->nHeight + 1,
                                            chainparams.GetConsensus());
@@ -5568,14 +5417,8 @@ static bool ContextualCheckBlock(const CBlock& block, CValidationState& state, c
         }
     }
 
-    // Height-dependent transaction rules that the context-free CheckTransaction
-    // cannot apply: strict OP_XNA_ASSET placement (NIP revision 010).
-    if (consensusParams.IsXnaAssetStrictActive(nHeight)) {
-        for (const auto& tx : block.vtx) {
-            if (!Consensus::CheckXnaAssetStrictPlacement(*tx, state))
-                return false;
-        }
-    }
+    if (!CheckBlockHeightTxRules(block, state, consensusParams, nHeight))
+        return false;
 
     // Enforce rule that the coinbase starts with serialized block height
     CScript expect = CScript() << nHeight;
@@ -6639,6 +6482,47 @@ bool RewindBlockIndex(const CChainParams& params)
     return true;
 }
 
+bool CheckNoRbfChainstate(const CChainParams& params, std::string& strError)
+{
+    const int nRuleHeight = params.GetConsensus().nNoRbfHeight;
+    // Every block of the active chain at or above nCheckedFrom went through
+    // the rule. Older builds never applied it and wrote no flag.
+    int nCheckedFrom = std::numeric_limits<int>::max();
+    const bool fHaveFlag = pblocktree->ReadIntFlag(NO_RBF_HEIGHT_FLAG, nCheckedFrom);
+
+    if (nRuleHeight < nCheckedFrom) {
+        LOCK(cs_main);
+        const int nLast = std::min(nCheckedFrom - 1, chainActive.Height());
+        if (nRuleHeight <= nLast) {
+            LogPrintf("Checking blocks %d to %d against the no-RBF sequence rule\n", nRuleHeight, nLast);
+            uiInterface.InitMessage(_("Checking blocks against the no-RBF sequence rule..."));
+        }
+        for (int nHeight = nRuleHeight; nHeight <= nLast; nHeight++) {
+            const CBlockIndex* pindex = chainActive[nHeight];
+            CBlock block;
+            if (!(pindex->nStatus & BLOCK_HAVE_DATA) || !ReadBlockFromDisk(block, pindex, params.GetConsensus())) {
+                strError = strprintf(_("Block %s at height %d cannot be checked against the no-RBF sequence rule because its data is missing. Rebuild the database using -reindex."),
+                                     pindex->GetBlockHash().ToString(), nHeight);
+                return false;
+            }
+            for (const auto& tx : block.vtx) {
+                CValidationState state;
+                if (!Consensus::CheckNoRbfSequences(*tx, state)) {
+                    strError = strprintf(_("Block %s at height %d breaks the no-RBF sequence rule (%s). Rebuild the chainstate using -reindex-chainstate."),
+                                         pindex->GetBlockHash().ToString(), nHeight, FormatStateMessage(state));
+                    return false;
+                }
+            }
+        }
+    }
+
+    if ((!fHaveFlag || nCheckedFrom != nRuleHeight) && !pblocktree->WriteIntFlag(NO_RBF_HEIGHT_FLAG, nRuleHeight)) {
+        strError = _("Error writing the no-RBF sequence rule flag");
+        return false;
+    }
+    return true;
+}
+
 // May NOT be used after any connections are up as much
 // of the peer-processing logic assumes a consistent
 // block index state
@@ -7154,7 +7038,7 @@ bool LoadMempool(void)
             if (nTime + nExpiryTimeout > nNow) {
                 LOCK(cs_main);
                 AcceptToMemoryPoolWithTime(chainparams, mempool, state, tx, nullptr /* pfMissingInputs */, nTime,
-                                           nullptr /* plTxnReplaced */, false /* bypass_limits */, 0 /* nAbsurdFee */,
+                                           false /* bypass_limits */, 0 /* nAbsurdFee */,
                                            false /* test_accept */);
                 if (state.IsValid()) {
                     ++count;

@@ -189,6 +189,7 @@ NEURAI_TESTS =\
   test/inputvalue_tests.cpp \
   test/chaincontext_tests.cpp \
   test/asset_rbf_block_tests.cpp \
+  test/norbf_sequence_tests.cpp \
   test/txlocktime_tests.cpp \
   test/txvalidationcache_tests.cpp \
   test/verify_flags_tests.cpp \

@@ -59,6 +59,15 @@ namespace Consensus {
  * outputs CheckTransaction inspects, with the strict rule.
  */
 bool CheckXnaAssetStrictPlacement(const CTransaction& tx, CValidationState& state);
+
+/**
+ * No-RBF sequence rule. Rejects a non-coinbase transaction with an input whose
+ * sequence only signals BIP 125 replaceability (see
+ * CTxIn::IsNoRbfSequenceAllowed) with "bad-txns-rbf-sequence". Like the
+ * placement rule above, callers that know the height of the block call it when
+ * Consensus::Params::IsNoRbfActive(height).
+ */
+bool CheckNoRbfSequences(const CTransaction& tx, CValidationState& state);
 } // namespace Consensus
 
 /** Context-independent validity checks */

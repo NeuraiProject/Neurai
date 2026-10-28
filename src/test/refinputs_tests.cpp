@@ -1058,7 +1058,7 @@ struct RefInputsMempoolSetup : public TestChain100Setup {
         LOCK(cs_main);
         CValidationState state;
         const bool accepted = AcceptToMemoryPool(mempool, state, MakeTransactionRef(tx), nullptr /* pfMissingInputs */,
-                                                 nullptr /* plTxnReplaced */, false /* bypass_limits */, 0 /* nAbsurdFee */);
+                                                 false /* bypass_limits */, 0 /* nAbsurdFee */);
         reason = state.GetRejectReason();
         return accepted;
     }

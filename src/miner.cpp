@@ -270,6 +270,13 @@ bool BlockAssembler::TestPackageTransactions(const CTxMemPool::setEntries& packa
         }
         if (!IsFinalTx(it->GetTx(), nHeight, nLockTimeCutoff))
             return false;
+        // The mempool is purged when the no-RBF sequence rule activates; this
+        // only keeps a stale entry out of the template.
+        if (chainparams.GetConsensus().IsNoRbfActive(nHeight)) {
+            CValidationState sequenceState;
+            if (!Consensus::CheckNoRbfSequences(it->GetTx(), sequenceState))
+                return false;
+        }
         if (!fIncludeWitness && it->GetTx().HasWitness())
             return false;
         // NIP-014: skip transactions whose reference inputs conflict with block template

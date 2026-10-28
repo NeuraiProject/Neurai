@@ -169,8 +169,6 @@ static const int64_t DEFAULT_DB_MAX_FILE_SIZE = 2;
 static const unsigned int DEFAULT_BANSCORE_THRESHOLD = 100;
 /** Default for -persistmempool */
 static const bool DEFAULT_PERSIST_MEMPOOL = true;
-/** Default for -mempoolreplacement */
-static const bool DEFAULT_ENABLE_REPLACEMENT = false;
 /** Default for using fee filter */
 static const bool DEFAULT_FEEFILTER = true;
 
@@ -226,7 +224,6 @@ extern bool fUnitTest;
 
 /** If the tip is older than this (in seconds), the node is considered to be in initial block download. */
 extern int64_t nMaxTipAge;
-extern bool fEnableReplacement;
 
 /** Block hash whose ancestors we will assume to have valid scripts without checking them. */
 extern uint256 hashAssumeValid;
@@ -400,10 +397,10 @@ void PruneAndFlush();
 /** Prune block files up to a given height */
 void PruneBlockFilesManual(int nManualPruneHeight);
 
-/** (try to) add transaction to memory pool
- * plTxnReplaced will be appended to with all transactions replaced from mempool **/
+/** (try to) add transaction to memory pool. A transaction that conflicts with
+ * one already in the pool is rejected (transaction replacement was removed). */
 bool AcceptToMemoryPool(CTxMemPool& pool, CValidationState &state, const CTransactionRef &tx,
-                        bool* pfMissingInputs, std::list<CTransactionRef>* plTxnReplaced,
+                        bool* pfMissingInputs,
                         bool bypass_limits, const CAmount nAbsurdFee, bool test_accept=false);
 
 /** Convert CValidationState to a human-readable message for logging */
@@ -569,6 +566,13 @@ bool IsWitnessEnabled(const CBlockIndex* pindexPrev, const Consensus::Params& pa
 
 /** When there are blocks in the active chain with missing data, rewind the chainstate and remove them from the block index */
 bool RewindBlockIndex(const CChainParams& params);
+
+/** Check once, at startup, the active chain blocks that were connected without
+ *  the no-RBF sequence rule (by older builds, or with a higher regtest
+ *  -rbfbanheight): they never go through ConnectBlock again on their own.
+ *  Records the activation height the chainstate is checked with. Returns false
+ *  with strError set when one of them breaks the rule or cannot be read. */
+bool CheckNoRbfChainstate(const CChainParams& params, std::string& strError);
 
 /** Update uncommitted block structures (currently: only the witness nonce). This is safe for submitted blocks. */
 void UpdateUncommittedBlockStructures(CBlock& block, const CBlockIndex* pindexPrev, const Consensus::Params& consensusParams);

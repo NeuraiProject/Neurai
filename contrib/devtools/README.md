@@ -150,6 +150,19 @@ optimize-pngs.py
 A script to optimize png files in the neurai
 repository (requires pngcrush).
 
+scan-rbf-sequences.py
+=====================
+
+Read-only scan of a node's active chain for the no-RBF sequence rule: it
+classifies every non-coinbase input from a start height to the tip and lists
+the ones the rule rejects (exit status 1 if any). Run it against a network
+that is already running before the rule is deployed, and again once the
+miners have upgraded:
+
+```
+contrib/devtools/scan-rbf-sequences.py http://127.0.0.1:19101 <rpcuser> <rpcpassword> 10
+```
+
 security-check.py and test-security-check.py
 ============================================
 

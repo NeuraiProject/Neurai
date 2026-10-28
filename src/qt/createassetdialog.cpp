@@ -214,16 +214,11 @@ void CreateAssetDialog::setModel(WalletModel *_model)
         connect(ui->checkBoxMinimumFee, SIGNAL(stateChanged(int)), this, SLOT(setMinimumFee()));
         connect(ui->checkBoxMinimumFee, SIGNAL(stateChanged(int)), this, SLOT(updateFeeSectionControls()));
         connect(ui->checkBoxMinimumFee, SIGNAL(stateChanged(int)), this, SLOT(coinControlUpdateLabels()));
-//        connect(ui->optInRBF, SIGNAL(stateChanged(int)), this, SLOT(updateSmartFeeLabel()));
-//        connect(ui->optInRBF, SIGNAL(stateChanged(int)), this, SLOT(coinControlUpdateLabels()));
         ui->customFee->setSingleStep(GetRequiredFee(1000));
         updateFeeSectionControls();
         updateMinFeeLabel();
         updateSmartFeeLabel();
 
-        // set default rbf checkbox state
-//        ui->optInRBF->setCheckState(model->getDefaultWalletRbf() ? Qt::Checked : Qt::Unchecked);
-        ui->optInRBF->hide();
 
         // set the smartfee-sliders default value (wallets default conf.target or last stored value)
         QSettings settings;
@@ -423,7 +418,6 @@ void CreateAssetDialog::setupFeeControl(const PlatformStyle *platformStyle)
     ui->labelCustomPerKilobyte->setFont(GUIUtil::getSubLabelFont());
     ui->customFee->setFont(GUIUtil::getSubLabelFont());
     ui->labelMinFeeWarning->setFont(GUIUtil::getSubLabelFont());
-    ui->optInRBF->setFont(GUIUtil::getSubLabelFont());
     ui->createAssetButton->setFont(GUIUtil::getSubLabelFont());
     ui->clearButton->setFont(GUIUtil::getSubLabelFont());
     ui->labelSmartFee->setFont(GUIUtil::getSubLabelFont());
@@ -1170,7 +1164,6 @@ void CreateAssetDialog::updateCoinControlState(CCoinControl& ctrl)
     // Avoid using global defaults when sending money from the GUI
     // Either custom fee will be used or if not selected, the confirmation target from dropdown box
     ctrl.m_confirm_target = getConfTargetForIndex(ui->confTargetSelector->currentIndex());
-//    ctrl.signalRbf = ui->optInRBF->isChecked();
 }
 
 void CreateAssetDialog::updateSmartFeeLabel()

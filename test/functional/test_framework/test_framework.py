@@ -319,13 +319,15 @@ class NeuraiTestFramework:
         blockchain.  If the cached version of the blockchain is used without
         mocktime then the mempools will not sync due to IBD.
 
-        For backwared compatibility of the python scripts with previous
-        versions of the cache, this helper function sets mocktime to November 7,
-        2017 + (201 * 1 * 60)
+        This helper sets mocktime to the regtest genesis time + (201 * 1 * 60),
+        so the cached chain starts right after the genesis block. An older
+        mocktime makes every cached block "time-too-new" and the cache cannot
+        be built.
 
-        NOTE: the timestamp should match time of genesis block.
+        NOTE: the timestamp should match time of genesis block (nGenesisTime of
+        CRegTestParams in src/chainparams.cpp).
         NOTE: the timestamp could be retrieved via "getblockhash 0" + "getblock <hash>"."""
-        self.mocktime = 1524179366 + (201 * 1 * 60)
+        self.mocktime = 1681720840 + (201 * 1 * 60)
 
     def disable_mocktime(self):
         self.mocktime = 0

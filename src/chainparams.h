@@ -100,6 +100,7 @@ public:
     void UpdateAuthScriptTreeHeight(int nHeight) { consensus.nAuthScriptTreeHeight = nHeight; }
     void UpdateMerklePoseidonHeight(int nHeight) { consensus.nMerklePoseidonHeight = nHeight; }
     void UpdateTxHashHeight(int nHeight) { consensus.nTxHashHeight = nHeight; }
+    void UpdateNoRbfHeight(int nHeight) { consensus.nNoRbfHeight = nHeight; }
     void UpdateSignatureOpcodesHeight(int nHeight) { consensus.nSignatureOpcodesHeight = nHeight; }
     void UpdateOptInFeaturesHeight(int nHeight) { consensus.nOptInFeaturesHeight = nHeight; }
     void UpdateBlockTimeReductionHeight(int nHeight) { consensus.nBlockTimeReductionHeight = nHeight; }
@@ -305,6 +306,8 @@ void UpdateInputFieldHeight(int nHeight);
 void UpdateAuthScriptTreeHeight(int nHeight);
 void UpdateMerklePoseidonHeight(int nHeight);
 void UpdateTxHashHeight(int nHeight);
+/** Regtest only: move the no-RBF sequence rule activation height. */
+void UpdateNoRbfHeight(int nHeight);
 
 void TurnOffSegwit();
 

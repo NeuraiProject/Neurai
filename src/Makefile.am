@@ -185,7 +185,6 @@ NEURAI_CORE_H = \
   policy/feerate.h \
   policy/fees.h \
   policy/policy.h \
-  policy/rbf.h \
   pow.h \
   protocol.h \
   random.h \
@@ -240,7 +239,6 @@ NEURAI_CORE_H = \
   wallet/coincontrol.h \
   wallet/crypter.h \
   wallet/db.h \
-  wallet/feebumper.h \
   wallet/fees.h \
   wallet/init.h \
   wallet/depinpoolkeyload.h \
@@ -296,7 +294,6 @@ libneurai_server_a_SOURCES = \
   assets/rewards.cpp \
   policy/fees.cpp \
   policy/policy.cpp \
-  policy/rbf.cpp \
   pow.cpp \
   rest.cpp \
   rpc/assets.cpp \
@@ -353,7 +350,6 @@ libneurai_wallet_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 libneurai_wallet_a_SOURCES = \
   wallet/crypter.cpp \
   wallet/db.cpp \
-  wallet/feebumper.cpp \
   wallet/fees.cpp \
   wallet/init.cpp \
   wallet/depinpoolkeyload.cpp \

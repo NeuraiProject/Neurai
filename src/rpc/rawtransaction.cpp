@@ -16,7 +16,6 @@
 #include "merkleblock.h"
 #include "net.h"
 #include "policy/policy.h"
-#include "policy/rbf.h"
 #include "primitives/transaction.h"
 #include "rpc/safemode.h"
 #include "rpc/server.h"
@@ -453,7 +452,9 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
             "       {\n"
             "         \"txid\":\"id\",                      (string, required) The transaction id\n"
             "         \"vout\":n,                         (number, required) The output number\n"
-            "         \"sequence\":n                      (number, optional) The sequence number\n"
+            "         \"sequence\":n                      (number, optional) The sequence number. Once the no-RBF sequence rule\n"
+            "                                             applies to the next block it must be 4294967295, 4294967294 or, in a\n"
+            "                                             version 2 or 3 transaction, a BIP 68 relative lock (bit 31 clear)\n"
             "       } \n"
             "       ,...\n"
             "     ]\n"
@@ -685,8 +686,6 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
         rawTx.nLockTime = nLockTime;
     }
 
-//    bool rbfOptIn = request.params[3].isTrue();
-
     for (unsigned int idx = 0; idx < inputs.size(); idx++) {
         const UniValue& input = inputs[idx];
         const UniValue& o = input.get_obj();
@@ -701,14 +700,6 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
             throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, vout must be positive");
 
         uint32_t nSequence;
-//        if (rbfOptIn) {
-//            nSequence = MAX_BIP125_RBF_SEQUENCE;
-//        } else if (rawTx.nLockTime) {
-//            nSequence = std::numeric_limits<uint32_t>::max() - 1;
-//        } else {
-//            nSequence = std::numeric_limits<uint32_t>::max();
-//        }
-
         if (rawTx.nLockTime) {
             nSequence = std::numeric_limits<uint32_t>::max() - 1;
         } else {
@@ -1625,9 +1616,22 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
         }
     }
 
-//    if (!request.params[3].isNull() && rbfOptIn != SignalsOptInRBF(rawTx)) {
-//        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter combination: Sequence number(s) contradict replaceable option");
-//    }
+    // No-RBF sequence rule: refuse an explicit sequence that the next block
+    // would reject, instead of returning a transaction that can never be mined.
+    int nNextHeight;
+    {
+        LOCK(cs_main);
+        nNextHeight = chainActive.Height() + 1;
+    }
+    if (GetParams().GetConsensus().IsNoRbfActive(nNextHeight)) {
+        for (unsigned int i = 0; i < rawTx.vin.size(); i++) {
+            if (!CTxIn::IsNoRbfSequenceAllowed(rawTx.nVersion, rawTx.vin[i].nSequence)) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf(
+                    "Invalid parameter, sequence 0x%08x of input %u only signals replaceability, which the no-RBF sequence rule rejects",
+                    rawTx.vin[i].nSequence, i));
+            }
+        }
+    }
 
     return EncodeHexTx(rawTx);
 }
@@ -2344,7 +2348,7 @@ UniValue sendrawtransaction(const JSONRPCRequest& request)
         CValidationState state;
         bool fMissingInputs;
         if (!AcceptToMemoryPool(mempool, state, std::move(tx), &fMissingInputs,
-                                nullptr /* plTxnReplaced */, false /* bypass_limits */, nMaxRawTxFee)) {
+                                false /* bypass_limits */, nMaxRawTxFee)) {
             if (state.IsInvalid()) {
                 throw JSONRPCError(RPC_TRANSACTION_REJECTED, strprintf("%i: %s", state.GetRejectCode(), state.GetRejectReason()));
             } else {
@@ -2432,7 +2436,7 @@ UniValue testmempoolaccept(const JSONRPCRequest& request)
     {
         LOCK(cs_main);
         test_accept_res = AcceptToMemoryPool(mempool, state, std::move(tx), &missing_inputs,
-                                             nullptr /* plTxnReplaced */, false /* bypass_limits */, max_raw_tx_fee, /* test_accpet */ true);
+                                             false /* bypass_limits */, max_raw_tx_fee, /* test_accpet */ true);
     }
     result_0.pushKV("allowed", test_accept_res);
     if (!test_accept_res) {

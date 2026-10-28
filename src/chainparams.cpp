@@ -157,6 +157,7 @@ public:
         consensus.nXNAAssetStrictEnabled = false; // NIP revision 010: keep origin/main OP_XNA_ASSET rule on mainnet until the unified fork
         consensus.nAssetMarkerNip040Height = std::numeric_limits<int>::max(); // NIP-040: H_main is set in the second release, after testnet validation
         consensus.nDepinTransferStateHeight = std::numeric_limits<int>::max(); // DEPIN transfer state: not scheduled on mainnet (DEPIN assets are testnet/regtest only until the unified fork)
+        consensus.nNoRbfHeight = std::numeric_limits<int>::max(); // No-RBF sequence rule: set with the unified fork height
         consensus.nAssetRip5ActivationByHeightEnabled = false; // NIP revision 004: mainnet uses VersionBits (origin/main), not the height-10 shortcut
         // NIP-028: block-time reduction not active on mainnet
         consensus.nBlockTimeReductionHeight   = std::numeric_limits<int>::max();
@@ -416,6 +417,7 @@ public:
         consensus.nXNAAssetStrictEnabled = true; // NIP revision 010: strict OP_XNA_ASSET rule is de-facto consensus on testnet
         consensus.nAssetMarkerNip040Height = TESTNET_FEATURES_HEIGHT; // NIP-040: rvn->xna marker migration; blocks 1-9 carry rvn and rvn UTXOs migrate on spend, which rehearses the future mainnet migration
         consensus.nDepinTransferStateHeight = TESTNET_FEATURES_HEIGHT; // DEPIN transfer state (OPEN/CLOSE/SEAL)
+        consensus.nNoRbfHeight = TESTNET_FEATURES_HEIGHT; // No-RBF sequence rule; retroactive on the running testnet, which never used BIP 125 signals
         consensus.nAssetRip5ActivationByHeightEnabled = true; // NIP revision 004: testnet activates assets/RIP5 by height (1)
         consensus.nAssetsActiveFromGenesis = true; // assets, RIP5 and asset VersionBits deployments: pure rule from genesis, no tip-based latch
         // NIP-028: block-time reduction (60s -> 30s) and coupled subsidy
@@ -686,6 +688,7 @@ public:
         consensus.nXNAAssetStrictEnabled = true; // NIP revision 010: strict OP_XNA_ASSET rule active on regtest
         consensus.nAssetMarkerNip040Height = 1; // NIP-040: active from block 1 so functional tests run xna-native; frontier tests move it via -nip040height / UpdateAssetMarkerNip040Height
         consensus.nDepinTransferStateHeight = 1; // DEPIN transfer state active from block 1; frontier tests move it via -depinstateheight / UpdateDepinTransferStateHeight
+        consensus.nNoRbfHeight = 0; // No-RBF sequence rule active from genesis; frontier tests move it via -rbfbanheight / UpdateNoRbfHeight
         consensus.nAssetRip5ActivationByHeightEnabled = true; // regtest activates assets/RIP5 by height (1), parity with testnet
         // nAssetsActiveFromGenesis stays false: unit tests exercise the paths
         // before asset/messaging activation on regtest. The reorg-to-genesis
@@ -978,6 +981,11 @@ void UpdateMerklePoseidonHeight(int nHeight)
 void UpdateTxHashHeight(int nHeight)
 {
     globalChainParams->UpdateTxHashHeight(nHeight);
+}
+
+void UpdateNoRbfHeight(int nHeight)
+{
+    globalChainParams->UpdateNoRbfHeight(nHeight);
 }
 
 void UpdateAuthScriptTreeHeight(int nHeight)
