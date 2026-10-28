@@ -614,7 +614,10 @@ New RPCs (52):
 - Reward eligibility (NIP-048): snapshots record, per holder, freezes, DEPIN
   self-revocations and qualifier tags at their height; plans exclude frozen
   and self-revoked holders and accept a `qualifier` filter and the `weights`
-  of a work report anchored on the owner token (`report`).
+  of a work report anchored on the owner token (`report`). With
+  `"allocation": "equal"` every eligible holder gets the same share, whatever
+  it holds (for instance one share per DEPIN device), and `min_held` excludes
+  holders with less than a minimum holding, in either allocation.
   `getsnapshotrecipients "asset_name" height` lists the holders with what an
   encrypted bulletin to them needs (public key revealed or not, address type
   supported or not).

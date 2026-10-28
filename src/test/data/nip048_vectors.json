@@ -1151,6 +1151,8 @@
    "announcement": null,
    "qualifier": null,
    "report": null,
+   "allocation": 0,
+   "min_held": 0,
    "hash": "d6cd4295e094b2bd0220ca17dd2f2847cd4271897b61fea5a6d3217c47a932d5"
   },
   {
@@ -1173,6 +1175,8 @@
    "announcement": "3333333333333333333333333333333333333333333333333333333333333333",
    "qualifier": null,
    "report": null,
+   "allocation": 0,
+   "min_held": 0,
    "hash": "f135e81b718b9b438ec56053f74a8496f77a174f7bb0ffbece291a27d5ae7f11"
   },
   {
@@ -1195,6 +1199,8 @@
    "announcement": null,
    "qualifier": "#A",
    "report": "7961d43b2c5d98e6f98b9ea00dc7cb6c6604231b186847fd600f440c8fceb921",
+   "allocation": 0,
+   "min_held": 0,
    "hash": "ff5a5e5df0b44e4ddbd5072bdeaff47dc986a1a2506201360f67faef527de5bb"
   },
   {
@@ -1217,7 +1223,105 @@
    "announcement": "3333333333333333333333333333333333333333333333333333333333333333",
    "qualifier": "#A",
    "report": null,
+   "allocation": 0,
+   "min_held": 0,
    "hash": "b42d810fdfb5e51c841004f0e95548a1c16f2c5341d654d59ef6114c164d4197"
+  },
+  {
+   "network": "main",
+   "asset": "TOKEN",
+   "height": 100,
+   "block_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+   "snapshot_hash": "314a6b4e732e079690850586ba03cfae82f36eaede9ecbf2545e4a8121694fd6",
+   "distribution_asset": "XNA",
+   "amount": 10,
+   "policy": 1,
+   "exclusions": [
+    "EXCLUDED"
+   ],
+   "distributed": 10,
+   "remainder": 0,
+   "leaf_count": 3,
+   "root": "3e73b57815e2f840b702c608314d40f87a6a1da9c9fc322f70f9085cbc8b8f70",
+   "version": 4,
+   "announcement": null,
+   "qualifier": null,
+   "report": null,
+   "allocation": 1,
+   "min_held": 0,
+   "hash": "4db1e9807dde8b01653e13d32672d978171285c8718ba595c6a61b47fd742129"
+  },
+  {
+   "network": "main",
+   "asset": "TOKEN",
+   "height": 100,
+   "block_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+   "snapshot_hash": "314a6b4e732e079690850586ba03cfae82f36eaede9ecbf2545e4a8121694fd6",
+   "distribution_asset": "XNA",
+   "amount": 10,
+   "policy": 1,
+   "exclusions": [
+    "EXCLUDED"
+   ],
+   "distributed": 10,
+   "remainder": 0,
+   "leaf_count": 3,
+   "root": "3e73b57815e2f840b702c608314d40f87a6a1da9c9fc322f70f9085cbc8b8f70",
+   "version": 4,
+   "announcement": null,
+   "qualifier": null,
+   "report": null,
+   "allocation": 0,
+   "min_held": 10000000000,
+   "hash": "4c9bceb726077a486849295a250206991d9768959dd73f01af3c7091852e960a"
+  },
+  {
+   "network": "main",
+   "asset": "TOKEN",
+   "height": 100,
+   "block_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+   "snapshot_hash": "314a6b4e732e079690850586ba03cfae82f36eaede9ecbf2545e4a8121694fd6",
+   "distribution_asset": "XNA",
+   "amount": 10,
+   "policy": 1,
+   "exclusions": [
+    "EXCLUDED"
+   ],
+   "distributed": 10,
+   "remainder": 0,
+   "leaf_count": 3,
+   "root": "3e73b57815e2f840b702c608314d40f87a6a1da9c9fc322f70f9085cbc8b8f70",
+   "version": 4,
+   "announcement": "3333333333333333333333333333333333333333333333333333333333333333",
+   "qualifier": "#A",
+   "report": null,
+   "allocation": 1,
+   "min_held": 10000000000,
+   "hash": "9fc7313e7074165a2fb11e2a0a051ef14fff0fea04d9ab9f99a0f46c4b9d1833"
+  },
+  {
+   "network": "main",
+   "asset": "TOKEN",
+   "height": 100,
+   "block_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+   "snapshot_hash": "314a6b4e732e079690850586ba03cfae82f36eaede9ecbf2545e4a8121694fd6",
+   "distribution_asset": "XNA",
+   "amount": 10,
+   "policy": 1,
+   "exclusions": [
+    "EXCLUDED"
+   ],
+   "distributed": 10,
+   "remainder": 0,
+   "leaf_count": 3,
+   "root": "3e73b57815e2f840b702c608314d40f87a6a1da9c9fc322f70f9085cbc8b8f70",
+   "version": 4,
+   "announcement": null,
+   "qualifier": null,
+   "report": "7961d43b2c5d98e6f98b9ea00dc7cb6c6604231b186847fd600f440c8fceb921",
+   "allocation": 0,
+   "min_held": 1,
+   "hash": "d7a156a7c2389ea4efa7772c81a2ad7c3f40797113c1503ee95e219fa6a0c962"
   }
  ],
  "batch_id": [

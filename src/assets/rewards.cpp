@@ -284,6 +284,8 @@ uint256 DistributionBatchId(const uint256& planHash, uint32_t nMaxOutputs, uint3
 
 uint8_t DistributionPlanVersion(const DistributionPlanHeader& header)
 {
+    if (header.allocation != DistributionAllocation::HOLDINGS || header.minHeld != 0)
+        return DISTRIBUTION_PLAN_VERSION_ALLOCATION;
     if (!header.qualifier.empty() || !header.reportHash.IsNull())
         return DISTRIBUTION_PLAN_VERSION_RULES;
     return header.announcementTxid.IsNull() ? DISTRIBUTION_PLAN_VERSION : DISTRIBUTION_PLAN_VERSION_ANNOUNCED;
@@ -299,6 +301,8 @@ uint256 ComputePlanHash(const DistributionPlanHeader& header, const uint256& mer
         ss << header.announcementTxid;
     if (version >= DISTRIBUTION_PLAN_VERSION_RULES)
         ss << header.qualifier << header.reportHash;
+    if (version >= DISTRIBUTION_PLAN_VERSION_ALLOCATION)
+        ss << static_cast<uint8_t>(header.allocation) << header.minHeld;
     ss << header.distributionAsset << header.amount
        << static_cast<uint8_t>(header.policy) << header.exclusions << header.distributed
        << header.remainder << header.leafCount << merkleRoot;

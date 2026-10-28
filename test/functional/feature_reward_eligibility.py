@@ -12,10 +12,13 @@ Test reward eligibility from holder state (NIP-048 D3) and bulletin recipients (
 - Frozen and self-revoked holders are excluded; a qualifier filter keeps only
   tagged holders; report weights replace holdings, and the plan commits to
   the qualifier and the report (format version 3).
+- Equal allocation gives every eligible holder the same share, a minimum
+  holding excludes smaller holders, and the plan commits to both (format
+  version 4).
 - getsnapshotrecipients classifies holders for an encrypted bulletin.
 """
 
-from test_framework.nip048 import report_hash, verify_plan
+from test_framework.nip048 import report_hash, verify_plan, verify_proof
 from test_framework.test_framework import NeuraiTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error
 
@@ -141,6 +144,13 @@ class RewardEligibilityTest(NeuraiTestFramework):
         assert_equal(self.amounts(by_holding), {paid: 4, light: 4})
         assert_equal(self.reasons(by_holding), {owner: "exception", revoking: "self_revoked", frozen: "frozen"})
 
+        # Equal shares among devices: the same exclusions, one share each
+        equal = n0.getdistributionplan("&GRID", height, "XNA", 8, owner, {"allocation": "equal"})
+        verify_plan(n0, equal)
+        assert_equal(self.amounts(equal), {paid: 4, light: 4})
+        assert_equal(self.reasons(equal), self.reasons(by_holding))
+        assert_equal((equal["version"], equal["allocation"]), (4, "equal"))
+
         options = {"weights": weights, "report": {"txid": report_txid}}
         weighted = n0.getdistributionplan("&GRID", height, "XNA", 8, owner, options)
         verify_plan(n0, weighted, weights)
@@ -157,6 +167,8 @@ class RewardEligibilityTest(NeuraiTestFramework):
         assert_equal(self.reasons(partial)[light], "no_weight")
         assert_raises_rpc_error(-8, "does not carry the expected message", n0.getdistributionplan,
                                 "&GRID", height, "XNA", 8, owner, {"weights": {paid: 3}, "report": {"txid": report_txid}})
+        assert_raises_rpc_error(-8, "cannot be combined with report weights", n0.getdistributionplan,
+                                "&GRID", height, "XNA", 8, owner, {"weights": weights, "allocation": "equal"})
 
         for node in (n0, n1):
             assert_equal(node.replaysnapshot("&GRID", height)["matches_stored"], True)
@@ -167,6 +179,59 @@ class RewardEligibilityTest(NeuraiTestFramework):
         assert_equal(recipients[revoking]["state"], "ready")
         assert_equal(recipients[paid]["state"], "key_not_revealed")
         assert_equal((recipients[revoking]["self_revoked"], recipients[frozen]["frozen"]), (True, True))
+
+    def test_equal_allocation(self):
+        n0, n1 = self.nodes[:2]
+        self.log.info("Equal allocation and a minimum holding")
+        issuer = n0.getnewaddress()
+        n0.issue("CLUB", 2000, issuer)
+        n0.generate(1)
+        alice, bob, carl, dave = n0.getnewaddress(), n0.getnewaddress(), n0.getnewaddress(), n1.getnewaddress()
+        for address, qty in ((alice, 1000), (bob, 500), (carl, 100), (dave, 40)):
+            n0.transferfromaddress("CLUB", issuer, qty, address, "", 0, "", issuer)
+            n0.generate(1)
+        self.sync_all()
+        height = self.snapshot_at_next_block("CLUB")
+        n0.generate(60)
+        self.sync_all()
+
+        by_holding = n0.getdistributionplan("CLUB", height, "XNA", 16, issuer)
+        assert_equal((by_holding["version"], by_holding["allocation"], by_holding["min_held"]), (1, "holdings", 0))
+
+        # Every eligible holder gets the same share, whatever it holds
+        equal = n0.getdistributionplan("CLUB", height, "XNA", 12, issuer, {"allocation": "equal"})
+        verify_plan(n0, equal)
+        assert_equal(self.amounts(equal), {alice: 3, bob: 3, carl: 3, dave: 3})
+        assert_equal({r["address"]: r["held"] for r in equal["recipients"]},
+                     {alice: 1000, bob: 500, carl: 100, dave: 40})
+        assert_equal((equal["version"], equal["allocation"]), (4, "equal"))
+
+        # A minimum holding excludes smaller holders, with equal shares...
+        options = {"allocation": "equal", "min_held": 100}
+        club = n0.getdistributionplan("CLUB", height, "XNA", 12, issuer, options)
+        verify_plan(n0, club)
+        assert_equal(self.amounts(club), {alice: 4, bob: 4, carl: 4})
+        assert_equal(self.reasons(club), {issuer: "exception", dave: "below_minimum"})
+        assert_equal((club["version"], club["min_held"]), (4, 100))
+        assert_equal(n1.getdistributionplan("CLUB", height, "XNA", 12, issuer, options)["plan_hash"], club["plan_hash"])
+        assert len({by_holding["plan_hash"], equal["plan_hash"], club["plan_hash"]}) == 3
+
+        # ...and in proportion to the holdings
+        proportional = n0.getdistributionplan("CLUB", height, "XNA", 16, issuer, {"min_held": 100})
+        verify_plan(n0, proportional)
+        assert_equal(self.amounts(proportional), {alice: 10, bob: 5, carl: 1})
+        assert_equal((proportional["version"], proportional["allocation"]), (4, "holdings"))
+
+        # The plan object of the proof and batch RPCs takes the same rules
+        plan_object = dict(options, asset_name="CLUB", snapshot_height=height, distribution_asset_name="XNA",
+                           amount=12, exception_addresses=issuer)
+        verify_proof(n0.getdistributionproof(plan_object, carl), club)
+        assert_equal(n0.getdistributionbatches(plan_object)["plan_hash"], club["plan_hash"])
+
+        for bad, message in (({"allocation": "weighted"}, "allocation must be"),
+                             ({"min_held": "0.5"}, "multiple of the asset's smallest unit"),
+                             ({"min_held": -1}, "must not be negative")):
+            assert_raises_rpc_error(-8, message, n0.getdistributionplan, "CLUB", height, "XNA", 12, issuer, bad)
 
     def test_unsupported_recipient(self):
         n0 = self.nodes[0]
@@ -188,6 +253,7 @@ class RewardEligibilityTest(NeuraiTestFramework):
         self.sync_all()
         self.test_restricted_asset()
         self.test_depin_and_report()
+        self.test_equal_allocation()
         self.test_unsupported_recipient()
 
 

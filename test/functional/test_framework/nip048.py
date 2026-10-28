@@ -25,6 +25,9 @@ proves that the format can be verified outside the node:
 - plan version 3 (qualifier or report): after the snapshot hash, the
   announcement txid (zero if none), the qualifier and the report hash (zero if
   none)
+- plan version 4 (equal allocation or minimum holding): after the version 3
+  fields, the allocation (uint8: 0 holdings, 1 equal) and the minimum holding
+  (int64, 0 if none)
 
 Strings and scripts carry a compact-size length; integers are little endian.
 """
@@ -37,6 +40,7 @@ from .util import assert_equal
 
 COIN = 100000000
 POLICIES = {"payer": 0, "largest": 1}
+ALLOCATIONS = {"holdings": 0, "equal": 1}
 
 
 def _compact_size(n):
@@ -164,13 +168,15 @@ def report_hash(weights):
 
 def plan_hash(version, network, asset, height, block_hash, snap_hash, dist_asset, amount, policy,
               exclusions, distributed, remainder, leaf_count, root, announcement=None, qualifier=None,
-              report=None):
+              report=None, allocation=0, min_held=0):
     data = bytes([version]) + _ser(network.encode()) + _ser(asset.encode()) + struct.pack('<i', height)
     data += block_hash + snap_hash
     if version >= 2:
         data += announcement or bytes(32)
     if version >= 3:
         data += _ser((qualifier or "").encode()) + (report or bytes(32))
+    if version >= 4:
+        data += bytes([allocation]) + struct.pack('<q', min_held)
     data += _ser(dist_asset.encode()) + struct.pack('<q', amount) + bytes([policy])
     data += _compact_size(len(exclusions))
     for address in exclusions:
@@ -217,6 +223,7 @@ def verify_plan(node, plan, weights=None):
     placed = [r['address'] for r in plan['recipients']] + [z['address'] for z in plan['zero_amount']]
     excluded = {e['address']: e['reason'] for e in plan['excluded']}
     assert_equal(sorted(placed + list(excluded)), sorted(owners))
+    min_held = _sat(plan['min_held'])
     for address in placed:
         owner = owners[address]
         if stored['format'] == 2:
@@ -224,6 +231,7 @@ def verify_plan(node, plan, weights=None):
             if plan['qualifier']:
                 assert plan['qualifier'] in owner['tags']
         assert address not in plan['exception_addresses']
+        assert _sat(owner['amount_owned']) >= min_held
     for address, reason in excluded.items():
         owner = owners[address]
         if reason == 'exception':
@@ -234,15 +242,23 @@ def verify_plan(node, plan, weights=None):
             assert owner[reason]
         elif reason == 'missing_qualifier':
             assert plan['qualifier'] not in owner['tags']
+        elif reason == 'below_minimum':
+            assert _sat(owner['amount_owned']) < min_held
         else:
             assert reason in ('burn', 'no_weight'), reason
 
     # Allocation: floor(A * w / W) in whole units, remainder by policy; w is the
-    # holding, or the report weight
-    weight_key = 'weight' if plan['report'] is not None else 'held'
+    # holding, the report weight, or 1 for equal shares
+    allocation = ALLOCATIONS[plan['allocation']]
     policy = POLICIES[plan['remainder_policy']]
     unit = _unit(node, plan['distribution_asset_name'])
-    weight_of = (lambda x: x['weight']) if weight_key == 'weight' else (lambda x: _sat(x['held']))
+    if allocation == ALLOCATIONS['equal']:
+        assert plan['report'] is None
+
+    def weight_of(entry):
+        if allocation == ALLOCATIONS['equal']:
+            return 1
+        return entry['weight'] if plan['report'] is not None else _sat(entry['held'])
     eligible = sorted([(_script(node, r['address']), weight_of(r)) for r in plan['recipients']] +
                       [(_script(node, z['address']), weight_of(z)) for z in plan['zero_amount']])
     amounts, remainder = allocate(eligible, _sat(plan['amount']), unit, policy)
@@ -259,7 +275,9 @@ def verify_plan(node, plan, weights=None):
     if plan['announcement'] is not None:
         announcement = bytes.fromhex(plan['announcement']['txid'])[::-1]
     report = bytes.fromhex(plan['report']['hash']) if plan['report'] is not None else None
-    if plan['qualifier'] or report:
+    if allocation or min_held:
+        assert_equal(plan['version'], 4)
+    elif plan['qualifier'] or report:
         assert_equal(plan['version'], 3)
     else:
         assert_equal(plan['version'], 2 if announcement else 1)
@@ -268,7 +286,7 @@ def verify_plan(node, plan, weights=None):
     expected_hash = plan_hash(plan['version'], plan['network'], snap['asset_name'], snap['height'], block_hash,
                               snap_hash, plan['distribution_asset_name'], _sat(plan['amount']), policy,
                               plan['exception_addresses'], _sat(plan['distributed']), _sat(plan['remainder']),
-                              len(leaves), root, announcement, plan['qualifier'], report)
+                              len(leaves), root, announcement, plan['qualifier'], report, allocation, min_held)
     assert_equal(plan['plan_hash'], expected_hash.hex())
 
 

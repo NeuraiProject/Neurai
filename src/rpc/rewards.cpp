@@ -404,6 +404,8 @@ struct PlanRequest {
     std::map<std::string, int64_t> weights; //!< D3: report weights; empty: holdings
     uint256 reportTxid;            //!< D3: the transaction that anchored the report hash
     uint256 reportBlockHint;
+    DistributionAllocation allocation = DistributionAllocation::HOLDINGS;
+    CAmount minHeld = 0;           //!< only holders with at least this much of the asset
 };
 
 /** A computed plan with everything the plan RPCs report. */
@@ -423,7 +425,7 @@ struct PlanResult {
     bool fGlobalFrozen = false;
     int reportHeight = -1;         //!< where the report hash was anchored, when given
     uint256 reportTxid;
-    std::map<CScript, CAmount> heldByScript; //!< actual holdings, when weights come from a report
+    std::map<CScript, CAmount> heldByScript; //!< actual holdings, when the leaves carry weights
     uint256 merkleRoot;
     uint256 planHash;
 };
@@ -468,7 +470,8 @@ static std::set<std::string> ParseExceptions(const UniValue& value)
     return exceptions;
 }
 
-/** Reads "remainder", "allow_legacy_snapshot" and "announcement" from an options or plan object. */
+/** Reads the plan options (remainder, eligibility and allocation rules,
+ *  announcement and report) from an options or plan object. */
 static void ParsePlanOptions(const UniValue& obj, PlanRequest& req)
 {
     const UniValue& remainder = find_value(obj, "remainder");
@@ -497,6 +500,21 @@ static void ParsePlanOptions(const UniValue& obj, PlanRequest& req)
         }
         if (req.weights.empty())
             throw JSONRPCError(RPC_INVALID_PARAMETER, "weights must not be empty");
+    }
+    const UniValue& allocation = find_value(obj, "allocation");
+    if (!allocation.isNull()) {
+        if (allocation.get_str() == "equal")
+            req.allocation = DistributionAllocation::EQUAL;
+        else if (allocation.get_str() != "holdings")
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "allocation must be \"holdings\" or \"equal\"");
+        if (req.allocation == DistributionAllocation::EQUAL && !req.weights.empty())
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "allocation \"equal\" cannot be combined with report weights");
+    }
+    const UniValue& minHeld = find_value(obj, "min_held");
+    if (!minHeld.isNull()) {
+        req.minHeld = AmountFromValue(minHeld, false);
+        if (req.minHeld < 0)
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "min_held must not be negative");
     }
     const UniValue& report = find_value(obj, "report");
     if (!report.isNull()) {
@@ -539,6 +557,8 @@ static PlanRequest PlanRequestFromParams(const UniValue& params)
                 {"qualifier", UniValueType(UniValue::VSTR)},
                 {"weights", UniValueType(UniValue::VOBJ)},
                 {"report", UniValueType(UniValue::VOBJ)},
+                {"allocation", UniValueType(UniValue::VSTR)},
+                {"min_held", UniValueType()},
             }, true, true);
         ParsePlanOptions(options, req);
     }
@@ -560,6 +580,8 @@ static PlanRequest PlanRequestFromObject(const UniValue& plan)
             {"qualifier", UniValueType(UniValue::VSTR)},
             {"weights", UniValueType(UniValue::VOBJ)},
             {"report", UniValueType(UniValue::VOBJ)},
+            {"allocation", UniValueType(UniValue::VSTR)},
+            {"min_held", UniValueType()},
         }, true, true);
     for (const char* key : {"asset_name", "snapshot_height", "distribution_asset_name", "amount"}) {
         if (find_value(plan, key).isNull())
@@ -614,6 +636,8 @@ static PlanResult ComputePlan(const PlanRequest& req)
     if (!passets->GetAssetMetaDataIfExists(req.assetName, ownershipAsset))
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid asset_name: asset does not exist");
     plan.ownershipUnits = ownershipAsset.units;
+    if (req.minHeld % AssetUnitSize(plan.ownershipUnits) != 0)
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "min_held must be a multiple of the asset's smallest unit");
 
     if (!fDistributeXNA) {
         CNewAsset distributionAsset;
@@ -671,7 +695,7 @@ static PlanResult ComputePlan(const PlanRequest& req)
 
     // Eligibility, in this order: exceptions, burn addresses, then the holder
     // state of a D3 snapshot (global freeze, freeze, self-revocation), the
-    // qualifier filter and, with a report, a weight
+    // qualifier filter, the minimum holding and, with a report, a weight
     std::vector<DistributionHolding> eligible;
     for (const auto& holding : holdings) {
         std::string reason;
@@ -687,6 +711,8 @@ static PlanResult ComputePlan(const PlanRequest& req)
             reason = "self_revoked";
         else if (!req.qualifier.empty() && !std::binary_search(holding.tags.begin(), holding.tags.end(), req.qualifier))
             reason = "missing_qualifier";
+        else if (holding.held < req.minHeld)
+            reason = "below_minimum";
         else if (!req.weights.empty() && !req.weights.count(holding.address))
             reason = "no_weight";
         if (reason.empty())
@@ -698,12 +724,13 @@ static PlanResult ComputePlan(const PlanRequest& req)
     for (const auto& holding : eligible)
         plan.totalHeld += holding.held;
 
-    // With a report, the weights replace the holdings in the allocation
+    // The report weights, or one per holder for equal shares, replace the
+    // holdings in the allocation
     std::vector<DistributionHolding> weighted = eligible;
-    if (!req.weights.empty()) {
+    if (!req.weights.empty() || req.allocation == DistributionAllocation::EQUAL) {
         for (auto& holding : weighted) {
             plan.heldByScript[holding.script] = holding.held;
-            holding.held = req.weights.at(holding.address);
+            holding.held = req.weights.empty() ? 1 : req.weights.at(holding.address);
         }
     }
 
@@ -722,6 +749,8 @@ static PlanResult ComputePlan(const PlanRequest& req)
     header.announcementTxid = req.announcementTxid;
     header.qualifier = req.qualifier;
     header.reportHash = reportHash;
+    header.allocation = req.allocation;
+    header.minHeld = req.minHeld;
     header.distributionAsset = req.distributionAsset;
     header.amount = req.amount;
     header.policy = req.policy;
@@ -755,8 +784,9 @@ static UniValue PlanToJSON(const PlanResult& plan)
         snapshotObj.push_back(Pair("global_frozen", plan.fGlobalFrozen));
     snapshotObj.push_back(Pair("confirmations", plan.confirmations));
 
-    // With a report, leaves carry the weight; the holding is kept apart
-    const bool fWeighted = !header.reportHash.IsNull();
+    // With a report or equal shares, leaves carry the weight; the holding is kept apart
+    const bool fReport = !header.reportHash.IsNull();
+    const bool fWeighted = fReport || header.allocation == DistributionAllocation::EQUAL;
     auto held = [&plan, fWeighted](const CScript& script, CAmount value) {
         return fWeighted ? plan.heldByScript.at(script) : value;
     };
@@ -771,7 +801,7 @@ static UniValue PlanToJSON(const PlanResult& plan)
         entry.push_back(Pair("address", leaf.address));
         entry.push_back(Pair("script", HexStr(leaf.script.begin(), leaf.script.end())));
         entry.push_back(Pair("held", ValueFromAmount(held(leaf.script, leaf.held), plan.ownershipUnits)));
-        if (fWeighted)
+        if (fReport)
             entry.push_back(Pair("weight", leaf.held));
         entry.push_back(Pair("amount", ValueFromAmount(leaf.amount, plan.distributionUnits)));
         recipients.push_back(entry);
@@ -782,7 +812,7 @@ static UniValue PlanToJSON(const PlanResult& plan)
         UniValue entry(UniValue::VOBJ);
         entry.push_back(Pair("address", holding.address));
         entry.push_back(Pair("held", ValueFromAmount(held(holding.script, holding.held), plan.ownershipUnits)));
-        if (fWeighted)
+        if (fReport)
             entry.push_back(Pair("weight", holding.held));
         zeroArr.push_back(entry);
     }
@@ -805,6 +835,8 @@ static UniValue PlanToJSON(const PlanResult& plan)
     result.push_back(Pair("distribution_asset_name", header.distributionAsset));
     result.push_back(Pair("amount", ValueFromAmount(header.amount, plan.distributionUnits)));
     result.push_back(Pair("remainder_policy", header.policy == RemainderPolicy::LARGEST ? "largest" : "payer"));
+    result.push_back(Pair("allocation", header.allocation == DistributionAllocation::EQUAL ? "equal" : "holdings"));
+    result.push_back(Pair("min_held", ValueFromAmount(header.minHeld, plan.ownershipUnits)));
     result.push_back(Pair("exception_addresses", exceptionsArr));
     result.push_back(Pair("total_held", ValueFromAmount(plan.totalHeld, plan.ownershipUnits)));
     result.push_back(Pair("distributed", ValueFromAmount(header.distributed, plan.distributionUnits)));
@@ -831,7 +863,7 @@ static UniValue PlanToJSON(const PlanResult& plan)
     // D3 rules the plan hash commits to
     result.push_back(Pair("qualifier", header.qualifier.empty() ? UniValue(UniValue::VNULL) : UniValue(header.qualifier)));
     UniValue report(UniValue::VNULL);
-    if (fWeighted) {
+    if (fReport) {
         report.setObject();
         report.push_back(Pair("hash", HashHex(header.reportHash)));
         if (plan.reportHeight >= 0) {
@@ -880,6 +912,8 @@ static const std::string PLAN_OBJECT_HELP =
         "     \"qualifier\": \"#TAG\",           (string, optional) as in getdistributionplan\n"
         "     \"weights\": {\"address\": n, ...}, (object, optional) as in getdistributionplan\n"
         "     \"report\": {\"txid\": \"hex\", \"block_hash\": \"hex\"} (object, optional) as in getdistributionplan\n"
+        "     \"allocation\": \"holdings\"|\"equal\", (string, optional, default \"holdings\") as in getdistributionplan\n"
+        "     \"min_held\": x.xxx,               (numeric, optional) as in getdistributionplan\n"
         "   }\n";
 
 UniValue getdistributionplan(const JSONRPCRequest& request) {
@@ -888,7 +922,8 @@ UniValue getdistributionplan(const JSONRPCRequest& request) {
                 "getdistributionplan \"asset_name\" snapshot_height \"distribution_asset_name\" gross_distribution_amount ( \"exception_addresses\" {options} )\n"
                 "\nComputes, without spending anything, how gross_distribution_amount of the distribution asset is split among the\n"
                 "holders of asset_name in its snapshot at snapshot_height (NIP-048). Each holder gets floor(amount * held / total)\n"
-                "in whole units of the distribution asset. The plan hash commits to the snapshot, the parameters and every payment;\n"
+                "in whole units of the distribution asset, or floor(amount / holders) with equal allocation. The plan hash commits\n"
+                "to the snapshot, the parameters and every payment;\n"
                 "pay the recipients from any wallet, for instance with getdistributionbatches and createdistributionbatch.\n"
 
                 "\nArguments:\n"
@@ -911,9 +946,14 @@ UniValue getdistributionplan(const JSONRPCRequest& request) {
                 "                                       the holdings, and holders without a weight are excluded\n"
                 "     \"report\": {\"txid\": \"hex\", \"block_hash\": \"hex\"} (object, optional) The owner token transfer that anchored\n"
                 "                                       the report hash (SHA-256 of 0x07 || weights)\n"
+                "     \"allocation\": \"holdings\"|\"equal\", (string, default \"holdings\") Split in proportion to the holdings (or the\n"
+                "                                       report weights), or in equal shares among the eligible holders, whatever\n"
+                "                                       they hold; equal cannot be combined with weights\n"
+                "     \"min_held\": x.xxx,               (numeric, optional) Only holders with at least this amount of asset_name\n"
                 "   }\n"
                 "\nA snapshot taken since NIP-048 D3 records, per holder, freezes, DEPIN self-revocations and qualifier tags; such\n"
-                "holders are excluded. With a qualifier, report weights or both, the plan hash commits to them (format version 3).\n"
+                "holders are excluded. With a qualifier, report weights or both, the plan hash commits to them (format version 3);\n"
+                "with equal allocation or a minimum holding, it commits to those too (format version 4).\n"
 
                 "\nResult:\n"
                 "{\n"
@@ -932,6 +972,8 @@ UniValue getdistributionplan(const JSONRPCRequest& request) {
                 "  \"distribution_asset_name\": \"name\",\n"
                 "  \"amount\": x.xxx,                  (numeric) gross_distribution_amount\n"
                 "  \"remainder_policy\": \"payer\"|\"largest\",\n"
+                "  \"allocation\": \"holdings\"|\"equal\",\n"
+                "  \"min_held\": x.xxx,                (numeric) minimum holding to be eligible, 0 if none\n"
                 "  \"exception_addresses\": [ \"address\", ... ], (array) sorted, as committed in the plan hash\n"
                 "  \"total_held\": x.xxx,              (numeric) holdings of the eligible holders\n"
                 "  \"distributed\": x.xxx,             (numeric) sum of the payments: the funds the payer needs, before fees\n"
@@ -941,7 +983,7 @@ UniValue getdistributionplan(const JSONRPCRequest& request) {
                 "  ],\n"
                 "  \"zero_amount\": [ { \"address\": \"address\", \"held\": x.xxx }, ... ], (array) holders whose share rounds to zero\n"
                 "  \"excluded\": [ { \"address\": \"address\", \"held\": x.xxx, \"reason\": \"...\" }, ... ], (array) reason: exception, burn,\n"
-                "                                   globally_frozen, frozen, self_revoked, missing_qualifier or no_weight\n"
+                "                                   globally_frozen, frozen, self_revoked, missing_qualifier, below_minimum or no_weight\n"
                 "  \"announcement\": {                (object or null) The announcement, when given\n"
                 "    \"txid\": \"hex\", \"height\": n, \"notice\": n, \"minimum_notice\": n   (notice: blocks between announcement and snapshot)\n"
                 "  },\n"
@@ -955,6 +997,7 @@ UniValue getdistributionplan(const JSONRPCRequest& request) {
                 "\nExamples:\n"
                 + HelpExampleCli("getdistributionplan", "\"TRONCO\" 12345 \"XNA\" 1000")
                 + HelpExampleCli("getdistributionplan", "\"PHATSTACKS\" 12345 \"DIVIDENDS\" 1000 \"\" '{\"remainder\":\"largest\"}'")
+                + HelpExampleCli("getdistributionplan", "\"&GRID\" 12345 \"XNA\" 1000 \"\" '{\"allocation\":\"equal\",\"min_held\":1}'")
                 + HelpExampleRpc("getdistributionplan", "\"TRONCO\", 34987, \"DIVIDENDS\", 100000")
         );
 

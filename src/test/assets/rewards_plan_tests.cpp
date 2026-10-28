@@ -299,6 +299,18 @@ BOOST_AUTO_TEST_CASE(pinned_vectors)
     BOOST_CHECK_EQUAL(DistributionPlanVersion(rules), DISTRIBUTION_PLAN_VERSION_RULES);
     BOOST_CHECK_EQUAL(Hex(ComputePlanHash(rules, root)), "ff5a5e5df0b44e4ddbd5072bdeaff47dc986a1a2506201360f67faef527de5bb");
 
+    // Equal shares and a minimum holding (version 4)
+    DistributionPlanHeader equal = header;
+    equal.allocation = DistributionAllocation::EQUAL;
+    BOOST_CHECK_EQUAL(DistributionPlanVersion(equal), DISTRIBUTION_PLAN_VERSION_ALLOCATION);
+    BOOST_CHECK_EQUAL(Hex(ComputePlanHash(equal, root)), "4db1e9807dde8b01653e13d32672d978171285c8718ba595c6a61b47fd742129");
+    DistributionPlanHeader minimum = header;
+    minimum.minHeld = 100 * COIN;
+    BOOST_CHECK_EQUAL(DistributionPlanVersion(minimum), DISTRIBUTION_PLAN_VERSION_ALLOCATION);
+    BOOST_CHECK_EQUAL(Hex(ComputePlanHash(minimum, root)), "4c9bceb726077a486849295a250206991d9768959dd73f01af3c7091852e960a");
+    minimum.minHeld = COIN;
+    BOOST_CHECK(ComputePlanHash(minimum, root) != ComputePlanHash(equal, root));
+
     // Every committed field changes the plan hash
     const uint256 base = ComputePlanHash(header, root);
     DistributionPlanHeader changed = header;
@@ -399,6 +411,8 @@ BOOST_AUTO_TEST_CASE(vectors_file)
             header.qualifier = v["qualifier"].get_str();
         if (!v["report"].isNull())
             header.reportHash = RawHash(v["report"].get_str());
+        header.allocation = static_cast<DistributionAllocation>(v["allocation"].get_int());
+        header.minHeld = v["min_held"].get_int64();
         header.distributionAsset = v["distribution_asset"].get_str();
         header.amount = v["amount"].get_int64();
         header.policy = static_cast<RemainderPolicy>(v["policy"].get_int());

@@ -81,13 +81,17 @@ def main():
             "distribution_asset": "XNA", "amount": 10, "policy": 1, "exclusions": ["EXCLUDED"], "distributed": 10,
             "remainder": 0, "leaf_count": 3, "root": root.hex()}
     plans = []
-    for version, announcement, qualifier, report in ((1, None, None, None), (2, bytes([0x33]) * 32, None, None),
-                                                     (3, None, "#A", report_hash({"AAA": 3, "BBB": 1})),
-                                                     (3, bytes([0x33]) * 32, "#A", None)):
+    weighted = report_hash({"AAA": 3, "BBB": 1})
+    for version, announcement, qualifier, report, allocation, min_held in (
+            (1, None, None, None, 0, 0), (2, bytes([0x33]) * 32, None, None, 0, 0),
+            (3, None, "#A", weighted, 0, 0), (3, bytes([0x33]) * 32, "#A", None, 0, 0),
+            (4, None, None, None, 1, 0), (4, None, None, None, 0, 100 * 10 ** 8),
+            (4, bytes([0x33]) * 32, "#A", None, 1, 100 * 10 ** 8), (4, None, None, weighted, 0, 1)):
         plan = dict(base, version=version, announcement=announcement.hex() if announcement else None,
-                    qualifier=qualifier, report=report.hex() if report else None)
+                    qualifier=qualifier, report=report.hex() if report else None, allocation=allocation,
+                    min_held=min_held)
         plan["hash"] = plan_hash(version, "main", "TOKEN", 100, block_hash, snap, "XNA", 10, 1, ["EXCLUDED"], 10, 0, 3,
-                                 root, announcement, qualifier, report).hex()
+                                 root, announcement, qualifier, report, allocation, min_held).hex()
         plans.append(plan)
 
     batches = [{"plan_hash": plans[0]["hash"], "max_outputs": m, "index": i,

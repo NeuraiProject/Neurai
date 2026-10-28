@@ -95,6 +95,8 @@ static const uint8_t DISTRIBUTION_PLAN_VERSION = 1;
 static const uint8_t DISTRIBUTION_PLAN_VERSION_ANNOUNCED = 2;
 /** NIP-048 D3: a plan with a qualifier filter or report weights commits to them. */
 static const uint8_t DISTRIBUTION_PLAN_VERSION_RULES = 3;
+/** A plan with equal shares or a minimum holding commits to them too. */
+static const uint8_t DISTRIBUTION_PLAN_VERSION_ALLOCATION = 4;
 static const int DEFAULT_MIN_SNAPSHOT_NOTICE = 60;
 
 /** NIP-048 D3: restriction and tag state of a holder at the snapshot height. */
@@ -120,6 +122,11 @@ static const uint8_t HOLDER_SELF_REVOKED = 0x02;
 enum class RemainderPolicy : uint8_t {
     PAYER = 0,   //!< the undivided remainder stays with the payer
     LARGEST = 1, //!< one unit each to the largest fractional parts, ties by script
+};
+
+enum class DistributionAllocation : uint8_t {
+    HOLDINGS = 0, //!< in proportion to the holdings, or to report weights
+    EQUAL = 1,    //!< the same share to every eligible holder, whatever it holds
 };
 
 /** A holder at the snapshot height. */
@@ -149,6 +156,8 @@ struct DistributionPlanHeader {
     uint256 announcementTxid; //!< null: not announced (format version 1)
     std::string qualifier;    //!< D3: only holders with this tag; empty: no filter
     uint256 reportHash;       //!< D3: weights from this report; null: holdings are the weights
+    DistributionAllocation allocation = DistributionAllocation::HOLDINGS;
+    CAmount minHeld = 0;      //!< only holders with at least this holding; 0: no minimum
     std::string distributionAsset;
     CAmount amount;
     RemainderPolicy policy;
@@ -193,8 +202,9 @@ uint256 DistributionMerkleRoot(const std::vector<DistributionLeaf>& leaves);
 
 uint256 ComputePlanHash(const DistributionPlanHeader& header, const uint256& merkleRoot);
 
-/** Format version a header hashes under: 3 with a qualifier filter or report
- *  weights, else 2 when it names an announcement, else 1. */
+/** Format version a header hashes under: 4 with equal shares or a minimum
+ *  holding, else 3 with a qualifier filter or report weights, else 2 when it
+ *  names an announcement, else 1. */
 uint8_t DistributionPlanVersion(const DistributionPlanHeader& header);
 
 /** The message the owner token carries to announce a snapshot height before it
