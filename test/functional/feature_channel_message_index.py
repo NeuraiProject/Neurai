@@ -12,6 +12,7 @@ Test the chain-wide channel message index (-channelmessageindex, NIP-048 C).
   OP_RETURN output of the same transaction; legacy messaging can stay off.
 - Expiry is decided at query time against a reference time.
 - Proofs and raw transactions can be attached; REST answers like the RPC.
+- A limit splits the answer into pages that end between blocks.
 - A message whose block leaves the active chain disappears, and comes back
   when it is mined again.
 - A message sent to another address is not a channel message.
@@ -127,6 +128,26 @@ class ChannelMessageIndexTest(NeuraiTestFramework):
         n0.generate(1)
         self.sync_all()
         assert_equal(self.txids(n0, "NEWS~ALERTS", include_expired=True), [txid2])
+
+        self.log.info("Pages end between blocks and next_from_height resumes them")
+        txid5 = n0.sendmessage("NEWS!", "ee" * 32)[0]
+        txid6 = n0.sendmessage("NEWS!", "ff" * 32)[0]
+        n0.generate(1)
+        self.sync_all()
+        everything = n0.getchannelmessages("NEWS!")
+        assert_equal(everything["next_from_height"], None)
+        pages, options = [], {"limit": 1}
+        while True:
+            page = n0.getchannelmessages("NEWS!", options)
+            pages.append([m["txid"] for m in page["messages"]])
+            if page["next_from_height"] is None:
+                break
+            options["from_height"] = page["next_from_height"]
+        assert_equal([txid for page in pages for txid in page], [m["txid"] for m in everything["messages"]])
+        # The two messages of the last block stay together, past the limit
+        assert_equal(sorted(pages[-1]), sorted([txid5, txid6]))
+        assert all(len(page) == 1 for page in pages[:-1])
+        assert_raises_rpc_error(-8, "limit must be between", n0.getchannelmessages, "NEWS!", {"limit": 0})
 
         self.log.info("A node that enables the index later catches up and answers alike")
         self.restart_node(1, ['-channelmessageindex'])

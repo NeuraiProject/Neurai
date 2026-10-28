@@ -228,6 +228,13 @@ class RewardEligibilityTest(NeuraiTestFramework):
         verify_proof(n0.getdistributionproof(plan_object, carl), club)
         assert_equal(n0.getdistributionbatches(plan_object)["plan_hash"], club["plan_hash"])
 
+        # Plans are kept per tip: a new block recomputes them
+        n0.generate(1)
+        later = n0.getdistributionplan("CLUB", height, "XNA", 12, issuer, options)
+        assert_equal(later["snapshot"]["confirmations"], club["snapshot"]["confirmations"] + 1)
+        assert_equal(later["plan_hash"], club["plan_hash"])
+        self.sync_all()
+
         for bad, message in (({"allocation": "weighted"}, "allocation must be"),
                              ({"min_held": "0.5"}, "multiple of the asset's smallest unit"),
                              ({"min_held": -1}, "must not be negative")):

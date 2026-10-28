@@ -6,6 +6,7 @@
 // from an independent Python implementation of the format in the NIP.
 
 #include <assets/rewards.h>
+#include <assets/snapshotrequestdb.h>
 
 #include <test/test_neurai.h>
 
@@ -14,7 +15,9 @@
 #include <amount.h>
 #include <base58.h>
 #include <crypto/sha256.h>
+#include <dbwrapper.h>
 #include <script/standard.h>
+#include <util.h>
 #include <utilstrencodings.h>
 #include <test/data/nip048_vectors.json.h>
 
@@ -427,6 +430,50 @@ BOOST_AUTO_TEST_CASE(vectors_file)
     for (const UniValue& v : vectors["batch_id"].getValues())
         BOOST_CHECK_EQUAL(Hex(DistributionBatchId(RawHash(v["plan_hash"].get_str()), v["max_outputs"].get_int(),
                                                   v["index"].get_int())), v["hash"].get_str());
+}
+
+// Snapshot requests are keyed by (height, asset). The string key used before
+// NIP-048 made height 12 of "3ABC" and height 123 of "ABC" collide; requests
+// stored with it are moved when the database opens.
+BOOST_FIXTURE_TEST_CASE(snapshot_request_keys, TestingSetup)
+{
+    const fs::path path = GetDataDir() / "rewards" / "snapshotrequest";
+    {
+        CDBWrapper legacy(path, 1 << 20);
+        const CSnapshotRequestDBEntry entry("OLD", 50);
+        BOOST_REQUIRE(legacy.Write(std::make_pair('S', entry.heightAndName), entry));
+    }
+
+    CSnapshotRequestDB db(1 << 20);
+    BOOST_CHECK(db.ContainsSnapshotRequest("OLD", 50));
+    BOOST_CHECK(!db.Exists(std::make_pair('S', std::string("50OLD"))));
+
+    BOOST_CHECK(db.ScheduleSnapshot("3ABC", 12));
+    BOOST_CHECK(db.ScheduleSnapshot("ABC", 123));
+    for (const std::string asset : {"A1", "B2", "C3"})
+        BOOST_CHECK(db.ScheduleSnapshot(asset, 1000));
+    BOOST_CHECK(db.ScheduleSnapshot("A1", 1000));
+    BOOST_CHECK(db.ScheduleSnapshot("D4", 1001));
+
+    std::set<CSnapshotRequestDBEntry> requests;
+    BOOST_CHECK(db.RetrieveSnapshotRequestsForHeight("", 12, requests));
+    BOOST_REQUIRE_EQUAL(requests.size(), 1U);
+    BOOST_CHECK_EQUAL(requests.begin()->assetName, "3ABC");
+    BOOST_CHECK(db.RetrieveSnapshotRequestsForHeight("", 123, requests));
+    BOOST_REQUIRE_EQUAL(requests.size(), 1U);
+    BOOST_CHECK_EQUAL(requests.begin()->assetName, "ABC");
+    BOOST_CHECK(db.RetrieveSnapshotRequestsForHeight("", 1000, requests));
+    BOOST_CHECK_EQUAL(requests.size(), 3U);
+    BOOST_CHECK(db.RetrieveSnapshotRequestsForHeight("B2", 1000, requests));
+    BOOST_CHECK_EQUAL(requests.size(), 1U);
+    BOOST_CHECK(db.RetrieveSnapshotRequestsForHeight("", 999, requests));
+    BOOST_CHECK(requests.empty());
+    BOOST_CHECK(db.RetrieveSnapshotRequestsForHeight("", 0, requests));
+    BOOST_CHECK_EQUAL(requests.size(), 7U);
+
+    BOOST_CHECK(db.RemoveSnapshotRequest("3ABC", 12));
+    BOOST_CHECK(!db.ContainsSnapshotRequest("3ABC", 12));
+    BOOST_CHECK(db.ContainsSnapshotRequest("ABC", 123));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

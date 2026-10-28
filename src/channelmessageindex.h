@@ -99,8 +99,14 @@ void ShutdownIndex();
 bool QueryChannel(const std::string& channel, int fromHeight, int toHeight,
                   std::vector<ChannelMessage>& out, std::string& error);
 
+/** Messages returned by one query: a block is never split, so the last block
+ *  of a page may go past the limit. */
+static const size_t DEFAULT_CHANNEL_MESSAGES_LIMIT = 1000;
+static const size_t MAX_CHANNEL_MESSAGES_LIMIT = 10000;
+
 struct QueryOptions {
     std::string channel;
+    size_t limit = DEFAULT_CHANNEL_MESSAGES_LIMIT;
     int fromHeight = 0;
     int toHeight = -1;            //!< -1: the tip
     bool fIncludeExpired = false;
@@ -110,7 +116,8 @@ struct QueryOptions {
     bool fIncludeProof = false;
 };
 
-/** JSON shared by getchannelmessages and REST (cs_main held). */
+/** JSON shared by getchannelmessages and REST (cs_main held). When the limit
+ *  stops the query, next_from_height is where the next page starts. */
 bool QueryChannelJSON(const QueryOptions& options, UniValue& result, std::string& error);
 
 } // namespace channelmessages

@@ -98,6 +98,9 @@ static const uint8_t DISTRIBUTION_PLAN_VERSION_RULES = 3;
 /** A plan with equal shares or a minimum holding commits to them too. */
 static const uint8_t DISTRIBUTION_PLAN_VERSION_ALLOCATION = 4;
 static const int DEFAULT_MIN_SNAPSHOT_NOTICE = 60;
+/** Snapshot requests accepted at one height: each is captured while the block
+ *  connects, reading every holder of its asset. 0: no limit. */
+static const int DEFAULT_MAX_SNAPSHOT_REQUESTS = 16;
 
 /** NIP-048 D3: restriction and tag state of a holder at the snapshot height. */
 struct SnapshotHolderState {

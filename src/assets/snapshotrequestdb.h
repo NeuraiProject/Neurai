@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 #include <set>
+#include <tuple>
 
 #include "amount.h"
 #include "assets/rewards.h"
@@ -38,7 +39,7 @@ public:
 
     bool operator<(const CSnapshotRequestDBEntry &rhs) const
     {
-        return heightAndName < rhs.heightAndName;
+        return std::tie(heightForSnapshot, assetName) < std::tie(rhs.heightForSnapshot, rhs.assetName);
     }
 
     // Serialization methods
@@ -84,6 +85,10 @@ public:
         const std::string & p_assetName, int p_blockHeight,
         std::set<CSnapshotRequestDBEntry> & p_assetsToSnapshot
     );
+
+private:
+    // Moves the requests stored before NIP-048 to the height-keyed records
+    void MigrateLegacyRequests();
 };
 
 class CDistributeSnapshotRequestDB  : public CDBWrapper

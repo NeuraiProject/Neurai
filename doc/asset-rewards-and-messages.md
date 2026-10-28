@@ -16,6 +16,7 @@ channel tokens carry. None of this changes consensus.
 | `-disablemessaging` | 0 | Same as `-assetmessages=0`; refused together with `-assetmessages=1` |
 | `-minrewardheight=<n>` | 60 | Blocks the chain must be past a snapshot before a plan is computed |
 | `-minsnapshotnotice=<n>` | 60 | Blocks an announcement must precede the snapshot height to count as timely |
+| `-maxsnapshotrequests=<n>` | 16 | Different assets whose snapshot can be requested at one height; 0 for no limit |
 | `-channelmessageindex` | 0 | Chain-wide channel message index; refused with `-prune` |
 | `-pubkeyindex` | 0 | Needed by `getsnapshotrecipients` |
 
@@ -40,7 +41,9 @@ is active and whether its store is on disk, and for rewards whether
    the same snapshot, so they can check the plan without trusting the issuer.
 2. **Request the snapshot** before the chain reaches the height:
    `requestsnapshot "ASSET" height`. Each node that requests it captures it
-   when it connects that block.
+   when it connects that block, reading every holder, so a node accepts at
+   most `-maxsnapshotrequests` different assets at one height. Repeating a
+   request changes nothing.
 3. **Compute the plan** once the chain is `-minrewardheight` blocks past the
    height:
 
@@ -71,6 +74,10 @@ is active and whether its store is on disk, and for rewards whether
 6. **Follow the batches.** `verifydistribution {plan} [records]` classifies
    every batch from its recorded versions. Build only the batches it reports
    as `unknown` (never built) or `conflicting`.
+
+The node keeps the plans computed at the current tip: proofs for every
+recipient and the batches of a plan cost one computation per block, not one
+per call.
 
 `{plan}` is an object with the parameters of `getdistributionplan`:
 `asset_name`, `snapshot_height`, `distribution_asset_name`, `amount` and,
@@ -231,8 +238,11 @@ neurai-cli getchannelmessages "ASSET!" '{"from_height": 1000, "include_expired":
 ```
 
 Options: `from_height`, `to_height`, `include_expired`, `reference_time`,
-`message` (only messages with that payload), `include_tx` (raw transaction)
-and `include_proof` (a proof checked with `verifytxoutproof`). Each message
+`message` (only messages with that payload), `include_tx` (raw transaction),
+`include_proof` (a proof checked with `verifytxoutproof`) and `limit`
+(default 1000, at most 10000). A page never splits a block, so its last block
+may go past the limit; `next_from_height` is the `from_height` of the next
+page, or null when there is none. Each message
 shows its channel, `authority` (`owner` or `channel`), txid, height, block,
 expiry, payload (IPFS hash or 64-hex hash), sender address and, when the
 transaction has one, the data of its `OP_RETURN` output. `op_return_matches`

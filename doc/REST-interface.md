@@ -149,8 +149,9 @@ Test vectors: `src/test/data/silentpayment_index_vectors.json`.
 
 Needs `-channelmessageindex`. The messages of an owner token (`NAME!`) or message channel (`NAME~CHANNEL`) from
 `<FROM-HEIGHT>` to the tip, in chain order, as `getchannelmessages "<CHANNEL>" {"from_height": <FROM-HEIGHT>}`
-returns them: expired messages are left out, judged against the median time past of the tip. The channel goes
-last because sub-asset names contain `/`. HTTP 503 when the index is disabled.
+returns them: expired messages are left out, judged against the median time past of the tip. At most 1000
+messages are returned, without splitting a block; `next_from_height` is the `<FROM-HEIGHT>` of the next page, or
+null at the end. The channel goes last because sub-asset names contain `/`. HTTP 503 when the index is disabled.
 
 Risks
 -------------

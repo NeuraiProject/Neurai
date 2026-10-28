@@ -16,7 +16,7 @@ class RewardsTest(NeuraiTestFramework):
         self.setup_clean_chain = True
         self.num_nodes = 4
         self.extra_args = [["-assetindex", "-debug=rewards"], ["-assetindex", "-minrewardheight=15"], ["-assetindex"],
-                           ["-assetindex"]]
+                           ["-assetindex", "-maxsnapshotrequests=2"]]
 
     def plan_and_pay(self, node, **kwargs):
         """NIP-048: the node computes and commits to the plan; the wallet pays it."""
@@ -625,6 +625,18 @@ class RewardsTest(NeuraiTestFramework):
         srl = n1.listsnapshotrequests(asset_name2)
         assert_equal(1, len(srl))
         assert_contains({'asset_name': asset_name2, 'block_height': block_height2}, srl)
+
+        self.log.info("At most -maxsnapshotrequests different assets at one height")
+        n3 = self.nodes[3]
+        self.sync_all()
+        height = n3.getblockcount() + 300
+        n3.requestsnapshot(asset_name=asset_name1, block_height=height)
+        n3.requestsnapshot(asset_name=asset_name2, block_height=height)
+        # Repeating a request is the same record
+        n3.requestsnapshot(asset_name=asset_name1, block_height=height)
+        assert_raises_rpc_error(-32600, "already 2 snapshot requests at height", n3.requestsnapshot, "STOCK1", height)
+        n3.requestsnapshot(asset_name="STOCK1", block_height=height + 1)
+        assert_equal(3, len(n3.listsnapshotrequests()))
 
     def basic_test_asset_uneven_distribution(self):
         self.log.info("Running ASSET reward test (units = 0)!")

@@ -279,6 +279,11 @@ bool QueryChannelJSON(const QueryOptions& options, UniValue& result, std::string
     const int64_t referenceTime = options.referenceTime >= 0 ? options.referenceTime
                                                              : chainActive.Tip()->GetMedianTimePast();
     UniValue list(UniValue::VARR);
+    UniValue nextFromHeight(UniValue::VNULL);
+    size_t nReturned = 0;
+    int lastHeight = -1;
+    CBlock block;
+    int blockHeight = -1;
     for (const auto& message : messages) {
         const bool fExpired = message.expireTime != 0 && message.expireTime <= referenceTime;
         if (fExpired && !options.fIncludeExpired)
@@ -286,6 +291,12 @@ bool QueryChannelJSON(const QueryOptions& options, UniValue& result, std::string
         const std::string encoded = EncodeAssetData(message.message);
         if (!options.messageFilter.empty() && encoded != options.messageFilter)
             continue;
+        // A page ends between blocks, so from_height = next_from_height
+        // resumes it without repeating or skipping a message
+        if (nReturned >= options.limit && message.height != lastHeight) {
+            nextFromHeight = message.height;
+            break;
+        }
 
         UniValue entry(UniValue::VOBJ);
         entry.push_back(Pair("channel", message.channel));
@@ -308,9 +319,15 @@ bool QueryChannelJSON(const QueryOptions& options, UniValue& result, std::string
         }
 
         if (options.fIncludeTx || options.fIncludeProof) {
-            CBlock block;
-            if (!ReadBlockFromDisk(block, chainActive[message.height], GetParams().GetConsensus()) ||
-                message.txIndex >= block.vtx.size()) {
+            // Messages come in chain order: one read per block
+            if (blockHeight != message.height) {
+                if (!ReadBlockFromDisk(block, chainActive[message.height], GetParams().GetConsensus())) {
+                    error = strprintf("Failed to read block %d", message.height);
+                    return false;
+                }
+                blockHeight = message.height;
+            }
+            if (message.txIndex >= block.vtx.size()) {
                 error = strprintf("Failed to read block %d", message.height);
                 return false;
             }
@@ -324,6 +341,8 @@ bool QueryChannelJSON(const QueryOptions& options, UniValue& result, std::string
             }
         }
         list.push_back(entry);
+        ++nReturned;
+        lastHeight = message.height;
     }
 
     result = UniValue(UniValue::VOBJ);
@@ -331,6 +350,7 @@ bool QueryChannelJSON(const QueryOptions& options, UniValue& result, std::string
     result.push_back(Pair("synced_height", chainActive.Height()));
     result.push_back(Pair("reference_time", referenceTime));
     result.push_back(Pair("messages", list));
+    result.push_back(Pair("next_from_height", nextFromHeight));
     return true;
 }
 

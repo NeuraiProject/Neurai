@@ -1423,7 +1423,9 @@ UniValue getchannelmessages(const JSONRPCRequest& request)
                 "     \"reference_time\": n,         (number, default the median time past of the tip) expiry reference\n"
                 "     \"message\": \"hash\",          (string, optional) only messages with this payload\n"
                 "     \"include_tx\": bool,          (boolean, default false) add the raw transaction\n"
-                "     \"include_proof\": bool        (boolean, default false) add a gettxoutproof-style proof\n"
+                "     \"include_proof\": bool,       (boolean, default false) add a gettxoutproof-style proof\n"
+                "     \"limit\": n                   (number, default " + std::to_string(channelmessages::DEFAULT_CHANNEL_MESSAGES_LIMIT) + ", max " + std::to_string(channelmessages::MAX_CHANNEL_MESSAGES_LIMIT) + ") messages per call;\n"
+                "                                   a block is never split, so the last block may go past it\n"
                 "   }\n"
 
                 "\nResult:\n"
@@ -1447,7 +1449,8 @@ UniValue getchannelmessages(const JSONRPCRequest& request)
                 "      \"tx\": \"hex\",                  (string, optional)\n"
                 "      \"proof\": \"hex\"                (string, optional) checked with verifytxoutproof\n"
                 "    }, ...\n"
-                "  ]\n"
+                "  ],\n"
+                "  \"next_from_height\": n|null       (number) the limit stopped here: pass it as from_height for the next page\n"
                 "}\n"
 
                 "\nExamples:\n"
@@ -1467,6 +1470,7 @@ UniValue getchannelmessages(const JSONRPCRequest& request)
                 {"message", UniValueType(UniValue::VSTR)},
                 {"include_tx", UniValueType(UniValue::VBOOL)},
                 {"include_proof", UniValueType(UniValue::VBOOL)},
+                {"limit", UniValueType(UniValue::VNUM)},
             }, true, true);
         if (!find_value(opts, "from_height").isNull())
             options.fromHeight = find_value(opts, "from_height").get_int();
@@ -1482,6 +1486,13 @@ UniValue getchannelmessages(const JSONRPCRequest& request)
             options.fIncludeTx = find_value(opts, "include_tx").get_bool();
         if (!find_value(opts, "include_proof").isNull())
             options.fIncludeProof = find_value(opts, "include_proof").get_bool();
+        if (!find_value(opts, "limit").isNull()) {
+            const int limit = find_value(opts, "limit").get_int();
+            if (limit < 1 || static_cast<size_t>(limit) > channelmessages::MAX_CHANNEL_MESSAGES_LIMIT)
+                throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("limit must be between 1 and %u",
+                                                                    channelmessages::MAX_CHANNEL_MESSAGES_LIMIT));
+            options.limit = limit;
+        }
     }
 
     LOCK(cs_main);

@@ -42,6 +42,9 @@
 
 #include <boost/thread.hpp>
 
+#include <list>
+#include <memory>
+
 #ifdef ENABLE_WALLET
 
 ////  Collect information about transactions that are pending commit
@@ -79,7 +82,8 @@ UniValue requestsnapshot(const JSONRPCRequest& request) {
     if (request.fHelp || request.params.size() < 2)
         throw std::runtime_error(
                 "requestsnapshot \"asset_name\" block_height\n"
-                "\nSchedules a snapshot of the specified asset at the specified block height.\n"
+                "\nSchedules a snapshot of the specified asset at the specified block height. The node captures it while it\n"
+                "connects that block, so at most -maxsnapshotrequests different assets are accepted at one height.\n"
 
                 "\nArguments:\n"
                 "1. \"asset_name\"              (string, required) The asset name for which the snapshot will be taken\n"
@@ -118,12 +122,25 @@ UniValue requestsnapshot(const JSONRPCRequest& request) {
     if (!currentActiveAssetCache->GetAssetMetaDataIfExists(asset_name, asset))
         throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid asset_name: asset does not exist."));
 
+    LOCK(cs_main);
     if (block_height <= chainActive.Height()) {
         throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid block_height: block height should be greater than current active chain height"));
     }
 
     if (!pSnapshotRequestDb)
         throw JSONRPCError(RPC_DATABASE_ERROR, REWARDS_INACTIVE_ERROR);
+
+    // A repeated request is the same record; a new one counts towards the
+    // requests captured at that height
+    const int64_t nMaxRequests = gArgs.GetArg("-maxsnapshotrequests", DEFAULT_MAX_SNAPSHOT_REQUESTS);
+    if (nMaxRequests > 0 && !pSnapshotRequestDb->ContainsSnapshotRequest(asset_name, block_height)) {
+        std::set<CSnapshotRequestDBEntry> atHeight;
+        if (pSnapshotRequestDb->RetrieveSnapshotRequestsForHeight("", block_height, atHeight) &&
+            static_cast<int64_t>(atHeight.size()) >= nMaxRequests)
+            throw JSONRPCError(RPC_INVALID_REQUEST, strprintf(
+                    "There are already %d snapshot requests at height %d (see -maxsnapshotrequests)",
+                    atHeight.size(), block_height));
+    }
 
     //  Build our snapshot request record for scheduling
     if (pSnapshotRequestDb->ScheduleSnapshot(asset_name, block_height)) {
@@ -764,6 +781,51 @@ static PlanResult ComputePlan(const PlanRequest& req)
     return plan;
 }
 
+/** Plans computed at the current tip. Every recipient asking for its proof, and
+ *  the batches of a plan, then cost one computation per block instead of one
+ *  per call; a new tip drops them, since anchors and confirmations follow it. */
+static const size_t PLAN_CACHE_SIZE = 4;
+
+struct CachedPlan {
+    std::string key;
+    uint256 tip;
+    std::shared_ptr<const PlanResult> plan;
+};
+
+static std::list<CachedPlan> g_planCache GUARDED_BY(cs_main);
+
+static std::string PlanCacheKey(const PlanRequest& req)
+{
+    CDataStream ss(SER_GETHASH, PROTOCOL_VERSION);
+    ss << req.assetName << req.height << req.distributionAsset << req.amount << req.exceptions
+       << static_cast<uint8_t>(req.policy) << req.fAllowLegacy << req.announcementTxid << req.announcementBlockHint
+       << req.qualifier << req.weights << req.reportTxid << req.reportBlockHint
+       << static_cast<uint8_t>(req.allocation) << req.minHeld;
+    return ss.str();
+}
+
+/** The plan of a request at the current tip, from the cache or computed. */
+static std::shared_ptr<const PlanResult> GetPlan(const PlanRequest& req)
+{
+    AssertLockHeld(cs_main);
+    const uint256 tip = chainActive.Tip()->GetBlockHash();
+    g_planCache.remove_if([&tip](const CachedPlan& entry) { return entry.tip != tip; });
+
+    const std::string key = PlanCacheKey(req);
+    for (auto it = g_planCache.begin(); it != g_planCache.end(); ++it) {
+        if (it->key == key) {
+            g_planCache.splice(g_planCache.begin(), g_planCache, it);
+            return g_planCache.front().plan;
+        }
+    }
+
+    auto plan = std::make_shared<const PlanResult>(ComputePlan(req));
+    g_planCache.push_front({key, tip, plan});
+    if (g_planCache.size() > PLAN_CACHE_SIZE)
+        g_planCache.pop_back();
+    return plan;
+}
+
 static std::string HashHex(const uint256& hash)
 {
     return HexStr(hash.begin(), hash.end());
@@ -1004,8 +1066,13 @@ UniValue getdistributionplan(const JSONRPCRequest& request) {
     EnsurePlansAvailable();
     const PlanRequest req = PlanRequestFromParams(request.params);
 
-    LOCK(cs_main);
-    return PlanToJSON(ComputePlan(req));
+    // The plan is immutable: the JSON of a large one is built outside cs_main
+    std::shared_ptr<const PlanResult> plan;
+    {
+        LOCK(cs_main);
+        plan = GetPlan(req);
+    }
+    return PlanToJSON(*plan);
 }
 
 UniValue getdistributionproof(const JSONRPCRequest& request) {
@@ -1042,8 +1109,12 @@ UniValue getdistributionproof(const JSONRPCRequest& request) {
     const PlanRequest req = PlanRequestFromObject(request.params[0].get_obj());
     const std::string address = request.params[1].get_str();
 
-    LOCK(cs_main);
-    const PlanResult plan = ComputePlan(req);
+    std::shared_ptr<const PlanResult> cached;
+    {
+        LOCK(cs_main);
+        cached = GetPlan(req);
+    }
+    const PlanResult& plan = *cached;
 
     size_t index = plan.leaves.size();
     for (size_t i = 0; i < plan.leaves.size(); ++i) {
@@ -1112,8 +1183,12 @@ UniValue getdistributionbatches(const JSONRPCRequest& request) {
     const PlanRequest req = PlanRequestFromObject(request.params[0].get_obj());
     const uint32_t nMaxOutputs = request.params.size() > 1 ? ParseMaxOutputs(request.params[1].get_obj()) : DEFAULT_DISTRIBUTION_BATCH_OUTPUTS;
 
-    LOCK(cs_main);
-    const PlanResult plan = ComputePlan(req);
+    std::shared_ptr<const PlanResult> cached;
+    {
+        LOCK(cs_main);
+        cached = GetPlan(req);
+    }
+    const PlanResult& plan = *cached;
     const bool fDistributeXNA = plan.header.distributionAsset == "XNA";
 
     UniValue batches(UniValue::VARR);
@@ -1259,7 +1334,8 @@ UniValue verifydistribution(const JSONRPCRequest& request) {
     }
 
     LOCK2(cs_main, mempool.cs);
-    const PlanResult plan = ComputePlan(req);
+    const std::shared_ptr<const PlanResult> cached = GetPlan(req);
+    const PlanResult& plan = *cached;
     const size_t nBatches = BatchCount(plan, nMaxOutputs);
 
     // Recorded versions per batch, with the block each was seen in when given
@@ -1783,7 +1859,8 @@ UniValue createdistributionbatch(const JSONRPCRequest& request) {
     LOCK2(cs_main, pwallet->cs_wallet);
     EnsureWalletIsUnlocked(pwallet);
 
-    const PlanResult plan = ComputePlan(req);
+    const std::shared_ptr<const PlanResult> cached = GetPlan(req);
+    const PlanResult& plan = *cached;
     if (HashHex(plan.planHash) != expectedHash)
         throw JSONRPCError(RPC_INVALID_PARAMETER, "plan_hash does not match the plan: the snapshot, the parameters or the chain changed");
     if (batchIndex < 0 || static_cast<size_t>(batchIndex) >= BatchCount(plan, nMaxOutputs))

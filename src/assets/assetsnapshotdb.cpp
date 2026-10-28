@@ -10,6 +10,9 @@
 #include <boost/algorithm/string.hpp>
 #include <boost/thread.hpp>
 
+#include <limits>
+#include <map>
+
 static const char SNAPSHOTCHECK_FLAG = 'C'; // Snapshot Check (legacy, before NIP-048 B1)
 static const char SNAPSHOTBLOCK_FLAG = 'B'; // Snapshot bound to its block (NIP-048 B1)
 
@@ -89,52 +92,29 @@ bool CAssetSnapshotDB::AddAssetOwnershipSnapshot(
         return false;
     }
 
-    std::set<std::pair<std::string, CAmount>> ownersAndAmounts;
-    std::vector<std::pair<std::string, CAmount>> tempOwnersAndAmounts;
-    int totalEntryCount;
-
-    if (!passetsdb->AssetAddressDir(tempOwnersAndAmounts, totalEntryCount, true, p_assetName, INT_MAX, 0)) {
+    // One pass over the asset's rows of the address index. Reading them in
+    // batches restarted the scan at the first row each time, which made the
+    // capture quadratic in the number of holders while the block connects.
+    // The rows are read from the database, so the state is flushed first.
+    FlushStateForDatabaseReads();
+    std::map<std::string, std::vector<std::pair<std::string, CAmount>>> rows;
+    bool fHitRowLimit = false;
+    if (!passetsdb->AssetAddressDirMulti({p_assetName}, rows, std::numeric_limits<size_t>::max(), fHitRowLimit)) {
         LogPrint(BCLog::REWARDS, "AddAssetOwnershipSnapshot: Failed to retrieve assets directory for '%s'\n", p_assetName.c_str());
         return false;
     }
 
-    //  Retrieve all of the addresses/amounts in batches
-    const int MAX_RETRIEVAL_COUNT = 100;
-    bool errorsOccurred = false;
-
-    for (int retrievalOffset = 0; retrievalOffset < totalEntryCount; retrievalOffset += MAX_RETRIEVAL_COUNT) {
-        //  Retrieve the specified segment of addresses
-        if (!passetsdb->AssetAddressDir(tempOwnersAndAmounts, totalEntryCount, false, p_assetName, MAX_RETRIEVAL_COUNT, retrievalOffset)) {
-            LogPrint(BCLog::REWARDS, "AddAssetOwnershipSnapshot: Failed to retrieve assets directory for '%s'\n", p_assetName.c_str());
-            errorsOccurred = true;
-            break;
+    std::set<std::pair<std::string, CAmount>> ownersAndAmounts;
+    for (const auto& row : rows[p_assetName]) {
+        //  Verify that the address is valid
+        if (IsValidDestination(DecodeDestination(row.first))) {
+            ownersAndAmounts.insert(row);
         }
-
-        //  Verify that some addresses were returned
-        if (tempOwnersAndAmounts.size() == 0) {
-            LogPrint(BCLog::REWARDS, "AddAssetOwnershipSnapshot: No addresses were retrieved.\n");
-            continue;
+        else {
+            LogPrint(BCLog::REWARDS, "AddAssetOwnershipSnapshot: Address '%s' is invalid.\n", row.first.c_str());
         }
-
-        //  Move these into the main set
-        for (auto const & currPair : tempOwnersAndAmounts) {
-            //  Verify that the address is valid
-            CTxDestination dest = DecodeDestination(currPair.first);
-            if (IsValidDestination(dest)) {
-                ownersAndAmounts.insert(currPair);
-            }
-            else {
-                LogPrint(BCLog::REWARDS, "AddAssetOwnershipSnapshot: Address '%s' is invalid.\n", currPair.first.c_str());
-            }
-        }
-
-        tempOwnersAndAmounts.clear();
     }
 
-    if (errorsOccurred) {
-        LogPrint(BCLog::REWARDS, "AddAssetOwnershipSnapshot: Errors occurred while acquiring ownership info for asset '%s'.\n", p_assetName.c_str());
-        return false;
-    }
     if (ownersAndAmounts.size() == 0) {
         LogPrint(BCLog::REWARDS, "AddAssetOwnershipSnapshot: No owners exist for asset '%s'.\n", p_assetName.c_str());
         return false;

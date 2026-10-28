@@ -526,6 +526,7 @@ std::string HelpMessage(HelpMessageMode mode)
     strUsage += HelpMessageOpt("-assetrewards", _("Keep the snapshot stores used by requestsnapshot and the reward RPCs (default: 1 with -assetindex or if the data directory already has a rewards store, 0 otherwise)"));
     strUsage += HelpMessageOpt("-minrewardheight=<n>", strprintf(_("Blocks the chain must be past a snapshot before a distribution plan is computed (default: %u)"), MINIMUM_REWARDS_PAYOUT_HEIGHT));
     strUsage += HelpMessageOpt("-minsnapshotnotice=<n>", strprintf(_("Blocks a snapshot height must be announced in advance for a plan to count as independently verifiable (default: %u)"), DEFAULT_MIN_SNAPSHOT_NOTICE));
+    strUsage += HelpMessageOpt("-maxsnapshotrequests=<n>", strprintf(_("Snapshot requests accepted at one block height, 0 for no limit (default: %u)"), DEFAULT_MAX_SNAPSHOT_REQUESTS));
 
     strUsage += HelpMessageOpt("-addressindex", strprintf(_("Maintain a full address index, used to query for the balance, txids and unspent outputs for addresses (default: %u)"), DEFAULT_ADDRESSINDEX));
     strUsage += HelpMessageOpt("-timestampindex", strprintf(_("Maintain a timestamp index for block hashes, used to query blocks hashes by a range of timestamps (default: %u)"), DEFAULT_TIMESTAMPINDEX));

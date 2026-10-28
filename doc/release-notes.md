@@ -540,8 +540,10 @@ New options:
 - `neurai-tx`: new command `refin=TXID:VOUT` adds a reference input (and
   forces a version 3 transaction).
 - Legacy asset modules (NIP-048): `-assetmessages`, `-assetrewards`,
-  `-minsnapshotnotice=<n>` (default 60 blocks); `-minrewardheight`, which
-  already existed, is now listed in the help.
+  `-minsnapshotnotice=<n>` (default 60 blocks), `-maxsnapshotrequests=<n>`
+  (different assets whose snapshot can be requested at one height, default
+  16, 0 for no limit); `-minrewardheight`, which already existed, is now
+  listed in the help.
 
 Changed defaults:
 
@@ -563,6 +565,12 @@ Changed behavior:
   with `-assetmessages=1` is refused at startup. A bare `-disablemessaging`
   now disables legacy asset messaging; it used to leave it enabled. Neither
   option affects DePIN messaging (`-depinmsg`).
+- Snapshot requests are stored by height and asset (existing ones are moved
+  at startup). Each block used to read every request ever made, and two
+  requests could overwrite each other (height 12 of `3ABC` and height 123 of
+  `ABC`). A snapshot reads its holders in one pass instead of restarting the
+  scan every 100 holders, which made the capture grow with the square of the
+  holder count while the block connected.
 
 Removed options: none. `-pqwallet`, which only existed in development
 builds, is refused at startup with a pointer to `-addresstype=pq`.
@@ -625,7 +633,9 @@ New RPCs (52):
   returns every message of an owner token or message channel from
   `-channelmessageindex`, with its authority, payload, expiry and any
   `OP_RETURN` data of the same transaction, optionally with the raw
-  transaction and a `gettxoutproof` proof.
+  transaction and a `gettxoutproof` proof. At most `limit` messages per call
+  (default 1000), without splitting a block; `next_from_height` starts the
+  next page.
 
 Changed RPCs (arguments and request format):
 
