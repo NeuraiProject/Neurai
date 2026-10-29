@@ -481,8 +481,11 @@ void StopHTTPServer()
     }
     if (eventBase) {
         LogPrint(BCLog::HTTP, "Waiting for HTTP event thread to exit\n");
-        // Exit the event loop as soon as there are no active events.
-        event_base_loopexit(eventBase, nullptr);
+        // The workers have exited, but the event loop still has to write the
+        // replies they posted last, such as a long poll woken by StopRPC: an
+        // immediate exit drops them. Give it a moment, then exit.
+        struct timeval flush_time = {0, 100 * 1000};
+        event_base_loopexit(eventBase, &flush_time);
         // Give event loop a few seconds to exit (to send back last RPC responses), then break it
         // Before this was solved with event_base_loopexit, but that didn't work as expected in
         // at least libevent 2.0.21 and always introduced a delay. In libevent

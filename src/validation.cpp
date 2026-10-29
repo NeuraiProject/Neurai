@@ -5452,7 +5452,14 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationSta
     //                              strprintf("rejected nVersion=0x%08x block", block.nVersion));
 
     // Reject outdated version blocks once assets are active.
-    if (AreAssetsDeployed() && block.nVersion < VERSIONBITS_TOP_BITS_ASSETS)
+    // On networks that activate assets by height, a block at or below the
+    // activation height is mined on a tip where assets are not active yet: a
+    // node past the activation must still accept a competing chain that
+    // starts there.
+    const bool fBeforeAssetActivation =
+        params.GetConsensus().nAssetRip5ActivationByHeightEnabled && params.GetAssetActivationHeight() > 0 &&
+        nHeight <= params.GetAssetActivationHeight();
+    if (AreAssetsDeployed() && !fBeforeAssetActivation && block.nVersion < VERSIONBITS_TOP_BITS_ASSETS)
         return state.Invalid(false, REJECT_OBSOLETE, strprintf("bad-version(0x%08x)", block.nVersion), strprintf("rejected nVersion=0x%08x block", block.nVersion));
 
     return true;
@@ -6343,6 +6350,18 @@ bool CVerifyDB::VerifyDB(const CChainParams& chainparams, CCoinsView *coinsview,
 
     // check level 4: try reconnecting blocks
     if (nCheckLevel >= 4) {
+        // Asset checks read the state before a block from passets, as
+        // ConnectTip connects each block on an empty cache over passets and
+        // flushes it there. Here that state is assetCache, which holds every
+        // disconnected block, not the tip: point passets at it and connect
+        // the same way.
+        CAssetsCache* const pTipAssets = passets;
+        passets = &assetCache;
+        struct RestoreTipAssets {
+            CAssetsCache* const pTip;
+            ~RestoreTipAssets() { passets = pTip; }
+        } restoreTipAssets{pTipAssets};
+
         CBlockIndex *pindex = pindexState;
         while (pindex != chainActive.Tip()) {
             boost::this_thread::interruption_point();
@@ -6351,8 +6370,11 @@ bool CVerifyDB::VerifyDB(const CChainParams& chainparams, CCoinsView *coinsview,
             CBlock block;
             if (!ReadBlockFromDisk(block, pindex, chainparams.GetConsensus()))
                 return error("VerifyDB(): *** ReadBlockFromDisk failed at %d, hash=%s", pindex->nHeight, pindex->GetBlockHash().ToString());
-            if (!ConnectBlock(block, state, pindex, coins, chainparams, &assetCache, false, true))
+            CAssetsCache blockAssets;
+            if (!ConnectBlock(block, state, pindex, coins, chainparams, &blockAssets, false, true))
                 return error("VerifyDB(): *** found unconnectable block at %d, hash=%s", pindex->nHeight, pindex->GetBlockHash().ToString());
+            if (!blockAssets.Flush())
+                return error("VerifyDB(): *** failed to apply the assets of block %d, hash=%s", pindex->nHeight, pindex->GetBlockHash().ToString());
         }
     }
 

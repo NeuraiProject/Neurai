@@ -10,7 +10,10 @@ import binascii
 from test_framework.test_framework import NeuraiTestFramework
 from test_framework.util import connect_nodes_bi, assert_equal
 from test_framework.script import CScript, OP_DUP, OP_HASH160, OP_EQUALVERIFY, OP_CHECKSIG
-from test_framework.mininode import CTransaction, CTxIn, CTxOut, COutPoint
+from test_framework.mininode import CTransaction, CTxIn, CTxOut, COutPoint, COIN
+
+# Regtest block subsidy
+SUBSIDY = 50000
 
 class TxIndexTest(NeuraiTestFramework):
 
@@ -63,8 +66,8 @@ class TxIndexTest(NeuraiTestFramework):
 
         # Check verbose raw transaction results
         verbose = self.nodes[3].getrawtransaction(unspent[0]["txid"], 1)
-        assert_equal(verbose["vout"][0]["valueSat"], 500000000000)
-        assert_equal(verbose["vout"][0]["value"], 5000)
+        assert_equal(verbose["vout"][0]["valueSat"], SUBSIDY * COIN)
+        assert_equal(verbose["vout"][0]["value"], SUBSIDY)
 
         self.log.info("All Tests Passed")
 

@@ -45,6 +45,8 @@ class BlockchainTest(NeuraiTestFramework):
         self.log.info("Test getblockchaininfo")
 
         keys = [
+            'asset_marker',
+            'asset_services',
             'bestblockhash',
             'bip9_softforks',
             'blocks',
@@ -59,6 +61,8 @@ class BlockchainTest(NeuraiTestFramework):
             'softforks',
             'verificationprogress',
             'warnings',
+            'zk_portable_tree',
+            'zk_public_tree',
         ]
         res = self.nodes[0].getblockchaininfo()
 
@@ -126,7 +130,8 @@ class BlockchainTest(NeuraiTestFramework):
         node = self.nodes[0]
         res = node.gettxoutsetinfo()
 
-        assert_equal(res['total_amount'], Decimal('872500.00000000'))
+        # 200 coinbase outputs at the regtest subsidy of 50000 XNA
+        assert_equal(res['total_amount'], Decimal('10000000.00000000'))
         assert_equal(res['transactions'], 200)
         assert_equal(res['height'], 200)
         assert_equal(res['txouts'], 200)

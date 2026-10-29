@@ -42,6 +42,8 @@ written to the script's blockchain.
 * `input`: neuraid blocks/ directory containing blkNNNNN.dat
 * `hashlist`: text file containing list of block hashes created by
 linearize-hashes.py.
+* `hashalgo`: Block header hash: `x16rv2` (default) or `sha256d`, which testnet
+and regtest use.
 * `max_out_sz`: Maximum size for files created by the `output_file` option.
 (Default: `1000*1000*1000 bytes`)
 * `netmagic`: Network magic number.

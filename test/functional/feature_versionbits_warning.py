@@ -17,9 +17,9 @@ from test_framework.test_framework import NeuraiTestFramework
 from test_framework.util import os, p2p_port
 from test_framework.blocktools import create_block, create_coinbase
 
-VB_PERIOD = 144 # versionbits period length for regtest
-VB_THRESHOLD = 108 # versionbits activation threshold for regtest
-VB_TOP_BITS = 0x20000000
+VB_PERIOD = 2016 # versionbits period length for regtest
+VB_THRESHOLD = 1000 # versionbits activation threshold for regtest
+VB_TOP_BITS = 0x30000000 # top bits plus the asset bit that every regtest block carries
 VB_UNKNOWN_BIT = 27 # Choose a bit unassigned to any deployment
 
 WARN_UNKNOWN_RULES_MINED = "Unknown block versions being mined! It's possible unknown rules are in effect"
@@ -43,8 +43,23 @@ class VersionBitsWarningTest(NeuraiTestFramework):
         self.extra_args = [["-alertnotify=echo %s >> \"" + self.alert_filename + "\""]]
         self.setup_nodes()
 
+    def follow_tip(self, ahead):
+        """Set the node clock to the tip time plus `ahead` seconds. Regtest
+        refuses blocks more than 12 minutes ahead, and these runs of thousands
+        of blocks add at least a second each."""
+        tip_time = self.nodes[0].getblockheader(self.nodes[0].getbestblockhash())["time"]
+        self.nodes[0].setmocktime(tip_time + ahead)
+
+    def generate(self, numblocks):
+        while numblocks > 0:
+            batch = min(numblocks, 500)
+            self.follow_tip(batch)
+            self.nodes[0].generate(batch)
+            numblocks -= batch
+
     # Send numblocks blocks via peer with nVersionToUse set.
     def send_blocks_with_version(self, peer, numblocks, n_version_to_use):
+        self.follow_tip(numblocks)
         tip = self.nodes[0].getbestblockhash()
         height = self.nodes[0].getblockcount()
         block_time = self.nodes[0].getblockheader(tip)["time"]+1
@@ -78,7 +93,7 @@ class VersionBitsWarningTest(NeuraiTestFramework):
         test_node.wait_for_verack()
 
         # 1. Have the node mine one period worth of blocks
-        self.nodes[0].generate(VB_PERIOD)
+        self.generate(VB_PERIOD)
 
         # 2. Now build one period of blocks on the tip, with < VB_THRESHOLD
         # blocks signaling some unknown bit.
@@ -86,7 +101,7 @@ class VersionBitsWarningTest(NeuraiTestFramework):
         self.send_blocks_with_version(test_node, VB_THRESHOLD-1, n_version)
 
         # Fill rest of period with regular version blocks
-        self.nodes[0].generate(VB_PERIOD - VB_THRESHOLD + 1)
+        self.generate(VB_PERIOD - VB_THRESHOLD + 1)
         # Check that we're not getting any versionbit-related errors in
         # get*info()
         assert(not VB_PATTERN.match(self.nodes[0].getinfo()["errors"]))
@@ -96,7 +111,7 @@ class VersionBitsWarningTest(NeuraiTestFramework):
         # 3. Now build one period of blocks with >= VB_THRESHOLD blocks signaling
         # some unknown bit
         self.send_blocks_with_version(test_node, VB_THRESHOLD, n_version)
-        self.nodes[0].generate(VB_PERIOD - VB_THRESHOLD)
+        self.generate(VB_PERIOD - VB_THRESHOLD)
         # Might not get a versionbits-related alert yet, as we should
         # have gotten a different alert due to more than 51/100 blocks
         # being of unexpected version.
@@ -109,7 +124,7 @@ class VersionBitsWarningTest(NeuraiTestFramework):
         # Mine a period worth of expected blocks so the generic block-version warning
         # is cleared, and restart the node. This should move the versionbit state
         # to ACTIVE.
-        self.nodes[0].generate(VB_PERIOD)
+        self.generate(VB_PERIOD)
         self.stop_nodes()
         # Empty out the alert file
         with open(self.alert_filename, 'w', encoding='utf8') as _:
@@ -117,7 +132,7 @@ class VersionBitsWarningTest(NeuraiTestFramework):
         self.start_nodes()
 
         # Connecting one block should be enough to generate an error.
-        self.nodes[0].generate(1)
+        self.generate(1)
         assert(WARN_UNKNOWN_RULES_ACTIVE in self.nodes[0].getinfo()["errors"])
         assert(WARN_UNKNOWN_RULES_ACTIVE in self.nodes[0].getmininginfo()["warnings"])
         assert(WARN_UNKNOWN_RULES_ACTIVE in self.nodes[0].getnetworkinfo()["warnings"])

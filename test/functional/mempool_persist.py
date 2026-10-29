@@ -100,13 +100,14 @@ class MempoolPersistTest(NeuraiTestFramework):
         wait_until(lambda: len(self.nodes[1].getrawmempool()) == 5, err_msg="Wait for getRawMempool")
 
         self.log.debug("Prevent neuraid from writing mempool.dat to disk. Verify that `savemempool` fails")
-        # to test the exception we are setting bad permissions on a tmp file called mempool.dat.new
-        # which is an implementation detail that could change and break this test
+        # to test the exception we are creating a tmp folder called mempool.dat.new
+        # which is an implementation detail that could change and break this test.
+        # A folder (unlike a file without permissions) also blocks the write when
+        # the test runs as root.
         mempooldotnew1 = mempooldat1 + '.new'
-        with os.fdopen(os.open(mempooldotnew1, os.O_CREAT, 0o000), 'w'):
-            pass
+        os.mkdir(mempooldotnew1)
         assert_raises_rpc_error(-1, "Unable to dump mempool to disk", self.nodes[1].savemempool)
-        os.remove(mempooldotnew1)
+        os.rmdir(mempooldotnew1)
 
 if __name__ == '__main__':
     MempoolPersistTest().main()

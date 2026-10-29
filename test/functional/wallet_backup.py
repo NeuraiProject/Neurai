@@ -11,7 +11,7 @@ Test case is:
 4 nodes. 1 2 and 3 send transactions between each other,
 fourth node is a miner.
 1 2 3 each mine a block to start, then
-Miner creates 100 blocks so 1 2 3 each have 50 mature
+Miner creates 100 blocks so 1 2 3 each have 50000 mature
 coins to spend.
 Then 5 iterations of 1/2/3 sending coins amongst
 themselves to get transactions in the wallets,
@@ -24,7 +24,7 @@ Miner then generates 101 more blocks, so any
 transaction fees paid mature.
 
 Sanity check:
-  Sum(1,2,3,4 balances) == 114*50
+  Sum(1,2,3,4 balances) == 114*50000
 
 1/2/3 are shutdown, and their wallets erased.
 Then restore using wallet.dat backup. And
@@ -38,6 +38,9 @@ from random import randint
 import shutil
 from test_framework.test_framework import NeuraiTestFramework
 from test_framework.util import connect_nodes, Decimal, sync_mempools, sync_blocks, os, assert_equal
+
+# Regtest block subsidy
+SUBSIDY = 50000
 
 class WalletBackupTest(NeuraiTestFramework):
     def set_test_params(self):
@@ -108,9 +111,9 @@ class WalletBackupTest(NeuraiTestFramework):
         self.nodes[3].generate(100)
         sync_blocks(self.nodes)
 
-        assert_equal(self.nodes[0].getbalance(), 5000)
-        assert_equal(self.nodes[1].getbalance(), 5000)
-        assert_equal(self.nodes[2].getbalance(), 5000)
+        assert_equal(self.nodes[0].getbalance(), SUBSIDY)
+        assert_equal(self.nodes[1].getbalance(), SUBSIDY)
+        assert_equal(self.nodes[2].getbalance(), SUBSIDY)
         assert_equal(self.nodes[3].getbalance(), 0)
 
         self.log.info("Creating transactions")
@@ -142,8 +145,8 @@ class WalletBackupTest(NeuraiTestFramework):
         total = balance0 + balance1 + balance2 + balance3
 
         # At this point, there are 214 blocks (103 for setup, then 10 rounds, then 101.)
-        # 114 are mature, so the sum of all wallets should be 114 * 50 = 5700.
-        assert_equal(total, 570000)
+        # 114 are mature, so the sum of all wallets should be 114 * 50000 = 5700000.
+        assert_equal(total, 114 * SUBSIDY)
 
         ##
         # Test restoring spender wallets from backups

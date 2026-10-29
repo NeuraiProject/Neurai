@@ -19,8 +19,9 @@ class SignMessagesTest(NeuraiTestFramework):
 
         self.log.info('test signing with priv_key')
         priv_key = 'cUeKHd5orzT3mz8P9pxyREHfsWtVfgsfDjiZZBcjUBAaGk1BTj7N'
-        address = 'mpLQjfK79b7CCV4VMJWEWAj5Mpx8Up5zxB'
-        expected_signature = 'H5vCbG+WhOeOPJ3jf6oux/1oSjkuIGZigCw4NW+A0/fSDlgdO4fMq0SWSfx7gUMB9kuG+t/0BQxtXaTCr7v9fGM='
+        address = 'tFk4VQ5iWUXDHRHsk1qLGB5fRu5DuWpFSr'
+        # Deterministic (RFC6979) compact signature over the "Neurai Signed Message:\n" magic.
+        expected_signature = 'INQlEBr0rBWE72X14I8dy6mfPCrNDr4yT7JZtcsGAlnPXldH3xklQhwSy0qlgDZoE5mDgcM3LihcW1bWe75ySfE='
         signature = self.nodes[0].signmessagewithprivkey(priv_key, message)
         assert_equal(expected_signature, signature)
         assert(self.nodes[0].verifymessage(address, signature, message))

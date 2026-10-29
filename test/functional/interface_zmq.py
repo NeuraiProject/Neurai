@@ -11,7 +11,7 @@ import configparser
 import os
 import struct
 from test_framework.test_framework import NeuraiTestFramework, SkipTest
-from test_framework.util import assert_equal, hash256, x16_hash_block
+from test_framework.util import assert_equal, hash256
 
 
 # noinspection PyUnresolvedReferences
@@ -106,7 +106,8 @@ class ZMQTest(NeuraiTestFramework):
 
             # Should receive the generated raw block.
             block = self.rawblock.receive()
-            assert_equal(genhashes[x], x16_hash_block(block[:80].hex(), "2"))
+            # Regtest block hashes are double-SHA256 of the header.
+            assert_equal(genhashes[x], hash256(block[:80]).hex())
 
         self.log.info("Wait for tx from second node")
         payment_txid = self.nodes[1].sendtoaddress(self.nodes[0].getnewaddress(), 1.0)

@@ -87,9 +87,17 @@ class MaxReorgTest(NeuraiTestFramework):
         adversary.issue(asset_name)
 
         self.log.info(f"Adversary is mining {height*2} (2 x {height}) blocks over the next ~{tip_age} seconds...")
-        interval = round(tip_age / (height * 2)) + 1
+        # Regtest gives a block more than 2 x 60 s after its parent the minimum
+        # difficulty, half the work of the others: mine at the 60 s target and
+        # leave the jump in time for the last block, so the adversary chain
+        # carries more work than the one it would replace.
+        honest_tip_time = subject.getblock(subject.getbestblockhash())['time']
+        block_time = now - tip_age
         for i in range(0, height*2):
-            set_node_times(self.nodes, (now - tip_age) + ((i+1) * interval))
+            block_time += 60
+            if i == height * 2 - 1:
+                block_time = max(block_time, honest_tip_time + tip_age)
+            set_node_times(self.nodes, block_time)
             adversary.generate(1)
         assert(adversary.getblockcount() - start == (subject.getblockcount() - start) * 2)
         besttimes = [n.getblock(n.getbestblockhash())['time'] for n in self.nodes]

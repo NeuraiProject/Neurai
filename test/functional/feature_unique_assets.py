@@ -66,7 +66,7 @@ class UniqueAssetTest(NeuraiTestFramework):
         assert_raises_rpc_error(-32600, f"Wallet doesn't have asset: {root}!", n0.issue, asset_name)
 
         # don't own root
-        n0.sendtoaddress(n1.getnewaddress(), 501)
+        n0.sendtoaddress(n1.getnewaddress(), 1001)
         n0.generate(1)
         self.sync_all()
         n1.issue(root)
@@ -96,7 +96,7 @@ class UniqueAssetTest(NeuraiTestFramework):
     def issue_unique_test(self):
         self.log.info("Testing issueunique RPC...")
         n0, n1 = self.nodes[0], self.nodes[1]
-        n0.sendtoaddress(n1.getnewaddress(), 501)
+        n0.sendtoaddress(n1.getnewaddress(), 1001)
 
         root = gen_root_asset_name()
         n0.issue(asset_name=root)

@@ -13,6 +13,9 @@ import shutil
 from test_framework.test_framework import NeuraiTestFramework
 from test_framework.util import (assert_equal, assert_raises_rpc_error)
 
+# Regtest block subsidy
+SUBSIDY = 50000
+
 class MultiWalletTest(NeuraiTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
@@ -57,7 +60,7 @@ class MultiWalletTest(NeuraiTestFramework):
 
         # check w1 wallet balance
         w1_info = w1.getwalletinfo()
-        assert_equal(w1_info['immature_balance'], 5000)
+        assert_equal(w1_info['immature_balance'], SUBSIDY)
         w1_name = w1_info['walletname']
         assert_equal(w1_name, "w1")
 
@@ -73,7 +76,7 @@ class MultiWalletTest(NeuraiTestFramework):
         assert_equal({"w1", "w2", "w3"}, {w1_name, w2_name, w3_name})
 
         w1.generate(101)
-        assert_equal(w1.getbalance(), 10000)
+        assert_equal(w1.getbalance(), 2 * SUBSIDY)
         assert_equal(w2.getbalance(), 0)
         assert_equal(w3.getbalance(), 0)
 

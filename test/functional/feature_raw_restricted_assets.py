@@ -10,20 +10,24 @@ import math
 from test_framework.test_framework import NeuraiTestFramework
 from test_framework.util import assert_equal
 
+# Neurai uses a single global burn address for every asset burn (regtest).
+GLOBAL_BURN_ADDRESS = 'tBURNXXXXXXXXXXXXXXXXXXXXXXXVZLroy'
+
 BURN_ADDRESSES = {
-    'issue_restricted': 'n1issueRestrictedXXXXXXXXXXXXZVT9V',
-    'reissue_restricted': 'n1ReissueAssetXXXXXXXXXXXXXXWG9NLd',
-    'issue_qualifier': 'n1issueQuaLifierXXXXXXXXXXXXUysLTj',
-    'issue_subqualifier': 'n1issueSubQuaLifierXXXXXXXXXYffPLh',
-    'tag_address': 'n1addTagBurnXXXXXXXXXXXXXXXXX5oLMH',
+    'issue_restricted': GLOBAL_BURN_ADDRESS,
+    'reissue_restricted': GLOBAL_BURN_ADDRESS,
+    'issue_qualifier': GLOBAL_BURN_ADDRESS,
+    'issue_subqualifier': GLOBAL_BURN_ADDRESS,
+    'tag_address': GLOBAL_BURN_ADDRESS,
 }
 
+# Regtest burn amounts (src/chainparams.cpp, CRegTestParams).
 BURN_AMOUNTS = {
-    'issue_restricted': 1500,
-    'reissue_restricted': 100,
-    'issue_qualifier': 1000,
-    'issue_subqualifier': 100,
-    'tag_address': 0.1,
+    'issue_restricted': 3000,
+    'reissue_restricted': 200,
+    'issue_qualifier': 2000,
+    'issue_subqualifier': 200,
+    'tag_address': 0.2,
 }
 
 FEE_AMOUNT = 0.01

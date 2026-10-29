@@ -718,6 +718,7 @@ UniValue dumpwallet(const JSONRPCRequest& request)
 
     std::map<CTxDestination, int64_t> mapKeyBirth;
     const std::map<CKeyID, int64_t>& mapKeyPool = pwallet->GetAllReserveKeys();
+    const std::map<CKeyID, int64_t>& mapStrictKeyPool = pwallet->GetAllStrictReserveKeys();
     pwallet->GetKeyBirthTimes(mapKeyBirth);
 
     // sort time/key pairs
@@ -800,14 +801,18 @@ UniValue dumpwallet(const JSONRPCRequest& request)
         CKey key;
         if (pwallet->GetKey(keyid, key)) {
             CPubKey pubkey = key.GetPubKey();
-            std::string strAddr = EncodeDestinationForPubKey(pubkey);
             CTxDestination dest = GetDestinationForPubKey(pubkey);
+            // The wallet hands PQ keys out as strict v2 addresses, and
+            // importwallet labels those: dump the same address.
+            if (pubkey.IsPQ())
+                pwallet->GetStrictAuthScriptDestination(pubkey, dest, /*persist=*/false);
+            std::string strAddr = EncodeDestination(dest);
             file << strprintf("%s %s ", CNeuraiSecret(key).ToString(), strTime);
             if (pwallet->mapAddressBook.count(dest)) {
                 file << strprintf("label=%s", EncodeDumpString(pwallet->mapAddressBook[dest].name));
             } else if (keyid == seed_id) {
                 file << "hdseed=1";
-            } else if (mapKeyPool.count(keyid)) {
+            } else if (mapKeyPool.count(keyid) || mapStrictKeyPool.count(keyid)) {
                 file << "reserve=1";
             } else if (pwallet->mapKeyMetadata[keyid].hdKeypath == "s") {
                 file << "inactivehdseed=1";

@@ -9,6 +9,7 @@
 #
 
 from __future__ import print_function, division
+import hashlib
 import struct
 import re
 import os
@@ -49,7 +50,10 @@ def wordreverse(in_buf):
 	out_words.reverse()
 	return b''.join(out_words)
 
-def calc_hash_str(blk_hdr):
+def calc_hash_str(blk_hdr, algo):
+	if algo == 'sha256d':
+		# Testnet and regtest mine double-SHA256 over the 80-byte header.
+		return hexlify(hashlib.sha256(hashlib.sha256(blk_hdr).digest()).digest()[::-1]).decode('utf-8')
 	x16r_hash_cmd = os.path.dirname(os.path.realpath(__file__)) + "/../../src/test/test_neurai_hash"
 	cmd = [x16r_hash_cmd, hexlify(blk_hdr).decode('utf-8'), "2"]
 	blk_hash = subprocess.run(cmd, stdout=subprocess.PIPE, check=True).stdout.decode('ascii')
@@ -212,7 +216,7 @@ class BlockDataCopier:
 			blk_hdr = self.inF.read(80)
 			inExtent = BlockExtent(self.inFn, self.inF.tell(), inhdr, blk_hdr, inLen)
 
-			self.hash_str = calc_hash_str(blk_hdr)
+			self.hash_str = calc_hash_str(blk_hdr, self.settings['hashalgo'])
 			if not self.hash_str in blkmap:
 				# Because blocks can be written to files out-of-order as of 0.10, the script
 				# may encounter blocks it doesn't know about. Treat as debug output.
@@ -272,6 +276,9 @@ if __name__ == '__main__':
 
 	if 'netmagic' not in settings:
 		settings['netmagic'] = '43524f57'
+	if 'hashalgo' not in settings:
+		settings['hashalgo'] = 'x16rv2'
+	settings['hashalgo'] = settings['hashalgo'].lower()
 	if 'genesis' not in settings:
 		settings['genesis'] = '0b2c703dc93bb63a36c4e33b85be4855ddbca2ac951a7a0a29b8de0408200a3c'
 	if 'input' not in settings:

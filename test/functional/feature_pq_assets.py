@@ -90,8 +90,8 @@ class PQAssetTest(NeuraiTestFramework):
         self.pq2_receive = n2.getnewaddress()
 
         self.assert_script_type(n0, self.legacy_receive, "pubkeyhash")
-        self.assert_script_type(n1, self.pq1_receive, "witness_v1_authscript")
-        self.assert_script_type(n2, self.pq2_receive, "witness_v1_authscript")
+        self.assert_script_type(n1, self.pq1_receive, "witness_v2_strict_pq")
+        self.assert_script_type(n2, self.pq2_receive, "witness_v2_strict_pq")
         self.assert_hd_path(n1, self.pq1_receive, "m_pq/100'/1'/0'/0'/0'")
         self.assert_hd_path(n2, self.pq2_receive, "m_pq/100'/1'/0'/0'/0'")
 
@@ -121,7 +121,7 @@ class PQAssetTest(NeuraiTestFramework):
                 break
 
         assert change_address is not None
-        self.assert_script_type(n1, change_address, "witness_v1_authscript")
+        self.assert_script_type(n1, change_address, "witness_v2_strict_pq")
         self.assert_hd_path(n1, change_address, "m_pq/100'/1'/0'/1'/0'")
 
     def pq_issue_and_reissue(self):

@@ -181,6 +181,13 @@ class DepinRestrictionUndoTest(NeuraiTestFramework):
         sync_blocks(self.nodes)
         assert_equal(SELF_REVOKED, self.restriction())
 
+    def verifychain_reconnects(self):
+        self.log.info("verifychain level 4 disconnects every block and reconnects them with their freezes...")
+        # Reconnecting the unfreezes needs the freeze state of each block's
+        # past, not the state at the tip, where the holder is no longer frozen.
+        for node in self.nodes:
+            assert node.verifychain(4, 0)
+
     def run_test(self):
         self.setup_asset()
         self.undo_owner_only_unfreeze()
@@ -188,6 +195,7 @@ class DepinRestrictionUndoTest(NeuraiTestFramework):
         self.rebuilt_chainstate_and_restart()
         self.freeze_evicts_pending_holder_transfer()
         self.self_revocation_survives_close_and_reorg()
+        self.verifychain_reconnects()
 
 
 if __name__ == '__main__':

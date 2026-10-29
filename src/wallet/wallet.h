@@ -1300,6 +1300,8 @@ public:
     void MarkStrictEcdsaReserveKeysAsUsed(int64_t keypool_id);
     size_t GetStrictEcdsaKeyPoolSize(bool internal);
     const std::map<CKeyID, int64_t>& GetAllReserveKeys() const { return m_pool_key_to_index; }
+    //! Unused keys of the strict ECDSA (witness v3) keypool.
+    const std::map<CKeyID, int64_t>& GetAllStrictReserveKeys() const { return m_strict_pool_key_to_index; }
 
     std::set< std::set<CTxDestination> > GetAddressGroupings();
     std::map<CTxDestination, CAmount> GetAddressBalances();

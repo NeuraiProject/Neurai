@@ -88,7 +88,7 @@ class WalletDumpTest(NeuraiTestFramework):
         found_addr, found_addr_chg, found_addr_rsv, hd_master_addr_unenc = read_dump(tmpdir + "/node0/wallet.unencrypted.dump", addrs, None)
         assert_equal(found_addr, test_addr_count)  # all keys must be in the dump
         assert_equal(found_addr_chg, 50)  # 50 blocks where mined
-        assert_equal(found_addr_rsv, 90*2) # 90 keys plus 100% internal keys
+        assert_equal(found_addr_rsv, 90*2*2) # 90 keys plus 100% internal keys, in the legacy and strict ECDSA keypools
 
         #encrypt wallet, restart, unlock and dump
         self.nodes[0].node_encrypt_wallet('test')
@@ -101,7 +101,7 @@ class WalletDumpTest(NeuraiTestFramework):
         found_addr, found_addr_chg, found_addr_rsv, _ = read_dump(tmpdir + "/node0/wallet.encrypted.dump", addrs, hd_master_addr_unenc)
         assert_equal(found_addr, test_addr_count)
         assert_equal(found_addr_chg, 50)  # old reserve keys are marked as change now
-        assert_equal(found_addr_rsv, 90*2) 
+        assert_equal(found_addr_rsv, 90*2*2)
 
         # Overwriting should fail
         assert_raises_rpc_error(-8, "already exists", self.nodes[0].dumpwallet, tmpdir + "/node0/wallet.unencrypted.dump")

@@ -16,7 +16,10 @@ class MempoolLimitTest(NeuraiTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 1
-        self.extra_args = [["-maxmempool=10", "-spendzeroconfchange=0"]]
+        # -maxmempool must be at least 40 times -limitdescendantsize, whose
+        # default is now 750 kB (30 MB minimum). Keep the old 250 kB limit so a
+        # 10 MB mempool is still allowed and fills up with few transactions.
+        self.extra_args = [["-maxmempool=10", "-limitdescendantsize=250", "-spendzeroconfchange=0"]]
         self.thirtyTransactions = 9  # tx are created in groups of 30.  Value here will be multiplied by thirty for the number of tx.
 
     def run_test(self):

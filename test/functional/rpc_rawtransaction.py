@@ -18,6 +18,9 @@ Test the following RPCs:
 from test_framework.test_framework import NeuraiTestFramework
 from test_framework.util import connect_nodes_bi, assert_raises_rpc_error, assert_equal, Decimal
 
+# Regtest block subsidy
+SUBSIDY = Decimal('50000.00000000')
+
 # Create one-input, one-output, no-fee transaction:
 class RawTransactionsTest(NeuraiTestFramework):
     def set_test_params(self):
@@ -121,7 +124,7 @@ class RawTransactionsTest(NeuraiTestFramework):
         self.sync_all()
         self.nodes[0].generate(1)
         self.sync_all()
-        assert_equal(self.nodes[0].getbalance(), bal+Decimal('5000.00000000')+Decimal('2.19000000')) #block reward + tx
+        assert_equal(self.nodes[0].getbalance(), bal+SUBSIDY+Decimal('2.19000000')) #block reward + tx
 
         # 2of2 test for combining transactions
         bal = self.nodes[2].getbalance()
@@ -170,7 +173,7 @@ class RawTransactionsTest(NeuraiTestFramework):
         self.sync_all()
         self.nodes[0].generate(1)
         self.sync_all()
-        assert_equal(self.nodes[0].getbalance(), bal+Decimal('5000.00000000')+Decimal('2.19000000')) #block reward + tx
+        assert_equal(self.nodes[0].getbalance(), bal+SUBSIDY+Decimal('2.19000000')) #block reward + tx
 
         # getrawtransaction tests
         # 1. valid parameters - only supply txid

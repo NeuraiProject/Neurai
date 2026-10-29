@@ -31,10 +31,10 @@ import struct
 import time
 
 from test_framework.siphash import siphash256
-from test_framework.util import hex_str_to_bytes, bytes_to_hex_str, x16_hash_block
+from test_framework.util import hex_str_to_bytes, bytes_to_hex_str
 
 BIP0031_VERSION = 60000
-MY_VERSION = 70025  # This needs to match the ASSETDATA_VERSION in version.h!
+MY_VERSION = 70030  # RESET_TESTNET_VERSION in version.h: what regtest announces and requires
 MY_SUBVERSION = b"/python-mininode-tester:0.0.3/"
 MY_RELAY = 1  # from version 70001 onwards, fRelay should be appended to version messages (BIP37)
 
@@ -678,6 +678,7 @@ class CBlockHeader:
         return r
 
     def calc_x16r(self):
+        # Regtest, like testnet, mines double-SHA256 over the 80-byte header.
         if self.x16r is None:
             r = b""
             r += struct.pack("<i", self.nVersion)
@@ -686,8 +687,9 @@ class CBlockHeader:
             r += struct.pack("<I", self.nTime)
             r += struct.pack("<I", self.nBits)
             r += struct.pack("<I", self.nNonce)
-            self.hash = x16_hash_block(encode(r, 'hex_codec').decode('ascii'), "2")
-            self.x16r = int(self.hash, 16)
+            digest = hash256(r)
+            self.hash = encode(digest[::-1], 'hex_codec').decode('ascii')
+            self.x16r = uint256_from_str(digest)
 
     def rehash(self):
         self.x16r = None

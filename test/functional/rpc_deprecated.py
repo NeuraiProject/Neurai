@@ -7,20 +7,30 @@
 """Test deprecation of RPC calls."""
 
 from test_framework.test_framework import NeuraiTestFramework
-from test_framework.util import assert_raises_rpc_error
+from test_framework.util import assert_equal
 
 class DeprecatedRpcTest(NeuraiTestFramework):
     def set_test_params(self):
         self.num_nodes = 2
         self.setup_clean_chain = True
-        self.extra_args = [[], ["-deprecatedrpc=estimatefee"]]
+        self.extra_args = [[], ["-deprecatedrpc=getmininginfo"]]
 
     def run_test(self):
-        self.log.info("estimatefee: Shows deprecated message")
-        assert_raises_rpc_error(-32, 'estimatefee is deprecated', self.nodes[0].estimatefee, 1)
+        # Neurai removed the estimatefee deprecation gate, so it no longer needs
+        # -deprecatedrpc. The getmininginfo "errors" field is the remaining
+        # deprecated behaviour behind -deprecatedrpc.
+        self.log.info("estimatefee: works without -deprecatedrpc")
+        assert_equal(self.nodes[0].estimatefee(1), -1)
 
-        self.log.info("Using -deprecatedrpc=estimatefee bypasses the error")
-        self.nodes[1].estimatefee(1)
+        self.log.info("getmininginfo: reports warnings, not the deprecated errors field")
+        info = self.nodes[0].getmininginfo()
+        assert 'warnings' in info
+        assert 'errors' not in info
+
+        self.log.info("Using -deprecatedrpc=getmininginfo restores the errors field")
+        info = self.nodes[1].getmininginfo()
+        assert 'errors' in info
+        assert 'warnings' not in info
 
 if __name__ == '__main__':
     DeprecatedRpcTest().main()

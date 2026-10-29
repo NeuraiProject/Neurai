@@ -33,13 +33,14 @@ def byte_to_base58(b, version):
 
 def keyhash_to_p2pkh(hash_input, main=False):
     assert (len(hash_input) == 20)
-    version = 0 if main else 111
+    # Neurai base58 versions: mainnet 'N' (53); testnet and regtest 't' (127).
+    version = 53 if main else 127
     return byte_to_base58(hash_input, version)
 
 
 def scripthash_to_p2sh(hash_in, main=False):
     assert (len(hash_in) == 20)
-    version = 5 if main else 196
+    version = 117 if main else 196
     return byte_to_base58(hash_in, version)
 
 

@@ -50,13 +50,16 @@ class RawTransactionsTest(NeuraiTestFramework):
         self.sync_all()
 
         # ensure that setting changePosition in fundraw with an exact match is handled properly
-        raw_match = self.nodes[2].createrawtransaction([], {self.nodes[2].getnewaddress():5000})
+        # (node 2 holds one mature 50000 XNA coinbase output)
+        raw_match = self.nodes[2].createrawtransaction([], {self.nodes[2].getnewaddress():50000})
         raw_match = self.nodes[2].fundrawtransaction(raw_match, {"changePosition":1, "subtractFeeFromOutputs":[0]})
         assert_equal(raw_match["changepos"], -1)
 
         watchonly_address = self.nodes[0].getnewaddress()
         watchonly_pubkey = self.nodes[0].validateaddress(watchonly_address)["pubkey"]
-        watchonly_amount = Decimal(20000)
+        # Larger than the 50000 XNA coinbase outputs, so node 0 does not pick
+        # the watched coin when it funds the following transactions.
+        watchonly_amount = Decimal(200000)
         self.nodes[3].importpubkey(watchonly_pubkey, "", True)
         watchonly_txid = self.nodes[0].sendtoaddress(watchonly_address, watchonly_amount)
         self.nodes[0].sendtoaddress(self.nodes[3].getnewaddress(), watchonly_amount / 10)
@@ -489,7 +492,7 @@ class RawTransactionsTest(NeuraiTestFramework):
         self.sync_all()
 
         # make sure funds are received at node1
-        assert_equal(oldBalance+Decimal('5001.10000000'), self.nodes[0].getbalance())
+        assert_equal(oldBalance+Decimal('50001.10000000'), self.nodes[0].getbalance())
 
 
         ###############################################
@@ -549,7 +552,7 @@ class RawTransactionsTest(NeuraiTestFramework):
         self.sync_all()
         self.nodes[0].generate(1)
         self.sync_all()
-        assert_equal(oldBalance+Decimal('5000.19000000'), self.nodes[0].getbalance()) #0.19+block reward
+        assert_equal(oldBalance+Decimal('50000.19000000'), self.nodes[0].getbalance()) #0.19+block reward
 
         #####################################################
         # test fundrawtransaction with OP_RETURN and no vin #

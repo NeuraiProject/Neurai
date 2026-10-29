@@ -8,8 +8,9 @@
 
 import binascii
 from test_framework.test_framework import NeuraiTestFramework
-from test_framework.util import connect_nodes_bi, assert_equal
-from test_framework.script import CScript, OP_DUP, OP_HASH160, OP_EQUALVERIFY, OP_CHECKSIG
+from test_framework.util import connect_nodes_bi, assert_equal, hex_str_to_bytes
+from test_framework.script import CScript, OP_DUP, OP_HASH160, OP_EQUALVERIFY, OP_CHECKSIG, hash160
+from test_framework.address import keyhash_to_p2pkh
 from test_framework.mininode import CTransaction, CTxIn, COutPoint, CTxOut
 
 class SpentIndexTest(NeuraiTestFramework):
@@ -48,7 +49,7 @@ class SpentIndexTest(NeuraiTestFramework):
 
         fee_satoshis = 192000
         privkey = "cSdkPxkAjA4HDr5VHgsebAPDEh9Gyub4HK8UJr2DFGGqKKy4K5sG"
-        #address = "mgY65WSfEmsyYaYPQaXhmXMeBhwp4EcsQW"
+        #address = "t7wjqFDGbfHzdWmmoHroXXiEFn4uTaWhWL"
         address_hash = bytes([11,47,10,12,49,191,224,64,107,12,204,19,129,253,190,49,25,70,218,220])
         script_pub_key = CScript([OP_DUP, OP_HASH160, address_hash, OP_EQUALVERIFY, OP_CHECKSIG])
         unspent = self.nodes[0].listunspent()
@@ -86,7 +87,7 @@ class SpentIndexTest(NeuraiTestFramework):
 
         # Check that verbose raw transaction includes address values and input values
         #privkey2 = "cSdkPxkAjA4HDr5VHgsebAPDEh9Gyub4HK8UJr2DFGGqKKy4K5sG"
-        address2 = "mgY65WSfEmsyYaYPQaXhmXMeBhwp4EcsQW"
+        address2 = "t7wjqFDGbfHzdWmmoHroXXiEFn4uTaWhWL"
         address_hash2 = bytes([11, 47, 10, 12, 49, 191, 224, 64, 107, 12, 204, 19, 129, 253, 190, 49, 25, 70, 218, 220])
         script_pub_key2 = CScript([OP_DUP, OP_HASH160, address_hash2, OP_EQUALVERIFY, OP_CHECKSIG])
         tx2 = CTransaction()
@@ -122,16 +123,24 @@ class SpentIndexTest(NeuraiTestFramework):
         assert_equal(len(block["deltas"]), 2)
         assert_equal(block["deltas"][0]["index"], 0)
         assert_equal(len(block["deltas"][0]["inputs"]), 0)
-        assert_equal(len(block["deltas"][0]["outputs"]), 0)
+        # The coinbase pays to a P2PK script; like the address index, block deltas
+        # report it under the P2PKH address of that pubkey.
+        coinbase_out = self.nodes[3].getrawtransaction(block["deltas"][0]["txid"], 1)["vout"][0]
+        assert_equal(coinbase_out["scriptPubKey"]["type"], "pubkey")
+        coinbase_pubkey = hex_str_to_bytes(coinbase_out["scriptPubKey"]["hex"])[1:-1]
+        assert_equal(len(block["deltas"][0]["outputs"]), 1)
+        assert_equal(block["deltas"][0]["outputs"][0]["index"], 0)
+        assert_equal(block["deltas"][0]["outputs"][0]["address"], keyhash_to_p2pkh(hash160(coinbase_pubkey)))
+        assert_equal(block["deltas"][0]["outputs"][0]["satoshis"], coinbase_out["valueSat"])
         assert_equal(block["deltas"][1]["index"], 1)
         assert_equal(block["deltas"][1]["txid"], txid2)
         assert_equal(block["deltas"][1]["inputs"][0]["index"], 0)
-        assert_equal(block["deltas"][1]["inputs"][0]["address"], "mgY65WSfEmsyYaYPQaXhmXMeBhwp4EcsQW")
+        assert_equal(block["deltas"][1]["inputs"][0]["address"], "t7wjqFDGbfHzdWmmoHroXXiEFn4uTaWhWL")
         assert_equal(block["deltas"][1]["inputs"][0]["satoshis"], (amount + fee_satoshis) * -1)
         assert_equal(block["deltas"][1]["inputs"][0]["prevtxid"], txid)
         assert_equal(block["deltas"][1]["inputs"][0]["prevout"], 0)
         assert_equal(block["deltas"][1]["outputs"][0]["index"], 0)
-        assert_equal(block["deltas"][1]["outputs"][0]["address"], "mgY65WSfEmsyYaYPQaXhmXMeBhwp4EcsQW")
+        assert_equal(block["deltas"][1]["outputs"][0]["address"], "t7wjqFDGbfHzdWmmoHroXXiEFn4uTaWhWL")
         assert_equal(block["deltas"][1]["outputs"][0]["satoshis"], amount)
 
         self.log.info("All Tests Passed")

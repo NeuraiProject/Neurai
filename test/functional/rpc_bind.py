@@ -6,11 +6,10 @@
 
 """Test running neuraid with the -rpcbind and -rpcallowip options."""
 
-import socket
 import sys
 from test_framework.test_framework import NeuraiTestFramework, SkipTest
 from test_framework.util import assert_equal, get_rpc_proxy, rpc_url, get_datadir_path, rpc_port, assert_raises_rpc_error
-from test_framework.netutil import addr_to_hex, get_bind_addrs, all_interfaces
+from test_framework.netutil import addr_to_hex, get_bind_addrs, all_interfaces, test_ipv6_local
 
 class RPCBindTest(NeuraiTestFramework):
     def set_test_params(self):
@@ -64,11 +63,7 @@ class RPCBindTest(NeuraiTestFramework):
                 break
         if non_loopback_ip is None:
             raise SkipTest("This test requires at least one non-loopback IPv4 interface.")
-        try:
-            s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-            s.connect(("::1",1))
-            s.close()
-        except OSError:
+        if not test_ipv6_local():
             raise SkipTest("This test requires IPv6 support.")
 
         self.log.info("Using interface %s for testing" % non_loopback_ip)

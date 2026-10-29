@@ -19,6 +19,8 @@ def create_block(hash_prev, coinbase, n_time=None):
     else:
         block.nTime = n_time
     block.hashPrevBlock = hash_prev
+    # Assets are active on regtest, and blocks below their version are rejected.
+    block.nVersion = 0x30000000
     block.nBits = 0x207fffff # Will break after a difficulty adjustment...
     block.vtx.append(coinbase)
     block.hashMerkleRoot = block.calc_merkle_root()
@@ -26,7 +28,7 @@ def create_block(hash_prev, coinbase, n_time=None):
     return block
 
 # Genesis block time (regtest)
-REGTEST_GENISIS_BLOCK_TIME = 1537466400
+REGTEST_GENISIS_BLOCK_TIME = 1681720840
 
 # From BIP141
 WITNESS_COMMITMENT_HEADER = b"\xaa\x21\xa9\xed"

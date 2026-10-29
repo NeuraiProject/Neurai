@@ -16,7 +16,8 @@ class UacommentTest(NeuraiTestFramework):
 
     def run_test(self):
         self.log.info("test multiple -uacomment")
-        test_uacomment = self.nodes[0].getnetworkinfo()["subversion"][-12:-1]
+        base_subversion = self.nodes[0].getnetworkinfo()["subversion"]
+        test_uacomment = base_subversion[-12:-1]
         assert_equal(test_uacomment, "(testnode0)")
 
         self.restart_node(0, ["-uacomment=foo"])
@@ -25,7 +26,10 @@ class UacommentTest(NeuraiTestFramework):
 
         self.log.info("test -uacomment max length")
         self.stop_node(0)
-        expected = "Total length of network version string (286) exceeds maximum length (256). Reduce the number or size of uacomments."
+        # The user agent length depends on the client version and on the
+        # optional build tag, so derive it from the running node: the extra
+        # comment adds "; " plus 256 characters.
+        expected = "Total length of network version string (%d) exceeds maximum length (256). Reduce the number or size of uacomments." % (len(base_subversion) + 2 + 256)
         self.assert_start_raises_init_error(0, ["-uacomment=" + 'a' * 256], expected)
 
         self.log.info("test -uacomment unsafe characters")

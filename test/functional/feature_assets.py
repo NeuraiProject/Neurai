@@ -109,7 +109,7 @@ class AssetTest(NeuraiTestFramework):
         assert_equal(n0.listassetbalancesbyaddress(address0)["MY_ASSET!"], 1)
 
         self.log.info("Burning all units to test reissue on zero units...")
-        n0.transfer(asset_name="MY_ASSET", qty=800, to_address="n1BurnXXXXXXXXXXXXXXXXXXXXXXU1qejP")
+        n0.transfer(asset_name="MY_ASSET", qty=800, to_address="tBURNXXXXXXXXXXXXXXXXXXXXXXXVZLroy")
         n0.generate(1)
         assert_does_not_contain_key("MY_ASSET", n0.listmyassets(asset="MY_ASSET", verbose=True))
 

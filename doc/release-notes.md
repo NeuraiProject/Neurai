@@ -173,6 +173,10 @@ height revalidates the mempool.
   scheduled with `-blocktimereductionheight`). The regtest-only options in
   the last column move the heights for activation tests; they are listed by
   `-help-debug`.
+- **Asset block version:** on testnet and regtest, which activate assets by
+  height, a block at or below the activation height does not need the asset
+  version bit. A node past the activation used to reject a competing chain
+  that starts there, because it checked the bit against its own tip.
 
 | Change | NIP | Mainnet | Testnet | Regtest (default, override) |
 |---|---|---|---|---|
@@ -400,6 +404,10 @@ reorganizations:
 - A confirmed freeze, self-revocation or close evicts only the pending holder
   transfers it makes invalid; self-revocations and transfers escorted by the
   owner token stay in the mempool.
+- `verifychain 4` (and `-checklevel=4`) reconnects each block against the
+  asset state of its own past. It used to check freezes, self-revocations
+  and the other asset rules against the state at the tip, so it reported a
+  valid unfreeze as unconnectable once the holder was no longer frozen.
 
 **Messaging.** An off-chain, encrypted and expiring message pool for the
 holders of one token subtree (`-depinmsgtoken`), served over the node's
@@ -710,6 +718,14 @@ Result changes:
   `zk_portable_tree`.
 - `getwalletinfo`: new `addresstype`, and `keypoolsize_strict_ecdsa` /
   `keypoolsize_strict_ecdsa_internal`.
+- An RPC call still running when the node shuts down, such as
+  `waitfornewblock`, gets its reply; the HTTP server used to close the
+  connection before sending it.
+- `dumpwallet`: unused keys of the strict ECDSA keypool are marked
+  `reserve=1`, like those of the legacy keypool; they used to appear as
+  `change=1`. Post-quantum keys are dumped with the strict v2 address the
+  wallet hands out, and keep their labels; the dump used to show a generic
+  AuthScript v1 address and mark labelled keys as `change=1`.
 - `getmasterkeyinfo`: new `wallet_type`, `address_type`,
   `strict_ecdsa_derivation_path` (ecdsa wallets),
   `external_derivation_path`, `internal_derivation_path` and post-quantum key

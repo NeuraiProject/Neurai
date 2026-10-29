@@ -18,6 +18,9 @@ RPCs tested are:
 from test_framework.test_framework import NeuraiTestFramework
 from test_framework.util import assert_equal
 
+# Regtest block subsidy
+SUBSIDY = 50000
+
 class WalletAccountsTest(NeuraiTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
@@ -30,13 +33,13 @@ class WalletAccountsTest(NeuraiTestFramework):
         assert_equal(len(node.listunspent()), 0)
 
         # Note each time we call generate, all generated coins go into
-        # the same address, so we call twice to get two addresses w/50 each
+        # the same address, so we call twice to get two addresses w/SUBSIDY each
         node.generate(1)
         node.generate(101)
-        assert_equal(node.getbalance(), 10000)
+        assert_equal(node.getbalance(), 2 * SUBSIDY)
 
         # there should be 2 address groups
-        # each with 1 address with a balance of 50 Neurais
+        # each with 1 address with a balance of SUBSIDY Neurais
         address_groups = node.listaddressgroupings()
         assert_equal(len(address_groups), 2)
         # the addresses aren't linked now, but will be after we send to the
@@ -45,16 +48,16 @@ class WalletAccountsTest(NeuraiTestFramework):
         for address_group in address_groups:
             assert_equal(len(address_group), 1)
             assert_equal(len(address_group[0]), 2)
-            assert_equal(address_group[0][1], 5000)
+            assert_equal(address_group[0][1], SUBSIDY)
             linked_addresses.add(address_group[0][0])
 
-        # send 50 from each address to a third address not in this wallet
+        # send SUBSIDY from each address to a third address not in this wallet
         # There's some fee that will come back to us when the miner reward
         # matures.
-        common_address = "msf4WtN1YQKXvNtvdFYt9JBnUD2FB41kjr"
+        common_address = "tK4iGd8cuHjZ1K8K1xsyuJYNYH9Laj83Uh"
         txid = node.sendmany(
             fromaccount="",
-            amounts={common_address: 10000},
+            amounts={common_address: 2 * SUBSIDY},
             subtractfeefrom=[common_address],
             minconf=1,
         )
@@ -105,13 +108,14 @@ class WalletAccountsTest(NeuraiTestFramework):
 
         node.generate(101)
 
-        expected_account_balances = {"": 520000}
+        # 106 mature block rewards minus the two sent to common_address
+        expected_account_balances = {"": 104 * SUBSIDY}
         for account in accounts:
             expected_account_balances[account] = 0
         
         assert_equal(node.listaccounts(), expected_account_balances)
         
-        assert_equal(node.getbalance(""), 520000)
+        assert_equal(node.getbalance(""), 104 * SUBSIDY)
         
         for account in accounts:
             address = node.getaccountaddress("")

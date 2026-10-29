@@ -53,19 +53,19 @@ class AddressIndexTest(NeuraiTestFramework):
         # Check p2pkh and p2sh address indexes
         self.log.info("Testing p2pkh and p2sh address index...")
 
-        tx_id0 = self.nodes[0].sendtoaddress("mo9ncXisMeAoXwqcV5EWuyncbmCcQN4rVs", 10)
+        tx_id0 = self.nodes[0].sendtoaddress("tEZSNGVUiXapct4zsnZcfz9CfqKhmUqguv", 10)
         self.nodes[0].generate(1)
 
         tx_idb0 = self.nodes[0].sendtoaddress("2N2JD6wb56AfK4tfmM6PwdVmoYk2dCKf4Br", 10)
         self.nodes[0].generate(1)
 
-        tx_id1 = self.nodes[0].sendtoaddress("mo9ncXisMeAoXwqcV5EWuyncbmCcQN4rVs", 15)
+        tx_id1 = self.nodes[0].sendtoaddress("tEZSNGVUiXapct4zsnZcfz9CfqKhmUqguv", 15)
         self.nodes[0].generate(1)
 
         tx_idb1 = self.nodes[0].sendtoaddress("2N2JD6wb56AfK4tfmM6PwdVmoYk2dCKf4Br", 15)
         self.nodes[0].generate(1)
 
-        tx_id2 = self.nodes[0].sendtoaddress("mo9ncXisMeAoXwqcV5EWuyncbmCcQN4rVs", 20)
+        tx_id2 = self.nodes[0].sendtoaddress("tEZSNGVUiXapct4zsnZcfz9CfqKhmUqguv", 20)
         self.nodes[0].generate(1)
 
         tx_idb2 = self.nodes[0].sendtoaddress("2N2JD6wb56AfK4tfmM6PwdVmoYk2dCKf4Br", 20)
@@ -73,7 +73,7 @@ class AddressIndexTest(NeuraiTestFramework):
 
         self.sync_all()
 
-        txids = self.nodes[1].getaddresstxids("mo9ncXisMeAoXwqcV5EWuyncbmCcQN4rVs")
+        txids = self.nodes[1].getaddresstxids("tEZSNGVUiXapct4zsnZcfz9CfqKhmUqguv")
         assert_equal(len(txids), 3)
         assert_equal(txids[0], tx_id0)
         assert_equal(txids[1], tx_id1)
@@ -97,7 +97,7 @@ class AddressIndexTest(NeuraiTestFramework):
         assert_equal(height_txids[1], tx_idb1)
 
         # Check that multiple addresses works
-        multi_tx_ids = self.nodes[1].getaddresstxids({"addresses": ["2N2JD6wb56AfK4tfmM6PwdVmoYk2dCKf4Br", "mo9ncXisMeAoXwqcV5EWuyncbmCcQN4rVs"]})
+        multi_tx_ids = self.nodes[1].getaddresstxids({"addresses": ["2N2JD6wb56AfK4tfmM6PwdVmoYk2dCKf4Br", "tEZSNGVUiXapct4zsnZcfz9CfqKhmUqguv"]})
         assert_equal(len(multi_tx_ids), 6)
         assert_equal(multi_tx_ids[0], tx_id0)
         assert_equal(multi_tx_ids[1], tx_idb0)
@@ -138,7 +138,7 @@ class AddressIndexTest(NeuraiTestFramework):
         # Check that balances are correct after spending
         self.log.info("Testing balances after spending...")
         privkey2 = "cSdkPxkAjA4HDr5VHgsebAPDEh9Gyub4HK8UJr2DFGGqKKy4K5sG"
-        address2 = "mgY65WSfEmsyYaYPQaXhmXMeBhwp4EcsQW"
+        address2 = "t7wjqFDGbfHzdWmmoHroXXiEFn4uTaWhWL"
         address_hash2 = bytes([11,47,10,12,49,191,224,64,107,12,204,19,129,253,190,49,25,70,218,220])
         script_pub_key2 = CScript([OP_DUP, OP_HASH160, address_hash2, OP_EQUALVERIFY, OP_CHECKSIG])
         self.nodes[0].importprivkey(privkey2)
@@ -229,7 +229,7 @@ class AddressIndexTest(NeuraiTestFramework):
         self.log.info("Testing mempool indexing...")
 
         priv_key3 = "cVfUn53hAbRrDEuMexyfgDpZPhF7KqXpS8UZevsyTDaugB7HZ3CD"
-        address3 = "mw4ynwhS7MmrQ27hr82kgqu7zryNDK26JB"
+        address3 = "tNUdYgU3UFBsUxM6EqMrSrFi4w6TbydD3s"
         address_hash3 = bytes([170,152,114,181,187,205,181,17,216,158,14,17,170,39,218,115,253,44,63,80])
         script_pub_key3 = CScript([OP_DUP, OP_HASH160, address_hash3, OP_EQUALVERIFY, OP_CHECKSIG])
         #address4 = "2N8oFVB2vThAKury4vnLquW2zVjsYjjAkYQ"
@@ -295,7 +295,7 @@ class AddressIndexTest(NeuraiTestFramework):
 
         # sending and receiving to the same address
         privkey1 = "cQY2s58LhzUCmEXN8jtAp1Etnijx78YRZ466w4ikX1V4UpTpbsf8"
-        address1 = "myAUWSHnwsQrhuMWv4Br6QsCnpB41vFwHn"
+        address1 = "tQa8GB4QJkpsnqauJmWwrRDnrtJ9LKiQqa"
         address1hash = bytes([193,146,191,247,81,175,142,254,193,81,53,212,43,254,237,249,26,111,62,52])
         address1script = CScript([OP_DUP, OP_HASH160, address1hash, OP_EQUALVERIFY, OP_CHECKSIG])
 

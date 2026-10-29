@@ -274,9 +274,10 @@ class RawAssetTransactionsTest(NeuraiTestFramework):
                 tx.vout[n].scriptPubKey = hex_str_to_bytes(tampered_script)
         tx_bad_issue = bytes_to_hex_str(tx.serialize())
         tx_bad_issue_signed = n0.signrawtransaction(tx_bad_issue)['hex']
-        # Strict placement rule (regtest, NIP revision 010): OP_XNA_ASSET sits
-        # at its expected position but the payload is unparseable
-        assert_raises_rpc_error(-26, "bad-txns-bad-asset-script",
+        # The tampered output is P2PKH followed by an unparseable OP_XNA_ASSET at
+        # byte 25. The context-free check (legacy placement rule, NIP revision
+        # 010) rejects it on every network before the strict rule is reached.
+        assert_raises_rpc_error(-26, "bad-txns-op-xna-asset-not-in-right-script-location",
                                 n0.sendrawtransaction, tx_bad_issue_signed)
 
         ########################################

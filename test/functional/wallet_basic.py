@@ -9,6 +9,9 @@
 from test_framework.test_framework import NeuraiTestFramework
 from test_framework.util import connect_nodes_bi, assert_fee_amount, assert_equal, assert_raises_rpc_error, Decimal, count_bytes, sync_mempools, sync_blocks, time, assert_array_result
 
+# Regtest block subsidy
+SUBSIDY = 50000
+
 class WalletTest(NeuraiTestFramework):
     def set_test_params(self):
         self.num_nodes = 4
@@ -42,15 +45,15 @@ class WalletTest(NeuraiTestFramework):
         self.nodes[0].generate(1)
 
         wallet_info = self.nodes[0].getwalletinfo()
-        assert_equal(wallet_info['immature_balance'], 5000)
+        assert_equal(wallet_info['immature_balance'], SUBSIDY)
         assert_equal(wallet_info['balance'], 0)
 
         self.sync_all([self.nodes[0:3]])
         self.nodes[1].generate(101)
         self.sync_all([self.nodes[0:3]])
 
-        assert_equal(self.nodes[0].getbalance(), 5000)
-        assert_equal(self.nodes[1].getbalance(), 5000)
+        assert_equal(self.nodes[0].getbalance(), SUBSIDY)
+        assert_equal(self.nodes[1].getbalance(), SUBSIDY)
         assert_equal(self.nodes[2].getbalance(), 0)
 
         # Check that only first and second nodes have UTXOs
@@ -64,9 +67,9 @@ class WalletTest(NeuraiTestFramework):
         # First, outputs that are unspent both in the chain and in the
         # mempool should appear with or without include_mempool
         txout = self.nodes[0].gettxout(txid=confirmed_txid, n=confirmed_index, include_mempool=False)
-        assert_equal(txout['value'], 5000)
+        assert_equal(txout['value'], SUBSIDY)
         txout = self.nodes[0].gettxout(txid=confirmed_txid, n=confirmed_index, include_mempool=True)
-        assert_equal(txout['value'], 5000)
+        assert_equal(txout['value'], SUBSIDY)
         
         # Send 21 XNA from 0 to 2 using sendtoaddress call.
         # Locked memory should use at least 32 bytes to sign each transaction
@@ -81,7 +84,7 @@ class WalletTest(NeuraiTestFramework):
         # utxo spent in mempool should be visible if you exclude mempool
         # but invisible if you include mempool
         txout = self.nodes[0].gettxout(confirmed_txid, confirmed_index, False)
-        assert_equal(txout['value'], 5000)
+        assert_equal(txout['value'], SUBSIDY)
         txout = self.nodes[0].gettxout(confirmed_txid, confirmed_index, True)
         assert txout is None
         # new utxo from mempool should be invisible if you exclude mempool
@@ -114,9 +117,9 @@ class WalletTest(NeuraiTestFramework):
         self.nodes[1].generate(100)
         self.sync_all([self.nodes[0:3]])
 
-        # node0 should end up with 100 btc in block rewards plus fees, but
+        # node0 should end up with two block rewards plus fees, but
         # minus the 21 plus fees sent to node2
-        assert_equal(self.nodes[0].getbalance(), 10000-21)
+        assert_equal(self.nodes[0].getbalance(), 2*SUBSIDY-21)
         assert_equal(self.nodes[2].getbalance(), 21)
 
         # Node0 should have two unspent outputs.
@@ -144,8 +147,8 @@ class WalletTest(NeuraiTestFramework):
         self.sync_all([self.nodes[0:3]])
 
         assert_equal(self.nodes[0].getbalance(), 0)
-        assert_equal(self.nodes[2].getbalance(), 9994)
-        assert_equal(self.nodes[2].getbalance("from1"), 9994-21)
+        assert_equal(self.nodes[2].getbalance(), 2*SUBSIDY-6)
+        assert_equal(self.nodes[2].getbalance("from1"), 2*SUBSIDY-6-21)
 
         # Send 10 XNA normal
         address = self.nodes[0].getnewaddress("test")
@@ -154,7 +157,7 @@ class WalletTest(NeuraiTestFramework):
         txid = self.nodes[2].sendtoaddress(address, 10, "", "", False)
         self.nodes[2].generate(1)
         self.sync_all([self.nodes[0:3]])
-        node_2_bal = self.check_fee_amount(self.nodes[2].getbalance(), Decimal('9984'), fee_per_byte, count_bytes(self.nodes[2].getrawtransaction(txid)))
+        node_2_bal = self.check_fee_amount(self.nodes[2].getbalance(), Decimal(2*SUBSIDY-16), fee_per_byte, count_bytes(self.nodes[2].getrawtransaction(txid)))
         assert_equal(self.nodes[0].getbalance(), Decimal('10'))
 
         # Send 10 XNA with subtract fee from amount
@@ -191,10 +194,15 @@ class WalletTest(NeuraiTestFramework):
 
         self.start_node(3)
         connect_nodes_bi(self.nodes, 0, 3)
+        connect_nodes_bi(self.nodes, 1, 3)
         sync_blocks(self.nodes)
 
+        # A wallet only rebroadcasts the transactions it signed, not the
+        # payments it merely received (NIP-047), so each sender resends its own.
         relayed = self.nodes[0].resendwallettransactions()
-        assert_equal(set(relayed), {txid1, txid2})
+        assert_equal(set(relayed), {txid1})
+        relayed = self.nodes[1].resendwallettransactions()
+        assert_equal(set(relayed), {txid2})
         sync_mempools(self.nodes)
 
         assert(txid1 in self.nodes[3].getrawmempool())
@@ -210,7 +218,7 @@ class WalletTest(NeuraiTestFramework):
         #4. check if recipient (node0) can list the zero value tx
         usp = self.nodes[1].listunspent()
         inputs = [{"txid":usp[0]['txid'], "vout":usp[0]['vout']}]
-        outputs = {self.nodes[1].getnewaddress(): 4999.998, self.nodes[0].getnewaddress(): 1111.11}
+        outputs = {self.nodes[1].getnewaddress(): SUBSIDY - Decimal('0.002'), self.nodes[0].getnewaddress(): 1111.11}
 
         raw_tx = self.nodes[1].createrawtransaction(inputs, outputs)
         raw_tx = raw_tx.replace("c04fbbde19", "0000000000") #replace 1111.11 with 0.0 (int32)

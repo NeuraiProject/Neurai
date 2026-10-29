@@ -162,6 +162,9 @@ def test_ipv6_local():
     try:
         s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
         s.connect(('::1', 0))
+        # The node resolves with AI_ADDRCONFIG, which hides IPv6 when only the
+        # loopback has an IPv6 address (as in most containers).
+        socket.getaddrinfo('::1', 0, socket.AF_UNSPEC, socket.SOCK_STREAM, 0, socket.AI_ADDRCONFIG)
     except socket.error:
         have_ipv6 = False
     return have_ipv6

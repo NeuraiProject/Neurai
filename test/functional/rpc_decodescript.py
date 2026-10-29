@@ -185,7 +185,7 @@ class DecodeScriptTest(NeuraiTestFramework):
         assert_equal(1, result['reqSigs'])
         assert_equal('new_asset', result['type'])
         assert_equal(1, len(result['addresses']))
-        assert_equal('mkQgP9nSuRocxERXGnPaWr8NPTWtCM4uiN', result['addresses'][0])
+        assert_equal('tBpL8tZ4GKDe3AeufVigGrUxTXdyaiysKJ', result['addresses'][0])
         assert_equal('2MvanKE2hxx2A5jcFZ5paHZHSb6VPZMEvGe', result['p2sh'])
         assert_equal('TESTASSET', result['asset_name'])
         assert_equal(100.0, result['amount'])
