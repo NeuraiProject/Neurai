@@ -234,8 +234,11 @@ http_get "${CONFIG_SUB_URL}" dist/config.sub "${CONFIG_SUB_HASH}"
 
 cd build_unix/
 
+# --enable-umrw fills the unused part of every new database page with a fixed
+# byte. Without it a new page keeps whatever its buffer held before, which can
+# carry a deleted unencrypted wallet secret into the file.
 "${BDB_PREFIX}/${BDB_VERSION}/dist/configure" \
-  --enable-cxx --disable-shared --disable-replication --with-pic --prefix="${BDB_PREFIX}" \
+  --enable-cxx --disable-shared --disable-replication --with-pic --enable-umrw --prefix="${BDB_PREFIX}" \
   "${@}"
 
 make install

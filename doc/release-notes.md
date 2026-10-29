@@ -326,6 +326,16 @@ Mining
 Wallet
 ------
 
+- **Encrypted wallets.** Encrypting a wallet could leave the unencrypted BIP39
+  mnemonic in unused space of `wallet.dat` (about one encryption in five in
+  tests): Berkeley DB filled part of a new page with whatever its buffer held
+  before. Berkeley DB is now built with `--enable-umrw` (`depends` and
+  `contrib/install_db4.sh`), which fills that space; a build linked against a
+  Berkeley DB without it does not get this protection. A wallet encrypted by
+  an earlier version is rewritten once on its first load (`Rewriting
+  encrypted wallet ... once` in the log); older versions ignore the record
+  that marks it. Copies and backups made earlier keep whatever they hold: if
+  one may have been exposed, move the funds to a new wallet.
 - **Address types.** `-addresstype` selects what a new wallet hands out by
   default, in the GUI and over RPC (`getnewaddress`, `getaccountaddress`,
   `getrawchangeaddress`, change, the asset RPCs and mining):

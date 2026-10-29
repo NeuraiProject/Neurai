@@ -341,6 +341,12 @@ public:
     bool EraseBip39Words(bool fEncrypted);
     bool EraseBip39Passphrase(bool fEncrypted);
     bool EraseBip39VchSeed(bool fEncrypted);
+
+    //! Records that the file was rewritten after encryption by a build whose
+    //! database fills the unused part of new pages, so no deleted
+    //! unencrypted secret survives there.
+    bool WriteEncryptedRewrite();
+    bool HasEncryptedRewrite();
 private:
     CDB batch;
     CWalletDBWrapper& m_dbw;

@@ -1204,6 +1204,17 @@ bool CWalletDB::EraseBip39VchSeed(bool fEncrypted)
     return EraseIC(key);
 }
 
+bool CWalletDB::WriteEncryptedRewrite()
+{
+    return WriteIC(std::string("encryptedrewrite"), uint8_t{1});
+}
+
+bool CWalletDB::HasEncryptedRewrite()
+{
+    uint8_t nVersion = 0;
+    return batch.Read(std::string("encryptedrewrite"), nVersion);
+}
+
 bool CWalletDB::EraseDestData(const std::string &address, const std::string &key)
 {
     return EraseIC(std::make_pair(std::string("destdata"), std::make_pair(address, key)));

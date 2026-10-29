@@ -1069,7 +1069,8 @@ bool CWallet::EncryptWallet(const SecureString& strWalletPassphrase)
 
         // Need to completely rewrite the wallet file; if we don't, bdb might keep
         // bits of the unencrypted private key in slack space in the database file.
-        dbw->Rewrite();
+        if (dbw->Rewrite())
+            CWalletDB(*dbw).WriteEncryptedRewrite();
 
         if (hdChain.IsBip44()) {
             CWalletDB walletdb(*dbw);
@@ -5824,6 +5825,17 @@ CWallet* CWallet:: CreateWalletFromFile(const std::string walletFile)
             InitError(strprintf(_("Error loading %s"), walletFile));
             return nullptr;
         }
+    }
+
+    // Earlier builds could carry deleted unencrypted secrets into the unused
+    // part of the pages they wrote when encrypting a wallet. Rewrite such a
+    // wallet once, with a database that fills those pages, and record it.
+    if (walletInstance->IsCrypted() && !CWalletDB(*walletInstance->dbw).HasEncryptedRewrite()) {
+        LogPrintf("Rewriting encrypted wallet %s once to clear unused page space\n", walletFile);
+        if (walletInstance->dbw->Rewrite())
+            CWalletDB(*walletInstance->dbw).WriteEncryptedRewrite();
+        else
+            LogPrintf("Warning: could not rewrite encrypted wallet %s\n", walletFile);
     }
 
     if (gArgs.GetBoolArg("-upgradewallet", fFirstRun))
