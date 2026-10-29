@@ -1401,6 +1401,113 @@ Activation: reset testnet height 10, regtest 0 (`-zkpublictreeheight`, `-1`
 disables), mainnet unscheduled. `getblockchaininfo` reports the state under
 `zk_public_tree`. Testnet nodes must upgrade before spending C5 outputs.
 
+## P2AH: `OP_CHECKASSETAUTH` (NIP-054)
+
+`OP_CHECKASSETAUTH` (slot `0xdf`, AuthScript only) lets a custody require M of
+N roles to approve a spend. A role is an owner token (`NAME!`, including DEPIN
+owners `&NAME!`): whoever holds it can approve, so roles move like any other
+token and the script holds no key list.
+
+### Stack contract
+
+```
+witness: 00 <c> <a> <b> <T> <script>
+script:  ... <1> <M> <G> <role_1> ... <role_n> <n> OP_CHECKASSETAUTH
+```
+
+Before the opcode the stack ends in `c a b T 1 M G role_1 ... role_n n`. On
+success the opcode removes those `n + 8` items and pushes `1`; on failure the
+script fails, it never pushes `0`.
+
+- **Policy** (`SCRIPT_ERR_ASSETAUTH_POLICY`): version `1`, `1 <= M <= G <= n <=
+  16`, roles are valid owner names in strictly increasing byte order.
+- **Arguments** (`SCRIPT_ERR_ASSETAUTH_ARGS`): `c`, `a`, `b`, `T` are
+  non-negative minimal numbers of up to 4 bytes, `c` at most the number of
+  inputs, `a + b` at most the number of outputs.
+
+### Approvals
+
+Every input that carries a role of the list is classified:
+
+| Input destination | Counts when | Fails with |
+|---|---|---|
+| P2PKH, or strict v2/v3 once the strict families are enforced | always: a direct signature | `SCRIPT_ERR_ASSETAUTH_SIGHASH` if the signature is not `SIGHASH_ALL` |
+| Any other (a vote lock) | its 32-byte transfer message equals the proposal hash `H` | `SCRIPT_ERR_ASSETAUTH_FOREIGN_VOTE` if it carries another message, an IPFS one included |
+
+A role counts once. With no vote counted the call is **synchronous** and only
+the threshold applies. With at least one vote it is **asynchronous**: the
+height must be at most `T` (`SCRIPT_ERR_ASSETAUTH_EXPIRED`), and the
+transaction must keep a fixed shape (`SCRIPT_ERR_ASSETAUTH_SHAPE`):
+
+1. The evaluated input is one of the first `c` (the proposal inputs).
+2. No input from index `c` on spends from the evaluated destination.
+3. Inputs from index `c` on are approval entries (an owner of amount 1 with a
+   `SIGHASH_ALL` direct signature or with message `H`) or carry no asset.
+4. Outputs between the first `a` and the last `b` are returns (an owner that
+   entered as an approval entry, amount 1, value 0) or plain XNA change with
+   no asset, null-asset data or `OP_RETURN`.
+5. The change is at most the XNA of the inputs from index `c` on that carry no
+   asset.
+
+The **threshold** is `G` when an owner held at the evaluated destination goes
+to another destination in this transaction, and `M` otherwise
+(`SCRIPT_ERR_ASSETAUTH_THRESHOLD`).
+
+### Proposal hash
+
+```
+H = TaggedHash("NeuraiAssetAuthProposal", m)
+m = chainId (u8: 0 main, 1 testnet, 2 regtest) || nVersion (i32) || nLockTime (u32)
+    || T (u32) || compact(c) || compact(a) || compact(b)
+    || (outpoint, nSequence) of inputs 0..c-1
+    || outputs 0..a-1 || the last b outputs
+    || compact(#refs) || reference inputs (version 3 only)
+```
+
+The executor is free to choose the sequences of inputs from index `c` on and
+the intermediate outputs: approvals, fees, returns and change.
+
+### Vote locks
+
+A vote lock is a wallet template, not part of the opcode. It must identify the
+custody with `OP_INPUTFIELD <j> 04`, the full version-plus-commitment
+`0x01 || C`. Selector `02` only reads the first 34 bytes of the spent script,
+so the anyone-can-spend script `OP_1 <C> OP_DROP OP_DROP OP_TRUE` would pass as
+the custody and release the vote to a forged execution.
+
+### Work budget and caching
+
+Each execution charges
+
+```
+W = 1 + inputs + outputs + ceil(|m| / 64) + N
+N = sum of ceil(|name| / 32) over the roles and over the asset name of every
+    spent output and every output that carries one
+```
+
+before it checks any name and before it hashes. Name validation is the costly
+step: it uses regular expressions, grows with the length and is slowest for
+DEPIN owners, so a script that calls the opcode many times with the same roles
+pays for every check. A block may use at most `MAX_BLOCK_ASSETAUTH_WORK` =
+450,000 (`bad-blk-assetauth-work`) and a standard transaction at most
+`MAX_STANDARD_TX_ASSETAUTH_WORK` = 45,000 (`bad-txns-assetauth-work`). With
+these values the worst block measured costs about 2 s to validate on mainnet
+and 3 s on testnet, where names reach 121 bytes, below the worst `OP_POSEIDON`
+block. A typical execution charges about 30 units.
+Block assembly adds up the cost stored with each
+mempool entry, and a mempool entry whose cost changes when the tip moves is
+evicted. Transactions whose witness contains the byte `0xdf` skip the script
+execution cache, so every validation charges the budget.
+
+### Activation
+
+`SCRIPT_VERIFY_ASSETAUTH` (bit 52), `nAssetAuthHeight`: testnet block 100
+(retroactive: executing `0xdf` always failed before, so no existing block
+changes), regtest 0 (`-assetauthheight`), mainnet unscheduled. With the flag
+off `0xdf` is `SCRIPT_ERR_BAD_OPCODE`. Outside AuthScript the opcode fails
+with `SCRIPT_ERR_ASSETAUTH_SIGVERSION`, and without prevouts or chain context
+with `SCRIPT_ERR_ASSETAUTH_CONTEXT`, so `libneuraiconsensus` cannot run it.
+
 ---
 
 ## Further Reading

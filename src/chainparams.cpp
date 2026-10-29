@@ -399,6 +399,9 @@ public:
         consensus.nInputFieldHeight = TESTNET_FEATURES_HEIGHT; // NIP-043
         consensus.nAuthScriptTreeHeight = TESTNET_FEATURES_HEIGHT; // NIP-044
         consensus.nMerklePoseidonHeight = TESTNET_FEATURES_HEIGHT; // NIP-043
+        // NIP-054: own height, retroactive on the running testnet. Executing
+        // 0xdf always failed before, so no stored block changes verdict.
+        consensus.nAssetAuthHeight = 100;
         consensus.nTxHashHeight = TESTNET_FEATURES_HEIGHT; // NIP-042
         consensus.nTXFIELDEnabled = true; // OP_TXFIELD (NOP7) active on testnet
         consensus.nSPLITEnabled = true;   // OP_SPLIT (NOP8) active on testnet
@@ -670,6 +673,7 @@ public:
         consensus.nInputFieldHeight = 0; // NIP-043: regtest
         consensus.nAuthScriptTreeHeight = 0; // NIP-044: reset testnet / regtest only
         consensus.nMerklePoseidonHeight = 0; // NIP-043: regtest
+        consensus.nAssetAuthHeight = 0; // NIP-054: regtest; tests move it via -assetauthheight
         consensus.nTxHashHeight = 0; // NIP-042: active by default on regtest
         consensus.nTXFIELDEnabled = true; // OP_TXFIELD (NOP7) active on regtest
         consensus.nSPLITEnabled = true;   // OP_SPLIT (NOP8) active on regtest
@@ -976,6 +980,11 @@ void UpdateInputFieldHeight(int nHeight)
 void UpdateMerklePoseidonHeight(int nHeight)
 {
     globalChainParams->UpdateMerklePoseidonHeight(nHeight);
+}
+
+void UpdateAssetAuthHeight(int nHeight)
+{
+    globalChainParams->UpdateAssetAuthHeight(nHeight);
 }
 
 void UpdateTxHashHeight(int nHeight)

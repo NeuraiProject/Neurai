@@ -549,6 +549,8 @@ libneurai_consensus_a_SOURCES = \
   pubkey.cpp \
   pubkey.h \
   script/neuraiconsensus.cpp \
+  script/assetauth.cpp \
+  script/assetauth.h \
   script/interpreter.cpp \
   script/interpreter.h \
   script/verify_flags.h \

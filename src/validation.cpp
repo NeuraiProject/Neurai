@@ -355,7 +355,7 @@ enum FlushStateMode {
 static bool FlushStateToDisk(const CChainParams& chainParams, CValidationState &state, FlushStateMode mode, int nManualPruneHeight=0);
 static void FindFilesToPruneManual(std::set<int>& setFilesToPrune, int nManualPruneHeight);
 static void FindFilesToPrune(std::set<int>& setFilesToPrune, uint64_t nPruneAfterHeight);
-bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks = nullptr, std::shared_ptr<std::vector<CTxOut>> pRefOutputs = nullptr, ChainContext chainCtx = {}, bool* pfUsesChainContext = nullptr, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr, std::shared_ptr<ScriptExecutionStatus> executionStatus = nullptr, bool fBlockValidation = false);
+bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks = nullptr, std::shared_ptr<std::vector<CTxOut>> pRefOutputs = nullptr, ChainContext chainCtx = {}, bool* pfUsesChainContext = nullptr, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr, std::shared_ptr<ScriptExecutionStatus> executionStatus = nullptr, bool fBlockValidation = false, std::shared_ptr<AssetAuthWorkBudget> assetAuthWork = nullptr);
 static FILE* OpenUndoFile(const CDiskBlockPos &pos, bool fReadOnly = false);
 
 bool CheckFinalTx(const CTransaction &tx, int flags)
@@ -592,7 +592,7 @@ void UpdateMempoolForReorg(DisconnectedBlockTransactions &disconnectpool, bool f
 // were somehow broken and returning the wrong scriptPubKeys
 static bool CheckInputsFromMempoolAndCache(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &view, CTxMemPool& pool,
                  script_verify_flags flags, bool cacheSigStore, PrecomputedTransactionData& txdata,
-                 const std::shared_ptr<std::vector<CTxOut>>& pRefOutputs, ChainContext chainCtx = {}, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr, bool* pfUsesChainContext = nullptr) {
+                 const std::shared_ptr<std::vector<CTxOut>>& pRefOutputs, ChainContext chainCtx = {}, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr, bool* pfUsesChainContext = nullptr, std::shared_ptr<AssetAuthWorkBudget> assetAuthWork = nullptr) {
     AssertLockHeld(cs_main);
 
     // pool.cs should be locked already, but go ahead and re-take the lock here
@@ -625,7 +625,7 @@ static bool CheckInputsFromMempoolAndCache(const CTransaction& tx, CValidationSt
     // Reference outputs were resolved from pcoinsTip under cs_main before the
     // first script check. Keep the same confirmed context for the consensus/cache
     // check: reference introspection also needs it on a script-cache miss.
-    return CheckInputs(tx, state, view, true, flags, cacheSigStore, true, txdata, nullptr, pRefOutputs, chainCtx, pfUsesChainContext, poseidonWork);
+    return CheckInputs(tx, state, view, true, flags, cacheSigStore, true, txdata, nullptr, pRefOutputs, chainCtx, pfUsesChainContext, poseidonWork, nullptr, false, assetAuthWork);
 }
 
 bool IsInactiveAuthScriptOutput(const CScript& scriptPubKey, const Consensus::Params& consensus, int nHeight)
@@ -973,10 +973,19 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
             txPoseidonWork = std::make_shared<PoseidonWorkBudget>(poseidonWorkActive ?
                 MAX_STANDARD_TX_POSEIDON_WORK : std::numeric_limits<uint64_t>::max());
 
-        if (!CheckInputs(tx, state, view, true, scriptVerifyFlags, true, false, txdata, nullptr, pRefOutputs, chainCtx, &fUsesChainContext_local, txPoseidonWork)) {
+        // NIP-054: the relay limit of OP_CHECKASSETAUTH work per transaction.
+        const bool assetAuthActive = consensus.IsAssetAuthActive(chainActive.Height() + 1);
+        std::shared_ptr<AssetAuthWorkBudget> txAssetAuthWork;
+        if (scriptVerifyFlags & SCRIPT_VERIFY_ASSETAUTH)
+            txAssetAuthWork = std::make_shared<AssetAuthWorkBudget>(assetAuthActive ?
+                MAX_STANDARD_TX_ASSETAUTH_WORK : std::numeric_limits<uint64_t>::max());
+
+        if (!CheckInputs(tx, state, view, true, scriptVerifyFlags, true, false, txdata, nullptr, pRefOutputs, chainCtx, &fUsesChainContext_local, txPoseidonWork, nullptr, false, txAssetAuthWork)) {
             if (state.IsError()) return false;
             if (txPoseidonWork && txPoseidonWork->Exceeded())
                 return state.Invalid(false, REJECT_NONSTANDARD, "bad-txns-poseidon-work");
+            if (txAssetAuthWork && txAssetAuthWork->Exceeded())
+                return state.Invalid(false, REJECT_NONSTANDARD, "bad-txns-assetauth-work");
             // SCRIPT_VERIFY_CLEANSTACK requires SCRIPT_VERIFY_WITNESS, so we
             // need to turn both off, and compare against just turning off CLEANSTACK
             // to see if the failure is specifically due to witness validation.
@@ -1021,11 +1030,19 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         if (currentBlockScriptVerifyFlags & (SCRIPT_VERIFY_POSEIDON | SCRIPT_VERIFY_MERKLE_POSEIDON | SCRIPT_VERIFY_POSEIDON_WORK))
             consensusPoseidonWork = std::make_shared<PoseidonWorkBudget>(poseidonWorkActive ?
                 MAX_STANDARD_TX_POSEIDON_WORK : std::numeric_limits<uint64_t>::max());
-        if (!CheckInputsFromMempoolAndCache(tx, state, view, pool, currentBlockScriptVerifyFlags, true, txdata, pRefOutputs, chainCtx, consensusPoseidonWork, &fUsesChainContext_local))
+        // NIP-054: the work recorded on the entry is the consensus cost that
+        // block assembly adds up against MAX_BLOCK_ASSETAUTH_WORK.
+        std::shared_ptr<AssetAuthWorkBudget> consensusAssetAuthWork;
+        if (currentBlockScriptVerifyFlags & SCRIPT_VERIFY_ASSETAUTH)
+            consensusAssetAuthWork = std::make_shared<AssetAuthWorkBudget>(assetAuthActive ?
+                MAX_STANDARD_TX_ASSETAUTH_WORK : std::numeric_limits<uint64_t>::max());
+        if (!CheckInputsFromMempoolAndCache(tx, state, view, pool, currentBlockScriptVerifyFlags, true, txdata, pRefOutputs, chainCtx, consensusPoseidonWork, &fUsesChainContext_local, consensusAssetAuthWork))
         {
             if (state.IsError()) return false;
             if (consensusPoseidonWork && consensusPoseidonWork->Exceeded())
                 return state.Invalid(false, REJECT_NONSTANDARD, "bad-txns-poseidon-work");
+            if (consensusAssetAuthWork && consensusAssetAuthWork->Exceeded())
+                return state.Invalid(false, REJECT_NONSTANDARD, "bad-txns-assetauth-work");
             // If we're using promiscuousmempoolflags, we may hit this normally
             // Check if current block has some flags that scriptVerifyFlags
             // does not before printing an ominous warning
@@ -1043,6 +1060,7 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         }
 
         entry.SetPoseidonWork(consensusPoseidonWork ? consensusPoseidonWork->Used() : 0);
+        entry.SetAssetAuthWork(consensusAssetAuthWork ? consensusAssetAuthWork->Used() : 0);
 
         // DEPIN: at most one pending transfer state operation per asset in
         // the mempool. Checked here, under pool.cs, before anything is
@@ -1752,6 +1770,7 @@ void UpdateCoins(const CTransaction& tx, CCoinsViewCache& inputs, int nHeight)
 bool CScriptCheck::operator()() {
     CachingTransactionSignatureChecker checker(ptxTo, nIn, m_tx_out.nValue, cacheStore, *txdata, m_tx_out.scriptPubKey, m_allPrevouts.get(), m_refOutputs.get(), m_chainContext);
     checker.poseidonWorkBudget = m_poseidonWork.get();
+    checker.assetAuthWorkBudget = m_assetAuthWork.get();
     return CheckWith(checker);
 }
 
@@ -1850,15 +1869,20 @@ static void MempoolRemoveForNewTip(CTxMemPool& pool,
         // commonly, a deadline-based covenant whose HEIGHT / MTP
         // constraint flipped when the tip advanced.
         auto work = std::make_shared<PoseidonWorkBudget>((flags & SCRIPT_VERIFY_POSEIDON_WORK) ? MAX_STANDARD_TX_POSEIDON_WORK : std::numeric_limits<uint64_t>::max());
+        auto assetAuthWork = std::make_shared<AssetAuthWorkBudget>((flags & SCRIPT_VERIFY_ASSETAUTH) ? MAX_STANDARD_TX_ASSETAUTH_WORK : std::numeric_limits<uint64_t>::max());
         const bool valid = CheckInputs(tx, stateDummy, view, true, flags,
                             /*cacheSigStore=*/true,
                             /*cacheFullScriptStore=*/false,
-                            txdata, nullptr, pRefOutputs, newCtx, nullptr, work);
+                            txdata, nullptr, pRefOutputs, newCtx, nullptr, work,
+                            nullptr, false, assetAuthWork);
         if (stateDummy.IsError()) {
             LogPrintf("Mempool script revalidation failed locally; retaining transaction\n");
             return false;
         }
-        return !valid || work->Used() != entry.GetPoseidonWork();
+        // NIP-054: a cost that changed with the tip (branches on the chain
+        // context) no longer matches what block assembly would add up.
+        return !valid || work->Used() != entry.GetPoseidonWork() ||
+               assetAuthWork->Used() != entry.GetAssetAuthWork();
     });
 }
 
@@ -1929,6 +1953,7 @@ static void MempoolCheckScriptRuleTransition(CTxMemPool& pool,
         params.IsInputFieldActive(nOldCandidateHeight) == params.IsInputFieldActive(nNewCandidateHeight) &&
         params.IsAuthScriptTreeActive(nOldCandidateHeight) == params.IsAuthScriptTreeActive(nNewCandidateHeight) &&
         params.IsMerklePoseidonActive(nOldCandidateHeight) == params.IsMerklePoseidonActive(nNewCandidateHeight) &&
+        params.IsAssetAuthActive(nOldCandidateHeight) == params.IsAssetAuthActive(nNewCandidateHeight) &&
         params.IsZKVerifyActive(nOldCandidateHeight) == params.IsZKVerifyActive(nNewCandidateHeight) &&
         params.IsZKPublicTreeActive(nOldCandidateHeight) == params.IsZKPublicTreeActive(nNewCandidateHeight) &&
         params.IsZKPortableTreeActive(nOldCandidateHeight) == params.IsZKPortableTreeActive(nNewCandidateHeight) &&
@@ -2038,14 +2063,17 @@ static void MempoolEvictScriptRuleEntries(CTxMemPool& pool)
         CValidationState stateDummy;
         PrecomputedTransactionData txdata(tx);
         auto work = std::make_shared<PoseidonWorkBudget>((flags & SCRIPT_VERIFY_POSEIDON_WORK) ? MAX_STANDARD_TX_POSEIDON_WORK : std::numeric_limits<uint64_t>::max());
+        auto assetAuthWork = std::make_shared<AssetAuthWorkBudget>((flags & SCRIPT_VERIFY_ASSETAUTH) ? MAX_STANDARD_TX_ASSETAUTH_WORK : std::numeric_limits<uint64_t>::max());
         const bool valid = CheckInputs(tx, stateDummy, view, true, flags,
                             /*cacheSigStore=*/true, /*cacheFullScriptStore=*/false,
-                            txdata, nullptr, pRefOutputs, candidateCtx, nullptr, work);
+                            txdata, nullptr, pRefOutputs, candidateCtx, nullptr, work,
+                            nullptr, false, assetAuthWork);
         if (stateDummy.IsError()) {
             LogPrintf("Mempool script revalidation failed locally; retaining transaction\n");
             return false;
         }
-        return !valid || work->Used() != entry.GetPoseidonWork();
+        return !valid || work->Used() != entry.GetPoseidonWork() ||
+               assetAuthWork->Used() != entry.GetAssetAuthWork();
     });
 }
 
@@ -2084,6 +2112,22 @@ static void MempoolCheckNoRbfTransition(CTxMemPool& pool,
     pool.removeForNoRbfTransition();
 }
 
+/** NIP-054: whether the transaction can execute OP_CHECKASSETAUTH. The opcode
+ *  only runs inside AuthScript, whose script travels in the witness, so a
+ *  transaction without the byte 0xdf in any witness item cannot charge
+ *  asset-auth work and may keep using the script execution cache. False
+ *  positives (the byte inside a signature) only cost a cache miss. */
+static bool TxMayExecuteAssetAuth(const CTransaction& tx)
+{
+    for (const CTxIn& txin : tx.vin) {
+        for (const std::vector<unsigned char>& item : txin.scriptWitness.stack) {
+            if (std::find(item.begin(), item.end(), static_cast<unsigned char>(OP_CHECKASSETAUTH)) != item.end())
+                return true;
+        }
+    }
+    return false;
+}
+
 /**
  * Check whether all inputs of this transaction are valid (no double spends, scripts & sigs, amounts)
  * This does not modify the UTXO set.
@@ -2102,12 +2146,16 @@ static void MempoolCheckNoRbfTransition(CTxMemPool& pool,
  *
  * Non-static (and re-declared) in src/test/txvalidationcache_tests.cpp
  */
-bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks, std::shared_ptr<std::vector<CTxOut>> pRefOutputs, ChainContext chainCtx, bool* pfUsesChainContext, std::shared_ptr<PoseidonWorkBudget> poseidonWork, std::shared_ptr<ScriptExecutionStatus> executionStatus, bool fBlockValidation)
+bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks, std::shared_ptr<std::vector<CTxOut>> pRefOutputs, ChainContext chainCtx, bool* pfUsesChainContext, std::shared_ptr<PoseidonWorkBudget> poseidonWork, std::shared_ptr<ScriptExecutionStatus> executionStatus, bool fBlockValidation, std::shared_ptr<AssetAuthWorkBudget> assetAuthWork)
 {
     if (!executionStatus) executionStatus = std::make_shared<ScriptExecutionStatus>();
     if (!executionStatus->Apply(state)) return false;
     if (!poseidonWork && (flags & SCRIPT_VERIFY_POSEIDON_WORK))
         poseidonWork = std::make_shared<PoseidonWorkBudget>(MAX_BLOCK_POSEIDON_WORK);
+    // NIP-054: every OP_CHECKASSETAUTH execution is metered; a caller without
+    // its own budget still gets the per-block cap.
+    if (!assetAuthWork && (flags & SCRIPT_VERIFY_ASSETAUTH))
+        assetAuthWork = std::make_shared<AssetAuthWorkBudget>(MAX_BLOCK_ASSETAUTH_WORK);
     if (!tx.IsCoinBase())
     {
         if (pvChecks)
@@ -2137,7 +2185,9 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
             AssertLockHeld(cs_main); //TODO: Remove this requirement by making CuckooCache not require external locks
             // This cache stores validity only, not resource cost. Re-execute
             // metered scripts; the separate signature cache remains usable.
-            if (!poseidonWork && scriptExecutionCache.contains(hashCacheEntry, !cacheFullScriptStore)) {
+            // NIP-054: the same holds for metered OP_CHECKASSETAUTH executions.
+            const bool fMeteredAssetAuth = assetAuthWork && TxMayExecuteAssetAuth(tx);
+            if (!poseidonWork && !fMeteredAssetAuth && scriptExecutionCache.contains(hashCacheEntry, !cacheFullScriptStore)) {
                 return true;
             }
 
@@ -2147,8 +2197,8 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
             // them if EITHER flag is on — gating on a single flag made
             // OP_INPUTVALUE fail closed on any network enabling NIP-024
             // without NIP-022. If a future opcode consumes m_allPrevouts, its
-            // flag MUST be added here.
-            if (flags & (SCRIPT_VERIFY_INPUTASSETFIELD | SCRIPT_VERIFY_INPUTVALUE)) {
+            // flag MUST be added here. NIP-054: OP_CHECKASSETAUTH reads them too.
+            if (flags & (SCRIPT_VERIFY_INPUTASSETFIELD | SCRIPT_VERIFY_INPUTVALUE | SCRIPT_VERIFY_ASSETAUTH)) {
                 pAllPrevouts = std::make_shared<std::vector<CTxOut>>();
                 pAllPrevouts->reserve(tx.vin.size());
                 for (const CTxIn& txin : tx.vin) {
@@ -2170,7 +2220,7 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                 // spent being checked as a part of CScriptCheck.
 
                 // Verify signature
-                CScriptCheck check(coin.out, tx, i, flags, cacheSigStore, &txdata, pAllPrevouts, pRefOutputs, chainCtx, poseidonWork, executionStatus);
+                CScriptCheck check(coin.out, tx, i, flags, cacheSigStore, &txdata, pAllPrevouts, pRefOutputs, chainCtx, poseidonWork, executionStatus, assetAuthWork);
                 if (pvChecks) {
                     pvChecks->push_back(CScriptCheck());
                     check.swap(pvChecks->back());
@@ -2183,6 +2233,8 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                     if (!executionStatus->Apply(state)) return false;
                     if (check.GetScriptError() == SCRIPT_ERR_POSEIDON_WORK_BUDGET)
                         return state.Invalid(false, REJECT_INVALID, "bad-txns-poseidon-work");
+                    if (check.GetScriptError() == SCRIPT_ERR_ASSETAUTH_BUDGET)
+                        return state.Invalid(false, REJECT_INVALID, "bad-txns-assetauth-work");
                     if (!fBlockValidation && (flags & STANDARD_NOT_MANDATORY_VERIFY_FLAGS)) {
                         // Check whether the failure was caused by a
                         // non-mandatory script verification check, such as
@@ -2211,7 +2263,7 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                 }
             }
 
-            if (cacheFullScriptStore && !pvChecks && !poseidonWork) {
+            if (cacheFullScriptStore && !pvChecks && !poseidonWork && !fMeteredAssetAuth) {
                 // We executed all of the provided scripts, and were told to
                 // cache the result. Do so now.
                 scriptExecutionCache.insert(hashCacheEntry);
@@ -3138,6 +3190,12 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
         // Dynamic work must be accounted even below assumevalid.
         fScriptChecks = true;
     }
+    // NIP-054: one OP_CHECKASSETAUTH budget shared by every script of the block.
+    std::shared_ptr<AssetAuthWorkBudget> blockAssetAuthWork;
+    if (flags & SCRIPT_VERIFY_ASSETAUTH) {
+        blockAssetAuthWork = std::make_shared<AssetAuthWorkBudget>(MAX_BLOCK_ASSETAUTH_WORK);
+        fScriptChecks = true;
+    }
 
     // NIP-014: reject v3 transactions before activation
     if (!chainparams.GetConsensus().IsRefInputsActive(pindex->nHeight)) {
@@ -3374,9 +3432,11 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
                 GetChainIdForParams(chainparams),
                 true
             };
-            if (!CheckInputs(tx, state, view, fScriptChecks, flags, fCacheResults, fCacheResults, txdata[i], nScriptCheckThreads ? &vChecks : nullptr, pRefOutputs, chainCtx, nullptr, blockPoseidonWork, blockExecutionStatus, /*fBlockValidation=*/true)) {
+            if (!CheckInputs(tx, state, view, fScriptChecks, flags, fCacheResults, fCacheResults, txdata[i], nScriptCheckThreads ? &vChecks : nullptr, pRefOutputs, chainCtx, nullptr, blockPoseidonWork, blockExecutionStatus, /*fBlockValidation=*/true, blockAssetAuthWork)) {
                 if (blockPoseidonWork && blockPoseidonWork->Exceeded())
                     return state.DoS(100, false, REJECT_INVALID, "bad-blk-poseidon-work");
+                if (blockAssetAuthWork && blockAssetAuthWork->Exceeded())
+                    return state.DoS(100, false, REJECT_INVALID, "bad-blk-assetauth-work");
                 return error("ConnectBlock(): CheckInputs on %s failed with %s",
                     tx.GetHash().ToString(), FormatStateMessage(state));
             }
@@ -3459,6 +3519,8 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
     if (!blockExecutionStatus->Apply(state)) return false;
     if (blockPoseidonWork && blockPoseidonWork->Exceeded())
         return state.DoS(100, false, REJECT_INVALID, "bad-blk-poseidon-work");
+    if (blockAssetAuthWork && blockAssetAuthWork->Exceeded())
+        return state.DoS(100, false, REJECT_INVALID, "bad-blk-assetauth-work");
     if (!scriptsOk)
         return state.DoS(100, error("%s: CheckQueue failed", __func__), REJECT_INVALID, "block-validation-failed");
     int64_t nTime4 = GetTimeMicros(); nTimeVerify += nTime4 - nTime2;

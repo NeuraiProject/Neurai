@@ -150,6 +150,7 @@ private:
     uint64_t nBlockTx;
     uint64_t nBlockSigOpsCost;
     uint64_t nBlockPoseidonWork;
+    uint64_t nBlockAssetAuthWork;  // NIP-054
     CAmount nFees;
     CTxMemPool::setEntries inBlock;
     std::set<COutPoint> blockSpentOutpoints;  // NIP-014: spent outpoints in current template

@@ -99,6 +99,7 @@ public:
     void UpdateInputFieldHeight(int nHeight) { consensus.nInputFieldHeight = nHeight; }
     void UpdateAuthScriptTreeHeight(int nHeight) { consensus.nAuthScriptTreeHeight = nHeight; }
     void UpdateMerklePoseidonHeight(int nHeight) { consensus.nMerklePoseidonHeight = nHeight; }
+    void UpdateAssetAuthHeight(int nHeight) { consensus.nAssetAuthHeight = nHeight; }
     void UpdateTxHashHeight(int nHeight) { consensus.nTxHashHeight = nHeight; }
     void UpdateNoRbfHeight(int nHeight) { consensus.nNoRbfHeight = nHeight; }
     void UpdateSignatureOpcodesHeight(int nHeight) { consensus.nSignatureOpcodesHeight = nHeight; }
@@ -305,6 +306,8 @@ void UpdateAssetMessageHeight(int nHeight);
 void UpdateInputFieldHeight(int nHeight);
 void UpdateAuthScriptTreeHeight(int nHeight);
 void UpdateMerklePoseidonHeight(int nHeight);
+/** Regtest only: move the NIP-054 OP_CHECKASSETAUTH activation height. */
+void UpdateAssetAuthHeight(int nHeight);
 void UpdateTxHashHeight(int nHeight);
 /** Regtest only: move the no-RBF sequence rule activation height. */
 void UpdateNoRbfHeight(int nHeight);

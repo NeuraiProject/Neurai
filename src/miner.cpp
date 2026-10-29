@@ -114,6 +114,7 @@ void BlockAssembler::resetBlock()
     nBlockWeight = 4000;
     nBlockSigOpsCost = 400;
     nBlockPoseidonWork = 0;
+    nBlockAssetAuthWork = 0;
     fIncludeWitness = false;
 
     // These counters do not include coinbase tx
@@ -263,10 +264,17 @@ bool BlockAssembler::TestPackage(uint64_t packageSize, int64_t packageSigOpsCost
 bool BlockAssembler::TestPackageTransactions(const CTxMemPool::setEntries& package)
 {
     uint64_t poseidonWork = nBlockPoseidonWork;
+    uint64_t assetAuthWork = nBlockAssetAuthWork;
     for (const CTxMemPool::txiter it : package) {
         if (chainparams.GetConsensus().IsPoseidonWorkActive(nHeight)) {
             if (it->GetPoseidonWork() > MAX_BLOCK_POSEIDON_WORK - poseidonWork) return false;
             poseidonWork += it->GetPoseidonWork();
+        }
+        // NIP-054: the template must stay within the block budget, or it
+        // would fail TestBlockValidity.
+        if (chainparams.GetConsensus().IsAssetAuthActive(nHeight)) {
+            if (it->GetAssetAuthWork() > MAX_BLOCK_ASSETAUTH_WORK - assetAuthWork) return false;
+            assetAuthWork += it->GetAssetAuthWork();
         }
         if (!IsFinalTx(it->GetTx(), nHeight, nLockTimeCutoff))
             return false;
@@ -300,6 +308,7 @@ void BlockAssembler::AddToBlock(CTxMemPool::txiter iter)
     ++nBlockTx;
     nBlockSigOpsCost += iter->GetSigOpCost();
     nBlockPoseidonWork += iter->GetPoseidonWork();
+    nBlockAssetAuthWork += iter->GetAssetAuthWork();
     nFees += iter->GetFee();
     inBlock.insert(iter);
 

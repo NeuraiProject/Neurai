@@ -30,6 +30,9 @@ static const unsigned int MAX_STANDARD_TX_WEIGHT = 400000;
 static const unsigned int MAX_P2SH_SIGOPS = 15;
 /** Maximum Poseidon work relayed in a single transaction after activation. */
 static constexpr uint64_t MAX_STANDARD_TX_POSEIDON_WORK = 20000;
+/** NIP-054: maximum OP_CHECKASSETAUTH work relayed in a single transaction,
+ *  a tenth of the block budget. */
+static constexpr uint64_t MAX_STANDARD_TX_ASSETAUTH_WORK = 45000;
 /** The maximum number of sigops we're willing to relay/mine in a single tx */
 static const unsigned int MAX_STANDARD_TX_SIGOPS_COST = MAX_BLOCK_SIGOPS_COST/5;
 /** Default for -maxmempool, maximum megabytes of mempool memory usage */
@@ -114,6 +117,7 @@ inline script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
     if (consensus.IsPoseidonWorkActive(nHeight)) base |= SCRIPT_VERIFY_POSEIDON_WORK;
     if (consensus.IsAuthScriptBudgetActive(nHeight)) base |= SCRIPT_VERIFY_AUTHSCRIPT_BUDGET;
     if (consensus.IsMerklePoseidonActive(nHeight)) base |= SCRIPT_VERIFY_MERKLE_POSEIDON;
+    if (consensus.IsAssetAuthActive(nHeight)) base |= SCRIPT_VERIFY_ASSETAUTH; // NIP-054
     if (consensus.IsOptInActive(consensus.nTXFIELDEnabled, nHeight))          base |= SCRIPT_VERIFY_TXFIELD;
     if (consensus.IsOptInActive(consensus.nSPLITEnabled, nHeight))            base |= SCRIPT_VERIFY_SPLIT;
     if (consensus.IsOptInActive(consensus.nREVERSEBYTESEnabled, nHeight))     base |= SCRIPT_VERIFY_REVERSEBYTES;
@@ -156,7 +160,7 @@ static constexpr script_verify_flags CONSENSUS_OPT_IN_FLAGS =
     SCRIPT_VERIFY_CAT | SCRIPT_VERIFY_CHECKTEMPLATEVERIFY | SCRIPT_VERIFY_CHECKSIGFROMSTACK |
     SCRIPT_VERIFY_TXHASH | SCRIPT_VERIFY_ASSETMESSAGEFIELD | SCRIPT_VERIFY_INPUTFIELD |
     SCRIPT_VERIFY_AUTHSCRIPT_TREE | SCRIPT_VERIFY_ZKVERIFY | SCRIPT_VERIFY_ZK_PUBLIC_TREE | SCRIPT_VERIFY_ZK_PORTABLE_TREE | SCRIPT_VERIFY_POSEIDON_WORK |
-    SCRIPT_VERIFY_AUTHSCRIPT_BUDGET | SCRIPT_VERIFY_MERKLE_POSEIDON | SCRIPT_VERIFY_TXFIELD |
+    SCRIPT_VERIFY_AUTHSCRIPT_BUDGET | SCRIPT_VERIFY_MERKLE_POSEIDON | SCRIPT_VERIFY_ASSETAUTH | SCRIPT_VERIFY_TXFIELD |
     SCRIPT_VERIFY_SPLIT | SCRIPT_VERIFY_REVERSEBYTES | SCRIPT_VERIFY_OUTPUTVALUE |
     SCRIPT_VERIFY_OUTPUTSCRIPT | SCRIPT_VERIFY_OUTPUTASSETFIELD | SCRIPT_VERIFY_INPUTASSETFIELD |
     SCRIPT_VERIFY_64BIT_INTEGERS | SCRIPT_VERIFY_TXLOCKTIME | SCRIPT_VERIFY_INPUTOUTPUTCOUNT |

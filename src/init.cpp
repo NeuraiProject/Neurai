@@ -655,6 +655,7 @@ std::string HelpMessage(HelpMessageMode mode)
         strUsage += HelpMessageOpt("-inputfieldheight=<n>", "Override NIP-043 InputField activation height (regtest-only)");
         strUsage += HelpMessageOpt("-authscripttreeheight=<n>", "Override NIP-044 activation height (regtest-only)");
         strUsage += HelpMessageOpt("-merkleposeidonheight=<n>", "Override NIP-043 MerklePoseidon activation height (regtest-only)");
+        strUsage += HelpMessageOpt("-assetauthheight=<n>", "Override the NIP-054 OP_CHECKASSETAUTH activation height (regtest-only)");
         strUsage += HelpMessageOpt("-txhashheight=<n>", "Override NIP-042 TXHASH activation height (regtest-only)");
         strUsage += HelpMessageOpt("-signatureopcodesheight=<n>", "Override CSFS/Ed25519/CHECKSIGADD activation height (regtest-only)");
         strUsage += HelpMessageOpt("-optinfeaturesheight=<n>", "Override the activation height of the opt-in feature switches (regtest-only)");
@@ -1475,6 +1476,14 @@ bool AppInitParameterInteraction()
         if (!ParseInt64(gArgs.GetArg("-merkleposeidonheight", ""), &height) || height < 0 || height > std::numeric_limits<int>::max())
             return InitError("Invalid -merkleposeidonheight");
         UpdateMerklePoseidonHeight(static_cast<int>(height));
+    }
+
+    if (gArgs.IsArgSet("-assetauthheight")) {
+        if (!chainparams.MineBlocksOnDemand()) return InitError("OP_CHECKASSETAUTH height may only be overridden on regtest.");
+        int64_t height;
+        if (!ParseInt64(gArgs.GetArg("-assetauthheight", ""), &height) || height < 0 || height > std::numeric_limits<int>::max())
+            return InitError("Invalid -assetauthheight");
+        UpdateAssetAuthHeight(static_cast<int>(height));
     }
 
     if (gArgs.IsArgSet("-txhashheight")) {

@@ -25,6 +25,7 @@
 #include "pubkey.h"
 #include "script/script.h"
 #include "script/merkle_inclusion.h"  // NIP-031
+#include "script/assetauth.h"         // NIP-054
 #include "script/standard.h"
 #include "uint256.h"
 #include "serialize.h"
@@ -1563,6 +1564,32 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         popstack(stack);
                         popstack(stack);
                         stack.push_back(vchResult);
+                    }
+                        break;
+
+                    case OP_CHECKASSETAUTH:
+                    {
+                        // NIP-054. Unassigned byte pre-activation → BAD_OPCODE
+                        // with the flag off (fail-closed), not NOP.
+                        if (!(flags & SCRIPT_VERIFY_ASSETAUTH))
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
+                        if (sigversion != SIGVERSION_AUTHSCRIPT)
+                            return set_error(serror, SCRIPT_ERR_ASSETAUTH_SIGVERSION);
+                        if (!checker.AssetAuthContextAvailable())
+                            return set_error(serror, SCRIPT_ERR_ASSETAUTH_CONTEXT);
+
+                        AssetAuthCall call;
+                        size_t consumed = 0;
+                        if (!DecodeAssetAuthCall(stack, call, consumed, serror))
+                            return false;
+                        if (!checker.CheckAssetAuth(call, flags, serror))
+                            return false;
+
+                        // Success consumes the call and leaves true; failure
+                        // never pushes false.
+                        for (size_t i = 0; i < consumed; ++i)
+                            popstack(stack);
+                        stack.push_back(vchTrue);
                     }
                         break;
 
@@ -3470,6 +3497,28 @@ bool TransactionSignatureChecker::GetChainContext(unsigned char selector,
     }
 }
 
+// NIP-054: the spending transaction, every prevout and the chain context.
+bool TransactionSignatureChecker::AssetAuthContextAvailable() const
+{
+    return txTo && m_allPrevouts && m_allPrevouts->size() == txTo->vin.size() &&
+           nIn < txTo->vin.size() && m_chainContext.available;
+}
+
+bool TransactionSignatureChecker::CheckAssetAuth(const AssetAuthCall& call, script_verify_flags flags,
+                                                 ScriptError* serror) const
+{
+    if (!AssetAuthContextAvailable())
+        return set_error(serror, SCRIPT_ERR_ASSETAUTH_CONTEXT);
+    bool fUsedHeight = false;
+    const bool ok = EvaluateAssetAuth(call, *txTo, nIn, *m_allPrevouts, m_chainContext, flags,
+                                      assetAuthWorkBudget, fUsedHeight, serror);
+    // Asynchronous mode depends on the height: let the mempool re-validate
+    // the entry on tip changes, even when the check failed.
+    if (fUsedHeight)
+        fChainContextObserved = true;
+    return ok;
+}
+
 bool TransactionSignatureChecker::GetOutputScript(unsigned int nOut,
                                                   std::vector<unsigned char>& result) const
 {
@@ -3638,7 +3687,8 @@ bool TransactionSignatureChecker::GetOutputAuthCommitment(unsigned int nOut,
 
 // NIP-043 only: strict transfer-message grammar, bounded to the single push.
 // Historical selectors deliberately continue to use their original parsers.
-static bool GetTransferMessage(const CScript& script, std::vector<unsigned char>& result)
+// Also used by OP_CHECKASSETAUTH (NIP-054) to recognise votes.
+bool GetTransferMessage(const CScript& script, std::vector<unsigned char>& result)
 {
     int type = 0, start = 0;
     bool owner = false;

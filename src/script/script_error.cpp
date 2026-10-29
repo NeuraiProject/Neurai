@@ -180,6 +180,26 @@ const char* ScriptErrorString(const ScriptError serror)
             return "OP_CHECKSIG_ED25519 signature encoding invalid (R non-canonical, R not on curve, R non-prime-order, or S >= l) (NIP-035 §4.4)";
         case SCRIPT_ERR_PQ_PUBKEY_SIZE:
             return "OP_CHECKSIGADD: 0x05-prefixed PQ public key has non-canonical size (NIP-039 §3.4)";
+        case SCRIPT_ERR_ASSETAUTH_SIGVERSION:
+            return "OP_CHECKASSETAUTH is only valid inside AuthScript (NIP-054)";
+        case SCRIPT_ERR_ASSETAUTH_CONTEXT:
+            return "OP_CHECKASSETAUTH requires all prevouts and the chain context (NIP-054)";
+        case SCRIPT_ERR_ASSETAUTH_POLICY:
+            return "OP_CHECKASSETAUTH: invalid policy (version, thresholds or role list)";
+        case SCRIPT_ERR_ASSETAUTH_ARGS:
+            return "OP_CHECKASSETAUTH: invalid argument encoding or range";
+        case SCRIPT_ERR_ASSETAUTH_BUDGET:
+            return "OP_CHECKASSETAUTH work budget exceeded (NIP-054)";
+        case SCRIPT_ERR_ASSETAUTH_SIGHASH:
+            return "OP_CHECKASSETAUTH: a direct-signature approval does not use SIGHASH_ALL";
+        case SCRIPT_ERR_ASSETAUTH_FOREIGN_VOTE:
+            return "OP_CHECKASSETAUTH: a role input carries a message that is not this proposal";
+        case SCRIPT_ERR_ASSETAUTH_EXPIRED:
+            return "OP_CHECKASSETAUTH: proposal expired";
+        case SCRIPT_ERR_ASSETAUTH_SHAPE:
+            return "OP_CHECKASSETAUTH: transaction shape not allowed in asynchronous mode";
+        case SCRIPT_ERR_ASSETAUTH_THRESHOLD:
+            return "OP_CHECKASSETAUTH: not enough roles approve";
         case SCRIPT_ERR_UNKNOWN_ERROR:
         case SCRIPT_ERR_ERROR_COUNT:
         default: break;

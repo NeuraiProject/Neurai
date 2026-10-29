@@ -171,6 +171,21 @@ typedef enum ScriptError_t
        delegated to the existing OP_CHECKSIG encoding helpers. */
     SCRIPT_ERR_PQ_PUBKEY_SIZE,
 
+    /* NIP-054: OP_CHECKASSETAUTH. Order of checks: sigversion, context,
+       stack and integers, policy and arguments, work budget, signature
+       hash types and foreign votes, expiry and shape (asynchronous mode
+       only), threshold. */
+    SCRIPT_ERR_ASSETAUTH_SIGVERSION,
+    SCRIPT_ERR_ASSETAUTH_CONTEXT,
+    SCRIPT_ERR_ASSETAUTH_POLICY,
+    SCRIPT_ERR_ASSETAUTH_ARGS,
+    SCRIPT_ERR_ASSETAUTH_BUDGET,
+    SCRIPT_ERR_ASSETAUTH_SIGHASH,
+    SCRIPT_ERR_ASSETAUTH_FOREIGN_VOTE,
+    SCRIPT_ERR_ASSETAUTH_EXPIRED,
+    SCRIPT_ERR_ASSETAUTH_SHAPE,
+    SCRIPT_ERR_ASSETAUTH_THRESHOLD,
+
     SCRIPT_ERR_ERROR_COUNT
 } ScriptError;
 

@@ -192,6 +192,7 @@ height revalidates the mempool.
 | `OP_ZKVERIFY` (Groth16 over BN254, AuthScript only), profile `01` | NIP-016 | not scheduled | 10 | 0, `-zkverifyheight` |
 | `OP_ZKVERIFY` profile `02`: public-tree transitions (C5, experimental) | — | not scheduled | 10 | 0, `-zkpublictreeheight` |
 | `OP_ZKVERIFY` profile `03`: portable-tree transitions (C6, experimental) | — | not scheduled | **100** | 0, `-zkportabletreeheight` |
+| P2AH: `OP_CHECKASSETAUTH` (`0xdf`, AuthScript only), M of N owner tokens approve a spend by direct signature or by a vote bound to a proposal hash; work budget of 450,000 units per block and 45,000 per standard transaction. See [covenants.md](covenants.md) | NIP-054 | not scheduled | **100** | 0, `-assetauthheight` |
 | Poseidon work budget: at most 200,000 permutations per block (20,000 per standard transaction) | — | not scheduled | 10 | 0, `-poseidonworkheight` |
 | Asset payload marker `rvn` → `xna` for new asset outputs; existing `rvn` outputs stay spendable | NIP-040 | not scheduled | 10 | 1, `-nip040height` |
 | DEPIN transfer state (open, close, seal) | — | not scheduled | 10 | 1, `-depinstateheight` |

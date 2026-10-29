@@ -164,6 +164,10 @@ struct Params {
     bool IsAuthScriptTreeActive(int height) const { return height >= nAuthScriptTreeHeight; }
     int nMerklePoseidonHeight{std::numeric_limits<int>::max()};
     bool IsMerklePoseidonActive(int height) const { return height >= nMerklePoseidonHeight; }
+    // NIP-054: OP_CHECKASSETAUTH, independent activation, unscheduled unless
+    // set for the network.
+    int nAssetAuthHeight{std::numeric_limits<int>::max()};
+    bool IsAssetAuthActive(int height) const { return height >= nAssetAuthHeight; }
     /** Enable OP_TXFIELD (NOP7) - push raw bytes of spent output fields to stack.
      *  Required for recursive DEX covenants. true on testnet/regtest; false on mainnet. */
     bool nTXFIELDEnabled;

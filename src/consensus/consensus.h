@@ -23,6 +23,10 @@ static const unsigned int MAX_BLOCK_SERIALIZED_SIZE_RIP2 = 8000000;
 
 // Deterministic Poseidon permutations, enforced after its height activation.
 static constexpr uint64_t MAX_BLOCK_POSEIDON_WORK = 200000;
+// NIP-054: OP_CHECKASSETAUTH work units per block (consensus). Sized from the
+// worst-case benchmarks so that a full block costs no more to validate than
+// the worst OP_POSEIDON block.
+static constexpr uint64_t MAX_BLOCK_ASSETAUTH_WORK = 450000;
 /** The maximum allowed number of signature check operations in a block (network rule) */
 static const int64_t MAX_BLOCK_SIGOPS_COST = 80000;
 /** Coinbase transaction outputs can only be spent after this number of new blocks (network rule) */

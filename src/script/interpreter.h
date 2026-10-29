@@ -306,6 +306,10 @@ enum class script_verify_flag_name : uint8_t {
     SCRIPT_VERIFY_ZK_PUBLIC_TREE = 50, // Experimental C5 profile 2
     SCRIPT_VERIFY_ZK_PORTABLE_TREE = 51, // Experimental C6 profile 3
 
+    // NIP-054: OP_CHECKASSETAUTH (0xdf), M-of-N authorization by owner-token
+    // roles inside AuthScript. Flag off: 0xdf is a bad opcode.
+    SCRIPT_VERIFY_ASSETAUTH = 52,
+
     // End marker — must always be last.
     SCRIPT_VERIFY_END_MARKER
 };
@@ -454,12 +458,12 @@ bool ParseAuthScriptTreeWitness(const CScriptWitness& witness, size_t& argsOffse
 /** Shared by all script checks of a block (or a mempool transaction).
  * Reserve before hashing. Failed reservations never wrap or exceed the cap.
  * Thread scheduling cannot affect acceptance of a valid block. */
-class PoseidonWorkBudget {
+class ScriptWorkBudget {
     const uint64_t limit;
     std::atomic<uint64_t> used{0};
     std::atomic<bool> exceeded{false};
 public:
-    explicit PoseidonWorkBudget(uint64_t limitIn) : limit(limitIn) {}
+    explicit ScriptWorkBudget(uint64_t limitIn) : limit(limitIn) {}
     bool Charge(uint64_t units) {
         uint64_t previous = used.load(std::memory_order_relaxed);
         do {
@@ -474,6 +478,13 @@ public:
     bool Exceeded() const { return exceeded.load(std::memory_order_relaxed); }
 };
 
+// NIP-036 Poseidon work and NIP-054 OP_CHECKASSETAUTH work are separate
+// budgets with separate limits; they share only the counter type.
+using PoseidonWorkBudget = ScriptWorkBudget;
+using AssetAuthWorkBudget = ScriptWorkBudget;
+
+struct AssetAuthCall;
+
 class BaseSignatureChecker
 {
 public:
@@ -484,6 +495,9 @@ public:
     mutable bool fChainContextObserved{false};
     // Owned by CScriptCheck; shared unchanged through BASE/P2SH/witness/MAST.
     PoseidonWorkBudget* poseidonWorkBudget{nullptr};
+    // NIP-054: owned by CScriptCheck, shared by every OP_CHECKASSETAUTH
+    // execution of a block (or of a mempool transaction).
+    AssetAuthWorkBudget* assetAuthWorkBudget{nullptr};
 
     virtual bool CheckSig(const std::vector<unsigned char> &scriptSig, const std::vector<unsigned char> &vchPubKey, const CScript &scriptCode, SigVersion sigversion, uint8_t authType = 0x00) const
     {
@@ -623,6 +637,22 @@ public:
         return false;
     }
 
+    // NIP-054: OP_CHECKASSETAUTH needs the spending transaction, the prevouts
+    // of all its inputs and the chain context. Checkers without them fail
+    // closed with SCRIPT_ERR_ASSETAUTH_CONTEXT.
+    virtual bool AssetAuthContextAvailable() const
+    {
+        return false;
+    }
+
+    // NIP-054: evaluate one decoded OP_CHECKASSETAUTH call. On failure,
+    // returns false and sets *serror.
+    virtual bool CheckAssetAuth(const AssetAuthCall& /*call*/, script_verify_flags /*flags*/, ScriptError* serror) const
+    {
+        if (serror) *serror = SCRIPT_ERR_ASSETAUTH_CONTEXT;
+        return false;
+    }
+
     virtual ~BaseSignatureChecker() {}
 };
 
@@ -720,6 +750,10 @@ public:
 
     // NIP-026: resolve HEIGHT / MTP / CHAIN_ID from m_chainContext.
     bool GetChainContext(unsigned char selector, int64_t& result) const override;
+
+    // NIP-054: OP_CHECKASSETAUTH.
+    bool AssetAuthContextAvailable() const override;
+    bool CheckAssetAuth(const AssetAuthCall& call, script_verify_flags flags, ScriptError* serror) const override;
 
     uint256 GetSigHash(const CScript& scriptCode, int nHashType, SigVersion sigversion, uint8_t authType = 0x00) const override;
 };

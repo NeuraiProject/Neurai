@@ -279,6 +279,12 @@ enum opcodetype
     // Flag off → bad-opcode (slot was unassigned, not a NOP).
     OP_CHECKSIGADD = 0xde,
 
+    // NIP-054: P2AH, M-of-N authorization by owner-token roles, in a
+    // previously unassigned slot (0xdf), the first free byte above the old
+    // MAX_OPCODE (0xbd..0xbf and 0xc6..0xc7 are claimed by pending NIPs).
+    // AuthScript only. Flag off → bad-opcode (slot was unassigned, not a NOP).
+    OP_CHECKASSETAUTH = 0xdf,
+
     /** XNA START */
     OP_XNA_ASSET = 0xc0,
     /** XNA END */
@@ -294,10 +300,11 @@ enum opcodetype
 };
 
 // Maximum value that an opcode can be. Bumped by NIP-039 to
-// OP_CHECKSIGADD (0xde). The 0xd8..0xdc range remains unassigned
-// (reserved for the NIP-033 BLS family) and currently falls through to
-// the EvalScript default branch returning SCRIPT_ERR_BAD_OPCODE.
-static const unsigned int MAX_OPCODE = OP_CHECKSIGADD;
+// OP_CHECKSIGADD (0xde) and by NIP-054 to OP_CHECKASSETAUTH (0xdf). The
+// 0xd8..0xdc range remains unassigned (reserved for the NIP-033 BLS family)
+// and currently falls through to the EvalScript default branch returning
+// SCRIPT_ERR_BAD_OPCODE.
+static const unsigned int MAX_OPCODE = OP_CHECKASSETAUTH;
 
 const char* GetOpName(opcodetype opcode);
 

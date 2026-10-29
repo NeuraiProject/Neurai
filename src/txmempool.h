@@ -77,6 +77,7 @@ private:
     unsigned int entryHeight;  //!< Chain height when entering the mempool
     bool spendsCoinbase;       //!< keep track of transactions that spend a coinbase
     uint64_t poseidonWork{0};
+    uint64_t assetAuthWork{0};  //!< NIP-054: OP_CHECKASSETAUTH work, consensus cost
     int64_t sigOpCost;         //!< Total sigop cost
     int64_t feeDelta;          //!< Used for determining the priority of the transaction for mining in a block
     LockPoints lockPoints;     //!< Track the height and time at which tx was final
@@ -111,6 +112,8 @@ public:
     unsigned int GetHeight() const { return entryHeight; }
     uint64_t GetPoseidonWork() const { return poseidonWork; }
     void SetPoseidonWork(uint64_t work) { poseidonWork = work; }
+    uint64_t GetAssetAuthWork() const { return assetAuthWork; }
+    void SetAssetAuthWork(uint64_t work) { assetAuthWork = work; }
     int64_t GetSigOpCost() const { return sigOpCost; }
     int64_t GetModifiedFee() const { return nFee + feeDelta; }
     size_t DynamicMemoryUsage() const { return nUsageSize; }
