@@ -690,13 +690,13 @@ std::string HelpMessage(HelpMessageMode mode)
 
     strUsage += HelpMessageGroup(_("Node relay options:"));
     if (showDebug) {
-        strUsage += HelpMessageOpt("-acceptnonstdtxn", strprintf("Relay and mine \"non-standard\" transactions (%sdefault: %u)", "testnet/regtest only; ", !testnetChainParams->RequireStandard()));
+        strUsage += HelpMessageOpt("-acceptnonstdtxn", "Relay and mine \"non-standard\" transactions (testnet/regtest only; default: 0)");
         strUsage += HelpMessageOpt("-incrementalrelayfee=<amt>", strprintf("Fee rate (in %s/kB) used to define cost of relay, used for mempool limiting. (default: %s)", CURRENCY_UNIT, FormatMoney(DEFAULT_INCREMENTAL_RELAY_FEE)));
         strUsage += HelpMessageOpt("-dustrelayfee=<amt>", strprintf("Fee rate (in %s/kB) used to defined dust, the value of an output such that it will cost more than its value in fees at this fee rate to spend it. (default: %s)", CURRENCY_UNIT, FormatMoney(DUST_RELAY_TX_FEE)));
     }
     strUsage += HelpMessageOpt("-bytespersigop", strprintf(_("Equivalent bytes per sigop in transactions for relay and mining (default: %u)"), DEFAULT_BYTES_PER_SIGOP));
     strUsage += HelpMessageOpt("-datacarrier", strprintf(_("Relay and mine data carrier transactions (default: %u)"), DEFAULT_ACCEPT_DATACARRIER));
-    strUsage += HelpMessageOpt("-datacarriersize", strprintf(_("Maximum size of data in data carrier transactions we relay and mine (default: %u mainnet, %u testnet)"), MAX_OP_RETURN_RELAY, MAX_OP_RETURN_RELAY_TESTNET));
+    strUsage += HelpMessageOpt("-datacarriersize", strprintf(_("Maximum size of data in data carrier transactions we relay and mine (default: %u, %u from the unified fork height)"), MAX_OP_RETURN_RELAY, MAX_OP_RETURN_RELAY_FORK));
     strUsage += HelpMessageOpt("-minrelaytxfee=<amt>", strprintf(_("Fees (in %s/kB) smaller than this are considered zero fee for relaying, mining and transaction creation (default: %s)"),
         CURRENCY_UNIT, FormatMoney(DEFAULT_MIN_RELAY_TX_FEE)));
     strUsage += HelpMessageOpt("-whitelistrelay", strprintf(_("Accept relayed transactions received from whitelisted peers even when not relaying transactions (default: %d)"), DEFAULT_WHITELISTRELAY));
@@ -1334,8 +1334,9 @@ bool AppInitParameterInteraction()
 
     fIsBareMultisigStd = gArgs.GetBoolArg("-permitbaremultisig", DEFAULT_PERMIT_BAREMULTISIG);
     fAcceptDatacarrier = gArgs.GetBoolArg("-datacarrier", DEFAULT_ACCEPT_DATACARRIER);
-    // Set default OP_RETURN size based on network (512 for testnet, 83 for mainnet)
-    nMaxDatacarrierBytes = gArgs.GetArg("-datacarriersize", GetMaxOPReturnRelay());
+    // Without -datacarriersize the limit follows the unified fork (GetMaxOPReturnRelay)
+    fMaxDatacarrierBytesSet = gArgs.IsArgSet("-datacarriersize");
+    nMaxDatacarrierBytes = gArgs.GetArg("-datacarriersize", MAX_OP_RETURN_RELAY);
 
     // Option to startup with mocktime set (used for regression testing):
     SetMockTime(gArgs.GetArg("-mocktime", 0)); // SetMockTime(0) is a no-op
@@ -2060,7 +2061,10 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
 
                 // Blocks connected by older builds have no DEPIN restriction undo
                 // record and could not be disconnected. Rebuilding the chainstate
-                // reconnects every block; mainnet has no DEPIN assets.
+                // reconnects every block. This describes what older builds wrote,
+                // not an activation rule: they accepted DEPIN assets on testnet and
+                // regtest only, so no mainnet block they connected carries a DEPIN
+                // restriction operation, before or after the unified fork.
                 {
                     int depinUndoSchemaVersion = 0;
                     if (!pblocktree->ReadIntFlag(DEPIN_RESTRICTION_UNDO_SCHEMA_FLAG, depinUndoSchemaVersion) ||

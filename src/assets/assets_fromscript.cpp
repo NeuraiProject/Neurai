@@ -7,6 +7,7 @@
 // neurai-tx can link without pulling in the full server stack
 // (validation.h, wallet.h, net.h, etc.).
 
+#include <limits>
 #include <regex>
 #include <vector>
 #include <string>
@@ -29,21 +30,25 @@
 // ---------------------------------------------------------------------------
 
 static const auto MAX_NAME_LENGTH          = 31;
-static const auto MAX_NAME_LENGTH_TESTNET  = 121;
+static const auto MAX_NAME_LENGTH_EXTENDED = 121;
 static const auto MAX_CHANNEL_NAME_LENGTH  = 12;
 
-static bool AreDEPINAssetsEnabledOnCurrentNetwork()
+bool AreDepinAssetsActiveInContext()
 {
-    const std::string& network = GetParams().NetworkIDString();
-    return network == CBaseChainParams::TESTNET || network == CBaseChainParams::REGTEST;
+    return IsStrictAuthScriptActiveInContext();
+}
+
+bool AreDepinAssetsScheduled()
+{
+    return GetParams().GetConsensus().nStrictAuthScriptHeight != std::numeric_limits<int>::max();
 }
 
 int GetMaxAssetNameLength()
 {
-    // Extended names apply wherever DePIN assets are enabled (testnet and
-    // regtest); mainnet keeps the legacy limit until its migration.
-    if (AreDEPINAssetsEnabledOnCurrentNetwork())
-        return MAX_NAME_LENGTH_TESTNET;
+    // Extended names apply wherever DePIN assets are active; below the fork
+    // height the legacy limit stays.
+    if (AreDepinAssetsActiveInContext())
+        return MAX_NAME_LENGTH_EXTENDED;
     return MAX_NAME_LENGTH;
 }
 
@@ -315,8 +320,8 @@ bool IsAssetNameValid(const std::string& name, AssetType& assetType, std::string
         if (ret) assetType = AssetType::RESTRICTED;
         return ret;
     } else if (std::regex_match(name, DEPIN_INDICATOR) || std::regex_match(name, SUB_DEPIN_INDICATOR)) {
-        if (!AreDEPINAssetsEnabledOnCurrentNetwork()) {
-            error = "DEPIN assets are only available in testnet and regtest";
+        if (!AreDepinAssetsActiveInContext()) {
+            error = "DEPIN assets are not active yet on this chain";
             return false;
         }
         bool ret = IsTypeCheckNameValid(AssetType::DEPIN, name, error);

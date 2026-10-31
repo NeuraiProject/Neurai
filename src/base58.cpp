@@ -570,9 +570,11 @@ CTxDestination DecodeDestination(const std::string& str)
             return CNoDestination();
         }
         // Generic v1 is just as unprotected on a network that has not scheduled
-        // AuthScript at all (mainnet today). Where it is scheduled, relay policy
-        // refuses v1 outputs until their activation height instead.
-        if (version == 1 && !GetParams().GetConsensus().nPQWitnessEnabled && !IsStrictAuthScriptActiveInContext()) {
+        // AuthScript at all (mainnet until the unified fork has a height).
+        // Where it is scheduled, relay policy refuses v1 outputs until their
+        // activation height instead.
+        const Consensus::Params& consensus = GetParams().GetConsensus();
+        if (version == 1 && !consensus.IsOptInScheduled(consensus.nPQWitnessEnabled) && !IsStrictAuthScriptActiveInContext()) {
             return CNoDestination();
         }
         std::vector<uint8_t> conv;

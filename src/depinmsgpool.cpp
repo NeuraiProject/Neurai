@@ -120,6 +120,10 @@ CDepinMsgPool::~CDepinMsgPool() = default;
 
 bool IsValidDepinMessagingToken(const std::string& token, std::string& error)
 {
+    // Messaging is off-chain: a DEPIN name is usable wherever the network
+    // schedules DEPIN assets, whatever the height of the tip, so a node in
+    // initial sync or configured before the fork height keeps its token.
+    CStrictAuthScriptContext depinContext(AreDepinAssetsScheduled());
     AssetType type;
     if (!IsAssetNameValid(token, type, error)) {
         return false;
@@ -129,8 +133,8 @@ bool IsValidDepinMessagingToken(const std::string& token, std::string& error)
         error = strprintf(
             "Token '%s' is a valid asset name but not a DEPIN token. DePIN messaging "
             "requires a soulbound DEPIN token (name starting with '%c', e.g. '%cMYTOKEN' "
-            "or a sub-token like '%cMYTOKEN/DEVICE'). DEPIN tokens are currently only "
-            "available on testnet and regtest.",
+            "or a sub-token like '%cMYTOKEN/DEVICE'). DEPIN tokens exist only on "
+            "networks that schedule DEPIN assets.",
             token, DEPIN_CHAR, DEPIN_CHAR, DEPIN_CHAR);
         return false;
     }

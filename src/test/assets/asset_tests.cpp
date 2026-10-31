@@ -221,20 +221,33 @@ BOOST_FIXTURE_TEST_SUITE(asset_tests, BasicTestingSetup)
         BOOST_CHECK(!IsAssetNameValid("$ABC#NO"));
     }
 
-    BOOST_AUTO_TEST_CASE(depin_name_validation_network_gating_tests)
+    BOOST_AUTO_TEST_CASE(depin_name_validation_activation_tests)
     {
-        BOOST_TEST_MESSAGE("Running DEPIN network gating validation tests");
+        BOOST_TEST_MESSAGE("Running DEPIN activation validation tests");
 
         AssetType type;
 
+        // Mainnet: the unified fork has no height yet.
         SelectParams(CBaseChainParams::MAIN);
         BOOST_CHECK(!IsAssetNameValid("&DEPINASSET", type));
         BOOST_CHECK(type == AssetType::INVALID);
 
+        // Testnet: from its fork height (block 10) on, the strict AuthScript
+        // activation context. Validation scopes it to each block.
         SelectParams(CBaseChainParams::TESTNET);
-        BOOST_CHECK(IsAssetNameValid("&DEPINASSET", type));
-        BOOST_CHECK(type == AssetType::DEPIN);
+        const Consensus::Params& testParams = GetParams().GetConsensus();
+        {
+            CStrictAuthScriptContext block9(testParams.IsStrictAuthScriptActive(9));
+            BOOST_CHECK(!IsAssetNameValid("&DEPINASSET", type));
+            BOOST_CHECK(type == AssetType::INVALID);
+        }
+        {
+            CStrictAuthScriptContext block10(testParams.IsStrictAuthScriptActive(10));
+            BOOST_CHECK(IsAssetNameValid("&DEPINASSET", type));
+            BOOST_CHECK(type == AssetType::DEPIN);
+        }
 
+        // Regtest: from genesis.
         SelectParams(CBaseChainParams::REGTEST);
         BOOST_CHECK(IsAssetNameValid("&DEPINASSET", type));
         BOOST_CHECK(type == AssetType::DEPIN);

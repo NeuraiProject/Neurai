@@ -20,15 +20,21 @@ typedef std::vector<unsigned char> valtype;
 
 bool fAcceptDatacarrier = DEFAULT_ACCEPT_DATACARRIER;
 unsigned nMaxDatacarrierBytes = MAX_OP_RETURN_RELAY;
+bool fMaxDatacarrierBytesSet = false;
 
 unsigned int GetMaxOPReturnRelay()
 {
-    // Use larger OP_RETURN size in testnet/regtest for testing purposes
-    const std::string& network = GetParams().NetworkIDString();
-    if (network == CBaseChainParams::TESTNET || network == CBaseChainParams::REGTEST) {
-        return MAX_OP_RETURN_RELAY_TESTNET;
+    // The larger limit belongs to the unified fork. Relay policy judges a
+    // transaction for the block after the tip.
+    if (GetSignatureOpcodeCandidateHeight() >= GetParams().GetConsensus().nOptInFeaturesHeight) {
+        return MAX_OP_RETURN_RELAY_FORK;
     }
     return MAX_OP_RETURN_RELAY;
+}
+
+unsigned int GetMaxDatacarrierBytes()
+{
+    return fMaxDatacarrierBytesSet ? nMaxDatacarrierBytes : GetMaxOPReturnRelay();
 }
 
 CScriptID::CScriptID(const CScript& in) : uint160(Hash160(in.begin(), in.end())) {}

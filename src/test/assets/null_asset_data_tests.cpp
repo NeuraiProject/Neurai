@@ -143,6 +143,8 @@ BOOST_FIXTURE_TEST_SUITE(null_asset_data_contextual_tests, DePINContextualTestin
         BOOST_TEST_MESSAGE("Running DEPIN owner freeze contextual check on PQ destination");
 
         SelectParams(CBaseChainParams::TESTNET);
+        // DEPIN assets exist from the fork height: check as a block past it.
+        CStrictAuthScriptContext pastFork(true);
 
         const std::string assetName = "&DEVICE";
         const CTxDestination targetDest = MakePQDestination();
@@ -182,6 +184,8 @@ BOOST_FIXTURE_TEST_SUITE(null_asset_data_contextual_tests, DePINContextualTestin
         BOOST_TEST_MESSAGE("Running DEPIN owner unfreeze contextual check on PQ destination");
 
         SelectParams(CBaseChainParams::TESTNET);
+        // DEPIN assets exist from the fork height: check as a block past it.
+        CStrictAuthScriptContext pastFork(true);
 
         const std::string assetName = "&DEVICE";
         const CTxDestination targetDest = MakePQDestination();
@@ -222,6 +226,8 @@ BOOST_FIXTURE_TEST_SUITE(null_asset_data_contextual_tests, DePINContextualTestin
         BOOST_TEST_MESSAGE("Running DEPIN self-revoke contextual check on PQ destination");
 
         SelectParams(CBaseChainParams::TESTNET);
+        // DEPIN assets exist from the fork height: check as a block past it.
+        CStrictAuthScriptContext pastFork(true);
 
         const std::string assetName = "&DEVICE";
         const CTxDestination targetDest = MakePQDestination();

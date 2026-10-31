@@ -7,6 +7,7 @@
 #ifndef NEURAI_CONSENSUS_PARAMS_H
 #define NEURAI_CONSENSUS_PARAMS_H
 
+#include "consensus/consensus.h"
 #include "uint256.h"
 #include <map>
 #include <limits>
@@ -50,6 +51,9 @@ struct BIP9Deployment {
 struct Params {
     uint256 hashGenesisBlock;
     int nSubsidyHalvingInterval;
+    /** Blocks a coinbase output waits before it can be spent: COINBASE_MATURITY
+     *  on mainnet and regtest, COINBASE_MATURITY_TESTNET on testnet. */
+    int nCoinbaseMaturity{COINBASE_MATURITY};
     /** Block height and hash at which BIP34 becomes active */
     bool nBIP34Enabled;
     bool nBIP65Enabled;
@@ -96,7 +100,7 @@ struct Params {
      *  nAssetMarkerNip040Height. Ported from origin/main 9568f3b. */
     int nAssetTransferOverflowCheckActivation;
     /** Enable post-quantum (ML-DSA-44) witness v1 verification.
-     *  true on testnet/regtest; false on mainnet until future activation. */
+     *  true on every network; applied from nOptInFeaturesHeight. */
     bool nPQWitnessEnabled;
     /** Activation height shared by the opt-in feature switches of a network:
      *  nPQWitnessEnabled, the opcode switches applied by ApplyConsensusOptIns
@@ -105,9 +109,15 @@ struct Params {
      *  the feature; a block at height h applies it when the switch is true and
      *  h >= nOptInFeaturesHeight. Mempool, mining and wallet evaluate the
      *  height of the next block. 0 on regtest (override with
-     *  -optinfeaturesheight); INT_MAX on mainnet, where no switch is scheduled. */
+     *  -optinfeaturesheight); MAINNET_FORK_HEIGHT on mainnet, which sets every
+     *  switch and every activation height of the unified fork from that one
+     *  constant (INT_MAX until the fork is scheduled). */
     int nOptInFeaturesHeight{std::numeric_limits<int>::max()};
     bool IsOptInActive(bool fEnabled, int nHeight) const { return fEnabled && nHeight >= nOptInFeaturesHeight; }
+    /** The network has given the switch an activation height. Code with no
+     *  block height (address decoding, per-tip cache upkeep) uses it to tell a
+     *  scheduled feature from one that no block can ever apply. */
+    bool IsOptInScheduled(bool fEnabled) const { return fEnabled && nOptInFeaturesHeight != std::numeric_limits<int>::max(); }
     bool IsPQWitnessActive(int nHeight) const { return IsOptInActive(nPQWitnessEnabled, nHeight); }
     bool IsRefInputsActive(int nHeight) const { return IsOptInActive(nREFINPUTSEnabled, nHeight); }
     bool IsXnaAssetStrictActive(int nHeight) const { return IsOptInActive(nXNAAssetStrictEnabled, nHeight); }
@@ -116,16 +126,17 @@ struct Params {
      *  template). Blocks at or above this height enforce the strict spending
      *  rules and recognise OP_2/OP_3-prefixed asset scripts; below it every
      *  rule behaves exactly as before these versions existed.
+     *  The same activation context gates DEPIN assets and asset names longer
+     *  than 31 characters (AreDepinAssetsActiveInContext).
      *  0 on regtest (override with -strictauthscriptheight); block 10 on the
-     *  reset testnet; INT_MAX (never) on mainnet until its activation is
-     *  decided. */
+     *  reset testnet; MAINNET_FORK_HEIGHT on mainnet. */
     int nStrictAuthScriptHeight;
     bool IsStrictAuthScriptActive(int nHeight) const { return nHeight >= nStrictAuthScriptHeight; }
     /** Enable OP_CAT (BIP 347) - stack element concatenation.
-     *  true on testnet/regtest; false on mainnet until future activation. */
+     *  true on every network; applied from nOptInFeaturesHeight. */
     bool nCATEnabled;
     /** Enable OP_CHECKTEMPLATEVERIFY (BIP 119) - transaction template verification.
-     *  true on testnet/regtest; false on mainnet until future activation. */
+     *  true on every network; applied from nOptInFeaturesHeight. */
     bool nCTVEnabled;
     // Common height gate for CSFS, Ed25519 and CHECKSIGADD. Individual
     // capability switches remain available; validation always supplies height.
@@ -133,7 +144,7 @@ struct Params {
     bool IsSignatureOpcodesActive(int height) const { return height >= nSignatureOpcodesHeight; }
     /** Enable OP_CHECKSIGFROMSTACK - verify signature against arbitrary message.
      *  true on every network; it applies only from nOptInFeaturesHeight and
-     *  nSignatureOpcodesHeight, both unscheduled (INT_MAX) on mainnet. */
+     *  nSignatureOpcodesHeight, both MAINNET_FORK_HEIGHT on mainnet. */
     bool nCSFSEnabled;
     /** NIP-042: independent activation of the tagged TXHASH format. */
     int nTxHashHeight{std::numeric_limits<int>::max()};
@@ -143,11 +154,11 @@ struct Params {
     int nZKVerifyHeight{std::numeric_limits<int>::max()};
     bool IsZKVerifyActive(int height) const { return height >= nZKVerifyHeight; }
     // C5 profile 2: block 10 on the reset testnet, 0 on regtest
-    // (-zkpublictreeheight), unscheduled on mainnet during review.
+    // (-zkpublictreeheight), MAINNET_FORK_HEIGHT on mainnet.
     int nZKPublicTreeHeight{std::numeric_limits<int>::max()};
     bool IsZKPublicTreeActive(int height) const { return height >= nZKPublicTreeHeight; }
     // C6 profile 3: block 100 on reset testnet, 0 on regtest;
-    // mainnet remains unscheduled.
+    // MAINNET_FORK_HEIGHT on mainnet.
     int nZKPortableTreeHeight{std::numeric_limits<int>::max()};
     bool IsZKPortableTreeActive(int height) const { return height >= nZKPortableTreeHeight; }
     int nPoseidonWorkHeight{std::numeric_limits<int>::max()};
@@ -169,49 +180,50 @@ struct Params {
     int nAssetAuthHeight{std::numeric_limits<int>::max()};
     bool IsAssetAuthActive(int height) const { return height >= nAssetAuthHeight; }
     /** Enable OP_TXFIELD (NOP7) - push raw bytes of spent output fields to stack.
-     *  Required for recursive DEX covenants. true on testnet/regtest; false on mainnet. */
+     *  Required for recursive DEX covenants. true on every network; applied from nOptInFeaturesHeight. */
     bool nTXFIELDEnabled;
     /** Enable OP_SPLIT (NOP8) - split a byte array into two parts at a given position.
-     *  Inverse of OP_CAT. true on testnet/regtest; false on mainnet until future activation. */
+     *  Inverse of OP_CAT. true on every network; applied from nOptInFeaturesHeight. */
     bool nSPLITEnabled;
     /** Enable OP_REVERSEBYTES - reverse the top stack item in place.
-     *  true on testnet/regtest; false on mainnet until future activation. */
+     *  true on every network; applied from nOptInFeaturesHeight. */
     bool nREVERSEBYTESEnabled;
     /** Enable OP_OUTPUTVALUE - push the amount of a selected output as raw
-     *  8-byte little-endian data. true on testnet/regtest; false on mainnet. */
+     *  8-byte little-endian data. true on every network; applied from
+     *  nOptInFeaturesHeight. */
     bool nOUTPUTVALUEEnabled;
     /** Enable OP_OUTPUTSCRIPT - push the scriptPubKey of a selected output
-     *  as raw bytes. true on testnet/regtest; false on mainnet. */
+     *  as raw bytes. true on every network; applied from nOptInFeaturesHeight. */
     bool nOUTPUTSCRIPTEnabled;
     /** Enable OP_OUTPUTASSETFIELD - read asset payload fields from a selected
-     *  output by selector. true on testnet/regtest; false on mainnet. */
+     *  output by selector. true on every network; applied from nOptInFeaturesHeight. */
     bool nOUTPUTASSETFIELDEnabled;
     /** Enable OP_INPUTASSETFIELD - read asset payload fields from a selected
-     *  prevout referenced by an input. true on testnet/regtest; false on mainnet. */
+     *  prevout referenced by an input. true on every network; applied from nOptInFeaturesHeight. */
     bool nINPUTASSETFIELDEnabled;
-    /** Enable 64-bit arithmetic and OP_MUL/OP_DIV/OP_MOD. true on
-     *  testnet/regtest; false on mainnet until future activation. */
+    /** Enable 64-bit arithmetic and OP_MUL/OP_DIV/OP_MOD. true on every
+     *  network; applied from nOptInFeaturesHeight. */
     bool n64BitIntegersEnabled;
     /** Enable OP_TXLOCKTIME - push transaction nLockTime as raw 4-byte
-     *  little-endian data. true on testnet/regtest; false on mainnet. */
+     *  little-endian data. true on every network; applied from nOptInFeaturesHeight. */
     bool nTXLOCKTIMEEnabled;
     /** Enable OP_INPUTCOUNT / OP_OUTPUTCOUNT - push transaction input/output
-     *  count onto the stack. true on testnet/regtest; false on mainnet. */
+     *  count onto the stack. true on every network; applied from nOptInFeaturesHeight. */
     bool nINPUTOUTPUTCOUNTEnabled;
     /** NIP-014: Enable transaction v3 with reference inputs (vrefin) and
-     *  OP_REFINPUT* opcodes. true on testnet/regtest; false on mainnet. */
+     *  OP_REFINPUT* opcodes. true on every network; applied from nOptInFeaturesHeight. */
     bool nREFINPUTSEnabled;
     /** NIP-023: Enable OP_OUTPUTAUTHCOMMITMENT - push the 32-byte AuthScript v1
      *  commitment of a selected output's scriptPubKey. Symmetric to
-     *  TXFIELD_SPENT_AUTHCOMMITMENT for inputs. true on testnet/regtest;
-     *  false on mainnet until future activation. */
+     *  TXFIELD_SPENT_AUTHCOMMITMENT for inputs. true on every network;
+     *  applied from nOptInFeaturesHeight. */
     bool nOUTPUTAUTHCOMMITMENTEnabled;
     /** NIP-024: Enable OP_INPUTVALUE - push the XNA satoshi value of a selected
-     *  input's prevout. Symmetric to OP_OUTPUTVALUE. true on testnet/regtest;
-     *  false on mainnet until future activation. */
+     *  input's prevout. Symmetric to OP_OUTPUTVALUE. true on every network;
+     *  applied from nOptInFeaturesHeight. */
     bool nINPUTVALUEEnabled;
     /** NIP-026: Enable OP_CHAINCONTEXT (selectors HEIGHT, MTP, CHAIN_ID).
-     *  true on testnet/regtest; false on mainnet until future activation.
+     *  true on every network; applied from nOptInFeaturesHeight.
      *  ApplyConsensusOptIns co-sets SCRIPT_VERIFY_64BIT_INTEGERS whenever
      *  this is true — MTP after 2038 does not fit in a 4-byte CScriptNum. */
     bool nCHAINCONTEXTEnabled;
@@ -219,30 +231,30 @@ struct Params {
      *  valid asset/null-asset script. The legacy (origin/main) rule accepts
      *  such an output when its script *starts* with OP_XNA_ASSET; the strict
      *  rule rejects it outright. Enabling this retroactively would fork mainnet
-     *  history, so it is false on mainnet (origin/main behaviour) until the
-     *  unified fork and true on testnet/regtest, where it is already consensus.
+     *  history, so like every switch it applies only from nOptInFeaturesHeight
+     *  (the unified fork on mainnet; already consensus on testnet/regtest).
      *  See NIP/revision/010. */
     bool nXNAAssetStrictEnabled;
     /** NIP-040: height at which the asset marker migrates from "rvn" to
      *  "xna". Below this height ordinary asset outputs must carry the legacy
      *  "rvn" marker and "xna" outputs are invalid; at and above it the rule
      *  inverts. Inputs are never affected: legacy UTXOs stay spendable
-     *  forever. std::numeric_limits<int>::max() on chains that have not
-     *  scheduled the fork (mainnet until the second release). See NIP/040. */
+     *  forever. MAINNET_FORK_HEIGHT on mainnet (INT_MAX, explicitly inactive,
+     *  until the unified fork is scheduled). See NIP/040. */
     int nAssetMarkerNip040Height;
     /** DEPIN transfer state: height at which the OPEN / CLOSE / SEAL
      *  operations on DEPIN assets ("&NAME") become valid. Below this height
      *  every DEPIN state operation is rejected and DEPIN assets stay
-     *  soulbound (CLOSED). std::numeric_limits<int>::max() on chains that
-     *  have not scheduled the fork (mainnet). See NIP/plan-nodo-depin-estado-transferencia.md. */
+     *  soulbound (CLOSED). MAINNET_FORK_HEIGHT on mainnet (INT_MAX until the
+     *  unified fork is scheduled). See NIP/plan-nodo-depin-estado-transferencia.md. */
     int nDepinTransferStateHeight;
     /** No-RBF sequence rule: from this height every input of a non-coinbase
      *  transaction must use sequence 0xffffffff, 0xfffffffe or, in a
      *  transaction of version 2 or higher, a BIP 68 relative lock (see
      *  CTxIn::IsNoRbfSequenceAllowed). Values that only signal BIP 125
      *  replaceability make the transaction invalid. Block 10 of the reset
-     *  testnet, 0 on regtest (override with -rbfbanheight), INT_MAX on mainnet
-     *  until the unified fork. */
+     *  testnet, 0 on regtest (override with -rbfbanheight), MAINNET_FORK_HEIGHT
+     *  on mainnet. */
     int nNoRbfHeight{std::numeric_limits<int>::max()};
     bool IsNoRbfActive(int nHeight) const { return nHeight >= nNoRbfHeight; }
     /** Enable the height-based shortcut in AreAssetsDeployed()/IsRip5Active()
@@ -266,11 +278,11 @@ struct Params {
      *  false on mainnet, which keeps VersionBits exactly like origin/main, and
      *  on regtest, whose unit tests exercise the pre-activation paths. */
     bool nAssetsActiveFromGenesis{false};
-    /** NIP-028: activation height for the testnet block-time reduction
-     *  (60s → 30s) and coupled subsidy halving. Set to
-     *  std::numeric_limits<int>::max() to disable on chains that did
-     *  not opt in (mainnet, regtest by default). At and after this
-     *  height the chain consensus rules use:
+    /** NIP-028: activation height for the block-time reduction
+     *  (60s → 30s) and coupled subsidy halving. Block 10 of the reset
+     *  testnet, MAINNET_FORK_HEIGHT on mainnet, INT_MAX (disabled) on
+     *  regtest by default. At and after this height the chain consensus
+     *  rules use:
      *    - nPowTargetSpacingPost           (= 30 on testnet)
      *    - nPowTargetTimespanPost          (= 2016 * 30 on testnet)
      *    - nSubsidyHalvingIntervalPost     (= 28800, doubled so the
@@ -287,8 +299,7 @@ struct Params {
      *  (`bad-opcode` pre-NIP-030); activation is a hard-fork
      *  relative to the pre-NIP-030 rules. true on testnet/regtest,
      *  applied from nOptInFeaturesHeight (block 10 of the reset
-     *  testnet, genesis on regtest); false on mainnet until a future
-     *  activation NIP. */
+     *  testnet, genesis on regtest, MAINNET_FORK_HEIGHT on mainnet). */
     bool nKeccakBlake2bEnabled;
     /** NIP-031: enable OP_CHECKMERKLEINCLUSION (0xc1) — native
      *  Merkle inclusion verification with a tree-scheme selector
@@ -298,8 +309,7 @@ struct Params {
      *  per-element stack cap to MAX_PQ_SCRIPT_ELEMENT_SIZE (3072 B)
      *  and the MAX_STACK_BYTES gate. true on testnet/regtest,
      *  applied from nOptInFeaturesHeight (block 10 of the reset
-     *  testnet, genesis on regtest); false on mainnet until a future
-     *  activation NIP. */
+     *  testnet, genesis on regtest, MAINNET_FORK_HEIGHT on mainnet). */
     bool nMerkleInclusionEnabled;
     /** NIP-034a: enable OP_BLAKE3 (0xc8), OP_SHA3_256 (0xca) and
      *  OP_SHA512 (0xcb) hash opcodes. All three slots were
@@ -307,8 +317,8 @@ struct Params {
      *  hard-fork. OP_POSEIDON (0xc9) is intentionally NOT covered
      *  by this flag; it has its own switch (NIP-036, below).
      *  true on testnet/regtest, applied from nOptInFeaturesHeight
-     *  (block 10 of the reset testnet, genesis on regtest); false on
-     *  mainnet until a future activation NIP. */
+     *  (block 10 of the reset testnet, genesis on regtest,
+     *  MAINNET_FORK_HEIGHT on mainnet). */
     bool nModernHashesEnabled;
 
     /** NIP-036: enable OP_POSEIDON (0xc9), the SNARK-friendly
@@ -316,7 +326,7 @@ struct Params {
      *  previously unassigned (`bad-opcode`); activation is a
      *  hard-fork. true on testnet/regtest, applied from
      *  nOptInFeaturesHeight (block 10 of the reset testnet, genesis
-     *  on regtest); false on mainnet until a future activation NIP. */
+     *  on regtest, MAINNET_FORK_HEIGHT on mainnet). */
     bool nPoseidonEnabled;
 
     /** NIP-035: enable OP_CHECKSIG_ED25519 (0xdd), the strict-profile
@@ -324,7 +334,7 @@ struct Params {
      *  unassigned (`bad-opcode`); activation is a hard-fork. true on
      *  every network; it applies only from nOptInFeaturesHeight and
      *  nSignatureOpcodesHeight (block 10 of the reset testnet, genesis on
-     *  regtest, unscheduled on mainnet). Activation also widens the
+     *  regtest, MAINNET_FORK_HEIGHT on mainnet). Activation also widens the
      *  large-witness standardness gate so messages > 80 B can be relayed. */
     bool nEd25519Enabled;
 
@@ -333,7 +343,7 @@ struct Params {
      *  Slot was previously unassigned (`bad-opcode`); activation is
      *  a hard-fork. true on every network; it applies only from
      *  nOptInFeaturesHeight and nSignatureOpcodesHeight (block 10 of the
-     *  reset testnet, genesis on regtest, unscheduled on mainnet).
+     *  reset testnet, genesis on regtest, MAINNET_FORK_HEIGHT on mainnet).
      *  Activation also widens the per-element script cap and the
      *  large-witness standardness gate so PQ-sized signatures and pubkeys
      *  can flow through. */

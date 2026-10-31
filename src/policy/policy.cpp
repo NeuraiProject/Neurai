@@ -123,7 +123,7 @@ bool IsStandard(const CScript& scriptPubKey, txnouttype& whichType, const bool w
         if (m < 1 || m > n)
             return false;
     } else if (whichType == TX_NULL_DATA &&
-               (!fAcceptDatacarrier || scriptPubKey.size() > nMaxDatacarrierBytes))
+               (!fAcceptDatacarrier || scriptPubKey.size() > GetMaxDatacarrierBytes()))
         return false;
     else if (whichType == TX_RESTRICTED_ASSET_DATA && scriptPubKey.size() > GetMaxOPReturnRelay())
         return false;

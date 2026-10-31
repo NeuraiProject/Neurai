@@ -52,7 +52,7 @@ const std::string ASSET = "&DEVICE";
 // fall through to `passets`. Restores every global it touches.
 //
 // REGTEST rather than TESTNET: DEPIN names validate on both
-// (AreDEPINAssetsEnabledOnCurrentNetwork), and selecting TESTNET costs about
+// (AreDepinAssetsActiveInContext), and selecting TESTNET costs about
 // 8.5 seconds per test case in this codebase -- the pre-existing DEPIN suites
 // that do select it each pay that, and there is no reason for this one to.
 //

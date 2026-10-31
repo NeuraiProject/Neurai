@@ -375,7 +375,9 @@ BOOST_AUTO_TEST_CASE(inputassetfield_cross_input_and_64bit_integration)
     BOOST_CHECK(result[0] == std::vector<unsigned char>{1});
 }
 
-BOOST_AUTO_TEST_CASE(inputassetfield_depin_type_network_matrix)
+// DEPIN prevouts parse from the fork height on (the strict AuthScript
+// activation context, which the interpreter derives from the block's flags).
+BOOST_AUTO_TEST_CASE(inputassetfield_depin_type_activation_matrix)
 {
     std::vector<unsigned char> result;
 
@@ -386,17 +388,18 @@ BOOST_AUTO_TEST_CASE(inputassetfield_depin_type_network_matrix)
         BOOST_CHECK(result == EncodeByte((unsigned char)IntFromAssetType(AssetType::DEPIN)));
     }
 
-    {
-        const std::vector<CTxOut> prevouts = BuildDEPINPrevoutsForNetwork(CBaseChainParams::TESTNET);
+    for (const std::string& chain : {CBaseChainParams::TESTNET, CBaseChainParams::MAIN}) {
+        const std::vector<CTxOut> prevouts = BuildDEPINPrevoutsForNetwork(chain);
         CTransaction tx(BuildSpendingTx(prevouts.size()));
-        BOOST_CHECK(DirectGetInputAssetField(tx, prevouts, 0, 0x07, result));
-        BOOST_CHECK(result == EncodeByte((unsigned char)IntFromAssetType(AssetType::DEPIN)));
-    }
-
-    {
-        const std::vector<CTxOut> prevouts = BuildDEPINPrevoutsForNetwork(CBaseChainParams::MAIN);
-        CTransaction tx(BuildSpendingTx(prevouts.size()));
-        BOOST_CHECK(!DirectGetInputAssetField(tx, prevouts, 0, 0x07, result));
+        {
+            CStrictAuthScriptContext beforeFork(false);
+            BOOST_CHECK(!DirectGetInputAssetField(tx, prevouts, 0, 0x07, result));
+        }
+        {
+            CStrictAuthScriptContext pastFork(true);
+            BOOST_CHECK(DirectGetInputAssetField(tx, prevouts, 0, 0x07, result));
+            BOOST_CHECK(result == EncodeByte((unsigned char)IntFromAssetType(AssetType::DEPIN)));
+        }
     }
 }
 

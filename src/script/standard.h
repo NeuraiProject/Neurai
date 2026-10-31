@@ -30,18 +30,19 @@ public:
 
 /**
  * Default setting for nMaxDatacarrierBytes.
- * Mainnet: 80 bytes of data, +1 for OP_RETURN, +2 for the pushdata opcodes = 83 bytes
- * Testnet: 512 bytes for testing purposes
+ * Below the unified fork: 80 bytes of data, +1 for OP_RETURN, +2 for the pushdata opcodes = 83 bytes
+ * From the unified fork (nOptInFeaturesHeight) on: 512 bytes
  */
 static const unsigned int MAX_OP_RETURN_RELAY = 83;
-static const unsigned int MAX_OP_RETURN_RELAY_TESTNET = 512;
+static const unsigned int MAX_OP_RETURN_RELAY_FORK = 512;
 
 // Forward declaration
 class CChainParams;
 
 /**
- * Get maximum OP_RETURN relay size based on network
- * Returns 512 bytes for testnet, 83 bytes for mainnet/regtest
+ * Get the default maximum OP_RETURN relay size for the block after the tip:
+ * MAX_OP_RETURN_RELAY_FORK from nOptInFeaturesHeight on, MAX_OP_RETURN_RELAY
+ * below it
  */
 unsigned int GetMaxOPReturnRelay();
 
@@ -51,8 +52,13 @@ unsigned int GetMaxOPReturnRelay();
  */
 extern bool fAcceptDatacarrier;
 
-/** Maximum size of TX_NULL_DATA scripts that this node considers standard. */
+/** Maximum size of TX_NULL_DATA scripts that this node considers standard,
+ *  when -datacarriersize sets it (fMaxDatacarrierBytesSet). */
 extern unsigned nMaxDatacarrierBytes;
+extern bool fMaxDatacarrierBytesSet;
+
+/** -datacarriersize when given, GetMaxOPReturnRelay() otherwise. */
+unsigned int GetMaxDatacarrierBytes();
 
 /**
  * Mandatory script verification flags that all new blocks must comply with for

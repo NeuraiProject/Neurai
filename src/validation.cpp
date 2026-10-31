@@ -1818,9 +1818,9 @@ void InitScriptExecutionCache() {
 // (scriptExecutionCache at line 1748), so a rotation makes all prior
 // entries unreachable without touching storage. Called on each tip
 // change so that OP_CHAINCONTEXT results tied to HEIGHT / MTP cannot
-// be re-served after the tip advances. Gated by callers on
+// be re-served after the tip advances. Gated by callers on a scheduled
 // nCHAINCONTEXTEnabled to avoid a pointless perf regression on chains
-// where the opcode is not active.
+// where the opcode is not scheduled.
 static void FlushScriptExecutionCache() {
     scriptExecutionCacheNonce = GetRandHash();
 }
@@ -2079,7 +2079,7 @@ static void MempoolEvictScriptRuleEntries(CTxMemPool& pool)
 
 // NIP-040: run on every tip change, in both directions, independent of the
 // NIP-026 chain-context machinery (that helper only visits tagged entries
-// and is gated on nCHAINCONTEXTEnabled). Only walks the mempool when the
+// and is gated on a scheduled nCHAINCONTEXTEnabled). Only walks the mempool when the
 // marker activation state of the mempool's target height actually flips:
 // connecting H-1 turns the "rvn" outputs unminable, disconnecting back to
 // H-2 turns the "xna" outputs unminable.
@@ -4080,8 +4080,8 @@ bool static DisconnectTip(CValidationState& state, const CChainParams& chainpara
     // observations baked into prior hits cannot be re-served at the new
     // tip, then evict mempool entries whose OP_CHAINCONTEXT-dependent
     // scripts no longer validate. Gated to avoid paying the cost on
-    // chains where the opcode is not yet active.
-    if (chainparams.GetConsensus().nCHAINCONTEXTEnabled) {
+    // chains where the opcode is not scheduled.
+    if (chainparams.GetConsensus().IsOptInScheduled(chainparams.GetConsensus().nCHAINCONTEXTEnabled)) {
         FlushScriptExecutionCache();
         if (pindexDelete->pprev)
             MempoolRemoveForNewTip(mempool, *pindexDelete->pprev, chainparams);
@@ -4286,7 +4286,7 @@ bool static ConnectTip(CValidationState& state, const CChainParams& chainparams,
     // NIP-026: see DisconnectTip — flushing here closes the stale-cache
     // window for every tip advance, including the reorg case (which
     // goes DisconnectTip → ConnectTip; both sides must flush).
-    if (chainparams.GetConsensus().nCHAINCONTEXTEnabled) {
+    if (chainparams.GetConsensus().IsOptInScheduled(chainparams.GetConsensus().nCHAINCONTEXTEnabled)) {
         FlushScriptExecutionCache();
         MempoolRemoveForNewTip(mempool, *pindexNew, chainparams);
     }

@@ -1106,8 +1106,8 @@ BOOST_AUTO_TEST_CASE(unscheduled_network_refuses_authscript_outputs)
     const auto testnet = CreateChainParams(CBaseChainParams::TESTNET);
     const Consensus::Params& mainParams = mainnet->GetConsensus();
     const Consensus::Params& testParams = testnet->GetConsensus();
-    BOOST_REQUIRE(!mainParams.nPQWitnessEnabled);
-    BOOST_REQUIRE(testParams.nPQWitnessEnabled);
+    BOOST_REQUIRE(!mainParams.IsOptInScheduled(mainParams.nPQWitnessEnabled));
+    BOOST_REQUIRE(testParams.IsOptInScheduled(testParams.nPQWitnessEnabled));
 
     const std::vector<unsigned char> program(32, 0x42);
     for (int version : {1, 2, 3}) {

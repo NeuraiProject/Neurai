@@ -32,7 +32,7 @@ enum class AssetType
     OWNER = 9,
     NULL_ADD_QUALIFIER = 10,
     INVALID = 11,
-    DEPIN = 12  // Soulbound assets (testnet and regtest only)
+    DEPIN = 12  // Soulbound assets (from the unified fork height)
 };
 
 enum class QualifierType

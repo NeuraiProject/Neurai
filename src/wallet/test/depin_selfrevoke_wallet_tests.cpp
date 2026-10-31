@@ -34,6 +34,7 @@
 #include "wallet/coincontrol.h"
 #include "wallet/test/wallet_test_fixture.h"
 
+#include <algorithm>
 #include <boost/test/unit_test.hpp>
 #include <string>
 #include <univalue.h>
@@ -63,7 +64,11 @@ struct DepinSelfRevokeWalletSetup : private ScopedTestBlockNetwork, public Testi
 
         coinbaseKey.MakeNewKey(true);
         const CScript coinbaseScript = GetScriptForRawPubKey(coinbaseKey.GetPubKey());
-        for (int i = 0; i < GetCoinbaseMaturity() + 3; ++i) {
+        // Enough blocks to mature coinbases (5 on testnet) with margin and to
+        // reach the fork height (block 10 on testnet), from which DEPIN assets
+        // exist; any height >= 1 already switches AreAssetsDeployed() on.
+        const int nBlocks = std::max(GetCoinbaseMaturity() + 3, GetParams().GetConsensus().nStrictAuthScriptHeight);
+        for (int i = 0; i < nBlocks; ++i) {
             MineBlock(coinbaseScript);
         }
 

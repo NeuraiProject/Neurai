@@ -375,7 +375,9 @@ BOOST_AUTO_TEST_CASE(outputassetfield_type_confusion_reissue_vs_root)
     BOOST_CHECK(result[0] == std::vector<unsigned char>{});
 }
 
-BOOST_AUTO_TEST_CASE(outputassetfield_depin_type_network_matrix)
+// DEPIN outputs parse from the fork height on (the strict AuthScript
+// activation context, which the interpreter derives from the block's flags).
+BOOST_AUTO_TEST_CASE(outputassetfield_depin_type_activation_matrix)
 {
     std::vector<unsigned char> result;
 
@@ -385,15 +387,17 @@ BOOST_AUTO_TEST_CASE(outputassetfield_depin_type_network_matrix)
         BOOST_CHECK(result == EncodeByte((unsigned char)IntFromAssetType(AssetType::DEPIN)));
     }
 
-    {
-        CTransaction tx(BuildDEPINTxForNetwork(CBaseChainParams::TESTNET));
-        BOOST_CHECK(DirectGetOutputAssetField(tx, 0, 0x07, result));
-        BOOST_CHECK(result == EncodeByte((unsigned char)IntFromAssetType(AssetType::DEPIN)));
-    }
-
-    {
-        CTransaction tx(BuildDEPINTxForNetwork(CBaseChainParams::MAIN));
-        BOOST_CHECK(!DirectGetOutputAssetField(tx, 0, 0x07, result));
+    for (const std::string& chain : {CBaseChainParams::TESTNET, CBaseChainParams::MAIN}) {
+        CTransaction tx(BuildDEPINTxForNetwork(chain));
+        {
+            CStrictAuthScriptContext beforeFork(false);
+            BOOST_CHECK(!DirectGetOutputAssetField(tx, 0, 0x07, result));
+        }
+        {
+            CStrictAuthScriptContext pastFork(true);
+            BOOST_CHECK(DirectGetOutputAssetField(tx, 0, 0x07, result));
+            BOOST_CHECK(result == EncodeByte((unsigned char)IntFromAssetType(AssetType::DEPIN)));
+        }
     }
 }
 

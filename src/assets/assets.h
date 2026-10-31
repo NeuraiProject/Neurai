@@ -45,7 +45,20 @@
 #define UNIQUE_ASSETS_REISSUABLE 0
 
 /**
- * Get maximum asset name length based on network
+ * DEPIN assets and asset names longer than 31 characters belong to the unified
+ * fork. They share the activation context of the strict AuthScript families
+ * (nStrictAuthScriptHeight): validation scopes it to the height of the block
+ * or of the next block, and code with no block context sees the block after
+ * the tip.
+ */
+bool AreDepinAssetsActiveInContext();
+
+/** The network has given DEPIN assets an activation height. Off-chain uses of
+ *  DEPIN names (DePIN messaging) depend on this, not on the height of the tip. */
+bool AreDepinAssetsScheduled();
+
+/**
+ * Get maximum asset name length for the current activation context
  * Returns the total asset-name limit used by validation.
  * ROOT/SUB names reserve one extra character for the OWNER_TAG ('!').
  */
@@ -83,7 +96,7 @@ AssetMarker MarkerForNextBlockOutput();
 
 #define RESTRICTED_CHAR '$'
 #define QUALIFIER_CHAR '#'
-#define DEPIN_CHAR '&'  // Soulbound assets (testnet and regtest only)
+#define DEPIN_CHAR '&'  // Soulbound assets (from the unified fork height)
 
 #define QUALIFIER_ASSET_MIN_AMOUNT 1 * COIN
 #define QUALIFIER_ASSET_MAX_AMOUNT 10 * COIN
@@ -516,7 +529,7 @@ bool IsAssetNameASubQualifier(const std::string& name);
 //! Check if an asset is a message channel
 bool IsAssetNameAnMsgChannel(const std::string& name);
 
-//! Check if an asset is a DEPIN (soulbound) asset (testnet and regtest only)
+//! Check if an asset is a DEPIN (soulbound) asset
 bool IsAssetNameADEPIN(const std::string& name);
 
 //! Check if an asset is a sub-DEPIN asset

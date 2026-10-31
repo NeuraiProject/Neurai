@@ -43,13 +43,8 @@
 std::map<uint256, std::string> mapReissuedTx;
 std::map<std::string, uint256> mapReissuedAssets;
 
-// Name length limits live in assets_fromscript.cpp (GetMaxAssetNameLength).
-
-static bool AreDEPINAssetsEnabledOnCurrentNetwork()
-{
-    const std::string& network = GetParams().NetworkIDString();
-    return network == CBaseChainParams::TESTNET || network == CBaseChainParams::REGTEST;
-}
+// Name length limits and the DEPIN activation context live in
+// assets_fromscript.cpp (GetMaxAssetNameLength, AreDepinAssetsActiveInContext).
 
 // min lengths are expressed by quantifiers
 static const std::regex ROOT_NAME_CHARACTERS("^[A-Z0-9._]{3,}$");
@@ -5830,11 +5825,11 @@ bool ContextualCheckTransferAsset(CAssetsCache* assetCache, const CAssetTransfer
         }
     }
 
-    // DEPIN assets validation (testnet and regtest only)
+    // DEPIN assets validation
     if (assetType == AssetType::DEPIN) {
-        // DEPIN assets can only be used in testnet and regtest
-        if (!AreDEPINAssetsEnabledOnCurrentNetwork()) {
-            strError = "bad-txns-depin-not-enabled: DEPIN assets are only available in testnet and regtest";
+        // DEPIN assets exist only from the unified fork on
+        if (!AreDepinAssetsActiveInContext()) {
+            strError = "bad-txns-depin-not-enabled: DEPIN assets are not active yet on this chain";
             return false;
         }
 
@@ -5990,19 +5985,7 @@ bool CheckReissueAsset(const CReissueAsset& asset, std::string& strError)
         return false;
     }
 
-    /// -------- TESTNET ONLY ---------- ///
-    // Testnet has a couple blocks that have invalid nReissue values before constriants were created
-    bool fSkip = false;
-    if (GetParams().NetworkIDString() == CBaseChainParams::TESTNET) {
-        if (asset.strName == "GAMINGWEB" && asset.nReissuable == 109) {
-            fSkip = true;
-        } else if (asset.strName == "UINT8" && asset.nReissuable == -47) {
-            fSkip = true;
-        }
-    }
-    /// -------- TESTNET ONLY ---------- ///
-
-    if (!fSkip && asset.nReissuable != 0 && asset.nReissuable != 1) {
+    if (asset.nReissuable != 0 && asset.nReissuable != 1) {
         strError = _("Unable to reissue asset: reissuable must be 0 or 1");
         return false;
     }

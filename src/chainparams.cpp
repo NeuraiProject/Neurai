@@ -133,43 +133,61 @@ public:
         consensus.nBIP66Enabled = true;
         consensus.nSegwitEnabled = true;
         consensus.nCSVEnabled = true;
-        consensus.nPQWitnessEnabled = false; // PQ not yet active on mainnet
-        consensus.nStrictAuthScriptHeight = std::numeric_limits<int>::max(); // strict AuthScript families (witness v2/v3): not scheduled on mainnet
-        consensus.nCATEnabled = false;  // OP_CAT (BIP 347) not yet active on mainnet
-        consensus.nCTVEnabled = false;  // OP_CTV (BIP 119) not yet active on mainnet
-        consensus.nSignatureOpcodesHeight = std::numeric_limits<int>::max(); // not scheduled on mainnet
+        // Unified fork: mainnet adopts at once every rule that testnet and
+        // regtest already run. Each switch below is scheduled and each
+        // activation height is MAINNET_FORK_HEIGHT, so setting the fork means
+        // changing this one constant. Until then it is INT_MAX and no block
+        // applies any of them (fork_parity_tests checks both properties).
+        static constexpr int MAINNET_FORK_HEIGHT = std::numeric_limits<int>::max();
+        consensus.nOptInFeaturesHeight = MAINNET_FORK_HEIGHT; // every opt-in switch below applies from this height
+        consensus.nPQWitnessEnabled = true; // PQ (ML-DSA-44) AuthScript
+        consensus.nStrictAuthScriptHeight = MAINNET_FORK_HEIGHT; // strict AuthScript families (witness v2/v3), NIP-041, DEPIN assets and long asset names
+        consensus.nCATEnabled = true;  // OP_CAT (BIP 347)
+        consensus.nCTVEnabled = true;  // OP_CTV (BIP 119)
+        consensus.nSignatureOpcodesHeight = MAINNET_FORK_HEIGHT; // CSFS, Ed25519, CHECKSIGADD
         consensus.nCSFSEnabled = true; // gated by nSignatureOpcodesHeight
-        consensus.nTxHashHeight = std::numeric_limits<int>::max(); // NIP-042: unscheduled on mainnet
-        consensus.nTXFIELDEnabled = false; // OP_TXFIELD (NOP7) not yet active on mainnet
-        consensus.nSPLITEnabled = false;   // OP_SPLIT (NOP8) not yet active on mainnet
-        consensus.nREVERSEBYTESEnabled = false; // OP_REVERSEBYTES not yet active on mainnet
-        consensus.nOUTPUTVALUEEnabled = false; // OP_OUTPUTVALUE not yet active on mainnet
-        consensus.nOUTPUTSCRIPTEnabled = false; // OP_OUTPUTSCRIPT not yet active on mainnet
-        consensus.nOUTPUTASSETFIELDEnabled = false; // OP_OUTPUTASSETFIELD not yet active on mainnet
-        consensus.nINPUTASSETFIELDEnabled = false; // OP_INPUTASSETFIELD not yet active on mainnet
-        consensus.n64BitIntegersEnabled = false; // 64-bit arithmetic not yet active on mainnet
-        consensus.nTXLOCKTIMEEnabled = false; // OP_TXLOCKTIME not yet active on mainnet
-        consensus.nINPUTOUTPUTCOUNTEnabled = false; // OP_INPUTCOUNT/OP_OUTPUTCOUNT not yet active on mainnet
-        consensus.nREFINPUTSEnabled = false; // NIP-014: tx v3 + vrefin not yet active on mainnet
-        consensus.nOUTPUTAUTHCOMMITMENTEnabled = false; // NIP-023: OP_OUTPUTAUTHCOMMITMENT not yet active on mainnet
-        consensus.nINPUTVALUEEnabled = false; // NIP-024: OP_INPUTVALUE not yet active on mainnet
-        consensus.nCHAINCONTEXTEnabled = false; // NIP-026: OP_CHAINCONTEXT not yet active on mainnet
-        consensus.nXNAAssetStrictEnabled = false; // NIP revision 010: keep origin/main OP_XNA_ASSET rule on mainnet until the unified fork
-        consensus.nAssetMarkerNip040Height = std::numeric_limits<int>::max(); // NIP-040: H_main is set in the second release, after testnet validation
-        consensus.nDepinTransferStateHeight = std::numeric_limits<int>::max(); // DEPIN transfer state: not scheduled on mainnet (DEPIN assets are testnet/regtest only until the unified fork)
-        consensus.nNoRbfHeight = std::numeric_limits<int>::max(); // No-RBF sequence rule: set with the unified fork height
+        consensus.nZKVerifyHeight = MAINNET_FORK_HEIGHT; // NIP-016
+        consensus.nZKPublicTreeHeight = MAINNET_FORK_HEIGHT; // C5 profile-2 public transitions
+        consensus.nZKPortableTreeHeight = MAINNET_FORK_HEIGHT; // C6 profile-3 portable transitions
+        consensus.nPoseidonWorkHeight = MAINNET_FORK_HEIGHT;
+        consensus.nAuthScriptBudgetHeight = MAINNET_FORK_HEIGHT; // NIP-046
+        consensus.nAssetMessageHeight = MAINNET_FORK_HEIGHT; // NIP-043
+        consensus.nInputFieldHeight = MAINNET_FORK_HEIGHT; // NIP-043
+        consensus.nAuthScriptTreeHeight = MAINNET_FORK_HEIGHT; // NIP-044
+        consensus.nMerklePoseidonHeight = MAINNET_FORK_HEIGHT; // NIP-043
+        consensus.nAssetAuthHeight = MAINNET_FORK_HEIGHT; // NIP-054
+        consensus.nTxHashHeight = MAINNET_FORK_HEIGHT; // NIP-042
+        consensus.nTXFIELDEnabled = true; // OP_TXFIELD (NOP7)
+        consensus.nSPLITEnabled = true;   // OP_SPLIT (NOP8)
+        consensus.nREVERSEBYTESEnabled = true; // OP_REVERSEBYTES
+        consensus.nOUTPUTVALUEEnabled = true; // OP_OUTPUTVALUE
+        consensus.nOUTPUTSCRIPTEnabled = true; // OP_OUTPUTSCRIPT
+        consensus.nOUTPUTASSETFIELDEnabled = true; // OP_OUTPUTASSETFIELD
+        consensus.nINPUTASSETFIELDEnabled = true; // OP_INPUTASSETFIELD
+        consensus.n64BitIntegersEnabled = true; // 64-bit arithmetic
+        consensus.nTXLOCKTIMEEnabled = true; // OP_TXLOCKTIME
+        consensus.nINPUTOUTPUTCOUNTEnabled = true; // OP_INPUTCOUNT/OP_OUTPUTCOUNT
+        consensus.nREFINPUTSEnabled = true; // NIP-014: tx v3 + vrefin
+        consensus.nOUTPUTAUTHCOMMITMENTEnabled = true; // NIP-023: OP_OUTPUTAUTHCOMMITMENT
+        consensus.nINPUTVALUEEnabled = true; // NIP-024: OP_INPUTVALUE
+        consensus.nCHAINCONTEXTEnabled = true; // NIP-026: OP_CHAINCONTEXT
+        consensus.nXNAAssetStrictEnabled = true; // NIP revision 010: strict OP_XNA_ASSET rule; origin/main rule below the fork height
+        consensus.nAssetMarkerNip040Height = MAINNET_FORK_HEIGHT; // NIP-040: rvn->xna marker migration
+        consensus.nDepinTransferStateHeight = MAINNET_FORK_HEIGHT; // DEPIN transfer state (OPEN/CLOSE/SEAL)
+        consensus.nNoRbfHeight = MAINNET_FORK_HEIGHT; // No-RBF sequence rule
         consensus.nAssetRip5ActivationByHeightEnabled = false; // NIP revision 004: mainnet uses VersionBits (origin/main), not the height-10 shortcut
-        // NIP-028: block-time reduction not active on mainnet
-        consensus.nBlockTimeReductionHeight   = std::numeric_limits<int>::max();
-        consensus.nPowTargetSpacingPost       = 1 * 60;       // mirror legacy
-        consensus.nPowTargetTimespanPost      = 2016 * 60;    // mirror legacy
-        consensus.nSubsidyHalvingIntervalPost = 14400;        // mirror legacy
-        consensus.nKeccakBlake2bEnabled       = false;        // NIP-030: not active on mainnet
-        consensus.nMerkleInclusionEnabled     = false;        // NIP-031: not active on mainnet
-        consensus.nModernHashesEnabled        = false;        // NIP-034a: not active on mainnet
-        consensus.nPoseidonEnabled            = false;        // NIP-036: not active on mainnet
-        consensus.nEd25519Enabled             = true;        // NIP-035: gated by nSignatureOpcodesHeight
-        consensus.nCheckSigAddEnabled         = true;        // NIP-039: gated by nSignatureOpcodesHeight
+        // NIP-028: block-time reduction (60s -> 30s) and coupled subsidy
+        // halving, with the same post-activation values as testnet.
+        consensus.nBlockTimeReductionHeight   = MAINNET_FORK_HEIGHT;
+        consensus.nPowTargetSpacingPost       = 30;
+        consensus.nPowTargetTimespanPost      = 2016 * 30;
+        consensus.nSubsidyHalvingIntervalPost = 28800;
+        consensus.nKeccakBlake2bEnabled       = true;         // NIP-030
+        consensus.nMerkleInclusionEnabled     = true;         // NIP-031
+        consensus.nModernHashesEnabled        = true;         // NIP-034a
+        consensus.nPoseidonEnabled            = true;         // NIP-036
+        consensus.nEd25519Enabled             = true;         // NIP-035: gated by nSignatureOpcodesHeight
+        consensus.nCheckSigAddEnabled         = true;         // NIP-039: gated by nSignatureOpcodesHeight
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
         consensus.nPowTargetTimespan = 2016 * 60; // 1.4 days
@@ -340,8 +358,10 @@ public:
         // DGW Activation
         nDGWActivationBlock = 1;
 
-        nMaxReorganizationDepth = 60; // 60 at 1 minute block timespan is +/- 60 minutes.
-        nMaxReorganizationDepthPost = 60; // mainnet: NIP-028 inactive; mirror legacy
+        // NIP-028: 60 blocks x 60s before the block-time reduction and
+        // 120 blocks x 30s from it on: 60 minutes either way.
+        nMaxReorganizationDepth = 60;
+        nMaxReorganizationDepthPost = 120;
         nMinReorganizationPeers = 6;
         nMinReorganizationAge = 60 * 60 * 12; // 12 hours
         nProtocolVersion = PROTOCOL_VERSION;
@@ -373,6 +393,7 @@ public:
     CTestNetParams() {
         strNetworkID = "test";
         consensus.nSubsidyHalvingInterval = 14400;  // Micro halving every 14400 blocks
+        consensus.nCoinbaseMaturity = COINBASE_MATURITY_TESTNET;
         consensus.nBIP34Enabled = true;
         consensus.nBIP65Enabled = true;
         consensus.nBIP66Enabled = true;

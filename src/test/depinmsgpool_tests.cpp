@@ -285,10 +285,12 @@ BOOST_AUTO_TEST_CASE(token_qualifier_rejected_not_depin)
     BOOST_CHECK(error.find("DEPIN") != std::string::npos);
 }
 
-// A DEPIN token ("&...") is accepted where DEPIN assets are enabled.
+// A DEPIN token ("&...") is accepted where DEPIN assets are scheduled, also
+// before the tip reaches the fork height (here testnet with no chain).
 BOOST_AUTO_TEST_CASE(token_depin_accepted_on_testnet)
 {
     NetworkGuard g(CBaseChainParams::TESTNET);
+    BOOST_REQUIRE(!AreDepinAssetsActiveInContext());
     std::string error;
     BOOST_CHECK(IsValidDepinMessagingToken("&VALIDTOKEN", error));
     BOOST_CHECK(error.empty());
@@ -304,16 +306,16 @@ BOOST_AUTO_TEST_CASE(token_sub_depin_accepted_on_regtest)
     BOOST_CHECK(error.empty());
 }
 
-// The same DEPIN-named token is rejected on mainnet -- but by the pre-existing
-// network gate inside IsAssetNameValid(), not by our type check. Assert on the
-// *network* wording so a future regression that swaps in the generic
-// "not a DEPIN token" message gets caught.
-BOOST_AUTO_TEST_CASE(token_depin_rejected_on_mainnet_by_network_gate)
+// The same DEPIN-named token is rejected on mainnet while the fork has no
+// height -- but by the activation gate inside IsAssetNameValid(), not by our
+// type check. Assert on the *activation* wording so a future regression that
+// swaps in the generic "not a DEPIN token" message gets caught.
+BOOST_AUTO_TEST_CASE(token_depin_rejected_on_mainnet_by_activation_gate)
 {
     NetworkGuard g(CBaseChainParams::MAIN);
     std::string error;
     BOOST_CHECK(!IsValidDepinMessagingToken("&VALIDTOKEN", error));
-    BOOST_CHECK(error.find("testnet and regtest") != std::string::npos);
+    BOOST_CHECK(error.find("not active yet") != std::string::npos);
 }
 
 // ---------------------------------------------------------------------------

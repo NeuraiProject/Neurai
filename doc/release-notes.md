@@ -15,8 +15,9 @@ assets and messaging, silent payments and a privacy pool prototype.
 
 **No new consensus rule is scheduled on mainnet by this release.** The new
 rules are active on testnet and regtest only; every mainnet activation height
-is unset (`INT_MAX`), and mainnet is to adopt them in a single coordinated
-hard fork in a later release. See [Consensus](#consensus).
+comes from one constant, `MAINNET_FORK_HEIGHT`, which is unset (`INT_MAX`),
+and mainnet is to adopt them in a single coordinated hard fork in a later
+release. See [Consensus](#consensus).
 
 A full mainnet `-reindex` of the release code accepts the whole mainnet history
 and reproduces exactly the chain state of the 8 October 2026 reference run (see
@@ -234,19 +235,27 @@ mined; a miner can still choose either. What the rule removes is the
 replaceability signal from the protocol, and the node no longer replaces
 transactions at all (see the relay policy under [P2P and network](#p2p-and-network)).
 
+Two asset rules follow the activation height of the strict AuthScript
+families (testnet block 10, regtest genesis, mainnet the unified fork):
+
+- **DEPIN assets** (`&NAME`, sections `&NAME/SUB`, owner tokens `&NAME!`)
+  exist from that height; before it they are rejected
+  (`bad-txns-depin-not-enabled`). DePIN messaging accepts a DEPIN token on
+  any network that schedules DEPIN assets, whatever the height of the tip.
+  See [DePIN](#depin).
+- **Asset name length:** 121 characters (`MAX_NAME_LENGTH_EXTENDED`) from that
+  height, 31 before it.
+
 Rules that depend on the network rather than on a height:
 
-- **DEPIN assets** (`&NAME`, sections `&NAME/SUB`, owner tokens `&NAME!`) exist
-  on testnet and regtest only; mainnet rejects them
-  (`bad-txns-depin-not-enabled`). See [DePIN](#depin).
-- **Asset name length:** testnet and regtest use `MAX_NAME_LENGTH_TESTNET`
-  (121) instead of 31.
 - **Proof of work:** testnet and regtest use SHA256d (regtest previously ran
   the X16R path). Mainnet is unchanged.
-- **Coinbase maturity:** 5 blocks on testnet (100 on mainnet and regtest).
+- **Coinbase maturity:** 5 blocks on testnet (100 on mainnet and regtest), now
+  a consensus parameter (`nCoinbaseMaturity`).
 - **Reset testnet:** assets, RIP5 and the asset VersionBits deployments are
   active from genesis, as are the 1.0.6 KAWPOW header-height and asset
-  overflow rules.
+  overflow rules. The reissue exception for two assets of the previous testnet
+  (`GAMINGWEB`, `UINT8`) is gone; neither exists on the reset testnet.
 
 Opcode details, encodings and covenant patterns are in
 [covenants.md](covenants.md) and
@@ -293,8 +302,9 @@ Relay policy:
 - Where the no-RBF sequence rule applies to the next block, the mempool
   refuses replaceability signals, and the transactions admitted before with a
   signal are evicted, with their descendants, when the rule activates.
-- `-datacarriersize` defaults to 512 bytes on testnet and regtest (83 on
-  mainnet).
+- `-datacarriersize` defaults to 512 bytes from the height of the opt-in
+  switches for the next block (testnet block 10, regtest genesis, mainnet the
+  unified fork) and to 83 bytes before it.
 - Where the new rules are active (testnet, regtest): outputs to an AuthScript
   family that is not yet active for the next block are refused; the P2WSH
   per-item relay limit rises from 80 to 3,072 bytes when the Merkle or
@@ -609,11 +619,11 @@ Changed defaults:
 
 - `-limitancestorcount` and `-limitdescendantcount`: 200 → 500.
 - `-limitancestorsize` and `-limitdescendantsize`: 250 → 750 kB.
-- `-datacarriersize`: 83 → 512 bytes on testnet and regtest (mainnet
-  unchanged).
+- `-datacarriersize`: 83 → 512 bytes from the unified fork height (testnet
+  block 10, regtest genesis); mainnet keeps 83 until its fork height.
 - `-listenonion`: 1 → 0.
-- `-maxreorg`: 120 on testnet from the NIP-028 height (60 before it, and on
-  mainnet).
+- `-maxreorg`: 120 from the NIP-028 height (testnet block 10, mainnet the
+  unified fork); 60 before it.
 
 Changed behavior:
 
