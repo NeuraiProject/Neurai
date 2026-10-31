@@ -110,6 +110,20 @@ BOOST_AUTO_TEST_CASE(mainnet_schedules_every_rule_at_one_height)
     }
 }
 
+BOOST_AUTO_TEST_CASE(regtest_forkheight_moves_every_rule)
+{
+    // -forkheight goes through UpdateUnifiedForkHeight, the list mainnet
+    // takes its heights from.
+    SelectParams(CBaseChainParams::REGTEST);
+    UpdateUnifiedForkHeight(777);
+    for (const auto& height : ForkHeights(GetParams().GetConsensus())) {
+        BOOST_CHECK_MESSAGE(height.second == 777, height.first << " did not move with -forkheight");
+    }
+    // The strict context default follows the moved height.
+    BOOST_CHECK(!AreDepinAssetsActiveInContext());
+    SelectParams(CBaseChainParams::MAIN);
+}
+
 BOOST_AUTO_TEST_CASE(mainnet_past_the_fork_matches_testnet)
 {
     const auto mainnet = CreateChainParams(CBaseChainParams::MAIN);

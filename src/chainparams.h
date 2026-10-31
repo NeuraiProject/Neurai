@@ -105,6 +105,10 @@ public:
     void UpdateSignatureOpcodesHeight(int nHeight) { consensus.nSignatureOpcodesHeight = nHeight; }
     void UpdateOptInFeaturesHeight(int nHeight) { consensus.nOptInFeaturesHeight = nHeight; }
     void UpdateBlockTimeReductionHeight(int nHeight) { consensus.nBlockTimeReductionHeight = nHeight; }
+    /** Unified fork: move every activation height of the fork to nHeight.
+     *  Mainnet takes its heights from here (MAINNET_FORK_HEIGHT), so this is
+     *  the one list of what the fork activates. */
+    void UpdateUnifiedForkHeight(int nHeight);
     void TurnOffSegwit();
     void TurnOffCSV();
     void TurnOffBIP34();
@@ -311,6 +315,9 @@ void UpdateAssetAuthHeight(int nHeight);
 void UpdateTxHashHeight(int nHeight);
 /** Regtest only: move the no-RBF sequence rule activation height. */
 void UpdateNoRbfHeight(int nHeight);
+/** Regtest only: move every activation height of the unified fork to nHeight,
+ *  as mainnet will activate them (-forkheight). */
+void UpdateUnifiedForkHeight(int nHeight);
 
 void TurnOffSegwit();
 

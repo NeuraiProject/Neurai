@@ -75,6 +75,28 @@ void CChainParams::UpdateDepinTransferStateHeight(int nHeight)
     consensus.nDepinTransferStateHeight = nHeight;
 }
 
+void CChainParams::UpdateUnifiedForkHeight(int nHeight)
+{
+    consensus.nOptInFeaturesHeight = nHeight;      // every opt-in switch
+    consensus.nStrictAuthScriptHeight = nHeight;   // strict AuthScript families (witness v2/v3), NIP-041, DEPIN assets and long asset names
+    consensus.nSignatureOpcodesHeight = nHeight;   // CSFS, Ed25519, CHECKSIGADD
+    consensus.nTxHashHeight = nHeight;             // NIP-042
+    consensus.nZKVerifyHeight = nHeight;           // NIP-016
+    consensus.nZKPublicTreeHeight = nHeight;       // C5 profile-2 public transitions
+    consensus.nZKPortableTreeHeight = nHeight;     // C6 profile-3 portable transitions
+    consensus.nPoseidonWorkHeight = nHeight;
+    consensus.nAuthScriptBudgetHeight = nHeight;   // NIP-046
+    consensus.nAssetMessageHeight = nHeight;       // NIP-043
+    consensus.nInputFieldHeight = nHeight;         // NIP-043
+    consensus.nAuthScriptTreeHeight = nHeight;     // NIP-044
+    consensus.nMerklePoseidonHeight = nHeight;     // NIP-043
+    consensus.nAssetAuthHeight = nHeight;          // NIP-054
+    consensus.nAssetMarkerNip040Height = nHeight;  // NIP-040: rvn->xna marker migration
+    consensus.nDepinTransferStateHeight = nHeight; // DEPIN transfer state (OPEN/CLOSE/SEAL)
+    consensus.nNoRbfHeight = nHeight;              // no-RBF sequence rule
+    consensus.nBlockTimeReductionHeight = nHeight; // NIP-028: block-time reduction and subsidy halving
+}
+
 void CChainParams::TurnOffSegwit() {
 	consensus.nSegwitEnabled = false;
 }
@@ -139,24 +161,11 @@ public:
         // changing this one constant. Until then it is INT_MAX and no block
         // applies any of them (fork_parity_tests checks both properties).
         static constexpr int MAINNET_FORK_HEIGHT = std::numeric_limits<int>::max();
-        consensus.nOptInFeaturesHeight = MAINNET_FORK_HEIGHT; // every opt-in switch below applies from this height
+        UpdateUnifiedForkHeight(MAINNET_FORK_HEIGHT); // every activation height of the fork
         consensus.nPQWitnessEnabled = true; // PQ (ML-DSA-44) AuthScript
-        consensus.nStrictAuthScriptHeight = MAINNET_FORK_HEIGHT; // strict AuthScript families (witness v2/v3), NIP-041, DEPIN assets and long asset names
         consensus.nCATEnabled = true;  // OP_CAT (BIP 347)
         consensus.nCTVEnabled = true;  // OP_CTV (BIP 119)
-        consensus.nSignatureOpcodesHeight = MAINNET_FORK_HEIGHT; // CSFS, Ed25519, CHECKSIGADD
         consensus.nCSFSEnabled = true; // gated by nSignatureOpcodesHeight
-        consensus.nZKVerifyHeight = MAINNET_FORK_HEIGHT; // NIP-016
-        consensus.nZKPublicTreeHeight = MAINNET_FORK_HEIGHT; // C5 profile-2 public transitions
-        consensus.nZKPortableTreeHeight = MAINNET_FORK_HEIGHT; // C6 profile-3 portable transitions
-        consensus.nPoseidonWorkHeight = MAINNET_FORK_HEIGHT;
-        consensus.nAuthScriptBudgetHeight = MAINNET_FORK_HEIGHT; // NIP-046
-        consensus.nAssetMessageHeight = MAINNET_FORK_HEIGHT; // NIP-043
-        consensus.nInputFieldHeight = MAINNET_FORK_HEIGHT; // NIP-043
-        consensus.nAuthScriptTreeHeight = MAINNET_FORK_HEIGHT; // NIP-044
-        consensus.nMerklePoseidonHeight = MAINNET_FORK_HEIGHT; // NIP-043
-        consensus.nAssetAuthHeight = MAINNET_FORK_HEIGHT; // NIP-054
-        consensus.nTxHashHeight = MAINNET_FORK_HEIGHT; // NIP-042
         consensus.nTXFIELDEnabled = true; // OP_TXFIELD (NOP7)
         consensus.nSPLITEnabled = true;   // OP_SPLIT (NOP8)
         consensus.nREVERSEBYTESEnabled = true; // OP_REVERSEBYTES
@@ -172,13 +181,9 @@ public:
         consensus.nINPUTVALUEEnabled = true; // NIP-024: OP_INPUTVALUE
         consensus.nCHAINCONTEXTEnabled = true; // NIP-026: OP_CHAINCONTEXT
         consensus.nXNAAssetStrictEnabled = true; // NIP revision 010: strict OP_XNA_ASSET rule; origin/main rule below the fork height
-        consensus.nAssetMarkerNip040Height = MAINNET_FORK_HEIGHT; // NIP-040: rvn->xna marker migration
-        consensus.nDepinTransferStateHeight = MAINNET_FORK_HEIGHT; // DEPIN transfer state (OPEN/CLOSE/SEAL)
-        consensus.nNoRbfHeight = MAINNET_FORK_HEIGHT; // No-RBF sequence rule
         consensus.nAssetRip5ActivationByHeightEnabled = false; // NIP revision 004: mainnet uses VersionBits (origin/main), not the height-10 shortcut
         // NIP-028: block-time reduction (60s -> 30s) and coupled subsidy
         // halving, with the same post-activation values as testnet.
-        consensus.nBlockTimeReductionHeight   = MAINNET_FORK_HEIGHT;
         consensus.nPowTargetSpacingPost       = 30;
         consensus.nPowTargetTimespanPost      = 2016 * 30;
         consensus.nSubsidyHalvingIntervalPost = 28800;
@@ -951,6 +956,12 @@ void UpdateStrictAuthScriptHeight(int nHeight)
 void UpdateDepinTransferStateHeight(int nHeight)
 {
     globalChainParams->UpdateDepinTransferStateHeight(nHeight);
+}
+
+void UpdateUnifiedForkHeight(int nHeight)
+{
+    globalChainParams->UpdateUnifiedForkHeight(nHeight);
+    SetStrictAuthScriptActiveDefault(globalChainParams->GetConsensus().IsStrictAuthScriptActive(0));
 }
 
 void TurnOffSegwit(){

@@ -128,6 +128,7 @@ BASE_SCRIPTS= [
     'feature_depin_transfer_state.py',
     'feature_norbf.py',
     'feature_assetauth.py',
+    'feature_unified_fork.py',
     'feature_depin_restriction_undo.py',
     'feature_depin_messaging_permissions.py',
     'feature_depin_request_signatures.py',

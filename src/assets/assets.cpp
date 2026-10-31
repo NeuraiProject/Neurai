@@ -1231,7 +1231,7 @@ bool CAssetTransfer::IsValid(std::string& strError) const
     strError = "";
 
     if (!IsAssetNameValid(std::string(strName))) {
-        strError = "Invalid parameter: asset_name must only consist of valid characters and have a size between 3 and 30 characters. See help for more details.";
+        strError = strprintf("Invalid parameter: asset_name must only consist of valid characters and have a size between 3 and %d characters. See help for more details.", GetMaxAssetNameLength() - 1);
         return false;
     }
 
@@ -5757,7 +5757,7 @@ bool ContextualCheckTransferAsset(CAssetsCache* assetCache, const CAssetTransfer
     strError = "";
     AssetType assetType;
     if (!IsAssetNameValid(transfer.strName, assetType)) {
-        strError = "Invalid parameter: asset_name must only consist of valid characters and have a size between 3 and 30 characters. See help for more details.";
+        strError = strprintf("Invalid parameter: asset_name must only consist of valid characters and have a size between 3 and %d characters. See help for more details.", GetMaxAssetNameLength() - 1);
         return false;
     }
 
@@ -5849,7 +5849,7 @@ bool CheckNewAsset(const CNewAsset& asset, std::string& strError)
 
     AssetType assetType;
     if (!IsAssetNameValid(std::string(asset.strName), assetType)) {
-        strError = _("Invalid parameter: asset_name must only consist of valid characters and have a size between 3 and 30 characters. See help for more details.");
+        strError = strprintf(_("Invalid parameter: asset_name must only consist of valid characters and have a size between 3 and %d characters. See help for more details."), GetMaxAssetNameLength() - 1);
         return false;
     }
 

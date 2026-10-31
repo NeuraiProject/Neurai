@@ -173,7 +173,9 @@ height revalidates the mempool.
   NIP-040 marker and the DEPIN transfer state (height 1) and NIP-028 (only
   scheduled with `-blocktimereductionheight`). The regtest-only options in
   the last column move the heights for activation tests; they are listed by
-  `-help-debug`.
+  `-help-debug`. `-forkheight=<n>` moves all of them at once, as mainnet will
+  activate them, and the single-rule options given with it still move one
+  rule.
 - **Asset block version:** on testnet and regtest, which activate assets by
   height, a block at or below the activation height does not need the asset
   version bit. A node past the activation used to reject a competing chain
