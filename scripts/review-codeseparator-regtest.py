@@ -159,7 +159,7 @@ def main():
                         block_error = ('Script failed an OP_CHECKSIGVERIFY operation' if '/CHECKSIGVERIFY/' in label else
                                        'Script failed an OP_CHECKMULTISIGVERIFY operation' if '/CHECKMULTISIGVERIFY/' in label else
                                        'Script evaluated without error but finished with a false/empty top stack element')
-                    expected = f'non-mandatory-script-verify-flag ({block_error})' if par == 1 else 'block-validation-failed'
+                    expected = f'mandatory-script-verify-flag-failed ({block_error})' if par == 1 else 'block-validation-failed'
                     check(label + '/' + name + f'/par{par}/block', result == expected, result)
                     check(label + '/' + name + f'/par{par}/unchanged', validator.rpc('getbestblockhash') == tip and validator.rpc('gettxout', *utxo) is not None, tip)
             good = transaction(utxo, sigscript, stack, output)

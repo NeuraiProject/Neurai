@@ -107,7 +107,7 @@ def main():
                 contract = _helpers.push(digest) + bytes.fromhex('b37551')
                 tag = sha(b'NeuraiAuthScript')
                 commitment = sha(tag + tag + b'\x01\x00' + sha(contract))
-                utxo = fund(bech32m('tnq', 1, commitment), b'\x51\x20' + commitment)
+                utxo = fund(bech32m('tnc', 1, commitment), b'\x51\x20' + commitment)
                 variants = [('wrong_destination', destinations[(family + 1) % 4], actual_refs)]
                 if version == 3:
                     variants.append(('reordered_references', destination, refs[::-1]))

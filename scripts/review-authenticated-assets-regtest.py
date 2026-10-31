@@ -46,7 +46,7 @@ def commitment(script):
 
 def contract_address(node, digest):
     native = b'\x51\x20' + digest
-    return node.rpc('decodescript', native.hex())['p2sh'] if WRAPPED else bech32m('tnq', 1, digest)
+    return node.rpc('decodescript', native.hex())['p2sh'] if WRAPPED else bech32m('tnc', 1, digest)
 
 
 def contract_output(digest):

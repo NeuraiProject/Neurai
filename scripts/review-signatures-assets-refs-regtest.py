@@ -262,7 +262,7 @@ def main():
                 if exact:
                     passed = isinstance(result, str) and result.startswith(block_error)
                 else:
-                    passed = result == (f'non-mandatory-script-verify-flag ({block_error})' if par == 1 else 'block-validation-failed')
+                    passed = result == (f'mandatory-script-verify-flag-failed ({block_error})' if par == 1 else 'block-validation-failed')
                 check(label + f'/par{par}/block', passed, result)
                 check(label + f'/par{par}/unchanged', node.rpc('getbestblockhash') == tip and
                       node.rpc('gettxout', *utxo) is not None and node.rpc('gettxout', *asset_in) is not None, tip)

@@ -139,7 +139,7 @@ def main():
                 for par, node in validators:
                     tip = node.rpc('getbestblockhash')
                     result = node.rpc('submitblock', raw_block.hex())
-                    expected = 'non-mandatory-script-verify-flag (Witness program hash mismatch)' if par == 1 else 'block-validation-failed'
+                    expected = 'mandatory-script-verify-flag-failed (Witness program hash mismatch)' if par == 1 else 'block-validation-failed'
                     check(label + '/' + name + f'/par{par}/block', result == expected, result)
                     check(label + '/' + name + f'/par{par}/state', node.rpc('getbestblockhash') == tip and
                           node.rpc('gettxout', *utxo[1]) is not None, tip)

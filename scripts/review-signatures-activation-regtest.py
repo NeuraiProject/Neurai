@@ -174,7 +174,7 @@ def main():
             for par, node in validators:
                 tip = node.rpc('getbestblockhash')
                 result = node.rpc('submitblock', raw_block.hex())
-                expected = f'non-mandatory-script-verify-flag ({BAD_OPCODE})' if par == 1 else 'block-validation-failed'
+                expected = f'mandatory-script-verify-flag-failed ({BAD_OPCODE})' if par == 1 else 'block-validation-failed'
                 check(label + f'/par{par}/block', result == expected, result)
                 check(label + f'/par{par}/unchanged', node.rpc('getbestblockhash') == tip, tip)
 

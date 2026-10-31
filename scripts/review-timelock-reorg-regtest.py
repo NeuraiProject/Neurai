@@ -63,7 +63,7 @@ def main():
                 contract = h.push(t.a.number(operand)) + bytes([0xb1 if absolute else 0xb2, 0x75])
                 contract += b'\x00\xcd' + h.push(destination) + b'\x87'
                 commitment = program(contract)
-                funding = node.rpc('sendtoaddress', t.bech32m('tnq', 1, commitment), 1)
+                funding = node.rpc('sendtoaddress', t.bech32m('tnc', 1, commitment), 1)
                 node.rpc('generatetoaddress', 1, miner)
                 funded = node.rpc('getrawtransaction', funding, True)
                 index = next(o['n'] for o in funded['vout'] if o['scriptPubKey']['hex'] == (b'\x51\x20' + commitment).hex())
@@ -78,9 +78,9 @@ def main():
                 mature_tip = node.rpc('getbestblockhash')
                 parent = t.transaction(utxo, contract, destination, locktime, sequence)
                 parent_id = node.rpc('sendrawtransaction', parent[1].hex())
-                # Serialize a child paying 0.98 XNA, with a 0.01 XNA fee.
+                # Serialize a child paying 0.89 XNA, with a 0.01 XNA fee (the parent pays 0.9).
                 inputs = b'\x01' + h.outpoint(parent_id, 0) + b'\x00' + b'\xff' * 4
-                outputs = b'\x01' + t.b.output(98_000_000, legacy)
+                outputs = b'\x01' + t.b.output(89_000_000, legacy)
                 witness = b'\x02\x01\x00\x01\x51'
                 version, lock = struct.pack('<I', 2), bytes(4)
                 child = (version + inputs + outputs + lock,
@@ -122,7 +122,7 @@ def main():
                 final = node.rpc('gettxout', child_id, 0)
                 check(label + '/final_state', node.rpc('getrawmempool') == [] and node.rpc('gettxout', *utxo) is None and
                       node.rpc('gettxout', parent_id, 0) is None and final is not None and
-                      final['value'] == 0.98 and final['scriptPubKey']['hex'] == legacy.hex(), final)
+                      final['value'] == 0.89 and final['scriptPubKey']['hex'] == legacy.hex(), final)
                 report['boundaries'].append({'par': par, 'kind': kind, 'funding_height': height,
                     'coin_mtp': coin_mtp, 'operand': operand, 'maturity_blocks': len(maturity)})
     except Exception as error:

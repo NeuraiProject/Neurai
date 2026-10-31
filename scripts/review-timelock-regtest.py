@@ -174,7 +174,7 @@ def main():
                 for par, validator in validators:
                     tip = validator.rpc('getbestblockhash')
                     result = validator.rpc('submitblock', raw.hex())
-                    expected = ('non-mandatory-script-verify-flag (Locktime requirement not satisfied)'
+                    expected = ('mandatory-script-verify-flag-failed (Locktime requirement not satisfied)'
                                 if par == 1 else 'block-validation-failed')
                     check(label + f'/par{par}/block', result == expected, result)
                     check(label + f'/par{par}/unchanged', validator.rpc('getbestblockhash') == tip and

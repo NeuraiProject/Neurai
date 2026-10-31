@@ -129,6 +129,51 @@ BOOST_FIXTURE_TEST_SUITE(main_tests, TestingSetup)
         }
     }
 
+    // Every block subsidy from genesis until the schedule reaches zero.
+    static CAmount TotalEmission(const Consensus::Params& params)
+    {
+        CAmount nTotal = 0;
+        for (int nHeight = 0;; nHeight++) {
+            const CAmount nSubsidy = GetBlockSubsidy(nHeight, params);
+            if (nSubsidy == 0 && nHeight > params.nSubsidyHalvingInterval) return nTotal;
+            nTotal += nSubsidy;
+        }
+    }
+
+    BOOST_AUTO_TEST_CASE(nip028_mainnet_emission_across_the_fork)
+    {
+        // B-10. From the fork height H the subsidy halves and the halving
+        // interval doubles, so every later period emits what it emitted at
+        // 60 s. The period that contains H is not cut at H: its blocks before
+        // H come on top of the 28,800 that follow, which emits
+        // (H mod 14,400) blocks of that period's reward beyond the legacy
+        // curve. A fork height that is a multiple of 14,400 adds nothing.
+        Consensus::Params params = CreateChainParams(CBaseChainParams::MAIN)->GetConsensus();
+        BOOST_REQUIRE_EQUAL(params.nBlockTimeReductionHeight, std::numeric_limits<int>::max());
+        const CAmount nLegacy = TotalEmission(params);
+        const int nInterval = params.nSubsidyHalvingInterval;
+        BOOST_REQUIRE_EQUAL(nInterval, 14400);
+        BOOST_REQUIRE_EQUAL(params.nSubsidyHalvingIntervalPost, 28800);
+
+        for (const int nOffset : {0, 1, 7200, 14399}) {
+            const int H = 132 * nInterval + nOffset;
+            params.nBlockTimeReductionHeight = H;
+            const CAmount nReward = GetBlockSubsidy(H - 1, params);
+            BOOST_CHECK_EQUAL(GetBlockSubsidy(H, params) * 2, nReward);
+            BOOST_CHECK_EQUAL(GetBlockSubsidy(H + 28800 - 1, params), GetBlockSubsidy(H, params));
+            BOOST_CHECK(GetBlockSubsidy(H + 28800, params) <= GetBlockSubsidy(H, params));
+            // The subsidy reaches zero 383 halvings in, counted on the new cadence.
+            const int nLast = H + (383 - H / nInterval) * 28800;
+            BOOST_CHECK(GetBlockSubsidy(nLast - 1, params) > 0);
+            BOOST_CHECK_EQUAL(GetBlockSubsidy(nLast, params), 0);
+
+            const CAmount nExtra = TotalEmission(params) - nLegacy;
+            BOOST_TEST_MESSAGE("NIP-028 fork at " << H << " (" << nOffset << " blocks into its period): "
+                               << nExtra / COIN << " XNA beyond the legacy " << nLegacy / COIN << " XNA");
+            BOOST_CHECK_EQUAL(nExtra, (CAmount)nOffset * nReward);
+        }
+    }
+
     BOOST_AUTO_TEST_CASE(testnet_genesis_nonce_reused)
     {
         // Without a selected block network, as here, the testnet params mine

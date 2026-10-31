@@ -105,7 +105,7 @@ def main():
         for auth in (0, 1, 2):
             for wrapped in (False, True):
                 env = Envelope(auth, wrapped, args.signer)
-                for name, script, operands, error, v0_policy in limits.cases():
+                for name, script, operands, error, v0_policy in limits.cases(1):
                     for family in range(4):
                         label = f'{name}/auth{auth}/p2sh{int(wrapped)}/family{family}'
                         source_family = 2 + family % 2
@@ -130,7 +130,7 @@ def main():
                             tip = worker.rpc('getbestblockhash')
                             result = worker.rpc('submitblock', raw.hex())
                             if error:
-                                expected = f'non-mandatory-script-verify-flag ({error})' if par == 1 else 'block-validation-failed'
+                                expected = f'mandatory-script-verify-flag-failed ({error})' if par == 1 else 'block-validation-failed'
                                 check(label + f'/par{par}/rejected', result == expected, result)
                                 check(label + f'/par{par}/unchanged', worker.rpc('getbestblockhash') == tip and
                                       worker.rpc('gettxout', *asset) is not None and worker.rpc('gettxout', *funding) is not None, tip)

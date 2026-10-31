@@ -212,7 +212,7 @@ def main():
         def fund_contract(script):
             tag = sha256(b'NeuraiAuthScript')
             commitment = sha256(tag + tag + b'\x01\x00' + sha256(script))
-            return fund(bech32m('tnq', 1, commitment), b'\x51\x20' + commitment)
+            return fund(bech32m('tnc', 1, commitment), b'\x51\x20' + commitment)
 
         def exercise(label, script, good_output, bad_outputs=(), refs=(), bad_refs=()):
             utxo = fund_contract(script)
@@ -259,7 +259,7 @@ def main():
         exercise('OP_TXFIELD/04/spent_v1', bytes.fromhex('54b68201218851b7755187'), legacy)
         for version in (1, 2, 3):
             spk = destinations[f'v{version}']
-            hrp = 'tpq' if version == 2 else 'tnq'
+            hrp = {1: 'tnc', 2: 'tpq', 3: 'tnq'}[version]
             ref = fund(bech32m(hrp, version, program), spk)
             legacy_ref = fund(miner, legacy)
             node.rpc('lockunspent', False, [{'txid': legacy_ref[0], 'vout': legacy_ref[1]}])

@@ -109,7 +109,7 @@ def main():
                 contract += b'\x51'
                 tag = m.sha256(b'NeuraiAuthScript')
                 commitment = m.sha256(tag + tag + b'\x01\x00' + m.sha256(contract))
-                funding = source.rpc('sendtoaddress', m.bech32m('tnq', 1, commitment), burn + 2)
+                funding = source.rpc('sendtoaddress', m.bech32m('tnc', 1, commitment), burn + 2)
                 source.rpc('generatetoaddress', 1, miner)
                 coin = source.rpc('getrawtransaction', funding, True)
                 prev = (funding, next(o['n'] for o in coin['vout'] if o['scriptPubKey']['hex'] == (b'\x51\x20' + commitment).hex()))
@@ -144,7 +144,7 @@ def main():
                 for par, node in validators:
                     tip = node.rpc('getbestblockhash')
                     result = node.rpc('submitblock', raw_block.hex())
-                    expected = 'non-mandatory-script-verify-flag (Script failed an OP_EQUALVERIFY operation)' if par == 1 else 'block-validation-failed'
+                    expected = 'mandatory-script-verify-flag-failed (Script failed an OP_EQUALVERIFY operation)' if par == 1 else 'block-validation-failed'
                     check(label + f'/wrong_metadata/par{par}', result == expected and
                           node.rpc('getbestblockhash') == tip and node.rpc('gettxout', *prev) is not None, result)
                 good = spend(outputs)

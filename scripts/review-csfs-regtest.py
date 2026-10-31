@@ -55,14 +55,16 @@ def main():
         destinations = [legacy] + [bytes([0x50 + v, 32]) + bytes(range(32)) for v in (1, 2, 3)]
         contracts = []
         for fixture in fixtures:
-            pubkey, message, signature = (bytes.fromhex(fixture[k]) for k in ('pubkey', 'message', 'signature'))
+            # src/test/data/txhash_csfs_vectors.json names the signed message 'digest'.
+            message = bytes.fromhex(fixture.get('message', fixture.get('digest')))
+            pubkey, signature = (bytes.fromhex(fixture[k]) for k in ('pubkey', 'signature'))
             for family, output in enumerate(destinations):
                 label = fixture['algorithm'] + f'/family{family}'
                 script = h.push(pubkey) + b'\xb4\x69\x00\xcd' + h.push(output) + b'\x87'
                 tag = sha256(b'NeuraiAuthScript')
                 commitment = sha256(tag + tag + b'\x01\x00' + sha256(script))
                 spk = b'\x51\x20' + commitment
-                funding = node.rpc('sendtoaddress', bech32m('tnq', 1, commitment), 1)
+                funding = node.rpc('sendtoaddress', bech32m('tnc', 1, commitment), 1)
                 node.rpc('generatetoaddress', 1, miner)
                 decoded = node.rpc('getrawtransaction', funding, True)
                 index = next(o['n'] for o in decoded['vout'] if o['scriptPubKey']['hex'] == spk.hex())
@@ -99,7 +101,7 @@ def main():
             script = b'\x00\x63' + h.push(struct.pack('<I', i)) + b'\xb4' * count + b'\x68\x51'
             tag = sha256(b'NeuraiAuthScript')
             commitment = sha256(tag + tag + b'\x01\x00' + sha256(script))
-            address = bech32m('tnq', 1, commitment)
+            address = bech32m('tnc', 1, commitment)
             payments[address] = 1
             boundary_scripts.append((script, b'\x51\x20' + commitment))
         funding = node.rpc('sendmany', '', payments)

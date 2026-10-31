@@ -45,7 +45,7 @@ def main():
             tag = sha256(b'NeuraiAuthScript')
             program = sha256(tag + tag + b'\x01\x00' + sha256(script))
             programs.append(b'\x51\x20' + program)
-            payments[bech32m('tnq', 1, program)] = 1
+            payments[bech32m('tnc', 1, program)] = 1
         funding = source.rpc('sendmany', '', payments)
         source.rpc('generatetoaddress', 1, miner)
         funded = source.rpc('getrawtransaction', funding, True)
@@ -105,7 +105,7 @@ def main():
                 if validator.rpc('submitblock', raw) is not None:
                     raise RuntimeError('validator rejected pre-activation history')
             result = validator.rpc('submitblock', bad119.hex())
-            expected = 'non-mandatory-script-verify-flag (Opcode missing or not understood)' if par == 1 else 'block-validation-failed'
+            expected = 'mandatory-script-verify-flag-failed (Opcode missing or not understood)' if par == 1 else 'block-validation-failed'
             check(f'par{par}/reject119', result == expected, result)
             log = (validator.directory / 'regtest' / 'debug.log').read_text()
             check(f'par{par}/script_failure', ('Opcode missing or not understood' if par == 1 else 'CheckQueue failed') in log, expected)

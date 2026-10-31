@@ -211,7 +211,6 @@ def main():
             result = measured(v, label, 'submitblock', raw.hex())
             diagnostics = log.read_bytes()[offset:]
             expected = ('mandatory-script-verify-flag-failed (Script failed an OP_VERIFY operation)',
-                        'non-mandatory-script-verify-flag (Script failed an OP_VERIFY operation)',
                         'block-validation-failed')
             # The worker queue exposes only block-validation-failed, whereas
             # synchronous CheckInputs logs the exact script error. The same

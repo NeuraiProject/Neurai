@@ -127,7 +127,7 @@ def main():
                 for par, validator in validators:
                     tip = validator.rpc('getbestblockhash')
                     result = validator.rpc('submitblock', raw_block.hex())
-                    prefix = 'mandatory-script-verify-flag-failed' if name == 'wrong_redeem' else 'non-mandatory-script-verify-flag'
+                    prefix = 'mandatory-script-verify-flag-failed'
                     expected = f'{prefix} ({consensus_error})' if par == 1 else 'block-validation-failed'
                     check(label + '/' + name + f'/par{par}/block', result == expected, result)
                     check(label + '/' + name + f'/par{par}/unchanged', validator.rpc('getbestblockhash') == tip and validator.rpc('gettxout', *utxo) is not None, tip)

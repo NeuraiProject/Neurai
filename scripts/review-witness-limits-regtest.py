@@ -33,11 +33,13 @@ def script_size(size):
     raise ValueError('unrepresentable requested size')
 
 
-def cases():
+def cases(version):
     for size in (3600, 3601, 10000, 10001):
         yield f'script{size}', script_size(size), [], ('Script is too big' if size > 10000 else None), size > 3600
-    for count in (201, 202):
-        yield f'ops{count}', b'\x61' * count + b'\x51', [], ('Operation limit exceeded' if count > 201 else None), False
+    # NIP-046: AuthScript counts operations against its own limit (MAX_OPS_PER_AUTHSCRIPT).
+    limit = 201 if version == 0 else 512
+    for count in (limit, limit + 1):
+        yield f'ops{count}', b'\x61' * count + b'\x51', [], ('Operation limit exceeded' if count > limit else None), False
     for size in (3072, 3073):
         yield f'item{size}', b'\x75\x51', [b'B' * size], ('Push value size limit exceeded' if size > 3072 else None), size > 3072
     for excess in (0, 1):
@@ -94,7 +96,7 @@ def main():
         # v0 has no external authentication or envelope; it is covered by the plain run only.
         versions = (1,) if (args.auth or args.wrapped) else (0, 1)
         for version in versions:
-            for name, script, arguments, error, policy in cases():
+            for name, script, arguments, error, policy in cases(version):
                 if version == 0:
                     spk = b'\x00\x20' + a.sha256(script)
                 else:
@@ -146,7 +148,7 @@ def main():
                 check(label + f'/par{par}/empty_mempool', validator.rpc('getrawmempool') == [], [])
                 result = validator.rpc('submitblock', raw_block.hex())
                 if error:
-                    expected = f'non-mandatory-script-verify-flag ({error})' if par == 1 else 'block-validation-failed'
+                    expected = f'mandatory-script-verify-flag-failed ({error})' if par == 1 else 'block-validation-failed'
                     check(label + f'/par{par}/invalid_block', result == expected, result)
                     check(label + f'/par{par}/unchanged', validator.rpc('getbestblockhash') == tip and validator.rpc('gettxout', *utxo) is not None, tip)
                 else:

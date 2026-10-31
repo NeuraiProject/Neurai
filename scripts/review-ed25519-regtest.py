@@ -48,7 +48,7 @@ def main():
             script = h.push(PK) + b'\xdd\x69\x00\xcd' + h.push(output) + b'\x87'
             tag = sha256(b'NeuraiAuthScript')
             program = sha256(tag + tag + b'\x01\x00' + sha256(script))
-            funding = node.rpc('sendtoaddress', bech32m('tnq', 1, program), 1)
+            funding = node.rpc('sendtoaddress', bech32m('tnc', 1, program), 1)
             node.rpc('generatetoaddress', 1, miner)
             funded = node.rpc('getrawtransaction', funding, True)
             index = next(o['n'] for o in funded['vout'] if o['scriptPubKey']['hex'] == (b'\x51\x20' + program).hex())

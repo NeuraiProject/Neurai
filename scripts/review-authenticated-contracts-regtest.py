@@ -138,7 +138,7 @@ def main():
                 for par, validator in validators:
                     tip = validator.rpc('getbestblockhash')
                     result = validator.rpc('submitblock', raw_block.hex())
-                    expected = f'non-mandatory-script-verify-flag ({error_text})' if par == 1 else 'block-validation-failed'
+                    expected = f'mandatory-script-verify-flag-failed ({error_text})' if par == 1 else 'block-validation-failed'
                     check(label + '/' + name + f'/par{par}/block', result == expected, result)
                     check(label + '/' + name + f'/par{par}/unchanged', validator.rpc('getbestblockhash') == tip and validator.rpc('gettxout', *utxo) is not None, tip)
             good = transaction(utxo, sigscript, stack, output)

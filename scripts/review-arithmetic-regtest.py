@@ -133,7 +133,7 @@ def main():
                 for par, validator in zip((1, 2), validators):
                     tip = validator.rpc('getbestblockhash')
                     result = validator.rpc('submitblock', raw_bad.hex())
-                    expected = 'non-mandatory-script-verify-flag (' + error_text + ')'
+                    expected = 'mandatory-script-verify-flag-failed (' + error_text + ')'
                     check(label + f'/{kind}/par{par}/invalid_block',
                           result == (expected if par == 1 else 'block-validation-failed'), result)
                     check(label + f'/{kind}/par{par}/state_preserved',

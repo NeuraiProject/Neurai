@@ -4,14 +4,20 @@
 // Distributed under the MIT/X11 software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include "arith_uint256.h"
 #include "chain.h"
 #include "chainparams.h"
+#include "consensus/params.h"
 #include "hash.h"
 #include "pow.h"
 #include "random.h"
 #include "util.h"
 #include "utilstrencodings.h"
 #include "test/test_neurai.h"
+
+#include <algorithm>
+#include <limits>
+#include <vector>
 
 #include <boost/test/unit_test.hpp>
 
@@ -149,6 +155,152 @@ BOOST_FIXTURE_TEST_SUITE(pow_tests, BasicTestingSetup)
 
         // And it is genuinely not the X16R-family hash regtest used to compute.
         BOOST_CHECK(header.GetHash() != header.GetX16RHash());
+    }
+
+    // NIP-028 on mainnet: Dark Gravity Wave across the unified fork height H,
+    // where the target spacing goes from 60 to 30 seconds. Blocks are built in
+    // memory with mainnet parameters (KAWPOW, every window block KAWPOW).
+
+    static const int FORK_HEIGHT = 1900000;
+    static const uint32_t SIMULATION_START_TIME = 1800000000;
+    static const uint32_t EQUILIBRIUM_BITS = 0x1b0404cb;
+
+    static Consensus::Params MainnetWithFork(int nForkHeight)
+    {
+        Consensus::Params params = CreateChainParams(CBaseChainParams::MAIN)->GetConsensus();
+        params.nBlockTimeReductionHeight = nForkHeight;
+        return params;
+    }
+
+    // Blocks [nFirstHeight, nFirstHeight + count), linked; the vector never
+    // reallocates so pprev stays valid.
+    struct SimulatedChain
+    {
+        std::vector<CBlockIndex> blocks;
+        SimulatedChain(int nFirstHeight, size_t capacity) : nFirst(nFirstHeight) { blocks.reserve(capacity); }
+        int nFirst;
+        CBlockIndex& Tip() { return blocks.back(); }
+        void Add(uint32_t nTime, uint32_t nBits)
+        {
+            BOOST_REQUIRE(blocks.size() < blocks.capacity());
+            CBlockIndex index;
+            index.pprev = blocks.empty() ? nullptr : &blocks.back();
+            index.nHeight = nFirst + blocks.size();
+            index.nTime = nTime;
+            index.nBits = nBits;
+            blocks.push_back(index);
+        }
+        uint32_t NextBits(const Consensus::Params& params)
+        {
+            CBlockHeader header;
+            header.nTime = Tip().nTime + 1;
+            return GetNextWorkRequired(&Tip(), &header, params);
+        }
+    };
+
+    // Time a block takes at a hashrate `hashrate` times the one that mines a
+    // block of EQUILIBRIUM_BITS every 60 seconds.
+    static uint32_t ExpectedBlockTime(uint32_t nBits, double hashrate)
+    {
+        arith_uint256 target, equilibrium;
+        target.SetCompact(nBits);
+        equilibrium.SetCompact(EQUILIBRIUM_BITS);
+        const double seconds = 60.0 * equilibrium.getdouble() / target.getdouble() / hashrate;
+        return std::max<uint32_t>(1, (uint32_t)(seconds + 0.5));
+    }
+
+    BOOST_AUTO_TEST_CASE(nip028_fork_block_keeps_the_legacy_difficulty)
+    {
+        // B-09: the window of block H holds only 60-second blocks, so H
+        // requires the nBits a node without the fork computes. The rules
+        // first differ at H + 1, whose window holds block H.
+        const Consensus::Params fork = MainnetWithFork(FORK_HEIGHT);
+        const Consensus::Params legacy = MainnetWithFork(std::numeric_limits<int>::max());
+        SimulatedChain chain(FORK_HEIGHT - 400, 402);
+        uint32_t nTime = SIMULATION_START_TIME;
+        uint32_t seed = 12345;
+        for (int i = 0; i < 400; i++) {
+            // Irregular history: block times of 10..130 s and drifting targets.
+            seed = seed * 1103515245 + 12345;
+            nTime += 10 + (seed >> 16) % 121;
+            chain.Add(nTime, i < 181 ? EQUILIBRIUM_BITS : chain.NextBits(legacy));
+        }
+        BOOST_REQUIRE_EQUAL(chain.Tip().nHeight, FORK_HEIGHT - 1);
+        const uint32_t nBitsAtFork = chain.NextBits(fork);
+        BOOST_CHECK_EQUAL(nBitsAtFork, chain.NextBits(legacy));
+
+        chain.Add(chain.Tip().nTime + 30, nBitsAtFork);
+        BOOST_CHECK(chain.NextBits(fork) != chain.NextBits(legacy));
+    }
+
+    struct ForkRun
+    {
+        int nBlocksToTwice = -1;          // first block whose 180-block mean is at most 60 s
+        int nBlocksToBand = -1;           // first block from which the mean stays within 30 s ± 10%
+        int64_t nSecondsToTwice = -1;
+        int64_t nSecondsToBand = -1;
+        uint32_t nLongestBlock = 0;
+        double finalMean = 0;
+    };
+
+    // The fork happens at equilibrium; after it the hashrate is `hashrate`
+    // times the previous one.
+    static ForkRun SimulateFork(double hashrate, int nBlocksAfterFork)
+    {
+        const Consensus::Params fork = MainnetWithFork(FORK_HEIGHT);
+        SimulatedChain chain(FORK_HEIGHT - 400, 400 + nBlocksAfterFork);
+        uint32_t nTime = SIMULATION_START_TIME;
+        for (int i = 0; i < 400; i++) {
+            nTime += 60;
+            chain.Add(nTime, i < 181 ? EQUILIBRIUM_BITS : chain.NextBits(fork));
+        }
+        ForkRun run;
+        std::vector<uint32_t> times;
+        int64_t elapsed = 0;
+        for (int i = 0; i < nBlocksAfterFork; i++) {
+            const uint32_t nBits = chain.NextBits(fork);
+            const uint32_t seconds = ExpectedBlockTime(nBits, hashrate);
+            chain.Add(chain.Tip().nTime + seconds, nBits);
+            times.push_back(seconds);
+            elapsed += seconds;
+            run.nLongestBlock = std::max(run.nLongestBlock, seconds);
+            const size_t window = std::min<size_t>(times.size(), 180);
+            double mean = 0;
+            for (size_t j = times.size() - window; j < times.size(); j++) mean += times[j];
+            mean /= window;
+            if (run.nBlocksToTwice < 0 && times.size() >= 180 && mean <= 60) {
+                run.nBlocksToTwice = i + 1;
+                run.nSecondsToTwice = elapsed;
+            }
+            const bool inBand = times.size() >= 180 && mean >= 27 && mean <= 33;
+            if (!inBand) {
+                run.nBlocksToBand = -1;
+            } else if (run.nBlocksToBand < 0) {
+                run.nBlocksToBand = i + 1;
+                run.nSecondsToBand = elapsed;
+            }
+            run.finalMean = mean;
+        }
+        return run;
+    }
+
+    BOOST_AUTO_TEST_CASE(nip028_difficulty_converges_after_the_fork)
+    {
+        // B-08 with the recovery criterion proposed in D-05: the mean block
+        // time is back to at most 60 s within 12 hours and stays in 30 s ±
+        // 10% within 48 hours, whatever share of the hashrate stays behind.
+        for (const double hashrate : {1.0, 0.5, 0.1, 3.0}) {
+            const ForkRun run = SimulateFork(hashrate, 6000);
+            BOOST_TEST_MESSAGE("NIP-028 hashrate x" << hashrate << ": mean <= 60 s after " << run.nBlocksToTwice
+                               << " blocks (" << run.nSecondsToTwice << " s), 30 s +-10% after " << run.nBlocksToBand
+                               << " blocks (" << run.nSecondsToBand << " s), longest block " << run.nLongestBlock
+                               << " s, final mean " << run.finalMean << " s");
+            BOOST_CHECK_MESSAGE(run.nBlocksToTwice > 0 && run.nSecondsToTwice <= 12 * 60 * 60,
+                                "hashrate x" << hashrate << " takes " << run.nSecondsToTwice << " s to a 60 s mean");
+            BOOST_CHECK_MESSAGE(run.nBlocksToBand > 0 && run.nSecondsToBand <= 48 * 60 * 60,
+                                "hashrate x" << hashrate << " takes " << run.nSecondsToBand << " s to 30 s +-10%");
+            BOOST_CHECK(run.finalMean >= 29 && run.finalMean <= 31);
+        }
     }
 
 BOOST_AUTO_TEST_SUITE_END()

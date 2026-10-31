@@ -130,7 +130,7 @@ def main():
             for par, validator in zip((1, 2), validators):
                 tip = validator.rpc('getbestblockhash')
                 result = validator.rpc('submitblock', raw_bad.hex())
-                expected = 'non-mandatory-script-verify-flag (' + ('Script failed an OP_VERIFY operation' if label.startswith('MERKLE') else 'Script failed an OP_EQUALVERIFY operation') + ')'
+                expected = 'mandatory-script-verify-flag-failed (' + ('Script failed an OP_VERIFY operation' if label.startswith('MERKLE') else 'Script failed an OP_EQUALVERIFY operation') + ')'
                 check(label + f'/par{par}/invalid_block', result == (expected if par == 1 else 'block-validation-failed'), result)
                 check(label + f'/par{par}/state_preserved', validator.rpc('getbestblockhash') == tip and validator.rpc('gettxout', *utxo) is not None, tip)
             good = transaction(utxo, script, arguments, output)
