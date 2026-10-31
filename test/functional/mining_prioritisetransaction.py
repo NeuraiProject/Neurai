@@ -14,7 +14,8 @@ class PrioritiseTransactionTest(NeuraiTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 2
-        self.extra_args = [["-printpriority=1"], ["-printpriority=1"]]
+        # node0 receives transactions of 128 OP_RETURN outputs, which are not standard.
+        self.extra_args = [["-printpriority=1", "-acceptnonstdtxn=1"], ["-printpriority=1"]]
 
     def run_test(self):
         self.txouts = gen_return_txouts()

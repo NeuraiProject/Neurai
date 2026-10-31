@@ -18,7 +18,8 @@ class WalletTest(NeuraiTestFramework):
         self.setup_clean_chain = True
 
     def setup_network(self):
-        self.add_nodes(4)
+        # node1 sends a zero-value output, which is dust and not standard.
+        self.add_nodes(4, [[], ["-acceptnonstdtxn=1"], [], []])
         self.start_node(0)
         self.start_node(1)
         self.start_node(2)
@@ -228,7 +229,7 @@ class WalletTest(NeuraiTestFramework):
         zero_value_txid = dec_raw_tx['txid']
         self.nodes[1].sendrawtransaction(signed_raw_tx['hex'])
 
-        self.sync_all()
+        # The other nodes do not relay dust: node1 mines it.
         self.nodes[1].generate(1) #mine a block
         self.sync_all()
 

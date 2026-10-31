@@ -15,7 +15,7 @@ away and plays a node that was not upgraded.
   AuthScript outputs and 512-byte OP_RETURN are refused; a BIP 125 signal
   is accepted; the asset marker is still "rvn"
 - tip H-1 (next block is the fork): all of that flips at once, under the
-  standard relay policy (-acceptnonstdtxn=0)
+  standard relay policy of every network
 - block H: carries the NIP-028 version flag and half the subsidy; the
   node without the fork rejects it, and its own pre-fork block H is
   rejected by the upgraded node (bad-version-nip028)
@@ -51,10 +51,8 @@ class UnifiedForkTest(NeuraiTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 2
-        # The framework config accepts non-standard transactions; the fork
-        # must work under the relay policy of mainnet.
-        self.extra_args = [["-assetindex", "-acceptnonstdtxn=0", "-forkheight=%d" % H],
-                           ["-assetindex", "-acceptnonstdtxn=0", "-forkheight=%d" % FAR]]
+        self.extra_args = [["-assetindex", "-forkheight=%d" % H],
+                           ["-assetindex", "-forkheight=%d" % FAR]]
 
     def run_test(self):
         self.used = set()
@@ -128,7 +126,7 @@ class UnifiedForkTest(NeuraiTestFramework):
         self.stop_node(1)
         for value in ("-1", "abc"):
             self.assert_start_raises_init_error(1, ["-forkheight=%s" % value], "Invalid -forkheight")
-        self.start_node(1, ["-acceptnonstdtxn=0", "-forkheight=600", "-zkpublictreeheight=7"])
+        self.start_node(1, ["-forkheight=600", "-zkpublictreeheight=7"])
         info = self.nodes[1].getblockchaininfo()
         assert_equal(info["zk_portable_tree"]["activation_height"], 600)
         assert_equal(info["zk_public_tree"]["activation_height"], 7)

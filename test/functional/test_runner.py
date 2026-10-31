@@ -129,6 +129,7 @@ BASE_SCRIPTS= [
     'feature_norbf.py',
     'feature_assetauth.py',
     'feature_unified_fork.py',
+    'feature_unified_fork_relay.py',
     'feature_depin_restriction_undo.py',
     'feature_depin_messaging_permissions.py',
     'feature_depin_request_signatures.py',
@@ -166,6 +167,7 @@ BASE_SCRIPTS= [
     'wallet_importprunedfunds.py',
     'rpc_bind.py',
     'feature_unique_assets.py',
+    'feature_op_poseidon.py',
     'rpc_preciousblock.py',
     'feature_notifications.py',
     'rpc_net.py',
@@ -201,7 +203,6 @@ SKIPPED_TESTS = [
     'feature_assumevalid.py',
     'feature_cltv.py',              #TODO - fix mininode rehash methods to use X16R
     'feature_dersig.py',            #TODO - fix mininode rehash methods to use X16R
-    'feature_op_poseidon.py',       # NIP-036
     'feature_nulldummy.py',         #TODO - fix mininode rehash methods to use X16R
     'feature_pruning.py',
     'feature_segwit.py',            #TODO - fix mininode rehash methods to use X16R

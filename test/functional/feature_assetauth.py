@@ -173,7 +173,10 @@ class AssetAuthTest(NeuraiTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 2
-        self.extra_args = [["-assetauthheight=%d" % ACTIVATION]] * 2
+        # node1 accepts non-standard transactions: it mines the fake custody
+        # of test_fake_custody, as an attacker's miner would.
+        self.extra_args = [["-assetauthheight=%d" % ACTIVATION],
+                           ["-assetauthheight=%d" % ACTIVATION, "-acceptnonstdtxn=1"]]
 
     # ------------------------------------------------------------------ helpers
 
@@ -451,14 +454,23 @@ class AssetAuthTest(NeuraiTestFramework):
     def test_fake_custody(self):
         self.log.info("Vote locks must identify the custody with selector 0x04, not 0x02")
         node = self.node
+        miner = self.nodes[1]
+
+        def mine_nonstandard(tx):
+            txid = miner.sendrawtransaction(tx.serialize_with_witness().hex())
+            miner.generate(1)
+            self.sync_all()
+            return txid
+
         # OP_1 <commitment> OP_DROP OP_DROP OP_TRUE: anyone can spend it, and
         # selector 0x02 reads its first 34 bytes as the custody commitment.
+        # The relay policy refuses this bare script, so the attack needs a miner.
         fake_spk = b"\x51\x20" + self.custody.commitment + bytes([OP_DROP, OP_DROP, OP_TRUE])
         fee = self.fee_utxo()
-        fund = build_tx([(fee["txid"], fee["vout"])],
-                        [(COIN, fake_spk), (int((fee["amount"] - 1 - FEE) * COIN), self.spk(self.legacy()))])
-        fake_txid = self.send(self.sign(fund))
-        self.mine()
+        fund = self.sign(build_tx([(fee["txid"], fee["vout"])],
+                                  [(COIN, fake_spk), (int((fee["amount"] - 1 - FEE) * COIN), self.spk(self.legacy()))]))
+        self.assert_rejected(fund, "scriptpubkey")
+        fake_txid = mine_nonstandard(fund)
         self.reserved.clear()
 
         T = node.getblockcount() + 50
@@ -472,18 +484,17 @@ class AssetAuthTest(NeuraiTestFramework):
             set_witness(attack, 1, [b"\x00", num(0), num(0), b"\x01", lock.script])
             attack = self.sign(attack)
             if cancelled:
-                self.send(attack)
-                self.mine()
+                mine_nonstandard(attack)
                 # The fake custody is spent; fund a new one for the next round.
                 fee2 = self.fee_utxo()
                 fund = build_tx([(fee2["txid"], fee2["vout"])],
                                 [(COIN, fake_spk), (int((fee2["amount"] - 1 - FEE) * COIN), self.spk(self.legacy()))])
-                fake_txid = self.send(self.sign(fund))
-                self.mine()
+                fake_txid = mine_nonstandard(self.sign(fund))
             else:
                 # The fake custody does not pass selector 0x04: the vote stays
                 # locked until it is executed or expires.
-                self.assert_rejected(attack, "OP_INPUTFIELD failed")
+                assert_raises_rpc_error(-26, "OP_INPUTFIELD failed",
+                                        miner.sendrawtransaction, attack.serialize_with_witness().hex())
             self.reserved.clear()
 
     def test_budget(self):

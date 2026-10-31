@@ -40,7 +40,9 @@ class MaxUploadTest(NeuraiTestFramework):
         self.setup_clean_chain = True
         self.num_nodes = 1
         self.maxuploadtarget = 11200
-        self.extra_args = [["-maxuploadtarget=%s" % self.maxuploadtarget, "-blockmaxsize=999000"]]
+        # mine_large_block fills blocks with transactions of 128 OP_RETURN
+        # outputs, which are not standard.
+        self.extra_args = [["-maxuploadtarget=%s" % self.maxuploadtarget, "-blockmaxsize=999000", "-acceptnonstdtxn=1"]]
 
         # Cache for utxos, as the listunspent may take a long time later in the test
         self.utxo_cache = []

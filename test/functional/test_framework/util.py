@@ -413,7 +413,6 @@ def initialize_data_dir(dirname, n):
         os.makedirs(datadir)
     with open(os.path.join(datadir, "neurai.conf"), 'w', encoding='utf8') as f:
         f.write("regtest=1\n")
-        f.write("acceptnonstdtxn=1\n")
         f.write("port=" + str(p2p_port(n)) + "\n")
         f.write("rpcport=" + str(rpc_port(n)) + "\n")
         f.write("listenonion=0\n")
