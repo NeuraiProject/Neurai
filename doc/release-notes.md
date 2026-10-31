@@ -315,6 +315,23 @@ Relay policy:
 - Post-signing verification in the wallet, `signrawtransaction` and
   `neurai-tx` applies the consensus opt-ins active at the next block
   (NIP-020). `neurai-tx` has no chain tip and uses height 0.
+- A transaction whose scripts break the consensus rules of the next block now
+  bans the peer that sent it also when the failure is in a witness program
+  (segwit v0, AuthScript and the strict families), reported as
+  `mandatory-script-verify-flag-failed`. Before, the mandatory rules were
+  P2SH only: an invalid witness spend was reported as
+  `non-mandatory-script-verify-flag`, did not punish its peer and, carrying a
+  witness, could be sent again and verified again. The mandatory rules are now
+  those every block enforces on every network: P2SH, BIP66, BIP65, BIP112,
+  segwit and NULLDUMMY. A transaction that only lacks its witness is still
+  not punished.
+- Within 10 blocks of an activation height of the unified fork, a transaction
+  that the mempool refuses never punishes its peer: when block `H-1` is
+  found, a peer that already has it relays transactions for block `H` (new
+  opcodes, DEPIN assets, long asset names, the `xna` marker) to nodes that
+  still validate against the old rules. Before, a P2SH spend using a new
+  opcode, or the issuance of a DEPIN asset or of a name longer than 30
+  characters, relayed at that moment banned an upgraded peer for 24 hours.
 
 Mining
 ------

@@ -992,8 +992,11 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
             CValidationState stateDummy; // Want reported failures to be from first CheckInputs
             if (!tx.HasWitness() && CheckInputs(tx, stateDummy, view, true, scriptVerifyFlags & ~(SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_CLEANSTACK), true, false, txdata, nullptr, pRefOutputs, chainCtx, &fUsesChainContext_local) &&
                 !CheckInputs(tx, stateDummy, view, true, scriptVerifyFlags & ~SCRIPT_VERIFY_CLEANSTACK, true, false, txdata, nullptr, pRefOutputs, chainCtx, &fUsesChainContext_local)) {
-                // Only the witness is missing, so the transaction itself may be fine.
+                // Only the witness is missing, so the transaction itself may be
+                // fine: a third party may have stripped it. Witness failures
+                // are mandatory, so drop the DoS score they carry.
                 state.SetCorruptionPossible();
+                state.ClearDoS();
             }
             if (stateDummy.IsError()) { state = stateDummy; return false; }
             return false; // state filled in by CheckInputs
@@ -1262,6 +1265,12 @@ static bool AcceptToMemoryPoolWithTime(const CChainParams& chainparams, CTxMemPo
     if (!res) {
         for (const COutPoint& hashTx : coins_to_uncache)
             pcoinsTip->Uncache(hashTx);
+        // Near a unified fork activation height a peer one block ahead or
+        // behind validates the next block against other rules (new opcodes,
+        // DEPIN, long asset names...): a refused transaction does not punish
+        // it, or the network would split between upgraded nodes at the fork.
+        if (state.IsInvalid() && IsNearForkActivation(chainparams.GetConsensus(), chainActive.Height() + 1))
+            state.ClearDoS();
     }
     // After we've (potentially) uncached entries, ensure our coins cache is still within its size limits
     CValidationState stateDummy;
@@ -2241,7 +2250,9 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                         // non-standard DER encodings or non-null dummy
                         // arguments; if so, don't trigger DoS protection to
                         // avoid splitting the network between upgraded and
-                        // non-upgraded nodes.
+                        // non-upgraded nodes. The mandatory flags and the
+                        // opt-ins kept in `flags` are the consensus rules of
+                        // the next block, witness programs included.
                         CScriptCheck check2(coin.out, tx, i,
                                 flags & ~STANDARD_NOT_MANDATORY_VERIFY_FLAGS, cacheSigStore, &txdata, pAllPrevouts, pRefOutputs, chainCtx, nullptr, executionStatus);
                         if (check2())
@@ -2250,11 +2261,9 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                     if (!executionStatus->Apply(state)) return false;
                     // Failures of other flags indicate a transaction that is
                     // invalid in new blocks, e.g. an invalid P2SH. We DoS ban
-                    // such nodes as they are not following the protocol. That
-                    // said during an upgrade careful thought should be taken
-                    // as to the correct behavior - we may want to continue
-                    // peering with non-upgraded nodes even after soft-fork
-                    // super-majority signaling has occurred.
+                    // such nodes as they are not following the protocol,
+                    // except near a unified fork activation height, where
+                    // AcceptToMemoryPool forgives the peer.
 
                     return state.DoS(100,false, REJECT_INVALID, strprintf("mandatory-script-verify-flag-failed (%s)", ScriptErrorString(check.GetScriptError())));
                 } else if (pfUsesChainContext) {
@@ -3033,6 +3042,17 @@ static script_verify_flags GetBlockScriptFlags(const CBlockIndex* pindex, const 
     // Strict AuthScript families activate by height: the flag belongs to the
     // block being validated, not to the chain tip or the network.
     return ApplyConsensusOptIns(flags, consensusparams, consensusparams.IsStrictAuthScriptActive(pindex->nHeight), pindex->nHeight);
+}
+
+bool IsNearForkActivation(const Consensus::Params& params, int nHeight)
+{
+    for (const auto height : Consensus::UNIFIED_FORK_HEIGHTS) {
+        const int64_t nActivation = params.*height;
+        if (nActivation > int64_t{nHeight} - FORK_ACTIVATION_GRACE_BLOCKS &&
+            nActivation <= int64_t{nHeight} + FORK_ACTIVATION_GRACE_BLOCKS)
+            return true;
+    }
+    return false;
 }
 
 

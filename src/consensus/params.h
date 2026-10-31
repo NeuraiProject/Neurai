@@ -349,6 +349,31 @@ struct Params {
      *  can flow through. */
     bool nCheckSigAddEnabled;
 };
+
+/** Every activation height of the unified fork. Mainnet sets all of them to
+ *  MAINNET_FORK_HEIGHT and regtest -forkheight moves them together
+ *  (CChainParams::UpdateUnifiedForkHeight); the mempool forgives rejections
+ *  near any of them (IsNearForkActivation). */
+constexpr int Params::* const UNIFIED_FORK_HEIGHTS[] = {
+    &Params::nOptInFeaturesHeight,      // every opt-in switch
+    &Params::nStrictAuthScriptHeight,   // strict AuthScript families (witness v2/v3), NIP-041, DEPIN assets and long asset names
+    &Params::nSignatureOpcodesHeight,   // CSFS, Ed25519, CHECKSIGADD
+    &Params::nTxHashHeight,             // NIP-042
+    &Params::nZKVerifyHeight,           // NIP-016
+    &Params::nZKPublicTreeHeight,       // C5 profile-2 public transitions
+    &Params::nZKPortableTreeHeight,     // C6 profile-3 portable transitions
+    &Params::nPoseidonWorkHeight,
+    &Params::nAuthScriptBudgetHeight,   // NIP-046
+    &Params::nAssetMessageHeight,       // NIP-043
+    &Params::nInputFieldHeight,         // NIP-043
+    &Params::nAuthScriptTreeHeight,     // NIP-044
+    &Params::nMerklePoseidonHeight,     // NIP-043
+    &Params::nAssetAuthHeight,          // NIP-054
+    &Params::nAssetMarkerNip040Height,  // NIP-040: rvn->xna marker migration
+    &Params::nDepinTransferStateHeight, // DEPIN transfer state (OPEN/CLOSE/SEAL)
+    &Params::nNoRbfHeight,              // no-RBF sequence rule
+    &Params::nBlockTimeReductionHeight, // NIP-028: block-time reduction and subsidy halving
+};
 } // namespace Consensus
 
 #endif // NEURAI_CONSENSUS_PARAMS_H

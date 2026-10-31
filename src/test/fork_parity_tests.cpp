@@ -11,9 +11,11 @@
 #include "chainparams.h"
 #include "consensus/consensus.h"
 #include "consensus/params.h"
+#include "policy/policy.h"
 #include "script/script.h"
 #include "script/standard.h"
 #include "test/test_neurai.h"
+#include "validation.h"
 
 #include <limits>
 #include <string>
@@ -231,6 +233,48 @@ BOOST_AUTO_TEST_CASE(op_return_limit_follows_the_fork_height)
     fMaxDatacarrierBytesSet = false;
     nMaxDatacarrierBytes = MAX_OP_RETURN_RELAY;
     SelectParams(CBaseChainParams::MAIN);
+}
+
+BOOST_AUTO_TEST_CASE(mandatory_flags_are_consensus_on_every_network)
+{
+    // A mempool script failure under the mandatory flags bans the peer, so
+    // every block on every network must enforce them.
+    for (const std::string& network : {CBaseChainParams::MAIN, CBaseChainParams::TESTNET, CBaseChainParams::REGTEST}) {
+        const auto chainparams = CreateChainParams(network);
+        const Consensus::Params& params = chainparams->GetConsensus();
+        BOOST_CHECK_MESSAGE(params.nBIP66Enabled && params.nBIP65Enabled && params.nCSVEnabled && params.nSegwitEnabled,
+                            network << " does not enforce every mandatory flag");
+    }
+    BOOST_CHECK(bool(MANDATORY_SCRIPT_VERIFY_FLAGS & SCRIPT_VERIFY_WITNESS));
+    BOOST_CHECK((STANDARD_SCRIPT_VERIFY_FLAGS & MANDATORY_SCRIPT_VERIFY_FLAGS) == MANDATORY_SCRIPT_VERIFY_FLAGS);
+    BOOST_CHECK(!(MANDATORY_SCRIPT_VERIFY_FLAGS & CONSENSUS_OPT_IN_FLAGS));
+}
+
+BOOST_AUTO_TEST_CASE(rejections_near_the_fork_do_not_ban)
+{
+    const int K = FORK_ACTIVATION_GRACE_BLOCKS;
+    SelectParams(CBaseChainParams::REGTEST);
+    UpdateUnifiedForkHeight(500);
+    const Consensus::Params& regtest = GetParams().GetConsensus();
+    // The window covers every next block whose neighbours within K blocks
+    // run other rules: [H - K, H + K).
+    BOOST_CHECK(!IsNearForkActivation(regtest, 500 - K - 1));
+    BOOST_CHECK(IsNearForkActivation(regtest, 500 - K));
+    BOOST_CHECK(IsNearForkActivation(regtest, 499));
+    BOOST_CHECK(IsNearForkActivation(regtest, 500));
+    BOOST_CHECK(IsNearForkActivation(regtest, 500 + K - 1));
+    BOOST_CHECK(!IsNearForkActivation(regtest, 500 + K));
+
+    // A rule moved on its own opens its own window.
+    UpdateZKPublicTreeHeight(700);
+    BOOST_CHECK(IsNearForkActivation(regtest, 700));
+    BOOST_CHECK(!IsNearForkActivation(regtest, 700 + K));
+
+    // Mainnet has no fork height yet: no window anywhere.
+    SelectParams(CBaseChainParams::MAIN);
+    for (const int nHeight : {0, 1, 1000000, 10000000}) {
+        BOOST_CHECK(!IsNearForkActivation(GetParams().GetConsensus(), nHeight));
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()

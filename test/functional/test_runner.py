@@ -130,6 +130,7 @@ BASE_SCRIPTS= [
     'feature_assetauth.py',
     'feature_unified_fork.py',
     'feature_unified_fork_relay.py',
+    'feature_unified_fork_p2p.py',
     'feature_depin_restriction_undo.py',
     'feature_depin_messaging_permissions.py',
     'feature_depin_request_signatures.py',

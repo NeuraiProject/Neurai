@@ -77,24 +77,9 @@ void CChainParams::UpdateDepinTransferStateHeight(int nHeight)
 
 void CChainParams::UpdateUnifiedForkHeight(int nHeight)
 {
-    consensus.nOptInFeaturesHeight = nHeight;      // every opt-in switch
-    consensus.nStrictAuthScriptHeight = nHeight;   // strict AuthScript families (witness v2/v3), NIP-041, DEPIN assets and long asset names
-    consensus.nSignatureOpcodesHeight = nHeight;   // CSFS, Ed25519, CHECKSIGADD
-    consensus.nTxHashHeight = nHeight;             // NIP-042
-    consensus.nZKVerifyHeight = nHeight;           // NIP-016
-    consensus.nZKPublicTreeHeight = nHeight;       // C5 profile-2 public transitions
-    consensus.nZKPortableTreeHeight = nHeight;     // C6 profile-3 portable transitions
-    consensus.nPoseidonWorkHeight = nHeight;
-    consensus.nAuthScriptBudgetHeight = nHeight;   // NIP-046
-    consensus.nAssetMessageHeight = nHeight;       // NIP-043
-    consensus.nInputFieldHeight = nHeight;         // NIP-043
-    consensus.nAuthScriptTreeHeight = nHeight;     // NIP-044
-    consensus.nMerklePoseidonHeight = nHeight;     // NIP-043
-    consensus.nAssetAuthHeight = nHeight;          // NIP-054
-    consensus.nAssetMarkerNip040Height = nHeight;  // NIP-040: rvn->xna marker migration
-    consensus.nDepinTransferStateHeight = nHeight; // DEPIN transfer state (OPEN/CLOSE/SEAL)
-    consensus.nNoRbfHeight = nHeight;              // no-RBF sequence rule
-    consensus.nBlockTimeReductionHeight = nHeight; // NIP-028: block-time reduction and subsidy halving
+    for (const auto height : Consensus::UNIFIED_FORK_HEIGHTS) {
+        consensus.*height = nHeight;
+    }
 }
 
 void CChainParams::TurnOffSegwit() {

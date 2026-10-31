@@ -61,15 +61,19 @@ extern bool fMaxDatacarrierBytesSet;
 unsigned int GetMaxDatacarrierBytes();
 
 /**
- * Mandatory script verification flags that all new blocks must comply with for
- * them to be valid. (but old blocks may not comply with) Currently just P2SH,
- * but in the future other flags may be added, such as a soft-fork to enforce
- * strict DER encoding.
- *
- * Failing one of these tests may trigger a DoS ban - see CheckInputs() for
- * details.
+ * Mandatory script verification flags: the ones every block enforces on every
+ * network (P2SH, BIP66, BIP65, BIP112, segwit and its NULLDUMMY rule). With the
+ * consensus opt-ins of the next block they are the consensus rules of that
+ * block, so a mempool transaction that fails them is invalid and the peer that
+ * sent it is punished, except near a change of those rules - see CheckInputs().
+ * Failing only the other standard flags makes a transaction non-standard.
  */
-static constexpr script_verify_flags MANDATORY_SCRIPT_VERIFY_FLAGS = SCRIPT_VERIFY_P2SH;
+static constexpr script_verify_flags MANDATORY_SCRIPT_VERIFY_FLAGS = SCRIPT_VERIFY_P2SH |
+                                                                     SCRIPT_VERIFY_DERSIG |
+                                                                     SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY |
+                                                                     SCRIPT_VERIFY_CHECKSEQUENCEVERIFY |
+                                                                     SCRIPT_VERIFY_WITNESS |
+                                                                     SCRIPT_VERIFY_NULLDUMMY;
 
 enum txnouttype
 {

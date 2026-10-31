@@ -91,6 +91,10 @@ public:
     void SetCorruptionPossible() {
         corruptionPossible = true;
     }
+    //! Keeps the rejection but drops its DoS score: the peer is not punished.
+    void ClearDoS() {
+        nDoS = 0;
+    }
     void SetFailedTransaction(const uint256& txhash) {
         failedTransaction = txhash;
     }

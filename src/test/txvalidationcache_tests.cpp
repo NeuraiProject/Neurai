@@ -469,12 +469,15 @@ BOOST_AUTO_TEST_CASE(consensus_failure_is_not_downgraded_to_policy)
         CValidationState inactive;
         BOOST_REQUIRE(CheckInputs(tx, inactive, view, true, before, true, true, data,
                                   nullptr, nullptr, {}, nullptr, nullptr, nullptr, true));
+        // Witness programs are mandatory: the mempool classifies the failure
+        // as the block does (AcceptToMemoryPool only forgives it near a fork
+        // activation height).
         CValidationState policy;
         BOOST_CHECK(!CheckInputs(tx, policy, view, true, after, true, true, data, nullptr));
         int policyScore = -1;
         BOOST_REQUIRE(policy.IsInvalid(policyScore));
-        BOOST_CHECK_EQUAL(policyScore, 0);
-        BOOST_CHECK_EQUAL(policy.GetRejectCode(), REJECT_NONSTANDARD);
+        BOOST_CHECK_EQUAL(policyScore, 100);
+        BOOST_CHECK_EQUAL(policy.GetRejectCode(), REJECT_INVALID);
         CValidationState block;
         BOOST_CHECK(!CheckInputs(tx, block, view, true, after, true, true, data,
                                 nullptr, nullptr, {}, nullptr, nullptr, nullptr, true));

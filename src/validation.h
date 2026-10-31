@@ -117,6 +117,9 @@ static const unsigned int MAX_HEADERS_RESULTS = 2000;
 static const int MAX_CMPCTBLOCK_DEPTH = 5;
 /** Maximum depth of blocks we're willing to respond to GETBLOCKTXN requests for. */
 static const int MAX_BLOCKTXN_DEPTH = 10;
+/** Blocks on each side of a unified fork activation height in which a
+ *  transaction refused by the mempool does not punish its peer. */
+static const int FORK_ACTIVATION_GRACE_BLOCKS = 10;
 /** Size of the "block download window": how far ahead of our current height do we fetch?
  *  Larger windows tolerate larger download speed differences between peer, but increase the potential
  *  degree of disordering of blocks on disk (which make reindexing and pruning harder). We'll probably
@@ -345,6 +348,13 @@ bool GetTransaction(const uint256 &hash, CTransactionRef &tx, const Consensus::P
 /** Find the best known block, and make it the tip of the block chain */
 bool ActivateBestChain(CValidationState& state, const CChainParams& chainparams, std::shared_ptr<const CBlock> pblock = std::shared_ptr<const CBlock>());
 CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams);
+
+/** Whether a unified fork activation height falls within
+ *  FORK_ACTIVATION_GRACE_BLOCKS of nHeight, in [nHeight - K + 1, nHeight + K].
+ *  There a peer one block ahead or behind validates the next block against
+ *  other rules, so a transaction the mempool refuses is not a reason to ban
+ *  it. */
+bool IsNearForkActivation(const Consensus::Params& params, int nHeight);
 
 /** Guess verification progress (as a fraction between 0.0=genesis and 1.0=current tip). */
 double GuessVerificationProgress(const ChainTxData& data, CBlockIndex* pindex);
