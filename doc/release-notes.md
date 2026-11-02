@@ -204,7 +204,7 @@ height revalidates the mempool.
 | Asset payload marker `rvn` → `xna` for new asset outputs; existing `rvn` outputs stay spendable | NIP-040 | not scheduled | 10 | 1, `-nip040height` |
 | DEPIN transfer state (open, close, seal) | — | not scheduled | 10 | 1, `-depinstateheight` |
 | No-RBF sequence rule: every non-coinbase input uses sequence `0xffffffff`, `0xfffffffe` or, in a version 2 or 3 transaction, a BIP 68 relative lock; a value that only signals BIP 125 replaceability makes the transaction invalid (`bad-txns-rbf-sequence`). See [No-RBF sequence rule](#no-rbf-sequence-rule) | — | not scheduled | 10 | 0, `-rbfbanheight` |
-| Block time 60 s → 30 s, subsidy halved with the halving interval doubled to 28,800 blocks, 120-block reorganization limit, block version bit `0x40000000` required | NIP-028 | not scheduled | 10 | not scheduled, `-blocktimereductionheight` |
+| Block time 60 s → 30 s, subsidy halved with the halving interval doubled to 28,800 blocks (from the 3,000 XNA tranche on, half the reward of the tranche below: 1,000, 500, 250 and 125 XNA), 120-block reorganization limit, block version bit `0x40000000` required | NIP-028 | not scheduled | 10 | not scheduled, `-blocktimereductionheight` |
 
 <!-- TODO: confirm the NIP numbers. No NIP is given in doc/ for AuthScript,
 the strict families, the first opcode set, the strict OP_XNA_ASSET rule, the

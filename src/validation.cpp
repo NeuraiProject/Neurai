@@ -1498,7 +1498,8 @@ CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
 {
     // NIP-028: at and after the block-time-reduction activation height
     // (reset testnet: block 10), freeze the legacy halving index at the boundary
-    // and add post-activation halvings on top, then halve the result.
+    // and add post-activation halvings on top, then halve the result, or
+    // lower it a tranche from the 3000 XNA tranche on.
     // Pre-activation behaviour is byte-identical to the legacy curve.
     const bool fPostReduction =
         IsBlockTimeReductionActive(nHeight, consensusParams);
@@ -1519,27 +1520,37 @@ CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
         return fPostReduction ? (v >> 1) : v;
     };
 
+    // The tranches that mainnet reaches after the fork pay, from the fork
+    // on, half the reward of the tranche below them: 3000 -> 1000,
+    // 2000 -> 500, 1000 -> 250 and 500 -> 125 XNA per 30 s block. The
+    // earlier tranches only follow the fork on testnet and regtest, and keep
+    // the halved reward.
+    auto lower = [fPostReduction](CAmount v, CAmount vPost) -> CAmount {
+        return fPostReduction ? vPost : v;
+    };
+
     // Go zero after 383 micro-halvings (10 years) Mined 21106329307 XNA
-    // (mainnet figures; testnet emission diverges from block 10 per NIP-028)
+    // (legacy mainnet figures; the fork lowers them, and testnet emission
+    // diverges from block 10 per NIP-028)
 
     if (halvings >= 383)
         return 0;
 
     // Force block reward to 500 after 216 micro-halvings. Mined 19903929307 XNA
     if (halvings >= 216)
-        return half(500 * COIN);
+        return lower(500 * COIN, 125 * COIN);
 
     // Force block reward to 1000 after 180 micro-halvings. Mined 19385529307 XNA
     if (halvings >= 180)
-        return half(1000 * COIN);
+        return lower(1000 * COIN, 250 * COIN);
 
     // Force block reward to 2000 after 144 micro-halvings. Mined 18348729307 XNA
     if (halvings >= 144)
-        return half(2000 * COIN);
+        return lower(2000 * COIN, 500 * COIN);
 
     // Force block reward to 3000 after 108 micro-halvings. Mined 16793529307 XNA
     if (halvings >= 108)
-        return half(3000 * COIN);
+        return lower(3000 * COIN, 1000 * COIN);
 
     // Force block reward to 4000 after 72 micro-halvings. Mined 14719929307 XNA
     if (halvings >= 72)

@@ -288,7 +288,9 @@ struct Params {
      *    - nSubsidyHalvingIntervalPost     (= 28800, doubled so the
      *      wall-clock halving cadence ~10 days is preserved across the
      *      spacing change)
-     *    - GetBlockSubsidy()               halved at this height
+     *    - GetBlockSubsidy()               halved at this height; from the
+     *      3000 XNA tranche on, half the reward of the tranche below
+     *      (1000, 500, 250, 125)
      *    - block.nVersion                  must carry VERSIONBITS_FLAG_NIP028 */
     int     nBlockTimeReductionHeight;
     int64_t nPowTargetSpacingPost;
