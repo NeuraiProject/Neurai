@@ -22,11 +22,14 @@ class NotificationsTest(NeuraiTestFramework):
         self.block_filename = os.path.join(self.options.tmpdir, "blocks.txt")
         self.tx_filename = os.path.join(self.options.tmpdir, "transactions.txt")
 
-        # -alertnotify and -blocknotify on node0, walletnotify on node1
+        # -alertnotify and -blocknotify on node0, walletnotify on node1. node1
+        # mines up-version blocks with unknown bit 27 (0x38000000): at least
+        # the asset version, and not bit 30, the NIP-028 flag that blocks
+        # below its activation height must not set.
         self.extra_args = [["-blockversion=536870912",
                             "-alertnotify=echo %%s >> %s" % self.alert_filename,
                             "-blocknotify=echo %%s >> %s" % self.block_filename],
-                           ["-blockversion=1610612736",
+                           ["-blockversion=939524096",
                             "-rescan",
                             "-walletnotify=echo %%s >> %s" % self.tx_filename]]
         super().setup_network()

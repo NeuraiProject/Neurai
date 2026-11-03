@@ -12,6 +12,8 @@
 #include "primitives/block.h"
 #include "protocol.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -109,6 +111,7 @@ public:
      *  Mainnet takes its heights from here (MAINNET_FORK_HEIGHT), so this is
      *  the one list of what the fork activates. */
     void UpdateUnifiedForkHeight(int nHeight);
+    void UpdateProtocolVersion(int nVersion) { nProtocolVersion = nVersion; }
     void TurnOffSegwit();
     void TurnOffCSV();
     void TurnOffBIP34();
@@ -175,11 +178,26 @@ public:
             ? nMaxReorganizationDepthPost
             : nMaxReorganizationDepth;
     }
+    /** NIP-028: whether disconnecting the active chain from nForkHeight up to
+     *  nTipHeight reaches the default reorg cap. The cap is the same span of
+     *  time on both sides of the activation height (60 blocks of 60 s, 120 of
+     *  30 s), so a reorg that crosses it counts each disconnected block at the
+     *  spacing it was mined under, not at the cap of its first height. */
+    bool ReachesMaxReorganizationDepth(int nForkHeight, int nTipHeight) const {
+        const int nActivation = consensus.nBlockTimeReductionHeight;
+        const int64_t nPre = std::max(0, std::min(nTipHeight, nActivation - 1) - nForkHeight + 1);
+        const int64_t nPost = std::max(0, nTipHeight - std::max(nForkHeight, nActivation) + 1);
+        return nPre * nMaxReorganizationDepthPost + nPost * nMaxReorganizationDepth >=
+               int64_t{nMaxReorganizationDepth} * nMaxReorganizationDepthPost;
+    }
     int MinReorganizationPeers() const { return nMinReorganizationPeers; }
     /** Protocol version announced in the version handshake. */
     int ProtocolVersion() const { return nProtocolVersion; }
     /** Peers announcing a lower protocol version are refused at handshake. */
     int MinPeerProtocolVersion() const { return nMinPeerProtocolVersion; }
+    /** From the NIP-028 height on the tip, peers announcing a lower protocol
+     *  version are refused at handshake and dropped from the connected set. */
+    int ForkMinPeerProtocolVersion() const { return nForkMinPeerProtocolVersion; }
     int MinReorganizationAge() const { return nMinReorganizationAge; }
 
     int GetAssetActivationHeight() const { return nAssetActivationHeight; }
@@ -248,6 +266,7 @@ protected:
 
     int nProtocolVersion;
     int nMinPeerProtocolVersion;
+    int nForkMinPeerProtocolVersion;
 
     int nAssetActivationHeight;
 
@@ -318,6 +337,9 @@ void UpdateNoRbfHeight(int nHeight);
 /** Regtest only: move every activation height of the unified fork to nHeight,
  *  as mainnet will activate them (-forkheight). */
 void UpdateUnifiedForkHeight(int nHeight);
+/** Regtest only: announce another protocol version (-announceversion), so a
+ *  node can play one that has not upgraded. */
+void UpdateProtocolVersion(int nVersion);
 
 void TurnOffSegwit();
 

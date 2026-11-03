@@ -1486,6 +1486,16 @@ bool ProcessHeadersMessage(CNode *pfrom, CConnman *connman, std::vector<CBlockHe
                 // etc), and not just the duplicate-invalid case.
                 pfrom->fDisconnect = true;
             }
+            // NIP-028: a header refused for its version flag comes from the
+            // other side of the fork height, so this peer cannot serve our
+            // chain. Free its slot for an upgraded peer, without a ban: it
+            // only has not upgraded. A node still below the fork height would
+            // otherwise keep it until the headers sync times out.
+            if (state.GetRejectReason().rfind("bad-version-nip028", 0) == 0) {
+                LogPrintf("peer=%d is on the other side of the fork height (%s); disconnecting\n",
+                          pfrom->GetId(), state.GetRejectReason());
+                pfrom->fDisconnect = true;
+            }
             return error("invalid header received");
         }
         // A local resource failure is not an invalid header. No header may have
@@ -1736,14 +1746,13 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
         }
 
         // NIP-028: once the local tip has reached the block-time-reduction
-        // activation height (reset testnet: block 10), peers below
-        // BLOCK_TIME_REDUCTION_VERSION are dropped at handshake. Inert on
-        // mainnet (nBlockTimeReductionHeight = INT_MAX) and before the
-        // activation height.
-        if (IsBlockTimeReductionActiveOnTip() && nVersion < BLOCK_TIME_REDUCTION_VERSION) {
+        // activation height (the fork height on mainnet, block 10 on the
+        // reset testnet), peers below the fork version are dropped at
+        // handshake. Inert before the activation height.
+        if (IsBlockTimeReductionActiveOnTip() && nVersion < chainparams.ForkMinPeerProtocolVersion()) {
             LogPrintf("peer=%d using obsolete version %i; disconnecting because peer isn't signalling protocol version for NIP-028 (block-time reduction)\n", pfrom->GetId(), nVersion);
             connman->PushMessage(pfrom, CNetMsgMaker(INIT_PROTO_VERSION).Make(NetMsgType::REJECT, strCommand, REJECT_OBSOLETE,
-                                                                              strprintf("Version must be %d or greater", BLOCK_TIME_REDUCTION_VERSION)));
+                                                                              strprintf("Version must be %d or greater", chainparams.ForkMinPeerProtocolVersion())));
             pfrom->fDisconnect = true;
             return false;
         }
@@ -3369,10 +3378,10 @@ bool PeerLogicValidation::SendMessages(CNode* pto, std::atomic<bool>& interruptM
         // complements the handshake-time gate added in ProcessMessage(VERSION),
         // which only catches new connections.
         // Cost: one short cs_main acquisition + integer compare per peer per
-        // tick. Inert on mainnet (predicate permanently false).
+        // tick. Inert before the activation height.
         if (IsBlockTimeReductionActiveOnTip() &&
             pto->nVersion != 0 &&
-            pto->nVersion < BLOCK_TIME_REDUCTION_VERSION) {
+            pto->nVersion < GetParams().ForkMinPeerProtocolVersion()) {
             LogPrintf("peer=%d using obsolete version %i; disconnecting post-activation per NIP-028\n",
                       pto->GetId(), pto->nVersion.load());
             pto->fDisconnect = true;

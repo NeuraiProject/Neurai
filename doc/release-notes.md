@@ -64,6 +64,14 @@ Indexes that need a reindex
 - **`-silentpaymentindex`** (new) does not need a reindex on an unpruned node:
   it is built at startup from block and undo data. A pruned node needs
   `-reindex` to enable it.
+- **`-assetindex` after a reorg.** When the disconnected blocks moved an
+  asset to an address and then spent it from there, the asset address index
+  kept that address with a zero balance (`listaddressesbyasset`). Reward
+  snapshots counted it, so `getdistributionplan` refused the snapshot ("Holdings
+  must be positive") and its `snapshot_hash` differed from `replaysnapshot`.
+  Undoing now erases the entry, and snapshots skip zero balances already in
+  the index. `-reindex` removes the existing empty entries; it is not needed
+  for rewards.
 
 Wallets
 -------
@@ -175,7 +183,8 @@ height revalidates the mempool.
   the last column move the heights for activation tests; they are listed by
   `-help-debug`. `-forkheight=<n>` moves all of them at once, as mainnet will
   activate them, and the single-rule options given with it still move one
-  rule.
+  rule. `-announceversion=<n>` makes a regtest node announce an older protocol
+  version, to play a node that has not upgraded.
 - **Asset block version:** on testnet and regtest, which activate assets by
   height, a block at or below the activation height does not need the asset
   version bit. A node past the activation used to reject a competing chain
@@ -204,7 +213,7 @@ height revalidates the mempool.
 | Asset payload marker `rvn` → `xna` for new asset outputs; existing `rvn` outputs stay spendable | NIP-040 | not scheduled | 10 | 1, `-nip040height` |
 | DEPIN transfer state (open, close, seal) | — | not scheduled | 10 | 1, `-depinstateheight` |
 | No-RBF sequence rule: every non-coinbase input uses sequence `0xffffffff`, `0xfffffffe` or, in a version 2 or 3 transaction, a BIP 68 relative lock; a value that only signals BIP 125 replaceability makes the transaction invalid (`bad-txns-rbf-sequence`). See [No-RBF sequence rule](#no-rbf-sequence-rule) | — | not scheduled | 10 | 0, `-rbfbanheight` |
-| Block time 60 s → 30 s, subsidy halved with the halving interval doubled to 28,800 blocks (from the 3,000 XNA tranche on, half the reward of the tranche below: 1,000, 500, 250 and 125 XNA), 120-block reorganization limit, block version bit `0x40000000` required | NIP-028 | not scheduled | 10 | not scheduled, `-blocktimereductionheight` |
+| Block time 60 s → 30 s, subsidy halved with the halving interval doubled to 28,800 blocks (from the 3,000 XNA tranche on, half the reward of the tranche below: 1,000, 500, 250 and 125 XNA), 120-block reorganization limit, block version bit `0x40000000` required from the activation height and refused below it | NIP-028 | not scheduled | 10 | not scheduled, `-blocktimereductionheight` |
 
 <!-- TODO: confirm the NIP numbers. No NIP is given in doc/ for AuthScript,
 the strict families, the first opcode set, the strict OP_XNA_ASSET rule, the
@@ -267,11 +276,17 @@ Opcode details, encodings and covenant patterns are in
 P2P and network
 ---------------
 
-- **Protocol version.** Mainnet announces 70029 (was 70028); the minimum peer
-  version is unchanged (70025). Testnet and regtest announce 70030. The reset
-  testnet refuses peers below 70030, and from the NIP-028 height it also
-  disconnects peers below 70029. `getnetworkinfo` reports the version of the
-  selected network.
+- **Protocol version.** Mainnet and regtest announce 70031 (mainnet was
+  70028); the minimum peer version is unchanged (70025) until the fork. From
+  the fork height on the tip, they refuse and disconnect peers below 70031:
+  1.0.7 (70028) and 2.0 builds without the mainnet fork height (70029). The
+  reset testnet announces 70030 and refuses peers below it from the first
+  handshake. `getnetworkinfo` reports the version of the selected network.
+- **Peers on the other side of the fork.** A peer that sends a header refused
+  for the NIP-028 version flag (missing from the fork height, or set before
+  it) is disconnected without a ban: its chain is not ours. A node still below
+  the fork height, for instance during initial sync, used to keep such a peer
+  until the headers download timed out.
 - **Faster initial header sync.** Mainnet ships 866 independently verified
   header anchors, one every 2,000 blocks through height 1,732,000; KAWPOW
   proof of work is not recomputed for anchored headers. Remaining KAWPOW
@@ -343,6 +358,11 @@ Mining
   in it, so a window that crosses the activation height does not jump; the
   minimum-difficulty rule uses the spacing in force. Every testnet block from
   that height must set version bit `0x40000000`.
+- Locks counted in blocks (`nLockTime` below 500,000,000, BIP 68 relative
+  locks by height, `OP_CHECKLOCKTIMEVERIFY` and `OP_CHECKSEQUENCEVERIFY` with
+  heights) take half the time from the NIP-028 height: 144 blocks are 72
+  minutes instead of 144. Locks counted in time are unchanged. Contracts that
+  rely on a duration should use time-based locks or double their block count.
 - Block templates respect the Poseidon work limit, count the signature
   operations of the new signature opcodes, and skip transactions whose
   reference inputs are spent by another transaction in the template.
@@ -642,7 +662,10 @@ Changed defaults:
   block 10, regtest genesis); mainnet keeps 83 until its fork height.
 - `-listenonion`: 1 → 0.
 - `-maxreorg`: 120 from the NIP-028 height (testnet block 10, mainnet the
-  unified fork); 60 before it.
+  unified fork); 60 before it. Both are 60 minutes, and by default a reorg
+  that crosses that height counts each disconnected block at the spacing it
+  was mined under (two blocks above the height weigh as one below it). A value
+  given with `-maxreorg` counts blocks.
 
 Changed behavior:
 
@@ -770,7 +793,7 @@ Result changes:
   `external_derivation_path`, `internal_derivation_path` and post-quantum key
   information.
 - `getnetworkinfo`: `protocolversion` is the version of the selected network
-  (70030 on testnet and regtest).
+  (70031 on mainnet and regtest, 70030 on testnet).
 - `getblockchaininfo`: new `asset_services` with the state of the legacy
   messages and rewards stores.
 - `getsnapshot`: new `block_hash`, `snapshot_hash`, `format` and, for

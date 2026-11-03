@@ -646,6 +646,7 @@ std::string HelpMessage(HelpMessageMode mode)
         strUsage += HelpMessageOpt("-limitdescendantsize=<n>", strprintf("Do not accept transactions if any ancestor would have more than <n> kilobytes of in-mempool descendants (default: %u).", DEFAULT_DESCENDANT_SIZE_LIMIT));
         strUsage += HelpMessageOpt("-vbparams=deployment:start:end", "Use given start/end times for specified version bits deployment (regtest-only)");
         strUsage += HelpMessageOpt("-forkheight=<n>", "Move every activation height of the unified fork to this height, as mainnet will activate them; the options below then move a single rule (regtest-only)");
+        strUsage += HelpMessageOpt("-announceversion=<n>", strprintf("Announce this protocol version, between %d and %d, to play a node that has not upgraded (regtest-only)", MIN_PEER_PROTO_VERSION, UNIFIED_FORK_VERSION));
         strUsage += HelpMessageOpt("-nip040height=<n>", "Override the NIP-040 asset marker fork height (regtest-only)");
         strUsage += HelpMessageOpt("-zkverifyheight=<n>", "Override ZKVERIFY activation (regtest-only, -1 disables)");
         strUsage += HelpMessageOpt("-zkpublictreeheight=<n>", "Override experimental ZK public-tree activation (regtest-only, -1 disables)");
@@ -1413,6 +1414,18 @@ bool AppInitParameterInteraction()
         }
         UpdateUnifiedForkHeight(static_cast<int>(nHeight));
         LogPrintf("Setting every unified fork activation height to %ld\n", nHeight);
+    }
+
+    if (gArgs.IsArgSet("-announceversion")) {
+        if (!chainparams.MineBlocksOnDemand()) {
+            return InitError("The announced protocol version may only be overridden on regtest.");
+        }
+        int64_t nVersion;
+        if (!ParseInt64(gArgs.GetArg("-announceversion", ""), &nVersion) || nVersion < MIN_PEER_PROTO_VERSION || nVersion > UNIFIED_FORK_VERSION) {
+            return InitError(strprintf("Invalid -announceversion (%s)", gArgs.GetArg("-announceversion", "")));
+        }
+        UpdateProtocolVersion(static_cast<int>(nVersion));
+        LogPrintf("Announcing protocol version %ld\n", nVersion);
     }
 
     if (gArgs.IsArgSet("-nip040height")) {

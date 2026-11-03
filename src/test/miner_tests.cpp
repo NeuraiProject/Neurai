@@ -667,4 +667,66 @@ BOOST_FIXTURE_TEST_SUITE(miner_tests, TestingSetup)
     }
 #endif  // #if 0 for createnewblock_validity_test — see top of case for context
 
+    BOOST_FIXTURE_TEST_CASE(template_respects_work_budgets, TestChain100Setup)
+    {
+        // D-32: a mempool full of transactions at the standard Poseidon and
+        // asset-auth limits never makes the template exceed the block
+        // budgets. The costs are set on the mempool entries; the scripts are
+        // plain signatures, so the template still passes TestBlockValidity.
+        const CScript p2pk = CScript() << ToByteVector(coinbaseKey.GetPubKey()) << OP_CHECKSIG;
+        auto sign = [&](CMutableTransaction& tx, const CScript& spk) {
+            std::vector<unsigned char> vchSig;
+            const uint256 hash = SignatureHash(spk, tx, 0, SIGHASH_ALL, 0, SIGVERSION_BASE);
+            BOOST_CHECK(coinbaseKey.Sign(hash, vchSig));
+            vchSig.push_back((unsigned char) SIGHASH_ALL);
+            tx.vin[0].scriptSig = CScript() << vchSig;
+        };
+        const int nPerBudget = MAX_BLOCK_POSEIDON_WORK / MAX_STANDARD_TX_POSEIDON_WORK + 1;
+        BOOST_REQUIRE_EQUAL(MAX_BLOCK_ASSETAUTH_WORK / MAX_STANDARD_TX_ASSETAUTH_WORK + 1, (uint64_t)nPerBudget);
+
+        CMutableTransaction parent;
+        parent.nVersion = 1;
+        parent.vin.resize(1);
+        parent.vin[0].prevout = COutPoint(coinbaseTxns[0].GetHash(), 0);
+        parent.vout.assign(2 * nPerBudget, CTxOut(coinbaseTxns[0].vout[0].nValue / (2 * nPerBudget + 1), p2pk));
+        sign(parent, coinbaseTxns[0].vout[0].scriptPubKey);
+
+        LOCK(cs_main);
+        TestMemPoolEntryHelper entry;
+        mempool.addUnchecked(parent.GetHash(), entry.Fee(10000).Time(GetTime()).SpendsCoinbase(true).FromTx(parent));
+        for (int i = 0; i < 2 * nPerBudget; i++) {
+            CMutableTransaction child;
+            child.nVersion = 1;
+            child.vin.resize(1);
+            child.vin[0].prevout = COutPoint(parent.GetHash(), i);
+            child.vout.assign(1, CTxOut(parent.vout[i].nValue - 100000, p2pk));
+            sign(child, p2pk);
+            CTxMemPoolEntry e = entry.Fee(100000).SpendsCoinbase(false).FromTx(child);
+            if (i % 2 == 0) {
+                e.SetPoseidonWork(MAX_STANDARD_TX_POSEIDON_WORK);
+            } else {
+                e.SetAssetAuthWork(MAX_STANDARD_TX_ASSETAUTH_WORK);
+            }
+            mempool.addUnchecked(child.GetHash(), e);
+        }
+
+        std::unique_ptr<CBlockTemplate> pblocktemplate = BlockAssembler(GetParams()).CreateNewBlock(p2pk);
+        BOOST_REQUIRE(pblocktemplate);
+        uint64_t nPoseidonWork = 0, nAssetAuthWork = 0;
+        {
+            LOCK(mempool.cs);
+            for (size_t i = 1; i < pblocktemplate->block.vtx.size(); i++) {
+                const auto it = mempool.mapTx.find(pblocktemplate->block.vtx[i]->GetHash());
+                BOOST_REQUIRE(it != mempool.mapTx.end());
+                nPoseidonWork += it->GetPoseidonWork();
+                nAssetAuthWork += it->GetAssetAuthWork();
+            }
+        }
+        // One transaction of each kind is left out: the budgets fill exactly.
+        BOOST_CHECK_EQUAL(nPoseidonWork, MAX_BLOCK_POSEIDON_WORK);
+        BOOST_CHECK_EQUAL(nAssetAuthWork, MAX_BLOCK_ASSETAUTH_WORK);
+        BOOST_CHECK_EQUAL(pblocktemplate->block.vtx.size(), 1u + 1u + 2u * (nPerBudget - 1));
+        mempool.clear();
+    }
+
 BOOST_AUTO_TEST_SUITE_END()

@@ -53,6 +53,17 @@ static const unsigned int MAX_CSFS_STANDARD_P2WSH_STACK_ITEM_SIZE = MAX_PQ_SCRIP
 static const unsigned int MAX_STANDARD_P2WSH_SCRIPT_SIZE = 3600;
 /** NIP-014: Maximum number of reference inputs in a standard v3 transaction */
 static const unsigned int MAX_STANDARD_REFINPUTS = 64;
+
+// Relay policy is never looser than the consensus limit it guards, so a
+// standard transaction always fits in a valid block.
+static_assert(MAX_STANDARD_TX_WEIGHT <= MAX_BLOCK_WEIGHT, "standard weight above the block limit");
+static_assert(MAX_STANDARD_TX_SIGOPS_COST <= MAX_BLOCK_SIGOPS_COST, "standard sigops above the block limit");
+static_assert(MAX_STANDARD_TX_POSEIDON_WORK <= MAX_BLOCK_POSEIDON_WORK, "standard Poseidon work above the block limit");
+static_assert(MAX_STANDARD_TX_ASSETAUTH_WORK <= MAX_BLOCK_ASSETAUTH_WORK, "standard asset-auth work above the block limit");
+static_assert(MAX_STANDARD_P2WSH_SCRIPT_SIZE <= unsigned(MAX_SCRIPT_SIZE), "standard witness script above the script limit");
+static_assert(MAX_STANDARD_P2WSH_STACK_ITEMS <= unsigned(MAX_STACK_SIZE), "standard witness items above the stack limit");
+static_assert(MAX_STANDARD_P2WSH_STACK_ITEM_SIZE <= MAX_SCRIPT_ELEMENT_SIZE, "standard witness item above the element limit");
+static_assert(MAX_CSFS_STANDARD_P2WSH_STACK_ITEM_SIZE <= MAX_PQ_SCRIPT_ELEMENT_SIZE, "standard CSFS item above the element limit");
 /** Min feerate for defining dust. Historically this has been based on the
  * minRelayTxFee, however changing the dust limit changes which transactions are
  * standard and should be done with care and ideally rarely. It makes sense to

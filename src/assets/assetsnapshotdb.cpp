@@ -106,6 +106,11 @@ bool CAssetSnapshotDB::AddAssetOwnershipSnapshot(
 
     std::set<std::pair<std::string, CAmount>> ownersAndAmounts;
     for (const auto& row : rows[p_assetName]) {
+        // An index written before the undo fix may keep holders at zero after
+        // a reorg; a replay of the blocks never has them.
+        if (row.second <= 0) {
+            continue;
+        }
         //  Verify that the address is valid
         if (IsValidDestination(DecodeDestination(row.first))) {
             ownersAndAmounts.insert(row);

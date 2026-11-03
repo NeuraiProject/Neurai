@@ -354,8 +354,11 @@ public:
         nMaxReorganizationDepthPost = 120;
         nMinReorganizationPeers = 6;
         nMinReorganizationAge = 60 * 60 * 12; // 12 hours
-        nProtocolVersion = PROTOCOL_VERSION;
+        // Announced before the fork so upgraded nodes can be counted; required
+        // from it, which leaves out 1.0.7 and 2.0 builds without the fork height.
+        nProtocolVersion = UNIFIED_FORK_VERSION;
         nMinPeerProtocolVersion = MIN_PEER_PROTO_VERSION;
+        nForkMinPeerProtocolVersion = UNIFIED_FORK_VERSION;
 
         nAssetActivationHeight = 10; // Asset activated block height
         nMessagingActivationBlock = 10; // Messaging activated block height
@@ -633,6 +636,7 @@ public:
         // share the "RUEN" message start and announce protocol 70029.
         nProtocolVersion = RESET_TESTNET_VERSION;
         nMinPeerProtocolVersion = RESET_TESTNET_VERSION;
+        nForkMinPeerProtocolVersion = RESET_TESTNET_VERSION;
 
         nAssetActivationHeight = 1; // Asset activated block height
         nMessagingActivationBlock = 1; // Messaging activated block height
@@ -869,10 +873,12 @@ public:
         nMaxReorganizationDepthPost = 120; // NIP-028 (only with -blocktimereductionheight), as testnet
         nMinReorganizationPeers = 4;
         nMinReorganizationAge = 60 * 60 * 12;
-        // Announces the testnet protocol version; the minimum stays low so
-        // the functional test framework's P2P node (70025) still connects.
-        nProtocolVersion = RESET_TESTNET_VERSION;
+        // Announces and, from the fork height, requires the mainnet fork
+        // version, so -forkheight rehearses the mainnet peer split. Before it
+        // the minimum stays low, so P2P tests with older versions connect.
+        nProtocolVersion = UNIFIED_FORK_VERSION;
         nMinPeerProtocolVersion = MIN_PEER_PROTO_VERSION;
+        nForkMinPeerProtocolVersion = UNIFIED_FORK_VERSION;
 
         nAssetActivationHeight = 1; // Asset activated block height (parity with testnet)
         nMessagingActivationBlock = 1; // Messaging activated block height
@@ -947,6 +953,11 @@ void UpdateUnifiedForkHeight(int nHeight)
 {
     globalChainParams->UpdateUnifiedForkHeight(nHeight);
     SetStrictAuthScriptActiveDefault(globalChainParams->GetConsensus().IsStrictAuthScriptActive(0));
+}
+
+void UpdateProtocolVersion(int nVersion)
+{
+    globalChainParams->UpdateProtocolVersion(nVersion);
 }
 
 void TurnOffSegwit(){

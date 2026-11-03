@@ -80,3 +80,41 @@ def check_script(script):
     if type(script) is bytes or type(script) is CScript:
         return script
     assert False
+
+
+BECH32M_CONST = 0x2bc830a3
+BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+
+
+def bech32_polymod(values):
+    generator = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3]
+    chk = 1
+    for value in values:
+        top = chk >> 25
+        chk = (chk & 0x1ffffff) << 5 ^ value
+        for i in range(5):
+            chk ^= generator[i] if ((top >> i) & 1) else 0
+    return chk
+
+
+def convertbits(data, frombits, tobits):
+    acc, bits, ret = 0, 0, []
+    maxv = (1 << tobits) - 1
+    for value in data:
+        acc = (acc << frombits) | value
+        bits += frombits
+        while bits >= tobits:
+            bits -= tobits
+            ret.append((acc >> bits) & maxv)
+    if bits:
+        ret.append((acc << (tobits - bits)) & maxv)
+    return ret
+
+
+def bech32m_address(hrp, witver, program):
+    """Witness v1+ address. Regtest: 'tnc' (AuthScript v1), 'tpq' (v2), 'tnq' (v3)."""
+    data = [witver] + convertbits(program, 8, 5)
+    values = [ord(x) >> 5 for x in hrp] + [0] + [ord(x) & 31 for x in hrp] + data
+    polymod = bech32_polymod(values + [0] * 6) ^ BECH32M_CONST
+    checksum = [(polymod >> 5 * (5 - i)) & 31 for i in range(6)]
+    return hrp + "1" + "".join(BECH32_CHARSET[d] for d in data + checksum)

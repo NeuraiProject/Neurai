@@ -2564,16 +2564,32 @@ bool CAssetsCache::DumpCacheToDatabase()
             for (auto undoSpend : vUndoAssetAmount) {
                 auto pair = std::make_pair(undoSpend.assetName, undoSpend.address);
                 if (mapAssetsAddressAmount.count(pair)) {
-                    if (!passetsdb->WriteAssetAddressQuantity(undoSpend.assetName, undoSpend.address,
-                                                              mapAssetsAddressAmount.at(pair))) {
-                        dirty = true;
-                        message = "_Failed Writing updated Address Quantity to database when undoing spends";
-                    }
+                    // An address that received the asset and spent it within the
+                    // disconnected blocks ends at zero: the transfer undo above
+                    // erased it, so erase it again rather than write an empty
+                    // holder that rewards snapshots would count.
+                    if (mapAssetsAddressAmount.at(pair) == 0) {
+                        if (!passetsdb->EraseAssetAddressQuantity(undoSpend.assetName, undoSpend.address)) {
+                            dirty = true;
+                            message = "_Failed Erasing Address Quantity from database when undoing spends";
+                        }
 
-                    if (!passetsdb->WriteAddressAssetQuantity(undoSpend.address, undoSpend.assetName,
-                                                              mapAssetsAddressAmount.at(pair))) {
-                        dirty = true;
-                        message = "_Failed Writing Address Balance to database";
+                        if (!passetsdb->EraseAddressAssetQuantity(undoSpend.address, undoSpend.assetName)) {
+                            dirty = true;
+                            message = "_Failed Erasing Address Balance from database when undoing spends";
+                        }
+                    } else {
+                        if (!passetsdb->WriteAssetAddressQuantity(undoSpend.assetName, undoSpend.address,
+                                                                  mapAssetsAddressAmount.at(pair))) {
+                            dirty = true;
+                            message = "_Failed Writing updated Address Quantity to database when undoing spends";
+                        }
+
+                        if (!passetsdb->WriteAddressAssetQuantity(undoSpend.address, undoSpend.assetName,
+                                                                  mapAssetsAddressAmount.at(pair))) {
+                            dirty = true;
+                            message = "_Failed Writing Address Balance to database";
+                        }
                     }
 
                     if (dirty) {

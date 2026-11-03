@@ -5412,12 +5412,25 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationSta
                                        "required at height %d",
                                        block.nVersion, VERSIONBITS_FLAG_NIP028, nHeight));
     }
+    // Below the activation height the flag is refused, so no block claims the
+    // fork before it applies. No mainnet block up to height 1,851,084 sets
+    // this bit, and the miner only sets it from the activation height.
+    if (!IsBlockTimeReductionActive(nHeight, consensusParams) &&
+        (block.nVersion & VERSIONBITS_FLAG_NIP028) != 0) {
+        return state.Invalid(false, REJECT_INVALID,
+                             strprintf("bad-version-nip028-early(0x%08x)", block.nVersion),
+                             strprintf("rejected nVersion=0x%08x block: NIP-028 flag (0x%08x) "
+                                       "set below its activation height (block %d)",
+                                       block.nVersion, VERSIONBITS_FLAG_NIP028, nHeight));
+    }
 
     //If this is a reorg, check that it is not too deep
-    int nMaxReorgDepth = gArgs.GetArg("-maxreorg", GetParams().MaxReorganizationDepth(nHeight));
+    // -maxreorg counts blocks; the default cap counts time across NIP-028.
     int nMinReorgPeers = gArgs.GetArg("-minreorgpeers", GetParams().MinReorganizationPeers());
     int nMinReorgAge = gArgs.GetArg("-minreorgage", GetParams().MinReorganizationAge());
-    bool fGreaterThanMaxReorg = (chainActive.Height() - (nHeight - 1)) >= nMaxReorgDepth;
+    bool fGreaterThanMaxReorg = gArgs.IsArgSet("-maxreorg")
+        ? (chainActive.Height() - (nHeight - 1)) >= gArgs.GetArg("-maxreorg", 0)
+        : GetParams().ReachesMaxReorganizationDepth(nHeight, chainActive.Height());
     if (fGreaterThanMaxReorg && g_connman) {
         int nCurrentNodeCount = g_connman->GetNodeCount(CConnman::CONNECTIONS_ALL);
         bool bIsCurrentChainCaughtUp = (GetTime() - chainActive.Tip()->nTime) <= nMinReorgAge;

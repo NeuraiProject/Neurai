@@ -131,6 +131,35 @@ BOOST_FIXTURE_TEST_SUITE(main_tests, TestingSetup)
         }
     }
 
+    BOOST_AUTO_TEST_CASE(nip028_reorg_cap_counts_time_across_the_fork)
+    {
+        // B-11. The default reorg cap is 60 minutes on both sides of H: 60
+        // blocks of 60 s below it, 120 of 30 s from it on. A reorg that
+        // crosses H counts each disconnected block at the spacing it was
+        // mined under, not at the cap of its first height.
+        auto chainParams = CreateChainParams(CBaseChainParams::MAIN);
+        const int H = 1900800;
+        chainParams->UpdateUnifiedForkHeight(H);
+        auto reaches = [&](int nFork, int nTip) { return chainParams->ReachesMaxReorganizationDepth(nFork, nTip); };
+        // Entirely below or entirely above H: a plain block count.
+        BOOST_CHECK(!reaches(H - 100, H - 100 + 58));
+        BOOST_CHECK(reaches(H - 100, H - 100 + 59));
+        BOOST_CHECK(!reaches(H, H + 118));
+        BOOST_CHECK(reaches(H, H + 119));
+        // Across H: 11 blocks below and 97 above is 59.5 minutes.
+        BOOST_CHECK(!reaches(H - 11, H + 96));
+        // 20 below and 80 above is 60 minutes, as is 1 below and 118 above.
+        BOOST_CHECK(reaches(H - 20, H + 79));
+        BOOST_CHECK(!reaches(H - 1, H + 116));
+        BOOST_CHECK(reaches(H - 1, H + 117));
+        // Not reached while the fork point is the tip's successor.
+        BOOST_CHECK(!reaches(H + 5, H + 4));
+        // A network without the fork keeps 60 blocks.
+        auto legacy = CreateChainParams(CBaseChainParams::MAIN);
+        BOOST_CHECK(!legacy->ReachesMaxReorganizationDepth(H - 11, H + 47));
+        BOOST_CHECK(legacy->ReachesMaxReorganizationDepth(H - 11, H + 48));
+    }
+
     // Every block subsidy from genesis until the schedule reaches zero.
     static CAmount TotalEmission(const Consensus::Params& params)
     {

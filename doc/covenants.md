@@ -135,13 +135,13 @@ and **block 10** is the first block that applies all of them:
 - NIP-028: 30-second blocks, the subsidy halved (and its halving interval
   doubled to 28,800 blocks, ~10 days as before), a 120-block reorg cap (60
   minutes, as before), the block version flag `0x40000000` required on every
-  block and peers below protocol 70029 dropped.
+  block (and refused before block 10) and peers below protocol 70030 dropped.
 
 The reset testnet keeps the `RUEN` message start and port 19100. It announces
 protocol 70030 and refuses peers below it from the first handshake, which keeps
 nodes of the previous testnet (same message start, protocol 70029) out; its new
-genesis keeps the chains apart. Regtest also announces 70030; mainnet keeps
-70029 for now.
+genesis keeps the chains apart. Mainnet and regtest announce 70031, the version
+that mainnet requires from its fork height.
 
 Assets, RIP5 and the asset VersionBits deployments are active from genesis as a
 pure rule (`nAssetsActiveFromGenesis`), and the v1.0.6 consensus fixes apply

@@ -16,6 +16,7 @@
 #include "test/test_neurai.h"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <vector>
 
@@ -300,6 +301,71 @@ BOOST_FIXTURE_TEST_SUITE(pow_tests, BasicTestingSetup)
             BOOST_CHECK_MESSAGE(run.nBlocksToBand > 0 && run.nSecondsToBand <= 48 * 60 * 60,
                                 "hashrate x" << hashrate << " takes " << run.nSecondsToBand << " s to 30 s +-10%");
             BOOST_CHECK(run.finalMean >= 29 && run.finalMean <= 31);
+        }
+    }
+
+    struct TimestampRun
+    {
+        double meanInterval = 0;      // real seconds per block over the last 4000 blocks
+        double largestTargetRise = 0; // largest target increase from one block to the next
+    };
+
+    // From H - 200 on, a miner with a share `alpha` of the (constant) hashrate
+    // stamps its blocks as far ahead as the rules allow: real time plus
+    // MAX_FUTURE_BLOCK_TIME_DGW. Every block must be later than the median of
+    // the previous 11, so honest miners follow the attacker's timestamps when
+    // those run ahead of real time.
+    static TimestampRun SimulateFutureTimestamps(double alpha)
+    {
+        const Consensus::Params fork = MainnetWithFork(FORK_HEIGHT);
+        const int nBlocks = 6000;
+        SimulatedChain chain(FORK_HEIGHT - 400, 400 + nBlocks);
+        uint32_t nNow = SIMULATION_START_TIME;
+        for (int i = 0; i < 200; i++) {
+            nNow += 60;
+            chain.Add(nNow, i < 181 ? EQUILIBRIUM_BITS : chain.NextBits(fork));
+        }
+        TimestampRun run;
+        uint32_t seed = 4242;
+        int64_t nMeasured = 0, nMeasuredBlocks = 0;
+        for (int i = 0; i < 200 + nBlocks; i++) {
+            const uint32_t nBits = chain.NextBits(fork);
+            arith_uint256 target, previous;
+            target.SetCompact(nBits);
+            previous.SetCompact(chain.Tip().nBits);
+            run.largestTargetRise = std::max(run.largestTargetRise, target.getdouble() / previous.getdouble());
+            const uint32_t seconds = ExpectedBlockTime(nBits, 1.0);
+            nNow += seconds;
+            seed = seed * 1103515245 + 12345;
+            const bool fAttacker = ((seed >> 16) % 1000) < alpha * 1000;
+            const uint32_t nStamp = fAttacker ? nNow + MAX_FUTURE_BLOCK_TIME_DGW : nNow;
+            chain.Add(std::max<uint32_t>(nStamp, chain.Tip().GetMedianTimePast() + 1), nBits);
+            if (i >= 200 + nBlocks - 4000) {
+                nMeasured += seconds;
+                nMeasuredBlocks++;
+            }
+        }
+        run.meanInterval = double(nMeasured) / nMeasuredBlocks;
+        return run;
+    }
+
+    BOOST_AUTO_TEST_CASE(nip028_future_timestamps_stay_bounded_across_the_fork)
+    {
+        // B-08, timestamp manipulation. A stamp 12 minutes ahead lowers the
+        // difficulty of the next block by the share of the 180-block window
+        // that 12 minutes are, twice when such a stamp leaves the window as
+        // another enters it: after the fork the window is 1.5 hours, so one
+        // block can get about a third more target. It does not accumulate,
+        // because stamps ahead of time do not grow, and the mean block time
+        // stays the honest one.
+        const double honest = SimulateFutureTimestamps(0.0).meanInterval;
+        for (const double alpha : {0.0, 0.3, 0.45}) {
+            const TimestampRun run = SimulateFutureTimestamps(alpha);
+            BOOST_TEST_MESSAGE("NIP-028 future timestamps, share " << alpha << ": mean block "
+                               << run.meanInterval << " s, largest target rise x" << run.largestTargetRise);
+            BOOST_CHECK(run.meanInterval >= 27 && run.meanInterval <= 33);
+            BOOST_CHECK(std::abs(run.meanInterval - honest) < 0.5);
+            BOOST_CHECK(run.largestTargetRise <= 1.4);
         }
     }
 
