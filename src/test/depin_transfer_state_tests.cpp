@@ -1643,4 +1643,34 @@ BOOST_AUTO_TEST_CASE(reorg_undoing_unfreeze_evicts_holder_transfer)
     BOOST_CHECK(!mempool.exists(move.GetHash()));
 }
 
+// A transfer takes its units from the asset cache. Only the mempool may also
+// take them from an unconfirmed issuance; a block reads the cache alone, as
+// 1.0.7 does, so an issuance-shaped output that registered no asset cannot
+// be transferred.
+BOOST_AUTO_TEST_CASE(block_takes_transfer_units_only_from_the_asset_cache)
+{
+    const std::string ghost = "GHOST";
+    BOOST_REQUIRE(!passets->CheckIfAssetExists(ghost));
+    CMutableTransaction move;
+    move.vin.emplace_back(Seed(IssuanceScript(ghost, 10 * COIN, holderAddr)));
+    move.vout.emplace_back(0, TransferScript(ghost, 10 * COIN, recipientAddr));
+    Sign(move);
+
+    CCoinsViewCache view(pcoinsTip);
+    for (const bool fUnconfirmedAssets : {true, false}) {
+        CValidationState state;
+        std::vector<std::pair<std::string, uint256>> vReissue;
+        const bool ok = Consensus::CheckTxAssets(CTransaction(move), state, view, passets,
+                                                 chainActive.Height() + 1, false, vReissue, false,
+                                                 nullptr, 0, nullptr, fUnconfirmedAssets);
+        BOOST_CHECK_MESSAGE(ok == fUnconfirmedAssets, state.GetRejectReason());
+        if (!fUnconfirmedAssets)
+            BOOST_CHECK_EQUAL(state.GetRejectReason(), "bad-txns-transfer-asset-not-exist");
+    }
+
+    std::string reason;
+    BOOST_CHECK(!BlockVerdict({move}, reason));
+    BOOST_CHECK_EQUAL(reason, "bad-txns-transfer-asset-not-exist");
+}
+
 BOOST_AUTO_TEST_SUITE_END()

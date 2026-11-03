@@ -157,8 +157,8 @@ struct Params {
     // (-zkpublictreeheight), MAINNET_FORK_HEIGHT on mainnet.
     int nZKPublicTreeHeight{std::numeric_limits<int>::max()};
     bool IsZKPublicTreeActive(int height) const { return height >= nZKPublicTreeHeight; }
-    // C6 profile 3: block 100 on reset testnet, 0 on regtest;
-    // MAINNET_FORK_HEIGHT on mainnet.
+    // C6 profile 3: block 10 on the reset testnet, 0 on regtest
+    // (-zkportabletreeheight), MAINNET_FORK_HEIGHT on mainnet.
     int nZKPortableTreeHeight{std::numeric_limits<int>::max()};
     bool IsZKPortableTreeActive(int height) const { return height >= nZKPortableTreeHeight; }
     int nPoseidonWorkHeight{std::numeric_limits<int>::max()};

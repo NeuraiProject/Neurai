@@ -172,10 +172,19 @@ bool GetAssetMetadataFromNewAssetTx(const CTransaction& tx, const std::string& a
     return false;
 }
 
-bool GetAssetMetadataForTransfer(CAssetsCache* assetCache, const CTransaction& tx, const CCoinsViewCache& inputs, const std::string& assetName, CNewAsset& asset)
+bool GetAssetMetadataForTransfer(CAssetsCache* assetCache, const CTransaction& tx, const CCoinsViewCache& inputs, const std::string& assetName, CNewAsset& asset, bool fUnconfirmedAssets)
 {
     if (assetCache && assetCache->GetAssetMetaDataIfExists(assetName, asset)) {
         return true;
+    }
+
+    // A block knows only the assets of the chain and of its earlier
+    // transactions, as in 1.0.7. The lookups below serve mempool chains on an
+    // unconfirmed issuance; in a block they would let a coinbase asset output
+    // from before the coinbase-assets deployment, which no issuance
+    // registered, be transferred, and the verdict would depend on the mempool.
+    if (!fUnconfirmedAssets) {
+        return false;
     }
 
     for (const auto& txin : tx.vin) {
@@ -872,7 +881,7 @@ bool Consensus::CheckTxInputs(const CTransaction& tx, CValidationState& state, c
 }
 
 //! Check to make sure that the inputs and outputs CAmount match exactly.
-bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, const CCoinsViewCache& inputs, CAssetsCache* assetCache, int nCandidateHeight, bool fCheckMempool, std::vector<std::pair<std::string, uint256> >& vPairReissueAssets, const bool fRunningUnitTests, std::set<CMessage>* setMessages, int64_t nBlocktime,   std::vector<std::pair<std::string, CNullAssetTxData>>* myNullAssetData)
+bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, const CCoinsViewCache& inputs, CAssetsCache* assetCache, int nCandidateHeight, bool fCheckMempool, std::vector<std::pair<std::string, uint256> >& vPairReissueAssets, const bool fRunningUnitTests, std::set<CMessage>* setMessages, int64_t nBlocktime,   std::vector<std::pair<std::string, CNullAssetTxData>>* myNullAssetData, bool fUnconfirmedAssets)
 {
     // are the actual inputs available?
     if (!inputs.HaveInputs(tx)) {
@@ -1098,7 +1107,7 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
                 } else {
                     // For all other types of assets, make sure they are sending the right type of units
                     CNewAsset asset;
-                    if (!GetAssetMetadataForTransfer(assetCache, tx, inputs, transfer.strName, asset))
+                    if (!GetAssetMetadataForTransfer(assetCache, tx, inputs, transfer.strName, asset, fUnconfirmedAssets))
                         return state.DoS(100, false, REJECT_INVALID, "bad-txns-transfer-asset-not-exist", false, "", tx.GetHash());
 
                     if (asset.strName != transfer.strName)

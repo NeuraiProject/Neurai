@@ -1501,9 +1501,8 @@ execution cache, so every validation charges the budget.
 
 ### Activation
 
-`SCRIPT_VERIFY_ASSETAUTH` (bit 52), `nAssetAuthHeight`: testnet block 100
-(retroactive: executing `0xdf` always failed before, so no existing block
-changes), regtest 0 (`-assetauthheight`), mainnet unscheduled. With the flag
+`SCRIPT_VERIFY_ASSETAUTH` (bit 52), `nAssetAuthHeight`: testnet block 10,
+regtest 0 (`-assetauthheight`), mainnet unscheduled. With the flag
 off `0xdf` is `SCRIPT_ERR_BAD_OPCODE`. Outside AuthScript the opcode fails
 with `SCRIPT_ERR_ASSETAUTH_SIGVERSION`, and without prevouts or chain context
 with `SCRIPT_ERR_ASSETAUTH_CONTEXT`, so `libneuraiconsensus` cannot run it.

@@ -87,8 +87,12 @@ bool CheckTxInputs(const CTransaction& tx, CValidationState& state, const CCoins
  *  containing block's height in ConnectBlock, the next block's height for
  *  mempool admission and mempool self-checks. Never derived from global tip
  *  state inside — NIP-040 marker rules depend on it and IBD/reorg/side-chain
- *  validation would otherwise use the wrong height. */
-bool CheckTxAssets(const CTransaction& tx, CValidationState& state, const CCoinsViewCache& inputs, CAssetsCache* assetCache, int nCandidateHeight, bool fCheckMempool, std::vector<std::pair<std::string, uint256> >& vPairReissueAssets, const bool fRunningUnitTests = false, std::set<CMessage>* setMessages = nullptr, int64_t nBlocktime = 0,  std::vector<std::pair<std::string, CNullAssetTxData>>* myNullAssetData = nullptr);
+ *  validation would otherwise use the wrong height.
+ *  fUnconfirmedAssets lets a transfer take the units of an asset whose
+ *  issuance is not confirmed yet (an issuance output it spends, or a mempool
+ *  issuance), so the mempool can chain on it. ConnectBlock passes false: a
+ *  block reads only the asset cache, as 1.0.7 does. */
+bool CheckTxAssets(const CTransaction& tx, CValidationState& state, const CCoinsViewCache& inputs, CAssetsCache* assetCache, int nCandidateHeight, bool fCheckMempool, std::vector<std::pair<std::string, uint256> >& vPairReissueAssets, const bool fRunningUnitTests = false, std::set<CMessage>* setMessages = nullptr, int64_t nBlocktime = 0,  std::vector<std::pair<std::string, CNullAssetTxData>>* myNullAssetData = nullptr, bool fUnconfirmedAssets = true);
 /** XNA END */
 } // namespace Consensus
 

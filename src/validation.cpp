@@ -3343,7 +3343,7 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
 
             if (AreAssetsDeployed()) {
                 std::vector<std::pair<std::string, uint256>> vReissueAssets;
-                if (!Consensus::CheckTxAssets(tx, state, view, assetsCache, pindex->nHeight, false, vReissueAssets, false, &setMessages, block.nTime, &myNullAssetData)) {
+                if (!Consensus::CheckTxAssets(tx, state, view, assetsCache, pindex->nHeight, false, vReissueAssets, false, &setMessages, block.nTime, &myNullAssetData, /*fUnconfirmedAssets=*/false)) {
                     state.SetFailedTransaction(tx.GetHash());
                     return error("%s: Consensus::CheckTxAssets: %s, %s", __func__, tx.GetHash().ToString(),
                                  FormatStateMessage(state));

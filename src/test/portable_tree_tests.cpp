@@ -136,15 +136,16 @@ BOOST_AUTO_TEST_CASE(network_activation_schedule)
 {
     const auto testnet = CreateChainParams(CBaseChainParams::TESTNET);
     const auto& params = testnet->GetConsensus();
-    BOOST_CHECK_EQUAL(params.nZKPortableTreeHeight, 100);
-    BOOST_CHECK(!params.IsZKPortableTreeActive(99));
-    BOOST_CHECK(params.IsZKPortableTreeActive(100));
-    for (const int height : {99, 100, 101}) {
+    // C6 activates with every other rule of the reset testnet, as on mainnet.
+    BOOST_CHECK_EQUAL(params.nZKPortableTreeHeight, params.nZKPublicTreeHeight);
+    BOOST_CHECK_EQUAL(params.nZKPortableTreeHeight, 10);
+    BOOST_CHECK(!params.IsZKPortableTreeActive(9));
+    BOOST_CHECK(params.IsZKPortableTreeActive(10));
+    for (const int height : {9, 10, 11}) {
         const auto flags = ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, params,
             params.IsStrictAuthScriptActive(height), height);
-        BOOST_CHECK_EQUAL(bool(flags & SCRIPT_VERIFY_ZK_PORTABLE_TREE), height >= 100);
-        // C6 activation must not move the existing C5 height gate.
-        BOOST_CHECK(flags & SCRIPT_VERIFY_ZK_PUBLIC_TREE);
+        BOOST_CHECK_EQUAL(bool(flags & SCRIPT_VERIFY_ZK_PORTABLE_TREE), height >= 10);
+        BOOST_CHECK_EQUAL(bool(flags & SCRIPT_VERIFY_ZK_PUBLIC_TREE), height >= 10);
     }
     const auto mainnet = CreateChainParams(CBaseChainParams::MAIN);
     BOOST_CHECK(!mainnet->GetConsensus().IsZKPortableTreeActive(1000000));

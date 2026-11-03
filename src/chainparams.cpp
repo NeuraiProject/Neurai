@@ -406,16 +406,14 @@ public:
         consensus.nSignatureOpcodesHeight = TESTNET_FEATURES_HEIGHT; // CSFS, Ed25519, CHECKSIGADD
         consensus.nZKVerifyHeight = TESTNET_FEATURES_HEIGHT;
         consensus.nZKPublicTreeHeight = TESTNET_FEATURES_HEIGHT; // C5 profile-2 public transitions; TEST nodes must upgrade before spending C5
-        consensus.nZKPortableTreeHeight = 100; // C6 profile-3 portable transitions; testnet nodes must upgrade before spending C6
+        consensus.nZKPortableTreeHeight = TESTNET_FEATURES_HEIGHT; // C6 profile-3 portable transitions
         consensus.nPoseidonWorkHeight = TESTNET_FEATURES_HEIGHT;
         consensus.nAuthScriptBudgetHeight = TESTNET_FEATURES_HEIGHT; // NIP-046
         consensus.nAssetMessageHeight = TESTNET_FEATURES_HEIGHT; // NIP-043
         consensus.nInputFieldHeight = TESTNET_FEATURES_HEIGHT; // NIP-043
         consensus.nAuthScriptTreeHeight = TESTNET_FEATURES_HEIGHT; // NIP-044
         consensus.nMerklePoseidonHeight = TESTNET_FEATURES_HEIGHT; // NIP-043
-        // NIP-054: own height, retroactive on the running testnet. Executing
-        // 0xdf always failed before, so no stored block changes verdict.
-        consensus.nAssetAuthHeight = 100;
+        consensus.nAssetAuthHeight = TESTNET_FEATURES_HEIGHT; // NIP-054
         consensus.nTxHashHeight = TESTNET_FEATURES_HEIGHT; // NIP-042
         consensus.nTXFIELDEnabled = true; // OP_TXFIELD (NOP7) active on testnet
         consensus.nSPLITEnabled = true;   // OP_SPLIT (NOP8) active on testnet
