@@ -135,6 +135,7 @@ BASE_SCRIPTS= [
     'feature_unified_fork_reorg.py',
     'feature_unified_fork_peers.py',
     'feature_unified_fork_state.py',
+    'feature_legacy_parity.py',
     'feature_depin_restriction_undo.py',
     'feature_depin_messaging_permissions.py',
     'feature_depin_request_signatures.py',

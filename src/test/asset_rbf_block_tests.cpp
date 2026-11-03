@@ -143,7 +143,13 @@ struct MainnetParamsScope {
 BOOST_AUTO_TEST_CASE(IsAssetAuthScript_matches_pq_asset_transfer)
 {
     CScript spk = MakeAssetAuthScriptSpk("CAT", 100 * COIN, 0x11);
-    BOOST_CHECK(spk.IsAssetAuthScript());
+    {
+        // AuthScript assets exist from the unified fork only.
+        CStrictAuthScriptContext strictAuthScriptContext(true);
+        BOOST_CHECK(spk.IsAssetAuthScript());
+    }
+    CStrictAuthScriptContext below(false);
+    BOOST_CHECK(!spk.IsAssetAuthScript());
 }
 
 BOOST_AUTO_TEST_CASE(IsAssetAuthScript_rejects_p2pkh_asset_transfer)

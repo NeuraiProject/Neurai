@@ -807,6 +807,8 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // Sign for a block where AuthScript applies: on the reset testnet the
         // opt-in features start at nOptInFeaturesHeight (plan 2026-09-26 v2).
         SetSignatureOpcodeCandidateHeight(GetParams().GetConsensus().nOptInFeaturesHeight);
+        // AuthScript assets exist from the unified fork only (testnet block 10).
+        CStrictAuthScriptContext strictAuthScriptContext(true);
         BOOST_CHECK_EQUAL(GetParams().GetConsensus().nAssetTransferOverflowCheckActivation, 0);
         BOOST_CHECK(IsAssetTransferOverflowActive(0, GetParams().GetConsensus()));
         SelectParams(CBaseChainParams::REGTEST);
@@ -823,6 +825,8 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // Sign for a block where AuthScript applies: on the reset testnet the
         // opt-in features start at nOptInFeaturesHeight (plan 2026-09-26 v2).
         SetSignatureOpcodeCandidateHeight(GetParams().GetConsensus().nOptInFeaturesHeight);
+        // AuthScript assets exist from the unified fork only (testnet block 10).
+        CStrictAuthScriptContext strictAuthScriptContext(true);
 
         uint256 witnessCommitment(uint256S("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"));
         CTxDestination pqDestination = WitnessV1AuthScript(witnessCommitment);
@@ -887,6 +891,8 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // Sign for a block where AuthScript applies: on the reset testnet the
         // opt-in features start at nOptInFeaturesHeight (plan 2026-09-26 v2).
         SetSignatureOpcodeCandidateHeight(GetParams().GetConsensus().nOptInFeaturesHeight);
+        // AuthScript assets exist from the unified fork only (testnet block 10).
+        CStrictAuthScriptContext strictAuthScriptContext(true);
 
         CBasicKeyStore keystore;
         CKey key;
@@ -933,7 +939,8 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
                                    SCRIPT_VERIFY_LOW_S |
                                    SCRIPT_VERIFY_WITNESS |
                                    SCRIPT_VERIFY_WITNESS_PUBKEYTYPE |
-                                   SCRIPT_VERIFY_AUTHSCRIPT;
+                                   SCRIPT_VERIFY_AUTHSCRIPT |
+                                   SCRIPT_VERIFY_AUTHSCRIPT_STRICT; // AuthScript assets: from the unified fork
 
         BOOST_CHECK(VerifyScript(txTo.vin[0].scriptSig, assetScript, &txTo.vin[0].scriptWitness,
                                  flags, MutableTransactionSignatureChecker(&txTo, 0, 0), &err));
@@ -950,6 +957,8 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // Sign for a block where AuthScript applies: on the reset testnet the
         // opt-in features start at nOptInFeaturesHeight (plan 2026-09-26 v2).
         SetSignatureOpcodeCandidateHeight(GetParams().GetConsensus().nOptInFeaturesHeight);
+        // AuthScript assets exist from the unified fork only (testnet block 10).
+        CStrictAuthScriptContext strictAuthScriptContext(true);
 
         CBasicKeyStore keystore;
         CKey key;
@@ -998,7 +1007,8 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
                                    SCRIPT_VERIFY_LOW_S |
                                    SCRIPT_VERIFY_WITNESS |
                                    SCRIPT_VERIFY_WITNESS_PUBKEYTYPE |
-                                   SCRIPT_VERIFY_AUTHSCRIPT;
+                                   SCRIPT_VERIFY_AUTHSCRIPT |
+                                   SCRIPT_VERIFY_AUTHSCRIPT_STRICT; // AuthScript assets: from the unified fork
 
         BOOST_CHECK(VerifyScript(txTo.vin[0].scriptSig, ownerScript, &txTo.vin[0].scriptWitness,
                                  flags, MutableTransactionSignatureChecker(&txTo, 0, 0), &err));
@@ -1021,6 +1031,8 @@ BOOST_FIXTURE_TEST_SUITE(asset_tx_tests, BasicTestingSetup)
         // Sign for a block where AuthScript applies: on the reset testnet the
         // opt-in features start at nOptInFeaturesHeight (plan 2026-09-26 v2).
         SetSignatureOpcodeCandidateHeight(GetParams().GetConsensus().nOptInFeaturesHeight);
+        // AuthScript assets exist from the unified fork only (testnet block 10).
+        CStrictAuthScriptContext strictAuthScriptContext(true);
 
         CBasicKeyStore keystore;
         CKey key;

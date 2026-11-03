@@ -155,6 +155,8 @@ BOOST_AUTO_TEST_CASE(p2pkh_all_operations_both_markers_both_networks)
     const std::vector<AssetMarker> markers = {
         AssetMarker::LEGACY_RVN, AssetMarker::NEURAI_XNA};
 
+    // "xna" assets exist from the unified fork; below it only "rvn" is read, as in 1.0.7.
+    CStrictAuthScriptContext strictAuthScriptContext(true);
     for (const auto& network : networks) {
         SelectParams(network);
         for (const auto marker : markers) {
@@ -227,6 +229,8 @@ BOOST_AUTO_TEST_CASE(p2pkh_all_operations_both_markers_both_networks)
 BOOST_AUTO_TEST_CASE(authscript_both_markers)
 {
     SelectParams(CBaseChainParams::MAIN);
+    // AuthScript assets exist from the unified fork only.
+    CStrictAuthScriptContext strictAuthScriptContext(true);
     for (const auto marker : {AssetMarker::LEGACY_RVN, AssetMarker::NEURAI_XNA}) {
         CScript spk = AuthScriptPrefix();
         CAssetTransfer transfer("GOLD", 25 * COIN);
@@ -275,6 +279,12 @@ BOOST_AUTO_TEST_CASE(doubled_op_xna_asset_xna_marker_recognized)
         "76a914cea85af9eb3b5db01239cf97ef1cc1786469be1988ac"
         "c0c011786e61740452434e460065cd1d0000000075");
 
+    {
+        // Below the unified fork "xna" is not an asset marker, as in 1.0.7.
+        CStrictAuthScriptContext below(false);
+        BOOST_CHECK(!Parse(spk).fIsAsset);
+    }
+    CStrictAuthScriptContext strictAuthScriptContext(true);
     ParsedAsset p = Parse(spk);
     BOOST_REQUIRE(p.fIsAsset);
     BOOST_CHECK_EQUAL(p.nType, (int)TX_TRANSFER_ASSET);
@@ -464,11 +474,12 @@ BOOST_AUTO_TEST_CASE(check_tx_assets_marker_frontier)
     }
 
     // Mainnet params: the fork is unscheduled, legacy stays valid and xna
-    // stays rejected at any plausible height.
+    // stays rejected at any plausible height. Below the fork an "xna" output
+    // is not an asset at all, as in 1.0.7, so the asset spent has no output.
     SelectParams(CBaseChainParams::MAIN);
     BOOST_CHECK_MESSAGE(RunTransferAtHeight(AssetMarker::LEGACY_RVN, 10000000, reason), reason);
     BOOST_CHECK(!RunTransferAtHeight(AssetMarker::NEURAI_XNA, 10000000, reason));
-    BOOST_CHECK_EQUAL(reason, "bad-txns-asset-marker-before-nip040");
+    BOOST_CHECK_EQUAL(reason, "bad-tx-asset-inputs-size-does-not-match-outputs-size");
 }
 
 BOOST_AUTO_TEST_SUITE_END()

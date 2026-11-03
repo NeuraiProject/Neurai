@@ -555,7 +555,9 @@ BOOST_AUTO_TEST_CASE(review_all_asset_fields_across_families)
                     BOOST_CHECK_EQUAL(err, SCRIPT_ERR_BAD_OPCODE);
                     const bool oldRules = Run(tx, query, flags & ~SCRIPT_VERIFY_AUTHSCRIPT_STRICT,
                         stack, err, spk, &prevouts, &prevouts);
-                    BOOST_CHECK_EQUAL(oldRules, version < 2);
+                    // Without the strict flag no script here is an asset: as in
+                    // 1.0.7, only the "rvn" marker counts and AuthScript forms do not.
+                    BOOST_CHECK(!oldRules);
                     if (!oldRules) BOOST_CHECK_EQUAL(err, errors[source]);
                     for (int index : {-1, 1}) {
                         BOOST_CHECK(!Run(tx, CScript() << index << OP_1 << ops[source], flags,

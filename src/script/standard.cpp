@@ -219,7 +219,12 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, std::vector<std::v
     if (scriptPubKey.IsAssetScript(nType, fIsOwner)) {
         typeRet = (txnouttype)nType;
         std::vector<unsigned char> hashBytes;
-        if (!ExtractAssetDestinationData(scriptPubKey, nullptr, &hashBytes, nullptr, nullptr, nullptr)) {
+        if (!IsStrictAuthScriptActiveInContext()) {
+            // Below the unified fork, as 1.0.7: bytes 3..23 whatever the prefix.
+            // The burn check of an issuance and the holder of the asset come
+            // from here.
+            hashBytes.assign(scriptPubKey.begin() + 3, scriptPubKey.begin() + 23);
+        } else if (!ExtractAssetDestinationData(scriptPubKey, nullptr, &hashBytes, nullptr, nullptr, nullptr)) {
             return false;
         }
         vSolutionsRet.push_back(hashBytes);
@@ -270,12 +275,19 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, std::vector<std::v
     if (scriptPubKey.size() >= 1 && scriptPubKey[0] == OP_XNA_ASSET && scriptPubKey.IsPushOnly(scriptPubKey.begin()+1)) {
         typeRet = TX_RESTRICTED_ASSET_DATA;
 
-        if (scriptPubKey[1] == 0x14 && scriptPubKey.size() >= 23) {
+        if (!IsStrictAuthScriptActiveInContext()) {
+            // Below the unified fork, as 1.0.7: bytes 2..22 unless byte 1 is
+            // OP_RESERVED, whatever the push. The burn check of an issuance
+            // reads this destination.
+            if (scriptPubKey.size() >= 23 && scriptPubKey[1] != OP_RESERVED) {
+                vSolutionsRet.emplace_back(scriptPubKey.begin() + 2, scriptPubKey.begin() + 22);
+            }
+        } else if (scriptPubKey.size() >= 23 && scriptPubKey[1] == 0x14) {
             // Legacy: hash at bytes [2..22)
             std::vector<unsigned char> hashBytes(scriptPubKey.begin() + 2, scriptPubKey.begin() + 22);
             vSolutionsRet.push_back(hashBytes);
             vSolutionsRet.push_back({0x00}); // version 0 = legacy
-        } else if ((scriptPubKey[1] == OP_1 || ((scriptPubKey[1] == OP_2 || scriptPubKey[1] == OP_3) && IsStrictAuthScriptActiveInContext())) && scriptPubKey.size() >= 36 && scriptPubKey[2] == 0x20) {
+        } else if (scriptPubKey.size() >= 36 && (scriptPubKey[1] == OP_1 || scriptPubKey[1] == OP_2 || scriptPubKey[1] == OP_3) && scriptPubKey[2] == 0x20) {
             // AuthScript (generic v1 or strict v2/v3): commitment at bytes [3..35)
             std::vector<unsigned char> hashBytes(scriptPubKey.begin() + 3, scriptPubKey.begin() + 35);
             vSolutionsRet.push_back(hashBytes);
@@ -397,6 +409,11 @@ bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
         return true;
     /** XNA START */
     } else if (whichType == TX_NEW_ASSET || whichType == TX_REISSUE_ASSET || whichType == TX_TRANSFER_ASSET) {
+        if (!IsStrictAuthScriptActiveInContext()) {
+            // Below the unified fork, as 1.0.7 (see Solver)
+            addressRet = CKeyID(uint160(vSolutions[0]));
+            return true;
+        }
         return ExtractAssetDestination(scriptPubKey, addressRet);
     } else if (whichType == TX_RESTRICTED_ASSET_DATA) {
         if (vSolutions.size() >= 2) {
@@ -440,6 +457,12 @@ bool GetAssetScriptWitnessProgram(const CScript& scriptPubKey, int& witnessversi
 
 bool GetAssetScriptWitnessProgram(const CScript& scriptPubKey, int& witnessversion, std::vector<unsigned char>& witnessprogram, std::vector<unsigned char>* assetData, bool fStrictActive)
 {
+    // AuthScript assets exist from the unified fork only. Below it an asset
+    // script is never a witness program, whatever its first bytes, as in 1.0.7.
+    if (!fStrictActive) {
+        return false;
+    }
+
     int nType = 0;
     bool fIsOwner = false;
     int nStartingIndex = 0;

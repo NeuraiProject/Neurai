@@ -2057,6 +2057,21 @@ static void MempoolEvictScriptRuleEntries(CTxMemPool& pool)
             if (txout.scriptPubKey.IsNullAssetTxDataScript(true) != txout.scriptPubKey.IsNullAssetTxDataScript(false)) {
                 return true;
             }
+            // Below the fork the destination is read as 1.0.7 reads it, from
+            // any asset data push too: the burn of an issuance may stop being one.
+            CTxDestination destActive, destInactive;
+            bool fDestActive, fDestInactive;
+            {
+                CStrictAuthScriptContext active(true);
+                fDestActive = ExtractDestination(txout.scriptPubKey, destActive);
+            }
+            {
+                CStrictAuthScriptContext inactive(false);
+                fDestInactive = ExtractDestination(txout.scriptPubKey, destInactive);
+            }
+            if (fDestActive != fDestInactive || !(destActive == destInactive)) {
+                return true;
+            }
         }
 
         // Script re-validation under the candidate rules. An entry whose parent

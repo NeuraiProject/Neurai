@@ -692,7 +692,9 @@ BOOST_AUTO_TEST_CASE(activation_context_is_scoped)
     // Explicit overloads ignore any ambient context.
     BOOST_CHECK(spk.IsAssetScript(nType, fOwner, nStart, marker, true));
     BOOST_CHECK(!spk.IsAssetScript(nType, fOwner, nStart, marker, false));
-    BOOST_CHECK(v1spk.IsAssetScript(nType, fOwner, nStart, marker, false)); // v1 never depends on it
+    // Below the fork no AuthScript form is an asset, v1 included, as in 1.0.7.
+    BOOST_CHECK(v1spk.IsAssetScript(nType, fOwner, nStart, marker, true));
+    BOOST_CHECK(!v1spk.IsAssetScript(nType, fOwner, nStart, marker, false));
     BOOST_CHECK(nullData.IsNullAssetTxDataScript(true));
     BOOST_CHECK(!nullData.IsNullAssetTxDataScript(false));
 
@@ -701,7 +703,7 @@ BOOST_AUTO_TEST_CASE(activation_context_is_scoped)
         CStrictAuthScriptContext below(false); // e.g. a historical block under the activation height
         BOOST_CHECK(!IsStrictAuthScriptActiveInContext());
         BOOST_CHECK(!spk.IsAssetScript());
-        BOOST_CHECK(v1spk.IsAssetScript());
+        BOOST_CHECK(!v1spk.IsAssetScript());
         BOOST_CHECK(!nullData.IsNullAssetTxDataScript());
         txnouttype type; std::vector<std::vector<unsigned char>> solutions;
         BOOST_CHECK(!Solver(spk, type, solutions) || type != TX_TRANSFER_ASSET);

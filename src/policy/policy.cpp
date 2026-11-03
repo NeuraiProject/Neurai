@@ -129,6 +129,14 @@ bool IsStandard(const CScript& scriptPubKey, txnouttype& whichType, const bool w
         return false;
     else if (!witnessEnabled && (whichType == TX_WITNESS_V0_KEYHASH || whichType == TX_WITNESS_V0_SCRIPTHASH))
         return false;
+    // Below the unified fork an asset part after any 25 bytes is an asset, as
+    // in 1.0.7, but only after a P2PKH script is it relayed: the other prefixes
+    // stop being assets at the fork.
+    else if ((whichType == TX_NEW_ASSET || whichType == TX_REISSUE_ASSET || whichType == TX_TRANSFER_ASSET) &&
+             !IsStrictAuthScriptActiveInContext() &&
+             !(scriptPubKey[0] == OP_DUP && scriptPubKey[1] == OP_HASH160 && scriptPubKey[2] == 0x14 &&
+               scriptPubKey[23] == OP_EQUALVERIFY && scriptPubKey[24] == OP_CHECKSIG))
+        return false;
 
     return whichType != TX_NONSTANDARD ;
 }

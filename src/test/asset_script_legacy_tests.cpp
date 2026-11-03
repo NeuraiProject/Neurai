@@ -110,7 +110,8 @@ BOOST_AUTO_TEST_CASE(single_op_xna_asset_still_recognized)
     BOOST_CHECK_EQUAL(out.nAmount, 25 * COIN);
 }
 
-// Test 3: the new AuthScript route (OP_1 <32B> prefix) is intact.
+// Test 3: the new AuthScript route (OP_1 <32B> prefix) is intact from the
+// unified fork, and below it the script is not an asset, as in 1.0.7.
 BOOST_AUTO_TEST_CASE(authscript_asset_still_recognized)
 {
     CScript spk = CScript() << OP_1 << std::vector<unsigned char>(32, 0xab);
@@ -120,6 +121,11 @@ BOOST_AUTO_TEST_CASE(authscript_asset_still_recognized)
     int nType = 0;
     bool fIsOwner = true;
     int nStartingIndex = 0;
+    {
+        CStrictAuthScriptContext below(false);
+        BOOST_CHECK(!spk.IsAssetScript(nType, fIsOwner, nStartingIndex));
+    }
+    CStrictAuthScriptContext strictAuthScriptContext(true);
     BOOST_REQUIRE(spk.IsAssetScript(nType, fIsOwner, nStartingIndex));
     BOOST_CHECK_EQUAL(nType, (int)TX_TRANSFER_ASSET);
 

@@ -50,6 +50,8 @@ BOOST_FIXTURE_TEST_SUITE(null_asset_data_tests, BasicTestingSetup)
         BOOST_TEST_MESSAGE("Running Null data from PQ script");
 
         SelectParams(CBaseChainParams::TESTNET);
+        // AuthScript null asset data exists from the unified fork only (testnet block 10).
+        CStrictAuthScriptContext strictAuthScriptContext(true);
 
         CKey key;
         key.MakeNewKeyPQ();

@@ -363,21 +363,25 @@ bool CScript::IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex, Ass
     fIsOwner = false;
     marker = AssetMarker::LEGACY_RVN;
 
-    // Legacy P2PKH-prefixed asset script (OP_XNA_ASSET at byte 25). Parsed
-    // with origin/main's fixed-offset logic, byte-for-byte: mainnet history
-    // contains scripts with a doubled OP_XNA_ASSET (c0 c0) where "rvn" lands
-    // at byte 28 instead of 27, and OP_PUSHDATA1-encoded payloads with the
-    // same shift. A stricter GetOp-based parser rejected those and stalled
-    // IBD at block 1615824 (NIP revision 011). Note the exact nesting below:
-    // when byte 27 is XNA_R but 28/29 do not complete "rvn", origin/main
-    // REJECTS without trying the byte-28 offset — a condensed if/else-if
-    // would diverge from deployed consensus.
+    // Legacy asset script (OP_XNA_ASSET at byte 25). Parsed with origin/main's
+    // fixed-offset logic, byte-for-byte: mainnet history contains scripts with
+    // a doubled OP_XNA_ASSET (c0 c0) where "rvn" lands at byte 28 instead of
+    // 27, and OP_PUSHDATA1-encoded payloads with the same shift. A stricter
+    // GetOp-based parser rejected those and stalled IBD at block 1615824 (NIP
+    // revision 011). Note the exact nesting below: when byte 27 is XNA_R but
+    // 28/29 do not complete "rvn", origin/main REJECTS without trying the
+    // byte-28 offset — a condensed if/else-if would diverge from deployed
+    // consensus.
+    // Below the unified fork the first 25 bytes are not checked, as in 1.0.7:
+    // an asset part after any other prefix is still an asset, and the
+    // AuthScript forms below are not. From the fork they must be a P2PKH script.
     if (this->size() > 31 &&
-        (*this)[0] == OP_DUP &&
-        (*this)[1] == OP_HASH160 &&
-        (*this)[2] == 0x14 &&
-        (*this)[23] == OP_EQUALVERIFY &&
-        (*this)[24] == OP_CHECKSIG) {
+        (!fStrictActive ||
+         ((*this)[0] == OP_DUP &&
+          (*this)[1] == OP_HASH160 &&
+          (*this)[2] == 0x14 &&
+          (*this)[23] == OP_EQUALVERIFY &&
+          (*this)[24] == OP_CHECKSIG))) {
 
         if ((*this)[25] != OP_XNA_ASSET) {
             return false;
@@ -399,8 +403,11 @@ bool CScript::IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex, Ass
         // match, so every script the deployed parser accepts keeps its exact
         // classification. The offset structure mirrors the legacy nesting,
         // including the branch that rejects without trying offset 28 when
-        // byte 27 starts the prefix but does not complete it.
-        if (index < 0) {
+        // byte 27 starts the prefix but does not complete it. Below the unified
+        // fork an "xna" script is not an asset, as in 1.0.7: an issuance may
+        // carry it as a plain output, and a script starting with OP_XNA_ASSET
+        // may hold it anywhere.
+        if (index < 0 && fStrictActive) {
             if ((*this)[27] == XNA_X) { // "xna" starts at 27 (single c0, direct push)
                 if ((*this)[28] == XNA_N)
                     if ((*this)[29] == XNA_A)
@@ -438,10 +445,10 @@ bool CScript::IsAssetScript(int& nType, bool& fIsOwner, int& nStartingIndex, Ass
 
     // AuthScript-prefixed asset script (OP_n <32-byte commitment>, byte 34),
     // where OP_n is OP_1 (generic AuthScript v1) or OP_2 / OP_3 (strict
-    // AuthScript families). New DePIN format with no mainnet history: keep
-    // the strict GetOp parser.
-    if (this->size() > 40 &&
-        ((*this)[0] == OP_1 || (((*this)[0] == OP_2 || (*this)[0] == OP_3) && fStrictActive)) &&
+    // AuthScript families). New DePIN format with no mainnet history, from the
+    // unified fork only: keep the strict GetOp parser.
+    if (fStrictActive && this->size() > 40 &&
+        ((*this)[0] == OP_1 || (*this)[0] == OP_2 || (*this)[0] == OP_3) &&
         (*this)[1] == 0x20) {
 
         const int assetOpIndex = 34;
@@ -554,9 +561,10 @@ bool CScript::IsNullAssetTxDataScript(bool fStrictActive) const
     if (this->size() > 23 && (*this)[0] == OP_XNA_ASSET && (*this)[1] == 0x14)
         return true;
     // AuthScript format: OP_XNA_ASSET OP_n 0x20 <32-byte-commitment> <asset-data>
-    // (OP_1 generic v1, OP_2 / OP_3 strict families)
-    if (this->size() > 36 && (*this)[0] == OP_XNA_ASSET &&
-        ((*this)[1] == OP_1 || (((*this)[1] == OP_2 || (*this)[1] == OP_3) && fStrictActive)) && (*this)[2] == 0x20)
+    // (OP_1 generic v1, OP_2 / OP_3 strict families), from the unified fork
+    // only: 1.0.7 does not read it as asset data.
+    if (fStrictActive && this->size() > 36 && (*this)[0] == OP_XNA_ASSET &&
+        ((*this)[1] == OP_1 || (*this)[1] == OP_2 || (*this)[1] == OP_3) && (*this)[2] == 0x20)
         return true;
     return false;
 }

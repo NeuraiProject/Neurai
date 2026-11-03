@@ -262,8 +262,9 @@ class UnifiedForkBoundaryTest(NeuraiTestFramework):
         for tx in (self.depin_issue, self.long_issue):
             tip = node.getbestblockhash()
             result = self.submit(self.build_block([tx]))
-            # Before H neither name is valid, so the burn of a valid issuance is not found.
-            assert_equal(result, "bad-txns-issue-burn-not-found")
+            # Both were built for block H, with the 'xna' marker. Below H that
+            # marker is not an asset, as in 1.0.7, so their outputs are misplaced.
+            assert_equal(result, "bad-txns-op-xna-asset-not-in-right-script-location")
             assert_equal(node.getbestblockhash(), tip)
 
         node.reconsiderblock(self.block_h1)

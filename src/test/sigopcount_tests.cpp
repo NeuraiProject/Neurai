@@ -305,7 +305,9 @@ BOOST_AUTO_TEST_CASE(optional_signature_cost_paths_and_activation)
         CScriptWitness witness;
         witness.stack = {{0}, Serialize(script)};
         BuildTxs(spending, coins, creation, asset, CScript(), witness);
-        BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(spending), coins, active), 1);
+        // AuthScript assets exist from the unified fork only, under the strict flag.
+        BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(spending), coins, active | SCRIPT_VERIFY_AUTHSCRIPT_STRICT), 1);
+        BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(spending), coins, active), 0);
         BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(spending), coins, inactive), 0);
         BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(spending), coins, otherFlags), 0);
 

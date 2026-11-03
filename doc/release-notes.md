@@ -185,6 +185,16 @@ height revalidates the mempool.
   activate them, and the single-rule options given with it still move one
   rule. `-announceversion=<n>` makes a regtest node announce an older protocol
   version, to play a node that has not upgraded.
+- **Below the strict AuthScript height scripts are read as 1.0.7 reads
+  them**, so that 2.0 and 1.0.7 accept the same blocks until mainnet
+  activates the fork. An asset part after any 25 bytes belongs to the holder
+  in bytes 3 to 22, an asset data push of any length names a destination in
+  its bytes 2 to 21 (the burn of an issuance can be one), and neither the
+  AuthScript forms of assets and asset data nor the `xna` marker are assets.
+  From that height an asset needs the P2PKH script in front. Relay never
+  takes an asset after another prefix, and at the activation height the
+  mempool drops what changes meaning. Earlier development builds applied the
+  P2PKH requirement and the AuthScript forms at every height.
 - **Asset block version:** on testnet and regtest, which activate assets by
   height, a block at or below the activation height does not need the asset
   version bit. A node past the activation used to reject a competing chain
