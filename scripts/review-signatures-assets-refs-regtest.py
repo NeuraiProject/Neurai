@@ -44,9 +44,11 @@ def serialize(inputs, sigscripts, outputs, refs, witnesses):
     vin = h.compact(len(inputs)) + b''.join(h.outpoint(*p) + h.compact(len(s)) + s + b'\xff' * 4
                                             for p, s in zip(inputs, sigscripts))
     vout = h.compact(len(outputs)) + b''.join(b.output(v, s) for v, s in outputs)
-    vref = h.compact(len(refs)) + b''.join(h.outpoint(*r) for r in refs)
+    # NIP-014: reference inputs are announced by flag 2, also without witnesses.
+    vref = h.compact(len(refs)) + b''.join(h.outpoint(*r) for r in refs) if refs else b''
     wit = b''.join(h.compact(len(w)) + b''.join(h.compact(len(x)) + x for x in w) for w in witnesses)
-    return version + vin + vout + vref + lock, version + b'\x00\x01' + vin + vout + vref + wit + lock
+    base = (b'\x00\x02' if refs else b'') + vin + vout + vref
+    return version + base + lock, version + bytes([0, 3 if refs else 1]) + vin + vout + vref + wit + lock
 
 
 def sighash(inputs, index, code, amount, outputs, refs, hashtype, auth, witversion=1):
@@ -58,15 +60,19 @@ def sighash(inputs, index, code, amount, outputs, refs, hashtype, auth, witversi
     pre += h.outpoint(*inputs[index]) + h.compact(len(code)) + code + struct.pack('<Q', amount) + seq
     ser = [b.output(v, s) for v, s in outputs]
     pre += bytes(32) if mode == 2 else b.hash256(ser[index] if mode == 3 else b''.join(ser))
-    # v3 always commits to the reference list, whatever the sighash mode.
-    pre += b.hash256(b''.join(h.outpoint(*r) for r in refs)) + bytes(4)
+    # A transaction with references commits to their list, whatever the sighash mode.
+    if refs:
+        pre += b.hash256(b''.join(h.outpoint(*r) for r in refs))
+    pre += bytes(4)
     pre += (bytes([witversion]) if witversion != 1 else b'') + bytes([auth]) + struct.pack('<I', hashtype)
     return b.hash256(pre)
 
 
 def strip(wire):
-    """Drop the witness of a signed v3 transaction serialised with marker and flag."""
+    """Drop the witness of a signed transaction serialised with marker and flag;
+    reference inputs keep the marker with flag 2."""
     pos = 6
+    has_refs = wire[5] & 2
 
     def compact():
         nonlocal pos
@@ -87,9 +93,10 @@ def strip(wire):
         pos += 8
         length = compact()
         pos += length
-    count = compact()
-    pos += 36 * count
-    return wire[:4] + wire[6:pos] + wire[-4:]
+    if has_refs:
+        count = compact()
+        pos += 36 * count
+    return wire[:4] + (b'\x00\x02' if has_refs else b'') + wire[6:pos] + wire[-4:]
 
 
 def main():

@@ -200,7 +200,6 @@ struct CMutableTransaction;
  * - int32_t nVersion
  * - std::vector<CTxIn> vin
  * - std::vector<CTxOut> vout
- * - if (nVersion == 3): std::vector<COutPoint> vrefin   // NIP-014
  * - uint32_t nLockTime
  *
  * Extended transaction serialization format:
@@ -209,10 +208,18 @@ struct CMutableTransaction;
  * - unsigned char flags (!= 0)
  * - std::vector<CTxIn> vin
  * - std::vector<CTxOut> vout
- * - if (nVersion == 3): std::vector<COutPoint> vrefin   // NIP-014
+ * - if (flags & 2):
+ *   - std::vector<COutPoint> vrefin   // NIP-014, never empty
  * - if (flags & 1):
  *   - CTxWitness wit;
  * - uint32_t nLockTime
+ *
+ * NIP-014: reference inputs are announced by flag 2, not by the version, so a
+ * version 3 transaction without them reads as 1.0.7 reads it, and 1.0.7
+ * refuses to read one that carries them. The txid commits to them, so they
+ * keep the extended format when witnesses are left out. A stream without
+ * witnesses does not read flags, because an empty vin there is a transaction
+ * without inputs: DecodeHexTx chooses between both readings.
  */
 template<typename Stream, typename TxType>
 inline void UnserializeTransaction(TxType& tx, Stream& s) {
@@ -236,15 +243,27 @@ inline void UnserializeTransaction(TxType& tx, Stream& s) {
         /* We read a non-empty vin. Assume a normal vout follows. */
         s >> tx.vout;
     }
-    // NIP-014: read vrefin for v3 (between vout and witness, affects both txid and wtxid)
-    if (tx.nVersion == 3) {
+    // NIP-014: reference inputs, between vout and witness (both txid and wtxid
+    // commit to them)
+    const bool fRefInputs = flags & 2;
+    if (fRefInputs) {
+        flags ^= 2;
         s >> tx.vrefin;
+        if (tx.vrefin.empty()) {
+            /* Only one encoding per transaction: the flag means some. */
+            throw std::ios_base::failure("Superfluous reference inputs record");
+        }
     }
     if ((flags & 1) && fAllowWitness) {
         /* The witness flag is present, and we support witnesses. */
         flags ^= 1;
         for (size_t i = 0; i < tx.vin.size(); i++) {
             s >> tx.vin[i].scriptWitness.stack;
+        }
+        if (fRefInputs && !tx.HasWitness()) {
+            /* One encoding per transaction in the new format. 1.0.7 reads an
+             * empty witness record without reference inputs, and so do we. */
+            throw std::ios_base::failure("Superfluous witness record");
         }
     }
     if (flags) {
@@ -267,16 +286,19 @@ inline void SerializeTransaction(const TxType& tx, Stream& s) {
             flags |= 1;
         }
     }
+    // NIP-014: reference inputs, with or without witnesses (the txid commits to them)
+    if (!tx.vrefin.empty()) {
+        flags |= 2;
+    }
     if (flags) {
-        /* Use extended format in case witnesses are to be serialized. */
+        /* Use extended format in case witnesses or reference inputs are to be serialized. */
         std::vector<CTxIn> vinDummy;
         s << vinDummy;
         s << flags;
     }
     s << tx.vin;
     s << tx.vout;
-    // NIP-014: write vrefin for v3 (between vout and witness, affects both txid and wtxid)
-    if (tx.nVersion == 3) {
+    if (flags & 2) {
         s << tx.vrefin;
     }
     if (flags & 1) {

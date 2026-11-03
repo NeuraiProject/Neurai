@@ -128,7 +128,7 @@ def main():
                     stripped = struct.pack('<I', 3) + m.compact(len(inputs))
                     stripped += b''.join(m.outpoint(*i) + b'\x00' + b'\xff' * 4 for i in inputs)
                     stripped += m.compact(len(outs)) + b''.join(b.output(value, script) for value, script in outs)
-                    stripped += b'\x00' + bytes(4)  # empty references and locktime
+                    stripped += bytes(4)  # locktime; no reference inputs, so no vrefin field
                     check(label + '/txid/' + b.hash256(stripped)[::-1].hex(),
                           b.hash256(stripped)[::-1].hex() == decoded['txid'], decoded['txid'])
                     return stripped, wire

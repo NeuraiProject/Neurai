@@ -55,7 +55,8 @@ def outpoint(txid, index):
 
 def transaction(utxo, contract, output, refs=()):
     version = 3 if refs else 2
-    wire = struct.pack('<I', version) + b'\x00\x01\x01'
+    # NIP-014: flag 2 of the extended format announces the reference inputs.
+    wire = struct.pack('<I', version) + bytes([0, 3 if refs else 1]) + b'\x01'
     wire += outpoint(*utxo) + b'\x00' + b'\xff' * 4
     wire += b'\x01' + struct.pack('<Q', COIN - 1_000_000) + compact(len(output)) + output
     if refs:

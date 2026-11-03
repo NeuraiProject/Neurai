@@ -64,7 +64,8 @@ def main():
                 prev=h.outpoint(txid,index);sequence=b'\xff'*4
                 output=struct.pack('<Q',90000000)+h.compact(len(target))+target
                 pre=struct.pack('<I',3)+v.D(prev)+v.D(sequence)+prev+h.compact(len(script))+script
-                pre+=struct.pack('<Q',h.COIN)+sequence+v.D(output)+v.D(b'')+bytes(4)+bytes([auth])+struct.pack('<I',1)
+                # Version 3 without reference inputs commits to none (NIP-014).
+                pre+=struct.pack('<Q',h.COIN)+sequence+v.D(output)+bytes(4)+bytes([auth])+struct.pack('<I',1)
                 base=v.D(pre)
                 signature=sign(algorithm,secret,v.signature_hash(base,1,auth,program,v.leaf(script)))
                 witness=[bytes([auth])]
@@ -211,7 +212,7 @@ def main():
             outs+=struct.pack('<Q',90000000)+h.compact(len(target))+target
             value=round(asset_output['value']*h.COIN)
             pre=struct.pack('<I',3)+v.D(prevs)+v.D(seq*2)+h.outpoint(*utxos[0])+h.compact(len(script))+script
-            pre+=struct.pack('<Q',value)+seq+v.D(outs)+v.D(b'')+bytes(4)+bytes([marker])+struct.pack('<I',1)
+            pre+=struct.pack('<Q',value)+seq+v.D(outs)+bytes(4)+bytes([marker])+struct.pack('<I',1)
             witness=[bytes([marker])]
             if marker!=0x10:
                 witness += [sign(algorithm,secret,v.signature_hash(v.D(pre),0,marker,program,v.leaf(script))),pub]

@@ -37,7 +37,7 @@ import struct
 from decimal import Decimal
 
 from test_framework.messages import (COIN, COutPoint, CTransaction, CTxIn, CTxInWitness, CTxOut, from_hex,
-                                     ser_compact_size, ser_vector)
+                                     ser_compact_size)
 from test_framework.script import (CScript, CScriptOp, OP_0, OP_CHECKSIGFROMSTACK, OP_CHECKTEMPLATEVERIFY,
                                    OP_CAT, OP_DIV, OP_DROP, OP_EQUAL, OP_EQUALVERIFY, OP_GREATERTHAN,
                                    OP_HASH160, OP_MOD, OP_MUL, OP_NUMEQUAL, OP_NUMEQUALVERIFY, OP_SWAP,
@@ -124,25 +124,6 @@ class AuthScript:
         self.commitment = tagged_hash(b"NeuraiAuthScript", b"\x01\x00" + sha256(self.script))
         self.spk = b"\x51\x20" + self.commitment
         self.dest33 = b"\x01" + self.commitment
-
-
-class CTransactionV3(CTransaction):
-    """A version 3 transaction: reference inputs go after the outputs (NIP-014)."""
-
-    def __init__(self):
-        super().__init__()
-        self.nVersion = 3
-        self.vrefin = []
-
-    def serialize_without_witness(self):
-        return (struct.pack("<i", self.nVersion) + ser_vector(self.vin) + ser_vector(self.vout) +
-                ser_vector(self.vrefin) + struct.pack("<I", self.nLockTime))
-
-    def serialize_with_witness(self):
-        r = struct.pack("<i", self.nVersion) + ser_vector([]) + struct.pack("<B", 1)
-        r += ser_vector(self.vin) + ser_vector(self.vout) + ser_vector(self.vrefin)
-        r += self.wit.serialize()
-        return r + struct.pack("<I", self.nLockTime)
 
 
 def set_witness(tx, index, stack):
@@ -241,7 +222,7 @@ class UnifiedForkRelayTest(NeuraiTestFramework):
         self.ref_outpoint = (txid, outputs[self.ref_spk.hex()])
 
     def spend(self, contract):
-        tx = CTransactionV3() if contract.version == 3 else CTransaction()
+        tx = CTransaction()
         tx.nVersion = contract.version
         txid, n = contract.outpoint
         tx.vin = [CTxIn(COutPoint(int(txid, 16), n), contract.script_sig, SEQUENCE)]

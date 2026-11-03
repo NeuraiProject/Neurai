@@ -524,13 +524,16 @@ class CTxWitness:
 
 
 class CTransaction:
-    __slots__ = ("nVersion", "vin", "vout", "wit", "nLockTime", "x16r", "hash")
+    """Reference inputs (NIP-014, vrefin) are announced by flag 2 of the
+    extended format and the txid commits to them."""
+    __slots__ = ("nVersion", "vin", "vout", "vrefin", "wit", "nLockTime", "x16r", "hash")
 
     def __init__(self, tx=None):
         if tx is None:
             self.nVersion = 1
             self.vin = []
             self.vout = []
+            self.vrefin = []
             self.wit = CTxWitness()
             self.nLockTime = 0
             self.x16r = None
@@ -539,6 +542,7 @@ class CTransaction:
             self.nVersion = tx.nVersion
             self.vin = copy.deepcopy(tx.vin)
             self.vout = copy.deepcopy(tx.vout)
+            self.vrefin = copy.deepcopy(tx.vrefin)
             self.nLockTime = tx.nLockTime
             self.x16r = tx.x16r
             self.hash = tx.hash
@@ -557,7 +561,8 @@ class CTransaction:
                 self.vout = deser_vector(f, CTxOut)
         else:
             self.vout = deser_vector(f, CTxOut)
-        if flags != 0:
+        self.vrefin = deser_vector(f, COutPoint) if flags & 2 else []
+        if flags & 1:
             self.wit.vtxinwit = [CTxInWitness() for _ in range(len(self.vin))]
             self.wit.deserialize(f)
         self.nLockTime = struct.unpack("<I", f.read(4))[0]
@@ -567,8 +572,13 @@ class CTransaction:
     def serialize_without_witness(self):
         r = b""
         r += struct.pack("<i", self.nVersion)
+        if self.vrefin:
+            r += ser_vector([])
+            r += struct.pack("<B", 2)
         r += ser_vector(self.vin)
         r += ser_vector(self.vout)
+        if self.vrefin:
+            r += ser_vector(self.vrefin)
         r += struct.pack("<I", self.nLockTime)
         return r
 
@@ -577,6 +587,8 @@ class CTransaction:
         flags = 0
         if not self.wit.is_null():
             flags |= 1
+        if self.vrefin:
+            flags |= 2
         r = b""
         r += struct.pack("<i", self.nVersion)
         if flags:
@@ -585,6 +597,8 @@ class CTransaction:
             r += struct.pack("<B", flags)
         r += ser_vector(self.vin)
         r += ser_vector(self.vout)
+        if flags & 2:
+            r += ser_vector(self.vrefin)
         if flags & 1:
             if len(self.wit.vtxinwit) != len(self.vin):
                 # vtxinwit must have the same length as vin
@@ -626,8 +640,8 @@ class CTransaction:
         return True
 
     def __repr__(self):
-        return "CTransaction(nVersion=%i vin=%s vout=%s wit=%s nLockTime=%i)" \
-               % (self.nVersion, repr(self.vin), repr(self.vout), repr(self.wit), self.nLockTime)
+        return "CTransaction(nVersion=%i vin=%s vout=%s vrefin=%s wit=%s nLockTime=%i)" \
+               % (self.nVersion, repr(self.vin), repr(self.vout), repr(self.vrefin), repr(self.wit), self.nLockTime)
 
 
 class CBlockHeader:

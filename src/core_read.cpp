@@ -143,6 +143,24 @@ bool DecodeHexTx(CMutableTransaction& tx, const std::string& strHexTx, bool fTry
 
     std::vector<unsigned char> txData(ParseHex(strHexTx));
 
+    // NIP-014: bytes that announce reference inputs (an empty vin, then flags
+    // with bit 2) may also read, without witnesses, as a transaction with no
+    // inputs. A complete extended reading that finds the references wins.
+    if (txData.size() > 6 && txData[4] == 0x00 && (txData[5] & 0x02)) {
+        CDataStream ssData(txData, SER_NETWORK, PROTOCOL_VERSION);
+        try {
+            CMutableTransaction txRefInputs;
+            ssData >> txRefInputs;
+            if (ssData.empty() && !txRefInputs.vrefin.empty()) {
+                tx = std::move(txRefInputs);
+                return true;
+            }
+        }
+        catch (const std::exception&) {
+            // Fall through.
+        }
+    }
+
     if (fTryNoWitness) {
         CDataStream ssData(txData, SER_NETWORK, PROTOCOL_VERSION | SERIALIZE_TRANSACTION_NO_WITNESS);
         try {

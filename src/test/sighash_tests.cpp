@@ -163,6 +163,12 @@ BOOST_FIXTURE_TEST_SUITE(sighash_tests, BasicTestingSetup)
             std::cout << "\n";
     #endif
             BOOST_CHECK(sh == sho);
+
+            // NIP-014: version 3 without reference inputs signs as in 1.0.7.
+            CMutableTransaction txV3(txTo);
+            txV3.nVersion = 3;
+            BOOST_CHECK(SignatureHash(scriptCode, txV3, nIn, nHashType, 0, SIGVERSION_BASE) ==
+                        SignatureHashOld(scriptCode, txV3, nIn, nHashType));
         }
     #if defined(PRINT_SIGHASH_JSON)
         std::cout << "]\n";

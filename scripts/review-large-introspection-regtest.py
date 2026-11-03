@@ -14,7 +14,8 @@ def padded(tag,size):
     return b'\x4d'+struct.pack('<H',len(data))+data+b'\x75\x51'
 
 def stripped(raw):
-    return r.strip_witness(raw) if raw[4:6]==b'\x00\x01' else raw
+    # Witness flag set (with or without the reference inputs flag, NIP-014).
+    return r.strip_witness(raw) if raw[4]==0 and raw[5]&1 else raw
 
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--size',type=int,choices=(3071,3072),default=3072);p.add_argument('--fill',action='store_true');p.add_argument('--par',type=int,choices=(1,2),default=1);p.add_argument('--bindir',type=Path,default=Path('/root/Neurai/src'));args=p.parse_args()

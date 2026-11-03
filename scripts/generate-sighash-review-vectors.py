@@ -41,7 +41,9 @@ def render():
                 for domain, suffix in enumerate(domains):
                     preimage = (u32(version) + hp + hs + prevouts[index] + blob(code) +
                                 struct.pack('<Q', 987654321) + sequences[index] + ho)
-                    if version == 3:
+                    # NIP-014: only a transaction with references commits to them;
+                    # without them, version 3 signs plain BIP 143 as in 1.0.7.
+                    if nrefs:
                         preimage += dh(b''.join(references[:nrefs]))
                     preimage += u32(12345) + suffix + u32(ht)
                     lines.append(f'    {{{version}, {nrefs}, {index}, {ht}, {domain}, "{dh(preimage).hex()}"}},')

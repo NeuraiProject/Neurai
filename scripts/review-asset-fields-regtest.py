@@ -32,13 +32,15 @@ def number(n):
 
 
 def raw_transaction(inputs, outputs, refs, witnesses):
-    raw = struct.pack('<I', 3) + b'\x00\x01' + compact(len(inputs))
+    # NIP-014: flag 2 announces reference inputs; without them there is no vrefin field.
+    raw = struct.pack('<I', 3) + bytes([0, 3 if refs else 1]) + compact(len(inputs))
     for txid, index in inputs:
         raw += outpoint(txid, index) + b'\x00' + b'\xff' * 4
     raw += compact(len(outputs))
     for value, script in outputs:
         raw += struct.pack('<Q', value) + compact(len(script)) + script
-    raw += compact(len(refs)) + b''.join(outpoint(*ref) for ref in refs)
+    if refs:
+        raw += compact(len(refs)) + b''.join(outpoint(*ref) for ref in refs)
     for witness in witnesses:
         raw += compact(len(witness))
         for item in witness:

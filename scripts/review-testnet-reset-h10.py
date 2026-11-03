@@ -140,8 +140,7 @@ def raw_tx(inputs, outputs, version=2, locktime=0):
     raw += compact(len(outputs))
     for value, spk in outputs:
         raw += struct.pack('<q', value) + compact(len(spk)) + spk
-    if version == 3:
-        raw += compact(0)  # NIP-014: empty vrefin
+    # NIP-014: without reference inputs a version 3 transaction has no vrefin field.
     return raw + struct.pack('<I', locktime)
 
 

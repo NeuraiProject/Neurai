@@ -39,8 +39,9 @@ def transfer(prefix, name, state, expiration=b'', message_tag=0x54):
 
 
 def strip_witness(wire):
-    """Parse lengths explicitly; support the v2/v3 transactions used here."""
+    """Parse lengths explicitly; reference inputs (flag 2) keep the marker."""
     pos=6
+    has_refs=wire[5]&2
     def compact():
         nonlocal pos
         first=wire[pos];pos+=1
@@ -53,9 +54,9 @@ def strip_witness(wire):
     for _ in range(compact()):
         pos+=8
         length=compact();pos+=length
-    if int.from_bytes(wire[:4],'little')==3:
+    if has_refs:
         count=compact();pos+=36*count
-    return wire[:4]+wire[6:pos]+wire[-4:]
+    return wire[:4]+(b'\x00\x02' if has_refs else b'')+wire[6:pos]+wire[-4:]
 
 
 def main():

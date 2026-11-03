@@ -138,10 +138,15 @@ def rehearse(bindir, root, rule):
 
         # Probe transaction for block H.
         miner_node = new
-        if rule == 'tx_v3':
-            coin = next(u for u in new.rpc('listunspent', 1) if u['amount'] > 2)
+        if rule in ('tx_v3', 'reference_inputs'):
+            coins = [u for u in new.rpc('listunspent', 1) if u['amount'] > 2]
+            coin, ref = coins[0], coins[1]
             unsigned = h10.raw_tx([(coin['txid'], coin['vout'], b'')],
                                   [(h10.sats(coin['amount']) - 1_000_000, spk(miner))], version=3)
+            if rule == 'reference_inputs':
+                # NIP-014: flag 2 of the extended format announces the references.
+                outpoint = bytes.fromhex(ref['txid'])[::-1] + ref['vout'].to_bytes(4, 'little')
+                unsigned = unsigned[:4] + b'\x00\x02' + unsigned[4:-4] + h10.compact(1) + outpoint + unsigned[-4:]
             new.rpc('sendrawtransaction', new.rpc('signrawtransaction', unsigned.hex())['hex'])
         elif rule == 'op_cat_p2sh':
             raw = h10.raw_tx([(cat_coin[0], cat_coin[1], h10.CAT_SCRIPTSIG)], [(99_000_000, spk(miner))])
@@ -188,7 +193,9 @@ def main():
     parser.add_argument('--bindir', default='/root/Neurai/src')
     args = parser.parse_args()
     root = Path(tempfile.mkdtemp(prefix='mainnet-cut-rehearsal-'))
-    expected = {'tx_v3': 'hard fork', 'op_cat_p2sh': 'hard fork', 'nip040_xna_marker': 'hard fork',
+    # A version 3 transaction without references is valid on both sides, as in 1.0.7.
+    expected = {'tx_v3': 'compatible', 'reference_inputs': 'hard fork', 'op_cat_p2sh': 'hard fork',
+                'nip040_xna_marker': 'hard fork',
                 'strict_xna_placement': 'restrictive (soft fork)'}
     report = {'directory': str(root), 'H': H, 'results': []}
     for rule, want in expected.items():

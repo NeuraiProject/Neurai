@@ -31,7 +31,7 @@ def transaction(env, inputs, script, expected, outputs, refs):
     if env.auth:
         preimage = (struct.pack('<I', 3) + t.double_sha(prev) + t.double_sha(seq * len(inputs)) +
                     h.outpoint(*inputs[0]) + compact(len(script)) + script + struct.pack('<Q', COIN) +
-                    seq + t.double_sha(out) + t.double_sha(b''.join(h.outpoint(*p) for p in refs)) +
+                    seq + t.double_sha(out) + (t.double_sha(b''.join(h.outpoint(*p) for p in refs)) if refs else b'') +
                     bytes(4) + bytes([env.auth]) + struct.pack('<I', 1))
         stack += [env.sign(t.double_sha(preimage)), env.pub]
     stack += [expected, script]
@@ -41,9 +41,10 @@ def transaction(env, inputs, script, expected, outputs, refs):
         vin += h.outpoint(*p) + compact(len(sig)) + sig + seq
     witness = compact(len(stack)) + b''.join(compact(len(x)) + x for x in stack)
     witness += b'\x00' * (len(inputs) - 1)
-    return (struct.pack('<I', 3) + b'\x00\x01' + compact(len(inputs)) + vin +
-            compact(len(outputs)) + out + compact(len(refs)) +
-            b''.join(h.outpoint(*p) for p in refs) + witness + bytes(4)).hex()
+    # NIP-014: flag 2 announces reference inputs; without them there is no vrefin field.
+    vref = compact(len(refs)) + b''.join(h.outpoint(*p) for p in refs) if refs else b''
+    return (struct.pack('<I', 3) + bytes([0, 3 if refs else 1]) + compact(len(inputs)) + vin +
+            compact(len(outputs)) + out + vref + witness + bytes(4)).hex()
 
 
 def main():

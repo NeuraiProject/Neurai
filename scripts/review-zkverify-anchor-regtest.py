@@ -64,7 +64,9 @@ def main():
    stack=[b'\x10' if index==4 else b'\x00',proof,response,leaf]
    if index==4:stack.append(b'\x01')
    witness=h.compact(len(stack))+b''.join(h.compact(len(s))+s for s in stack)
-   v=struct.pack('<I',3);return v+b'\x00\x01'+vin+vout+refbytes+witness+bytes(4)
+   # NIP-014: flag 2 announces the reference inputs.
+   if not refs:refbytes=b''
+   v=struct.pack('<I',3);return v+bytes([0,3 if refs else 1])+vin+vout+refbytes+witness+bytes(4)
   for index,label in [(3,'flat'),(4,'mast')]:
    digest=txhash.field_hash(511,3,0,[h.outpoint(txid,index)],[0xffffffff],[(h.COIN,out)],0,[h.outpoint(txid,i) for i in (0,2)])
    anchor=int(poseidon.sponge(digest),16)

@@ -717,9 +717,16 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
     if (fRequireStandard && !IsStandardTx(tx, reason, witnessEnabled))
         return state.DoS(0, false, REJECT_NONSTANDARD, reason);
 
-    // NIP-014: reject v3 before activation (evaluated for the next block)
-    if (tx.nVersion == 3 && !chainparams.GetConsensus().IsRefInputsActive(chainActive.Height() + 1)) {
-        return state.DoS(0, false, REJECT_NONSTANDARD, "version-v3-not-active");
+    // NIP-014: reference inputs are valid from their activation height
+    // (evaluated for the next block). Below it a version 3 transaction without
+    // them is an ordinary one, valid as in 1.0.7, which does not relay it.
+    if (!chainparams.GetConsensus().IsRefInputsActive(chainActive.Height() + 1)) {
+        if (!tx.vrefin.empty()) {
+            return state.DoS(0, false, REJECT_INVALID, "bad-txns-vrefin-not-active");
+        }
+        if (fRequireStandard && tx.nVersion == 3) {
+            return state.DoS(0, false, REJECT_NONSTANDARD, "version-v3-not-active");
+        }
     }
 
     // Policy only: do not relay outputs to AuthScript families that do not
@@ -2023,9 +2030,9 @@ static void MempoolEvictScriptRuleEntries(CTxMemPool& pool)
     const Consensus::Params& consensus = chainparams.GetConsensus();
     pool.removeForStrictAuthScriptTransition([&](const CTxMemPoolEntry& entry) -> bool {
         const CTransaction& tx = entry.GetTx();
-        // Structural rules that CheckInputs cannot see: a v3 transaction with
+        // Structural rules that CheckInputs cannot see: reference inputs with
         // no special opcode, and the strict OP_XNA_ASSET output placement.
-        if (tx.nVersion == 3 && !consensus.IsRefInputsActive(nCandidateHeight)) {
+        if (!tx.vrefin.empty() && !consensus.IsRefInputsActive(nCandidateHeight)) {
             return true;
         }
         // Policy: outputs to AuthScript families that no longer apply to the
@@ -3243,11 +3250,12 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
         fScriptChecks = true;
     }
 
-    // NIP-014: reject v3 transactions before activation
+    // NIP-014: reference inputs are valid from their activation height. Below
+    // it a version 3 transaction without them is valid, as in 1.0.7.
     if (!chainparams.GetConsensus().IsRefInputsActive(pindex->nHeight)) {
         for (const auto& tx : block.vtx) {
-            if (tx->nVersion == 3) {
-                return state.DoS(100, false, REJECT_INVALID, "bad-txns-v3-not-active");
+            if (!tx->vrefin.empty()) {
+                return state.DoS(100, false, REJECT_INVALID, "bad-txns-vrefin-not-active");
             }
         }
     }

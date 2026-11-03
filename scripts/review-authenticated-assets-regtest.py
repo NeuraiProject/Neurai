@@ -63,16 +63,18 @@ def raw_transaction(inputs, outputs, refs, witnesses):
         double = lambda x: sha256(sha256(x))
         preimage = (struct.pack('<I', 3) + double(prevouts) + double(b'\xff' * (4 * len(inputs))) +
                     outpoint(*inputs[0]) + compact(len(contract)) + contract + struct.pack('<Q', COIN) + b'\xff' * 4 +
-                    double(serialized_outputs) + double(b''.join(outpoint(*p) for p in refs)) + bytes(4) + bytes([AUTH]) + struct.pack('<I', 1))
+                    double(serialized_outputs) + (double(b''.join(outpoint(*p) for p in refs)) if refs else b'') + bytes(4) + bytes([AUTH]) + struct.pack('<I', 1))
         signature = bytes.fromhex(subprocess.check_output([str(SIGNER), 'sign', 'pq' if AUTH == 1 else 'ecdsa'],
                                   input=SECRET + '\n' + double(preimage).hex() + '\n', text=True).strip())
         witnesses[0] = [bytes([AUTH]), signature, PUB, contract]
-    raw = struct.pack('<I', 3) + b'\x00\x01' + compact(len(inputs))
+    # NIP-014: flag 2 announces reference inputs; without them there is no vrefin field.
+    raw = struct.pack('<I', 3) + bytes([0, 3 if refs else 1]) + compact(len(inputs))
     for i, (txid, index) in enumerate(inputs):
         script_sig = push(b'\x51\x20' + commitment(contract)) if WRAPPED and i == 0 else b''
         raw += outpoint(txid, index) + compact(len(script_sig)) + script_sig + b'\xff' * 4
     raw += compact(len(outputs)) + serialized_outputs
-    raw += compact(len(refs)) + b''.join(outpoint(*ref) for ref in refs)
+    if refs:
+        raw += compact(len(refs)) + b''.join(outpoint(*ref) for ref in refs)
     for witness in witnesses:
         raw += compact(len(witness))
         for item in witness:

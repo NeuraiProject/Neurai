@@ -140,7 +140,7 @@ def main():
                 sequence = b'\xff'*4
                 preimage = (struct.pack('<I', 3)+r.b.hash256(prevout)+r.b.hash256(sequence)+prevout+
                     h.compact(len(script))+script+struct.pack('<Q', 200000000)+sequence+
-                    r.b.hash256(r.b.output(190000000, pay))+r.b.hash256(b'')+bytes(4)+b'\x00'+struct.pack('<I', 1))
+                    r.b.hash256(r.b.output(190000000, pay))+bytes(4)+b'\x00'+struct.pack('<I', 1))
                 sig = bytes.fromhex(subprocess.check_output([str(args.signer), 'sign', family],
                     input=secret+'\n'+r.b.hash256(preimage).hex()+'\n', text=True).strip())
                 msg = b''  # CHECKSIGADD starts its counter at zero.

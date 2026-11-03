@@ -5,21 +5,25 @@
 // Below the unified fork, 2.0 must read every scriptPubKey exactly as 1.0.7
 // does, or a block valid for one of them is invalid for the other while both
 // run on mainnet. The functions in namespace legacy107 are copied verbatim
-// from the 1.0.7 tag (src/script/script.cpp, src/script/standard.cpp and the
-// OP_XNA_ASSET rule of CheckTransaction in src/consensus/tx_verify.cpp); only
-// member calls are turned into free functions and the calls between them are
-// qualified. Each generated script is read by both with the strict AuthScript
-// context inactive, as on mainnet below the fork.
+// from the 1.0.7 tag (src/script/script.cpp, src/script/standard.cpp, the
+// OP_XNA_ASSET rule of CheckTransaction in src/consensus/tx_verify.cpp and the
+// transaction format of src/primitives/transaction.h); only member calls are
+// turned into free functions and the calls between them are qualified. Each
+// generated script is read by both with the strict AuthScript context
+// inactive, as on mainnet below the fork.
 
 #include "assets/assets.h"
 #include "base58.h"
 #include "consensus/tx_verify.h"
+#include "core_io.h"
 #include "policy/policy.h"
 #include "random.h"
 #include "script/script.h"
 #include "script/standard.h"
+#include "streams.h"
 #include "test/test_neurai.h"
 #include "utilstrencodings.h"
+#include "version.h"
 
 #include <map>
 #include <string>
@@ -298,6 +302,70 @@ bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
      /** XNA END */
     // Multisig txns have more than one address...
     return false;
+}
+
+template<typename Stream, typename TxType>
+inline void UnserializeTransaction(TxType& tx, Stream& s) {
+    const bool fAllowWitness = !(s.GetVersion() & SERIALIZE_TRANSACTION_NO_WITNESS);
+
+    s >> tx.nVersion;
+    unsigned char flags = 0;
+    tx.vin.clear();
+    tx.vout.clear();
+    /* Try to read the vin. In case the dummy is there, this will be read as an empty vector. */
+    s >> tx.vin;
+    if (tx.vin.size() == 0 && fAllowWitness) {
+        /* We read a dummy or an empty vin. */
+        s >> flags;
+        if (flags != 0) {
+            s >> tx.vin;
+            s >> tx.vout;
+        }
+    } else {
+        /* We read a non-empty vin. Assume a normal vout follows. */
+        s >> tx.vout;
+    }
+    if ((flags & 1) && fAllowWitness) {
+        /* The witness flag is present, and we support witnesses. */
+        flags ^= 1;
+        for (size_t i = 0; i < tx.vin.size(); i++) {
+            s >> tx.vin[i].scriptWitness.stack;
+        }
+    }
+    if (flags) {
+        /* Unknown flag in the serialization */
+        throw std::ios_base::failure("Unknown transaction optional data");
+    }
+    s >> tx.nLockTime;
+}
+
+template<typename Stream, typename TxType>
+inline void SerializeTransaction(const TxType& tx, Stream& s) {
+    const bool fAllowWitness = !(s.GetVersion() & SERIALIZE_TRANSACTION_NO_WITNESS);
+
+    s << tx.nVersion;
+    unsigned char flags = 0;
+    // Consistency check
+    if (fAllowWitness) {
+        /* Check whether witnesses need to be serialized. */
+        if (tx.HasWitness()) {
+            flags |= 1;
+        }
+    }
+    if (flags) {
+        /* Use extended format in case witnesses are to be serialized. */
+        std::vector<CTxIn> vinDummy;
+        s << vinDummy;
+        s << flags;
+    }
+    s << tx.vin;
+    s << tx.vout;
+    if (flags & 1) {
+        for (size_t i = 0; i < tx.vin.size(); i++) {
+            s << tx.vin[i].scriptWitness.stack;
+        }
+    }
+    s << tx.nLockTime;
 }
 
 // The rule CheckTransaction applies to each output of a transaction that
@@ -646,6 +714,136 @@ BOOST_AUTO_TEST_CASE(confirmed_divergences_are_closed_below_the_fork)
         BOOST_CHECK(authscript.IsAssetScript(nType, fOwner, nStart));
         BOOST_CHECK(nullAuthScript.IsNullAssetTxDataScript());
         BOOST_CHECK(!ExtractDestination(burn, dest));
+    }
+}
+
+valtype Serialized(const CMutableTransaction& tx, int flags)
+{
+    CDataStream ss(SER_NETWORK, PROTOCOL_VERSION | flags);
+    ss << tx;
+    return valtype(ss.begin(), ss.end());
+}
+
+valtype Serialized107(const CMutableTransaction& tx, int flags)
+{
+    CDataStream ss(SER_NETWORK, PROTOCOL_VERSION | flags);
+    legacy107::SerializeTransaction(tx, ss);
+    return valtype(ss.begin(), ss.end());
+}
+
+CMutableTransaction Read(const valtype& data, int flags = 0)
+{
+    CDataStream ss(data, SER_NETWORK, PROTOCOL_VERSION | flags);
+    CMutableTransaction tx;
+    ss >> tx;
+    BOOST_CHECK(ss.empty());
+    return tx;
+}
+
+CMutableTransaction Read107(const valtype& data, int flags = 0)
+{
+    CDataStream ss(data, SER_NETWORK, PROTOCOL_VERSION | flags);
+    CMutableTransaction tx;
+    legacy107::UnserializeTransaction(tx, ss);
+    BOOST_CHECK(ss.empty());
+    return tx;
+}
+
+CMutableTransaction RandomTx(FastRandomContext& rng, int32_t version, bool fWitness)
+{
+    CMutableTransaction tx;
+    tx.nVersion = version;
+    tx.nLockTime = rng.randbool() ? rng.rand32() : 0;
+    for (int i = 0, n = 1 + rng.randrange(3); i < n; ++i) {
+        tx.vin.emplace_back(COutPoint(rng.rand256(), rng.randrange(4)), CScript() << rng.randbytes(rng.randrange(40)),
+                            rng.randbool() ? rng.rand32() : 0xffffffff);
+        if (fWitness && rng.randbool()) tx.vin.back().scriptWitness.stack = {rng.randbytes(1 + rng.randrange(70))};
+    }
+    for (int i = 0, n = 1 + rng.randrange(3); i < n; ++i) {
+        tx.vout.emplace_back(rng.randrange(COIN), CScript() << OP_DUP << OP_HASH160 << rng.randbytes(20) << OP_EQUALVERIFY << OP_CHECKSIG);
+    }
+    return tx;
+}
+
+// B-16: a version 3 transaction without reference inputs has the format, txid
+// and signatures of 1.0.7, and 1.0.7 refuses to read one that carries them.
+BOOST_AUTO_TEST_CASE(version_3_without_references_reads_as_in_107)
+{
+    FastRandomContext rng(true);
+    for (int i = 0; i < 2000; ++i) {
+        const int32_t version = i % 4 == 0 ? (int32_t)rng.rand32() : 1 + i % 4;
+        const CMutableTransaction tx = RandomTx(rng, version, rng.randbool());
+        BOOST_TEST_CONTEXT("version=" << version) {
+            for (int flags : {0, SERIALIZE_TRANSACTION_NO_WITNESS}) {
+                const valtype data = Serialized(tx, flags);
+                BOOST_CHECK(data == Serialized107(tx, flags));
+                BOOST_CHECK(Serialized(Read107(data, flags), flags) == data);
+                BOOST_CHECK(Serialized(Read(data, flags), flags) == data);
+            }
+            BOOST_CHECK(CTransaction(tx).GetHash() == SerializeHash(tx, SER_GETHASH, SERIALIZE_TRANSACTION_NO_WITNESS));
+        }
+
+        CMutableTransaction withRefs = RandomTx(rng, 3, rng.randbool());
+        withRefs.vrefin.emplace_back(rng.rand256(), rng.randrange(4));
+        const valtype data = Serialized(withRefs, 0);
+        BOOST_CHECK_EQUAL(data[4], 0x00);
+        BOOST_CHECK(data[5] & 0x02);
+        BOOST_CHECK(Read(data).vrefin == withRefs.vrefin);
+        BOOST_CHECK_THROW(Read107(data), std::ios_base::failure);
+        // The txid commits to the references.
+        CMutableTransaction noRefs(withRefs);
+        noRefs.vrefin.clear();
+        BOOST_CHECK(CTransaction(noRefs).GetHash() != CTransaction(withRefs).GetHash());
+    }
+}
+
+BOOST_AUTO_TEST_CASE(reference_inputs_have_one_encoding)
+{
+    FastRandomContext rng(true);
+    CMutableTransaction tx = RandomTx(rng, 3, false);
+    const valtype base = Serialized(tx, SERIALIZE_TRANSACTION_NO_WITNESS);
+    const valtype body(base.begin() + 4, base.end() - 4);
+    const valtype version(base.begin(), base.begin() + 4), locktime(base.end() - 4, base.end());
+    const valtype emptyWitness(tx.vin.size(), 0x00);
+
+    // Flag 2 with an empty list.
+    BOOST_CHECK_THROW(Read(Concat({version, {0x00, 0x02}, body, {0x00}, locktime})), std::ios_base::failure);
+    // Flag 3 with references and only empty witness stacks.
+    valtype refs{0x01};
+    refs.insert(refs.end(), 36, 0x42);
+    BOOST_CHECK_NO_THROW(Read(Concat({version, {0x00, 0x02}, body, refs, locktime})));
+    BOOST_CHECK_THROW(Read(Concat({version, {0x00, 0x03}, body, refs, emptyWitness, locktime})), std::ios_base::failure);
+    // Flag 1 with only empty witness stacks reads in 2.0 as in 1.0.7.
+    const valtype flag1 = Concat({version, {0x00, 0x01}, body, emptyWitness, locktime});
+    BOOST_CHECK(Serialized(Read(flag1), 0) == Serialized(Read107(flag1), 0));
+}
+
+// These bytes announce one reference input, and also read, without witnesses,
+// as a transaction with no inputs and two outputs whose scripts are valid.
+BOOST_AUTO_TEST_CASE(decodehextx_prefers_the_references_reading)
+{
+    std::vector<unsigned char> prevout(32, 0x11);
+    prevout[7] = 15;                       // length of the first script of the other reading
+    std::fill(prevout.begin() + 8, prevout.begin() + 23, OP_1);
+    prevout[31] = 81;                      // length of its second script
+    std::vector<unsigned char> reference(32, OP_1);
+    CMutableTransaction tx;
+    tx.nVersion = 3;
+    tx.vin.emplace_back(COutPoint(uint256(prevout), 0), CScript(), 0);
+    tx.vout.emplace_back(1, CScript() << OP_DUP << OP_HASH160 << valtype(20, 0x42) << OP_EQUALVERIFY << OP_CHECKSIG);
+    tx.vrefin.emplace_back(uint256(reference), 0);
+    tx.nLockTime = 0x01020304;
+    const valtype data = Serialized(tx, SERIALIZE_TRANSACTION_NO_WITNESS);
+
+    const CMutableTransaction other = Read(data, SERIALIZE_TRANSACTION_NO_WITNESS);
+    BOOST_CHECK(other.vin.empty());
+    BOOST_CHECK_EQUAL(other.vout.size(), 2U);
+
+    for (bool fTryNoWitness : {false, true}) {
+        CMutableTransaction decoded;
+        BOOST_REQUIRE(DecodeHexTx(decoded, HexStr(data), fTryNoWitness));
+        BOOST_CHECK(CTransaction(decoded).GetHash() == CTransaction(tx).GetHash());
+        BOOST_CHECK(decoded.vrefin == tx.vrefin);
     }
 }
 

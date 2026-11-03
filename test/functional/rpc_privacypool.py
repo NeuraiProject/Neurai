@@ -87,7 +87,8 @@ class PrivacyPoolTest(NeuraiTestFramework):
             inputs = compact(len(points)) + b''.join(bytes.fromhex(p['txid'])[::-1] + struct.pack('<I', p['vout']) + b'\x00' + b'\xff' * 4 for p in points)
             stack = [b'\x00', *payloads, leaf]
             witness = (b'\x00' if nonzero_input else b'') + compact(len(stack)) + b''.join(compact(len(item)) + item for item in stack)
-            raw = struct.pack('<I', 3) + b'\x00\x01' + inputs + compact(2) + b''.join(output(*item) for item in outputs) + b'\x00' + witness + bytes(4)
+            # Version 3 without reference inputs: no vrefin field (NIP-014 flag 2 is unset).
+            raw = struct.pack('<I', 3) + b'\x00\x01' + inputs + compact(2) + b''.join(output(*item) for item in outputs) + witness + bytes(4)
             if nonzero_input:
                 raw = bytes.fromhex(node.signrawtransaction(raw.hex())['hex'])
             txid = node.sendrawtransaction(raw.hex(), True)

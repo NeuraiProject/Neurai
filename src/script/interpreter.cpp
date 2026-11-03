@@ -2774,8 +2774,9 @@ namespace
             unsigned int nOutputs = fHashNone ? 0 : (fHashSingle ? nIn + 1 : txTo.vout.size());
             ::WriteCompactSize(s, nOutputs);
             for (unsigned int nOutput = 0; nOutput < nOutputs; nOutput++) SerializeOutput(s, nOutput);
-            // NIP-014: serialize vrefin for v3 (unconditional — not affected by sighash mode)
-            if (txTo.nVersion == 3) {
+            // NIP-014: serialize vrefin when present (not affected by sighash mode).
+            // Without references the preimage is the one 1.0.7 signs, version 3 included.
+            if (!txTo.vrefin.empty()) {
                 ::WriteCompactSize(s, txTo.vrefin.size());
                 for (const auto& refin : txTo.vrefin) {
                     ::Serialize(s, refin);
@@ -2950,8 +2951,9 @@ uint256 SignatureHash(const CScript &scriptCode, const CTransaction &txTo, unsig
         ss << txTo.vin[nIn].nSequence;
         // Outputs (none/one/all, depending on flags)
         ss << hashOutputs;
-        // NIP-014: commit to reference inputs for v3
-        if (txTo.nVersion == 3) {
+        // NIP-014: commit to reference inputs when present. Without them the
+        // preimage is BIP 143 as 1.0.7 signs it, version 3 included.
+        if (!txTo.vrefin.empty()) {
             uint256 hashRefIns;
             if (cacheready && cache->refInputsReady) {
                 hashRefIns = cache->hashRefInputs;

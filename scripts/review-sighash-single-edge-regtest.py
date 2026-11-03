@@ -39,7 +39,9 @@ def transaction(utxo, sigscript, stack, outputs, refs, sequence=0xffffffff):
     refdata = h.compact(len(refs)) + b''.join(h.outpoint(*ref) for ref in refs) if refs else b''
     witness = b'\x02\x01\x00\x01\x51' + h.compact(len(stack)) + b''.join(h.compact(len(x)) + x for x in stack)
     prefix = struct.pack('<I', 3 if refs else 2)
-    return prefix + inputs + outs + refdata + bytes(4), prefix + b'\x00\x01' + inputs + outs + refdata + witness + bytes(4)
+    # NIP-014: flag 2 announces the reference inputs, also in the txid form.
+    stripped = prefix + (b'\x00\x02' if refs else b'') + inputs + outs + refdata + bytes(4)
+    return stripped, prefix + bytes([0, 3 if refs else 1]) + inputs + outs + refdata + witness + bytes(4)
 
 
 def main():

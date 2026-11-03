@@ -130,6 +130,12 @@ tags):
   must use `0xfffffffe`, `0xffffffff` or a BIP 68 relative lock. The first
   start checks the blocks the node already has against the rule (see
   [No-RBF sequence rule](#no-rbf-sequence-rule)).
+- Reference inputs changed format (NIP-014): they are announced by flag
+  `0x02` of the extended serialization instead of following every version 3
+  transaction. Transaction ids of version 3 transactions change, those
+  without reference inputs too, and blocks written by earlier builds that
+  hold version 3 transactions do not read: testnet is reset again. Wallets,
+  SDKs and explorers that build or parse reference inputs must follow.
 - Restart testnet and regtest nodes once with `-reindex-chainstate` (or
   `-reindex`). Blocks connected by earlier builds have no DEPIN restriction
   undo record, and the node refuses to start until it rebuilds them. Mainnet
@@ -195,6 +201,12 @@ height revalidates the mempool.
   takes an asset after another prefix, and at the activation height the
   mempool drops what changes meaning. Earlier development builds applied the
   P2PKH requirement and the AuthScript forms at every height.
+- **Version 3 transactions read and sign as in 1.0.7** unless they announce
+  reference inputs with flag `0x02` of the extended serialization, which
+  1.0.7 cannot read and which is only valid from the reference inputs height.
+  A version 3 transaction mined by 1.0.7 used to be unreadable for 2.0. Below
+  that height version 3 is valid but not relayed, as in 1.0.7, and a
+  reorganization below it drops reference inputs from the mempool.
 - **Asset block version:** on testnet and regtest, which activate assets by
   height, a block at or below the activation height does not need the asset
   version bit. A node past the activation used to reject a competing chain
@@ -206,7 +218,7 @@ height revalidates the mempool.
 | Strict AuthScript families: witness v2 post-quantum (`pq1z…` / `tpq1z…`) and witness v3 ECDSA (`nq1r…` / `tnq1r…`); family-independent signature checks in v1 `OP_CHECKMULTISIG` (mixed ECDSA/PQ multisig) | — | not scheduled | 10 | 0, `-strictauthscriptheight` |
 | AuthScript destination introspection: `OP_OUTPUTAUTHDEST`, selector `0x04` | NIP-041 | not scheduled | 10 | 0, `-strictauthscriptheight` |
 | Covenant and introspection opcodes: `OP_CHECKTEMPLATEVERIFY` (BIP 119), `OP_CAT` (BIP 347), `OP_SPLIT`, `OP_REVERSEBYTES`, `OP_TXFIELD`, `OP_TXLOCKTIME`, `OP_OUTPUTVALUE`, `OP_OUTPUTSCRIPT`, `OP_INPUTCOUNT`, `OP_OUTPUTCOUNT`, `OP_OUTPUTASSETFIELD`, `OP_INPUTASSETFIELD`; 64-bit script numbers with `OP_MUL`, `OP_DIV`, `OP_MOD` re-enabled | — | not scheduled | 10 | 0, `-optinfeaturesheight` |
-| Transaction version 3 with reference inputs (`vrefin`); `OP_REFINPUTCOUNT`, `OP_REFINPUTFIELD`, `OP_REFINPUTASSETFIELD` | NIP-014 | not scheduled | 10 | 0, `-optinfeaturesheight` |
+| Reference inputs (`vrefin`) in version 3 transactions, announced by flag `0x02` of the extended serialization; `OP_REFINPUTCOUNT`, `OP_REFINPUTFIELD`, `OP_REFINPUTASSETFIELD`. A version 3 transaction without them is an ordinary one, valid at any height as in 1.0.7 | NIP-014 | not scheduled | 10 | 0, `-optinfeaturesheight` |
 | `OP_OUTPUTAUTHCOMMITMENT`, `OP_INPUTVALUE`, `OP_CHAINCONTEXT` | NIP-023, NIP-024, NIP-026 | not scheduled | 10 | 0, `-optinfeaturesheight` |
 | Hash and proof opcodes: `OP_KECCAK256`, `OP_BLAKE2B`, `OP_CHECKMERKLEINCLUSION`, `OP_BLAKE3`, `OP_SHA3_256`, `OP_SHA512`, `OP_POSEIDON` | NIP-030, NIP-031, NIP-034a, NIP-036 | not scheduled | 10 | 0, `-optinfeaturesheight` |
 | Strict `OP_XNA_ASSET` placement rule | — | not scheduled | 10 | 0, `-optinfeaturesheight` |

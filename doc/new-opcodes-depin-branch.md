@@ -472,7 +472,7 @@ These opcodes allow scripts to read fields from **reference inputs** — UTXOs d
 
 All three opcodes are gated by `SCRIPT_VERIFY_REFINPUTS` (bit 31, consensus parameter `nREFINPUTSEnabled`). They occupy previously unassigned bytes, so when the flag is not active they fail with `SCRIPT_ERR_BAD_OPCODE` (they are not NOPs).
 
-Reference inputs are transported in a dedicated `vrefin` vector alongside `vin` and `vout` in the transaction serialization. Unlike regular inputs, they do not require signatures and do not consume the referenced UTXOs; their sole purpose is to make external state available for introspection during script evaluation. The `OP_REFINPUT*` family provides the primitives to read values, commitments, scripts, and asset fields from those referenced outputs.
+Reference inputs are transported in a dedicated `vrefin` vector alongside `vin` and `vout` in the transaction serialization. A version 3 transaction announces them with flag `0x02` of the extended (BIP 144) format, after the outputs and before any witness; without that flag it has none and serializes as any other transaction, as in 1.0.7. The txid commits to them, so the flag is kept when witnesses are left out, and signatures commit to them only when present. Unlike regular inputs, they do not require signatures and do not consume the referenced UTXOs; their sole purpose is to make external state available for introspection during script evaluation. The `OP_REFINPUT*` family provides the primitives to read values, commitments, scripts, and asset fields from those referenced outputs.
 
 ---
 

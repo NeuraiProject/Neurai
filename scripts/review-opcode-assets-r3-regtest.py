@@ -35,7 +35,7 @@ def transaction(env, inputs, script, arguments, outputs, locktime=0, sequence=0x
     if env.auth:
         preimage = (struct.pack('<I', 3) + b.hash256(prev) + b.hash256(seq * len(inputs)) +
                     h.outpoint(*inputs[0]) + compact(len(script)) + script + struct.pack('<Q', COIN) +
-                    seq + b.hash256(out) + b.hash256(b'') + lock + bytes([env.auth]) + struct.pack('<I', 1))
+                    seq + b.hash256(out) + lock + bytes([env.auth]) + struct.pack('<I', 1))
         stack += [env.sign(b.hash256(preimage)), env.pub]
     stack += list(arguments) + [script]
     vin = b''
@@ -44,8 +44,9 @@ def transaction(env, inputs, script, arguments, outputs, locktime=0, sequence=0x
         vin += h.outpoint(*p) + compact(len(script_sig)) + script_sig + seq
     witness = compact(len(stack)) + b''.join(compact(len(x)) + x for x in stack)
     witness += b'\x00' * (len(inputs) - 1)
+    # Version 3 without reference inputs: no vrefin field, no commitment (NIP-014).
     return (struct.pack('<I', 3) + b'\x00\x01' + compact(len(inputs)) + vin +
-            compact(len(outputs)) + out + b'\x00' + witness + lock).hex()
+            compact(len(outputs)) + out + witness + lock).hex()
 
 
 def cases(group, vectors):

@@ -17,9 +17,12 @@ h, b = r3.h, r3.b
 def spend(env, point, script, output, refs=(), amount=90_000_000):
     scriptsig = h.push(b'\x51\x20' + env.program(script)) if env.wrapped else b''
     vin = b'\x01' + h.outpoint(*point) + compact(len(scriptsig)) + scriptsig + b'\xff'*4
-    body = vin + b'\x01' + b.output(amount, output) + compact(len(refs)) + b''.join(h.outpoint(*p) for p in refs)
+    # NIP-014: flag 2 announces reference inputs, also in the txid form.
+    vref = compact(len(refs)) + b''.join(h.outpoint(*p) for p in refs) if refs else b''
+    body = vin + b'\x01' + b.output(amount, output) + vref
     witness = b'\x02\x01\x00' + compact(len(script)) + script
-    return struct.pack('<I', 3) + body + bytes(4), struct.pack('<I', 3) + b'\x00\x01' + body + witness + bytes(4)
+    stripped = struct.pack('<I', 3) + (b'\x00\x02' if refs else b'') + body + bytes(4)
+    return stripped, struct.pack('<I', 3) + bytes([0, 3 if refs else 1]) + body + witness + bytes(4)
 
 
 def main():
