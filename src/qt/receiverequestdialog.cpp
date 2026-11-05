@@ -23,10 +23,6 @@
 #include <QUrl>
 #endif
 
-#if defined(HAVE_CONFIG_H)
-#include "config/neurai-config.h" /* for USE_QRCODE */
-#endif
-
 
 QRImageWidget::QRImageWidget(QWidget *parent):
     QLabel(parent), contextMenu(0)
@@ -94,11 +90,6 @@ ReceiveRequestDialog::ReceiveRequestDialog(QWidget *parent) :
 {
     ui->setupUi(this);
 
-#ifndef USE_QRCODE
-    ui->btnSaveAs->setVisible(false);
-    ui->lblQRCode->setVisible(false);
-#endif
-
     connect(ui->btnSaveAs, SIGNAL(clicked()), ui->lblQRCode, SLOT(saveImage()));
 
     ui->outUri->setFont(GUIUtil::getSubLabelFont());
@@ -160,7 +151,7 @@ void ReceiveRequestDialog::update()
         html += "<b>"+tr("Message")+"</b>: " + GUIUtil::HtmlEscape(info.message) + "<br>";
     ui->outUri->setText(html);
 
-#ifdef USE_QRCODE
+    // The QR code is drawn by the vendored QRKude library (see qrimage.h).
     ui->lblQRCode->setText("");
     if(!uri.isEmpty())
     {
@@ -180,7 +171,6 @@ void ReceiveRequestDialog::update()
             ui->btnSaveAs->setEnabled(true);
         }
     }
-#endif
 }
 
 void ReceiveRequestDialog::on_btnCopyURI_clicked()

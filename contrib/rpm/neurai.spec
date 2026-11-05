@@ -7,9 +7,9 @@
 %else
 %define _buildqt 1
 %if 0%{?_use_qt4}
-%define buildargs --with-qrencode --with-gui=qt4
+%define buildargs --with-gui=qt4
 %else
-%define buildargs --with-qrencode --with-gui=qt5
+%define buildargs --with-gui=qt5
 %endif
 %endif
 
@@ -72,7 +72,6 @@ BuildRequires:	qt5-qtbase-devel
 BuildRequires:	qt5-linguist
 %endif
 BuildRequires:	protobuf-devel
-BuildRequires:	qrencode-devel
 BuildRequires:	%{_bindir}/desktop-file-validate
 # for icon generation from SVG
 BuildRequires:	%{_bindir}/inkscape

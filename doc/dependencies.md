@@ -31,7 +31,6 @@ These are the dependencies currently used by Neurai. You can find instructions f
 | PCRE |  |  |  |  | [Yes](../depends/packages/qt.mk) |
 | protobuf | [2.6.1](https://github.com/google/protobuf/releases) |  | No |  |  |
 | Python (tests) |  | [3.4](https://www.python.org/downloads) |  |  |  |
-| qrencode | [3.4.4](https://fukuchi.org/works/qrencode) |  | No |  |  |
 | Qt | [6.8.3](https://download.qt.io/archive/qt/) | 6.x | No |  |  |
 | Wayland | 1.22.0 |  |  |  | (Linux only) |
 | XCB | 1.17.0 |  |  |  | [Yes](../depends/packages/qt.mk) (Linux only) |
@@ -47,4 +46,5 @@ Bundled in the source tree (no installation needed):
 | Ed25519 ref10 (from libsodium) | | `src/crypto/ed25519` |
 | mcl | commit `cbb18eb` ([herumi/mcl](https://github.com/herumi/mcl)) | `src/crypto/mcl` |
 | Monocypher | 4.0.2 | `src/monocypher` |
+| QRKude (GUI QR codes) | 0.1.0 | `src/qrkude` |
 | wasm3 | 0.5.0 | `src/wasm3` |

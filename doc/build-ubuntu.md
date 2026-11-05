@@ -23,7 +23,7 @@ sudo apt install build-essential autoconf automake libtool pkg-config cmake git 
 For the GUI (optional):
 ```
 sudo apt install qt6-base-dev qt6-tools-dev qt6-tools-dev-tools qt6-l10n-tools \
-    libgl-dev libqrencode-dev libprotobuf-dev protobuf-compiler
+    libgl-dev libprotobuf-dev protobuf-compiler
 ```
 
 Directory structure

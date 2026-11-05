@@ -37,11 +37,6 @@ configure_options=(
     --enable-hardening --enable-reduce-exports --enable-wallet
     --without-libs --with-daemon --with-cli "--with-gui=$gui"
 )
-if [[ "$BUILD_TYPE" == user ]]; then
-    configure_options+=(--with-qrencode)
-else
-    configure_options+=(--without-qrencode)
-fi
 suffix=
 case "$target" in
     linux)

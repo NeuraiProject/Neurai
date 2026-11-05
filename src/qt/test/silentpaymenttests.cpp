@@ -41,10 +41,6 @@
 #include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
 
-#if defined(HAVE_CONFIG_H)
-#include "config/neurai-config.h" /* for USE_QRCODE */
-#endif
-
 namespace
 {
 //! Press "Yes" in the modal send confirmation dialog.
@@ -240,9 +236,7 @@ void TestSilentPaymentsGUI()
     QVERIFY(!codeCard->isHidden());
     QCOMPARE(receive.findChild<QPlainTextEdit*>("silentCodeText")->toPlainText(), ownCode);
     QVERIFY(!receive.findChild<QLabel*>("silentCodeStatus")->text().isEmpty());
-#ifdef USE_QRCODE
     QVERIFY(GUIUtil::HasPixmap(receive.findChild<QLabel*>("silentCodeQR")));
-#endif
     button->click();
     QVERIFY(codeCard->isHidden());
 

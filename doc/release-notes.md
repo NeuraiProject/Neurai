@@ -646,6 +646,10 @@ Build system
   4.0.2. They are listed in [dependencies.md](dependencies.md).
 - `neurai-tx` now links on Windows (it relied on weak symbols that MinGW
   does not resolve from static libraries).
+- libqrencode is no longer used: the GUI draws its QR codes with the bundled
+  QRKude library, so they are always available in GUI builds. `configure` no
+  longer looks for libqrencode, `--with-qrencode` is gone, and the depends
+  system no longer downloads it.
 - See [dependencies.md](dependencies.md) for the versions of the external
   dependencies.
 

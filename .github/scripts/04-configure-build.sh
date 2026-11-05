@@ -19,14 +19,13 @@ elif [[ ${OS} == "osx" ]]; then
     source "${GITHUB_WORKSPACE}/contrib/mac-cross/env.sh"
     mac_environment "$GITHUB_WORKSPACE"
     gui=qt6
-    qrencode=--with-qrencode
-    if [[ -n "${NO_QT:-}" ]]; then gui=no; qrencode=--without-qrencode; fi
+    if [[ -n "${NO_QT:-}" ]]; then gui=no; fi
     tests=--enable-tests
     if [[ "${MAC_BUILD_TESTS:-yes}" == no ]]; then tests=--disable-tests; fi
     CONFIG_SITE="$MAC_DEPENDS_PREFIX/share/config.site" "$GITHUB_WORKSPACE/configure" \
       --prefix=/ --disable-ccache --disable-maintainer-mode --disable-dependency-tracking \
       --disable-bench --disable-gui-tests --with-libs="$MAC_CONSENSUS_LIBS" \
-      --with-gui="$gui" "$qrencode" "$tests" --with-tx ${BUILD_TAG_OPT}
+      --with-gui="$gui" "$tests" --with-tx ${BUILD_TAG_OPT}
 elif [[ ${OS} == "linux" || ${OS} == "linux-disable-wallet" ]]; then
     if [[ ${OS} == "linux-disable-wallet" ]]; then
         EXTRA_OPTS="--disable-wallet"

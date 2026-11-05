@@ -21,7 +21,6 @@ Build-Depends: debhelper,
  libminiupnpc8-dev | libminiupnpc-dev,
  qt4-qmake, libqt4-dev,
  qttools5-dev-tools, qttools5-dev,
- libqrencode-dev,
  libprotobuf-dev, protobuf-compiler,
  python,
  libzmq3-dev
