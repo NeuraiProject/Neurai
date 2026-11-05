@@ -91,7 +91,7 @@ BOOST_AUTO_TEST_CASE(wallet_network_scope_matches_testnet_and_restores_globals)
             BOOST_CHECK(bNetwork.fSHA256Mining && bNetwork.fOnTestnet && !bNetwork.fOnRegtest);
             const auto params=CreateChainParams(CBaseChainParams::TESTNET);
             BOOST_CHECK_EQUAL(params->GenesisBlock().GetHash().GetHex(),
-                "0000008b384aeffecdab182575dc4e86c9f07f90318c65088532660ed9a8a021");
+                "000000c710413a4265a996d30c86043aedef6a563900f1bc43fea61d5b2dc77d");
             {
                 ScopedTestBlockNetwork reg(CBaseChainParams::REGTEST);
                 BOOST_CHECK(bNetwork.fSHA256Mining && bNetwork.fOnRegtest && !bNetwork.fOnTestnet);

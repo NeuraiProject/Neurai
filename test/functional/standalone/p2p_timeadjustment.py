@@ -56,7 +56,7 @@ class Peer:
         self.thread = threading.Thread(target=self.run, daemon=True)
         address = struct.pack('<Q', 9) + b'\0' * 10 + b'\xff\xff\x7f\0\0\1' + struct.pack('>H', P2P_PORT)
         agent = b'/clock-policy-test:0.1/'
-        version = struct.pack('<iQq', 70030, 9, timestamp) + address * 2
+        version = struct.pack('<iQq', 70031, 9, timestamp) + address * 2
         version += struct.pack('<Q', id(self)) + bytes([len(agent)]) + agent + struct.pack('<i?', 0, True)
         # Send our version before the reader can reply with verack.
         self.send(b'version', version)

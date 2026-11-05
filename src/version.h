@@ -60,17 +60,14 @@ static const int ASSETDATA_VERSION_UPDATED = 70020;
 //! In this version, 'rip5 (messaging and restricted assets)' was introduced
 static const int MESSAGING_RESTRICTED_ASSETS_VERSION = 70026;
 
-//! Protocol version announced on the reset testnet. It refuses peers below it
-//! from the first handshake: nodes of the previous testnet share its message
-//! start and announce 70029. No message format depends on it, so the version
-//! negotiated with a peer stays capped at PROTOCOL_VERSION.
-static const int RESET_TESTNET_VERSION = 70030;
-
-//! Protocol version announced on mainnet and regtest by nodes that carry the
-//! unified fork. Once the tip reaches the fork height (NIP-028 active), they
+//! Protocol version announced by nodes that carry the unified fork. On mainnet
+//! and regtest, once the tip reaches the fork height (NIP-028 active), they
 //! drop peers below it, at handshake and on every tick: 1.0.7 (70028) and 2.0
-//! builds without the mainnet fork height (70029) follow the old rules. Like
-//! RESET_TESTNET_VERSION it changes no message format.
+//! builds without the mainnet fork height (70029) follow the old rules. The
+//! reset testnet refuses peers below it from the first handshake: nodes of the
+//! previous testnets share its message start and announce 70029 or 70030. No
+//! message format depends on it, so the version negotiated with a peer stays
+//! capped at PROTOCOL_VERSION.
 static const int UNIFIED_FORK_VERSION = 70031;
 
 

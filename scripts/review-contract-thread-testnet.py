@@ -21,7 +21,7 @@ thread = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(thread)
 
 COIN = 100_000_000
-GENESIS = '0000008b384aeffecdab182575dc4e86c9f07f90318c65088532660ed9a8a021'
+GENESIS = '000000c710413a4265a996d30c86043aedef6a563900f1bc43fea61d5b2dc77d'
 
 
 class Rpc:

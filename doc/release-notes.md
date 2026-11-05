@@ -92,11 +92,12 @@ Wallets
 Testnet reset
 -------------
 
-Testnet was restarted from a new genesis block (2026-09-26). The new chain:
+Testnet was restarted from a new genesis block (2026-11-05). The new chain:
 
 - uses SHA256d proof of work instead of KAWPOW;
 - keeps the `RUEN` message start and port 19100, but announces protocol
-  70030 and refuses older peers, so earlier versions cannot connect to it;
+  70031 (the mainnet fork version) and refuses older peers, so earlier
+  versions cannot connect to it;
 - stores its data in `testnet/` instead of `testnet7/`. The old `testnet7/`
   directory is not read, and its coins do not exist on the new chain;
 - has new DNS seeds.
@@ -139,6 +140,13 @@ tags):
 - The C6 proof profile (`OP_ZKVERIFY` profile `03`) and `OP_CHECKASSETAUTH`
   (NIP-054) activate at block 10 of the reset testnet with every other rule,
   instead of block 100.
+- Testnet restarted again from a new genesis block (2026-11-05,
+  `000000c7…2dc77d`) and requires protocol 70031: nodes of earlier builds
+  (70030) are refused at handshake. A node refuses to start on a `testnet/`
+  directory of the previous chain (wrong genesis block): remove it, keeping
+  `wallet.dat` if its keys are needed, and start once with
+  `-zapwallettxes=1` to drop the transactions of the previous chain. Pool
+  configurations of the previous chain no longer apply.
 - Restart testnet and regtest nodes once with `-reindex-chainstate` (or
   `-reindex`). Blocks connected by earlier builds have no DEPIN restriction
   undo record, and the node refuses to start until it rebuilds them. Mainnet
@@ -311,8 +319,8 @@ P2P and network
   70028); the minimum peer version is unchanged (70025) until the fork. From
   the fork height on the tip, they refuse and disconnect peers below 70031:
   1.0.7 (70028) and 2.0 builds without the mainnet fork height (70029). The
-  reset testnet announces 70030 and refuses peers below it from the first
-  handshake. `getnetworkinfo` reports the version of the selected network.
+  reset testnet announces 70031 too and refuses peers below it from the first
+  handshake. `getnetworkinfo` reports the version the node announces.
 - **Peers on the other side of the fork.** A peer that sends a header refused
   for the NIP-028 version flag (missing from the fork height, or set before
   it) is disconnected without a ban: its chain is not ours. A node still below
@@ -823,8 +831,8 @@ Result changes:
   `strict_ecdsa_derivation_path` (ecdsa wallets),
   `external_derivation_path`, `internal_derivation_path` and post-quantum key
   information.
-- `getnetworkinfo`: `protocolversion` is the version of the selected network
-  (70031 on mainnet and regtest, 70030 on testnet).
+- `getnetworkinfo`: `protocolversion` is the version the node announces
+  (70031 on every network).
 - `getblockchaininfo`: new `asset_services` with the state of the legacy
   messages and rewards stores.
 - `getsnapshot`: new `block_hash`, `snapshot_hash`, `format` and, for

@@ -12,9 +12,10 @@ activation height H:
     wallet is opened with a different -addresstype;
   * mempool eviction and continued mining after a reorg from above H back to H-2;
   * a reorg down to the genesis block (assets are a pure rule from genesis);
-  * separation from a node of the previous testnet (optional old binary): both
-    keep the "RUEN" magic; the reset testnet announces protocol 70030 and
-    refuses 70029 peers at handshake, and the new genesis keeps the chains apart.
+  * separation from a node of a previous testnet (optional old binary): both
+    keep the "RUEN" magic; the reset testnet announces protocol 70031 and
+    refuses older peers (70029, 70030) at handshake, and the new genesis keeps
+    the chains apart.
 
 Each check prints PASS/FAIL; a JSON report is written next to the data.
 Usage: review-testnet-reset-h10.py [--bindir DIR] [--old-bindir DIR]
@@ -32,7 +33,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-GENESIS = '0000008b384aeffecdab182575dc4e86c9f07f90318c65088532660ed9a8a021'  # reset testnet, 2026-09-26
+GENESIS = '000000c710413a4265a996d30c86043aedef6a563900f1bc43fea61d5b2dc77d'  # reset testnet, 2026-11-05
 H = 10                       # opt-in activation height of the reset testnet
 MATURITY = 5                 # COINBASE_MATURITY_TESTNET
 NIP028_FLAG = 0x40000000     # NIP-028 block version flag, required from H
@@ -239,7 +240,7 @@ def main():
 
         info = a.rpc('getblockchaininfo')
         check('network is testnet', info['chain'] == 'test', info['chain'])
-        check('reset testnet announces protocol 70030', a.rpc('getnetworkinfo')['protocolversion'] == 70030,
+        check('reset testnet announces protocol 70031', a.rpc('getnetworkinfo')['protocolversion'] == 70031,
               a.rpc('getnetworkinfo')['protocolversion'])
         check('chain starts at the reset-testnet genesis', a.rpc('getblockhash', 0) == GENESIS, a.rpc('getblockhash', 0))
 
@@ -358,9 +359,11 @@ def main():
         pre = a.rpc('transfer', ASSET, 10, a.rpc('getnewaddress'))[0]
         check('transfer before H produces an rvn output', MARKER_RVN in a.rpc('getrawtransaction', pre))
         mine(1)                                          # tip 8 (next block 9)
+        # Below H the 'xna' marker is not an asset, as in 1.0.7, so the output
+        # is misplaced.
         expect_error('xna-marker output rejected before H',
                      lambda: send_raw(asset_respend(pre, MARKER_RVN, MARKER_XNA)),
-                     'bad-txns-asset-marker-before-nip040')
+                     'bad-txns-op-xna-asset-not-in-right-script-location')
         mine(1)                                          # tip 9 (next block 10 = H)
         check('tip is H-1', tip() == H - 1, tip())
 
@@ -502,10 +505,10 @@ def main():
         code, output = init_error(args.bindir, directory / 'fresh-nobip44', ['-addresstype=ecdsa', '-bip44=0'])
         check('-addresstype=ecdsa requires -bip44=1', code != 0 and 'requires -bip44=1' in output, output[-400:])
 
-        # ---- separation from the previous testnet --------------------------------
+        # ---- separation from a previous testnet ----------------------------------
         # Same "RUEN" magic: the reset testnet refuses the old node's protocol
-        # (70029) at handshake, even on a manual connection, and the new
-        # genesis keeps the chains apart.
+        # (70029 or 70030) at handshake, even on a manual connection, and the
+        # new genesis keeps the chains apart.
         if args.old_bindir:
             old = TestnetNode(args.old_bindir, directory / 'old')
             nodes.append(old)
@@ -516,9 +519,10 @@ def main():
             old.rpc('addnode', f'127.0.0.1:{a.p2p_port}', 'onetry')
             time.sleep(10)
             log = a.debug_log()
-            check('previous-testnet node refused at handshake (protocol 70029)',
-                  'using obsolete version 70029; disconnecting' in log and
-                  all(p.get('version') != 70029 for p in a.rpc('getpeerinfo')), a.rpc('getpeerinfo'))
+            old_version = old.rpc('getnetworkinfo')['protocolversion']
+            check('previous-testnet node refused at handshake (protocol %d)' % old_version,
+                  old_version < 70031 and 'using obsolete version %d; disconnecting' % old_version in log and
+                  all(p.get('version') != old_version for p in a.rpc('getpeerinfo')), a.rpc('getpeerinfo'))
             check('no misbehaviour loop with the previous-testnet node', 'Misbehaving' not in log,
                   log.count('Misbehaving'))
             check('previous-testnet node has another genesis', old.rpc('getblockhash', 0) != GENESIS,

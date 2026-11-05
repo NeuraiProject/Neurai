@@ -96,7 +96,7 @@ class Peer:
         self.sock.settimeout(5)
         addr = struct.pack('<Q', 9) + b'\0' * 10 + b'\xff\xff\x7f\0\0\1' + struct.pack('>H', 29800)
         ua = b'/work-admission-test/'
-        self.send('version', struct.pack('<iQq', 70030, 9, int(time.time())) + addr + addr +
+        self.send('version', struct.pack('<iQq', 70031, 9, int(time.time())) + addr + addr +
                   struct.pack('<Q', 734928) + bytes([len(ua)]) + ua + struct.pack('<i?', 0, False))
         while True:
             command, _ = self.receive()

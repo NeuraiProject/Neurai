@@ -507,11 +507,11 @@ public:
         nKAAAWWWPOWActivationTime = 0xFFFFFFFF;
         nKAWPOWActivationTime = nKAAAWWWPOWActivationTime;
 
-        // Genesis of the reset testnet (2026-09-26): fixed time, nonce and hash,
+        // Genesis of the reset testnet (2026-11-05): fixed time, nonce and hash,
         // same coinbase as before. Every node starts from this block.
-        static const uint32_t TESTNET_GENESIS_TIME = 1790380800; // 2026-09-26 00:00:00 UTC
-        static const uint32_t TESTNET_GENESIS_NONCE = 3409810;
-        static const char* TESTNET_GENESIS_HASH = "0000008b384aeffecdab182575dc4e86c9f07f90318c65088532660ed9a8a021";
+        static const uint32_t TESTNET_GENESIS_TIME = 1793836800; // 2026-11-05 00:00:00 UTC
+        static const uint32_t TESTNET_GENESIS_NONCE = 2915850;
+        static const char* TESTNET_GENESIS_HASH = "000000c710413a4265a996d30c86043aedef6a563900f1bc43fea61d5b2dc77d";
 
         uint32_t nGenesisTime = TESTNET_GENESIS_TIME;
         genesis = CreateGenesisBlock(nGenesisTime, TESTNET_GENESIS_NONCE, 0x1e00ffff, 2, 50000 * COIN);
@@ -630,11 +630,12 @@ public:
         nMaxReorganizationDepthPost = 120;
         nMinReorganizationPeers = 6;
         nMinReorganizationAge = 60 * 60 * 12; // 12 hours
-        // Separates the reset testnet from nodes of the previous one, which
-        // share the "RUEN" message start and announce protocol 70029.
-        nProtocolVersion = RESET_TESTNET_VERSION;
-        nMinPeerProtocolVersion = RESET_TESTNET_VERSION;
-        nForkMinPeerProtocolVersion = RESET_TESTNET_VERSION;
+        // The mainnet fork version, required from the first handshake: it
+        // separates the reset testnet from nodes of the previous one, which
+        // share the "RUEN" message start and announce protocol 70030.
+        nProtocolVersion = UNIFIED_FORK_VERSION;
+        nMinPeerProtocolVersion = UNIFIED_FORK_VERSION;
+        nForkMinPeerProtocolVersion = UNIFIED_FORK_VERSION;
 
         nAssetActivationHeight = 1; // Asset activated block height
         nMessagingActivationBlock = 1; // Messaging activated block height
