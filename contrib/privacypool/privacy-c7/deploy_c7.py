@@ -17,6 +17,15 @@ report with every transaction. On testnet it never mines and waits for public
 miners; on regtest it mines the confirmations itself.
 
     deploy_c7.py --rpc-config rpc.json --name C7TEST1022A --out <dir>
+
+Without the C6 constructors, --leaf-template takes the contract from a pinned
+C7 config instead. A leaf depends on its instance only through the context,
+pushed once, and the pool name, pushed four times; the name length also sets
+a few offsets. The template's leaves are rewritten with the new context and a
+name of the same length, after its own leaves rebuild its pinned commitment.
+
+    deploy_c7.py --rpc-config rpc.json --name C7TEST1106A --out <dir> \\
+        --leaf-template c7-testnet.json
 """
 import argparse
 import base64
@@ -49,7 +58,8 @@ class RPC:
         s = self.s
         body = json.dumps({"id": "c7-birth", "method": method, "params": params}).encode()
         auth = base64.b64encode((s["user"] + ":" + s["password"]).encode()).decode()
-        req = urllib.request.Request(s.get("url", "http://127.0.0.1:" + str(s["port"])), body,
+        url = s["url"] if "url" in s else "http://127.0.0.1:" + str(s["port"])
+        req = urllib.request.Request(url, body,
                                      {"Authorization": "Basic " + auth, "Content-Type": "application/json"})
         try:
             response = urllib.request.urlopen(req, timeout=300)
@@ -66,6 +76,59 @@ def compact(n):
     return bytes([n]) if n < 253 else b"\xfd" + struct.pack("<H", n)
 
 
+def tagged(tag, data):
+    t = hashlib.sha256(tag.encode()).digest()
+    return hashlib.sha256(t + t + data).digest()
+
+
+def commitment(leaves):
+    """AuthScript program of the leaves: the MAST sorted by form name, as
+    BuildMast() in src/privacy/c6_config.cpp and c7-transaction.js build it."""
+    def tree(items):
+        if len(items) == 1:
+            script = items[0]["script"]
+            return tagged("NeuraiAuthLeaf", b"\x01" + compact(len(script)) + script)
+        cut = 1
+        while cut * 2 < len(items):
+            cut *= 2
+        a, b = tree(items[:cut]), tree(items[cut:])
+        return tagged("NeuraiAuthBranch", min(a, b) + max(a, b))
+    return tagged("NeuraiAuthScript", b"\x04\x00" + tree(sorted(leaves, key=lambda l: l["form"])))
+
+
+def template_contract(path, vks, identity, ctx):
+    """Contract of a new instance from a pinned C7 config (see --leaf-template).
+    Returns (commitment, leaves, opening, state script)."""
+    t = json.loads(path.read_text())
+    t = t.get("config", t)
+    manifest, deployment = t["manifest"], t["deployment"]
+    if manifest.get("profile") != PROFILE or deployment.get("kind") != "xna":
+        raise ValueError("leaf template: a C7 XNA config is required")
+    if any(bytes.fromhex(manifest["vks"][op]) != vks[op] for op in OPERATIONS):
+        raise ValueError("leaf template: its verifying keys are not the C6 ones")
+    old, new = manifest["identity"].encode(), identity.encode()
+    if len(old) != len(new):
+        raise ValueError("leaf template: the pool name must have the template's length, " + str(len(old)) + " bytes")
+    old_push, new_push = compact(len(old)) + old, compact(len(new)) + new
+    old_ctx = bytes.fromhex(manifest["context"])
+    rows = [{"form": l["form"], "script": bytes.fromhex(l["script"]), "args": l["args"]} for l in deployment["leaves"]]
+    if commitment(rows) != bytes.fromhex(deployment["commitment"]):
+        raise ValueError("leaf template: its leaves do not rebuild its commitment")
+    leaves = []
+    for row in rows:
+        s = row["script"]
+        if s.count(old_ctx) != 1 or s.count(old_push) != 4 or s.count(old) != 4:
+            raise ValueError("leaf template: unexpected instance bytes in leaf " + row["form"])
+        leaves.append(dict(row, script=s.replace(old_ctx, ctx).replace(old_push, new_push)))
+    C = commitment(leaves)
+    opening = bytes.fromhex(deployment["anchor"]["opening"])
+    state = bytes.fromhex(deployment["anchor"]["script"])
+    if (state[:34] != b"\x51\x20" + bytes.fromhex(deployment["commitment"]) or state[34:].count(old_push) != 1 or
+            state[-33:] != c7_ref.poseidon_bytes(opening) + b"\x75"):
+        raise ValueError("leaf template: unexpected birth state")
+    return C, leaves, opening, b"\x51\x20" + C + state[34:].replace(old_push, new_push)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--rpc-config", type=Path, required=True, help='{"port": n, "user": "...", "password": "..."}')
@@ -74,11 +137,13 @@ def main():
     p.add_argument("--c6-config", type=Path, default=HERE.parent / "privacy-c6/c6-testnet.json",
                    help="C6 pool config: source of the verifying keys and proving file pins")
     p.add_argument("--repo-root", type=Path, default=HERE.parents[2], help="checkout with scripts/ and NIP/bench/")
+    p.add_argument("--leaf-template", type=Path,
+                   help="pinned C7 config whose leaves are rewritten for this instance, instead of the C6 constructors")
     a = p.parse_args()
     if not a.name.isalnum() or not a.name.isupper() or not 3 <= len(a.name) <= 20:
         raise ValueError("root name: 3 to 20 upper-case letters and digits")
     a.out.mkdir(parents=True, exist_ok=False)
-    Contract, j = c7_contract.load(a.repo_root)
+    Contract, j = (None, None) if a.leaf_template else c7_contract.load(a.repo_root)
 
     report = {"success": False, "scope": __doc__.split("\n")[0], "checks": [], "transactions": [], "phase": "preflight",
               "keys": "C6 PUBLIC TEST keys reused; not production keys"}
@@ -138,6 +203,11 @@ def main():
         vks = {op: bytes.fromhex(c6["manifest"]["vks"][op]) for op in OPERATIONS}
         check("C6 verifying keys match their pins",
               all(hashlib.sha256(vks[op]).hexdigest() == c6["manifest"]["vk_sha256"][op] for op in OPERATIONS))
+        if a.leaf_template:
+            # Everything but the context is checked before any coin is spent.
+            template_contract(a.leaf_template, vks, a.name + "#POOL", bytes(32))
+            check("leaf template rebuilds its pinned commitment", True)
+            report["leafTemplate"] = str(a.leaf_template)
         try:
             existing = bool(node.call("getassetdata", a.name))
         except RuntimeError as e:
@@ -162,14 +232,22 @@ def main():
         domain = c7_ref.pool_domain(genesis, issuance["txid"], emission_vout, identity)
         asset = c7_ref.xna_asset_id()
         ctx = c7_ref.pool_context(domain, asset)
-        check("context agrees with the C6 constructor", ctx == j.tr.P(b"NeuraiPoolCtx\x01" + domain + asset +
-                                                                    struct.pack("<Q", 1) + bytes(32)))
-        pool = Contract(vks, ctx, j.tr.EMPTY_W_DATA, identity.encode())
-        C, leaves, controls, guard = pool.construct()
-        check("nine leaves within the script limits",
-              len(leaves) == 9 and all(len(s.bytes()) <= 10000 and s.nops() <= 512 for s in leaves.values()))
-        opening = j.packets.World().state()
-        state = j.c.asset_script(C, identity.encode(), COIN, j.tr.P(opening))
+        if a.leaf_template:
+            C, rows, opening, state = template_contract(a.leaf_template, vks, identity, ctx)
+            # A rewrite changes no opcode, so the template's operation counts hold.
+            check("nine leaves within the script size limit",
+                  len(rows) == 9 and all(len(r["script"]) <= 10000 for r in rows))
+        else:
+            check("context agrees with the C6 constructor", ctx == j.tr.P(b"NeuraiPoolCtx\x01" + domain + asset +
+                                                                        struct.pack("<Q", 1) + bytes(32)))
+            pool = Contract(vks, ctx, j.tr.EMPTY_W_DATA, identity.encode())
+            C, leaves, controls, guard = pool.construct()
+            check("nine leaves within the script limits",
+                  len(leaves) == 9 and all(len(s.bytes()) <= 10000 and s.nops() <= 512 for s in leaves.values()))
+            rows = [{"form": f, "script": s.bytes(), "args": pool.leaf(f)[1]} for f, s in leaves.items()]
+            opening = j.packets.World().state()
+            state = j.c.asset_script(C, identity.encode(), COIN, j.tr.P(opening))
+        check("leaves rebuild the commitment", commitment(rows) == C)
 
         # 3. Birth: state, burn of NAME!, change.
         funding = sent("birth-funding", "sendtoaddress", address, 2)
@@ -184,7 +262,9 @@ def main():
         raw += b"".join(bytes.fromhex(t)[::-1] + struct.pack("<I", n) + b"\x00" + b"\xff" * 4 for t, n in points)
         outputs = [(0, state), (0, burn_script), (190_000_000, pay)]
         raw += compact(len(outputs)) + b"".join(struct.pack("<Q", v) + compact(len(s)) + s for v, s in outputs)
-        raw += b"\x00" + bytes(4)  # version 3: empty reference inputs (NIP-014), then the lock time
+        # Version 3 without reference inputs: no vrefin field (NIP-014 flag 2 is
+        # unset), so the lock time follows the outputs.
+        raw += bytes(4)
         signed = node.call("signrawtransaction", raw.hex())
         check("birth signatures complete", signed["complete"])
         (a.out / "birth.hex").write_text(signed["hex"] + "\n")
@@ -208,7 +288,7 @@ def main():
                       "ownerBurn": birth["txid"] + ":1",
                       "anchor": {"height": block["height"], "hash": block["hash"], "outpoint": birth["txid"] + ":0",
                                  "opening": opening.hex(), "script": state.hex()},
-                      "leaves": [{"form": f, "script": s.bytes().hex(), "args": pool.leaf(f)[1]} for f, s in leaves.items()]}
+                      "leaves": [{"form": r["form"], "script": r["script"].hex(), "args": r["args"]} for r in rows]}
         config = {"manifest": manifest, "deployment": deployment, "domain": domain.hex(), "assetId": asset.hex(),
                   "network": NETWORK_NAME[chain], "expectedGenesis": manifest["network"], "expectedCommitment": C.hex(),
                   "artifacts": c6["artifacts"], "artifactBaseUrl": "/privacy-c7/", "reservations": []}

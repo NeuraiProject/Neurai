@@ -142,6 +142,22 @@ The contract changes only the publication framing (`c7_contract.py`):
 python3 deploy_c7.py --rpc-config rpc.json --name C7TEST1023A --out out/
 ```
 
+Without the C6 constructors, `--leaf-template` takes the contract from a pinned C7 config:
+
+```sh
+python3 deploy_c7.py --rpc-config rpc.json --name C7TEST1106A --out out/ --leaf-template c7-testnet.json
+```
+
+A leaf depends on its instance only through the context, pushed once, and the pool name, pushed four times. The name
+length also sets a few offsets, so the new name must have the template's length (`C7TEST` plus five characters). The
+tool rebuilds the template's pinned commitment from its leaves before it spends anything. It then writes the context
+and the name of the new instance into them. The C6 and C7 testnet leaves confirm the rule: once the context and the
+name are swapped, the withdrawal leaves, which have no publication, are identical except for the offsets that depend
+on the name length. The other leaves differ only in the C7 publication framing.
+
+`rpc.json` takes `{"url": "http://host:port", "user": "...", "password": "..."}` or `{"port": n, ...}` for a local
+node.
+
 It prints the pin `{identity, emission, commitment}` and writes `c7-testnet.json`. For neurai-qt, the `privacy-c7`
 folder holds that config and the C6 proving files (`D`, `T1`, `T2`, `T3`, `W` `.wasm` and `.zkey`). Until the pin is
 added to `C7Pins()` in `src/privacy/c6_config.cpp`, the wallet loads the instance only with `-privacypoolunpinned`,
@@ -149,14 +165,17 @@ and shows that it is not pinned.
 
 ## Testnet instance
 
+Born on the testnet restarted on 2026-11-05 (genesis `000000c7…2dc77d`), with `--leaf-template` from the previous
+instance `C7TEST1023A#POOL`, whose chain no longer exists.
+
 | Field | Value |
 |---|---|
-| Identity | `C7TEST1023A#POOL` (owner token `C7TEST1023A!` burned at the birth output 1) |
-| Emission | `8bc6445bb44d6adb2e9c5d59b5ed1e7f6971662a8a571888bc1120060901e3a2:3` |
-| Birth | `8336537aab139fa78e9a219affaefa7f2c86eb8787c36600c6a270babd8763fa:0`, height 75836 |
-| Domain | `8d3b692f54fdd047b0cbf011dcdace31935e7e3cd63ac606aa3a6ee59e674142` |
-| Context | `017622c8fc4f395c371b25584a670112e73760ee1da24cbcb1e3821885f4944d` |
-| Commitment | `a90ce546a03d4b6a83ba8d7680eced7f8adaf1ff7cf71c4fa9f35badcd158be2` (pinned in `C7Pins()`) |
+| Identity | `C7TEST1106A#POOL` (owner token `C7TEST1106A!` burned at the birth output 1) |
+| Emission | `a2b016cd54fa1675ffd06deeb7cf3a7ac9541f83272a692449e343afa55af4b6:3` |
+| Birth | `a226e8ebc29d663fa25a0145d8d20743fdd5c38c348b531f516af29a6114457d:0`, height 1547 |
+| Domain | `5f329743838515cc53e13570be4e2a617c1e345e5b0689fb609c4fd5031adff9` |
+| Context | `1bf9f745086577625eb79655b937804908137b99b098f7c9102d17a1ce449ad7` |
+| Commitment | `c5ea4bd1506d6b951348263d171d92c490421575aa3c8b3def0defc823f4b762` (pinned in `C7Pins()`) |
 
 `c7-testnet.json` is its config. neurai-qt uses this folder as `privacy-c7` once the C6 proving files are copied into
 it (`D`, `T1`, `T2`, `T3`, `W` `.wasm` and `.zkey`, the same files and digests as `../privacy-c6`). They are not stored

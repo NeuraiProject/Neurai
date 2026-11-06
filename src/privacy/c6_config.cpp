@@ -31,9 +31,10 @@ struct C7Pin {
 const std::vector<C7Pin>& C7Pins()
 {
     static const std::vector<C7Pin> pins = {
-        // Born on testnet at height 75836, birth 8336537aab139fa78e9a219affaefa7f2c86eb8787c36600c6a270babd8763fa.
-        {"testnet", "C7TEST1023A#POOL", "8bc6445bb44d6adb2e9c5d59b5ed1e7f6971662a8a571888bc1120060901e3a2:3",
-         "a90ce546a03d4b6a83ba8d7680eced7f8adaf1ff7cf71c4fa9f35badcd158be2"},
+        // Born on the testnet restarted on 2026-11-05, at height 1547, birth
+        // a226e8ebc29d663fa25a0145d8d20743fdd5c38c348b531f516af29a6114457d.
+        {"testnet", "C7TEST1106A#POOL", "a2b016cd54fa1675ffd06deeb7cf3a7ac9541f83272a692449e343afa55af4b6:3",
+         "c5ea4bd1506d6b951348263d171d92c490421575aa3c8b3def0defc823f4b762"},
     };
     return pins;
 }
