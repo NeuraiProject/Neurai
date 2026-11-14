@@ -255,4 +255,114 @@ BOOST_FIXTURE_TEST_SUITE(asset_reissue_tests, BasicTestingSetup)
         BOOST_CHECK(both.setNewRestrictedVerifierToRemove.empty());
     }
 
+    BOOST_AUTO_TEST_CASE(reissue_keeps_the_block_the_asset_was_issued_in)
+    {
+        // The data of a reissue that is not on disk yet carries no block. The
+        // lookup still answers with the block the asset was issued in, also
+        // for the next reissue and for the undo, which store it again.
+        SelectParams(CBaseChainParams::MAIN);
+        fAssetIndex = true;
+        ResetGlobalAssetsCache();
+        CAssetsCache cache;
+
+        const std::string name = "ISSUEBLOCK";
+        const std::string address = GetParams().GlobalBurnAddress();
+        const int issueHeight = 1234;
+        const uint256 issueBlock = uint256S("c0ffee0000000000000000000000000000000000000000000000000000000001");
+        BOOST_REQUIRE(cache.AddNewAsset(CNewAsset(name, CAmount(100 * COIN), 0, 1, 0, ""), address, issueHeight, issueBlock));
+
+        CNewAsset found;
+        int height = -1;
+        uint256 block = uint256S("01");
+        BOOST_REQUIRE(cache.GetAssetMetaDataIfExists(name, found, height, block));
+        BOOST_CHECK_EQUAL(height, issueHeight);
+        BOOST_CHECK(block == issueBlock);
+
+        const CReissueAsset first(name, CAmount(1 * COIN), -1, 1, "");
+        const COutPoint firstOut(uint256S("01"), 1);
+        BOOST_REQUIRE(cache.AddReissueAsset(first, address, firstOut));
+        height = -1;
+        block = uint256S("01");
+        BOOST_REQUIRE(cache.GetAssetMetaDataIfExists(name, found, height, block));
+        BOOST_CHECK_EQUAL(found.nAmount, CAmount(101 * COIN));
+        BOOST_CHECK_EQUAL(height, issueHeight);
+        BOOST_CHECK(block == issueBlock);
+
+        // A second reissue on top of the first, and its undo
+        const CReissueAsset second(name, CAmount(2 * COIN), -1, 1, "");
+        const COutPoint secondOut(uint256S("02"), 1);
+        BOOST_REQUIRE(cache.AddReissueAsset(second, address, secondOut));
+        for (const auto& reissue : cache.setNewReissueToAdd) {
+            BOOST_CHECK_EQUAL(reissue.blockHeight, issueHeight);
+            BOOST_CHECK(reissue.blockHash == issueBlock);
+        }
+        std::vector<std::pair<std::string, CBlockAssetUndo> > undoBlockData;
+        BOOST_REQUIRE(cache.RemoveReissueAsset(second, address, secondOut, undoBlockData));
+        BOOST_REQUIRE_EQUAL(cache.setNewReissueToRemove.size(), 1u);
+        BOOST_CHECK_EQUAL(cache.setNewReissueToRemove.begin()->blockHeight, issueHeight);
+        BOOST_CHECK(cache.setNewReissueToRemove.begin()->blockHash == issueBlock);
+
+        // An asset that does not exist leaves no block behind
+        height = -1;
+        block = uint256S("01");
+        BOOST_CHECK(!cache.GetAssetMetaDataIfExists("NOSUCHASSET", found, height, block));
+        BOOST_CHECK_EQUAL(height, 0);
+        BOOST_CHECK(block.IsNull());
+    }
+
+    BOOST_AUTO_TEST_CASE(asset_issued_again_over_a_pending_removal)
+    {
+        // The cache below holds the removal of an asset that was issued and
+        // reissued in blocks that were disconnected. A cache layered on it
+        // issues the name again: there the asset exists, with the properties
+        // of the new issue, and it cannot be issued twice.
+        SelectParams(CBaseChainParams::MAIN);
+        fAssetIndex = true;
+        ResetGlobalAssetsCache();
+
+        const std::string name = "TWICEISSUED";
+        const std::string address = GetParams().GlobalBurnAddress();
+        const CNewAsset first(name, CAmount(100 * COIN), 0, 1, 0, "");
+        const CReissueAsset reissue(name, CAmount(50 * COIN), 2, 1, "");
+        const COutPoint reissueOut(uint256S("01"), 1);
+        std::vector<std::pair<std::string, CBlockAssetUndo> > undoBlockData;
+        undoBlockData.emplace_back(std::make_pair(name, CBlockAssetUndo{false, true, "", 0, ASSET_UNDO_INCLUDES_VERIFIER_STRING, false, ""}));
+
+        BOOST_REQUIRE(passets->AddNewAsset(first, address, 10, uint256S("0a")));
+        BOOST_REQUIRE(passets->AddReissueAsset(reissue, address, reissueOut));
+        BOOST_REQUIRE(passets->RemoveReissueAsset(reissue, address, reissueOut, undoBlockData));
+        BOOST_CHECK_EQUAL(passets->mapReissuedAssetData.count(name), 1u);
+        BOOST_REQUIRE(passets->RemoveNewAsset(first, address));
+
+        CNewAsset found;
+        BOOST_CHECK(!passets->GetAssetMetaDataIfExists(name, found));
+        BOOST_CHECK(!passets->CheckIfAssetExists(name));
+        // The reissue data went with the asset
+        BOOST_CHECK_EQUAL(passets->mapReissuedAssetData.count(name), 0u);
+
+        CAssetsCache block;
+        BOOST_CHECK(!block.GetAssetMetaDataIfExists(name, found));
+        const CNewAsset second(name, CAmount(1000 * COIN), 4, 0, 0, "");
+        BOOST_REQUIRE(block.AddNewAsset(second, address, 20, uint256S("0b")));
+        int height = -1;
+        uint256 hash;
+        BOOST_REQUIRE(block.GetAssetMetaDataIfExists(name, found, height, hash));
+        BOOST_CHECK_EQUAL(found.nAmount, CAmount(1000 * COIN));
+        BOOST_CHECK_EQUAL((int)found.units, 4);
+        BOOST_CHECK_EQUAL(height, 20);
+        BOOST_CHECK(hash == uint256S("0b"));
+        BOOST_CHECK(block.CheckIfAssetExists(name));
+        BOOST_CHECK(!block.AddNewAsset(second, address, 20, uint256S("0b")));
+        // The cache below still holds the removal
+        BOOST_CHECK(!passets->GetAssetMetaDataIfExists(name, found));
+
+        // ...until the block is connected
+        BOOST_REQUIRE(block.Flush());
+        BOOST_REQUIRE(passets->GetAssetMetaDataIfExists(name, found, height, hash));
+        BOOST_CHECK_EQUAL(found.nAmount, CAmount(1000 * COIN));
+        BOOST_CHECK_EQUAL((int)found.units, 4);
+        BOOST_CHECK_EQUAL(height, 20);
+        BOOST_CHECK(passets->setNewAssetsToRemove.empty());
+    }
+
 BOOST_AUTO_TEST_SUITE_END()

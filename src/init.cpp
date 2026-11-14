@@ -666,6 +666,7 @@ std::string HelpMessage(HelpMessageMode mode)
         strUsage += HelpMessageOpt("-depinstateheight=<n>", "Override the DEPIN transfer state (open/close/seal) activation height (regtest-only)");
         strUsage += HelpMessageOpt("-rbfbanheight=<n>", "Override the no-RBF sequence rule activation height (regtest-only)");
         strUsage += HelpMessageOpt("-consensuscleanupheight=<n>", "Override the consensus cleanup (BIP-54 port) activation height (regtest-only)");
+        strUsage += HelpMessageOpt("-minertemplatefailures=<n>", "Refuse the first <n> block templates the internal miner asks for (regtest-only)");
         strUsage += HelpMessageOpt("-assetflushcrashpoint=<n>", "Simulate a crash while writing (1: before the asset databases, 2: between them, at -assetflushcrashheight) or recovering (3) the asset state (regtest-only)");
     }
     strUsage += HelpMessageOpt("-debug=<category>", strprintf(_("Output debugging information (default: %u, supplying <category> is optional)"), 0) + ". " +

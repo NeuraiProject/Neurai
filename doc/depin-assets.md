@@ -61,3 +61,21 @@ against earlier transactions of the block being built.
   state operation per asset are accepted to the mempool. Pending operations are
   judged again whenever the tip changes, also after a reorganization, and the
   ones that are no longer valid are dropped.
+
+## Known limitation: `verifychain` at check level 4
+
+This also concerns the tags and restrictions of restricted assets.
+
+`verifychain` at check level 4, and `-checklevel=4` at start-up, undo the last
+blocks in memory and connect them again. All of them are undone into a single
+asset cache. When two of those blocks changed the same piece of asset state,
+that cache keeps the value restored by the more recent of the two, and an older
+block that depended on the earlier value is judged against the wrong one. This
+has been observed with the verifier string of a restricted asset that changed
+twice within the blocks being checked: a valid transfer in an older block was
+reported as unconnectable.
+
+Level 4 can produce false positives in these scenarios. Such a failure alone
+does not prove corruption; it does not rule out real corruption either. Normal
+validation and reorganisations undo and connect each block with a cache of its
+own and are not affected. The default check level is 3.

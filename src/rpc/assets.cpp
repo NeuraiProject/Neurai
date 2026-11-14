@@ -2415,6 +2415,12 @@ UniValue listaddressesfortag(const JSONRPCRequest& request)
                 + HelpExampleRpc("listaddressesfortag", "\"#TAG\"")
         );
 
+    // The addresses of a tag are only recorded with the asset index. Without
+    // it the listing is empty, which reads as "no address has this tag".
+    if (!fAssetIndex)
+        throw JSONRPCError(RPC_MISC_ERROR, "listaddressesfortag requires -assetindex, which requires a -reindex. "
+                                           "Use checkaddresstag or listtagsforaddress to ask about one address.");
+
     if (!prestricteddb)
         throw JSONRPCError(RPC_DATABASE_ERROR, "Restricted asset database not available");
 

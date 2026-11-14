@@ -414,6 +414,8 @@ public :
     //! Returns true if an asset with the name exists, and it was able to get the asset metadata from database
     bool GetAssetMetaDataIfExists(const std::string &name, CNewAsset &asset);
     bool GetAssetMetaDataIfExists(const std::string &name, CNewAsset &asset, int& nHeight, uint256& blockHash);
+    //! The block an asset was issued in, which a reissue does not change. False, with 0 and null, when it is not recorded.
+    bool GetAssetIssueBlock(const std::string& name, int& nHeight, uint256& blockHash);
 
     //! Returns true if the Asset Verifier String was found for an asset_name, if fSkipTempCache is true, it will only search passets pointer and databases
     bool GetAssetVerifierStringIfExists(const std::string &name, CNullAssetTxVerifierString& verifier, bool fSkipTempCache = false);

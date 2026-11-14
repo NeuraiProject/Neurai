@@ -310,6 +310,38 @@ covenants.md. -->
   `unfreezeaddress`, `freezedepin` and `unfreezedepin`, where the tag or the
   restriction used to be recorded for another address. Coins can still be sent
   to script-hash addresses. See [depin-assets.md](depin-assets.md).
+- **An asset name issued again after a reorganisation is the new asset on
+  every node.** A node that disconnects the block that issued an asset keeps
+  that removal in memory until its asset state is next written to disk. Until
+  then it judged a transaction that used the name in the same block that issued
+  it again as if the asset did not exist, while nodes that never connected the
+  disconnected block accepted it: the two could disagree on a block. After a
+  reissue of the disconnected asset the node could also keep its properties
+  (amount, units, reissuable, IPFS) for the new asset of that name, and write
+  them to disk. The lookups of assets, verifier strings, tags, restrictions and
+  DEPIN transfer states now read the block being connected before the pending
+  changes below it, and removing or issuing an asset drops the reissue data
+  kept under its name. This is not a rule change: the fixed node accepts
+  exactly the blocks a node that never saw the disconnected block accepts.
+- **A transaction the mempool refuses is not left in it.** One pending change
+  per tag and address, and one pending freeze and unfreeze per restricted
+  asset, are accepted. The transaction that repeated one was refused
+  (`bad-txns-adding-tag-already-in-mempool`,
+  `bad-txns-remove-tag-already-in-mempool`,
+  `bad-txns-global-freeze-already-in-mempool`,
+  `bad-txns-global-unfreeze-already-in-mempool`) after it had been stored, and
+  stayed in the mempool. Once the first one confirmed it could not be mined:
+  the next block template failed, and a node running with `-checkmempool`
+  stopped. These rules are now applied before the transaction is stored.
+- `listaddressesfortag` returns an error on a node without `-assetindex`,
+  which is the only place the addresses of a tag are recorded. It used to
+  return an empty list.
+- `listassets` (verbose) and the asset data sent to peers report the block an
+  asset was issued in. After two reissues of an asset between two writes of the
+  asset database, or after a reissue was disconnected, the height and block
+  hash were not set; and an asset issued under the name of one that had been
+  disconnected could be stored with the block of that earlier asset. Entries
+  written by earlier versions keep what they have.
 
 ### No-RBF sequence rule
 

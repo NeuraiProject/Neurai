@@ -1150,6 +1150,43 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
             }
         }
 
+        // One pending change per tag and address, and one pending freeze and
+        // unfreeze per restricted asset. A transaction that repeats one is
+        // refused here, before it is stored: the bookkeeping below only
+        // records the ones that were accepted.
+        if (AreAssetsDeployed()) {
+            std::set<std::pair<std::string, std::string> > setTagsAdded, setTagsRemoved;
+            std::set<std::string> setGlobalFreezes, setGlobalUnfreezes;
+            for (const auto& out : tx.vout) {
+                if (out.scriptPubKey.IsNullGlobalRestrictionAssetTxDataScript()) {
+                    CNullAssetTxData globalNullData;
+                    // DEPIN state operations are tracked in mapDepinStateChanges above
+                    if (!GlobalAssetNullDataFromScript(out.scriptPubKey, globalNullData) || IsAssetNameADEPIN(globalNullData.asset_name))
+                        continue;
+                    if (globalNullData.flag == 1) {
+                        if (pool.mapGlobalFreezingAssetTransactions.count(globalNullData.asset_name) || !setGlobalFreezes.insert(globalNullData.asset_name).second)
+                            return state.DoS(0, false, REJECT_INVALID, "bad-txns-global-freeze-already-in-mempool");
+                    } else if (globalNullData.flag == 0) {
+                        if (pool.mapGlobalUnFreezingAssetTransactions.count(globalNullData.asset_name) || !setGlobalUnfreezes.insert(globalNullData.asset_name).second)
+                            return state.DoS(0, false, REJECT_INVALID, "bad-txns-global-unfreeze-already-in-mempool");
+                    }
+                } else if (out.scriptPubKey.IsNullAssetTxDataScript()) {
+                    CNullAssetTxData addressNullData;
+                    std::string address;
+                    if (!AssetNullDataFromScript(out.scriptPubKey, addressNullData, address) || !IsAssetNameAQualifier(addressNullData.asset_name))
+                        continue;
+                    const auto tag = std::make_pair(address, addressNullData.asset_name);
+                    if (addressNullData.flag == (int) QualifierType::ADD_QUALIFIER) {
+                        if (pool.mapAddressAddedTag.count(tag) || !setTagsAdded.insert(tag).second)
+                            return state.DoS(0, false, REJECT_INVALID, "bad-txns-adding-tag-already-in-mempool");
+                    } else {
+                        if (pool.mapAddressRemoveTag.count(tag) || !setTagsRemoved.insert(tag).second)
+                            return state.DoS(0, false, REJECT_INVALID, "bad-txns-remove-tag-already-in-mempool");
+                    }
+                }
+            }
+        }
+
         if (test_accept) {
             // Tx was accepted, but not added
             return true;
@@ -1236,43 +1273,28 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
                     CNullAssetTxData globalNullData;
                     // DEPIN state operations are tracked in mapDepinStateChanges above
                     if (GlobalAssetNullDataFromScript(out.scriptPubKey, globalNullData) && !IsAssetNameADEPIN(globalNullData.asset_name)) {
+                        // A repeated one was refused before the transaction was stored
                         if (globalNullData.flag == 1) {
-                            if (pool.mapGlobalFreezingAssetTransactions.count(globalNullData.asset_name)) {
-                                return state.DoS(0, false, REJECT_INVALID, "bad-txns-global-freeze-already-in-mempool");
-                            } else {
-                                pool.mapGlobalFreezingAssetTransactions[globalNullData.asset_name].insert(tx.GetHash());
-                                pool.mapHashGlobalFreezingAssetTransactions[tx.GetHash()].insert(globalNullData.asset_name);
-                            }
+                            pool.mapGlobalFreezingAssetTransactions[globalNullData.asset_name].insert(tx.GetHash());
+                            pool.mapHashGlobalFreezingAssetTransactions[tx.GetHash()].insert(globalNullData.asset_name);
                         } else if (globalNullData.flag == 0) {
-                            if (pool.mapGlobalUnFreezingAssetTransactions.count(globalNullData.asset_name)) {
-                                return state.DoS(0, false, REJECT_INVALID, "bad-txns-global-unfreeze-already-in-mempool");
-                            } else {
-                                pool.mapGlobalUnFreezingAssetTransactions[globalNullData.asset_name].insert(tx.GetHash());
-                                pool.mapHashGlobalUnFreezingAssetTransactions[tx.GetHash()].insert(globalNullData.asset_name);
-                            }
+                            pool.mapGlobalUnFreezingAssetTransactions[globalNullData.asset_name].insert(tx.GetHash());
+                            pool.mapHashGlobalUnFreezingAssetTransactions[tx.GetHash()].insert(globalNullData.asset_name);
                         }
                     }
                 } else if (out.scriptPubKey.IsNullAssetTxDataScript()) {
                     // We need to track all tags that are being adding to address, that live in the mempool
                     // This will allow us to keep the mempool clean, and only allow one tag per address at a time into the mempool
+                    // (a repeated one was refused before the transaction was stored)
                     CNullAssetTxData addressNullData;
                     std::string address;
                     if (AssetNullDataFromScript(out.scriptPubKey, addressNullData, address)) {
                         if (IsAssetNameAQualifier(addressNullData.asset_name)) {
                             if (addressNullData.flag == (int) QualifierType::ADD_QUALIFIER) {
-                                if (pool.mapAddressAddedTag.count(std::make_pair(address, addressNullData.asset_name))) {
-                                    return state.DoS(0, false, REJECT_INVALID,
-                                                     "bad-txns-adding-tag-already-in-mempool");
-                                }
                                 // Adding a qualifier to an address
                                 pool.mapAddressAddedTag[std::make_pair(address, addressNullData.asset_name)].insert(tx.GetHash());
                                 pool.mapHashToAddressAddedTag[tx.GetHash()].insert(std::make_pair(address, addressNullData.asset_name));
                             } else {
-                                    if (pool.mapAddressRemoveTag.count(std::make_pair(address, addressNullData.asset_name))) {
-                                        return state.DoS(0, false, REJECT_INVALID,
-                                                         "bad-txns-remove-tag-already-in-mempool");
-                                    }
-
                                 pool.mapAddressRemoveTag[std::make_pair(address, addressNullData.asset_name)].insert(tx.GetHash());
                                 pool.mapHashToAddressRemoveTag[tx.GetHash()].insert(std::make_pair(address, addressNullData.asset_name));
                             }

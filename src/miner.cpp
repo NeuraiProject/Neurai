@@ -56,6 +56,7 @@ uint64_t nLastBlockTx = 0;
 uint64_t nLastBlockWeight = 0;
 static uint64_t nMiningTimeStart = 0;
 std::atomic<uint64_t> nHashesPerSec{0};
+std::atomic<uint64_t> nMinerTemplatesRejected{0};
 static std::atomic<uint64_t> nHashesDone{0};
 
 
@@ -601,6 +602,20 @@ static bool ProcessBlockFound(const CBlock* pblock, const CChainParams& chainpar
     return true;
 }
 
+/** Regtest only: the first -minertemplatefailures templates the internal miner
+ *  asks for are refused, the way a template that does not pass
+ *  TestBlockValidity is. */
+static void MinerTemplateFailurePoint(const CChainParams& chainparams)
+{
+    static std::atomic<int64_t> nRefused{0};
+    if (!chainparams.MineBlocksOnDemand())
+        return;
+    if (nRefused.load() >= gArgs.GetArg("-minertemplatefailures", 0))
+        return;
+    ++nRefused;
+    throw std::runtime_error("template refused by -minertemplatefailures");
+}
+
 static void NeuraiMiner(const CChainParams& chainparams)
 {
     LogPrintf("NeuraiMiner -- started\n");
@@ -634,12 +649,14 @@ static void NeuraiMiner(const CChainParams& chainparams)
                 previous = chainActive.Tip();
                 if (!previous) return;
                 try {
+                    MinerTemplateFailurePoint(chainparams);
                     blockTemplate = BlockAssembler(chainparams).CreateNewBlock(coinbaseScript->reserveScript);
                 } catch (const std::runtime_error& e) {
                     // The template did not pass TestBlockValidity. CreateNewBlock
                     // has dropped the transaction it blames, so the next
                     // template can succeed: keep mining.
                     LogPrintf("NeuraiMiner -- template rejected, retrying: %s\n", e.what());
+                    ++nMinerTemplatesRejected;
                     fTemplateRejected = true;
                 }
                 if (!fTemplateRejected) {

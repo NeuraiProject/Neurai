@@ -11,6 +11,7 @@
 #include "primitives/block.h"
 #include "txmempool.h"
 
+#include <atomic>
 #include <stdint.h>
 #include <memory>
 #include <boost/multi_index_container.hpp>
@@ -224,4 +225,6 @@ MiningScanResult ScanBlockNonces(CBlockHeader& block, const arith_uint256& targe
                                 uint32_t max_tries, uint64_t& hashes_done);
 
 int GenerateNeurais(bool fGenerate, int nThreads, const CChainParams& chainparams);
+/** Templates the internal miner asked for and did not get; it keeps mining after each one. */
+extern std::atomic<uint64_t> nMinerTemplatesRejected;
 #endif // NEURAI_MINER_H

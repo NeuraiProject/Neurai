@@ -1557,6 +1557,9 @@ bool CAssetsCache::RemoveNewAsset(const CNewAsset& asset, const std::string addr
 
     setNewAssetsToRemove.insert(newAsset);
 
+    // The data of its reissues goes with it
+    mapReissuedAssetData.erase(asset.strName);
+
     if (fAssetIndex)
         mapAssetsAddressAmount[std::make_pair(asset.strName, address)] = 0;
 
@@ -1577,6 +1580,9 @@ bool CAssetsCache::AddNewAsset(const CNewAsset& asset, const std::string address
         setNewAssetsToRemove.erase(newAsset);
 
     setNewAssetsToAdd.insert(newAsset);
+
+    // Reissue data under this name belongs to an asset that was removed
+    mapReissuedAssetData.erase(asset.strName);
 
     if (fAssetIndex) {
         // Insert the asset into the assests address amount map
@@ -2284,7 +2290,16 @@ bool CAssetsCache::WriteCacheToPendingBatches()
             auto reissue_name = newReissue.reissue.strName;
             auto pair = make_pair(reissue_name, newReissue.address);
             if (mapReissuedAssetData.count(reissue_name)) {
-                if(!passetsdb->WriteAssetData(mapReissuedAssetData.at(reissue_name), newReissue.blockHeight, newReissue.blockHash)) {
+                // The block the asset was issued in is read now, not taken from the record
+                int nIssueHeight = newReissue.blockHeight;
+                uint256 issueBlockHash = newReissue.blockHash;
+                int nFoundHeight;
+                uint256 foundBlockHash;
+                if (GetAssetIssueBlock(reissue_name, nFoundHeight, foundBlockHash)) {
+                    nIssueHeight = nFoundHeight;
+                    issueBlockHash = foundBlockHash;
+                }
+                if(!passetsdb->WriteAssetData(mapReissuedAssetData.at(reissue_name), nIssueHeight, issueBlockHash)) {
                     dirty = true;
                     message = "_Failed Writing reissue asset data to database";
                 }
@@ -2330,7 +2345,18 @@ bool CAssetsCache::WriteCacheToPendingBatches()
 
             auto reissue_name = undoReissue.reissue.strName;
             if (mapReissuedAssetData.count(reissue_name)) {
-                if(!passetsdb->WriteAssetData(mapReissuedAssetData.at(reissue_name), undoReissue.blockHeight, undoReissue.blockHash)) {
+                // The block the asset was issued in is read now. This record may
+                // be the undo of a reissue of an earlier asset of the same name,
+                // disconnected with it, and carry the block that one was issued in.
+                int nIssueHeight = undoReissue.blockHeight;
+                uint256 issueBlockHash = undoReissue.blockHash;
+                int nFoundHeight;
+                uint256 foundBlockHash;
+                if (GetAssetIssueBlock(reissue_name, nFoundHeight, foundBlockHash)) {
+                    nIssueHeight = nFoundHeight;
+                    issueBlockHash = foundBlockHash;
+                }
+                if(!passetsdb->WriteAssetData(mapReissuedAssetData.at(reissue_name), nIssueHeight, issueBlockHash)) {
                     dirty = true;
                     message = "_Failed Writing undo reissue asset data to database";
                 }
@@ -2741,16 +2767,21 @@ bool CAssetsCache::Flush()
         return error("%s: Couldn't find passets pointer while trying to flush assets cache", __func__);
 
     try {
+        // An asset that is issued or removed leaves no reissue data of an
+        // earlier life of its name in the cache below. The reissues of this
+        // cache are copied after this.
         for (auto &item : setNewAssetsToAdd) {
             if (passets->setNewAssetsToRemove.count(item))
                 passets->setNewAssetsToRemove.erase(item);
             passets->setNewAssetsToAdd.insert(item);
+            passets->mapReissuedAssetData.erase(item.asset.strName);
         }
 
         for (auto &item : setNewAssetsToRemove) {
             if (passets->setNewAssetsToAdd.count(item))
                 passets->setNewAssetsToAdd.erase(item);
             passets->setNewAssetsToRemove.insert(item);
+            passets->mapReissuedAssetData.erase(item.asset.strName);
         }
 
         for (auto &item : mapAssetsAddressAmount)
@@ -3153,11 +3184,8 @@ bool CAssetsCache::CheckIfAssetExists(const std::string& name, bool fForceDuplic
         return false;
     }
 
-    // Check the dirty caches first and see if it was recently added or removed
-    if (passets->setNewAssetsToRemove.count(cachedAsset)) {
-        return false;
-    }
-
+    // This cache comes before the one it is layered on: what it added is not
+    // hidden by what the cache below removed
     if (setNewAssetsToAdd.count(cachedAsset)) {
         if (fForceDuplicateCheck) {
             return true;
@@ -3165,6 +3193,11 @@ bool CAssetsCache::CheckIfAssetExists(const std::string& name, bool fForceDuplic
         else {
             LogPrintf("%s : Found asset %s in setNewAssetsToAdd but force duplicate check wasn't true\n", __func__, name);
         }
+    }
+
+    // Check the dirty caches first and see if it was recently added or removed
+    if (passets->setNewAssetsToRemove.count(cachedAsset)) {
+        return false;
     }
 
     if (passets->setNewAssetsToAdd.count(cachedAsset)) {
@@ -3212,51 +3245,87 @@ bool CAssetsCache::GetAssetMetaDataIfExists(const std::string &name, CNewAsset &
     return GetAssetMetaDataIfExists(name, asset, height, hash);
 }
 
-bool CAssetsCache::GetAssetMetaDataIfExists(const std::string &name, CNewAsset &asset, int& nHeight, uint256& blockHash)
+bool CAssetsCache::GetAssetIssueBlock(const std::string& name, int& nHeight, uint256& blockHash)
 {
-    // Check the map that contains the reissued asset data. If it is in this map, it hasn't been saved to disk yet
-    if (mapReissuedAssetData.count(name)) {
-        asset = mapReissuedAssetData.at(name);
+    nHeight = 0;
+    blockHash.SetNull();
+
+    CNewAsset tempAsset;
+    tempAsset.strName = name;
+    CAssetCacheNewAsset cachedAsset(tempAsset, "", 0, uint256());
+
+    // Issued in a block that is not on disk yet
+    for (const CAssetsCache* cache : {static_cast<const CAssetsCache*>(this), static_cast<const CAssetsCache*>(passets)}) {
+        if (!cache)
+            continue;
+        auto setIterator = cache->setNewAssetsToAdd.find(cachedAsset);
+        if (setIterator != cache->setNewAssetsToAdd.end()) {
+            nHeight = setIterator->blockHeight;
+            blockHash = setIterator->blockHash;
+            return true;
+        }
+    }
+
+    if (passetsCache && passetsCache->Exists(name)) {
+        CDatabasedAssetData data = passetsCache->Get(name);
+        nHeight = data.nHeight;
+        blockHash = data.blockHash;
         return true;
     }
 
-    // Check the map that contains the reissued asset data. If it is in this map, it hasn't been saved to disk yet
-    if (passets->mapReissuedAssetData.count(name)) {
-        asset = passets->mapReissuedAssetData.at(name);
-        return true;
+    if (passetsdb) {
+        CNewAsset readAsset;
+        int height;
+        uint256 hash;
+        if (passetsdb->ReadAssetData(name, readAsset, height, hash)) {
+            nHeight = height;
+            blockHash = hash;
+            return true;
+        }
     }
+
+    return false;
+}
+
+bool CAssetsCache::GetAssetMetaDataIfExists(const std::string &name, CNewAsset &asset, int& nHeight, uint256& blockHash)
+{
+    nHeight = 0;
+    blockHash.SetNull();
 
     // Create objects that will be used to check the dirty cache
     CNewAsset tempAsset;
     tempAsset.strName = name;
     CAssetCacheNewAsset cachedAsset(tempAsset, "", 0, uint256());
 
-    // Check the dirty caches first and see if it was recently added or removed
-    if (setNewAssetsToRemove.count(cachedAsset)) {
-        LogPrintf("%s : Found in new assets to Remove - Returning False\n", __func__);
-        return false;
-    }
+    // The changes that are not on disk yet, layer by layer: this cache, then
+    // the one it is layered on. In a layer a removal comes first, then the
+    // data of a reissue, then the issue. What a layer says is never hidden by
+    // the layer below it: an asset issued in this cache exists, also when the
+    // cache below still holds the removal of an earlier issue of that name.
+    for (const CAssetsCache* layer : {static_cast<const CAssetsCache*>(this), static_cast<const CAssetsCache*>(passets)}) {
+        if (!layer)
+            continue;
 
-    // Check the dirty caches first and see if it was recently added or removed
-    if (passets->setNewAssetsToRemove.count(cachedAsset)) {
-        LogPrintf("%s : Found in new assets to Remove - Returning False\n", __func__);
-        return false;
-    }
+        if (layer->setNewAssetsToRemove.count(cachedAsset)) {
+            LogPrintf("%s : Found in new assets to Remove - Returning False\n", __func__);
+            return false;
+        }
 
-    auto setIterator = setNewAssetsToAdd.find(cachedAsset);
-    if (setIterator != setNewAssetsToAdd.end()) {
-        asset = setIterator->asset;
-        nHeight = setIterator->blockHeight;
-        blockHash = setIterator->blockHash;
-        return true;
-    }
+        // The data of a reissue carries no block: a reissue keeps the block the asset was issued in
+        auto reissued = layer->mapReissuedAssetData.find(name);
+        if (reissued != layer->mapReissuedAssetData.end()) {
+            asset = reissued->second;
+            GetAssetIssueBlock(name, nHeight, blockHash);
+            return true;
+        }
 
-    setIterator = passets->setNewAssetsToAdd.find(cachedAsset);
-    if (setIterator != passets->setNewAssetsToAdd.end()) {
-        asset = setIterator->asset;
-        nHeight = setIterator->blockHeight;
-        blockHash = setIterator->blockHash;
-        return true;
+        auto setIterator = layer->setNewAssetsToAdd.find(cachedAsset);
+        if (setIterator != layer->setNewAssetsToAdd.end()) {
+            asset = setIterator->asset;
+            nHeight = setIterator->blockHeight;
+            blockHash = setIterator->blockHash;
+            return true;
+        }
     }
 
     // Check the cache, if it doesn't exist in the cache. Try and read it from database
@@ -5019,6 +5088,14 @@ bool CAssetsCache::GetAssetVerifierStringIfExists(const std::string &name, CNull
         return false;
     }
 
+    // This cache comes before the one it is layered on: what it added is not
+    // hidden by what the cache below removed
+    setIterator = setNewRestrictedVerifierToAdd.find(tempCacheVerifier);
+    if (!fSkipTempCache && setIterator != setNewRestrictedVerifierToAdd.end()) {
+        verifierString.verifier_string = setIterator->verifier;
+        return true;
+    }
+
     setIterator = passets->setNewRestrictedVerifierToRemove.find(tempCacheVerifier);
     // Check the dirty caches first and see if it was recently added or removed
     if (setIterator != passets->setNewRestrictedVerifierToRemove.end()) {
@@ -5027,12 +5104,6 @@ bool CAssetsCache::GetAssetVerifierStringIfExists(const std::string &name, CNull
             return true;
         }
         return false;
-    }
-
-    setIterator = setNewRestrictedVerifierToAdd.find(tempCacheVerifier);
-    if (!fSkipTempCache && setIterator != setNewRestrictedVerifierToAdd.end()) {
-        verifierString.verifier_string = setIterator->verifier;
-        return true;
     }
 
     setIterator = passets->setNewRestrictedVerifierToAdd.find(tempCacheVerifier);
@@ -5084,18 +5155,20 @@ bool CAssetsCache::CheckForAddressQualifier(const std::string &qualifier_name, c
     }
 
 
-    setIterator = passets->setNewQualifierAddressToRemove.find(cachedQualifierAddress);
-    if (setIterator != passets->setNewQualifierAddressToRemove.end()) {
-        // Undoing a remove qualifier command, means that we are adding the qualifier to the address
-        return setIterator->type == QualifierType::REMOVE_QUALIFIER;
-    }
-
+    // This cache comes before the one it is layered on: what it added is not
+    // hidden by what the cache below removed
     setIterator = setNewQualifierAddressToAdd.find(cachedQualifierAddress);
     if (!fSkipTempCache && setIterator != setNewQualifierAddressToAdd.end()) {
         // Return true if we are adding the qualifier, and false if we are removing it
         return setIterator->type == QualifierType::ADD_QUALIFIER;
     }
 
+
+    setIterator = passets->setNewQualifierAddressToRemove.find(cachedQualifierAddress);
+    if (setIterator != passets->setNewQualifierAddressToRemove.end()) {
+        // Undoing a remove qualifier command, means that we are adding the qualifier to the address
+        return setIterator->type == QualifierType::REMOVE_QUALIFIER;
+    }
 
     setIterator = passets->setNewQualifierAddressToAdd.find(cachedQualifierAddress);
     if (setIterator != passets->setNewQualifierAddressToAdd.end()) {
@@ -5178,16 +5251,18 @@ bool CAssetsCache::CheckForAddressRestriction(const std::string &restricted_name
         return setIterator->type == RestrictedType::UNFREEZE_ADDRESS;
     }
 
-    setIterator = passets->setNewRestrictedAddressToRemove.find(cachedRestrictedAddress);
-    if (setIterator != passets->setNewRestrictedAddressToRemove.end()) {
-        // Undoing a unfreeze, means that we are adding back a freeze
-        return setIterator->type == RestrictedType::UNFREEZE_ADDRESS;
-    }
-
+    // This cache comes before the one it is layered on: what it added is not
+    // hidden by what the cache below removed
     setIterator = setNewRestrictedAddressToAdd.find(cachedRestrictedAddress);
     if (!fSkipTempCache && setIterator != setNewRestrictedAddressToAdd.end()) {
         // Return true if we are freezing the address
         return setIterator->type == RestrictedType::FREEZE_ADDRESS;
+    }
+
+    setIterator = passets->setNewRestrictedAddressToRemove.find(cachedRestrictedAddress);
+    if (setIterator != passets->setNewRestrictedAddressToRemove.end()) {
+        // Undoing a unfreeze, means that we are adding back a freeze
+        return setIterator->type == RestrictedType::UNFREEZE_ADDRESS;
     }
 
     setIterator = passets->setNewRestrictedAddressToAdd.find(cachedRestrictedAddress);
@@ -5237,16 +5312,18 @@ bool CAssetsCache::CheckForGlobalRestriction(const std::string &restricted_name,
         return setIterator->type == RestrictedType::GLOBAL_UNFREEZE;
     }
 
-    setIterator = passets->setNewRestrictedGlobalToRemove.find(cachedRestrictedGlobal);
-    if (setIterator != passets->setNewRestrictedGlobalToRemove.end()) {
-        // Undoing a removal of a global unfreeze, means that is will become frozen
-        return setIterator->type == RestrictedType::GLOBAL_UNFREEZE;
-    }
-
+    // This cache comes before the one it is layered on: what it added is not
+    // hidden by what the cache below removed
     setIterator = setNewRestrictedGlobalToAdd.find(cachedRestrictedGlobal);
     if (!fSkipTempCache && setIterator != setNewRestrictedGlobalToAdd.end()) {
         // Return true if we are adding a freeze command
         return setIterator->type == RestrictedType::GLOBAL_FREEZE;
+    }
+
+    setIterator = passets->setNewRestrictedGlobalToRemove.find(cachedRestrictedGlobal);
+    if (setIterator != passets->setNewRestrictedGlobalToRemove.end()) {
+        // Undoing a removal of a global unfreeze, means that is will become frozen
+        return setIterator->type == RestrictedType::GLOBAL_UNFREEZE;
     }
 
     setIterator = passets->setNewRestrictedGlobalToAdd.find(cachedRestrictedGlobal);
@@ -5299,14 +5376,16 @@ bool CAssetsCache::CheckForDEPINSelfRestriction(const std::string &assetName, co
         return !it->isSelfRevoke;
     }
 
-    it = passets->setNewSelfRestrictionToRemove.find(selfCache);
-    if (it != passets->setNewSelfRestrictionToRemove.end()) {
-        return !it->isSelfRevoke;
-    }
-
+    // This cache comes before the one it is layered on: what it added is not
+    // hidden by what the cache below removed
     it = setNewSelfRestrictionToAdd.find(selfCache);
     if (!fSkipTempCache && it != setNewSelfRestrictionToAdd.end()) {
         return it->isSelfRevoke;
+    }
+
+    it = passets->setNewSelfRestrictionToRemove.find(selfCache);
+    if (it != passets->setNewSelfRestrictionToRemove.end()) {
+        return !it->isSelfRevoke;
     }
 
     it = passets->setNewSelfRestrictionToAdd.find(selfCache);
@@ -5347,14 +5426,16 @@ DepinTransferState CAssetsCache::GetDepinTransferState(const std::string& assetN
         return DepinUndoState(setIterator->state);
     }
 
-    setIterator = passets->setNewDepinStateToRemove.find(key);
-    if (setIterator != passets->setNewDepinStateToRemove.end()) {
-        return DepinUndoState(setIterator->state);
-    }
-
+    // This cache comes before the one it is layered on: what it added is not
+    // hidden by what the cache below removed
     setIterator = setNewDepinStateToAdd.find(key);
     if (!fSkipTempCache && setIterator != setNewDepinStateToAdd.end()) {
         return setIterator->state;
+    }
+
+    setIterator = passets->setNewDepinStateToRemove.find(key);
+    if (setIterator != passets->setNewDepinStateToRemove.end()) {
+        return DepinUndoState(setIterator->state);
     }
 
     setIterator = passets->setNewDepinStateToAdd.find(key);
