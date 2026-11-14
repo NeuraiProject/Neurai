@@ -28,6 +28,9 @@ static const unsigned int DEFAULT_BLOCK_MIN_TX_FEE = 1000;
 static const unsigned int MAX_STANDARD_TX_WEIGHT = 400000;
 /** Maximum number of signature check operations in an IsStandard() P2SH script */
 static const unsigned int MAX_P2SH_SIGOPS = 15;
+/** The minimum non-witness size for transactions we're willing to relay/mine:
+ *  one larger than 64, the size the consensus cleanup (BIP-54) makes invalid. */
+static const unsigned int MIN_STANDARD_TX_NONWITNESS_SIZE = 65;
 /** Maximum Poseidon work relayed in a single transaction after activation. */
 static constexpr uint64_t MAX_STANDARD_TX_POSEIDON_WORK = 20000;
 /** NIP-054: maximum OP_CHECKASSETAUTH work relayed in a single transaction,

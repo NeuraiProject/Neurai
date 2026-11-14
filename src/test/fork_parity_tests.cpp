@@ -48,6 +48,7 @@ std::vector<std::pair<std::string, int>> ForkHeights(const Consensus::Params& p)
         {"nAssetMarkerNip040Height", p.nAssetMarkerNip040Height},
         {"nDepinTransferStateHeight", p.nDepinTransferStateHeight},
         {"nNoRbfHeight", p.nNoRbfHeight},
+        {"nConsensusCleanupHeight", p.nConsensusCleanupHeight},
         {"nBlockTimeReductionHeight", p.nBlockTimeReductionHeight},
     };
 }

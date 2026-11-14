@@ -89,6 +89,11 @@ def create_coinbase(height, pubkey = None):
     else:
         coin_base_output.scriptPubKey = CScript([OP_TRUE])
     coinbase.vout = [ coin_base_output ]
+    # The consensus cleanup (BIP-54) makes a transaction of exactly 64 bytes
+    # without witness invalid, the coinbase included. With a 2-byte height and
+    # an OP_TRUE output the coinbase is 64 bytes: pad its scriptSig with OP_0.
+    if len(coinbase.serialize_without_witness()) == 64:
+        coinbase.vin[0].scriptSig += b'\x00'
     coinbase.calc_x16r()
     return coinbase
 

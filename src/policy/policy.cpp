@@ -164,6 +164,14 @@ bool IsStandardTx(const CTransaction& tx, std::string& reason, const bool witnes
         return false;
     }
 
+    // Transactions smaller than 65 bytes without witness are not relayed: one
+    // of exactly 64 bytes can be read as an inner node of the Merkle tree, and
+    // the consensus cleanup (BIP-54) makes it invalid.
+    if (::GetSerializeSize(tx, SER_NETWORK, PROTOCOL_VERSION | SERIALIZE_TRANSACTION_NO_WITNESS) < MIN_STANDARD_TX_NONWITNESS_SIZE) {
+        reason = "tx-size-small";
+        return false;
+    }
+
     for (const CTxIn& txin : tx.vin)
     {
         // Biggest 'standard' txin is a 15-of-15 P2SH multisig with compressed

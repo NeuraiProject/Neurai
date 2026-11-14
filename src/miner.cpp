@@ -59,10 +59,18 @@ std::atomic<uint64_t> nHashesPerSec{0};
 static std::atomic<uint64_t> nHashesDone{0};
 
 
+int64_t GetMinimumBlockTime(const CBlockIndex* pindexPrev)
+{
+    // The consensus cleanup bounds apply on every network and before their
+    // activation height. A node in sync with the network is never held back by
+    // them, and its templates are already valid when the rules activate.
+    return std::max<int64_t>(pindexPrev->GetMedianTimePast() + 1, GetConsensusCleanupMinimumTime(pindexPrev));
+}
+
 int64_t UpdateTime(CBlockHeader* pblock, const Consensus::Params& consensusParams, const CBlockIndex* pindexPrev)
 {
     int64_t nOldTime = pblock->nTime;
-    int64_t nNewTime = std::max(pindexPrev->GetMedianTimePast()+1, GetAdjustedTime());
+    int64_t nNewTime = std::max(GetMinimumBlockTime(pindexPrev), GetAdjustedTime());
 
     if (nOldTime < nNewTime)
         pblock->nTime = nNewTime;

@@ -124,6 +124,21 @@ unsigned int GetP2SHSigOpCount(const CTransaction& tx, const CCoinsViewCache& ma
 int64_t GetTransactionSigOpCost(const CTransaction& tx, const CCoinsViewCache& inputs, script_verify_flags flags);
 
 /**
+ * Count the legacy signature operations a transaction may execute when its
+ * inputs are validated (Neurai port of the BIP-54 per-transaction limit).
+ * For every input: the scriptSig, the spent scriptPubKey and, when that is
+ * P2SH, the redeem script, each counted as BIP16 does (CHECKMULTISIG preceded
+ * by OP_1..OP_16 counts that many, any other CHECKMULTISIG counts 20). Unlike
+ * GetLegacySigOpCount, the spent scriptPubKey is counted where it executes.
+ * The optional signature opcodes enabled by `flags` (CHECKSIGFROMSTACK,
+ * CHECKSIGADD, CHECKSIG_ED25519) count as CHECKSIG. Witness scripts are not
+ * counted: their signature hash does not grow with the transaction.
+ * @return 0 for a coinbase transaction
+ * @pre every input of tx is available in `inputs`
+ */
+unsigned int GetLegacyExecutedSigOpCount(const CTransaction& tx, const CCoinsViewCache& inputs, script_verify_flags flags);
+
+/**
  * Check if transaction is final and can be included in a block with the
  * specified height and time. Consensus critical.
  */

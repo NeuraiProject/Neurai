@@ -29,6 +29,10 @@ static constexpr uint64_t MAX_BLOCK_POSEIDON_WORK = 200000;
 static constexpr uint64_t MAX_BLOCK_ASSETAUTH_WORK = 450000;
 /** The maximum allowed number of signature check operations in a block (network rule) */
 static const int64_t MAX_BLOCK_SIGOPS_COST = 80000;
+/** The maximum number of legacy signature operations a transaction may execute,
+ *  counted by GetLegacyExecutedSigOpCount (network rule from the consensus
+ *  cleanup height, BIP-54). */
+static const unsigned int MAX_TX_LEGACY_SIGOPS = 2500;
 /** Coinbase transaction outputs can only be spent after this number of new blocks (network rule) */
 static const int COINBASE_MATURITY = 100;
 static const int COINBASE_MATURITY_TESTNET = 5;

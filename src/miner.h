@@ -209,6 +209,9 @@ private:
 
 /** Modify the extranonce in a block */
 void IncrementExtraNonce(CBlock* pblock, const CBlockIndex* pindexPrev, unsigned int& nExtraNonce);
+/** Earliest valid timestamp for a block on top of pindexPrev: after the median
+ *  time past and within the consensus cleanup bounds. */
+int64_t GetMinimumBlockTime(const CBlockIndex* pindexPrev);
 int64_t UpdateTime(CBlockHeader* pblock, const Consensus::Params& consensusParams, const CBlockIndex* pindexPrev);
 
 /** Result of a bounded internal-miner nonce search. */

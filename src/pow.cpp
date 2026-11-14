@@ -15,6 +15,8 @@
 #include "chainparams.h"
 #include "tinyformat.h"
 
+#include <algorithm>
+
 unsigned int static DarkGravityWave(const CBlockIndex* pindexLast, const CBlockHeader *pblock, const Consensus::Params& params) {
     /* current difficulty formula, dash - DarkGravity v3, written by Evan Duffield - evan@dash.org */
     assert(pindexLast != nullptr);
@@ -27,7 +29,7 @@ unsigned int static DarkGravityWave(const CBlockIndex* pindexLast, const CBlockH
     // per-block-summed nTargetTimespan below tracks the rules in force
     // at each block in the window, so a straddling window does not
     // trigger a single-step difficulty jump.
-    int64_t nPastBlocks = 180;
+    int64_t nPastBlocks = DGW_PAST_BLOCKS;
 
     // make sure we have at least (nPastBlocks + 1) blocks, otherwise just return powLimit
     if (!pindexLast || pindexLast->nHeight < nPastBlocks) {
@@ -117,6 +119,21 @@ unsigned int static DarkGravityWave(const CBlockIndex* pindexLast, const CBlockH
     }
 
     return bnNew.GetCompact();
+}
+
+int64_t GetConsensusCleanupMinimumTime(const CBlockIndex* pindexPrev)
+{
+    assert(pindexPrev != nullptr);
+    int64_t nMinTime = pindexPrev->GetBlockTime() - MAX_BLOCK_TIME_REGRESSION;
+    // The block at nHeight closes the window [nHeight - (DGW_PAST_BLOCKS - 1), nHeight]
+    // that the retarget of the following block measures.
+    const int nFirstHeight = pindexPrev->nHeight + 1 - (DGW_PAST_BLOCKS - 1);
+    if (nFirstHeight >= 0) {
+        const CBlockIndex* pindexFirst = pindexPrev->GetAncestor(nFirstHeight);
+        assert(pindexFirst != nullptr);
+        nMinTime = std::max(nMinTime, pindexFirst->GetBlockTime());
+    }
+    return nMinTime;
 }
 
 unsigned int GetNextWorkRequiredBTC(const CBlockIndex* pindexLast, const CBlockHeader *pblock, const Consensus::Params& params)

@@ -37,3 +37,17 @@ accepted. For the 720-second DGW allowance, two nodes at opposite default
 adjustments differ by at most 600 seconds due to peers alone; actual system-clock
 errors consume the remaining margin. Mining templates still respect median time
 past as well as adjusted time. A well-synchronized system clock remains necessary.
+
+## Block timestamps in templates
+
+From the consensus cleanup height (`nConsensusCleanupHeight`, part of the
+unified fork), a block timestamp may not be more than 720 seconds earlier than
+its parent's, nor earlier than the first block of the 180-block retarget window
+it closes. A clock in sync with the network always satisfies both bounds.
+
+`getblocktemplate` already accounts for them on every network and before the
+activation height: `mintime` is the earliest timestamp that satisfies median
+time past and both bounds, and `curtime` is never below it. Pools must stamp
+blocks with `curtime`, or with any value of at least `mintime`, and take
+`version` from the template instead of hard-coding it. A pool that stamps blocks
+with its own clock without honouring `mintime` can produce invalid blocks.

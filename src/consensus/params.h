@@ -257,6 +257,17 @@ struct Params {
      *  on mainnet. */
     int nNoRbfHeight{std::numeric_limits<int>::max()};
     bool IsNoRbfActive(int nHeight) const { return nHeight >= nNoRbfHeight; }
+    /** Consensus cleanup (Neurai port of BIP-54). From this height:
+     *  - a block timestamp may not be more than MAX_BLOCK_TIME_REGRESSION
+     *    seconds earlier than its parent's, nor earlier than the first block of
+     *    the retarget window it closes (GetConsensusCleanupMinimumTime);
+     *  - a non-coinbase transaction may not carry more than
+     *    MAX_TX_LEGACY_SIGOPS potentially executed legacy signature operations;
+     *  - a transaction may not serialize to exactly 64 bytes without witness.
+     *  A future height on testnet, 0 on regtest (override with
+     *  -consensuscleanupheight), MAINNET_FORK_HEIGHT on mainnet. */
+    int nConsensusCleanupHeight{std::numeric_limits<int>::max()};
+    bool IsConsensusCleanupActive(int nHeight) const { return nHeight >= nConsensusCleanupHeight; }
     /** Enable the height-based shortcut in AreAssetsDeployed()/IsRip5Active()
      *  (assets/RIP5 active once the tip reaches nAssetActivationHeight /
      *  nMessagingActivationBlock). This is meant for fresh test networks. On
@@ -374,6 +385,7 @@ constexpr int Params::* const UNIFIED_FORK_HEIGHTS[] = {
     &Params::nAssetMarkerNip040Height,  // NIP-040: rvn->xna marker migration
     &Params::nDepinTransferStateHeight, // DEPIN transfer state (OPEN/CLOSE/SEAL)
     &Params::nNoRbfHeight,              // no-RBF sequence rule
+    &Params::nConsensusCleanupHeight,   // BIP-54 port: block time, legacy sigops, 64-byte transactions
     &Params::nBlockTimeReductionHeight, // NIP-028: block-time reduction and subsidy halving
 };
 } // namespace Consensus

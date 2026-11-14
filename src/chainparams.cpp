@@ -433,6 +433,10 @@ public:
         consensus.nAssetMarkerNip040Height = TESTNET_FEATURES_HEIGHT; // NIP-040: rvn->xna marker migration; blocks 1-9 carry rvn and rvn UTXOs migrate on spend, which rehearses the future mainnet migration
         consensus.nDepinTransferStateHeight = TESTNET_FEATURES_HEIGHT; // DEPIN transfer state (OPEN/CLOSE/SEAL)
         consensus.nNoRbfHeight = TESTNET_FEATURES_HEIGHT; // No-RBF sequence rule; retroactive on the running testnet, which never used BIP 125 signals
+        // Consensus cleanup (BIP-54 port): a future height on the running
+        // testnet, so the activation is crossed while mining.
+        static constexpr int TESTNET_CONSENSUS_CLEANUP_HEIGHT = 100000;
+        consensus.nConsensusCleanupHeight = TESTNET_CONSENSUS_CLEANUP_HEIGHT;
         consensus.nAssetRip5ActivationByHeightEnabled = true; // NIP revision 004: testnet activates assets/RIP5 by height (1)
         consensus.nAssetsActiveFromGenesis = true; // assets, RIP5 and asset VersionBits deployments: pure rule from genesis, no tip-based latch
         // NIP-028: block-time reduction (60s -> 30s) and coupled subsidy
@@ -707,6 +711,7 @@ public:
         consensus.nAssetMarkerNip040Height = 1; // NIP-040: active from block 1 so functional tests run xna-native; frontier tests move it via -nip040height / UpdateAssetMarkerNip040Height
         consensus.nDepinTransferStateHeight = 1; // DEPIN transfer state active from block 1; frontier tests move it via -depinstateheight / UpdateDepinTransferStateHeight
         consensus.nNoRbfHeight = 0; // No-RBF sequence rule active from genesis; frontier tests move it via -rbfbanheight / UpdateNoRbfHeight
+        consensus.nConsensusCleanupHeight = 0; // Consensus cleanup (BIP-54 port) active from genesis; frontier tests move it via -consensuscleanupheight / UpdateConsensusCleanupHeight
         consensus.nAssetRip5ActivationByHeightEnabled = true; // regtest activates assets/RIP5 by height (1), parity with testnet
         // nAssetsActiveFromGenesis stays false: unit tests exercise the paths
         // before asset/messaging activation on regtest. The reorg-to-genesis
@@ -1022,6 +1027,11 @@ void UpdateTxHashHeight(int nHeight)
 void UpdateNoRbfHeight(int nHeight)
 {
     globalChainParams->UpdateNoRbfHeight(nHeight);
+}
+
+void UpdateConsensusCleanupHeight(int nHeight)
+{
+    globalChainParams->UpdateConsensusCleanupHeight(nHeight);
 }
 
 void UpdateAuthScriptTreeHeight(int nHeight)

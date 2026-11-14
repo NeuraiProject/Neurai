@@ -717,6 +717,11 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
     if (fRequireStandard && !IsStandardTx(tx, reason, witnessEnabled))
         return state.DoS(0, false, REJECT_NONSTANDARD, reason);
 
+    // Consensus cleanup (BIP-54): refused on every network and before the
+    // activation height too, so no block template can carry one.
+    if (::GetSerializeSize(tx, SER_NETWORK, PROTOCOL_VERSION | SERIALIZE_TRANSACTION_NO_WITNESS) == 64)
+        return state.DoS(0, false, REJECT_NONSTANDARD, "bad-txns-64-byte");
+
     // NIP-014: reference inputs are valid from their activation height
     // (evaluated for the next block). Below it a version 3 transaction without
     // them is an ordinary one, valid as in 1.0.7, which does not relay it.
@@ -873,8 +878,9 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
                                ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, fStrictAuthScriptActive, chainActive.Height()+1)))
             return state.DoS(0, false, REJECT_NONSTANDARD, "bad-witness-nonstandard", true);
 
-        int64_t nSigOpsCost = GetTransactionSigOpCost(tx, view,
-            ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, fStrictAuthScriptActive, chainActive.Height() + 1));
+        const script_verify_flags sigOpFlags =
+            ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, fStrictAuthScriptActive, chainActive.Height() + 1);
+        int64_t nSigOpsCost = GetTransactionSigOpCost(tx, view, sigOpFlags);
 
         // nModifiedFees includes any fee deltas from PrioritiseTransaction
         CAmount nModifiedFees = nFees;
@@ -906,6 +912,14 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         if (nSigOpsCost > MAX_STANDARD_TX_SIGOPS_COST)
             return state.DoS(0, false, REJECT_NONSTANDARD, "bad-txns-too-many-sigops", false,
                 strprintf("%d", nSigOpsCost));
+
+        // Consensus cleanup (BIP-54): refused on every network and before the
+        // activation height too, so no block template can carry a transaction
+        // that the rule rejects once it is active.
+        const unsigned int nLegacySigOps = GetLegacyExecutedSigOpCount(tx, view, sigOpFlags);
+        if (nLegacySigOps > MAX_TX_LEGACY_SIGOPS)
+            return state.DoS(0, false, REJECT_NONSTANDARD, "bad-txns-legacy-sigops", false,
+                strprintf("%u", nLegacySigOps));
 
         CAmount mempoolRejectFee = pool.GetMinFee(gArgs.GetArg("-maxmempool", DEFAULT_MAX_MEMPOOL_SIZE) * 1000000).GetFee(nSize);
         if (!bypass_limits && mempoolRejectFee > 0 && nModifiedFees < mempoolRejectFee) {
@@ -3456,6 +3470,16 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
             return state.DoS(100, error("ConnectBlock(): too many sigops"),
                              REJECT_INVALID, "bad-blk-sigops");
 
+        // Consensus cleanup (BIP-54): per-transaction bound on the legacy
+        // signature operations its inputs may execute, spent scriptPubKeys
+        // included.
+        if (chainparams.GetConsensus().IsConsensusCleanupActive(pindex->nHeight) &&
+            GetLegacyExecutedSigOpCount(tx, view, flags) > MAX_TX_LEGACY_SIGOPS) {
+            state.SetFailedTransaction(txhash);
+            return state.DoS(100, error("ConnectBlock(): too many legacy sigops in transaction %s", txhash.ToString()),
+                             REJECT_INVALID, "bad-txns-legacy-sigops");
+        }
+
         txdata.emplace_back(tx);
         if (!tx.IsCoinBase())
         {
@@ -5498,6 +5522,18 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationSta
     if (block.GetBlockTime() <= pindexPrev->GetMedianTimePast())
         return state.Invalid(false, REJECT_INVALID, "time-too-old", "block's timestamp is too early");
 
+    // Consensus cleanup (BIP-54 timestamp rules). Dark Gravity Wave retargets
+    // on every block, so both rules apply to every block rather than only to
+    // the boundaries of a retarget period.
+    if (consensusParams.IsConsensusCleanupActive(nHeight)) {
+        if (block.GetBlockTime() < pindexPrev->GetBlockTime() - MAX_BLOCK_TIME_REGRESSION)
+            return state.Invalid(false, REJECT_INVALID, "time-too-early-for-parent",
+                                 "block's timestamp is too far before its parent's");
+        if (block.GetBlockTime() < GetConsensusCleanupMinimumTime(pindexPrev))
+            return state.Invalid(false, REJECT_INVALID, "time-too-early-for-window",
+                                 "block's timestamp is before the first block of its retarget window");
+    }
+
     // Check timestamp
     if (IsDGWActive(pindexPrev->nHeight+1))
     {
@@ -5555,6 +5591,19 @@ static bool ContextualCheckBlock(const CBlock& block, CValidationState& state, c
 
     if (!CheckBlockHeightTxRules(block, state, consensusParams, nHeight))
         return false;
+
+    // Consensus cleanup (BIP-54): no transaction, coinbase included, may
+    // serialize to exactly 64 bytes without witness, the size of an inner node
+    // of the Merkle tree. This serialization is the preimage of the txid, so it
+    // keeps the reference inputs record.
+    if (consensusParams.IsConsensusCleanupActive(nHeight)) {
+        for (const auto& tx : block.vtx) {
+            if (::GetSerializeSize(*tx, SER_NETWORK, PROTOCOL_VERSION | SERIALIZE_TRANSACTION_NO_WITNESS) == 64) {
+                return state.DoS(100, false, REJECT_INVALID, "bad-txns-64-byte", false,
+                                 strprintf("transaction %s is 64 bytes without witness", tx->GetHash().ToString()));
+            }
+        }
+    }
 
     // Enforce rule that the coinbase starts with serialized block height
     CScript expect = CScript() << nHeight;

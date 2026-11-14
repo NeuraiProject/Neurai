@@ -23,6 +23,17 @@ static const int64_t MAX_FUTURE_BLOCK_TIME = 2 * 60 * 60;
 static const int64_t MAX_FUTURE_BLOCK_TIME_DGW = MAX_FUTURE_BLOCK_TIME / 10;
 
 /**
+ * Maximum number of seconds a block timestamp may be earlier than the
+ * timestamp of its parent, from the consensus cleanup height on (BIP-54
+ * timestamp rules, applied to every block because Dark Gravity Wave retargets
+ * on every block). It equals the future limit, so a block stamped by a clock
+ * in sync with the network always satisfies it.
+ */
+static const int64_t MAX_BLOCK_TIME_REGRESSION = MAX_FUTURE_BLOCK_TIME_DGW;
+static_assert(MAX_BLOCK_TIME_REGRESSION <= MAX_FUTURE_BLOCK_TIME_DGW,
+              "a block stamped with the network time must be able to follow any accepted parent");
+
+/**
  * Timestamp window used as a grace period by code that compares external
  * timestamps (such as timestamps passed to RPCs, or wallet key creation times)
  * to block timestamps. This should be set at least as high as

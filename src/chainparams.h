@@ -104,6 +104,7 @@ public:
     void UpdateAssetAuthHeight(int nHeight) { consensus.nAssetAuthHeight = nHeight; }
     void UpdateTxHashHeight(int nHeight) { consensus.nTxHashHeight = nHeight; }
     void UpdateNoRbfHeight(int nHeight) { consensus.nNoRbfHeight = nHeight; }
+    void UpdateConsensusCleanupHeight(int nHeight) { consensus.nConsensusCleanupHeight = nHeight; }
     void UpdateSignatureOpcodesHeight(int nHeight) { consensus.nSignatureOpcodesHeight = nHeight; }
     void UpdateOptInFeaturesHeight(int nHeight) { consensus.nOptInFeaturesHeight = nHeight; }
     void UpdateBlockTimeReductionHeight(int nHeight) { consensus.nBlockTimeReductionHeight = nHeight; }
@@ -334,6 +335,8 @@ void UpdateAssetAuthHeight(int nHeight);
 void UpdateTxHashHeight(int nHeight);
 /** Regtest only: move the no-RBF sequence rule activation height. */
 void UpdateNoRbfHeight(int nHeight);
+/** Regtest only: move the consensus cleanup (BIP-54 port) activation height. */
+void UpdateConsensusCleanupHeight(int nHeight);
 /** Regtest only: move every activation height of the unified fork to nHeight,
  *  as mainnet will activate them (-forkheight). */
 void UpdateUnifiedForkHeight(int nHeight);

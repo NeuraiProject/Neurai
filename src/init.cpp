@@ -665,6 +665,7 @@ std::string HelpMessage(HelpMessageMode mode)
         strUsage += HelpMessageOpt("-strictauthscriptheight=<n>", "Override the strict AuthScript (witness v2/v3) activation height (regtest-only)");
         strUsage += HelpMessageOpt("-depinstateheight=<n>", "Override the DEPIN transfer state (open/close/seal) activation height (regtest-only)");
         strUsage += HelpMessageOpt("-rbfbanheight=<n>", "Override the no-RBF sequence rule activation height (regtest-only)");
+        strUsage += HelpMessageOpt("-consensuscleanupheight=<n>", "Override the consensus cleanup (BIP-54 port) activation height (regtest-only)");
     }
     strUsage += HelpMessageOpt("-debug=<category>", strprintf(_("Output debugging information (default: %u, supplying <category> is optional)"), 0) + ". " +
         _("If <category> is not supplied or if <category> = 1, output all debugging information.") + " " + _("<category> can be:") + " " + ListLogCategories() + ".");
@@ -1587,6 +1588,18 @@ bool AppInitParameterInteraction()
         }
         UpdateNoRbfHeight(static_cast<int>(nHeight));
         LogPrintf("Setting no-RBF sequence rule activation height to %ld\n", nHeight);
+    }
+
+    if (gArgs.IsArgSet("-consensuscleanupheight")) {
+        if (!chainparams.MineBlocksOnDemand()) {
+            return InitError("The consensus cleanup height may only be overridden on regtest.");
+        }
+        int64_t nHeight;
+        if (!ParseInt64(gArgs.GetArg("-consensuscleanupheight", ""), &nHeight) || nHeight < 0 || nHeight > std::numeric_limits<int>::max()) {
+            return InitError(strprintf("Invalid -consensuscleanupheight (%s)", gArgs.GetArg("-consensuscleanupheight", "")));
+        }
+        UpdateConsensusCleanupHeight(static_cast<int>(nHeight));
+        LogPrintf("Setting consensus cleanup activation height to %ld\n", nHeight);
     }
     return true;
 }

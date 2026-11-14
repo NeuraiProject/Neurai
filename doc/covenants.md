@@ -896,6 +896,25 @@ transaction. TXHASH reuses the BIP143 lists, which are only computed for
 transactions with witness data; in a transaction without witness data, each
 execution that selects a list hashes it again in O(n) time.
 
+From the consensus cleanup height (`nConsensusCleanupHeight`), a non-coinbase
+transaction may execute at most 2500 legacy signature operations
+(`MAX_TX_LEGACY_SIGOPS`, BIP-54). They are counted in each input's scriptSig,
+spent scriptPubKey and P2SH redeem script, with CHECKSIGADD, CSFS and Ed25519
+counted as CHECKSIG when active. Witness v0 and AuthScript are not counted:
+their signature hash does not grow with the transaction.
+
+### Merkle Inclusion Proofs of Bitcoin-Style Trees
+
+`OP_CHECKMERKLEINCLUSION` scheme `0x01` takes the leaf as a 32-byte txid and
+the depth from the proof. In a Bitcoin-style transaction tree, a transaction of
+exactly 64 bytes without witness has the size of an inner node, so a proof one
+level deeper can present its second half as a leaf. Neurai makes such
+transactions invalid from the consensus cleanup height, but earlier Neurai
+blocks and other chains may contain them. A contract that proves inclusion in
+a block must fix the depth of the proof (check its first byte against the depth
+derived from the transaction count) or also prove the coinbase at the same
+depth.
+
 ### Arithmetic Overflow Protection
 
 All 64-bit arithmetic operations use compiler intrinsics (`__builtin_add_overflow`, `__builtin_mul_overflow`) or equivalent manual bounds checking. Division by zero and `INT64_MIN` edge cases are explicitly handled. No undefined behavior is possible.

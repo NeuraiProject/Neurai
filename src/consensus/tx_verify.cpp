@@ -371,6 +371,25 @@ int64_t GetTransactionSigOpCost(const CTransaction& tx, const CCoinsViewCache& i
     return nSigOps;
 }
 
+unsigned int GetLegacyExecutedSigOpCount(const CTransaction& tx, const CCoinsViewCache& inputs, script_verify_flags flags)
+{
+    if (tx.IsCoinBase())
+        return 0;
+
+    const bool countCSFS = (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) != 0;
+    const bool countCheckSigAdd = (flags & SCRIPT_VERIFY_CHECKSIGADD) != 0;
+    const bool countEd25519 = (flags & SCRIPT_VERIFY_ED25519) != 0;
+    unsigned int nSigOps = 0;
+    for (const auto& txin : tx.vin) {
+        const Coin& coin = inputs.AccessCoin(txin.prevout);
+        assert(!coin.IsSpent());
+        nSigOps += txin.scriptSig.GetSigOpCount(true, countCSFS, countCheckSigAdd, countEd25519);
+        // For P2SH this counts the redeem script; otherwise the scriptPubKey itself.
+        nSigOps += coin.out.scriptPubKey.GetSigOpCount(txin.scriptSig, countCSFS, countCheckSigAdd, countEd25519);
+    }
+    return nSigOps;
+}
+
 bool CheckTransaction(const CTransaction& tx, CValidationState &state, bool fCheckDuplicateInputs, bool fMempoolCheck, bool fBlockCheck)
 {
     // Basic checks that don't depend on any context
