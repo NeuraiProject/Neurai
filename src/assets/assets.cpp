@@ -1323,6 +1323,8 @@ bool CReissueAsset::IsNull() const
 
 bool CAssetsCache::AddTransferAsset(const CAssetTransfer& transferAsset, const std::string& address, const COutPoint& out, const CTxOut& txOut)
 {
+    if (!(nStateDatabases & ASSET_STATE_DB_ASSETS))
+        return true; // not a change to the database this cache is for
     AddToAssetBalance(transferAsset.strName, address, transferAsset.nAmount);
 
     // Add to cache so we can save to database
@@ -1356,6 +1358,8 @@ void CAssetsCache::AddToAssetBalance(const std::string& strName, const std::stri
 
 bool CAssetsCache::TrySpendCoin(const COutPoint& out, const CTxOut& txOut)
 {
+    if (!(nStateDatabases & ASSET_STATE_DB_ASSETS))
+        return true; // not a change to the database this cache is for
     // Placeholder strings that will get set if you successfully get the transfer or asset from the script
     std::string address = "";
     std::string assetName = "";
@@ -1431,6 +1435,8 @@ bool CAssetsCache::ContainsAsset(const std::string& assetName)
 
 bool CAssetsCache::UndoAssetCoin(const Coin& coin, const COutPoint& out)
 {
+    if (!(nStateDatabases & ASSET_STATE_DB_ASSETS))
+        return true; // not a change to the database this cache is for
     std::string strAddress = "";
     std::string assetName = "";
     CAmount nAmount = 0;
@@ -1539,6 +1545,8 @@ bool CAssetsCache::UndoTransfer(const CAssetTransfer& transfer, const std::strin
 //! Changes Memory Only
 bool CAssetsCache::RemoveNewAsset(const CNewAsset& asset, const std::string address)
 {
+    if (!(nStateDatabases & ASSET_STATE_DB_ASSETS))
+        return true; // not a change to the database this cache is for
     if (!CheckIfAssetExists(asset.strName))
         return error("%s : Tried removing an asset that didn't exist. Asset Name : %s", __func__, asset.strName);
 
@@ -1558,6 +1566,8 @@ bool CAssetsCache::RemoveNewAsset(const CNewAsset& asset, const std::string addr
 //! Changes Memory Only
 bool CAssetsCache::AddNewAsset(const CNewAsset& asset, const std::string address, const int& nHeight, const uint256& blockHash)
 {
+    if (!(nStateDatabases & ASSET_STATE_DB_ASSETS))
+        return true; // not a change to the database this cache is for
     if(CheckIfAssetExists(asset.strName))
         return error("%s: Tried adding new asset, but it already existed in the set of assets: %s", __func__, asset.strName);
 
@@ -1579,6 +1589,8 @@ bool CAssetsCache::AddNewAsset(const CNewAsset& asset, const std::string address
 //! Changes Memory Only
 bool CAssetsCache::AddReissueAsset(const CReissueAsset& reissue, const std::string address, const COutPoint& out)
 {
+    if (!(nStateDatabases & ASSET_STATE_DB_ASSETS))
+        return true; // not a change to the database this cache is for
     auto pair = std::make_pair(reissue.strName, address);
 
     CNewAsset asset;
@@ -1633,8 +1645,22 @@ bool CAssetsCache::AddReissueAsset(const CReissueAsset& reissue, const std::stri
 }
 
 //! Changes Memory Only
+bool CAssetsCache::RemoveReissueVerifier(const std::string& assetName, const std::vector<std::pair<std::string, CBlockAssetUndo> >& vUndoData)
+{
+    for (const auto& undoItem : vUndoData) {
+        if (undoItem.first == assetName) {
+            if (undoItem.second.fChangedVerifierString)
+                return RemoveRestrictedVerifier(assetName, undoItem.second.verifierString, true);
+            break;
+        }
+    }
+    return true;
+}
+
 bool CAssetsCache::RemoveReissueAsset(const CReissueAsset& reissue, const std::string address, const COutPoint& out, const std::vector<std::pair<std::string, CBlockAssetUndo> >& vUndoIPFS)
 {
+    if (!(nStateDatabases & ASSET_STATE_DB_ASSETS))
+        return true; // not a change to the database this cache is for
     auto pair = std::make_pair(reissue.strName, address);
 
     CNewAsset assetData;
@@ -1647,9 +1673,8 @@ bool CAssetsCache::RemoveReissueAsset(const CReissueAsset& reissue, const std::s
     assetData.nAmount -= reissue.nAmount;
     assetData.nReissuable = 1;
 
-    bool fVerifierStringChanged = false;
-    std::string verifierString = "";
-    // Find the ipfs hash in the undoblock data and restore the ipfs hash to its previous hash
+    // Find the ipfs hash in the undoblock data and restore the ipfs hash to its previous hash.
+    // The verifier string is restored by RemoveReissueVerifier.
     for (auto undoItem : vUndoIPFS) {
         if (undoItem.first == reissue.strName) {
             if (undoItem.second.fChangedIPFS)
@@ -1658,11 +1683,6 @@ bool CAssetsCache::RemoveReissueAsset(const CReissueAsset& reissue, const std::s
                 assetData.units = undoItem.second.nUnits;
             if (assetData.strIPFSHash == "")
                 assetData.nHasIPFS = 0;
-            if (undoItem.second.fChangedVerifierString) {
-                fVerifierStringChanged = true;
-                verifierString = undoItem.second.verifierString;
-
-            }
             break;
         }
     }
@@ -1675,11 +1695,6 @@ bool CAssetsCache::RemoveReissueAsset(const CReissueAsset& reissue, const std::s
         setNewReissueToAdd.erase(reissueAsset);
 
     setNewReissueToRemove.insert(reissueAsset);
-
-    // If the verifier string was changed by this reissue, undo the change
-    if (fVerifierStringChanged) {
-        RemoveRestrictedVerifier(assetData.strName, verifierString, true);
-    }
 
     if (fAssetIndex) {
         // Get the best amount form the database or dirty cache
@@ -1701,6 +1716,8 @@ bool CAssetsCache::RemoveReissueAsset(const CReissueAsset& reissue, const std::s
 //! Changes Memory Only
 bool CAssetsCache::AddOwnerAsset(const std::string& assetsName, const std::string address)
 {
+    if (!(nStateDatabases & ASSET_STATE_DB_ASSETS))
+        return true; // not a change to the database this cache is for
     // Update the cache
     CAssetCacheNewOwner newOwner(assetsName, address);
 
@@ -1720,6 +1737,8 @@ bool CAssetsCache::AddOwnerAsset(const std::string& assetsName, const std::strin
 //! Changes Memory Only
 bool CAssetsCache::RemoveOwnerAsset(const std::string& assetsName, const std::string address)
 {
+    if (!(nStateDatabases & ASSET_STATE_DB_ASSETS))
+        return true; // not a change to the database this cache is for
     // Update the cache
     CAssetCacheNewOwner newOwner(assetsName, address);
     if (setNewOwnerAssetsToAdd.count(newOwner))
@@ -1738,6 +1757,8 @@ bool CAssetsCache::RemoveOwnerAsset(const std::string& assetsName, const std::st
 //! Changes Memory Only
 bool CAssetsCache::RemoveTransfer(const CAssetTransfer &transfer, const std::string &address, const COutPoint &out)
 {
+    if (!(nStateDatabases & ASSET_STATE_DB_ASSETS))
+        return true; // not a change to the database this cache is for
     if (!UndoTransfer(transfer, address, out))
         return error("%s : Failed to undo the transfer", __func__);
 
@@ -1753,6 +1774,8 @@ bool CAssetsCache::RemoveTransfer(const CAssetTransfer &transfer, const std::str
 //! Changes Memory Only, this only called when adding a block to the chain
 bool CAssetsCache::AddQualifierAddress(const std::string& assetName, const std::string& address, const QualifierType type)
 {
+    if (!(nStateDatabases & ASSET_STATE_DB_RESTRICTED))
+        return true; // not a change to the database this cache is for
     CAssetCacheQualifierAddress newQualifier(assetName, address, type);
 
     // We are adding a qualifier that was in a transaction, so, if the set of qualifiers
@@ -1784,6 +1807,8 @@ bool CAssetsCache::AddQualifierAddress(const std::string& assetName, const std::
 //! Changes Memory Only, this is only called when undoing a block from the chain
 bool CAssetsCache::RemoveQualifierAddress(const std::string& assetName, const std::string& address, const QualifierType type)
 {
+    if (!(nStateDatabases & ASSET_STATE_DB_RESTRICTED))
+        return true; // not a change to the database this cache is for
     CAssetCacheQualifierAddress newQualifier(assetName, address, type);
 
     // We are adding a qualifier that was in a transaction, so, if the set of qualifiers
@@ -1818,6 +1843,8 @@ bool CAssetsCache::RemoveQualifierAddress(const std::string& assetName, const st
 //! Changes Memory Only, this only called when adding a block to the chain
 bool CAssetsCache::AddRestrictedAddress(const std::string& assetName, const std::string& address, const RestrictedType type)
 {
+    if (!(nStateDatabases & ASSET_STATE_DB_RESTRICTED))
+        return true; // not a change to the database this cache is for
     CAssetCacheRestrictedAddress newRestricted(assetName, address, type);
 
     // We are adding a restricted address that was in a transaction, so, if the set of restricted addresses
@@ -1839,6 +1866,8 @@ bool CAssetsCache::AddRestrictedAddress(const std::string& assetName, const std:
 //! Changes Memory Only, this is only called when undoing a block from the chain
 bool CAssetsCache::RemoveRestrictedAddress(const std::string& assetName, const std::string& address, const RestrictedType type)
 {
+    if (!(nStateDatabases & ASSET_STATE_DB_RESTRICTED))
+        return true; // not a change to the database this cache is for
     CAssetCacheRestrictedAddress newRestricted(assetName, address, type);
 
     // We are undoing a restricted address transaction, so if the set that contains restricted address from new block
@@ -1860,6 +1889,8 @@ bool CAssetsCache::RemoveRestrictedAddress(const std::string& assetName, const s
 //! Changes Memory Only, this only called when adding a block to the chain
 bool CAssetsCache::AddSelfRestriction(const std::string& assetName, const std::string& address, bool isSelfRevoke)
 {
+    if (!(nStateDatabases & ASSET_STATE_DB_RESTRICTED))
+        return true; // not a change to the database this cache is for
     CAssetCacheSelfRestriction newSelfRestriction(assetName, address, isSelfRevoke);
 
     // We are adding a self-restriction that was in a transaction, so, if the set of self-restrictions
@@ -1881,6 +1912,8 @@ bool CAssetsCache::AddSelfRestriction(const std::string& assetName, const std::s
 //! Changes Memory Only, this is only called when undoing a block from the chain
 bool CAssetsCache::RemoveSelfRestriction(const std::string& assetName, const std::string& address, bool isSelfRevoke)
 {
+    if (!(nStateDatabases & ASSET_STATE_DB_RESTRICTED))
+        return true; // not a change to the database this cache is for
     CAssetCacheSelfRestriction newSelfRestriction(assetName, address, isSelfRevoke);
 
     // We are undoing a self-restriction transaction, so if the set that contains self-restrictions from new block
@@ -1902,6 +1935,8 @@ bool CAssetsCache::RemoveSelfRestriction(const std::string& assetName, const std
 //! Changes Memory Only, this only called when adding a block to the chain
 bool CAssetsCache::AddGlobalRestricted(const std::string& assetName, const RestrictedType type)
 {
+    if (!(nStateDatabases & ASSET_STATE_DB_RESTRICTED))
+        return true; // not a change to the database this cache is for
     CAssetCacheRestrictedGlobal newGlobalRestriction(assetName, type);
 
     // We are adding a global restriction transaction, so if the set the contains undo global restrictions,
@@ -1923,6 +1958,8 @@ bool CAssetsCache::AddGlobalRestricted(const std::string& assetName, const Restr
 //! Changes Memory Only, this is only called when undoing a block from the chain
 bool CAssetsCache::RemoveGlobalRestricted(const std::string& assetName, const RestrictedType type)
 {
+    if (!(nStateDatabases & ASSET_STATE_DB_RESTRICTED))
+        return true; // not a change to the database this cache is for
     CAssetCacheRestrictedGlobal newGlobalRestriction(assetName, type);
 
     // We are undoing a global restriction transaction, so if the set the contains new global restrictions,
@@ -1946,6 +1983,8 @@ bool CAssetsCache::RemoveGlobalRestricted(const std::string& assetName, const Re
 //! for an asset wins (see CAssetCacheDepinState).
 bool CAssetsCache::AddDepinTransferState(const std::string& assetName, const DepinTransferState state)
 {
+    if (!(nStateDatabases & ASSET_STATE_DB_RESTRICTED))
+        return true; // not a change to the database this cache is for
     CAssetCacheDepinState newState(assetName, state);
 
     // We are applying a state change, so a pending undo for this asset is superseded
@@ -1968,6 +2007,8 @@ bool CAssetsCache::AddDepinTransferState(const std::string& assetName, const Dep
 //! restore follows from the transition table (DepinUndoState).
 bool CAssetsCache::RemoveDepinTransferState(const std::string& assetName, const DepinTransferState state)
 {
+    if (!(nStateDatabases & ASSET_STATE_DB_RESTRICTED))
+        return true; // not a change to the database this cache is for
     CAssetCacheDepinState undoState(assetName, state);
 
     // We are undoing a state change, so a pending addition for this asset is superseded
@@ -1988,6 +2029,8 @@ bool CAssetsCache::RemoveDepinTransferState(const std::string& assetName, const 
 //! Changes Memory Only
 bool CAssetsCache::AddRestrictedVerifier(const std::string& assetName, const std::string& verifier)
 {
+    if (!(nStateDatabases & ASSET_STATE_DB_RESTRICTED))
+        return true; // not a change to the database this cache is for
     // Insert the reissue information into the reissue map
     CAssetCacheRestrictedVerifiers newVerifier(assetName, verifier);
 
@@ -2002,6 +2045,8 @@ bool CAssetsCache::AddRestrictedVerifier(const std::string& assetName, const std
 //! Changes Memory Only
 bool CAssetsCache::RemoveRestrictedVerifier(const std::string& assetName, const std::string& verifier, const bool fUndoingReissue)
 {
+    if (!(nStateDatabases & ASSET_STATE_DB_RESTRICTED))
+        return true; // not a change to the database this cache is for
     CAssetCacheRestrictedVerifiers newVerifier(assetName, verifier);
     newVerifier.fUndoingRessiue = fUndoingReissue;
 
@@ -2013,7 +2058,50 @@ bool CAssetsCache::RemoveRestrictedVerifier(const std::string& assetName, const 
     return true;
 }
 
-bool CAssetsCache::DumpCacheToDatabase()
+namespace {
+//! Collects the single writes of a database in a batch for as long as it lives.
+class CPendingBatchScope
+{
+    CDBWrapper& m_db;
+public:
+    CPendingBatchScope(CDBWrapper& db, CDBBatch& batch) : m_db(db) { m_db.BeginPendingBatch(batch); }
+    ~CPendingBatchScope() { m_db.EndPendingBatch(); }
+    CPendingBatchScope(const CPendingBatchScope&) = delete;
+    CPendingBatchScope& operator=(const CPendingBatchScope&) = delete;
+};
+} // namespace
+
+bool CAssetsCache::DumpCacheToDatabase(const uint256& hashBestBlock, unsigned int nDatabases, bool fSync)
+{
+    if (!passetsdb || !prestricteddb)
+        return error("%s : asset databases are not available", __func__);
+
+    CDBBatch assetsBatch(*passetsdb);
+    CDBBatch restrictedBatch(*prestricteddb);
+    {
+        // Every write of WriteCacheToPendingBatches lands in these batches
+        CPendingBatchScope assetsScope(*passetsdb, assetsBatch);
+        CPendingBatchScope restrictedScope(*prestricteddb, restrictedBatch);
+        if (!WriteCacheToPendingBatches())
+            return false;
+        if (!passetsdb->WriteBestBlock(hashBestBlock) || !prestricteddb->WriteBestBlock(hashBestBlock))
+            return error("%s : failed to record the best block", __func__);
+    }
+
+    // Each database moves from the state of one block to the state of another
+    // in one write. A failure between both writes leaves them at different
+    // blocks, which their best block records tell apart at start-up.
+    if ((nDatabases & ASSET_STATE_DB_ASSETS) && !passetsdb->WriteBatch(assetsBatch, fSync))
+        return error("%s : failed to write the asset database", __func__);
+    AssetFlushCrashPoint(2);
+    if ((nDatabases & ASSET_STATE_DB_RESTRICTED) && !prestricteddb->WriteBatch(restrictedBatch, fSync))
+        return error("%s : failed to write the restricted asset database", __func__);
+
+    ClearDirtyCache();
+    return true;
+}
+
+bool CAssetsCache::WriteCacheToPendingBatches()
 {
     try {
         bool dirty = false;
@@ -2637,8 +2725,6 @@ bool CAssetsCache::DumpCacheToDatabase()
                 }
             }
         }
-
-        ClearDirtyCache();
 
         return true;
     } catch (const std::runtime_error& e) {
@@ -3439,6 +3525,16 @@ bool TxContainsAssetTransferToAddress(const CTransaction& tx, const std::string&
     return false;
 }
 
+bool IsScriptHashDestination(const CTxDestination& destination)
+{
+    return boost::get<CScriptID>(&destination) != nullptr;
+}
+
+std::string ScriptHashAssetError(const std::string& address)
+{
+    return "Script-hash addresses cannot hold assets, nor be tagged or restricted: " + address;
+}
+
 bool TxContainsDEPINOwnerTokenTransfer(const CTransaction& tx, const std::string& assetName)
 {
     return TxContainsAssetTransfer(tx, assetName + OWNER_TAG);
@@ -3583,6 +3679,23 @@ void GetDepinStateOperations(const CTransaction& tx, std::set<std::string>& setA
             continue;
         if (MaybeDepinName(data.asset_name) && IsAssetNameADEPIN(data.asset_name))
             setAssets.insert(data.asset_name);
+    }
+}
+
+void GetDepinOwnerAddressOperations(const CTransaction& tx, std::set<std::pair<std::string, std::string>>& setOps)
+{
+    for (const auto& txout : tx.vout) {
+        if (!txout.scriptPubKey.IsNullAssetTxDataScript())
+            continue;
+        CNullAssetTxData data;
+        std::string address;
+        if (!AssetNullDataFromScript(txout.scriptPubKey, data, address))
+            continue;
+        // Same test ContextualCheckNullAssetTxOut uses to tell an owner
+        // operation from a self-revocation
+        if (MaybeDepinName(data.asset_name) && IsAssetNameADEPIN(data.asset_name) &&
+            TxContainsDEPINOwnerTokenTransfer(tx, data.asset_name))
+            setOps.insert(std::make_pair(data.asset_name, address));
     }
 }
 
@@ -3973,8 +4086,21 @@ bool CreateAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, const C
     return CreateAssetTransaction(pwallet, coinControl, assets, address, error, wtxNew, reservekey, nFeeRequired, verifier_string);
 }
 
+// For the builders below: refuse a script-hash address wherever an asset
+// output or null asset data would be built for it.
+static bool RefuseScriptHashForAssets(const std::string& address, std::pair<int, std::string>& error)
+{
+    if (!IsScriptHashDestination(DecodeDestination(address)))
+        return false;
+    error = std::make_pair(RPC_INVALID_ADDRESS_OR_KEY, ScriptHashAssetError(address));
+    return true;
+}
+
 bool CreateAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, const std::vector<CNewAsset> assets, const std::string& address, std::pair<int, std::string>& error, CWalletTx& wtxNew, CReserveKey& reservekey, CAmount& nFeeRequired, std::string* verifier_string)
 {
+    if (RefuseScriptHashForAssets(address, error))
+        return false;
+
     std::string change_address = EncodeDestination(coinControl.destChange);
 
     auto currentActiveAssetCache = GetCurrentAssetCache();
@@ -4064,6 +4190,9 @@ bool CreateAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, const s
 
     // If the asset is a subasset or unique asset. We need to send the ownertoken change back to ourselfs
     if (assetType == AssetType::SUB || assetType == AssetType::UNIQUE || assetType == AssetType::MSGCHANNEL || fIsSubDepin) {
+        // The change address also receives the owner token
+        if (RefuseScriptHashForAssets(change_address, error))
+            return false;
         // Get the script for the destination address for the assets
         CScript scriptTransferOwnerAsset = GetScriptForDestination(DecodeDestination(change_address));
 
@@ -4075,6 +4204,9 @@ bool CreateAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, const s
 
     // If the asset is a sub qualifier. We need to send the token parent change back to ourselfs
     if (assetType == AssetType::SUB_QUALIFIER) {
+        // The change address also receives the parent qualifier
+        if (RefuseScriptHashForAssets(change_address, error))
+            return false;
         // Get the script for the destination address for the assets
         CScript scriptTransferQualifierAsset = GetScriptForDestination(DecodeDestination(change_address));
 
@@ -4105,7 +4237,10 @@ bool CreateAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, const s
     }
 
     if (assetType == AssetType::RESTRICTED) {
-        // Restricted assets require the ROOT! token to be sent with the issuance
+        // Restricted assets require the ROOT! token to be sent with the issuance,
+        // and the change address receives it back
+        if (RefuseScriptHashForAssets(change_address, error))
+            return false;
         CScript scriptTransferOwnerAsset = GetScriptForDestination(DecodeDestination(change_address));
 
         // Create a transaction that sends the ROOT owner token (e.g. $TOKEN requires TOKEN!)
@@ -4168,6 +4303,8 @@ bool CreateReissueAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, 
         error = std::make_pair(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Neurai address: ") + address);
         return false;
     }
+    if (RefuseScriptHashForAssets(address, error))
+        return false;
 
     // Validate the optional wallet change address
     if (!change_address.empty()) {
@@ -4261,6 +4398,10 @@ bool CreateReissueAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, 
         return false;
     }
 
+    // The change address also receives the owner token
+    if (RefuseScriptHashForAssets(owner_change_address, error))
+        return false;
+
     // Get the script for the destination address for the assets
     CScript scriptTransferOwnerAsset = GetScriptForDestination(DecodeDestination(owner_change_address));
 
@@ -4344,6 +4485,11 @@ bool CreateReissueAssetTransaction(CWallet* pwallet, CCoinControl& coinControl, 
 // nullGlobalRestrictionData -> Use this to globally freeze/unfreeze a restricted asset.
 bool CreateTransferAssetTransaction(CWallet* pwallet, const CCoinControl& coinControl, const std::vector< std::pair<CAssetTransfer, std::string> >vTransfers, const std::string& changeAddress, std::pair<int, std::string>& error, CWalletTx& wtxNew, CReserveKey& reservekey, CAmount& nFeeRequired, std::vector<std::pair<CNullAssetTxData, std::string> >* nullAssetTxData, std::vector<CNullAssetTxData>* nullGlobalRestrictionData)
 {
+    if (IsScriptHashDestination(coinControl.assetDestChange)) {
+        error = std::make_pair(RPC_INVALID_ADDRESS_OR_KEY, ScriptHashAssetError(EncodeDestination(coinControl.assetDestChange)));
+        return false;
+    }
+
     // Initialize Values for transaction
     std::string strTxError;
     std::vector<CRecipient> vecSend;
@@ -4475,6 +4621,8 @@ bool CreateTransferAssetTransaction(CWallet* pwallet, const CCoinControl& coinCo
             error = std::make_pair(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Neurai address: ") + address);
             return false;
         }
+        if (RefuseScriptHashForAssets(address, error))
+            return false;
         auto currentActiveAssetCache = GetCurrentAssetCache();
         if (!currentActiveAssetCache) {
             error = std::make_pair(RPC_DATABASE_ERROR, std::string("passets isn't initialized"));
@@ -4540,6 +4688,10 @@ bool CreateTransferAssetTransaction(CWallet* pwallet, const CCoinControl& coinCo
         std::string strError = "";
         int nAddTagCount = 0;
         for (auto pair : *nullAssetTxData) {
+            // A tag or a restriction on a script-hash address would be recorded
+            // for the key-hash address with the same bytes
+            if (RefuseScriptHashForAssets(pair.second, error))
+                return false;
 
             if (IsAssetNameAQualifier(pair.first.asset_name)) {
                 if (!VerifyQualifierChange(*passets, pair.first, pair.second, strError)) {

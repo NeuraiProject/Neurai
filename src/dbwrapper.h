@@ -214,6 +214,9 @@ private:
     //! the length of the obfuscate key in number of bytes
     static const unsigned int OBFUSCATE_KEY_NUM_BYTES;
 
+    //! while set, Write() and Erase() are collected here instead of being written
+    CDBBatch* m_pending_batch{nullptr};
+
     std::vector<unsigned char> CreateObfuscateKey() const;
 
 public:
@@ -257,9 +260,30 @@ public:
     template <typename K, typename V>
     bool Write(const K& key, const V& value, bool fSync = false)
     {
+        if (m_pending_batch) {
+            m_pending_batch->Write(key, value);
+            return true;
+        }
         CDBBatch batch(*this);
         batch.Write(key, value);
         return WriteBatch(batch, fSync);
+    }
+
+    /**
+     * Collect every following Write() and Erase() in `batch`, until
+     * EndPendingBatch(), so that code written as single writes can be committed
+     * as one atomic WriteBatch(). Reads keep seeing the database without the
+     * collected writes. The caller serializes access to the database meanwhile.
+     */
+    void BeginPendingBatch(CDBBatch& batch)
+    {
+        assert(m_pending_batch == nullptr);
+        m_pending_batch = &batch;
+    }
+
+    void EndPendingBatch()
+    {
+        m_pending_batch = nullptr;
     }
 
     template <typename K>
@@ -284,6 +308,10 @@ public:
     template <typename K>
     bool Erase(const K& key, bool fSync = false)
     {
+        if (m_pending_batch) {
+            m_pending_batch->Erase(key);
+            return true;
+        }
         CDBBatch batch(*this);
         batch.Erase(key);
         return WriteBatch(batch, fSync);

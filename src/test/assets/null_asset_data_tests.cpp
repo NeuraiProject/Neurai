@@ -12,6 +12,8 @@
 #include <chainparams.h>
 #include <key.h>
 #include <coins.h>
+#include <consensus/tx_verify.h>
+#include <consensus/validation.h>
 #include <validation.h>
 
 BOOST_FIXTURE_TEST_SUITE(null_asset_data_tests, BasicTestingSetup)
@@ -73,6 +75,27 @@ BOOST_FIXTURE_TEST_SUITE(null_asset_data_tests, BasicTestingSetup)
         BOOST_CHECK_EQUAL(fetchedData.asset_name, nullData.asset_name);
         BOOST_CHECK_EQUAL(fetchedData.flag, nullData.flag);
         BOOST_CHECK_EQUAL(fetchedAddress, EncodeDestination(pqDest));
+    }
+
+    BOOST_AUTO_TEST_CASE(null_data_with_empty_asset_name_is_rejected)
+    {
+        // OP_XNA_ASSET <20-byte hash> <push: empty name, flag 1>
+        CScript nullDataScript;
+        nullDataScript << OP_XNA_ASSET << std::vector<unsigned char>(20, 0x11) << std::vector<unsigned char>{0x00, 0x01};
+        BOOST_REQUIRE(nullDataScript.IsNullAssetTxDataScript());
+
+        CNullAssetTxData fetchedData;
+        std::string fetchedAddress;
+        BOOST_REQUIRE(AssetNullDataFromScript(nullDataScript, fetchedData, fetchedAddress));
+        BOOST_CHECK(fetchedData.asset_name.empty());
+        BOOST_CHECK_EQUAL(fetchedData.flag, 1);
+
+        CMutableTransaction mtx;
+        mtx.vin.emplace_back(COutPoint(uint256S("01"), 0));
+        mtx.vout.emplace_back(0, nullDataScript);
+        CValidationState state;
+        BOOST_CHECK(!CheckTransaction(CTransaction(mtx), state));
+        BOOST_CHECK_EQUAL(state.GetRejectReason(), "bad-txns-null-data-empty-asset-name");
     }
 
     BOOST_AUTO_TEST_CASE(global_null_data_from_script_test)

@@ -627,15 +627,30 @@ static void NeuraiMiner(const CChainParams& chainparams)
             const unsigned int transactionsUpdated = mempool.GetTransactionsUpdated();
             CBlockIndex* previous;
             std::unique_ptr<CBlockTemplate> blockTemplate;
+            bool fTemplateRejected = false;
             {
                 // The template, parent and extranonce must describe one tip.
                 LOCK(cs_main);
                 previous = chainActive.Tip();
                 if (!previous) return;
-                blockTemplate = BlockAssembler(chainparams).CreateNewBlock(coinbaseScript->reserveScript);
-                if (!blockTemplate)
-                    throw std::runtime_error("Could not create a mining template");
-                IncrementExtraNonce(&blockTemplate->block, previous, extraNonce);
+                try {
+                    blockTemplate = BlockAssembler(chainparams).CreateNewBlock(coinbaseScript->reserveScript);
+                } catch (const std::runtime_error& e) {
+                    // The template did not pass TestBlockValidity. CreateNewBlock
+                    // has dropped the transaction it blames, so the next
+                    // template can succeed: keep mining.
+                    LogPrintf("NeuraiMiner -- template rejected, retrying: %s\n", e.what());
+                    fTemplateRejected = true;
+                }
+                if (!fTemplateRejected) {
+                    if (!blockTemplate)
+                        throw std::runtime_error("Could not create a mining template");
+                    IncrementExtraNonce(&blockTemplate->block, previous, extraNonce);
+                }
+            }
+            if (fTemplateRejected) {
+                MilliSleep(1000);
+                continue;
             }
             CBlock& block = blockTemplate->block;
             const int64_t started = GetTime();

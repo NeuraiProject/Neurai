@@ -721,6 +721,18 @@ void CTxMemPool::removeUnchecked(txiter it, MemPoolRemovalReason reason)
         mapHashDepinHolderTransfers.erase(hash);
     }
 
+    if (mapHashDepinOwnerAddressOps.count(hash)) {
+        for (const auto& item : mapHashDepinOwnerAddressOps.at(hash)) {
+            auto itOps = mapDepinOwnerAddressOps.find(item);
+            if (itOps != mapDepinOwnerAddressOps.end()) {
+                itOps->second.erase(hash);
+                if (itOps->second.empty())
+                    mapDepinOwnerAddressOps.erase(itOps);
+            }
+        }
+        mapHashDepinOwnerAddressOps.erase(hash);
+    }
+
     if (mapHashToAddressAddedTag.count(hash)) {
         for (auto item : mapHashToAddressAddedTag.at(hash)) {
             if (mapAddressAddedTag.count(item)) {
@@ -892,7 +904,7 @@ void CTxMemPool::removeForNewTip(std::function<bool(const CTxMemPoolEntry&)> sho
 void CTxMemPool::removeForDepinStateTip(CAssetsCache* assetCache, int nSpendHeight)
 {
     LOCK(cs);
-    if (!assetCache || (mapDepinHolderTransfers.empty() && mapDepinStateChanges.empty()))
+    if (!assetCache || (mapDepinHolderTransfers.empty() && mapDepinStateChanges.empty() && mapDepinOwnerAddressOps.empty()))
         return;
 
     setEntries txToRemove;
@@ -903,6 +915,22 @@ void CTxMemPool::removeForDepinStateTip(CAssetsCache* assetCache, int nSpendHeig
     CCoinsViewMemPool mempoolView(pcoinsTip, *this);
     CCoinsViewCache assetView(&mempoolView);
     for (const auto& item : mapDepinHolderTransfers) {
+        for (const uint256& hash : item.second) {
+            indexed_transaction_set::iterator i = mapTx.find(hash);
+            if (i == mapTx.end() || txToRemove.count(i))
+                continue;
+            CValidationState state;
+            std::vector<std::pair<std::string, uint256>> reissues;
+            if (!Consensus::CheckTxAssets(i->GetTx(), state, assetView, assetCache, nSpendHeight, false, reissues))
+                txToRemove.insert(i);
+        }
+    }
+
+    // Owner freezes and unfreezes, re-judged against the new tip: a
+    // disconnected freeze or unfreeze changes whether the address is frozen,
+    // and an unfreeze stays valid only while the address is frozen or
+    // self-revoked.
+    for (const auto& item : mapDepinOwnerAddressOps) {
         for (const uint256& hash : item.second) {
             indexed_transaction_set::iterator i = mapTx.find(hash);
             if (i == mapTx.end() || txToRemove.count(i))
@@ -1229,6 +1257,30 @@ void CTxMemPool::removeForBlock(const std::vector<CTransactionRef>& vtx, unsigne
         if (it.isSelfRevoke)
             evictInvalidDepinHolderTransfers(it.assetName);
     }
+
+    // Pending DEPIN owner operations (freeze / unfreeze) on an address whose
+    // restriction state the block changed, re-judged against the new tip: a
+    // second freeze of an address the block froze, or an unfreeze of an
+    // address the block left active, can no longer be mined.
+    const auto evictInvalidDepinOwnerOps = [&](const std::string& assetName, const std::string& address) {
+        auto itOps = mapDepinOwnerAddressOps.find(std::make_pair(assetName, address));
+        if (itOps == mapDepinOwnerAddressOps.end())
+            return;
+        for (const uint256& hash : itOps->second) {
+            indexed_transaction_set::iterator i = mapTx.find(hash);
+            if (i != mapTx.end() && !setAlreadyRemoving.count(hash) && !assetsStillValid(i->GetTx())) {
+                entries.push_back(&*i);
+                trans.emplace_back(i->GetTx());
+                setAlreadyRemoving.insert(hash);
+            }
+        }
+    };
+    for (const auto& it : connectedBlockData.newAddressRestrictionsToAdd) {
+        if (IsAssetNameADEPIN(it.assetName))
+            evictInvalidDepinOwnerOps(it.assetName, it.address);
+    }
+    for (const auto& it : connectedBlockData.newSelfRestrictionsToAdd)
+        evictInvalidDepinOwnerOps(it.assetName, it.address);
     /** XNA END */
 
     // Before the txs in the new block have been removed from the mempool, update policy estimates
@@ -1319,12 +1371,20 @@ void CTxMemPool::_clear()
     mapHashDepinStateChanges.clear();
     mapDepinHolderTransfers.clear();
     mapHashDepinHolderTransfers.clear();
+    mapDepinOwnerAddressOps.clear();
+    mapHashDepinOwnerAddressOps.clear();
 }
 
 void CTxMemPool::clear()
 {
     LOCK(cs);
     _clear();
+
+    // The pending reissues describe this mempool too. They are not members:
+    // cs_main guards them, and the caller holds it. They are left out of
+    // _clear(), which also runs when the global mempool is constructed.
+    mapReissuedAssets.clear();
+    mapReissuedTx.clear();
 }
 
 static void CheckInputsAndUpdateCoins(const CTransaction& tx, CCoinsViewCache& mempoolDuplicate, const int64_t spendheight) {

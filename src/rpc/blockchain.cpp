@@ -2085,7 +2085,8 @@ UniValue clearmempool(const JSONRPCRequest& request)
         );
     }
 
-    LOCK(mempool.cs);
+    // cs_main guards the pending reissues, which are cleared with the mempool
+    LOCK2(cs_main, mempool.cs);
     mempool.clear();
 
     return _("Mempool cleared");

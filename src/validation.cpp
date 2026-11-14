@@ -845,6 +845,7 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         // below under pool.cs, before and after insertion.
         std::map<std::string, DepinTxContext> mapDepinCtx;
         std::set<std::string> setDepinStateOps;
+        std::set<std::pair<std::string, std::string>> setDepinOwnerOps;
         if (AreAssetsDeployed()) {
             if (!Consensus::CheckTxAssets(tx, state, view, GetCurrentAssetCache(), nSpendHeight, true, vReissueAssets))
                 return error("%s: Consensus::CheckTxAssets: %s, %s", __func__, tx.GetHash().ToString(),
@@ -852,6 +853,7 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
 
             BuildDepinTxContext(tx, view, GetCurrentAssetCache(), mapDepinCtx);
             GetDepinStateOperations(tx, setDepinStateOps);
+            GetDepinOwnerAddressOperations(tx, setDepinOwnerOps);
         }
         /** XNA END */
 
@@ -1119,6 +1121,35 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
             }
         }
 
+        // DEPIN: at most one pending owner operation per (asset, address).
+        // Both were judged against the same tip, so once one confirms the
+        // other is a freeze of a frozen address or an unfreeze of an active
+        // one. Policy only: removeForBlock and removeForDepinStateTip re-judge
+        // whatever is pending when the tip changes. A pending operation that
+        // descends from this transaction is met out of order during a reorg,
+        // as above.
+        for (const auto& ownerOp : setDepinOwnerOps) {
+            auto pendingIt = pool.mapDepinOwnerAddressOps.find(ownerOp);
+            if (pendingIt == pool.mapDepinOwnerAddressOps.end())
+                continue;
+            for (const uint256& pendingHash : pendingIt->second) {
+                bool fDescendant = false;
+                CTxMemPool::txiter pendingTxIt = pool.mapTx.find(pendingHash);
+                if (pendingTxIt != pool.mapTx.end()) {
+                    for (const CTxIn& pendingIn : pendingTxIt->GetTx().vin) {
+                        if (pendingIn.prevout.hash == hash) {
+                            fDescendant = true;
+                            break;
+                        }
+                    }
+                }
+                if (fDescendant)
+                    continue;
+
+                return state.DoS(0, false, REJECT_INVALID, "bad-txns-depin-owner-change-already-in-mempool");
+            }
+        }
+
         if (test_accept) {
             // Tx was accepted, but not added
             return true;
@@ -1151,6 +1182,10 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
                 pool.mapDepinHolderTransfers[depinItem.first].insert(hash);
                 pool.mapHashDepinHolderTransfers[hash].insert(depinItem.first);
             }
+        }
+        for (const auto& ownerOp : setDepinOwnerOps) {
+            pool.mapDepinOwnerAddressOps[ownerOp].insert(hash);
+            pool.mapHashDepinOwnerAddressOps[hash].insert(ownerOp);
         }
 
         // Add memory address index
@@ -2681,6 +2716,14 @@ static DisconnectResult DisconnectBlock(const CBlock& block, const CBlockIndex* 
                         return DISCONNECT_FAILED;
                     }
 
+                    // The verifier string comes from the undo data alone. It is
+                    // not tied to the lookup below, which reads the asset
+                    // database: the two databases can be undone separately.
+                    if (!assetsCache->RemoveReissueVerifier(reissue.strName, vUndoData)) {
+                        error("%s : Failed to Undo the Verifier of a Reissue. Asset Name : %s", __func__, reissue.strName);
+                        return DISCONNECT_FAILED;
+                    }
+
                     if (assetsCache->ContainsAsset(reissue.strName)) {
                         if (!assetsCache->RemoveReissueAsset(reissue, strAddress,
                                                              COutPoint(tx.GetHash(), tx.vout.size() - 1),
@@ -3000,6 +3043,16 @@ void ThreadScriptCheck() {
 
 // Protected by cs_main
 VersionBitsCache versionbitscache;
+
+/** Set while the asset state databases may be at another block than the coins
+ *  database (see SetAssetStateRecoveryPending). Guarded by cs_main. */
+static bool g_fAssetStateRecoveryPending = false;
+
+void SetAssetStateRecoveryPending()
+{
+    LOCK(cs_main);
+    g_fAssetStateRecoveryPending = true;
+}
 
 int32_t ComputeBlockVersion(const CBlockIndex* pindexPrev, const Consensus::Params& params)
 {
@@ -3902,24 +3955,32 @@ bool static FlushStateToDisk(const CChainParams& chainparams, CValidationState &
             if (!CheckDiskSpace((48 * 2 * 2 * pcoinsTip->GetCacheSize()) + assetDirtyCacheSize * 2)) /** XNA START */ /** XNA END */
                 return state.Error("out of disk space");
 
+            // The asset undo data of the connected blocks is written to the
+            // asset database as each block connects, without waiting for it to
+            // reach the disk. Make it durable before the coins database
+            // records those blocks as part of the chain state.
+            if (passetsdb && !passetsdb->Sync())
+                return AbortNode(state, "Failed to write to asset database");
+
             // Flush the chainstate (which may refer to block index entries).
             if (!pcoinsTip->Flush())
                 return AbortNode(state, "Failed to write to coin database");
+            AssetFlushCrashPoint(1);
 
             /** XNA START */
-            // Flush the assetstate
-            if (AreAssetsDeployed()) {
-                // Flush the assetstate
-                auto currentActiveAssetCache = GetCurrentAssetCache();
-                if (currentActiveAssetCache) {
-                    if (!currentActiveAssetCache->DumpCacheToDatabase())
-                        return AbortNode(state, "Failed to write to asset database");
-                }
+            // Flush the asset state. The coins database is written first: the
+            // asset databases record the block they are at, and when they
+            // fall behind RecoverAssetStateDatabases brings them forward.
+            // Before assets activate there is no state to write, only the
+            // record of the block the databases are at.
+            // Nor is anything written while the databases have not been
+            // brought to the chain state: a flush on the way out of a failed
+            // start must not record them as being at it.
+            auto currentActiveAssetCache = GetCurrentAssetCache();
+            if (!g_fAssetStateRecoveryPending && currentActiveAssetCache && passetsdb && prestricteddb && !pcoinsTip->GetBestBlock().IsNull()) {
+                if (!currentActiveAssetCache->DumpCacheToDatabase(pcoinsTip->GetBestBlock()))
+                    return AbortNode(state, "Failed to write to asset database");
             }
-
-            // Write the reissue mempool data to database
-            if (passetsdb)
-                passetsdb->WriteReissuedMempoolState();
 
             if (fMessaging) {
                 if (pmessagedb) {
@@ -6526,12 +6587,23 @@ bool ReplayBlocks(const CChainParams& params, CCoinsView* view)
     LOCK(cs_main);
 
     CCoinsViewCache cache(view);
-    auto currentActiveAssetCache = GetCurrentAssetCache();
-    CAssetsCache assetsCache(*currentActiveAssetCache);
 
     std::vector<uint256> hashHeads = view->GetHeadBlocks();
     if (hashHeads.empty()) return true; // We're already in a consistent state.
     if (hashHeads.size() != 2) return error("ReplayBlocks(): unknown inconsistent state");
+
+    // Only the coins are replayed here. The asset state is written after the
+    // coins, so an interrupted coins flush leaves it at the old tip, and
+    // RecoverAssetStateDatabases brings it to the new one from its own best
+    // block records. A database written by a version without that record is
+    // marked as being at the old tip, which is where such a flush left it.
+    if (!hashHeads[1].IsNull()) {
+        uint256 hashAssetState;
+        if (passetsdb && !passetsdb->ReadBestBlock(hashAssetState) && !passetsdb->WriteBestBlock(hashHeads[1]))
+            return error("ReplayBlocks(): failed to write to the asset database");
+        if (prestricteddb && !prestricteddb->ReadBestBlock(hashAssetState) && !prestricteddb->WriteBestBlock(hashHeads[1]))
+            return error("ReplayBlocks(): failed to write to the restricted asset database");
+    }
 
     uiInterface.ShowProgress(_("Replaying blocks..."), 0, false);
     LogPrintf("Replaying blocks\n");
@@ -6562,7 +6634,9 @@ bool ReplayBlocks(const CChainParams& params, CCoinsView* view)
                 return error("RollbackBlock(): ReadBlockFromDisk() failed at %d, hash=%s", pindexOld->nHeight, pindexOld->GetBlockHash().ToString());
             }
             LogPrintf("Rolling back %s (%i)\n", pindexOld->GetBlockHash().ToString(), pindexOld->nHeight);
-            DisconnectResult res = DisconnectBlock(block, pindexOld, cache, &assetsCache);
+            // The asset changes of the disconnection are dropped with this cache
+            CAssetsCache assetsCacheDiscarded;
+            DisconnectResult res = DisconnectBlock(block, pindexOld, cache, &assetsCacheDiscarded);
             if (res == DISCONNECT_FAILED) {
                 return error("RollbackBlock(): DisconnectBlock failed at %d, hash=%s", pindexOld->nHeight, pindexOld->GetBlockHash().ToString());
             }
@@ -6584,8 +6658,356 @@ bool ReplayBlocks(const CChainParams& params, CCoinsView* view)
 
     cache.SetBestBlock(pindexNew->GetBlockHash());
     cache.Flush();
-    assetsCache.Flush();
     uiInterface.ShowProgress("", 100, false);
+    return true;
+}
+
+void AssetFlushCrashPoint(int nPoint)
+{
+    static const int nCrashPoint = gArgs.GetArg("-assetflushcrashpoint", 0);
+    if (nCrashPoint == 0 || nCrashPoint != nPoint || !GetParams().MineBlocksOnDemand())
+        return;
+    // Points 1 and 2 belong to a flush of the chain state at a given height
+    const int nCrashHeight = gArgs.GetArg("-assetflushcrashheight", -1);
+    if (nPoint <= 2 && nCrashHeight >= 0 && chainActive.Height() != nCrashHeight)
+        return;
+    LogPrintf("Simulating a crash at asset flush point %d. Goodbye.\n", nPoint);
+    _Exit(0);
+}
+
+namespace {
+
+const char* AssetStateDatabaseName(unsigned int nDatabase)
+{
+    return nDatabase == ASSET_STATE_DB_ASSETS ? "assets" : "restricted assets";
+}
+
+bool ReadAssetStateBestBlock(unsigned int nDatabase, uint256& hashBlock)
+{
+    return nDatabase == ASSET_STATE_DB_ASSETS ? passetsdb->ReadBestBlock(hashBlock) : prestricteddb->ReadBestBlock(hashBlock);
+}
+
+/**
+ * The asset state of a block is applied under two deployments that latch on
+ * the tip: AreAssetsDeployed() and IsRip5Active(). These tell, as they did
+ * while the child of `pindex` was connected, whether each one was active.
+ */
+bool AssetsWereDeployedAfter(const CBlockIndex* pindex, const CChainParams& params)
+{
+    const Consensus::Params& consensus = params.GetConsensus();
+    if (consensus.nAssetsActiveFromGenesis)
+        return true;
+    if (consensus.nAssetRip5ActivationByHeightEnabled && params.GetAssetActivationHeight() > 0 &&
+        pindex->nHeight >= params.GetAssetActivationHeight())
+        return true;
+    return VersionBitsState(pindex, consensus, Consensus::DEPLOYMENT_ASSETS, versionbitscache) == THRESHOLD_ACTIVE;
+}
+
+bool Rip5WasActiveAfter(const CBlockIndex* pindex, const CChainParams& params)
+{
+    const Consensus::Params& consensus = params.GetConsensus();
+    if (consensus.nAssetsActiveFromGenesis)
+        return true;
+    if (consensus.nAssetRip5ActivationByHeightEnabled && params.MessagingActivationBlock() > 0 &&
+        pindex->nHeight >= (int)params.MessagingActivationBlock())
+        return true;
+    return VersionBitsState(pindex, consensus, Consensus::DEPLOYMENT_MSG_REST_ASSETS, versionbitscache) == THRESHOLD_ACTIVE;
+}
+
+/**
+ * How the asset state of `pindex` can be taken to another block:
+ *  - before assets were deployed a block has no asset state at all;
+ *  - with both deployments active it is applied as when it was connected;
+ *  - in between, the rules depend on which of them had latched, and the
+ *    block cannot be applied again reliably.
+ */
+enum class AssetStateStep { NONE, APPLY, UNSUPPORTED };
+
+AssetStateStep AssetStateStepFor(const CBlockIndex* pindex, const CChainParams& params)
+{
+    if (!pindex->pprev || !AssetsWereDeployedAfter(pindex->pprev, params))
+        return AssetStateStep::NONE;
+    return Rip5WasActiveAfter(pindex->pprev, params) ? AssetStateStep::APPLY : AssetStateStep::UNSUPPORTED;
+}
+
+/** Record that the selected databases are at `hashBlock`, with no change to their state. */
+bool WriteAssetStateBestBlock(unsigned int nDatabases, const uint256& hashBlock)
+{
+    if ((nDatabases & ASSET_STATE_DB_ASSETS) && !passetsdb->WriteBestBlock(hashBlock))
+        return false;
+    if ((nDatabases & ASSET_STATE_DB_RESTRICTED) && !prestricteddb->WriteBestBlock(hashBlock))
+        return false;
+    return true;
+}
+
+/** Wait until every write to the selected databases has reached the disk. */
+bool SyncAssetStateDatabases(unsigned int nDatabases)
+{
+    if ((nDatabases & ASSET_STATE_DB_ASSETS) && !passetsdb->Sync())
+        return false;
+    if ((nDatabases & ASSET_STATE_DB_RESTRICTED) && !prestricteddb->Sync())
+        return false;
+    return true;
+}
+
+bool HaveBlockAndUndo(const CBlockIndex* pindex)
+{
+    return (pindex->nStatus & BLOCK_HAVE_DATA) && (pindex->nStatus & BLOCK_HAVE_UNDO) && !pindex->GetUndoPos().IsNull();
+}
+
+/**
+ * Write the changes `cache` holds for one database, as the state of
+ * `hashBlock`. The cache was restricted to that database (nStateDatabases), so
+ * every change was computed from the state that database is at, whichever
+ * block the other one holds.
+ */
+bool CommitAssetStateStep(CAssetsCache& cache, unsigned int nDatabase, const uint256& hashBlock)
+{
+    if (!cache.Flush())
+        return false;
+    // One batch per block, not waited for: the database keeps the writes in
+    // order, so whatever part of them survives an interruption ends at a
+    // complete block. RecoverAssetStateDatabases syncs once at the end.
+    return passets->DumpCacheToDatabase(hashBlock, nDatabase, /*fSync=*/false);
+}
+
+/** Undo the asset state of one block in the selected databases, which are left at its parent. */
+bool AssetStateStepBack(const CBlockIndex* pindex, unsigned int nDatabase, const CChainParams& params, std::string& strError)
+{
+    const AssetStateStep step = AssetStateStepFor(pindex, params);
+    if (step == AssetStateStep::UNSUPPORTED) {
+        strError = strprintf("block %s (height %d) was connected while assets were activating", pindex->GetBlockHash().ToString(), pindex->nHeight);
+        return false;
+    }
+    if (step == AssetStateStep::NONE) {
+        if (!pindex->pprev || !WriteAssetStateBestBlock(nDatabase, pindex->pprev->GetBlockHash())) {
+            strError = "failed to write the asset state";
+            return false;
+        }
+        return true;
+    }
+
+    CBlock block;
+    if (!HaveBlockAndUndo(pindex) || !ReadBlockFromDisk(block, pindex, params.GetConsensus())) {
+        strError = strprintf("block %s (height %d) is not available", pindex->GetBlockHash().ToString(), pindex->nHeight);
+        return false;
+    }
+
+    // The coins database is not touched: the block is undone on a scratch
+    // view that holds its outputs. Its inputs come from the undo data.
+    CCoinsView viewEmpty;
+    CCoinsViewCache viewScratch(&viewEmpty);
+    {
+        CStrictAuthScriptContext strictAuthScriptContext(params.GetConsensus().IsStrictAuthScriptActive(pindex->nHeight));
+        for (const CTransactionRef& tx : block.vtx)
+            AddCoins(viewScratch, *tx, pindex->nHeight, pindex->GetBlockHash(), true);
+    }
+
+    CAssetsCache cache;
+    cache.nStateDatabases = nDatabase;
+    if (DisconnectBlock(block, pindex, viewScratch, &cache, /*ignoreAddressIndex=*/true, /*databaseMessaging=*/false) == DISCONNECT_FAILED) {
+        strError = strprintf("failed to undo block %s (height %d)", pindex->GetBlockHash().ToString(), pindex->nHeight);
+        return false;
+    }
+    if (!CommitAssetStateStep(cache, nDatabase, pindex->pprev->GetBlockHash())) {
+        strError = "failed to write the asset state";
+        return false;
+    }
+    return true;
+}
+
+/** Apply the asset state of one block to the selected databases, which must be at its parent. */
+bool AssetStateStepForward(const CBlockIndex* pindex, unsigned int nDatabase, const CChainParams& params, std::string& strError)
+{
+    const AssetStateStep step = AssetStateStepFor(pindex, params);
+    if (step == AssetStateStep::UNSUPPORTED) {
+        strError = strprintf("block %s (height %d) was connected while assets were activating", pindex->GetBlockHash().ToString(), pindex->nHeight);
+        return false;
+    }
+    if (step == AssetStateStep::NONE) {
+        if (!WriteAssetStateBestBlock(nDatabase, pindex->GetBlockHash())) {
+            strError = "failed to write the asset state";
+            return false;
+        }
+        return true;
+    }
+
+    CBlock block;
+    CBlockUndo blockUndo;
+    if (!HaveBlockAndUndo(pindex) || !ReadBlockFromDisk(block, pindex, params.GetConsensus()) ||
+        !UndoReadFromDisk(blockUndo, pindex->GetUndoPos(), pindex->pprev->GetBlockHash())) {
+        strError = strprintf("block %s (height %d) is not available", pindex->GetBlockHash().ToString(), pindex->nHeight);
+        return false;
+    }
+    if (blockUndo.vtxundo.size() + 1 != block.vtx.size()) {
+        strError = strprintf("undo data of block %s (height %d) does not match the block", pindex->GetBlockHash().ToString(), pindex->nHeight);
+        return false;
+    }
+
+    // The coins database already holds the block. Its effects on the asset
+    // state are applied again on a scratch view, with the coins it spent
+    // taken from its undo data.
+    CStrictAuthScriptContext strictAuthScriptContext(params.GetConsensus().IsStrictAuthScriptActive(pindex->nHeight));
+    CCoinsView viewEmpty;
+    CCoinsViewCache viewScratch(&viewEmpty);
+    CAssetsCache cache;
+    cache.nStateDatabases = nDatabase;
+    for (size_t i = 0; i < block.vtx.size(); i++) {
+        const CTransaction& tx = *block.vtx[i];
+        if (!tx.IsCoinBase()) {
+            const CTxUndo& txundo = blockUndo.vtxundo[i - 1];
+            if (txundo.vprevout.size() != tx.vin.size()) {
+                strError = strprintf("undo data of block %s (height %d) does not match the block", pindex->GetBlockHash().ToString(), pindex->nHeight);
+                return false;
+            }
+            for (size_t j = 0; j < tx.vin.size(); j++) {
+                viewScratch.AddCoin(tx.vin[j].prevout, Coin(txundo.vprevout[j]), true);
+                if (!viewScratch.SpendCoin(tx.vin[j].prevout, nullptr, &cache)) {
+                    strError = strprintf("failed to apply block %s (height %d)", pindex->GetBlockHash().ToString(), pindex->nHeight);
+                    return false;
+                }
+            }
+        }
+        // A reissue that changes units, IPFS or verifier fills this entry. The
+        // block's asset undo data was stored when it was first connected, from
+        // the state before it, and is not written again.
+        std::pair<std::string, CBlockAssetUndo> undoAssetDataDiscarded;
+        AddCoins(viewScratch, tx, pindex->nHeight, pindex->GetBlockHash(), true, &cache, &undoAssetDataDiscarded);
+    }
+    if (!CommitAssetStateStep(cache, nDatabase, pindex->GetBlockHash())) {
+        strError = "failed to write the asset state";
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
+bool AssetStateDatabasesHoldState()
+{
+    uint256 hashState;
+    return (passetsdb && passetsdb->ReadBestBlock(hashState)) || (prestricteddb && prestricteddb->ReadBestBlock(hashState));
+}
+
+namespace {
+
+/**
+ * Take the selected databases, all of them at `pindexState`, to `pindexTip`:
+ * back to the common ancestor and forward from it. Several databases at the
+ * same block go together, reading each block once.
+ */
+bool BringAssetStateTo(unsigned int nDatabases, const CBlockIndex* pindexState, const CBlockIndex* pindexTip,
+                       const CChainParams& params, std::string& strError)
+{
+    const CBlockIndex* pindexFork = LastCommonAncestor(pindexState, pindexTip);
+    if (!pindexFork) {
+        strError = "its block does not belong to this chain";
+        return false;
+    }
+    for (const unsigned int nDatabase : {ASSET_STATE_DB_ASSETS, ASSET_STATE_DB_RESTRICTED}) {
+        if (nDatabases & nDatabase)
+            LogPrintf("The %s database is at block %s (height %d) and the chain state at block %s (height %d): bringing it to the chain state\n",
+                      AssetStateDatabaseName(nDatabase), pindexState->GetBlockHash().ToString(), pindexState->nHeight,
+                      pindexTip->GetBlockHash().ToString(), pindexTip->nHeight);
+    }
+    uiInterface.InitMessage(_("Recovering the asset state..."));
+
+    // Each step commits the state of one block together with its record,
+    // so an interruption resumes from the last block that was completed.
+    for (const CBlockIndex* pindex = pindexState; pindex != pindexFork; pindex = pindex->pprev) {
+        if (!AssetStateStepBack(pindex, nDatabases, params, strError))
+            return false;
+        AssetFlushCrashPoint(3);
+    }
+    for (int nHeight = pindexFork->nHeight + 1; nHeight <= pindexTip->nHeight; ++nHeight) {
+        if (!AssetStateStepForward(pindexTip->GetAncestor(nHeight), nDatabases, params, strError))
+            return false;
+        AssetFlushCrashPoint(3);
+    }
+    if (!SyncAssetStateDatabases(nDatabases)) {
+        strError = "failed to write the asset state";
+        return false;
+    }
+    for (const unsigned int nDatabase : {ASSET_STATE_DB_ASSETS, ASSET_STATE_DB_RESTRICTED}) {
+        if (nDatabases & nDatabase)
+            LogPrintf("The %s database is at the chain state again\n", AssetStateDatabaseName(nDatabase));
+    }
+    return true;
+}
+
+} // namespace
+
+bool RecoverAssetStateDatabases(const CChainParams& params, std::string& strError)
+{
+    LOCK(cs_main);
+    if (!passetsdb || !prestricteddb || !passets) {
+        g_fAssetStateRecoveryPending = false;
+        return true;
+    }
+
+    // Null while the coins database is empty (new or being rebuilt)
+    const CBlockIndex* pindexTip = pcoinsTip && !pcoinsTip->GetBestBlock().IsNull() ? chainActive.Tip() : nullptr;
+
+    // The block each database is at, for the ones that are not at the tip
+    std::map<unsigned int, const CBlockIndex*> mapBehind;
+    for (const unsigned int nDatabase : {ASSET_STATE_DB_ASSETS, ASSET_STATE_DB_RESTRICTED}) {
+        const char* name = AssetStateDatabaseName(nDatabase);
+        uint256 hashState;
+        if (!ReadAssetStateBestBlock(nDatabase, hashState)) {
+            // Empty, or written by a version that did not record the block. Its
+            // position cannot be told: it is taken to be at the chain state,
+            // which is what those versions assumed.
+            if (pindexTip) {
+                if (!WriteAssetStateBestBlock(nDatabase, pindexTip->GetBlockHash()) || !SyncAssetStateDatabases(nDatabase)) {
+                    strError = strprintf("Failed to write to the %s database", name);
+                    return false;
+                }
+                LogPrintf("The %s database records no block: taken to be at the chain state, block %s (height %d)\n",
+                          name, pindexTip->GetBlockHash().ToString(), pindexTip->nHeight);
+            }
+            continue;
+        }
+        if (pindexTip && hashState == pindexTip->GetBlockHash())
+            continue;
+
+        BlockMap::const_iterator it = mapBlockIndex.find(hashState);
+        if (!pindexTip || it == mapBlockIndex.end()) {
+            strError = strprintf("The %s database does not match the chain state and cannot be brought to it (its block is not in the block index). "
+                                 "Restart with -reindex-chainstate, or with -reindex if blocks were pruned.", name);
+            return false;
+        }
+        mapBehind[nDatabase] = it->second;
+    }
+
+    // Databases at the same block go together; otherwise one at a time, each
+    // from its own block.
+    std::vector<std::pair<unsigned int, const CBlockIndex*>> vPasses;
+    if (mapBehind.size() == 2 && mapBehind[ASSET_STATE_DB_ASSETS] == mapBehind[ASSET_STATE_DB_RESTRICTED]) {
+        vPasses.emplace_back(ASSET_STATE_DB_ALL, mapBehind[ASSET_STATE_DB_ASSETS]);
+    } else {
+        for (const auto& behind : mapBehind)
+            vPasses.emplace_back(behind.first, behind.second);
+    }
+    for (const auto& pass : vPasses) {
+        std::string strPassError;
+        if (!BringAssetStateTo(pass.first, pass.second, pindexTip, params, strPassError)) {
+            strError = strprintf("The %s database does not match the chain state and cannot be brought to it (%s). "
+                                 "Restart with -reindex-chainstate, or with -reindex if blocks were pruned.",
+                                 pass.first == ASSET_STATE_DB_ALL ? "asset" : AssetStateDatabaseName(pass.first), strPassError);
+            return false;
+        }
+    }
+
+    if (!vPasses.empty()) {
+        // Nothing of the steps stays in memory: the databases hold the state
+        passets->ClearDirtyCache();
+        for (auto* cache : {passetsQualifierCache, passetsRestrictionCache, passetsSelfRestrictionCache,
+                            passetsGlobalRestrictionCache, passetsDepinTransferStateCache})
+            if (cache) cache->Clear();
+        if (passetsCache) passetsCache->Clear();
+        if (passetsVerifierCache) passetsVerifierCache->Clear();
+    }
+    g_fAssetStateRecoveryPending = false;
     return true;
 }
 

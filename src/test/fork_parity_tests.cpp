@@ -205,6 +205,21 @@ BOOST_AUTO_TEST_CASE(depin_assets_follow_the_activation_context)
         BOOST_CHECK(IsAssetNameValid("&DEVICE/SECTION"));
         BOOST_CHECK(IsAssetNameValid(longName));
         BOOST_CHECK(!IsAssetNameValid(longName + "A"));
+
+        // DEPIN names keep that character too, in roots and in sections: the
+        // owner token of the longest name is still a valid name.
+        const std::string longDepin = "&" + std::string(119, 'D');
+        const std::string longSection = "&DEVICE/" + std::string(112, 'S');
+        for (const std::string& depin : {longDepin, longSection}) {
+            BOOST_CHECK_EQUAL(depin.size(), 120u);
+            BOOST_CHECK(IsAssetNameValid(depin));
+            BOOST_CHECK(IsAssetNameValid(depin + "!"));
+            BOOST_CHECK(!IsAssetNameValid(depin + "D"));
+        }
+        // A name over the limit reports an invalid type, not a stale one.
+        AssetType type = AssetType::DEPIN;
+        BOOST_CHECK(!IsAssetNameValid(longDepin + "DD", type));
+        BOOST_CHECK(type == AssetType::INVALID);
     }
     // Without a scope, mainnet sees the block after the tip: before the fork.
     BOOST_CHECK(!AreDepinAssetsActiveInContext());

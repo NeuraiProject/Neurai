@@ -434,6 +434,10 @@ bool CheckTransaction(const CTransaction& tx, CValidationState &state, bool fChe
                 if (!VerifyNullAssetDataFlag(data.flag, strError))
                     return state.DoS(100, false, REJECT_INVALID, strError);
 
+                // The name is not validated yet and is inspected below
+                if (data.asset_name.empty())
+                    return state.DoS(100, false, REJECT_INVALID, "bad-txns-null-data-empty-asset-name");
+
                 auto pair = std::make_pair(data.asset_name, address);
                 if(!mapNullDataTxCount.count(pair)){
                     mapNullDataTxCount.insert(std::make_pair(pair, 0));
@@ -962,9 +966,11 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
 
             // DEPIN holder transfer (asset OPEN, no owner escort): the input
             // must not come from an address the owner froze or that revoked
-            // itself. The owner, escorting &X!, may move the asset from
-            // anywhere -- that is the recovery path. Owner tokens "&X!" are
-            // never keys of mapDepin, so they fall through here.
+            // itself. Under the owner escort (&X! spent and re-emitted) this
+            // rule does not apply; spending the holder's output still needs
+            // the holder's signature, so the escort is no way for the owner
+            // to take units back. Owner tokens "&X!" are never keys of
+            // mapDepin, so they fall through here.
             if (!mapDepin.empty()) {
                 auto depinIt = mapDepin.find(data.assetName);
                 if (depinIt != mapDepin.end() &&
@@ -1161,11 +1167,17 @@ bool Consensus::CheckTxAssets(const CTransaction& tx, CValidationState& state, c
             if (!ReissueAssetFromScript(txout.scriptPubKey, reissue, address))
                 return state.DoS(100, false, REJECT_INVALID, "bad-tx-asset-reissue-bad-deserialize", false, "", tx.GetHash());
 
-            if (mapReissuedAssets.count(reissue.strName)) {
-                if (mapReissuedAssets.at(reissue.strName) != tx.GetHash())
-                    return state.DoS(100, false, REJECT_INVALID, "bad-tx-reissue-chaining-not-allowed", false, "", tx.GetHash());
-            } else {
-                vPairReissueAssets.emplace_back(std::make_pair(reissue.strName, tx.GetHash()));
+            // One pending reissue per asset is mempool policy: mapReissuedAssets
+            // describes the local mempool, so only mempool admission may read
+            // it. The validity of a block cannot depend on what this node has
+            // pending.
+            if (fCheckMempool) {
+                if (mapReissuedAssets.count(reissue.strName)) {
+                    if (mapReissuedAssets.at(reissue.strName) != tx.GetHash())
+                        return state.DoS(0, false, REJECT_INVALID, "bad-tx-reissue-chaining-not-allowed", false, "", tx.GetHash());
+                } else {
+                    vPairReissueAssets.emplace_back(std::make_pair(reissue.strName, tx.GetHash()));
+                }
             }
         }
         index++;

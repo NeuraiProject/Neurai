@@ -97,7 +97,6 @@ public:
     bool WriteAddressAssetQuantity( const std::string& address, const std::string& assetName, const CAmount& quantity);
     bool WriteBlockUndoAssetData(const uint256& blockhash, const std::vector<std::pair<std::string, CBlockAssetUndo> >& assetUndoData);
     bool WriteBlockUndoDepinRestrictions(const uint256& blockhash, const std::vector<CDepinRestrictionUndo>& depinUndoData);
-    bool WriteReissuedMempoolState();
 
     // Read from database functions
     bool ReadAssetData(const std::string& strName, CNewAsset& asset, int& nHeight, uint256& blockHash);
@@ -106,7 +105,13 @@ public:
     bool ReadBlockUndoAssetData(const uint256& blockhash, std::vector<std::pair<std::string, CBlockAssetUndo> >& assetUndoData);
     //! False when the record is missing or cannot be deserialized
     bool ReadBlockUndoDepinRestrictions(const uint256& blockhash, std::vector<CDepinRestrictionUndo>& depinUndoData);
-    bool ReadReissuedMempoolState();
+    /** Clear the pending reissue maps and erase the copy older versions stored. */
+    bool ResetReissuedMempoolState();
+
+    /** The block whose state this database holds. It is written in the same
+     *  batch as that state (CAssetsCache::DumpCacheToDatabase). */
+    bool WriteBestBlock(const uint256& hashBlock);
+    bool ReadBestBlock(uint256& hashBlock);
 
     // Erase from database functions
     bool EraseAssetData(const std::string& assetName);

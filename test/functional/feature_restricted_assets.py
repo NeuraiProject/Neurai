@@ -259,6 +259,11 @@ class RestrictedAssetsTest(NeuraiTestFramework):
         n0.issuequalifierasset(tag)
         n0.generate(1)
 
+        # A script-hash address cannot hold assets: tagging it is refused
+        script_hash_address = n0.addmultisigaddress(1, [n0.getnewaddress()])
+        for change_tag in (n0.addtagtoaddress, n0.removetagfromaddress):
+            assert_raises_rpc_error(-5, "Script-hash addresses cannot hold assets", change_tag, tag, script_hash_address)
+
         base_asset_name = "TAG_RESTRICTED"
         asset_name = f"${base_asset_name}"
         qty = 1000
@@ -431,6 +436,12 @@ class RestrictedAssetsTest(NeuraiTestFramework):
 
         assert_raises_rpc_error(None, "Invalid Neurai address", n0.freezeaddress, asset_name, "garbageaddress")
         assert_raises_rpc_error(None, "Invalid Neurai change address", n0.freezeaddress, asset_name, address, "garbagechangeaddress")
+        # A script-hash address cannot hold assets: restricting it is refused,
+        # and so is sending it the asset
+        script_hash_address = n0.addmultisigaddress(1, [n0.getnewaddress()])
+        for restrict in (n0.freezeaddress, n0.unfreezeaddress):
+            assert_raises_rpc_error(-5, "Script-hash addresses cannot hold assets", restrict, asset_name, script_hash_address)
+        assert_raises_rpc_error(-5, "Script-hash addresses cannot hold assets", n0.transferfromaddress, asset_name, address, 1, script_hash_address)
 
         n0.freezeaddress(asset_name, address, xna_change_address)
         n0.generate(1)

@@ -575,3 +575,4 @@ a DePIN recipient list.
 - [Membership epochs](depin-membership.md)
 - [Legacy and strict ECDSA messaging / ECIES 2](depin-ecdsa.md)
 - [Pool state](depin-pool-state.md)
+- [DEPIN assets: rules an operator should know](depin-assets.md)

@@ -4308,6 +4308,13 @@ bool CWallet::CreateTransactionAll(const std::vector<CRecipient>& vecSend, CWall
 
                     for (auto assetChange : mapAssetChange) {
                         if (assetChange.second > 0) {
+                            // Without an asset change address the asset change
+                            // goes with the coin change, which may be a script
+                            // hash; assets cannot be held there.
+                            if (assetScriptChange.IsPayToScriptHash()) {
+                                strFailReason = _("The asset change cannot go to a script-hash address: set an asset change address");
+                                return false;
+                            }
                             if (IsAssetNameAnRestricted(assetChange.first))
                             {
                                 // Get the verifier string for the restricted asset

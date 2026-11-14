@@ -666,6 +666,7 @@ std::string HelpMessage(HelpMessageMode mode)
         strUsage += HelpMessageOpt("-depinstateheight=<n>", "Override the DEPIN transfer state (open/close/seal) activation height (regtest-only)");
         strUsage += HelpMessageOpt("-rbfbanheight=<n>", "Override the no-RBF sequence rule activation height (regtest-only)");
         strUsage += HelpMessageOpt("-consensuscleanupheight=<n>", "Override the consensus cleanup (BIP-54 port) activation height (regtest-only)");
+        strUsage += HelpMessageOpt("-assetflushcrashpoint=<n>", "Simulate a crash while writing (1: before the asset databases, 2: between them, at -assetflushcrashheight) or recovering (3) the asset state (regtest-only)");
     }
     strUsage += HelpMessageOpt("-debug=<category>", strprintf(_("Output debugging information (default: %u, supplying <category> is optional)"), 0) + ". " +
         _("If <category> is not supplied or if <category> = 1, output all debugging information.") + " " + _("<category> can be:") + " " + ListLogCategories() + ".");
@@ -1996,6 +1997,7 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
 
                     // Restricted assets
                     prestricteddb = new CRestrictedDB(nBlockTreeDBCache, false, fWipeDerivedState);
+                    SetAssetStateRecoveryPending();
                     passetsVerifierCache = new CLRUCache<std::string, CNullAssetTxVerifierString>(
                             MAX_CACHE_ASSETS_SIZE);
                     passetsQualifierCache = new CLRUCache<std::string, int8_t>(MAX_CACHE_ASSETS_SIZE);
@@ -2026,9 +2028,8 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
                         break;
                     }
 
-                    if (!passetsdb->ReadReissuedMempoolState())
-                        LogPrintf(
-                                "Database failed to load last Reissued Mempool State. Will have to start from empty state");
+                    if (!passetsdb->ResetReissuedMempoolState())
+                        LogPrintf("Failed to erase the stored pending reissue state\n");
 
                     LogPrintf("Successfully loaded assets from database.\nCache of assets size: %d\n",
                               passetsCache->Size());
@@ -2186,6 +2187,23 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
                         break;
                     }
                     assert(chainActive.Tip() != nullptr);
+                }
+
+                // An empty chain state next to asset databases that hold the
+                // state of some block: the chain state was removed and the asset
+                // state, which derives from it, was left behind. Rebuild both
+                // together: retry the load loop with a chainstate rebuild.
+                if (is_coinsview_empty && !fReset && !fReindexChainState && AssetStateDatabasesHoldState()) {
+                    LogPrintf("The chain state is empty and the asset databases are not: rebuilding the asset state with the chain state\n");
+                    fReindexChainState = true;
+                    fRebuildChainState = true;
+                    break;
+                }
+
+                // The asset state is written after the coins: bring it to the
+                // chain state if the last shutdown left it behind
+                if (!RecoverAssetStateDatabases(chainparams, strLoadError)) {
+                    break;
                 }
 
                 CValidationState powRecovery;

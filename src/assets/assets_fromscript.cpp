@@ -252,7 +252,9 @@ bool IsTypeCheckNameValid(const AssetType type, const std::string& name, std::st
         if (!valid) { error = "Restricted name contains invalid characters (Valid characters are: A-Z 0-9 _ .) ($ must be the first character, _ . special characters can't be the first or last characters)"; return false; }
         return true;
     } else if (type == AssetType::DEPIN) {
-        if (name.size() > (size_t)maxLength) { error = "Name is greater than max length of " + std::to_string(maxLength); return false; }
+        // One character of the limit is kept for the owner tag: &X! must be a
+        // valid name too, or the owner token could never be transferred.
+        if (name.size() > (size_t)(maxLength - 1)) { error = "Name is greater than max length of " + std::to_string(maxLength - 1); return false; }
         if (name.find('/') != std::string::npos) {
             std::vector<std::string> parts;
             boost::split(parts, name, boost::is_any_of("/"));
@@ -283,11 +285,11 @@ bool IsTypeCheckNameValid(const AssetType type, const std::string& name, std::st
 
 bool IsAssetNameValid(const std::string& name, AssetType& assetType, std::string& error)
 {
+    assetType = AssetType::INVALID;
     if (name.length() > static_cast<size_t>(GetMaxAssetNameLength())) {
         error = "Name is greater than max length of " + std::to_string(GetMaxAssetNameLength());
         return false;
     }
-    assetType = AssetType::INVALID;
     if (std::regex_match(name, UNIQUE_INDICATOR)) {
         bool ret = IsTypeCheckNameValid(AssetType::UNIQUE, name, error);
         if (ret) assetType = AssetType::UNIQUE;

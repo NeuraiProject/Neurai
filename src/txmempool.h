@@ -528,6 +528,12 @@ public:
     std::map<std::string, std::set<uint256>> mapDepinHolderTransfers;
     std::map<uint256, std::set<std::string>> mapHashDepinHolderTransfers;
 
+    // DEPIN owner operations on an address (freeze / unfreeze under the owner
+    // escort), by (asset, address). Their validity depends on the restriction
+    // state of that address at the tip, so they are re-judged when it changes.
+    std::map<std::pair<std::string, std::string>, std::set<uint256>> mapDepinOwnerAddressOps;
+    std::map<uint256, std::set<std::pair<std::string, std::string>>> mapHashDepinOwnerAddressOps;
+
     typedef indexed_transaction_set::nth_index<0>::type::iterator txiter;
     std::vector<std::pair<uint256, txiter> > vTxHashes; //!< All tx witness hashes/entries in mapTx, in random order
 
@@ -643,6 +649,9 @@ public:
      *  descendants. */
     void removeForNoRbfTransition();
 
+    /** Remove every entry, and the pending reissues recorded for them
+     *  (mapReissuedAssets, mapReissuedTx). The caller must hold cs_main, which
+     *  guards those two maps. */
     void clear();
     void _clear(); //lock free
     bool CompareDepthAndScore(const uint256& hasha, const uint256& hashb);

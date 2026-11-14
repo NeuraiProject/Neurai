@@ -23,6 +23,8 @@ static const char MY_ASSET_FLAG = 'M';
 static const char BLOCK_ASSET_UNDO_DATA = 'U';
 static const char BLOCK_DEPIN_RESTRICTION_UNDO_DATA = 'D';
 static const char MEMPOOL_REISSUED_TX = 'Z';
+static const char BEST_BLOCK_FLAG = 'H';
+static const std::string BEST_BLOCK_KEY = "bestblock";
 
 static size_t MAX_DATABASE_RESULTS = 50000;
 
@@ -137,22 +139,27 @@ bool CAssetsDB::ReadBlockUndoDepinRestrictions(const uint256& blockhash, std::ve
     return Read(std::make_pair(BLOCK_DEPIN_RESTRICTION_UNDO_DATA, blockhash), depinUndoData);
 }
 
-bool CAssetsDB::WriteReissuedMempoolState()
+bool CAssetsDB::WriteBestBlock(const uint256& hashBlock)
 {
-    return Write(MEMPOOL_REISSUED_TX, mapReissuedAssets);
+    return Write(std::make_pair(BEST_BLOCK_FLAG, BEST_BLOCK_KEY), hashBlock);
 }
 
-bool CAssetsDB::ReadReissuedMempoolState()
+bool CAssetsDB::ReadBestBlock(uint256& hashBlock)
 {
+    return Read(std::make_pair(BEST_BLOCK_FLAG, BEST_BLOCK_KEY), hashBlock);
+}
+
+bool CAssetsDB::ResetReissuedMempoolState()
+{
+    // The pending reissues are a view of the mempool. Mempool admission
+    // rebuilds them as the mempool loads; a copy read back from disk would
+    // describe a mempool that may not be the one loaded. Earlier versions
+    // stored that copy: drop it so nothing reads it again.
     mapReissuedAssets.clear();
     mapReissuedTx.clear();
-    // If it exists, return the read value.
-    bool rv = Read(MEMPOOL_REISSUED_TX, mapReissuedAssets);
-    if (rv) {
-        for (auto pair : mapReissuedAssets)
-            mapReissuedTx.insert(std::make_pair(pair.second, pair.first));
-    }
-    return rv;
+    if (!Exists(MEMPOOL_REISSUED_TX))
+        return true;
+    return Erase(MEMPOOL_REISSUED_TX);
 }
 
 bool CAssetsDB::LoadAssets()
@@ -227,7 +234,7 @@ bool CAssetsDB::AssetDir(std::vector<CDatabasedAssetData>& assets, const std::st
     pcursor->Seek(std::make_pair(ASSET_FLAG, std::string()));
 
     auto prefix = filter;
-    bool wildcard = prefix.back() == '*';
+    bool wildcard = !prefix.empty() && prefix.back() == '*';
     if (wildcard)
         prefix.pop_back();
 

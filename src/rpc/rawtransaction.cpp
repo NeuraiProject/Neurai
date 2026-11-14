@@ -804,6 +804,10 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
             }
             /** XNA COIN START **/
             else if (outputValue.type() == UniValue::VOBJ) {
+                // Every asset operation builds an asset output for this address
+                if (IsScriptHashDestination(destination))
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, ScriptHashAssetError(name_));
+
                 auto asset_ = outputValue.get_obj();
                 auto assetKey_ = asset_.getKeys()[0];
 
@@ -1485,6 +1489,8 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
                     for (int i = 0; i < (int)addresses.size(); i++) {
                         if (!IsValidDestinationString(addresses[i].get_str()))
                             throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, supplied address is not a valid Neurai address");
+                        if (IsScriptHashDestination(DecodeDestination(addresses[i].get_str())))
+                            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, ScriptHashAssetError(addresses[i].get_str()));
                     }
 
                     CAmount changeQty = COIN;
@@ -1530,6 +1536,8 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
                     for (int i = 0; i < (int)addresses.size(); i++) {
                         if (!IsValidDestinationString(addresses[i].get_str()))
                             throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, supplied address is not a valid Neurai address");
+                        if (IsScriptHashDestination(DecodeDestination(addresses[i].get_str())))
+                            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, ScriptHashAssetError(addresses[i].get_str()));
                     }
 
                     // owner change

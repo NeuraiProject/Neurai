@@ -356,6 +356,31 @@ CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams);
  *  it. */
 bool IsNearForkActivation(const Consensus::Params& params, int nHeight);
 
+/**
+ * Bring the asset state databases to the block of the chain state.
+ *
+ * Each database records the block whose state it holds. After an unclean
+ * shutdown a database can be at another block than the coins database; its
+ * state is then undone back to the common ancestor and applied forward to the
+ * chain tip, one block at a time, from the blocks and undo data on disk. A
+ * database without that record (written by an earlier version) is taken to be
+ * at the chain state. Call after LoadChainTip().
+ * Returns false with strError set when a block that is needed is not available.
+ */
+bool RecoverAssetStateDatabases(const CChainParams& params, std::string& strError);
+
+/** Whether an asset state database records the block its state belongs to. */
+bool AssetStateDatabasesHoldState();
+
+/** The asset state databases were just opened and may be at another block than
+ *  the coins database. Until RecoverAssetStateDatabases() succeeds no flush
+ *  records them as being at the chain state. */
+void SetAssetStateRecoveryPending();
+
+/** Regression test hook (-assetflushcrashpoint, regtest only): end the process
+ *  at the given point of writing or recovering the asset state. */
+void AssetFlushCrashPoint(int nPoint);
+
 /** Guess verification progress (as a fraction between 0.0=genesis and 1.0=current tip). */
 double GuessVerificationProgress(const ChainTxData& data, CBlockIndex* pindex);
 

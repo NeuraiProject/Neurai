@@ -219,4 +219,40 @@ BOOST_FIXTURE_TEST_SUITE(asset_reissue_tests, BasicTestingSetup)
     }
 
 
+    BOOST_AUTO_TEST_CASE(reissue_undo_is_split_by_database)
+    {
+        // A reissue that changed the verifier string. The verifier lives in the
+        // restricted database and the rest of the reissue in the asset
+        // database: each part is undone by a cache for its own database,
+        // without reading or changing the other.
+        const std::string name = "$RESTRICTED";
+        std::vector<std::pair<std::string, CBlockAssetUndo> > undoBlockData;
+        undoBlockData.emplace_back(std::make_pair(name, CBlockAssetUndo{false, false, "", 0, ASSET_UNDO_INCLUDES_VERIFIER_STRING, true, "true"}));
+        const CReissueAsset reissue(name, CAmount(1 * COIN), 8, 1, "");
+
+        CAssetsCache restrictedOnly;
+        restrictedOnly.nStateDatabases = ASSET_STATE_DB_RESTRICTED;
+        BOOST_CHECK(restrictedOnly.RemoveReissueVerifier(name, undoBlockData));
+        BOOST_REQUIRE_EQUAL(restrictedOnly.setNewRestrictedVerifierToRemove.size(), 1u);
+        BOOST_CHECK_EQUAL(restrictedOnly.setNewRestrictedVerifierToRemove.begin()->assetName, name);
+        BOOST_CHECK_EQUAL(restrictedOnly.setNewRestrictedVerifierToRemove.begin()->verifier, "true");
+        BOOST_CHECK(restrictedOnly.setNewRestrictedVerifierToRemove.begin()->fUndoingRessiue);
+        BOOST_CHECK(restrictedOnly.RemoveReissueAsset(reissue, GetParams().GlobalBurnAddress(), COutPoint(), undoBlockData));
+        BOOST_CHECK(restrictedOnly.setNewReissueToRemove.empty());
+        BOOST_CHECK(restrictedOnly.mapReissuedAssetData.empty());
+
+        CAssetsCache assetsOnly;
+        assetsOnly.nStateDatabases = ASSET_STATE_DB_ASSETS;
+        BOOST_CHECK(assetsOnly.RemoveReissueVerifier(name, undoBlockData));
+        BOOST_CHECK(assetsOnly.setNewRestrictedVerifierToRemove.empty());
+
+        // A reissue that left the verifier alone has nothing to undo there.
+        std::vector<std::pair<std::string, CBlockAssetUndo> > undoWithoutVerifier;
+        undoWithoutVerifier.emplace_back(std::make_pair(name, CBlockAssetUndo{true, true, "", 0, ASSET_UNDO_INCLUDES_VERIFIER_STRING, false, ""}));
+        CAssetsCache both;
+        BOOST_CHECK(both.RemoveReissueVerifier(name, undoWithoutVerifier));
+        BOOST_CHECK(both.RemoveReissueVerifier("$OTHER", undoBlockData));
+        BOOST_CHECK(both.setNewRestrictedVerifierToRemove.empty());
+    }
+
 BOOST_AUTO_TEST_SUITE_END()

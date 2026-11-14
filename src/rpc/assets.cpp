@@ -68,6 +68,15 @@ void CheckRestrictedAssetTransferInputs(const CWalletTx& transaction, const std:
 #ifdef ENABLE_WALLET
 // Wallet-backed helpers of the DePIN RPCs, registered only with the wallet.
 namespace {
+// A tag or a restriction on a script-hash address would be recorded for the
+// key-hash address with the same 20 bytes (see IsScriptHashDestination).
+static void EnsureAddressCanHoldAssets(const CTxDestination& destination, const std::string& address)
+{
+    if (IsScriptHashDestination(destination)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, ScriptHashAssetError(address));
+    }
+}
+
 UniValue UpdateDEPINAddressRestriction(const JSONRPCRequest &request, const int8_t &flag)
 {
     CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
@@ -92,6 +101,7 @@ UniValue UpdateDEPINAddressRestriction(const JSONRPCRequest &request, const int8
     if (!IsValidDestination(destination)) {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Neurai address: ") + address);
     }
+    EnsureAddressCanHoldAssets(destination, address);
 
     // Early warning only. Consensus decides this for real, structurally, from
     // the transaction's inputs and outputs (ContextualCheckNullAssetTxOut).
@@ -338,6 +348,7 @@ UniValue UpdateAddressTag(const JSONRPCRequest &request, const int8_t &flag)
     if (!IsValidDestination(destination)) {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Neurai address: ") + address);
     }
+    EnsureAddressCanHoldAssets(destination, address);
 
     // Get the optional change address
     std::string change_address = "";
@@ -437,6 +448,7 @@ UniValue UpdateAddressRestriction(const JSONRPCRequest &request, const int8_t &f
     if (!IsValidDestination(destination)) {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Neurai address: ") + address);
     }
+    EnsureAddressCanHoldAssets(destination, address);
 
     // Get the optional change address
     std::string change_address = "";
@@ -2130,6 +2142,9 @@ UniValue getcacheinfo(const JSONRPCRequest& request)
                 + HelpExampleRpc("getcacheinfo", "")
                 + HelpExampleCli("getcacheinfo", "")
         );
+
+    // cs_main guards the caches and the pending reissues read below
+    LOCK(cs_main);
 
     auto currentActiveAssetCache = GetCurrentAssetCache();
     if (!currentActiveAssetCache)

@@ -261,6 +261,56 @@ docs call OP_ZKVERIFY NIP-016; src/script/interpreter.h labels
 SCRIPT_VERIFY_ZKVERIFY "NIP-018". Profile 03 (C6) is not described in
 covenants.md. -->
 
+### Asset state fixes
+
+- **Block validity no longer depends on pending reissues.** "One pending
+  reissue per asset" is mempool policy, but block validation consulted the same
+  record of the local mempool, and that record was also stored on disk and read
+  back at start-up. A node holding another pending reissue of an asset could
+  reject a valid block that reissued it. Block validation no longer reads the
+  record and it is no longer stored. This is not a rule change: the fixed node
+  accepts exactly the blocks a node with an empty mempool accepts.
+  `clearmempool` clears the record too; it used to keep refusing a new reissue
+  of an asset whose pending reissue had just been cleared.
+
+  A node that rejected such a block keeps it marked as invalid after
+  upgrading. To recover it: find the block in `debug.log`, in the lines
+  `ConnectBlock: Consensus::CheckTxAssets: <txid>, bad-tx-reissue-chaining-not-allowed`
+  and `InvalidChainFound: invalid block=<hash>`, and run
+  `reconsiderblock <hash>`. `getchaintips` shows the invalid branch but not
+  its cause. `reconsiderblock` also clears the marks of the ancestors and
+  descendants of that block, including any set on purpose with
+  `invalidateblock`, which must then be set again.
+- **The asset state follows the chain state across unclean shutdowns.** The
+  asset databases are written after the coins database. Each one is now written
+  in a single batch together with the block it is at, and at start-up a
+  database left at another block is brought to the chain state from the blocks
+  and undo data on disk (also across a reorganization, and resuming if
+  interrupted). An interrupted flush used to leave freezes, transfer states and
+  balances of an older block under a newer chain tip, or a node that reported a
+  corrupted block database. If a block that is needed is not on disk the node
+  stops and asks for `-reindex-chainstate`, or `-reindex` when blocks were
+  pruned. Databases written by earlier versions carry no block record and are
+  taken to be at the chain state on the first start.
+- **Pending DEPIN owner operations follow the tip.** Owner freezes and
+  unfreezes are judged again when the tip changes, also after a
+  reorganization, and one pending operation per (asset, address) is accepted.
+  A stale one used to stay in the mempool and make the next block template
+  fail, or stop a node running with `-checkmempool`. The internal miner keeps
+  running when a template is rejected.
+- A per-address asset data output with an empty asset name is rejected before
+  the name is inspected.
+- DEPIN names are limited to 120 characters, so that the owner token of the
+  longest name is a valid name. No DEPIN asset exists on testnet at this point.
+- Script-hash addresses cannot hold assets, and every asset RPC now says so
+  instead of building the transaction: as the destination or the asset change
+  of an issue, reissue or transfer (these used to be rejected by the mempool
+  with an unrelated reason), in `createrawtransaction` asset outputs, and in
+  `addtagtoaddress`, `removetagfromaddress`, `freezeaddress`,
+  `unfreezeaddress`, `freezedepin` and `unfreezedepin`, where the tag or the
+  restriction used to be recorded for another address. Coins can still be sent
+  to script-hash addresses. See [depin-assets.md](depin-assets.md).
+
 ### No-RBF sequence rule
 
 Replace-by-fee is prohibited by consensus from the activation height. A

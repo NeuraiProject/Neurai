@@ -8,6 +8,7 @@
 // the fixed [authType, sig, pubkey, OP_TRUE] witness, the sighash domain,
 // sigops, asset-wrapped outputs and witness standardness / dust.
 
+#include "assets/assets.h"
 #include "assets/assettypes.h"
 #include "base58.h"
 #include "bech32.h"
@@ -34,6 +35,7 @@
 #include <boost/test/unit_test.hpp>
 
 #include <limits>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -511,6 +513,90 @@ BOOST_AUTO_TEST_CASE(asset_wrapped_strict_outputs)
     BOOST_CHECK(nullData[1] == OP_3);
     nullData << std::vector<unsigned char>{0x01, 0x02, 0x03};
     BOOST_CHECK(nullData.IsNullAssetTxDataScript());
+}
+
+// Restrictions (freeze, unfreeze, self-revocation) are keyed by the address
+// read from the null asset data output, and apply to the asset outputs whose
+// address is the same string. Both must come from the same destination.
+BOOST_AUTO_TEST_CASE(asset_restrictions_address_the_destination_that_holds_the_asset)
+{
+    const CKey ecdsa = MakeEcdsaKey();
+    const CKey pq = MakePQKey();
+    const CPubKey ecdsaPub = ecdsa.GetPubKey();
+    const CPubKey pqPub = pq.GetPubKey();
+    const CScript witnessScript = CScript() << OP_TRUE;
+
+    // Every kind of destination that can hold an asset.
+    const std::vector<std::pair<std::string, CTxDestination>> holders{
+        {"key hash", CTxDestination(ecdsaPub.GetID())},
+        {"AuthScript v1 (ECDSA)", CTxDestination(WitnessV1AuthScript(GetAuthScriptCommitment(0x02, &ecdsaPub, witnessScript)))},
+        {"AuthScript v1 (PQ)", CTxDestination(WitnessV1AuthScript(GetAuthScriptCommitment(0x01, &pqPub, witnessScript)))},
+        {"strict v2 (PQ)", CTxDestination(StrictDest(pq))},
+        {"strict v3 (ECDSA)", CTxDestination(StrictDest(ecdsa))},
+    };
+
+    std::set<std::string> addresses;
+    for (const auto& holder : holders) {
+        const std::string expected = EncodeDestination(holder.second);
+        BOOST_REQUIRE_MESSAGE(!expected.empty(), holder.first);
+        BOOST_CHECK(DecodeDestination(expected) == holder.second);
+
+        // The output that holds the asset...
+        CScript assetScript = GetScriptForDestination(holder.second);
+        CAssetTransfer("&DEVICE", 1).ConstructTransaction(assetScript, AssetMarker::NEURAI_XNA);
+        BOOST_REQUIRE_MESSAGE(assetScript.IsAssetScript(), holder.first);
+        CAssetTransfer transfer;
+        std::string assetAddress;
+        BOOST_REQUIRE_MESSAGE(TransferAssetFromScript(assetScript, transfer, assetAddress), holder.first);
+
+        // ...and the null asset data that freezes, unfreezes or revokes it.
+        for (const int flag : {0, 1}) {
+            CScript nullScript = GetScriptForNullAssetDataDestination(holder.second);
+            CNullAssetTxData("&DEVICE", flag).ConstructTransaction(nullScript);
+            BOOST_REQUIRE_MESSAGE(nullScript.IsNullAssetTxDataScript(), holder.first);
+            CNullAssetTxData data;
+            std::string nullAddress;
+            BOOST_REQUIRE_MESSAGE(AssetNullDataFromScript(nullScript, data, nullAddress), holder.first);
+            BOOST_CHECK_EQUAL(data.asset_name, "&DEVICE");
+            BOOST_CHECK_EQUAL(data.flag, flag);
+            BOOST_CHECK_MESSAGE(nullAddress == assetAddress,
+                                holder.first << ": null data addresses " << nullAddress << ", the asset is held by " << assetAddress);
+            BOOST_CHECK_EQUAL(nullAddress, expected);
+        }
+        addresses.insert(assetAddress);
+    }
+    // Destinations that share a key are still different destinations, each
+    // with its own address and so with its own restrictions.
+    BOOST_CHECK_EQUAL(addresses.size(), holders.size());
+
+    // A script hash cannot hold an asset from the fork on, and its null data
+    // has the key-hash form: it reads back as the key-hash address with the
+    // same 20 bytes, never as the script-hash address. RPCs refuse it.
+    const CScriptID scriptId(witnessScript);
+    CScript p2shAsset = GetScriptForDestination(scriptId);
+    CAssetTransfer("&DEVICE", 1).ConstructTransaction(p2shAsset, AssetMarker::NEURAI_XNA);
+    BOOST_CHECK(!p2shAsset.IsAssetScript());
+    CScript p2shNull = GetScriptForNullAssetDataDestination(scriptId);
+    CNullAssetTxData("&DEVICE", 1).ConstructTransaction(p2shNull);
+    CNullAssetTxData p2shData;
+    std::string p2shNullAddress;
+    BOOST_REQUIRE(AssetNullDataFromScript(p2shNull, p2shData, p2shNullAddress));
+    BOOST_CHECK(p2shNullAddress != EncodeDestination(scriptId));
+    BOOST_CHECK_EQUAL(p2shNullAddress, EncodeDestination(CKeyID(uint160(scriptId))));
+
+    // Before the fork an AuthScript prefix is not null asset data at all.
+    {
+        CStrictAuthScriptContext beforeFork(false);
+        for (const auto& holder : holders) {
+            if (boost::get<CKeyID>(&holder.second)) continue;
+            CScript nullScript = GetScriptForNullAssetDataDestination(holder.second);
+            CNullAssetTxData("&DEVICE", 1).ConstructTransaction(nullScript);
+            CNullAssetTxData data;
+            std::string address;
+            BOOST_CHECK_MESSAGE(!nullScript.IsNullAssetTxDataScript(), holder.first);
+            BOOST_CHECK_MESSAGE(!AssetNullDataFromScript(nullScript, data, address), holder.first);
+        }
+    }
 }
 
 BOOST_AUTO_TEST_CASE(witness_standard_and_dust)

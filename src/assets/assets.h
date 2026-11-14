@@ -129,6 +129,7 @@ class COutput;
 
 // Create map that store that state of current reissued transaction that the mempool as accepted.
 // If an asset name is in this map, any other reissue transactions wont be accepted into the mempool
+// Both maps are guarded by cs_main
 extern std::map<uint256, std::string> mapReissuedTx;
 extern std::map<std::string, uint256> mapReissuedAssets;
 
@@ -183,6 +184,13 @@ struct ErrorReport {
 };
 
 std::string GetUserErrorString(const ErrorReport& report);
+
+/** The databases that hold asset state, for CAssetsCache::DumpCacheToDatabase. */
+enum : unsigned int {
+    ASSET_STATE_DB_ASSETS = 1,     //!< passetsdb: asset data and address balances
+    ASSET_STATE_DB_RESTRICTED = 2, //!< prestricteddb: verifiers, tags, restrictions, DEPIN state
+    ASSET_STATE_DB_ALL = ASSET_STATE_DB_ASSETS | ASSET_STATE_DB_RESTRICTED,
+};
 
 class CAssetsCache : public CAssets
 {
@@ -239,6 +247,13 @@ public :
     std::map<CAssetCacheRootQualifierChecker, std::set<std::string> > mapRootQualifierAddressesAdd;
     std::map<CAssetCacheRootQualifierChecker, std::set<std::string> > mapRootQualifierAddressesRemove;
 
+    //! The databases whose state this cache changes (ASSET_STATE_DB_*). A
+    //! change that belongs to the other one is skipped, so that a block can be
+    //! applied or undone on a single database while the other one stays at
+    //! another block (RecoverAssetStateDatabases). Every other user leaves it
+    //! at ASSET_STATE_DB_ALL.
+    unsigned int nStateDatabases = ASSET_STATE_DB_ALL;
+
     CAssetsCache() : CAssets()
     {
         SetNull();
@@ -294,6 +309,8 @@ public :
         //! Root Qualifier Address Map
         this->mapRootQualifierAddressesAdd = cache.mapRootQualifierAddressesAdd;
         this->mapRootQualifierAddressesRemove = cache.mapRootQualifierAddressesRemove;
+
+        this->nStateDatabases = cache.nStateDatabases;
     }
 
     CAssetsCache& operator=(const CAssetsCache& cache)
@@ -349,6 +366,8 @@ public :
         this->mapRootQualifierAddressesAdd = cache.mapRootQualifierAddressesAdd;
         this->mapRootQualifierAddressesRemove = cache.mapRootQualifierAddressesRemove;
 
+        this->nStateDatabases = cache.nStateDatabases;
+
         return *this;
     }
 
@@ -357,6 +376,11 @@ public :
     bool RemoveTransfer(const CAssetTransfer& transfer, const std::string& address, const COutPoint& out);
     bool RemoveOwnerAsset(const std::string& assetsName, const std::string address);
     bool RemoveReissueAsset(const CReissueAsset& reissue, const std::string address, const COutPoint& out, const std::vector<std::pair<std::string, CBlockAssetUndo> >& vUndoIPFS);
+    //! Undo the verifier string change of a reissue, from the block's asset
+    //! undo data. The verifier lives in the restricted database, the rest of
+    //! a reissue (RemoveReissueAsset) in the asset database: they are undone
+    //! separately so that each can be undone without the other.
+    bool RemoveReissueVerifier(const std::string& assetName, const std::vector<std::pair<std::string, CBlockAssetUndo> >& vUndoData);
     bool UndoAssetCoin(const Coin& coin, const COutPoint& out);
     bool RemoveQualifierAddress(const std::string& assetName, const std::string& address, const QualifierType type);
     bool RemoveRestrictedAddress(const std::string& assetName, const std::string& address, const RestrictedType type);
@@ -427,8 +451,25 @@ public :
     //! Flush all new cache entries into the passets global cache
     bool Flush();
 
-    //! Write asset cache data to database
-    bool DumpCacheToDatabase();
+    /**
+     * Write the asset cache data to the databases and clear it.
+     *
+     * The asset state lives in two databases (passetsdb and prestricteddb).
+     * The changes of each one are written in a single batch together with
+     * `hashBestBlock`, the block the resulting state belongs to, so that each
+     * database always holds the complete state of exactly one block.
+     * `nDatabases` selects which of them are written (ASSET_STATE_DB_*); the
+     * changes of the other one are dropped, which is what bringing a single
+     * database to the chain state needs. Without `fSync` the batch is still
+     * written at once, but may not have reached the disk on return.
+     */
+    bool DumpCacheToDatabase(const uint256& hashBestBlock, unsigned int nDatabases = ASSET_STATE_DB_ALL, bool fSync = true);
+
+private:
+    //! The writes of DumpCacheToDatabase, as single database writes.
+    bool WriteCacheToPendingBatches();
+
+public:
 
     //! Clear all dirty cache sets, vetors, and maps
     void ClearDirtyCache() {
@@ -641,6 +682,17 @@ bool TxContainsAssetTransferToAddress(const CTransaction& tx, const std::string&
 bool TxContainsDEPINOwnerTokenTransfer(const CTransaction& tx, const std::string& assetName);
 
 /**
+ * Whether `destination` is a script hash. Assets are held by key-hash and
+ * AuthScript outputs only: asset data after a script-hash script is not an
+ * asset output, and null asset data (tags, restrictions) for a script hash has
+ * the form of a key hash, so it lands on the key-hash address with the same 20
+ * bytes. Nothing that builds an asset transaction accepts one.
+ */
+bool IsScriptHashDestination(const CTxDestination& destination);
+/** The error to report for the script-hash `address`. */
+std::string ScriptHashAssetError(const std::string& address);
+
+/**
  * Did `address` hold the owner token of `assetName` before this transaction?
  *
  * Answered structurally, from the inputs, rather than by asking an address ->
@@ -717,6 +769,11 @@ void BuildDepinTxContext(const CTransaction& tx, const CCoinsViewCache& inputs, 
 /** Names of the DEPIN assets for which `tx` carries a transfer state operation
  *  (global null data output with a '&' name). */
 void GetDepinStateOperations(const CTransaction& tx, std::set<std::string>& setAssets);
+
+/** (asset, address) pairs for which `tx` carries a DEPIN owner operation: a
+ *  per-address null data output (freeze / unfreeze) for &X in a transaction
+ *  that transfers the owner token &X!. Self-revocations are not included. */
+void GetDepinOwnerAddressOperations(const CTransaction& tx, std::set<std::pair<std::string, std::string>>& setOps);
 
 /** "closed" | "open" | "sealed" for RPC output. */
 std::string DepinTransferStateToString(DepinTransferState state);

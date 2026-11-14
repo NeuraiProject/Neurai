@@ -17,10 +17,22 @@ static const char RESTRICTED_ADDRESS_FLAG = 'R';
 static const char GLOBAL_RESTRICTION_FLAG = 'G';
 static const char SELF_RESTRICTED_FLAG = 'S';  // DEPIN self-revocation
 static const char DEPIN_TRANSFER_STATE_FLAG = 'P';  // DEPIN transfer state (own prefix, never collides with 'G')
+static const char BEST_BLOCK_FLAG = 'H';
+static const std::string BEST_BLOCK_KEY = "bestblock";
 
 
 
 CRestrictedDB::CRestrictedDB(size_t nCacheSize, bool fMemory, bool fWipe) : CDBWrapper(GetDataDir() / "assets" / "restricted", nCacheSize, fMemory, fWipe) {
+}
+
+bool CRestrictedDB::WriteBestBlock(const uint256& hashBlock)
+{
+    return Write(std::make_pair(BEST_BLOCK_FLAG, BEST_BLOCK_KEY), hashBlock);
+}
+
+bool CRestrictedDB::ReadBestBlock(uint256& hashBlock)
+{
+    return Read(std::make_pair(BEST_BLOCK_FLAG, BEST_BLOCK_KEY), hashBlock);
 }
 
 // Restricted Verifier Strings

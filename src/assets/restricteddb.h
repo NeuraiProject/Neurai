@@ -7,6 +7,7 @@
 #define NEURAICOIN_RESTRICTEDDB_H
 
 #include <dbwrapper.h>
+#include "uint256.h"
 
 #include <set>
 #include <string>
@@ -19,6 +20,11 @@ public:
 
     CRestrictedDB(const CRestrictedDB&) = delete;
     CRestrictedDB& operator=(const CRestrictedDB&) = delete;
+
+    /** The block whose state this database holds. It is written in the same
+     *  batch as that state (CAssetsCache::DumpCacheToDatabase). */
+    bool WriteBestBlock(const uint256& hashBlock);
+    bool ReadBestBlock(uint256& hashBlock);
 
     // Database of restricted asset verifier strings
     bool WriteVerifier(const std::string& assetName, const std::string& verifier);
