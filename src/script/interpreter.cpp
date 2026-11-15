@@ -618,7 +618,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
     CScript::const_iterator pbegincodehash = script.begin();
     opcodetype opcode;
     valtype vchPushValue;
-    std::vector<bool> vfExec;
+    ConditionStack vfExec;
     std::vector<valtype> altstack;
     set_error(serror, SCRIPT_ERR_UNKNOWN_ERROR);
     if (script.size() > MAX_SCRIPT_SIZE)
@@ -651,7 +651,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
     {
         while (pc < pend)
         {
-            bool fExec = !count(vfExec.begin(), vfExec.end(), false);
+            bool fExec = vfExec.all_true();
 
             //
             // Read instruction
@@ -1705,7 +1705,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                     {
                         if (vfExec.empty())
                             return set_error(serror, SCRIPT_ERR_UNBALANCED_CONDITIONAL);
-                        vfExec.back() = !vfExec.back();
+                        vfExec.toggle_top();
                     }
                         break;
 

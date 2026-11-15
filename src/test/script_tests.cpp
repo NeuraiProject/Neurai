@@ -12,6 +12,7 @@
 #include "script/script.h"
 #include "script/script_error.h"
 #include "script/sign.h"
+#include "random.h"
 #include "util.h"
 #include "utilstrencodings.h"
 #include "test/test_neurai.h"
@@ -21,6 +22,7 @@
 #include "script/neuraiconsensus.h"
 #endif
 
+#include <algorithm>
 #include <fstream>
 #include <stdint.h>
 #include <string>
@@ -1666,5 +1668,64 @@ BOOST_FIXTURE_TEST_SUITE(script_tests, BasicTestingSetup)
         s += s;
         BOOST_CHECK(s == d);
     }
+
+// The IF/ELSE condition stack must answer exactly as the std::vector<bool> it
+// replaced -- empty(), and whether no entry is false -- after any sequence of
+// pushes, pops and toggles of the top.
+BOOST_AUTO_TEST_CASE(condition_stack_matches_vector_bool)
+{
+    FastRandomContext rng(true);
+    for (int run = 0; run < 2000; ++run) {
+        ConditionStack fast;
+        std::vector<bool> reference;
+        for (int step = 0; step < 400; ++step) {
+            const uint64_t op = reference.empty() ? 0 : rng.randrange(4);
+            if (op <= 1) {
+                const bool value = rng.randbool();
+                fast.push_back(value);
+                reference.push_back(value);
+            } else if (op == 2) {
+                fast.pop_back();
+                reference.pop_back();
+            } else {
+                fast.toggle_top();
+                reference.back() = !reference.back();
+            }
+            BOOST_REQUIRE_EQUAL(fast.empty(), reference.empty());
+            BOOST_REQUIRE_EQUAL(fast.all_true(), std::count(reference.begin(), reference.end(), false) == 0);
+        }
+    }
+}
+
+// Deep nests behave as before: a false branch hides everything inside it,
+// OP_ELSE reopens it, and only the innermost toggle matters.
+BOOST_AUTO_TEST_CASE(deep_condition_nest)
+{
+    for (int depth : {1, 50, 98}) { // 2 * depth + 5 operations, under the 201 limit
+        for (bool innerElse : {false, true}) {
+            CScript script;
+            for (int i = 0; i < depth; ++i) script << OP_1 << OP_IF;
+            script << OP_0 << OP_IF << OP_RETURN;
+            if (innerElse) script << OP_ELSE << OP_1;
+            script << OP_ENDIF;
+            for (int i = 0; i < depth; ++i) script << OP_ENDIF;
+            if (!innerElse) script << OP_1;
+            std::vector<std::vector<unsigned char>> stack;
+            ScriptError err;
+            BOOST_CHECK(EvalScript(stack, script, SCRIPT_VERIFY_NONE, BaseSignatureChecker(), SIGVERSION_BASE, &err));
+            BOOST_CHECK_EQUAL(stack.size(), 1U);
+        }
+        // A false outer branch hides an OP_ELSE inside it.
+        CScript hidden;
+        hidden << OP_0 << OP_IF;
+        for (int i = 0; i < depth; ++i) hidden << OP_1 << OP_IF;
+        hidden << OP_ELSE << OP_RETURN;
+        for (int i = 0; i < depth; ++i) hidden << OP_ENDIF;
+        hidden << OP_ENDIF << OP_1;
+        std::vector<std::vector<unsigned char>> stack;
+        ScriptError err;
+        BOOST_CHECK(EvalScript(stack, hidden, SCRIPT_VERIFY_NONE, BaseSignatureChecker(), SIGVERSION_BASE, &err));
+    }
+}
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -14,6 +14,8 @@
 
 #include <vector>
 #include <atomic>
+#include <cassert>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -516,6 +518,44 @@ public:
     }
     uint64_t Used() const { return used.load(std::memory_order_relaxed); }
     bool Exceeded() const { return exceeded.load(std::memory_order_relaxed); }
+};
+
+/** The stack of OP_IF/OP_NOTIF conditions, reduced to what the interpreter
+ * observes: its size and whether every entry is true. Equivalent to a
+ * std::vector<bool> whose only queries are empty() and "contains no false",
+ * but O(1) per operation; counting the falses on every opcode made a deep IF
+ * nest followed by many pushes cost depth x pushes. Same design as Bitcoin
+ * Core's ConditionStack (PR 16902). */
+class ConditionStack
+{
+    static constexpr uint32_t NO_FALSE = std::numeric_limits<uint32_t>::max();
+    uint32_t m_stack_size = 0;
+    uint32_t m_first_false_pos = NO_FALSE; //!< position of the first false entry, or NO_FALSE
+
+public:
+    bool empty() const { return m_stack_size == 0; }
+    bool all_true() const { return m_first_false_pos == NO_FALSE; }
+    void push_back(bool f)
+    {
+        if (m_first_false_pos == NO_FALSE && !f) m_first_false_pos = m_stack_size;
+        ++m_stack_size;
+    }
+    void pop_back()
+    {
+        assert(m_stack_size > 0);
+        --m_stack_size;
+        if (m_first_false_pos == m_stack_size) m_first_false_pos = NO_FALSE;
+    }
+    void toggle_top()
+    {
+        assert(m_stack_size > 0);
+        if (m_first_false_pos == NO_FALSE) {
+            m_first_false_pos = m_stack_size - 1;
+        } else if (m_first_false_pos == m_stack_size - 1) {
+            m_first_false_pos = NO_FALSE;
+        }
+        // Otherwise a false lies below the top, and toggling the top is unobservable.
+    }
 };
 
 // NIP-036 Poseidon work and NIP-054 OP_CHECKASSETAUTH work are separate

@@ -3356,16 +3356,17 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
     // Get the script flags for this block
     script_verify_flags flags = GetBlockScriptFlags(pindex, chainparams.GetConsensus());
     std::shared_ptr<PoseidonWorkBudget> blockPoseidonWork;
+    // The work budgets bound what executing this block's scripts may cost.
+    // They are part of script validity, so below assumevalid, where scripts
+    // are not executed and their validity is assumed, they have nothing to
+    // account and do not force execution.
     if (flags & SCRIPT_VERIFY_POSEIDON_WORK) {
         blockPoseidonWork = std::make_shared<PoseidonWorkBudget>(MAX_BLOCK_POSEIDON_WORK);
-        // Dynamic work must be accounted even below assumevalid.
-        fScriptChecks = true;
     }
     // NIP-054: one OP_CHECKASSETAUTH budget shared by every script of the block.
     std::shared_ptr<AssetAuthWorkBudget> blockAssetAuthWork;
     if (flags & SCRIPT_VERIFY_ASSETAUTH) {
         blockAssetAuthWork = std::make_shared<AssetAuthWorkBudget>(MAX_BLOCK_ASSETAUTH_WORK);
-        fScriptChecks = true;
     }
 
     // NIP-014: reference inputs are valid from their activation height. Below
