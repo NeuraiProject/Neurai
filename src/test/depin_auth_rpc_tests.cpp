@@ -905,12 +905,15 @@ BOOST_AUTO_TEST_CASE(v5_restart_and_clock_rollback_invalidate_old_requests)
     BOOST_CHECK_NO_THROW(Challenge(SECTION_A,holder,DepinChallengeType::RECEIVE));
 }
 
-BOOST_AUTO_TEST_CASE(v5_signed_purge_failure_keeps_messages_and_never_reports_success)
+// The marks hold one hash and the purge needs two. It used to fail and keep
+// the messages. Now it removes them, reports it, and is remembered by date:
+// what it removed stays out.
+BOOST_AUTO_TEST_CASE(v5_signed_purge_with_full_marks_removes_and_is_remembered_by_date)
 {
     const auto owner=NewHolder(true,SECTION_A+OWNER_TAG,1);
     const auto sender=NewHolder(true,SECTION_A,1), reader=NewHolder(true,SECTION_A,1);
     std::string error;BOOST_REQUIRE(pDepinMsgPool->InitializeStorage(false,error,1));
-    AddMessage(SECTION_A,sender,{reader},"retained-one");AddMessage(SECTION_A,sender,{reader},"retained-two");
+    AddMessage(SECTION_A,sender,{reader},"purged-one");AddMessage(SECTION_A,sender,{reader},"purged-two");
     const auto nonce=Challenge(SECTION_A,owner,DepinChallengeType::ADMIN);
     UniValue args(UniValue::VOBJ);args.pushKV("mode","all");
     auto object=DepinTestSign("depinclearmsg",MakeDepinRpcRequest("depinclearmsg",GetDepinRpcIdentity(),SECTION_A,owner.address,nonce,args),owner.key);
@@ -919,11 +922,10 @@ BOOST_AUTO_TEST_CASE(v5_signed_purge_failure_keeps_messages_and_never_reports_su
     const auto response=(*tableRPC[rpc.strMethod]->actor)(rpc);
     BOOST_CHECK(response.exists("encrypted"));BOOST_CHECK(!response.exists("body"));
     BOOST_CHECK(VerifyDepinRpcResponse(response,parsed,poolKey.GetPubKey(),error));
-    const auto body=Open(response,owner);BOOST_REQUIRE(body.exists("error"));
-    BOOST_CHECK_EQUAL(body["error"]["code"].get_int(),RPC_DATABASE_ERROR);
-    BOOST_CHECK_EQUAL(body["error"]["data"]["depin_error"].get_str(),"storage_failure");
-    BOOST_CHECK(!body.exists("removed"));BOOST_CHECK(!body.exists("result"));
-    BOOST_CHECK_EQUAL(pDepinMsgPool->Size(),2U);BOOST_CHECK_EQUAL(pDepinMsgPool->GetTombstoneCount(),0U);
+    const auto body=Open(response,owner);BOOST_REQUIRE_MESSAGE(!body.exists("error"),body.write());
+    BOOST_CHECK_EQUAL(body["removed"].get_int64(),2);BOOST_CHECK_EQUAL(body["remaining"].get_int64(),0);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->Size(),0U);BOOST_CHECK_EQUAL(pDepinMsgPool->GetTombstoneCount(),0U);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetScopeFloorCount(),1U);
     BOOST_CHECK(pDepinMsgPool->StorageHealthy());BOOST_CHECK(!g_depinChallenges.Peek(nonce,error));
 }
 

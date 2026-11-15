@@ -14,7 +14,7 @@
 #include <limits>
 
 namespace {
-const char META = 'V', MESSAGE = 'M', TOMBSTONE = 'T', QUARANTINE = 'Q';
+const char META = 'V', MESSAGE = 'M', TOMBSTONE = 'T', QUARANTINE = 'Q', FLOOR = 'F';
 const uint32_t STATE_VERSION = 2;
 const int64_t MAX_RETENTION = int64_t(MAX_DEPIN_MESSAGE_EXPIRY_HOURS) * 3600;
 
@@ -71,10 +71,19 @@ void Require(bool condition, const std::string& error)
 }
 }
 
-bool CDepinMsgPool::StorageHealthy() const { LOCK(cs_depinmsgpool); return !storageFault; }
+bool CDepinMsgPool::StorageHealthy() const { return !storageFault; }
 uint256 CDepinMsgPool::GetStreamId() const { LOCK(cs_depinmsgpool); return streamId; }
 uint64_t CDepinMsgPool::GetHighWater() const { LOCK(cs_depinmsgpool); return highWater; }
 size_t CDepinMsgPool::GetTombstoneCount() const { LOCK(cs_depinmsgpool); return tombstones.size(); }
+size_t CDepinMsgPool::GetScopeFloorCount() const { LOCK(cs_depinmsgpool); return scopeFloors.size(); }
+
+bool CDepinMsgPool::IsBelowScopeFloor(const CDepinMessage& message) const
+{
+    for (const auto& floor : scopeFloors)
+        if (message.timestamp <= floor.second && (floor.first.empty() || IsDepinSectionOrRoot(message.token, floor.first)))
+            return true;
+    return false;
+}
 
 bool CDepinMsgPool::FailStorage(const std::string& reason, std::string& error)
 {
@@ -97,32 +106,54 @@ bool CDepinMsgPool::CommitAdmission(const CDepinMessage& message, uint64_t seque
 }
 
 bool CDepinMsgPool::CommitErase(const std::vector<uint256>& hashes, bool moderation, int64_t now,
-                               std::string& error, const std::map<uint256, int64_t>* retainedTimestamps)
+                               std::string& error, const std::map<uint256, int64_t>* retainedTimestamps,
+                               const std::string* moderationScope)
 {
     if (storageFault) { error = "DePIN storage unavailable"; return false; }
     if (hashes.empty() && !moderation) return true;
     // Keep moderation hashes for the longest configurable TTL, so increasing
     // -depinmsgexpire cannot revive an already acknowledged deletion.
     std::map<uint256, int64_t> marks;
+    // The dates that purges are remembered by, without the ones that only
+    // cover messages no retention period would admit any more
+    std::map<std::string, int64_t> floors;
     int64_t nextFloor = minimumTimestamp;
     const int64_t expiredBefore = now > MAX_RETENTION ? now - MAX_RETENTION : 0;
     if (moderation) {
+        for (const auto& floor : scopeFloors) {
+            if (floor.second >= expiredBefore) floors.insert(floor);
+            // What the date refused stays refused: nothing dated before the
+            // retention period comes back, whatever the clock says later
+            else nextFloor = std::max(nextFloor, expiredBefore);
+        }
         for (const auto& entry : tombstones) {
             if (now <= entry.second) marks.insert(entry);
             else nextFloor = std::max(nextFloor, expiredBefore);
         }
+        const std::map<uint256, int64_t> live = marks;
+        int64_t newest = -1;
         for (const auto& hash : hashes) {
             const auto it = mapMessages.find(hash);
             if (it == mapMessages.end() && (!retainedTimestamps || !retainedTimestamps->count(hash))) continue;
             const int64_t timestamp = it != mapMessages.end() ? it->second.timestamp : retainedTimestamps->at(hash);
             const int64_t expiry = timestamp > std::numeric_limits<int64_t>::max() - MAX_RETENTION
                 ? std::numeric_limits<int64_t>::max() : timestamp + MAX_RETENTION;
-            if (now <= expiry) marks[hash] = expiry;
+            if (now <= expiry) { marks[hash] = expiry; newest = std::max(newest, timestamp); }
             else nextFloor = std::max(nextFloor, expiredBefore);
         }
         if (marks.size() > tombstoneLimit) {
-            error = "DePIN tombstone capacity exceeded; nothing deleted";
-            return false;
+            if (!moderationScope) {
+                error = "DePIN tombstone capacity exceeded; nothing deleted";
+                return false;
+            }
+            // No room to remember each hash. The purge is remembered by date:
+            // the messages of its scope dated up to the newest one removed
+            // stay out. The marks already held are kept; none is added.
+            marks = live;
+            if (newest >= 0) {
+                auto held = floors.find(*moderationScope);
+                if (held == floors.end() || held->second < newest) floors[*moderationScope] = newest;
+            }
         }
     }
     try {
@@ -132,7 +163,19 @@ bool CDepinMsgPool::CommitErase(const std::vector<uint256>& hashes, bool moderat
             if (moderation) {
                 for (const auto& old : tombstones)
                     if (!marks.count(old.first)) batch.Erase(std::make_pair(TOMBSTONE, old.first));
-                for (const auto& entry : marks) batch.Write(std::make_pair(TOMBSTONE, entry.first), entry.second);
+                // only the marks this purge adds: the others are on disk already
+                for (const auto& entry : marks) {
+                    const auto held = tombstones.find(entry.first);
+                    if (held == tombstones.end() || held->second != entry.second)
+                        batch.Write(std::make_pair(TOMBSTONE, entry.first), entry.second);
+                }
+                for (const auto& old : scopeFloors)
+                    if (!floors.count(old.first)) batch.Erase(std::make_pair(FLOOR, old.first));
+                for (const auto& entry : floors) {
+                    const auto held = scopeFloors.find(entry.first);
+                    if (held == scopeFloors.end() || held->second != entry.second)
+                        batch.Write(std::make_pair(FLOOR, entry.first), entry.second);
+                }
             }
             batch.Write(META, StateMeta{STATE_VERSION, activeToken,
                 persistMessages ? streamId : checkpointStream,
@@ -140,7 +183,7 @@ bool CDepinMsgPool::CommitErase(const std::vector<uint256>& hashes, bool moderat
                 uint8_t(persistMessages || checkpointKeep), nextFloor, uint8_t(legacyImported)});
             Require(store->WriteBatch(batch, true), "deletion sync failed");
         }
-        if (moderation) tombstones.swap(marks);
+        if (moderation) { tombstones.swap(marks); scopeFloors.swap(floors); }
         minimumTimestamp = nextFloor;
         return true;
     } catch (const std::exception& e) { return FailStorage(e.what(), error); }
@@ -186,7 +229,7 @@ bool CDepinMsgPool::Purge(const std::string& scope, int64_t now, bool all, int64
     std::vector<uint256> hashes;
     hashes.reserve(selected.size());
     for (const auto& entry : selected) hashes.push_back(entry.first);
-    if (!CommitErase(hashes, true, now, error, &selected)) return false;
+    if (!CommitErase(hashes, true, now, error, &selected, &scope)) return false;
     ApplyErase(hashes);
     removed = hashes.size();
     return true;
@@ -289,7 +332,32 @@ bool CDepinMsgPool::InitializeStorage(bool keepMessages, std::string& error, siz
         persistMessages = keepMessages;
         Clear();
         tombstones.clear();
+        scopeFloors.clear();
         CDBBatch batch(*store);
+        {
+            std::unique_ptr<CDBIterator> floorIt(store->NewIterator());
+            floorIt->Seek(std::make_pair(FLOOR, std::string()));
+            const int64_t now = GetTime();
+            const int64_t expiredBefore = now > MAX_RETENTION ? now - MAX_RETENTION : 0;
+            while (floorIt->Valid()) {
+                char type;
+                Require(floorIt->GetKey(type), "unreadable state key");
+                if (type != FLOOR) break;
+                std::pair<char, std::string> key;
+                int64_t floor = 0;
+                Require(floorIt->GetKey(key) && floorIt->GetValueSize() == 8 && floorIt->GetValue(floor) && floor >= 0,
+                        "corrupt purge date; deletion guarantees cannot be recovered");
+                Require(existed, "critical metadata missing while purge dates exist");
+                if (floor >= expiredBefore) scopeFloors[key.second] = floor;
+                else {
+                    // as for an expired mark: what it refused stays refused
+                    batch.Erase(key);
+                    minimumTimestamp = std::max<int64_t>(minimumTimestamp, expiredBefore);
+                }
+                floorIt->Next();
+            }
+            floorIt->CheckStatus();
+        }
         std::unique_ptr<CDBIterator> it(store->NewIterator());
         it->Seek(std::make_pair(TOMBSTONE, uint256()));
         while (it->Valid()) {
@@ -301,12 +369,13 @@ bool CDepinMsgPool::InitializeStorage(bool keepMessages, std::string& error, siz
             Require(it->GetKeySize() == 33 && it->GetKey(key) && it->GetValueSize() == 8 && it->GetValue(expiry) && expiry >= 0,
                     "corrupt tombstone; deletion guarantees cannot be recovered");
             if (GetTime() <= expiry) {
-                Require(tombstones.size() < tombstoneLimit, "stored tombstones exceed configured capacity");
+                // More marks than the limit allows now are kept: they still
+                // stand for deletions. New purges are remembered by date.
                 tombstones[key.second] = expiry;
             } else {
                 batch.Erase(key);
                 const int64_t now = GetTime();
-                minimumTimestamp = std::max(minimumTimestamp, now > MAX_RETENTION ? now - MAX_RETENTION : 0);
+                minimumTimestamp = std::max<int64_t>(minimumTimestamp, now > MAX_RETENTION ? now - MAX_RETENTION : 0);
             }
             Require(existed, "critical metadata missing while tombstones exist");
             it->Next();
@@ -337,7 +406,7 @@ bool CDepinMsgPool::InitializeStorage(bool keepMessages, std::string& error, siz
                     lostRecord = true;
                     batch.Write(std::make_pair(QUARANTINE, key.second), record);
                     batch.Erase(key);
-                } else if (message.IsExpired(GetTime(), GetMessageExpiryTime()) || message.timestamp < minimumTimestamp || tombstones.count(key.second)) {
+                } else if (message.IsExpired(GetTime(), GetMessageExpiryTime()) || message.timestamp < minimumTimestamp || tombstones.count(key.second) || IsBelowScopeFloor(message)) {
                     batch.Erase(key);
                 } else {
                     if (DepinPubKeyMatchesAddress(message.senderAddress, record.senderKey) &&
@@ -443,6 +512,7 @@ bool CDepinMsgPool::SaveToDisk()
         for (const auto& entry : mapMessages)
             batch.Write(std::make_pair(MESSAGE, entry.first), EncodeRecord(entry.second, sequenceByHash.at(entry.first)));
         for (const auto& entry : tombstones) batch.Write(std::make_pair(TOMBSTONE, entry.first), entry.second);
+        for (const auto& entry : scopeFloors) batch.Write(std::make_pair(FLOOR, entry.first), entry.second);
         batch.Write(META, StateMeta{STATE_VERSION, activeToken, streamId, highWater, 1, minimumTimestamp, 1});
         Require(store->WriteBatch(batch, true), "snapshot sync failed");
         persistMessages = true;

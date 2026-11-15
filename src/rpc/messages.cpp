@@ -506,6 +506,8 @@ class CPubKey;
 class CKey;
 #endif
 
+UniValue DepinMsgInfo(const CDepinServiceStatus& status);
+
 UniValue depingetmsginfo(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() != 0)
@@ -521,6 +523,9 @@ UniValue depingetmsginfo(const JSONRPCRequest& request)
                 "  \"maxmessagesize\": n,          (numeric) Maximum message size in bytes\n"
                 "  \"messageexpiryhours\": n,      (numeric) Message expiry time in hours\n"
                 "  \"maxpoolsizemb\": n,           (numeric) Maximum pool size in MB\n"
+                "  \"maxsendersizemb\": n,         (numeric) Maximum pool space for one sender in MB, 0 for no limit\n"
+                "  \"rolling\": true|false,        (boolean) A full pool drops its oldest messages to admit new ones\n"
+                "  \"evicted\": n,                 (numeric) Messages dropped to make room since the node started\n"
                 "  \"messages\": n,                (numeric) Number of messages in mempool\n"
                 "  \"memoryusage\": n,             (numeric) Memory usage in bytes\n"
                 "  \"memoryusagemb\": n,           (numeric) Memory usage in MB\n"
@@ -546,6 +551,13 @@ UniValue depingetmsginfo(const JSONRPCRequest& request)
                 + HelpExampleRpc("depingetmsginfo", "")
         );
 
+    return DepinMsgInfo(GetDepinServiceStatus());
+}
+
+/** What depingetmsginfo answers. `status` is what the caller read of the
+ *  chain; the rest needs the pool only, and no cs_main. */
+UniValue DepinMsgInfo(const CDepinServiceStatus& status)
+{
     if (!pDepinMsgPool) {
         throw JSONRPCError(RPC_INTERNAL_ERROR, "DePIN messaging pool not initialized");
     }
@@ -558,6 +570,9 @@ UniValue depingetmsginfo(const JSONRPCRequest& request)
     obj.push_back(Pair("maxmessagesize", (int)pDepinMsgPool->GetMaxMessageSize()));
     obj.push_back(Pair("messageexpiryhours", (int)pDepinMsgPool->GetMessageExpiryHours()));
     obj.push_back(Pair("maxpoolsizemb", (int)pDepinMsgPool->GetMaxPoolSizeMB()));
+    obj.push_back(Pair("maxsendersizemb", (int)pDepinMsgPool->GetMaxSenderSizeMB()));
+    obj.push_back(Pair("rolling", UniValue(pDepinMsgPool->IsRolling())));
+    obj.push_back(Pair("evicted", (int64_t)pDepinMsgPool->GetEvictedCount()));
     obj.push_back(Pair("messages", (int)pDepinMsgPool->Size()));
 
     size_t memoryUsage = pDepinMsgPool->DynamicMemoryUsage();
@@ -573,7 +588,6 @@ UniValue depingetmsginfo(const JSONRPCRequest& request)
     // The service identity: the pool public key and which wallet it came
     // from. Clients pin depinpoolpkey on first use; nothing served here is
     // trusted on its own.
-    const CDepinServiceStatus status = GetDepinServiceStatus();
     obj.push_back(Pair("ready", status.ready));
     obj.push_back(Pair("not_ready_reason", status.reason));
     obj.push_back(Pair("authorization_height", status.height));
@@ -652,7 +666,7 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
     }
 
     if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
-        throw JSONRPCError(RPC_MISC_ERROR, "DePIN messaging pool is not enabled");
+        throw JSONRPCError(RPC_MISC_ERROR, DepinServiceDisabledMessage());
     }
 
     // The token must be the pool root or a section inside its subtree.
@@ -934,7 +948,7 @@ UniValue depingetmsg(const JSONRPCRequest& request)
 
     // Local query
     if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) {
-        throw JSONRPCError(RPC_MISC_ERROR, "DePIN messaging pool is not enabled");
+        throw JSONRPCError(RPC_MISC_ERROR, DepinServiceDisabledMessage());
     }
 
     CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
@@ -1085,74 +1099,32 @@ UniValue depinpoolstats(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_MISC_ERROR, "DePIN message pool is not enabled");
     }
 
-    // Get all messages
-    std::vector<CDepinMessage> messages = pDepinMsgPool->GetAllMessages();
+    // One pass over the pool, under its lock, without copying a message
+    const CDepinPoolStats stats = pDepinMsgPool->GetStats(GetTime());
 
-    // Calculate statistics
-    int64_t now = GetTime();
-    int64_t oldest = std::numeric_limits<int64_t>::max();
-    int64_t newest = 0;
-    size_t totalSize = 0;
-    int totalRecipients = 0;
-    int messagesLastHour = 0;
-    int messagesLastDay = 0;
-    int messagesLastWeek = 0;
-    int expiringIn24h = 0;
-
-    std::set<std::string> uniqueSenders;
-    std::set<std::string> uniqueRecipients;
-
-    for (const auto& msg : messages) {
-        // Track time range
-        if (msg.timestamp < oldest) oldest = msg.timestamp;
-        if (msg.timestamp > newest) newest = msg.timestamp;
-
-        // Count by age
-        int64_t age = now - msg.timestamp;
-        if (age < 3600) messagesLastHour++;
-        if (age < 86400) messagesLastDay++;
-        if (age < 604800) messagesLastWeek++;
-
-        // Count expiring soon
-        int64_t timeToExpiry = (msg.timestamp + pDepinMsgPool->GetMessageExpiryTime()) - now;
-        if (timeToExpiry < 86400 && timeToExpiry > 0) expiringIn24h++;
-
-        // Track senders
-        uniqueSenders.insert(msg.senderAddress);
-
-        // With ECIES shared encryption, we can't determine individual recipients
-        // Count the message payload size instead
-        totalSize += msg.signature.size();
-        totalSize += msg.encryptedPayload.size();
-    }
-
-    // Note: totalRecipients and uniqueRecipients are not available with ECIES shared encryption
-    totalRecipients = 0;  // Not determinable without decryption
-
-    // Build result
     UniValue result(UniValue::VOBJ);
     result.push_back(Pair("enabled", pDepinMsgPool->IsEnabled()));
     result.push_back(Pair("token", pDepinMsgPool->GetActiveToken()));
-    result.push_back(Pair("total_messages", (int)messages.size()));
-    result.push_back(Pair("total_size_bytes", (int)totalSize));
-    result.push_back(Pair("memory_usage_bytes", (int)pDepinMsgPool->DynamicMemoryUsage()));
+    result.push_back(Pair("total_messages", (int)stats.messages));
+    result.push_back(Pair("total_size_bytes", (int)stats.payloadBytes));
+    result.push_back(Pair("memory_usage_bytes", (int)stats.memoryUsage));
 
-    if (messages.size() > 0) {
-        result.push_back(Pair("oldest_message", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", oldest)));
-        result.push_back(Pair("newest_message", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", newest)));
+    if (stats.messages > 0) {
+        result.push_back(Pair("oldest_message", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", stats.oldest)));
+        result.push_back(Pair("newest_message", DateTimeStrFormat("%Y-%m-%d %H:%M:%S", stats.newest)));
 
         UniValue byAge(UniValue::VOBJ);
-        byAge.push_back(Pair("last_hour", messagesLastHour));
-        byAge.push_back(Pair("last_day", messagesLastDay));
-        byAge.push_back(Pair("last_week", messagesLastWeek));
+        byAge.push_back(Pair("last_hour", (int)stats.lastHour));
+        byAge.push_back(Pair("last_day", (int)stats.lastDay));
+        byAge.push_back(Pair("last_week", (int)stats.lastWeek));
         result.push_back(Pair("messages_by_age", byAge));
 
-        result.push_back(Pair("unique_senders", (int)uniqueSenders.size()));
+        result.push_back(Pair("unique_senders", (int)stats.senders));
         result.push_back(Pair("unique_recipients", "N/A (ECIES shared encryption)"));
         result.push_back(Pair("avg_recipients_per_message", "N/A (ECIES shared encryption)"));
 
-        result.push_back(Pair("avg_message_size", (int)(totalSize / messages.size())));
-        result.push_back(Pair("expiring_in_24h", expiringIn24h));
+        result.push_back(Pair("avg_message_size", (int)(stats.payloadBytes / stats.messages)));
+        result.push_back(Pair("expiring_in_24h", (int)stats.expiringSoon));
     } else {
         result.push_back(Pair("oldest_message", ""));
         result.push_back(Pair("newest_message", ""));

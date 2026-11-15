@@ -103,22 +103,22 @@ bool ECDH_ComputeSecret(const CKey& privKey,
 
     // Use secp256k1 ECDH
     // Shared secret = privKey * pubKey
-    secp256k1_context* ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
+    // One context for the life of the process: building one for each secret
+    // costs far more than the secret itself. It is only read here, which any
+    // number of threads may do at once.
+    static secp256k1_context* const ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
 
     secp256k1_pubkey secp_pubkey;
     if (!secp256k1_ec_pubkey_parse(ctx, &secp_pubkey, pubKey.begin(), pubKey.size())) {
-        secp256k1_context_destroy(ctx);
         return false;
     }
 
     unsigned char shared[32];
     if (!secp256k1_ecdh(ctx, shared, &secp_pubkey, privKey.begin(), nullptr, nullptr)) {
-        secp256k1_context_destroy(ctx);
         return false;
     }
 
     secret.assign(shared, shared + 32);
-    secp256k1_context_destroy(ctx);
 
     return true;
 }

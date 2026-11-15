@@ -43,7 +43,7 @@ struct CDepinServiceStatus {
 };
 
 // Chain-dependent operations hold cs_main from this check through their
-// final permission check and effect. Diagnostics may call this at any time.
+// final permission check. Diagnostics may call this at any time.
 CDepinServiceStatus GetDepinServiceStatus();
 bool CheckDepinServiceReady(std::string& error);
 
@@ -66,6 +66,11 @@ static const unsigned int MAX_DEPIN_POOL_SIZE_MB = 1000;  // 1GB max
 
 // DePIN pool persistence
 static const bool DEFAULT_DEPINPOOL_PERSIST = false;
+// Pool space for the messages of one sender, in MB. 0: no limit of its own.
+static const unsigned int DEFAULT_DEPIN_POOL_SENDER_SIZE_MB = 10;
+// When the pool, or the space of a sender, is full: drop the oldest messages
+// to admit the new one, instead of refusing it.
+static const bool DEFAULT_DEPIN_POOL_ROLLING = false;
 static const uint32_t DEPINPOOL_MAGIC_BYTES = 0xD0D1D2D3;
 // Legacy flat file only; current transactional state is version 2.
 static const uint32_t DEPINPOOL_FILE_VERSION = 1;
@@ -178,6 +183,24 @@ struct CDepinSequencePage {
     std::vector<CDepinSequenceMessage> messages;
 };
 
+/** A message that passed CDepinMsgPool::AuthorizeMessage and may be stored */
+class CDepinAuthorizedMessage {
+    friend class CDepinMsgPool;
+    CDepinMessage message;
+    bool authorized = false;
+};
+
+/** What depinpoolstats reports */
+struct CDepinPoolStats {
+    size_t messages = 0;
+    size_t payloadBytes = 0;   //!< signatures and encrypted payloads
+    size_t memoryUsage = 0;
+    size_t senders = 0;
+    size_t lastHour = 0, lastDay = 0, lastWeek = 0;
+    size_t expiringSoon = 0;   //!< within a day
+    int64_t oldest = 0, newest = 0;
+};
+
 // Chat message mempool
 class CDepinMsgPool {
 private:
@@ -195,19 +218,27 @@ private:
     std::map<uint256, uint64_t> sequenceByHash;
     uint256 streamId;
     uint64_t highWater = 0;
-    int64_t minimumTimestamp = 0;
+    // Written under cs_depinmsgpool. Read without it by the checks that
+    // precede storing a message, which must not wait for the pool.
+    std::atomic<int64_t> minimumTimestamp{0};
     uint256 checkpointStream;
     uint64_t checkpointHigh = 0;
     bool checkpointKeep = false;
     bool legacyImported = false;
     std::map<uint256, int64_t> tombstones;
+    // A purge that does not fit in the marks above is remembered by date
+    // instead: messages of the scope (empty: the whole pool) dated at or
+    // before the time are refused. One entry per scope, so it cannot run out.
+    std::map<std::string, int64_t> scopeFloors;
+    bool IsBelowScopeFloor(const CDepinMessage& message) const;
     std::unique_ptr<CDBWrapper> store;
     bool persistMessages = false;
-    bool storageFault = false;
+    std::atomic<bool> storageFault{false}; // as minimumTimestamp
     size_t tombstoneLimit = DEFAULT_DEPIN_TOMBSTONE_LIMIT;
     bool CommitAdmission(const CDepinMessage& message, uint64_t sequence, std::string& error);
     bool CommitErase(const std::vector<uint256>& hashes, bool moderation, int64_t now, std::string& error,
-                     const std::map<uint256, int64_t>* retainedTimestamps = nullptr);
+                     const std::map<uint256, int64_t>* retainedTimestamps = nullptr,
+                     const std::string* moderationScope = nullptr);
     void ApplyErase(const std::vector<uint256>& hashes);
     bool FailStorage(const std::string& reason, std::string& error);
 
@@ -216,6 +247,19 @@ private:
     unsigned int nMaxMessageSize;       // Maximum message size in bytes
     unsigned int nMessageExpiryHours;   // Message expiry time in hours
     unsigned int nMaxPoolSizeMB;        // Maximum pool size in MB
+    unsigned int nMaxSenderSizeMB = DEFAULT_DEPIN_POOL_SENDER_SIZE_MB; // Pool space of one sender in MB, 0: no limit
+    bool fRolling = DEFAULT_DEPIN_POOL_ROLLING; // Full: the oldest messages make room
+
+    // Space charged to the messages held, in total and by sender, and the
+    // admission order of each sender's messages. Kept with every insertion
+    // and removal, under cs_depinmsgpool.
+    size_t nPoolUsage = 0;
+    std::map<std::string, size_t> mapSenderUsage;
+    std::map<std::string, std::set<uint64_t> > mapSenderSequences;
+    uint64_t nEvicted = 0;
+    static size_t MessageCharge(const CDepinMessage& message);
+    //! The oldest messages that have to go for `incoming` bytes of `sender` to fit; false when they cannot
+    bool MakeRoom(const std::string& sender, size_t incoming, bool restoring, std::vector<uint256>& evict, std::string& error) const;
 
     // Per-tip snapshot of the sections under activeToken (see GetSections()).
     // Its own lock, never cs_depinmsgpool: rebuilding is a full asset-directory
@@ -233,6 +277,14 @@ private:
     bool AddMessageInternal(const CDepinMessage& message, std::string& error,
                             bool skipSignatureCheck, bool restoring,
                             DepinAdmissionError* admissionError = nullptr, uint64_t restoreSequence = 0);
+    // The two halves of an admission. CheckAdmission decides whether the
+    // message may be published: its form, its signature and, unless restoring,
+    // the permissions of its sender and recipients at the connected tip, for
+    // which the caller holds cs_main. It never takes cs_depinmsgpool.
+    // StoreAdmitted needs the pool only: duplicates, purges, space, disk.
+    bool CheckAdmission(const CDepinMessage& message, CDepinMessage& admitted, std::string& error,
+                        bool skipSignatureCheck, bool restoring, DepinAdmissionError* admissionError) const;
+    bool StoreAdmitted(CDepinMessage&& admitted, std::string& error, bool restoring, uint64_t restoreSequence);
 
 public:
     CDepinMsgPool();
@@ -254,6 +306,16 @@ public:
     // Configuration
     bool Initialize(const std::string& token, unsigned int maxRecipients,
                    unsigned int maxMessageSize, unsigned int messageExpiryHours, unsigned int maxPoolSizeMB);
+    //! The space one sender may use and what happens when space runs out (-depinpoolsendersize, -depinpoolrolling)
+    void SetSpacePolicy(unsigned int maxSenderSizeMB, bool rolling);
+    unsigned int GetMaxSenderSizeMB() const { return nMaxSenderSizeMB; }
+    bool IsRolling() const { return fRolling; }
+    //! Messages dropped to make room since the node started
+    uint64_t GetEvictedCount() const;
+    //! Scopes whose purges are remembered by date because the marks were full
+    size_t GetScopeFloorCount() const;
+    //! Pool space charged to the messages of a sender, in bytes
+    size_t GetSenderUsage(const std::string& sender) const;
     bool IsEnabled() const { return fEnabled; }
     std::string GetActiveToken() const { return activeToken; }
     // Encryption used by the pool for message payloads.
@@ -268,6 +330,12 @@ public:
     // Message handling
     bool AddMessage(const CDepinMessage& message, std::string& error, bool skipSignatureCheck = false,
                     DepinAdmissionError* admissionError = nullptr);
+    // The two steps of AddMessage, for a caller that holds cs_main and must
+    // not keep it while the message is stored. AuthorizeMessage needs cs_main:
+    // it decides against the connected tip. StoreMessage needs the pool only.
+    bool AuthorizeMessage(const CDepinMessage& message, CDepinAuthorizedMessage& authorized, std::string& error,
+                          bool skipSignatureCheck = false, DepinAdmissionError* admissionError = nullptr) const;
+    bool StoreMessage(CDepinAuthorizedMessage&& authorized, std::string& error);
     bool GetDepinMessage(const uint256& hash, CDepinMessage& message) const;
     // Returns only unexpired messages, including for the sender. scopeToken
     // "" considers every token; otherwise
@@ -283,6 +351,10 @@ public:
     size_t GetMessageCount() const;
     // Unexpired count for section listings; share the RPC's reference time.
     size_t CountMessagesInScope(const std::string& scopeToken, int64_t now) const;
+    // Unexpired messages by the token they were published to, in one pass
+    std::map<std::string, size_t> CountMessagesByToken(int64_t now) const;
+    // Figures of the whole pool, in one pass and without copying a message
+    CDepinPoolStats GetStats(int64_t now) const;
 
     // Cleanup. scopeToken "" keeps the historical pool-wide behavior; otherwise
     // only messages inside that subtree are touched -- the owner of a section
@@ -366,8 +438,10 @@ std::string GetDepinSectionLabel(const std::string& name, const std::string& roo
 // or force a full UTXO flush. No mempool permissions are used.
 //
 // Callers performing an operation must hold cs_main from CheckDepinServiceReady
-// through authorization and selection/mutation. Lock order is cs_main before
-// pool, section-cache, challenge and wallet locks; never call under a pool lock.
+// through authorization. What the pool then does for an authorized request
+// (reading a page, storing a message, purging) needs the pool lock only.
+// Lock order is cs_main before pool, section-cache, challenge and wallet
+// locks; never call under a pool lock.
 // These reusable permission helpers do not enforce node freshness themselves.
 // Missing indexes, chainstate cache or databases are named errors. In particular
 // a missing restriction database must fail closed.
@@ -381,6 +455,13 @@ bool HasDepinSectionAccess(const std::string& address, const std::string& sectio
 // "active" reduces to positive balance and prestricteddb is not required.
 bool HasDepinSectionOwnerAccess(const std::string& address, const std::string& sectionToken,
                                 const std::string& root, std::string& error);
+
+/** Why the DePIN service asked for with -depinmsg is not running. Empty when it
+ *  runs or was not asked for. Set once, while the node starts. */
+std::string GetDepinServiceFailure();
+void SetDepinServiceFailure(const std::string& strReason);
+/** "... is not enabled", or what failed when the service was asked for and did not start. */
+std::string DepinServiceDisabledMessage();
 
 bool VerifyDepinMessageSignature(const CDepinMessage& message, CPubKey* verifiedKey = nullptr);
 bool SignDepinMessage(CDepinMessage& message, const std::string& senderAddress, CWallet* wallet = nullptr);

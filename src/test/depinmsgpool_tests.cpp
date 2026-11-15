@@ -490,4 +490,210 @@ BOOST_FIXTURE_TEST_CASE(addmessage_enforces_current_signature_format, DepinSigna
     BOOST_CHECK_MESSAGE(error.find("signature") != std::string::npos, error);
 }
 
+// What ties an encrypted payload to its sender is the signature of the message
+// that carries it, and nothing inside the encryption. A member that received a
+// group message can therefore publish the same payload again under its own
+// name: the pool admits it as a new message and the recipients read the same
+// text from the new sender. The pool hands a payload only to its sender and to
+// the addresses it is encrypted for, so whoever can do this could also have
+// read the text and encrypted it again. This test records that behaviour: it
+// has to change with the message format if the sender and the token are ever
+// authenticated inside the encryption.
+BOOST_FIXTURE_TEST_CASE(payload_is_tied_to_its_sender_by_the_message_signature_only, DepinSignatureSetup)
+{
+    ScopedInitializedPool pool("&TEST");
+
+    std::string alice, mallory, bob;
+    CKey aliceKey = NewRevealedSender(alice);
+    CKey malloryKey = NewRevealedSender(mallory);
+    CKey bobKey = NewRevealedSender(bob);
+    for (const std::string& holder : {alice, mallory, bob})
+        BOOST_REQUIRE(passetsdb->WriteAssetAddressQuantity("&TEST", holder, 10));
+
+    const auto message = [&](const std::string& sender, const CKey& key, const std::string& text,
+                             const std::map<std::string, CPubKey>& recipients, int64_t timestamp) {
+        CECIESEncryptedMessage ecies;
+        std::string error;
+        BOOST_REQUIRE_MESSAGE(ECIESEncryptMessage(text, recipients, ecies, error), error);
+        CDepinMessage msg;
+        msg.token = "&TEST";
+        msg.senderAddress = sender;
+        msg.timestamp = timestamp;
+        msg.messageType = 0x02;
+        CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
+        ss << ecies;
+        msg.encryptedPayload.assign(ss.begin(), ss.end());
+        BOOST_REQUIRE(key.Sign(msg.GetHash(), msg.signature));
+        return msg;
+    };
+    const auto recipientOf = [](const std::string& address) {
+        DepinRecipient recipient;
+        BOOST_REQUIRE(DepinRecipient::FromAddress(address, recipient));
+        return recipient;
+    };
+
+    // Alice writes to the three of them
+    const int64_t now = GetTime();
+    const CDepinMessage original = message(alice, aliceKey, "written by alice",
+        {{alice, aliceKey.GetPubKey()}, {mallory, malloryKey.GetPubKey()}, {bob, bobKey.GetPubKey()}}, now);
+    std::string error;
+    BOOST_REQUIRE_MESSAGE(pDepinMsgPool->AddMessage(original, error, /*skipSignatureCheck=*/false), error);
+
+    // Mallory publishes the same payload as hers: a new message for the pool
+    CDepinMessage copy = original;
+    copy.senderAddress = mallory;
+    copy.timestamp = now + 1;
+    copy.signature.clear();
+    BOOST_REQUIRE(malloryKey.Sign(copy.GetHash(), copy.signature));
+    BOOST_CHECK(copy.GetHash() != original.GetHash());
+    BOOST_CHECK_MESSAGE(pDepinMsgPool->AddMessage(copy, error, /*skipSignatureCheck=*/false), error);
+
+    // ...and Bob reads Alice's text in it
+    CECIESEncryptedMessage received;
+    CDataStream in(copy.encryptedPayload, SER_NETWORK, PROTOCOL_VERSION);
+    in >> received;
+    std::string plaintext;
+    BOOST_REQUIRE_MESSAGE(ECIESDecryptMessage(received, bobKey, bob, plaintext, error), error);
+    BOOST_CHECK_EQUAL(plaintext, "written by alice");
+
+    // Alice's signature does not carry over: the copy is not hers
+    copy.senderAddress = alice;
+    BOOST_CHECK(!VerifyDepinMessageSignature(copy));
+
+    // A payload that is not encrypted for Mallory is not handed to her
+    const CDepinMessage forBob = message(alice, aliceKey, "for bob only",
+        {{alice, aliceKey.GetPubKey()}, {bob, bobKey.GetPubKey()}}, now + 2);
+    const DepinRecipient malloryId = recipientOf(mallory), bobId = recipientOf(bob);
+    BOOST_CHECK(!ShouldDeliverDepinMessageToAddress(forBob, mallory, &malloryId));
+    BOOST_CHECK(ShouldDeliverDepinMessageToAddress(forBob, bob, &bobId));
+}
+
+namespace {
+// A pool of `poolMB` that takes the largest messages, so that few of them fill it
+struct ScopedSizedPool {
+    std::unique_ptr<CDepinMsgPool> previous;
+
+    explicit ScopedSizedPool(unsigned int poolMB) : previous(std::move(pDepinMsgPool))
+    {
+        pDepinMsgPool.reset(new CDepinMsgPool());
+        BOOST_REQUIRE(pDepinMsgPool->Initialize("&TEST", DEFAULT_MAX_DEPIN_RECIPIENTS, MAX_DEPIN_MESSAGE_SIZE,
+                                                DEFAULT_DEPIN_MESSAGE_EXPIRY_HOURS, poolMB));
+    }
+    ~ScopedSizedPool() { pDepinMsgPool = std::move(previous); }
+};
+
+// A signed message of about 10 KB from `sender` to itself
+CDepinMessage LargeMessage(const std::string& sender, const CKey& key)
+{
+    CECIESEncryptedMessage ecies;
+    std::string error;
+    BOOST_REQUIRE_MESSAGE(ECIESEncryptMessage(std::string(MAX_DEPIN_MESSAGE_SIZE - 64, 'x'), {{sender, key.GetPubKey()}}, ecies, error), error);
+    CDepinMessage msg;
+    msg.token = "&TEST";
+    msg.senderAddress = sender;
+    msg.timestamp = GetTime();
+    msg.messageType = 0x02;
+    CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
+    ss << ecies;
+    msg.encryptedPayload.assign(ss.begin(), ss.end());
+    BOOST_REQUIRE(key.Sign(msg.GetHash(), msg.signature));
+    return msg;
+}
+
+const size_t MB = 1024 * 1024;
+} // namespace
+
+// One sender cannot use more than its space, and the others keep publishing.
+// Without a space of its own a sender is stopped by the pool limit.
+BOOST_FIXTURE_TEST_CASE(sender_space_limit_refuses_one_sender_only, DepinSignatureSetup)
+{
+    ScopedSizedPool pool(2);
+    pDepinMsgPool->SetSpacePolicy(1, /*rolling=*/false);
+
+    std::string alice, bob;
+    CKey aliceKey = NewRevealedSender(alice);
+    CKey bobKey = NewRevealedSender(bob);
+    for (const std::string& holder : {alice, bob})
+        BOOST_REQUIRE(passetsdb->WriteAssetAddressQuantity("&TEST", holder, 10));
+
+    std::string error;
+    size_t admitted = 0;
+    while (pDepinMsgPool->AddMessage(LargeMessage(alice, aliceKey), error, false))
+        BOOST_REQUIRE(++admitted < 1000);
+    BOOST_CHECK_MESSAGE(error.find("Sender space limit exceeded") != std::string::npos, error);
+    BOOST_CHECK(admitted > 50);
+    BOOST_CHECK(pDepinMsgPool->GetSenderUsage(alice) <= 1 * MB);
+    BOOST_CHECK(pDepinMsgPool->GetSenderUsage(alice) > 1 * MB - 12 * 1024);
+
+    // Bob is not affected, and the pool is charged what its senders are
+    BOOST_CHECK_MESSAGE(pDepinMsgPool->AddMessage(LargeMessage(bob, bobKey), error, false), error);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->DynamicMemoryUsage(), pDepinMsgPool->GetSenderUsage(alice) + pDepinMsgPool->GetSenderUsage(bob));
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetEvictedCount(), 0u);
+
+    // With no space of her own, Alice goes on until the pool is full
+    pDepinMsgPool->SetSpacePolicy(0, /*rolling=*/false);
+    while (pDepinMsgPool->AddMessage(LargeMessage(alice, aliceKey), error, false))
+        BOOST_REQUIRE(++admitted < 1000);
+    BOOST_CHECK_MESSAGE(error.find("Pool size limit exceeded") != std::string::npos, error);
+    BOOST_CHECK(pDepinMsgPool->DynamicMemoryUsage() <= 2 * MB);
+
+    // Removing messages gives the space back
+    pDepinMsgPool->Clear();
+    BOOST_CHECK_EQUAL(pDepinMsgPool->DynamicMemoryUsage(), 0u);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetSenderUsage(alice), 0u);
+}
+
+// A rolling pool never refuses for space: the oldest messages make room. A
+// sender that fills its own space loses its own oldest messages, not those of
+// the others; when the pool itself is full, the oldest go, whoever sent them.
+BOOST_FIXTURE_TEST_CASE(rolling_pool_drops_the_oldest_messages, DepinSignatureSetup)
+{
+    ScopedSizedPool pool(2);
+    pDepinMsgPool->SetSpacePolicy(1, /*rolling=*/true);
+
+    std::string alice, bob, carol;
+    CKey aliceKey = NewRevealedSender(alice);
+    CKey bobKey = NewRevealedSender(bob);
+    CKey carolKey = NewRevealedSender(carol);
+    for (const std::string& holder : {alice, bob, carol})
+        BOOST_REQUIRE(passetsdb->WriteAssetAddressQuantity("&TEST", holder, 10));
+
+    std::string error;
+    const CDepinMessage aliceFirst = LargeMessage(alice, aliceKey);
+    const CDepinMessage bobFirst = LargeMessage(bob, bobKey);
+    BOOST_REQUIRE_MESSAGE(pDepinMsgPool->AddMessage(aliceFirst, error, false), error);
+    BOOST_REQUIRE_MESSAGE(pDepinMsgPool->AddMessage(bobFirst, error, false), error);
+
+    // Alice publishes more than her space holds
+    CDepinMessage aliceLast;
+    for (int i = 0; i < 150; ++i) {
+        aliceLast = LargeMessage(alice, aliceKey);
+        BOOST_REQUIRE_MESSAGE(pDepinMsgPool->AddMessage(aliceLast, error, false), error);
+    }
+    CDepinMessage found;
+    BOOST_CHECK(pDepinMsgPool->GetSenderUsage(alice) <= 1 * MB);
+    BOOST_CHECK(!pDepinMsgPool->GetDepinMessage(aliceFirst.GetHash(), found));
+    BOOST_CHECK(pDepinMsgPool->GetDepinMessage(aliceLast.GetHash(), found));
+    BOOST_CHECK(pDepinMsgPool->GetDepinMessage(bobFirst.GetHash(), found));
+    const uint64_t droppedForAlice = pDepinMsgPool->GetEvictedCount();
+    BOOST_CHECK(droppedForAlice > 0);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->DynamicMemoryUsage(), pDepinMsgPool->GetSenderUsage(alice) + pDepinMsgPool->GetSenderUsage(bob));
+
+    // Carol fills the rest of the pool and goes on: the oldest of the pool go
+    pDepinMsgPool->SetSpacePolicy(0, /*rolling=*/true);
+    CDepinMessage carolLast;
+    for (int i = 0; i < 250; ++i) {
+        carolLast = LargeMessage(carol, carolKey);
+        BOOST_REQUIRE_MESSAGE(pDepinMsgPool->AddMessage(carolLast, error, false), error);
+    }
+    BOOST_CHECK(pDepinMsgPool->DynamicMemoryUsage() <= 2 * MB);
+    BOOST_CHECK(pDepinMsgPool->DynamicMemoryUsage() > 2 * MB - 12 * 1024);
+    BOOST_CHECK(!pDepinMsgPool->GetDepinMessage(bobFirst.GetHash(), found));
+    BOOST_CHECK(!pDepinMsgPool->GetDepinMessage(aliceLast.GetHash(), found));
+    BOOST_CHECK(pDepinMsgPool->GetDepinMessage(carolLast.GetHash(), found));
+    BOOST_CHECK(pDepinMsgPool->GetEvictedCount() > droppedForAlice);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetSenderUsage(alice), 0u);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->DynamicMemoryUsage(), pDepinMsgPool->GetSenderUsage(carol));
+}
+
 BOOST_AUTO_TEST_SUITE_END()

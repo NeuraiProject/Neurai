@@ -54,8 +54,11 @@ size_t DepinRpcReplaySize();
 std::string DepinRpcResponsePreimage(const DepinRpcIdentity& identity,
                                      const std::string& method, const std::string& requestHash,
                                      uint8_t bodyKind, const std::vector<unsigned char>& body);
+/** Encrypts the answer for the client, if it has a key, and signs it with the
+ *  pool key. Needs no chain state when given the identity the request was
+ *  answered under, so it can run without cs_main. */
 UniValue FinishDepinRpcResponse(const UniValue& result, const DepinRpcRequest& request,
-                                const CPubKey* clientKey = nullptr);
+                                const CPubKey* clientKey = nullptr, const DepinRpcIdentity* answeredUnder = nullptr);
 bool VerifyDepinRpcResponse(const UniValue& response, const DepinRpcRequest& request,
                             const CPubKey& pinnedKey, std::string& error);
 void RegisterDepinRPCCommands(CRPCTable& table);

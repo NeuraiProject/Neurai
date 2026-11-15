@@ -241,9 +241,9 @@ std::string DepinRpcResponsePreimage(const DepinRpcIdentity& i, const std::strin
     Fixed(q,i.network);Blob(q,ParseHex(i.poolKey));Text(q,i.root);Fixed(q,i.instance);Fixed(q,i.membership.revision);Number(q,uint64_t(i.membership.height),8);Fixed(q,i.membership.block);Fixed(q,requestHash);Number(q,kind,1);Blob(q,body);
     return "DEPIN-RPC-RESPONSE-v5|"+Digest(q);
 }
-UniValue FinishDepinRpcResponse(const UniValue& result, const DepinRpcRequest& r, const CPubKey* clientKey)
+UniValue FinishDepinRpcResponse(const UniValue& result, const DepinRpcRequest& r, const CPubKey* clientKey, const DepinRpcIdentity* answeredUnder)
 {
-    const auto identity=GetDepinRpcIdentity();const auto plain=result.write();
+    const auto identity=answeredUnder?*answeredUnder:GetDepinRpcIdentity();const auto plain=result.write();
     if (plain.size()>MAX_DEPIN_REPLY_PLAINTEXT) throw JSONRPCError(RPC_INVALID_PARAMETER,"DePIN response exceeds 4 MiB plaintext budget");
     Bytes body;std::string error;
     if (clientKey) {

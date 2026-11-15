@@ -1358,11 +1358,21 @@ BOOST_AUTO_TEST_CASE(tombstone_capacity_and_expiry_never_silently_drop_live_mark
     size_t removed = 0;
     BOOST_REQUIRE(pDepinMsgPool->Purge(ROOT, GetTime(), true, 0, removed, error));
     BOOST_REQUIRE(pDepinMsgPool->AddMessage(second, error));
-    BOOST_CHECK(!pDepinMsgPool->Purge(ROOT, GetTime(), true, 0, removed, error));
-    BOOST_CHECK_EQUAL(removed, 0U);
-    BOOST_CHECK_EQUAL(pDepinMsgPool->Size(), 1U);
-    BOOST_CHECK(pDepinMsgPool->StorageHealthy()); // capacity exhaustion is recoverable
-    BOOST_CHECK(!pDepinMsgPool->AddMessage(first, error));
+    // The marks are full. The purge removes all the same and is remembered
+    // by date; the mark that was held is kept.
+    BOOST_REQUIRE_MESSAGE(pDepinMsgPool->Purge(ROOT, GetTime(), true, 0, removed, error), error);
+    BOOST_CHECK_EQUAL(removed, 1U);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->Size(), 0U);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetTombstoneCount(), 1U);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetScopeFloorCount(), 1U);
+    BOOST_CHECK(pDepinMsgPool->StorageHealthy());
+    BOOST_CHECK(!pDepinMsgPool->AddMessage(first, error));  // by its mark
+    BOOST_CHECK(!pDepinMsgPool->AddMessage(second, error)); // by the date of the purge
+    BOOST_CHECK_MESSAGE(error.find("administratively deleted") != std::string::npos, error);
+    // ...also after a restart
+    BOOST_REQUIRE_MESSAGE(pDepinMsgPool->InitializeStorage(false, error, 1), error);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetScopeFloorCount(), 1U);
+    BOOST_CHECK(!pDepinMsgPool->AddMessage(second, error));
     SetMockTime(GetTime() + int64_t(MAX_DEPIN_MESSAGE_EXPIRY_HOURS) * 3600);
     RefreshDepinTestTipTime();
     BOOST_CHECK(!pDepinMsgPool->AddMessage(first, error));
@@ -1370,11 +1380,149 @@ BOOST_AUTO_TEST_CASE(tombstone_capacity_and_expiry_never_silently_drop_live_mark
     RefreshDepinTestTipTime();
     BOOST_REQUIRE(pDepinMsgPool->Purge(ROOT, GetTime(), false, pDepinMsgPool->GetMessageExpiryTime(), removed, error));
     BOOST_CHECK_EQUAL(pDepinMsgPool->GetTombstoneCount(), 0U);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetScopeFloorCount(), 0U); // nothing that old can come back
     BOOST_CHECK(!pDepinMsgPool->AddMessage(first, error)); // date now rejects it, not its old mark
     SetMockTime(0);
     RefreshDepinTestTipTime();
     BOOST_REQUIRE(pDepinMsgPool->InitializeStorage(false, error));
     BOOST_CHECK(!pDepinMsgPool->AddMessage(first, error)); // no replay after the wall clock rolls back
+}
+
+// A section that fills the marks does not leave the others without moderation,
+// and what its purges are remembered by covers that section only.
+BOOST_AUTO_TEST_CASE(full_marks_never_stop_a_purge_and_stay_in_their_scope)
+{
+    ScopedInitializedPool pool(ROOT);
+    const auto now = GetTime();
+    SetMockTime(now);
+    RefreshDepinTestTipTime();
+    const Holder sender = NewHolder(true), receiver = NewHolder(true);
+    SetBalance(ROOT, sender.address, 10);
+    SetBalance(ROOT, receiver.address, 10);
+    std::string error;
+    BOOST_REQUIRE(pDepinMsgPool->InitializeStorage(false, error, 2));
+
+    const auto publish = [&](const std::string& token, const std::string& text) {
+        CDepinMessage message = MakeEciesMessage(token, sender, {receiver}, text);
+        SignMessageWithKey(message, sender.key);
+        BOOST_REQUIRE_MESSAGE(pDepinMsgPool->AddMessage(message, error), error);
+        return message;
+    };
+
+    // Section A publishes and purges until the marks are full, and once more
+    size_t removed = 0;
+    std::vector<CDepinMessage> purged;
+    for (int i = 0; i < 2; ++i) {
+        purged.push_back(publish(SECTION_A, strprintf("a%d", i)));
+        BOOST_REQUIRE(pDepinMsgPool->Purge(SECTION_A, GetTime(), true, 0, removed, error));
+    }
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetTombstoneCount(), 2U);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetScopeFloorCount(), 0U);
+
+    // Written before the purges below, published after them
+    CDepinMessage lateInA = MakeEciesMessage(SECTION_A, sender, {receiver}, "late in a");
+    CDepinMessage lateInB = MakeEciesMessage(SECTION_B, sender, {receiver}, "late in b");
+    SignMessageWithKey(lateInA, sender.key);
+    SignMessageWithKey(lateInB, sender.key);
+
+    const CDepinMessage inB = publish(SECTION_B, "b");
+    const CDepinMessage inRoot = publish(ROOT, "root");
+    const CDepinMessage overflow = publish(SECTION_A, "a overflow");
+    BOOST_REQUIRE_MESSAGE(pDepinMsgPool->Purge(SECTION_A, GetTime(), true, 0, removed, error), error);
+    BOOST_CHECK_EQUAL(removed, 1U);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetTombstoneCount(), 2U);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetScopeFloorCount(), 1U);
+    CDepinMessage found;
+    BOOST_CHECK(pDepinMsgPool->GetDepinMessage(inB.GetHash(), found));
+    BOOST_CHECK(pDepinMsgPool->GetDepinMessage(inRoot.GetHash(), found));
+
+    // Nothing purged in A comes back, nor anything of A from before the purge
+    for (const auto& message : purged)
+        BOOST_CHECK(!pDepinMsgPool->AddMessage(message, error));
+    BOOST_CHECK(!pDepinMsgPool->AddMessage(overflow, error));
+    BOOST_CHECK(!pDepinMsgPool->AddMessage(lateInA, error));
+    // ...which does not reach the other section
+    BOOST_CHECK_MESSAGE(pDepinMsgPool->AddMessage(lateInB, error), error);
+
+    // The other section and the whole pool can still be purged
+    BOOST_REQUIRE_MESSAGE(pDepinMsgPool->Purge(SECTION_B, GetTime(), true, 0, removed, error), error);
+    BOOST_CHECK_EQUAL(removed, 2U);
+    BOOST_REQUIRE_MESSAGE(pDepinMsgPool->Purge("", GetTime(), true, 0, removed, error), error);
+    BOOST_CHECK_EQUAL(removed, 1U);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->Size(), 0U);
+    BOOST_CHECK(!pDepinMsgPool->AddMessage(inB, error));
+    BOOST_CHECK(!pDepinMsgPool->AddMessage(inRoot, error));
+
+    // A message written after the purges is a new message
+    SetMockTime(now + 5);
+    RefreshDepinTestTipTime();
+    publish(SECTION_A, "a again");
+    publish(ROOT, "root again");
+    SetMockTime(0);
+    RefreshDepinTestTipTime();
+}
+
+// A purge remembered by date only: no mark is held for its messages. Once the
+// date is too old to matter it is dropped, by a later purge or when the node
+// starts. What it refused must stay refused if the clock then goes back.
+static void ExpiredPurgeDateStaysRefused(DepinSectionsSetup& setup, bool restart)
+{
+    ScopedInitializedPool pool(ROOT);
+    const auto now = GetTime();
+    SetMockTime(now);
+    RefreshDepinTestTipTime();
+    const Holder sender = setup.NewHolder(true), receiver = setup.NewHolder(true);
+    setup.SetBalance(ROOT, sender.address, 10);
+    setup.SetBalance(ROOT, receiver.address, 10);
+    std::string error;
+    BOOST_REQUIRE(pDepinMsgPool->InitializeStorage(false, error, 1));
+    CDepinMessage first = MakeEciesMessage(ROOT, sender, {receiver}, "dated first");
+    CDepinMessage second = MakeEciesMessage(ROOT, sender, {receiver}, "dated second");
+    SignMessageWithKey(first, sender.key);
+    SignMessageWithKey(second, sender.key);
+    BOOST_REQUIRE(pDepinMsgPool->AddMessage(first, error));
+    BOOST_REQUIRE(pDepinMsgPool->AddMessage(second, error));
+    size_t removed = 0;
+    BOOST_REQUIRE_MESSAGE(pDepinMsgPool->Purge(ROOT, GetTime(), true, 0, removed, error), error);
+    BOOST_CHECK_EQUAL(removed, 2U);
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetTombstoneCount(), 0U); // two do not fit in one mark
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetScopeFloorCount(), 1U);
+    BOOST_CHECK(!pDepinMsgPool->AddMessage(first, error));
+    BOOST_CHECK_MESSAGE(error.find("administratively deleted") != std::string::npos, error);
+
+    SetMockTime(now + int64_t(MAX_DEPIN_MESSAGE_EXPIRY_HOURS) * 3600 + 24 * 3600);
+    RefreshDepinTestTipTime();
+    if (restart) {
+        BOOST_REQUIRE_MESSAGE(pDepinMsgPool->InitializeStorage(false, error, 1), error);
+    } else {
+        BOOST_REQUIRE_MESSAGE(pDepinMsgPool->Purge(ROOT, GetTime(), true, 0, removed, error), error);
+        BOOST_CHECK_EQUAL(removed, 0U);
+    }
+    BOOST_CHECK_EQUAL(pDepinMsgPool->GetScopeFloorCount(), 0U);
+
+    SetMockTime(now);
+    RefreshDepinTestTipTime();
+    for (const auto& message : {first, second}) {
+        BOOST_CHECK(!pDepinMsgPool->AddMessage(message, error));
+        BOOST_CHECK_MESSAGE(error.find("retention floor") != std::string::npos, error);
+    }
+    BOOST_CHECK_EQUAL(pDepinMsgPool->Size(), 0U);
+    // ...and the node remembers it when it starts again
+    BOOST_REQUIRE_MESSAGE(pDepinMsgPool->InitializeStorage(false, error, 1), error);
+    BOOST_CHECK(!pDepinMsgPool->AddMessage(first, error));
+    BOOST_CHECK_MESSAGE(error.find("retention floor") != std::string::npos, error);
+    SetMockTime(0);
+    RefreshDepinTestTipTime();
+}
+
+BOOST_AUTO_TEST_CASE(expired_purge_date_stays_refused_after_a_later_purge)
+{
+    ExpiredPurgeDateStaysRefused(*this, false);
+}
+
+BOOST_AUTO_TEST_CASE(expired_purge_date_stays_refused_after_a_restart)
+{
+    ExpiredPurgeDateStaysRefused(*this, true);
 }
 
 BOOST_AUTO_TEST_CASE(durable_purge_respects_scope_age_and_inactive_checkpoint)

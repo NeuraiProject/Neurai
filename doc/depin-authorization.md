@@ -46,17 +46,40 @@ needed. Recipient directories merge persisted rows with dirty balances;
 section directories merge persisted metadata with pending creations/deletions.
 Their cached names are invalidated by a tip change; permissions are not cached.
 
-RPCs retain `cs_main` from the readiness and permission checks through nonce
-consumption and message selection, insertion or purge. A block cannot change
-permissions halfway through that operation. If a request finishes selecting
-its response before a freeze connects, that already authorized response can
-still arrive afterward. Revocation cannot recall downloaded copies or an
-already authorized response. A request after the block connects sees the new
-permissions, even with an unexpired nonce.
+Protocol requests hold `cs_main` from the readiness check through the
+permission checks: a block cannot change permissions halfway through the
+decision. What the pool then does for the authorized request (selecting a
+page, storing a message, purging, counting) needs the pool lock only and is
+done without `cs_main`, so the node keeps validating meanwhile. A block can
+therefore connect between the decision and the end of the request. What
+happens then depends on the operation:
+
+- A submission is recorded against replay, and a purge consumes its nonce,
+  before the pool is touched. Once authorized, both are completed: the
+  message is stored, or the purge is done, also when the block changes the
+  permissions of the requester.
+- A read and an authenticated section listing consume their nonce after the
+  pool work, with `cs_main` held again. A block that changes the membership
+  of the pool invalidates every outstanding challenge, so such a request then
+  ends with a `challenge_invalid` error instead of its answer; the client
+  refreshes the directory, asks for a new challenge and repeats it. A block
+  that does not change the membership leaves the request to complete.
+
+Revocation cannot recall downloaded copies or an operation that was
+completed. A request after the block connects sees the new permissions, even
+with an unexpired nonce.
 
 Lock order is `cs_main` before pool, section-cache, wallet and challenge locks.
-Admission does signature/permission work before taking the pool lock. Raw
-pool snapshots are internal storage helpers, not authorized download APIs.
+No protocol request waits for the pool lock while it holds `cs_main`: the pool
+lock can be held for as long as it takes to go through the pool. A message is
+checked (signature, permissions) without the pool lock and stored under it;
+what a purge decided in between is read under the lock the message is stored
+with. The local wallet commands (`depinsendmsg`, `depingetmsg`) hold `cs_main`
+and the wallet lock for their whole duration. Raw pool snapshots are internal
+storage helpers, not authorized download APIs.
+
+With `-debug=bench` the node logs how long each protocol request held
+`cs_main` (`DePIN <method>: node lock held <n>ms`).
 The MCP model/network request runs outside `cs_main`; local reply resolution
 and admission run together afterward.
 

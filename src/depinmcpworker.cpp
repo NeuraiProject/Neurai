@@ -210,11 +210,17 @@ void CDepinMCPWorker::WorkerLoop()
                     std::this_thread::sleep_for(std::chrono::seconds(pollInterval));
                     continue;
                 }
-                LOCK(cs_main);
                 std::string accessError;
-                if (CheckDepinServiceReady(accessError) &&
-                    HasDepinSectionAccess(nodeAddress, depinToken,
-                                          pDepinMsgPool->GetActiveToken(), accessError)) {
+                bool allowed;
+                {
+                    LOCK(cs_main);
+                    allowed = CheckDepinServiceReady(accessError) &&
+                              HasDepinSectionAccess(nodeAddress, depinToken,
+                                                    pDepinMsgPool->GetActiveToken(), accessError);
+                }
+                // Going through the pool needs the pool lock only: the node
+                // keeps validating meanwhile
+                if (allowed) {
                     messages = pDepinMsgPool->GetMessagesForAddress(nodeAddress, depinToken);
                 } else {
                     LogPrint(BCLog::NET, "MCPWorker: DePIN reception unavailable: %s\n", accessError);

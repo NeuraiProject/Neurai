@@ -89,6 +89,25 @@ bool DecodeDepinMessage(const std::vector<unsigned char>& bytes, CDepinMessage& 
 
 // CDepinMessage implementation
 
+static std::string g_depinServiceFailure;
+
+std::string GetDepinServiceFailure()
+{
+    return g_depinServiceFailure;
+}
+
+void SetDepinServiceFailure(const std::string& strReason)
+{
+    g_depinServiceFailure = strReason;
+}
+
+std::string DepinServiceDisabledMessage()
+{
+    if (g_depinServiceFailure.empty())
+        return "DePIN messaging pool is not enabled";
+    return "DePIN messaging pool is not running: " + g_depinServiceFailure;
+}
+
 uint256 CDepinMessage::GetHash() const {
     CHashWriter ss(SER_GETHASH, 0);
     ss << token << senderAddress << timestamp << messageType << encryptedPayload;
@@ -208,17 +227,51 @@ bool CDepinMsgPool::Initialize(const std::string& token, unsigned int maxRecipie
 
 bool CDepinMsgPool::AddMessage(const CDepinMessage& message, std::string& error, bool skipSignatureCheck,
                               DepinAdmissionError* admissionError) {
+    CDepinAuthorizedMessage authorized;
+    {
+        // Who may publish, and to whom, is decided against the connected tip.
+        // Never acquire cs_main for the first time under the pool lock.
+        LOCK(cs_main);
+        if (!AuthorizeMessage(message, authorized, error, skipSignatureCheck, admissionError)) return false;
+    }
+    // Storing it needs the pool only. A caller that does not hold cs_main
+    // does not keep the node waiting for the pool or for the disk.
+    return StoreMessage(std::move(authorized), error);
+}
+
+bool CDepinMsgPool::AuthorizeMessage(const CDepinMessage& message, CDepinAuthorizedMessage& authorized,
+                                    std::string& error, bool skipSignatureCheck,
+                                    DepinAdmissionError* admissionError) const {
+    AssertLockHeld(cs_main);
     if (admissionError) *admissionError = DepinAdmissionError::NONE;
-    // A block cannot connect or disconnect between authorization and insertion.
-    // Never acquire cs_main for the first time under the pool lock.
-    LOCK(cs_main);
+    authorized.authorized = false;
     if (!CheckDepinServiceReady(error)) return false;
-    return AddMessageInternal(message, error, skipSignatureCheck, /*restoring=*/false, admissionError);
+    if (!CheckAdmission(message, authorized.message, error, skipSignatureCheck, /*restoring=*/false, admissionError))
+        return false;
+    authorized.authorized = true;
+    return true;
+}
+
+bool CDepinMsgPool::StoreMessage(CDepinAuthorizedMessage&& authorized, std::string& error) {
+    if (!authorized.authorized) {
+        error = "Message was not authorized";
+        return false;
+    }
+    authorized.authorized = false;
+    return StoreAdmitted(std::move(authorized.message), error, /*restoring=*/false, 0);
 }
 
 bool CDepinMsgPool::AddMessageInternal(const CDepinMessage& message, std::string& error,
                                       bool skipSignatureCheck, bool restoring,
                                       DepinAdmissionError* admissionError, uint64_t restoreSequence) {
+    CDepinMessage admitted;
+    return CheckAdmission(message, admitted, error, skipSignatureCheck, restoring, admissionError) &&
+           StoreAdmitted(std::move(admitted), error, restoring, restoreSequence);
+}
+
+bool CDepinMsgPool::CheckAdmission(const CDepinMessage& message, CDepinMessage& admitted, std::string& error,
+                                  bool skipSignatureCheck, bool restoring,
+                                  DepinAdmissionError* admissionError) const {
     if (!fEnabled) {
         error = "Chat mempool is not enabled";
         return false;
@@ -227,12 +280,8 @@ bool CDepinMsgPool::AddMessageInternal(const CDepinMessage& message, std::string
     // Restoration bypasses current membership, never token syntax/type.
     if (!IsValidDepinMessagingToken(message.token, error)) return false;
 
-    int64_t timestampFloor;
-    {
-        LOCK(cs_depinmsgpool);
-        if (storageFault) { error = "DePIN storage unavailable"; return false; }
-        timestampFloor = minimumTimestamp;
-    }
+    if (storageFault) { error = "DePIN storage unavailable"; return false; }
+    const int64_t timestampFloor = minimumTimestamp;
     if (message.token.size() > 128 || message.senderAddress.size() > 64 || message.signature.size() > 80) {
         error = "DePIN message field exceeds size budget"; return false;
     }
@@ -288,7 +337,7 @@ bool CDepinMsgPool::AddMessageInternal(const CDepinMessage& message, std::string
     std::vector<DepinRecipient> recipients;
     for (const auto& entry : eciesProbe.recipientKeys) recipients.push_back(entry.first);
 
-    CDepinMessage admitted = message;
+    admitted = message;
     // Restored v2 messages have already been checked against their saved key.
     if (!skipSignatureCheck) {
         if (!VerifyDepinMessageSignature(message, &admitted.verifiedSenderKey)) {
@@ -317,29 +366,28 @@ bool CDepinMsgPool::AddMessageInternal(const CDepinMessage& message, std::string
         }
     }
     gDepinAdmissionStats.permissionMicros += GetTimeMicros() - permissionStart;
+    return true;
+}
 
-    // Permission reads and signature work run before taking the pool lock.
-    // cs_main is still held by AddMessage, so no authorization can go stale.
+bool CDepinMsgPool::StoreAdmitted(CDepinMessage&& admitted, std::string& error, bool restoring,
+                                 uint64_t restoreSequence) {
+    // `admitted` is moved into the pool below: what is needed of it afterwards
+    const CDepinMessage& message = admitted;
+    const uint256 hash = message.GetHash();
+    const std::string sender = message.senderAddress;
+    const int64_t timestamp = message.timestamp;
+    const size_t charge = MessageCharge(message);
+    const size_t payloadSize = message.encryptedPayload.size();
+
+    // The permission reads and the signature work were done before, without
+    // the pool lock. A purge or a cleanup may have run since: what they
+    // decided is read here, under the lock the message is stored with.
     const int64_t poolWaitStart = GetTimeMicros();
     LOCK(cs_depinmsgpool);
     const int64_t poolStart = GetTimeMicros();
     gDepinAdmissionStats.poolWaitMicros += poolStart - poolWaitStart;
-    // Cleanup may encounter an I/O failure while signature/permission work
-    // runs outside the pool lock. Recheck before any admission or disk write.
     if (storageFault) { error = "DePIN storage unavailable"; return false; }
-    if (message.timestamp < minimumTimestamp) { error = "Message timestamp below retention floor"; return false; }
-    const size_t currentPoolSize = DynamicMemoryUsage();
-    const size_t maxPoolSizeBytes = (size_t)nMaxPoolSizeMB * 1024 * 1024;
-    const size_t incomingSize = sizeof(CDepinMessage) + message.token.size() + message.senderAddress.size() +
-                                message.signature.size() + message.encryptedPayload.size() + 320;
-    if (currentPoolSize + incomingSize > maxPoolSizeBytes) {
-        error = strprintf("Pool size limit exceeded (current: %d MB, limit: %d MB). Message rejected.",
-                         currentPoolSize / (1024 * 1024), nMaxPoolSizeMB);
-        return false;
-    }
-
-    // Add message
-    uint256 hash = message.GetHash();
+    if (timestamp < minimumTimestamp) { error = "Message timestamp below retention floor"; return false; }
 
     // Verify if it already exists
     if (mapMessages.count(hash)) {
@@ -352,23 +400,49 @@ bool CDepinMsgPool::AddMessageInternal(const CDepinMessage& message, std::string
         error = "Message was administratively deleted";
         return false;
     }
+    if (IsBelowScopeFloor(message)) {
+        error = "Message was administratively deleted";
+        return false;
+    }
     if (!restoreSequence && highWater >= uint64_t(std::numeric_limits<int64_t>::max())) {
         error = "DePIN admission sequence exhausted"; return false;
+    }
+
+    // Room for it: within the space of its sender and of the pool. A rolling
+    // pool drops its oldest messages to admit this one; otherwise it is refused.
+    std::vector<uint256> evict;
+    if (!MakeRoom(sender, charge, restoring, evict, error))
+        return false;
+    if (!evict.empty()) {
+        if (!CommitErase(evict, false, GetTime(), error))
+            return false;
+        ApplyErase(evict);
+        nEvicted += evict.size();
+        LogPrint(BCLog::MEMPOOL, "DePIN pool full: dropped the %d oldest messages to admit %s\n", evict.size(), hash.ToString());
     }
     const uint64_t sequence = restoring && restoreSequence ? restoreSequence : highWater + 1;
     // Allocate all index nodes before the durable write. The pool lock keeps
     // provisional entries invisible; every failure rolls them back together.
     const std::vector<uint256> rollback{hash};
     auto undo = [&] {
+        auto ofSender = mapSenderSequences.find(sender);
+        if (ofSender != mapSenderSequences.end()) {
+            ofSender->second.erase(sequence);
+            if (ofSender->second.empty())
+                mapSenderSequences.erase(ofSender);
+        }
         mapBySequence.erase(sequence);
         sequenceByHash.erase(hash);
         ApplyErase(rollback);
     };
     try {
         mapMessages.emplace(hash, std::move(admitted));
-        mapByTime.emplace(message.timestamp, hash);
+        nPoolUsage += charge;
+        mapSenderUsage[sender] += charge;
+        mapByTime.emplace(timestamp, hash);
         mapBySequence.emplace(sequence, hash);
         sequenceByHash.emplace(hash, sequence);
+        mapSenderSequences[sender].insert(sequence);
         if (!restoring && !CommitAdmission(mapMessages.at(hash), sequence, error)) {
             undo(); return false;
         }
@@ -376,7 +450,7 @@ bool CDepinMsgPool::AddMessageInternal(const CDepinMessage& message, std::string
     highWater = std::max(highWater, sequence);
 
     LogPrint(BCLog::MEMPOOL, "DePIN message added: hash=%s, sender=%s, payload_size=%d\n",
-             hash.ToString(), message.senderAddress, message.encryptedPayload.size());
+             hash.ToString(), sender, payloadSize);
 
     gDepinAdmissionStats.poolHoldMicros += GetTimeMicros() - poolStart;
     gDepinAdmissionStats.admitted++;
@@ -504,8 +578,23 @@ void CDepinMsgPool::ApplyErase(const std::vector<uint256>& hashes) {
         auto it = mapMessages.find(hash);
         if (it != mapMessages.end()) {
             int64_t timestamp = it->second.timestamp;
+            const std::string sender = it->second.senderAddress;
+            const size_t charge = MessageCharge(it->second);
+            nPoolUsage -= std::min(nPoolUsage, charge);
+            auto usage = mapSenderUsage.find(sender);
+            if (usage != mapSenderUsage.end()) {
+                usage->second -= std::min(usage->second, charge);
+                if (usage->second == 0)
+                    mapSenderUsage.erase(usage);
+            }
             auto sequence = sequenceByHash.find(hash);
             if (sequence != sequenceByHash.end()) {
+                auto ofSender = mapSenderSequences.find(sender);
+                if (ofSender != mapSenderSequences.end()) {
+                    ofSender->second.erase(sequence->second);
+                    if (ofSender->second.empty())
+                        mapSenderSequences.erase(ofSender);
+                }
                 mapBySequence.erase(sequence->second);
                 sequenceByHash.erase(sequence);
             }
@@ -575,6 +664,9 @@ void CDepinMsgPool::Clear() {
     mapByTime.clear();
     mapBySequence.clear();
     sequenceByHash.clear();
+    nPoolUsage = 0;
+    mapSenderUsage.clear();
+    mapSenderSequences.clear();
     LogPrint(BCLog::MEMPOOL, "Chat mempool cleared\n");
 }
 
@@ -610,23 +702,126 @@ size_t CDepinMsgPool::CountMessagesInScope(const std::string& scopeToken, int64_
     return count;
 }
 
+std::map<std::string, size_t> CDepinMsgPool::CountMessagesByToken(int64_t now) const {
+    LOCK(cs_depinmsgpool);
+    const int64_t expiry = GetMessageExpiryTime();
+    std::map<std::string, size_t> counts;
+    for (const auto& entry : mapMessages)
+        if (!entry.second.IsExpired(now, expiry))
+            ++counts[entry.second.token];
+    return counts;
+}
+
+CDepinPoolStats CDepinMsgPool::GetStats(int64_t now) const {
+    LOCK(cs_depinmsgpool);
+    const int64_t expiry = GetMessageExpiryTime();
+    CDepinPoolStats stats;
+    stats.messages = mapMessages.size();
+    stats.memoryUsage = nPoolUsage;
+    stats.senders = mapSenderUsage.size();
+    if (!mapByTime.empty()) {
+        stats.oldest = mapByTime.begin()->first;
+        stats.newest = mapByTime.rbegin()->first;
+    }
+    for (const auto& entry : mapMessages) {
+        const CDepinMessage& message = entry.second;
+        const int64_t age = now - message.timestamp;
+        if (age < 3600) ++stats.lastHour;
+        if (age < 86400) ++stats.lastDay;
+        if (age < 604800) ++stats.lastWeek;
+        const int64_t left = message.timestamp + expiry - now;
+        if (left > 0 && left < 86400) ++stats.expiringSoon;
+        stats.payloadBytes += message.signature.size() + message.encryptedPayload.size();
+    }
+    return stats;
+}
+
 size_t CDepinMsgPool::Size() const {
     LOCK(cs_depinmsgpool);
     return mapMessages.size();
 }
 
+size_t CDepinMsgPool::MessageCharge(const CDepinMessage& message) {
+    // conservative charge for the tree indexes, plus what the message carries
+    return sizeof(CDepinMessage) + 320 + message.token.size() + message.senderAddress.size() +
+           message.signature.size() + message.encryptedPayload.size();
+}
+
 size_t CDepinMsgPool::DynamicMemoryUsage() const {
     LOCK(cs_depinmsgpool);
-    size_t total = 0;
-    for (const auto& entry : mapMessages) {
-        const CDepinMessage& msg = entry.second;
-        total += sizeof(CDepinMessage) + 320; // conservative charge for four tree indexes
-        total += msg.token.size();
-        total += msg.senderAddress.size();
-        total += msg.signature.size();
-        total += msg.encryptedPayload.size();
+    return nPoolUsage;
+}
+
+void CDepinMsgPool::SetSpacePolicy(unsigned int maxSenderSizeMB, bool rolling) {
+    LOCK(cs_depinmsgpool);
+    nMaxSenderSizeMB = maxSenderSizeMB;
+    fRolling = rolling;
+}
+
+uint64_t CDepinMsgPool::GetEvictedCount() const {
+    LOCK(cs_depinmsgpool);
+    return nEvicted;
+}
+
+size_t CDepinMsgPool::GetSenderUsage(const std::string& sender) const {
+    LOCK(cs_depinmsgpool);
+    auto usage = mapSenderUsage.find(sender);
+    return usage == mapSenderUsage.end() ? 0 : usage->second;
+}
+
+bool CDepinMsgPool::MakeRoom(const std::string& sender, size_t incoming, bool restoring,
+                             std::vector<uint256>& evict, std::string& error) const {
+    const size_t maxPoolBytes = (size_t)nMaxPoolSizeMB * 1024 * 1024;
+    // The space of a sender applies to what is published now. Messages read
+    // back from disk were admitted under the limit of their time.
+    const size_t maxSenderBytes = restoring ? 0 : (size_t)nMaxSenderSizeMB * 1024 * 1024;
+    auto usage = mapSenderUsage.find(sender);
+    size_t senderUsage = usage == mapSenderUsage.end() ? 0 : usage->second;
+    size_t poolUsage = nPoolUsage;
+
+    const bool senderFull = maxSenderBytes && senderUsage + incoming > maxSenderBytes;
+    const bool poolFull = poolUsage + incoming > maxPoolBytes;
+    if (!senderFull && !poolFull)
+        return true;
+    // Nothing is dropped while the pool is read back from disk
+    if (!fRolling || restoring || incoming > maxPoolBytes || (maxSenderBytes && incoming > maxSenderBytes)) {
+        if (senderFull)
+            error = strprintf("Sender space limit exceeded (current: %d KB, limit: %d MB). Message rejected.",
+                              senderUsage / 1024, nMaxSenderSizeMB);
+        else
+            error = strprintf("Pool size limit exceeded (current: %d MB, limit: %d MB). Message rejected.",
+                              poolUsage / (1024 * 1024), nMaxPoolSizeMB);
+        return false;
     }
-    return total;
+
+    std::set<uint256> chosen;
+    const auto drop = [&](uint64_t sequence) {
+        const uint256& hash = mapBySequence.at(sequence);
+        if (!chosen.insert(hash).second)
+            return;
+        const CDepinMessage& old = mapMessages.at(hash);
+        const size_t charge = MessageCharge(old);
+        poolUsage -= std::min(poolUsage, charge);
+        if (old.senderAddress == sender)
+            senderUsage -= std::min(senderUsage, charge);
+        evict.push_back(hash);
+    };
+    // The sender's own oldest messages first, for its own space...
+    auto ofSender = mapSenderSequences.find(sender);
+    if (maxSenderBytes && ofSender != mapSenderSequences.end()) {
+        for (uint64_t sequence : ofSender->second) {
+            if (senderUsage + incoming <= maxSenderBytes)
+                break;
+            drop(sequence);
+        }
+    }
+    // ...then the oldest of the pool, whoever sent them
+    for (const auto& entry : mapBySequence) {
+        if (poolUsage + incoming <= maxPoolBytes)
+            break;
+        drop(entry.first);
+    }
+    return true;
 }
 
 int64_t CDepinMsgPool::GetOldestMessageTime() const {

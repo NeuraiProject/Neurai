@@ -13,6 +13,7 @@
 #include "rpc/server.h"
 #include "rpc/protocol.h"
 #include "streams.h"
+#include "util.h"
 #include "utilstrencodings.h"
 #include "utiltime.h"
 #include "validation.h"
@@ -23,15 +24,43 @@
 #endif
 #include <limits>
 #include <algorithm>
+#include <map>
 
 // Public, non-authenticating business queries. Only the v5 dispatcher below is
 // registered: their old positional forms are not reachable through the table.
-UniValue depingetmsginfo(const JSONRPCRequest&);
+UniValue DepinMsgInfo(const CDepinServiceStatus& status);
 UniValue depinpoolstats(const JSONRPCRequest&);
 UniValue depinmcpstatus(const JSONRPCRequest&);
 UniValue depingetancestorrecipients(const JSONRPCRequest&);
 
 namespace {
+/** How long one request holds cs_main: the time the node cannot validate
+ *  because of it. Logged under -debug=bench when the request ends. Declared
+ *  before the lock is taken, so that the line is written after it is released;
+ *  `Holding` marks the time the lock is held. */
+struct MainLockTime {
+    const std::string& method;
+    int64_t since=0,held=0;
+    explicit MainLockTime(const std::string& m):method(m) {}
+    ~MainLockTime() { LogPrint(BCLog::BENCH,"DePIN %s: node lock held %.3fms\n",method,held*0.001); }
+    void Pause() { held+=GetTimeMicros()-since; }
+    void Resume() { since=GetTimeMicros(); }
+    struct Holding {
+        MainLockTime& time;
+        explicit Holding(MainLockTime& t):time(t) { time.Resume(); }
+        ~Holding() { time.Pause(); }
+    };
+};
+/** Leaves cs_main for the life of the object, for work that needs no chain
+ *  state: whatever touches the pool, which has a lock of its own, and
+ *  cryptography. What the request may do was decided before, with cs_main
+ *  held. Nothing in this file waits for the pool lock with cs_main held: the
+ *  pool lock is held for as long as it takes to go through the pool. */
+struct WithoutMainLock {
+    MainLockTime& time;
+    explicit WithoutMainLock(MainLockTime& t):time(t) { time.Pause();LEAVE_CRITICAL_SECTION(cs_main); }
+    ~WithoutMainLock() { ENTER_CRITICAL_SECTION(cs_main);time.Resume(); }
+};
 void Ready()
 {
     std::string error;
@@ -39,7 +68,7 @@ void Ready()
 }
 void Enabled()
 {
-    if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) throw DepinRpcError(RPC_MISC_ERROR,"service_disabled","DePIN messaging pool is not enabled");
+    if (!pDepinMsgPool || !pDepinMsgPool->IsEnabled()) throw DepinRpcError(RPC_MISC_ERROR,"service_disabled",DepinServiceDisabledMessage());
 }
 void Remember(const DepinRpcRequest& r)
 {
@@ -73,7 +102,7 @@ UniValue Message(const CDepinMessage& m)
     item.pushKV("message_type",m.messageType==1?"private":"group");
     item.pushKV("encrypted_payload_hex",HexStr(m.encryptedPayload));item.pushKV("signature_hex",HexStr(m.signature));return item;
 }
-UniValue Run(const DepinRpcRequest& r, const JSONRPCRequest& original)
+UniValue Run(const DepinRpcRequest& r, const JSONRPCRequest& original, MainLockTime& lockTime)
 {
     if (r.method=="depingetmsginfo" || r.method=="depinpoolstats" || r.method=="depinmcpstatus" || r.method=="depingetancestorrecipients") {
         JSONRPCRequest q=original;q.params=UniValue(UniValue::VARR);
@@ -82,7 +111,10 @@ UniValue Run(const DepinRpcRequest& r, const JSONRPCRequest& original)
             return depingetancestorrecipients(q);
         }
         if (r.method=="depingetmsginfo") {
-            auto info=depingetmsginfo(q);const auto id=GetDepinRpcIdentity();
+            // What the answer says of the chain is read here, in the lock
+            // hold it is signed under. The figures of the pool need no cs_main.
+            const auto id=GetDepinRpcIdentity();const auto status=GetDepinServiceStatus();
+            UniValue info;{ WithoutMainLock unlocked(lockTime);info=DepinMsgInfo(status); }
             info.pushKV("network",id.network);info.pushKV("instance_id",id.instance);info.pushKV("server_time_ms",DepinRequestClockMillis());
             UniValue versions(UniValue::VARR);versions.push_back(DEPIN_RPC_PROTOCOL_VERSION);
             info.pushKV("accepted_protocols",versions);
@@ -95,6 +127,8 @@ UniValue Run(const DepinRpcRequest& r, const JSONRPCRequest& original)
             UniValue formats(UniValue::VARR);formats.push_back(1);formats.push_back(2);
             info.pushKV("ecies_formats",formats);return info;
         }
+        // These two read the pool and the worker only
+        WithoutMainLock unlocked(lockTime);
         return r.method=="depinpoolstats"?depinpoolstats(q):depinmcpstatus(q);
     }
     Enabled();Ready();
@@ -114,8 +148,9 @@ UniValue Run(const DepinRpcRequest& r, const JSONRPCRequest& original)
         if (!GetDepinPoolKey(key,pub)) throw JSONRPCError(RPC_MISC_ERROR,"DePIN pool key unavailable");
         CECIESEncryptedMessage envelope;const DepinRecipient poolId(pub.GetID());
         if (!DecodeDepinECIES(ParseHex(r.args["encrypted"].get_str()),MAX_DEPIN_MESSAGE_WIRE_BYTES*2,1,envelope,error,&poolId)) throw JSONRPCError(RPC_DESERIALIZATION_ERROR,error);
-        std::string inner;
-        if (!ECIESDecryptMessage(envelope,key,poolId.Address(),inner,error)) throw JSONRPCError(RPC_VERIFY_ERROR,"Failed to decrypt outer privacy shell: "+error);
+        std::string inner;bool opened;
+        { WithoutMainLock unlocked(lockTime);opened=ECIESDecryptMessage(envelope,key,poolId.Address(),inner,error); }
+        if (!opened) throw JSONRPCError(RPC_VERIFY_ERROR,"Failed to decrypt outer privacy shell: "+error);
         if (inner.empty() || inner.size()>MAX_DEPIN_MESSAGE_WIRE_BYTES*2 || !IsHex(inner)) throw JSONRPCError(RPC_INVALID_PARAMETER,"Message must be bounded hex");
         CDepinMessage message;
         if (!DecodeDepinMessage(ParseHex(inner),message,error)) throw JSONRPCError(RPC_DESERIALIZATION_ERROR,error);
@@ -129,23 +164,42 @@ UniValue Run(const DepinRpcRequest& r, const JSONRPCRequest& original)
         if (!CheckDepinRpcReplay(r,error)) throw JSONRPCError(RPC_INVALID_REQUEST,error);
         if (!g_depinRateLimiter.Allow("submit|"+r.address,GetTime())) throw JSONRPCError(RPC_MISC_ERROR,"Rate limited: too many messages from this address");
         Remember(r);
-        DepinAdmissionError admission;
-        if (!pDepinMsgPool->AddMessage(message,error,false,&admission))
+        // Who may publish, and to whom, is decided here against the tip. The
+        // message is stored, in the pool and on disk, without the node lock.
+        DepinAdmissionError admission;CDepinAuthorizedMessage authorized;
+        if (!pDepinMsgPool->AuthorizeMessage(message,authorized,error,false,&admission))
             throw JSONRPCError(admission==DepinAdmissionError::RECIPIENT_NOT_AUTHORIZED?RPC_VERIFY_REJECTED:RPC_MISC_ERROR,error);
+        bool stored;
+        { WithoutMainLock unlocked(lockTime);stored=pDepinMsgPool->StoreMessage(std::move(authorized),error); }
+        if (!stored) throw JSONRPCError(RPC_MISC_ERROR,error);
         UniValue result(UniValue::VOBJ);result.pushKV("result","success");result.pushKV("hash",message.GetHash().ToString());result.pushKV("timestamp",message.timestamp);return result;
     }
     if (r.method=="depinlistsections") {
         if (r.kind) Access(r);
         std::vector<std::string> sections;std::string error;
         if (!pDepinMsgPool->GetSections(sections,error)) throw JSONRPCError(RPC_MISC_ERROR,error);
-        UniValue entries(UniValue::VARR);
+        // Which sections the reader may see is decided with cs_main held;
+        // their messages are counted afterwards, in one pass and without it
+        std::vector<std::pair<std::string,bool> > listed;bool counting=false;
         for (const auto& section:sections) {
             if (r.kind && !IsDepinSectionOrRoot(section,r.token)) continue;
+            const bool access=r.kind && HasDepinSectionAccess(r.address,section,r.target.root,error);
+            listed.emplace_back(section,access);counting=counting || access;
+        }
+        std::map<std::string,size_t> held;
+        if (counting) { WithoutMainLock unlocked(lockTime);held=pDepinMsgPool->CountMessagesByToken(GetTime()); }
+        UniValue entries(UniValue::VARR);
+        for (const auto& item:listed) {
+            const auto& section=item.first;
             const auto label=GetDepinSectionLabel(section,r.target.root);UniValue entry(UniValue::VOBJ);
             entry.pushKV("name",section);entry.pushKV("label",label);entry.pushKV("depth",label.empty()?0:int(1+std::count(label.begin(),label.end(),'/')));
             if (r.kind) {
-                const bool access=HasDepinSectionAccess(r.address,section,r.target.root,error);entry.pushKV("access",UniValue(access));
-                if (access) entry.pushKV("messages",int64_t(pDepinMsgPool->CountMessagesInScope(section,GetTime())));
+                entry.pushKV("access",UniValue(item.second));
+                if (item.second) {
+                    size_t count=0;
+                    for (const auto& token:held) if (IsDepinSectionOrRoot(token.first,section)) count+=token.second;
+                    entry.pushKV("messages",int64_t(count));
+                }
             }
             entries.push_back(entry);
         }
@@ -155,26 +209,43 @@ UniValue Run(const DepinRpcRequest& r, const JSONRPCRequest& original)
     Access(r);
     if (r.method=="depinclearmsg") {
         const auto mode=r.args["mode"].get_str();const auto hours=r.args["hours"].get_int64();
-        Consume(r);size_t removed=0;std::string error;
-        if (!pDepinMsgPool->Purge(r.token==r.target.root?"":r.token,GetTime(),mode=="all",
-                                 mode=="expired"?pDepinMsgPool->GetMessageExpiryTime():hours*3600,removed,error))
-            throw JSONRPCError(RPC_DATABASE_ERROR,error);
-        UniValue result(UniValue::VOBJ);result.pushKV("removed",int64_t(removed));result.pushKV("remaining",int64_t(pDepinMsgPool->Size()));return result;
+        Consume(r);size_t removed=0,remaining=0;std::string error;bool purged;
+        {
+            WithoutMainLock unlocked(lockTime);
+            purged=pDepinMsgPool->Purge(r.token==r.target.root?"":r.token,GetTime(),mode=="all",
+                                        mode=="expired"?pDepinMsgPool->GetMessageExpiryTime():hours*3600,removed,error);
+            remaining=pDepinMsgPool->Size();
+        }
+        if (!purged) throw JSONRPCError(RPC_DATABASE_ERROR,error);
+        UniValue result(UniValue::VOBJ);result.pushKV("removed",int64_t(removed));result.pushKV("remaining",int64_t(remaining));return result;
     }
     UniValue messages(UniValue::VARR),result(UniValue::VOBJ);std::string error;bool more=false;
+    // The reader was authorized above. Going through the pool and encoding
+    // the page need the pool lock only: the node keeps validating meanwhile.
     if (r.method=="depinreceivemsg") {
-        std::vector<CDepinMessage> page;auto timestamp=r.args["timestamp"].get_int64();if (timestamp) --timestamp;
-        if (!pDepinMsgPool->GetLegacyPage(r.address,r.token,timestamp,r.args["after_hash"].get_str(),size_t(r.args["limit"].get_int64()),page,more,error)) throw JSONRPCError(RPC_INVALID_PARAMETER,error);
-        for (const auto& m:page) messages.push_back(Message(m));
+        std::vector<CDepinMessage> page;auto timestamp=r.args["timestamp"].get_int64();if (timestamp) --timestamp;bool read;
+        {
+            WithoutMainLock unlocked(lockTime);
+            read=pDepinMsgPool->GetLegacyPage(r.address,r.token,timestamp,r.args["after_hash"].get_str(),size_t(r.args["limit"].get_int64()),page,more,error);
+            if (read) for (const auto& m:page) messages.push_back(Message(m));
+        }
+        if (!read) throw JSONRPCError(RPC_INVALID_PARAMETER,error);
     } else {
-        const auto& cursor=r.args["cursor"];const auto stream=cursor.isNull()?pDepinMsgPool->GetStreamId():uint256S(cursor["stream_id"].get_str());
-        const auto after=cursor.isNull()?0:uint64_t(cursor["after_seq"].get_int64());CDepinSequencePage page;
-        if (!pDepinMsgPool->GetSequencePage(r.address,r.token,stream,after,size_t(r.args["limit"].get_int64()),r.args["from_timestamp"].get_int64(),page,error)) throw JSONRPCError(RPC_INVALID_PARAMETER,error);
-        for (const auto& m:page.messages) { auto entry=Message(m.message);entry.pushKV("sequence",int64_t(m.sequence));messages.push_back(entry); }
+        const auto& cursor=r.args["cursor"];
+        const auto after=cursor.isNull()?0:uint64_t(cursor["after_seq"].get_int64());CDepinSequencePage page;bool read;
+        {
+            WithoutMainLock unlocked(lockTime);
+            const auto stream=cursor.isNull()?pDepinMsgPool->GetStreamId():uint256S(cursor["stream_id"].get_str());
+            read=pDepinMsgPool->GetSequencePage(r.address,r.token,stream,after,size_t(r.args["limit"].get_int64()),r.args["from_timestamp"].get_int64(),page,error);
+            if (read) for (const auto& m:page.messages) { auto entry=Message(m.message);entry.pushKV("sequence",int64_t(m.sequence));messages.push_back(entry); }
+        }
+        if (!read) throw JSONRPCError(RPC_INVALID_PARAMETER,error);
         UniValue next(UniValue::VOBJ);next.pushKV("version",1);next.pushKV("stream_id",page.stream.ToString());next.pushKV("after_seq",int64_t(page.after));
         next.pushKV("scope",r.token);next.pushKV("address",r.address);next.pushKV("from_timestamp",r.args["from_timestamp"]);result.pushKV("cursor",next);more=page.hasMore;
     }
-    Consume(r);result.pushKV("messages",messages);result.pushKV("has_more",UniValue(more));Chain(result,r);return result;
+    // A page can be megabytes: it is copied into the answer without the node lock too
+    { WithoutMainLock unlocked(lockTime);result.pushKV("messages",messages);result.pushKV("has_more",UniValue(more)); }
+    Consume(r);Chain(result,r);return result;
 }
 
 UniValue DepinRpcV4(const JSONRPCRequest& request)
@@ -182,11 +253,17 @@ UniValue DepinRpcV4(const JSONRPCRequest& request)
     if (request.fHelp) throw std::runtime_error(request.strMethod+" request\nDePIN protocol 5. One JSON object; legacy signatures are rejected.\nSee doc/depin-request-signatures.md. Use depinsignrpc method request on the signing wallet.\n");
     if (request.params.size()!=1 || !request.params[0].isObject()) throw DepinRpcError(RPC_INVALID_PARAMETER,"unsupported_protocol","DePIN unsupported_protocol: one protocol 5 request object required");
     const auto r=ParseDepinRpcRequest(request.strMethod,request.params[0]);
-    LOCK(cs_main);const auto now=DepinRequestClockMillis();ObserveDepinRpcClock(now);const auto identity=GetDepinRpcIdentity();
+    // cs_main is held while the request is checked and answered from the
+    // chain state. The answer is encrypted and signed after it is released,
+    // under the identity it was produced with.
+    // The answer is built in place: copying a large one would be done with the lock held
+    std::unique_ptr<UniValue> answer;CPubKey client;bool encrypted=false;DepinRpcIdentity identity;
+    {
+    MainLockTime lockTime(r.method);LOCK(cs_main);MainLockTime::Holding holding(lockTime);
+    const auto now=DepinRequestClockMillis();ObserveDepinRpcClock(now);identity=GetDepinRpcIdentity();
     // Readiness precedes asset/public-key index work. Early unavailability is
     // a transport error: it cannot be encrypted without consulting that index.
     if (r.kind || r.method=="depinlistsections" || r.method=="depingetancestorrecipients") { Enabled();Ready(); }
-    CPubKey client;
     // Error bodies for addressed requests are encrypted too. No on-chain key
     // lookup is needed to sign a public query or to disclose a parse failure.
     if (r.kind) { std::string error;if (!CheckAddressHasPublicKey(r.address,client,error))
@@ -204,7 +281,7 @@ UniValue DepinRpcV4(const JSONRPCRequest& request)
             if (r.target.membership.revision!=identity.membership.revision)
                 throw DepinRpcError(RPC_INVALID_REQUEST,"membership_stale","DePIN membership changed: refresh the directory and request a new challenge");
         }
-        return FinishDepinRpcResponse(Run(r,request),r,r.kind?&client:nullptr);
+        answer.reset(new UniValue(Run(r,request,lockTime)));encrypted=r.kind!=0;
     } catch (const UniValue& error) {
         // Syntax errors preceding a request hash remain JSON-RPC transport
         // errors. Every correlatable operation error has the pool signature.
@@ -225,9 +302,10 @@ UniValue DepinRpcV4(const JSONRPCRequest& request)
             auto data=detail["data"];data.pushKV("membership_revision",identity.membership.revision);
             data.pushKV("refresh_recipients",UniValue(true));data.pushKV("renew_challenge",UniValue(true));detail.pushKV("data",data);
         }
-        UniValue result(UniValue::VOBJ);result.pushKV("error",detail);
-        return FinishDepinRpcResponse(result,r,client.IsFullyValid()?&client:nullptr);
+        answer.reset(new UniValue(UniValue::VOBJ));answer->pushKV("error",detail);encrypted=client.IsFullyValid();
     }
+    }
+    return FinishDepinRpcResponse(*answer,r,encrypted?&client:nullptr,&identity);
 }
 
 #ifdef ENABLE_WALLET

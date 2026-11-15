@@ -172,10 +172,18 @@ have gone. A large incorrect clock jump can therefore make the service
 reject newly dated messages until time catches up. Correct the clock and
 inspect the preserved state; do not erase moderation state as a routine fix.
 
-`-depintombstonelimit` defaults to 100000, maximum 1000000. If a deletion
-would exceed it, the **whole operation fails**, removes nothing, and drops
-no live mark. This is recoverable by increasing capacity or waiting until
-marks can safely expire. Disk/sync/read failures reject the operation,
+`-depintombstonelimit` defaults to 100000, maximum 1000000. A deletion that
+would exceed it still removes its messages and drops no live mark, but adds
+none: it is remembered **by date** instead. From then on the messages of its
+scope (a section, or the whole pool) dated at or before the newest message it
+removed are refused as administratively deleted, also ones that were never in
+the pool. One date is kept per scope, so this cannot run out, and a section
+that fills the marks does not leave the others without moderation. A date is
+dropped once it only covers messages too old to be admitted under any
+retention period, by another purge or on startup. Like the pruning of a mark,
+that advances the durable minimum accepted timestamp, so what the date
+refused stays refused after a clock jump forward and back. More stored marks
+than the limit allows, after lowering it, are kept. Disk/sync/read failures reject the operation,
 acknowledge no removal and disable permission-dependent service (`-10` on
 subsequent calls) until restart. The failing purge reports `-20`. The
 storage outcome of an I/O error can be uncertain: recovery may find the

@@ -542,6 +542,8 @@ std::string HelpMessage(HelpMessageMode mode)
     strUsage += HelpMessageOpt("-depinwallet=<file>", _("Wallet the DePIN pool key is derived from (required only when more than one wallet is loaded). Must be an unencrypted legacy BIP44 wallet"));
     strUsage += HelpMessageOpt("-depinratelimit=<n>", strprintf(_("Maximum DePIN challenges issued and messages accepted per address and minute, 0 = unlimited (default: %u)"), DEFAULT_DEPIN_RATE_LIMIT));
     strUsage += HelpMessageOpt("-depinmsgmaxusers=<n>", strprintf(_("Maximum number of DePIN message recipients (default: %u)"), DEFAULT_MAX_DEPIN_RECIPIENTS));
+    strUsage += HelpMessageOpt("-depinpoolsendersize=<n>", strprintf(_("Maximum DePIN pool space for the messages of one sender, in MB; 0 for no limit of its own (default: %u)"), DEFAULT_DEPIN_POOL_SENDER_SIZE_MB));
+    strUsage += HelpMessageOpt("-depinpoolrolling", strprintf(_("When the DePIN pool or the space of a sender is full, drop the oldest messages to admit a new one instead of refusing it (default: %u)"), DEFAULT_DEPIN_POOL_ROLLING));
     strUsage += HelpMessageOpt("-depinpoolpersist", strprintf(_("Synchronously retain DePIN messages across restarts; moderation hashes are always durable (default: %u)"), DEFAULT_DEPINPOOL_PERSIST));
     strUsage += HelpMessageOpt("-depintombstonelimit=<n>", strprintf(_("Maximum retained DePIN moderation hashes; a full store rejects further deletions (default: %u, max: %u)"), DEFAULT_DEPIN_TOMBSTONE_LIMIT, MAX_DEPIN_TOMBSTONE_LIMIT));
     strUsage += HelpMessageOpt("-depinmaxtipage=<n>", strprintf(_("Maximum active-tip age in seconds for DePIN authorization (positive; default: %d)"), DEFAULT_DEPIN_MAX_TIP_AGE));
@@ -1130,6 +1132,25 @@ bool AppInitBasicSetup()
     return true;
 }
 
+/** The DePIN service is optional. A part of it that cannot start does not keep
+ *  the node from starting: the node runs without the service and says which
+ *  part failed, at start-up, in the warnings and in the answers of the depin
+ *  commands. The first failure is the one reported. */
+static void DepinServiceFailed(const std::string& strReason)
+{
+    if (!GetDepinServiceFailure().empty())
+        return;
+    SetDepinServiceFailure(strReason);
+    g_depinMCPWorker.reset();
+    pDepinMsgPool.reset();
+    std::string strPart = strReason;
+    while (!strPart.empty() && strPart.back() == '.')
+        strPart.pop_back();
+    const std::string strMessage = strprintf(_("The DePIN service is not running: %s. The node runs without it."), strPart);
+    SetMiscWarning(strMessage);
+    InitWarning(strMessage);
+}
+
 bool AppInitParameterInteraction()
 {
     const CChainParams& chainparams = GetParams();
@@ -1641,13 +1662,13 @@ static bool LockDataDirectory(bool probeOnly)
     // ********************************************************* Chat Mempool validation
     if (gArgs.GetBoolArg("-depinmsg", false)) {
         if (!gArgs.GetBoolArg("-assetindex", false)) {
-            return InitError(_("DePIN messaging requires -assetindex to be enabled. "
+            DepinServiceFailed(_("DePIN messaging requires -assetindex to be enabled. "
                             "Please add assetindex=1 to your configuration and restart with -reindex"));
         }
 
         std::string token = gArgs.GetArg("-depinmsgtoken", "");
         if (token.empty()) {
-            return InitError(_("DePIN messaging enabled but no token specified. "
+            DepinServiceFailed(_("DePIN messaging enabled but no token specified. "
                             "Use -depinmsgtoken=&TOKENNAME"));
         }
 
@@ -1657,7 +1678,7 @@ static bool LockDataDirectory(bool probeOnly)
         // Safe to call GetParams() indirectly: SelectParams() already ran.
         std::string tokenError;
         if (!IsValidDepinMessagingToken(token, tokenError)) {
-            return InitError(strprintf(_("Invalid -depinmsgtoken '%s': %s"), token, tokenError));
+            DepinServiceFailed(strprintf(_("Invalid -depinmsgtoken '%s': %s"), token, tokenError));
         }
     }
 
@@ -2386,11 +2407,13 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
     LogPrintf("nBestHeight = %d\n", chain_active_height);
 
     // ********************************************************* Initialize Chat Mempool
-    if (gArgs.GetBoolArg("-depinmsg", false)) {
+    if (gArgs.GetBoolArg("-depinmsg", false) && GetDepinServiceFailure().empty()) {
+        // Each step answers with what failed, or with nothing
+        const std::string strDepinFailure = [&]() -> std::string {
         std::string token = gArgs.GetArg("-depinmsgtoken", "");
         if (gArgs.GetArg("-depinmaxtipage", DEFAULT_DEPIN_MAX_TIP_AGE) <= 0 ||
             gArgs.GetArg("-depinmaxheaderlag", DEFAULT_DEPIN_MAX_HEADER_LAG) < 0) {
-            return InitError(_("Invalid DePIN freshness limits: depinmaxtipage must be positive and depinmaxheaderlag nonnegative"));
+            return std::string(_("Invalid DePIN freshness limits: depinmaxtipage must be positive and depinmaxheaderlag nonnegative"));
         }
         auto depinLimit = [](const std::string& name, int64_t fallback, unsigned int maximum) {
             const int64_t value = gArgs.GetArg(name, fallback);
@@ -2405,16 +2428,16 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
         // it there is no service, so fail here rather than serve unsigned or
         // in the clear.
 #ifndef ENABLE_WALLET
-        return InitError(_("DePIN service requires a wallet-enabled build"));
+        return std::string(_("DePIN service requires a wallet-enabled build"));
 #else
         {
             std::string poolKeyError;
             CWallet* serviceWallet = SelectDepinServiceWallet(gArgs.GetArg("-depinwallet", ""), poolKeyError);
             if (!serviceWallet) {
-                return InitError(strprintf(_("DePIN service: %s"), poolKeyError));
+                return std::string(strprintf(_("DePIN service: %s"), poolKeyError));
             }
             if (!LoadDepinPoolKey(serviceWallet, poolKeyError)) {
-                return InitError(strprintf(_("DePIN service: %s"), poolKeyError));
+                return std::string(strprintf(_("DePIN service: %s"), poolKeyError));
             }
             LogPrintf("DePIN pool key loaded from wallet '%s'\n", GetDepinPoolKeyWalletName());
         }
@@ -2426,8 +2449,13 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
 
         pDepinMsgPool = std::make_unique<CDepinMsgPool>();
         if (!pDepinMsgPool->Initialize(token, maxRecipients, maxMessageSize, messageExpiryHours, maxPoolSizeMB)) {
-            return InitError(_("Failed to initialize DePIN messaging. Check that the token exists and -assetindex is enabled."));
+            return std::string(_("Failed to initialize DePIN messaging. Check that the token exists and -assetindex is enabled."));
         }
+
+        // Space of one sender, and whether a full pool rolls. Before the
+        // stored messages are read back.
+        pDepinMsgPool->SetSpacePolicy(depinLimit("-depinpoolsendersize", DEFAULT_DEPIN_POOL_SENDER_SIZE_MB, MAX_DEPIN_POOL_SIZE_MB),
+                                      gArgs.GetBoolArg("-depinpoolrolling", DEFAULT_DEPIN_POOL_ROLLING));
 
         LogPrintf("DePIN messaging initialized for token: %s (served over the node RPC port)\n", token);
 
@@ -2453,10 +2481,10 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
         std::string storageError;
         const int64_t markLimit = gArgs.GetArg("-depintombstonelimit", int64_t(DEFAULT_DEPIN_TOMBSTONE_LIMIT));
         if (markLimit <= 0 || uint64_t(markLimit) > MAX_DEPIN_TOMBSTONE_LIMIT)
-            return InitError("Invalid -depintombstonelimit: must be 1..1000000");
+            return std::string("Invalid -depintombstonelimit: must be 1..1000000");
         if (!pDepinMsgPool->InitializeStorage(gArgs.GetBoolArg("-depinpoolpersist", DEFAULT_DEPINPOOL_PERSIST),
                                               storageError, size_t(markLimit))) {
-            return InitError("Cannot initialize DePIN state: " + storageError);
+            return std::string("Cannot initialize DePIN state: " + storageError);
         }
 
         // Schedule automatic cleanup of expired messages
@@ -2483,6 +2511,7 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
 
         // ********************************************************* Initialize DePIN MCP Worker (AI Integration)
         if (gArgs.GetBoolArg("-depinmcp", false)) {
+            const std::string strMcpFailure = [&]() -> std::string {
             std::string mcpUrl = gArgs.GetArg("-depinmcpurl", "http://localhost:1234");
             std::string mcpEndpoint = gArgs.GetArg("-depinmcpendpoint", "/v1/chat/completions");
             std::string mcpApiKey = gArgs.GetArg("-depinmcpapikey", "");
@@ -2502,7 +2531,7 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
             int mcpMaxFragments = gArgs.GetArg("-depinmcpmaxfragments", DEFAULT_DEPIN_MCP_MAX_FRAGMENTS);
 
             if (mcpAddress.empty()) {
-                return InitError(_("DePIN MCP enabled but no address specified. Use -depinmcpaddress=ADDRESS"));
+                return std::string(_("DePIN MCP enabled but no address specified. Use -depinmcpaddress=ADDRESS"));
             }
 
             // Create and initialize MCP worker
@@ -2513,17 +2542,30 @@ bool AppInitMain(boost::thread_group& threadGroup, CScheduler& scheduler)
                                              mcpMaxTokens, mcpTemperature, mcpConcurrency,
                                              mcpContext, mcpGlobalRateLimit,
                                              mcpFragSize, mcpMaxFragments)) {
-                return InitError(_("Failed to initialize DePIN MCP worker"));
+                return std::string(_("Failed to initialize DePIN MCP worker"));
             }
 
             // Start worker thread
             if (!g_depinMCPWorker->Start()) {
-                return InitError(_("Failed to start DePIN MCP worker"));
+                return std::string(_("Failed to start DePIN MCP worker"));
             }
 
             LogPrintf("DePIN MCP worker started: URL=%s, endpoint=%s, key=%s, interval=%d seconds\n",
                      mcpUrl, mcpEndpoint, mcpKey, mcpInterval);
+            return std::string();
+            }();
+            if (!strMcpFailure.empty()) {
+                // The messaging itself is up: only the worker is left out
+                g_depinMCPWorker.reset();
+                const std::string strMessage = strprintf(_("The DePIN MCP worker is not running: %s. The messaging service runs without it."), strMcpFailure);
+                SetMiscWarning(strMessage);
+                InitWarning(strMessage);
+            }
         }
+        return std::string();
+        }();
+        if (!strDepinFailure.empty())
+            DepinServiceFailed(strDepinFailure);
     }
 
     if (gArgs.GetBoolArg("-listenonion", DEFAULT_LISTEN_ONION))

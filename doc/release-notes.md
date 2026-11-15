@@ -343,6 +343,43 @@ covenants.md. -->
   disconnected could be stored with the block of that earlier asset. Entries
   written by earlier versions keep what they have.
 
+### DePIN messaging service
+
+- **Requests no longer hold the node for their whole duration.** A protocol 5
+  request kept the node lock (`cs_main`) while it went through the pool,
+  encrypted its answer and signed it, so reads of a large pool delayed the
+  validation of blocks and every other command. The lock is now held while the
+  request is checked against the chain state. Everything that touches the pool
+  (reading it, storing a submitted message and writing it to disk, purging,
+  counting the messages of the sections, the pool statistics), building the
+  answer, encrypting and signing it, and opening the envelope of a submitted
+  message are done without it. What a request may do is decided when it
+  arrives. A submission or a purge authorized before a block connects is
+  completed after it; a read or a section listing ends with an error if that
+  block changed the membership of the pool, and the client repeats it.
+  `depinpoolstats` no longer copies the pool. Every shared secret also used to
+  build a cryptographic context of its own; one is kept for the process.
+  With `-debug=bench` the node logs how long each request held the node lock.
+- **Pool space per sender**: `-depinpoolsendersize=<n>` (MB, default 10, 0 for
+  no limit of its own). A sender that fills it is refused and the others keep
+  publishing. One sender could fill the whole pool before.
+- **Rolling pool**: with `-depinpoolrolling=1` a full pool, or a sender's full
+  space, drops its oldest messages to admit a new one instead of refusing it.
+  A sender that fills its own space loses its own oldest messages.
+  `depingetmsginfo` reports `maxsendersizemb`, `rolling` and `evicted`.
+- **A purge never fails for lack of marks.** When the marks kept for purged
+  messages (`-depintombstonelimit`) are full, a purge is remembered by date and
+  scope instead: the messages of that section, or of the whole pool, dated at
+  or before the newest one it removed are refused. A section that fills the
+  marks no longer leaves the others without moderation, and a purge of the
+  whole pool always works. A purge only writes the marks it adds.
+- **The node starts when the DePIN service cannot.** A missing `-assetindex`
+  or token, an unusable pool key or wallet, a damaged pool state or an invalid
+  limit used to stop the node. It now starts without the service, says which
+  part failed at start-up and in the warnings of `getnetworkinfo`, and the
+  `depin` commands answer with that reason. When only the MCP worker fails,
+  the messaging keeps running.
+
 ### No-RBF sequence rule
 
 Replace-by-fee is prohibited by consensus from the activation height. A

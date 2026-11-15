@@ -345,8 +345,10 @@ depinmsgmaxusers=20
 # depinmsgsize=1024        # max content plaintext in bytes, excluding ECIES/key overhead (default 1024, max 10240)
 # depinmsgexpire=168       # expiry in hours (default 168 = 7 days, max 720)
 # depinpoolsize=100        # pool size in MB (default 100, max 1000)
+# depinpoolsendersize=10   # pool space for the messages of one sender, in MB (default 10, 0: no limit of its own)
+# depinpoolrolling=0       # 1: a full pool, or a sender's full space, drops its oldest messages to admit a new one
 # depinpoolpersist=0       # retain messages across restarts, written synchronously (default 0)
-# depintombstonelimit=100000 # retained moderation hashes, always durable; a full store refuses further deletions (default 100000, max 1000000)
+# depintombstonelimit=100000 # retained moderation hashes, always durable; once full, deletions are remembered by date and scope instead (default 100000, max 1000000)
 # depinmaxtipage=3600      # max active-tip age in seconds for DePIN authorization (default 3600)
 # depinmaxheaderlag=2      # max known-header lead in blocks for DePIN authorization (default 2)
 ```
@@ -405,6 +407,12 @@ neurai-cli depingetmsginfo '{"protocol":5,"request_id":"<fresh 32-byte hex>","ti
 ```
 
 Verify the v5 signed wrapper before reading active root, counters and limits.
+
+The service is optional for the node. If a part of it cannot start (no asset
+index, no token, an unusable pool key, a damaged pool state, an invalid limit)
+the node starts without it and says which part failed: at start-up, in the
+`warnings` of `getnetworkinfo`, and in the answers of the `depin` commands
+(`DePIN messaging pool is not running: <reason>`).
 
 
 ## Usage
