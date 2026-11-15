@@ -279,7 +279,9 @@ class NodeConn(asyncore.dispatcher):
         "regtest": b"\x52\x55\x45\x4e",  # regtest, "RUEN" as testnet
     }
 
-    def __init__(self, dstaddr, dstport, rpc, callback, net="regtest", services=NODE_NETWORK, send_version=True):
+    # Witness is active from genesis on this regtest, and a node only fetches
+    # blocks from peers that signal NODE_WITNESS.
+    def __init__(self, dstaddr, dstport, rpc, callback, net="regtest", services=NODE_NETWORK | NODE_WITNESS, send_version=True):
         asyncore.dispatcher.__init__(self, map=mininode_socket_map)
         self.dstaddr = dstaddr
         self.dstport = dstport

@@ -80,7 +80,7 @@ class P2PFingerprintTest(NeuraiTestFramework):
         node0.wait_for_verack()
 
         # Set node time to 60 days ago
-        self.nodes[0].setmocktime(int(time.time()) - 60 * 24 * 60 * 6)
+        self.nodes[0].setmocktime(int(time.time()) - 60 * 24 * 60 * 60)
 
         # Generating a chain of 10 blocks
         block_hashes = self.nodes[0].generate(nblocks=10)

@@ -76,7 +76,7 @@ e. Announce one more that doesn't connect.
    Expect: disconnect.
 """
 
-from test_framework.mininode import NodeConnCB, mininode_lock, MsgGetdata, MsgGetHeaders, MsgHeaders, NodeConn, NetworkThread, MsgBlock, CInv, MsgInv, CBlockHeader, MsgGetBlocks, MsgSendHeaders
+from test_framework.mininode import NODE_WITNESS, NodeConnCB, mininode_lock, MsgGetdata, MsgGetHeaders, MsgHeaders, NodeConn, NetworkThread, MsgBlock, CInv, MsgInv, CBlockHeader, MsgGetBlocks, MsgSendHeaders
 from test_framework.test_framework import NeuraiTestFramework
 from test_framework.util import wait_until, sync_blocks, p2p_port, assert_equal
 from test_framework.blocktools import create_block, create_coinbase
@@ -215,9 +215,10 @@ class SendHeadersTest(NeuraiTestFramework):
         self.p2p_connections = [inv_node, test_node]
 
         connections = [NodeConn('127.0.0.1', p2p_port(0), self.nodes[0], inv_node),
-                       NodeConn('127.0.0.1', p2p_port(0), self.nodes[0], test_node, services=0)]
-        # Set nServices to 0 for test_node, so no block download will occur outside of
-        # direct fetching
+                       NodeConn('127.0.0.1', p2p_port(0), self.nodes[0], test_node, services=NODE_WITNESS)]
+        # Leave NODE_NETWORK out for test_node, so no block download will occur
+        # outside of direct fetching; NODE_WITNESS keeps direct fetch possible,
+        # since witness is active from genesis
         inv_node.add_connection(connections[0])
         test_node.add_connection(connections[1])
 
@@ -430,15 +431,17 @@ class SendHeadersTest(NeuraiTestFramework):
 
         test_node.send_header_for_blocks(blocks)
         test_node.sync_with_ping()
-        test_node.wait_for_getdata([x.sha256 for x in blocks], timeout=int(direct_fetch_response_time))
+        test_node.wait_for_getdata([x.sha256 for x in blocks], timeout=direct_fetch_response_time)
 
         [test_node.send_message(MsgBlock(x)) for x in blocks]
 
         test_node.sync_with_ping()
 
-        # Now announce a header that forks the last two blocks
+        # Now announce a header that forks the last two blocks. The three
+        # blocks above took heights h..h+2, so the fork's first block is h+1
+        # (BIP34 is enforced from height 1 on this regtest).
         tip = blocks[0].sha256
-        height -= 1
+        height -= 2
         blocks = []
 
         # Create extra blocks for later
@@ -461,13 +464,13 @@ class SendHeadersTest(NeuraiTestFramework):
         # both blocks (same work as tip)
         test_node.send_header_for_blocks(blocks[1:2])
         test_node.sync_with_ping()
-        test_node.wait_for_getdata([x.sha256 for x in blocks[0:2]], timeout=int(direct_fetch_response_time))
+        test_node.wait_for_getdata([x.sha256 for x in blocks[0:2]], timeout=direct_fetch_response_time)
 
         # Announcing 16 more headers should trigger direct fetch for 14 more
         # blocks
         test_node.send_header_for_blocks(blocks[2:18])
         test_node.sync_with_ping()
-        test_node.wait_for_getdata([x.sha256 for x in blocks[2:16]], timeout=int(direct_fetch_response_time))
+        test_node.wait_for_getdata([x.sha256 for x in blocks[2:16]], timeout=direct_fetch_response_time)
 
         # Announcing 1 more header should not trigger any response
         test_node.last_message.pop("getdata", None)

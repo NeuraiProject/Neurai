@@ -632,6 +632,19 @@ class CTransaction:
             self.x16r = uint256_from_str(hash256(self.serialize_without_witness()))
         self.hash = encode(hash256(self.serialize())[::-1], 'hex_codec').decode('ascii')
 
+    # Tests ported from Bitcoin name the txid "sha256"; this framework calls
+    # it x16r after the mainnet block hash. Both names are the same value.
+    @property
+    def sha256(self):
+        return self.x16r
+
+    @sha256.setter
+    def sha256(self, value):
+        self.x16r = value
+
+    def calc_sha256(self, with_witness=False):
+        return self.calc_x16r(with_witness)
+
     def is_valid(self):
         self.calc_x16r()
         for tout in self.vout:
@@ -709,6 +722,18 @@ class CBlockHeader:
         self.x16r = None
         self.calc_x16r()
         return self.x16r
+
+    # Same alias as CTransaction: the block hash, double SHA-256 on regtest.
+    @property
+    def sha256(self):
+        return self.x16r
+
+    @sha256.setter
+    def sha256(self, value):
+        self.x16r = value
+
+    def calc_sha256(self):
+        return self.calc_x16r()
 
     def __repr__(self):
         return "CBlockHeader(nVersion=%i hashPrevBlock=%064x hashMerkleRoot=%064x nTime=%s nBits=%08x nNonce=%08x)" \

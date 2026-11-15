@@ -19,15 +19,15 @@ transactions:
               output can be spent
     102:      a block containing a transaction spending the coinbase
               transaction output. The transaction has an invalid signature.
-    103-2202: bury the bad block with just over two weeks' worth of blocks
-              (2100 blocks)
+    103-20462: bury the bad block with just over two weeks' worth of blocks
+              (20360 blocks of 60 seconds on regtest)
 
 Start three nodes:
 
-    - node0 has no -assumevalid parameter. Try to sync to block 2202. It will
+    - node0 has no -assumevalid parameter. Try to sync to block 20462. It will
       reject block 102 and only sync as far as block 101
     - node1 has -assumevalid set to the hash of block 102. Try to sync to
-      block 2202. node1 will sync all the way to block 2202.
+      block 20462. node1 will sync all the way to block 20462.
     - node2 has -assumevalid set to the hash of block 102. Try to sync to
       block 200. node2 will reject block 102 since it's assumed valid, but it
       isn't buried by at least two weeks' work.
@@ -49,6 +49,14 @@ class BaseNode(NodeConnCB):
         self.send_message(headers_message)
 
 
+# Version of the blocks the regtest node mines (version bits top bits).
+BLOCK_VERSION = 0x30000000
+# Two weeks of proof-equivalent time: the regtest target spacing is 60 seconds.
+BURY = 14 * 24 * 60 + 200
+# A headers message carries at most 2000 headers.
+MAX_HEADERS = 2000
+
+
 class AssumeValidTest(NeuraiTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
@@ -60,6 +68,10 @@ class AssumeValidTest(NeuraiTestFramework):
         # we need to pre-mine a block with an invalid transaction
         # signature so we can pass in the block hash as assumevalid.
         self.start_node(0)
+
+    def send_headers(self, node, blocks):
+        for i in range(0, len(blocks), MAX_HEADERS):
+            node.send_header_for_blocks(blocks[i:i + MAX_HEADERS])
 
     def send_blocks_until_disconnected(self, node):
         """Keep sending blocks to the node until we're disconnected."""
@@ -77,7 +89,9 @@ class AssumeValidTest(NeuraiTestFramework):
         """Wait until the blockchain is no longer advancing and verify it's reached the expected height."""
         last_height = node.getblock(node.getbestblockhash())['height']
         timeout = 10
+        deadline = time.time() + 600
         while True:
+            assert time.time() < deadline, "blockchain stuck at %d, expected %d" % (last_height, height)
             time.sleep(0.25)
             current_height = node.getblock(node.getbestblockhash())['height']
             if current_height != last_height:
@@ -115,6 +129,7 @@ class AssumeValidTest(NeuraiTestFramework):
         # Create the first block with a coinbase output to our key
         height = 1
         block = create_block(self.tip, create_coinbase(height, coinbase_pubkey), self.block_time)
+        block.nVersion = BLOCK_VERSION
         self.blocks.append(block)
         self.block_time += 1
         block.solve()
@@ -126,6 +141,7 @@ class AssumeValidTest(NeuraiTestFramework):
         # Bury the block 100 deep so the coinbase output is spendable
         for i in range(100):
             block = create_block(self.tip, create_coinbase(height), self.block_time)
+            block.nVersion = BLOCK_VERSION
             block.solve()
             self.blocks.append(block)
             self.tip = block.x16r
@@ -139,6 +155,7 @@ class AssumeValidTest(NeuraiTestFramework):
         tx.calc_x16r()
 
         block102 = create_block(self.tip, create_coinbase(height), self.block_time)
+        block102.nVersion = BLOCK_VERSION
         self.block_time += 1
         block102.vtx.extend([tx])
         block102.hashMerkleRoot = block102.calc_merkle_root()
@@ -149,10 +166,10 @@ class AssumeValidTest(NeuraiTestFramework):
         self.block_time += 1
         height += 1
 
-        # Bury the assumed valid block 2100 deep
-        for i in range(2100):
+        # Bury the assumed valid block two weeks deep
+        for i in range(BURY):
             block = create_block(self.tip, create_coinbase(height), self.block_time)
-            block.nVersion = 4
+            block.nVersion = BLOCK_VERSION
             block.solve()
             self.blocks.append(block)
             self.tip = block.x16r
@@ -173,24 +190,24 @@ class AssumeValidTest(NeuraiTestFramework):
         node2.wait_for_verack()
 
         # send header lists to all three nodes
-        node0.send_header_for_blocks(self.blocks[0:2000])
-        node0.send_header_for_blocks(self.blocks[2000:])
-        node1.send_header_for_blocks(self.blocks[0:2000])
-        node1.send_header_for_blocks(self.blocks[2000:])
-        node2.send_header_for_blocks(self.blocks[0:200])
+        self.send_headers(node0, self.blocks)
+        self.send_headers(node1, self.blocks)
 
         # Send blocks to node0. Block 102 will be rejected.
         self.send_blocks_until_disconnected(node0)
         self.assert_blockchain_height(self.nodes[0], 101)
 
         # Send all blocks to node1. All blocks will be accepted.
-        for i in range(2202):
-            node1.send_message(MsgBlock(self.blocks[i]))
-        # Syncing 2200 blocks can take a while on slow systems. Give it plenty of time to sync.
-        node1.sync_with_ping(120)
-        assert_equal(self.nodes[1].getblock(self.nodes[1].getbestblockhash())['height'], 2202)
+        for block in self.blocks:
+            node1.send_message(MsgBlock(block))
+        # Syncing 20000 blocks can take a while on slow systems. Give it plenty of time to sync.
+        node1.sync_with_ping(900)
+        assert_equal(self.nodes[1].getblock(self.nodes[1].getbestblockhash())['height'], len(self.blocks))
 
-        # Send blocks to node2. Block 102 will be rejected.
+        # Send blocks to node2. Block 102 will be rejected. Its headers go out
+        # just before: node2 asks this peer for the blocks it announces, and
+        # would drop it as a staller while node1 syncs.
+        self.send_headers(node2, self.blocks[0:200])
         self.send_blocks_until_disconnected(node2)
         self.assert_blockchain_height(self.nodes[2], 101)
 

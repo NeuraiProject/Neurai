@@ -8,7 +8,7 @@
 
 from .mininode import (CBlock, uint256_from_str, ser_uint256, hash256, CTxInWitness, CTxOut, CTxIn,
                        CTransaction, COutPoint, ser_string, COIN)
-from .script import CScript, OP_TRUE, OP_CHECKSIG, OP_RETURN
+from .script import CScript, CScriptOp, OP_0, OP_TRUE, OP_CHECKSIG, OP_RETURN
 
 # Create a block (with regtest difficulty)
 def create_block(hash_prev, coinbase, n_time=None):
@@ -76,10 +76,19 @@ def serialize_script_num(value):
 # Create a coinbase transaction, assuming no miner fees.
 # If pubkey is passed in, the coinbase output will be a P2PK output;
 # otherwise an anyone-can-spend output.
+def coinbase_height_script(height):
+    """BIP34 height prefix, as `CScript() << nHeight` writes it in C++.
+
+    Heights 1 to 16 are a small-integer opcode, plus a dummy push: a coinbase
+    scriptSig needs at least two bytes. Larger heights are a minimal push."""
+    if 1 <= height <= 16:
+        return bytes([CScriptOp.encode_op_n(height), OP_0])
+    return ser_string(serialize_script_num(height))
+
 def create_coinbase(height, pubkey = None):
     coinbase = CTransaction()
-    coinbase.vin.append(CTxIn(COutPoint(0, 0xffffffff), 
-                ser_string(serialize_script_num(height)), 0xffffffff))
+    coinbase.vin.append(CTxIn(COutPoint(0, 0xffffffff),
+                coinbase_height_script(height), 0xffffffff))
     coin_base_output = CTxOut()
     coin_base_output.nValue = 5000 * COIN
     halvings = int(height/150) # regtest
