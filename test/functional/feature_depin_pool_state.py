@@ -8,87 +8,41 @@ pure-Python secp256k1 test key and the system OpenSSL EVP API for AES-GCM.
 It never touches external wallets or the project's client libraries.
 """
 import copy
-import ctypes
-import ctypes.util
 import hashlib
-import os
 import struct
 
 from feature_depin_messaging_permissions import DepinMessagingPermissionsTest, TOKEN
-from test_framework.key import ECKey, ECPubKey, SECP256K1
-from test_framework.depin import DepinClient
+from test_framework.key import ECKey
+from test_framework.depin import (DepinClient, SUBMIT_TAG, aes_gcm, legacy_recipient, message_context,
+                                  message_hash, seal, transport_context, var)
 from test_framework.util import assert_equal, assert_raises_rpc_error
-
-
-def compact(size):
-    if size < 253:
-        return bytes([size])
-    if size <= 65535:
-        return b'\xfd' + struct.pack('<H', size)
-    return b'\xfe' + struct.pack('<I', size)
-
-
-def vector(data):
-    return compact(len(data)) + data
 
 
 def sha256(data):
     return hashlib.sha256(data).digest()
 
 
-def aes_gcm(key, nonce, plaintext):
-    crypto = ctypes.CDLL(ctypes.util.find_library('crypto'))
-    pointer = ctypes.c_void_p
-    crypto.EVP_CIPHER_CTX_new.restype = pointer
-    crypto.EVP_aes_256_gcm.restype = pointer
-    crypto.EVP_CIPHER_CTX_free.argtypes = [pointer]
-    crypto.EVP_EncryptInit_ex.argtypes = [pointer, pointer, pointer, pointer, pointer]
-    crypto.EVP_EncryptUpdate.argtypes = [pointer, pointer, pointer, pointer, ctypes.c_int]
-    crypto.EVP_EncryptFinal_ex.argtypes = [pointer, pointer, pointer]
-    crypto.EVP_CIPHER_CTX_ctrl.argtypes = [pointer, ctypes.c_int, ctypes.c_int, pointer]
-    context = crypto.EVP_CIPHER_CTX_new()
-    assert context
-    output = ctypes.create_string_buffer(len(plaintext) + 16)
-    count, final = ctypes.c_int(), ctypes.c_int()
-    tag = ctypes.create_string_buffer(16)
-    try:
-        assert crypto.EVP_EncryptInit_ex(context, crypto.EVP_aes_256_gcm(), None, None, None) == 1
-        assert crypto.EVP_CIPHER_CTX_ctrl(context, 9, 12, None) == 1  # SET_IVLEN
-        assert crypto.EVP_EncryptInit_ex(context, None, None, ctypes.create_string_buffer(key), ctypes.create_string_buffer(nonce)) == 1
-        assert crypto.EVP_EncryptUpdate(context, output, ctypes.byref(count), ctypes.create_string_buffer(plaintext), len(plaintext)) == 1
-        assert crypto.EVP_EncryptFinal_ex(context, ctypes.byref(output, count.value), ctypes.byref(final)) == 1
-        assert crypto.EVP_CIPHER_CTX_ctrl(context, 16, 16, tag) == 1  # GET_TAG
-        return nonce + output.raw[:count.value + final.value] + tag.raw
-    finally:
-        crypto.EVP_CIPHER_CTX_free(context)
+def encrypt(plaintext, pubkeys, context, identities=None):
+    """An envelope of format 3 for `pubkeys`, bound to `context`. `identities` are
+    their recipient ids: the Legacy ones of the keys by default."""
+    ids = identities if identities is not None else [legacy_recipient(key) for key in pubkeys]
+    return seal(plaintext, list(zip(pubkeys, ids)), context)
 
 
-def encrypt(plaintext, pubkeys, identities=None):
-    ephemeral = ECKey()
-    ephemeral.generate()
-    content_key = sha256(ephemeral.get_bytes() + b'\x00\x00\x00\x01')
-    payload = aes_gcm(content_key, os.urandom(12), plaintext)
-    entries = []
-    for index, raw in enumerate(pubkeys):
-        public = ECPubKey()
-        public.set(raw)
-        point = SECP256K1.affine(SECP256K1.mul([(public.p, ephemeral.secret)]))
-        compressed = bytes([2 + (point[1] & 1)]) + point[0].to_bytes(32, 'big')
-        wrapping_key = sha256(sha256(compressed) + b'\x00\x00\x00\x01')
-        identity = identities[index] if identities is not None else hashlib.new('ripemd160', sha256(raw)).digest()
-        entries.append((identity, aes_gcm(wrapping_key, os.urandom(12), content_key)))
-    return ((b'\x00\x02' if identities is not None else b'') +
-            vector(ephemeral.get_pubkey().get_bytes()) + vector(payload) + compact(len(entries)) +
-            b''.join(identity + vector(wrapped) for identity, wrapped in sorted(entries)))
+def context_of(message, network):
+    """The context of a message as served: its header on `network`."""
+    kind = {'private': 1, 'group': 2}[message['message_type']]
+    return message_context(network, message['token'], message['sender'], message['timestamp'], kind)
 
 
-def message_wire(message, key=None):
+def message_wire(message, key=None, network=None):
+    """The signed message. With `key`, signed again under the header on `network`."""
     payload = bytes.fromhex(message['encrypted_payload_hex'])
     kind = {'private': 1, 'group': 2}[message['message_type']]
-    body = (vector(message['token'].encode()) + vector(message['sender'].encode()) +
-            struct.pack('<qB', message['timestamp'], kind) + vector(payload))
-    signature = key.sign_ecdsa(sha256(sha256(body))) if key else bytes.fromhex(message['signature_hex'])
-    return body + vector(signature)
+    body = (var(message['token'].encode()) + var(message['sender'].encode()) +
+            struct.pack('<qB', message['timestamp'], kind) + var(payload))
+    signature = key.sign_ecdsa(message_hash(context_of(message, network), payload)) if key else bytes.fromhex(message['signature_hex'])
+    return body + var(signature)
 
 
 def private_key(wif):
@@ -132,12 +86,18 @@ class DepinPoolStateTest(DepinMessagingPermissionsTest):
         node.rpc = None
         self.start_node(0, args or self.depin_args)
 
+    def network(self):
+        return bytes.fromhex(self.plain(self.info_response(self.nodes[0]))['network'])
+
     def wrap(self, message, key=None, extra_recipient=None):
+        """What a client sends to depinsubmitmsg: the signed message in an envelope for the pool."""
         info = self.plain(self.info_response(self.nodes[0]))
+        network = bytes.fromhex(info['network'])
         keys = [bytes.fromhex(info['depinpoolpkey'])]
         if extra_recipient:
             keys.append(extra_recipient)
-        return {'sender': message['sender'], 'encrypted': encrypt(message_wire(message, key).hex().encode(), keys).hex()}
+        envelope = encrypt(message_wire(message, key, network).hex().encode(), keys, transport_context(SUBMIT_TAG, network))
+        return {'sender': message['sender'], 'encrypted': envelope.hex()}
 
     def run_test(self):
         node = self.nodes[0]
@@ -196,7 +156,8 @@ class DepinPoolStateTest(DepinMessagingPermissionsTest):
         assert_raises_rpc_error(-1, 'administratively deleted', self.submit, self.wrap(original))
         late = copy.deepcopy(original)
         late['timestamp'] -= 60
-        late['encrypted_payload_hex'] = encrypt(b'late timestamp', [bytes.fromhex(node.validateaddress(reader)['pubkey'])]).hex()
+        late['encrypted_payload_hex'] = encrypt(b'late timestamp', [bytes.fromhex(node.validateaddress(reader)['pubkey'])],
+                                                context_of(late, self.network())).hex()
         accepted = self.submit(self.wrap(late, signing_key))
         late_hash = accepted['hash']
         resumed = self.sequence_page(reader, old_cursor)

@@ -5,9 +5,9 @@
 import copy
 from concurrent.futures import ThreadPoolExecutor
 
-from feature_depin_pool_state import DepinPoolStateTest, encrypt, private_key
+from feature_depin_pool_state import DepinPoolStateTest, context_of, encrypt, private_key
 from feature_depin_messaging_permissions import TOKEN
-from test_framework.depin import DepinClient
+from test_framework.depin import PROTOCOL, DepinClient
 from test_framework.authproxy import JSONRPCException
 from test_framework.util import assert_equal, assert_raises_rpc_error, get_rpc_proxy
 
@@ -27,7 +27,7 @@ class DepinMembershipTest(DepinPoolStateTest):
         node.depinsendmsg(TOKEN, 'history before membership changes', alice)
         client = DepinClient(node)
         initial = client.bootstrap()[0]
-        assert_equal(initial['protocol'], 5)
+        assert_equal(initial['protocol'], PROTOCOL)
         key = private_key(node.dumpprivkey(alice))
         first_page = self.sequence_page(bob)
         original = first_page['messages'][0]
@@ -52,7 +52,8 @@ class DepinMembershipTest(DepinPoolStateTest):
         def prepared_message(text, recipients):
             message = copy.deepcopy(original)
             message['encrypted_payload_hex'] = encrypt(text.encode(), [bytes.fromhex(node.validateaddress(a)['pubkey'])
-                                                                       for a in recipients]).hex()
+                                                                       for a in recipients],
+                                                       context_of(message, self.network())).hex()
             return self.wrap(message, key)
 
         self.log.info('Empty blocks, first key reveals outside the group, and other roots preserve the epoch')

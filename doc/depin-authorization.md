@@ -3,9 +3,9 @@
 This describes historical message restoration, recipient authorization and
 current-permission checks (2026-10-21). For subsequent
 strict encoding, sequence reads and durable state, see
-[depin-pool-state.md](depin-pool-state.md). The signed user message framing remains unchanged. RPC 5 additionally supports
-strict ECDSA destinations with [typed ECIES recipients](depin-ecdsa.md);
-Legacy-only ECIES keeps its original bytes.
+[depin-pool-state.md](depin-pool-state.md). Messages use envelope format 3,
+bound to their header, with [typed recipients](depin-ecdsa.md) for Legacy and
+strict ECDSA destinations.
 
 ## Publications and recipients
 
@@ -110,7 +110,7 @@ signed plain `body` adds `ready`, `not_ready_reason`, `authorization_height`,
 ## Restoring historical messages
 
 `-depinpoolpersist` remains **off by default**. With it enabled, startup uses a
-private restoration path. It checks signatures, strict ECIES encoding,
+private restoration path. It checks signatures, strict envelope encoding,
 type, scope, timestamps/expiry, existing size/count budgets and duplicates,
 without requiring historical senders or recipients to retain their assets.
 Current reader permissions are still checked at download time, including for
@@ -140,7 +140,7 @@ truncated directory as complete. Preserve verification of signed wrappers.
 
 The node implements complete method/parameter signatures and
 [membership context](depin-membership.md) under
-[RPC protocol 5](depin-request-signatures.md). Every relevant confirmed pool
+[RPC protocol 6](depin-request-signatures.md). Every relevant confirmed pool
 change invalidates RECEIVE/ADMIN challenges; stale operation proofs and sends
 require refresh. Current permission is still rechecked. A reorganization never
 reactivates an invalidated nonce. External libraries remain pending.

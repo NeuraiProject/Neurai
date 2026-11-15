@@ -3,6 +3,8 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "depinecies.h"
+#include "depinmsgpool.h"
+#include "data/depin_format3.json.h"
 #include "streams.h"
 #include "version.h"
 #include "random.h"
@@ -16,6 +18,7 @@
 #include "keystore.h"
 
 #include <boost/test/unit_test.hpp>
+#include <univalue.h>
 #include <string>
 #include <vector>
 #include <set>
@@ -274,112 +277,105 @@ BOOST_AUTO_TEST_CASE(aes256_gcm_nonce_uniqueness_test)
 }
 
 // Test 9: ECIES end-to-end with GCM (single recipient)
+// The context of the message envelopes made in these tests
+static uint256 TestContext(const std::string& token = "&TEST")
+{
+    return DepinMessageContext(token, "sender", 1800000000, 2);
+}
+
+static std::vector<unsigned char> Wire(const CECIESEncryptedMessage& value)
+{
+    CDataStream stream(SER_NETWORK, PROTOCOL_VERSION);
+    stream << value;
+    return std::vector<unsigned char>(stream.begin(), stream.end());
+}
+
+// Test 9: ECIES round trip under the context of the envelope
 BOOST_AUTO_TEST_CASE(ecies_gcm_basic_test)
 {
-    // Create recipient keys
     CKey recipientPrivKey;
     recipientPrivKey.MakeNewKey(true);
     CPubKey recipientPubKey = recipientPrivKey.GetPubKey();
-
-    // Create a valid Neurai address from the public key
-    CKeyID keyID = recipientPubKey.GetID();
-    std::string recipientAddress = EncodeDestination(keyID);
+    std::string recipientAddress = EncodeDestination(recipientPubKey.GetID());
 
     std::map<std::string, CPubKey> recipients;
     recipients[recipientAddress] = recipientPubKey;
 
-    // Encrypt message
     std::string plaintext = "Secret DePIN message!";
     CECIESEncryptedMessage encryptedMsg;
     std::string error;
+    BOOST_CHECK(ECIESEncryptMessage(plaintext, recipients, TestContext(), encryptedMsg, error));
 
-    BOOST_CHECK(ECIESEncryptMessage(plaintext, recipients, encryptedMsg, error));
-
-    // Verify structure
     BOOST_CHECK(encryptedMsg.ephemeralPubKey.IsValid());
-    BOOST_CHECK(!encryptedMsg.encryptedPayload.empty());
+    BOOST_CHECK(!encryptedMsg.commitment.IsNull());
     BOOST_CHECK_EQUAL(encryptedMsg.recipientKeys.size(), 1);
+    // nonce 12 + ciphertext + tag 16
+    BOOST_CHECK_EQUAL(encryptedMsg.encryptedPayload.size(), plaintext.size() + DEPIN_GCM_OVERHEAD);
 
-    // Verify payload size (nonce 12 + ciphertext + tag 16)
-    BOOST_CHECK(encryptedMsg.encryptedPayload.size() >= 28);
-
-    // Decrypt message
     std::string decrypted;
-    BOOST_CHECK(ECIESDecryptMessage(encryptedMsg, recipientPrivKey, recipientAddress, decrypted, error));
-
-    // Verify decrypted matches original
+    DepinOpenFailure failure;
+    BOOST_CHECK(ECIESDecryptMessage(encryptedMsg, recipientPrivKey, recipientAddress, TestContext(), decrypted, error, &failure));
     BOOST_CHECK_EQUAL(decrypted, plaintext);
+    BOOST_CHECK(failure == DepinOpenFailure::NONE);
+
+    // Under any other context the envelope does not open
+    BOOST_CHECK(!ECIESDecryptMessage(encryptedMsg, recipientPrivKey, recipientAddress, TestContext("&TEST/B"), decrypted, error, &failure));
+    BOOST_CHECK(failure == DepinOpenFailure::UNWRAP);
+    BOOST_CHECK(IsDepinEnvelopeForged(failure));
 }
 
 // Test 10: ECIES with multiple recipients
 BOOST_AUTO_TEST_CASE(ecies_gcm_multiple_recipients_test)
 {
-    // Create 5 recipients
     std::map<std::string, CPubKey> recipients;
     std::vector<CKey> recipientPrivKeys;
     std::vector<std::string> recipientAddresses;
-
     for (int i = 0; i < 5; i++) {
         CKey privKey;
         privKey.MakeNewKey(true);
-        CPubKey pubKey = privKey.GetPubKey();
-
-        CKeyID keyID = pubKey.GetID();
-        std::string address = EncodeDestination(keyID);
-
-        recipients[address] = pubKey;
+        const std::string address = EncodeDestination(privKey.GetPubKey().GetID());
+        recipients[address] = privKey.GetPubKey();
         recipientPrivKeys.push_back(privKey);
         recipientAddresses.push_back(address);
     }
 
-    // Encrypt message
     std::string plaintext = "Message for all 5 recipients!";
     CECIESEncryptedMessage encryptedMsg;
     std::string error;
-
-    BOOST_CHECK(ECIESEncryptMessage(plaintext, recipients, encryptedMsg, error));
+    BOOST_CHECK(ECIESEncryptMessage(plaintext, recipients, TestContext(), encryptedMsg, error));
     BOOST_CHECK_EQUAL(encryptedMsg.recipientKeys.size(), 5);
 
-    // Each recipient should be able to decrypt
     for (size_t i = 0; i < recipientPrivKeys.size(); i++) {
         std::string decrypted;
-        BOOST_CHECK(ECIESDecryptMessage(encryptedMsg, recipientPrivKeys[i],
-                                        recipientAddresses[i], decrypted, error));
+        BOOST_CHECK(ECIESDecryptMessage(encryptedMsg, recipientPrivKeys[i], recipientAddresses[i], TestContext(),
+                                        decrypted, error));
         BOOST_CHECK_EQUAL(decrypted, plaintext);
     }
 }
 
-// Test 11: ECIES wrong recipient cannot decrypt
+// Test 11: ECIES wrong recipient cannot decrypt, and that is not a forgery
 BOOST_AUTO_TEST_CASE(ecies_gcm_wrong_recipient_test)
 {
-    // Encrypt for recipient 1
     CKey recipient1PrivKey;
     recipient1PrivKey.MakeNewKey(true);
-    CPubKey recipient1PubKey = recipient1PrivKey.GetPubKey();
+    const std::string recipient1Address = EncodeDestination(recipient1PrivKey.GetPubKey().GetID());
 
-    CKeyID keyID1 = recipient1PubKey.GetID();
-    std::string recipient1Address = EncodeDestination(keyID1);
-
-    std::map<std::string, CPubKey> recipients;
-    recipients[recipient1Address] = recipient1PubKey;
-
-    std::string plaintext = "Secret message";
-    CECIESEncryptedMessage encryptedMsg;
     std::string error;
+    CECIESEncryptedMessage encryptedMsg;
+    BOOST_CHECK(ECIESEncryptMessage("Secret message", {{recipient1Address, recipient1PrivKey.GetPubKey()}},
+                                    TestContext(), encryptedMsg, error));
 
-    BOOST_CHECK(ECIESEncryptMessage(plaintext, recipients, encryptedMsg, error));
-
-    // Try to decrypt with recipient 2's key (not in recipients list)
     CKey recipient2PrivKey;
     recipient2PrivKey.MakeNewKey(true);
-
-    CKeyID keyID2 = recipient2PrivKey.GetPubKey().GetID();
-    std::string recipient2Address = EncodeDestination(keyID2);
-
+    const std::string recipient2Address = EncodeDestination(recipient2PrivKey.GetPubKey().GetID());
     std::string decrypted;
-    BOOST_CHECK(!ECIESDecryptMessage(encryptedMsg, recipient2PrivKey,
-                                     recipient2Address, decrypted, error));
-    BOOST_CHECK(!error.empty());
+    DepinOpenFailure failure;
+    BOOST_CHECK(!ECIESDecryptMessage(encryptedMsg, recipient2PrivKey, recipient2Address, TestContext(), decrypted, error, &failure));
+    BOOST_CHECK(failure == DepinOpenFailure::NOT_RECIPIENT);
+    BOOST_CHECK(!IsDepinEnvelopeForged(failure));
+    // ...and a key that is not the address's is refused before anything else
+    BOOST_CHECK(!ECIESDecryptMessage(encryptedMsg, recipient2PrivKey, recipient1Address, TestContext(), decrypted, error, &failure));
+    BOOST_CHECK(failure == DepinOpenFailure::INVALID_KEY);
 }
 
 BOOST_AUTO_TEST_CASE(strict_wire_decoder_bounds_and_canonical_form)
@@ -390,15 +386,14 @@ BOOST_AUTO_TEST_CASE(strict_wire_decoder_bounds_and_canonical_form)
     const std::string address = EncodeDestination(pubkey.GetID());
     std::string error;
     CECIESEncryptedMessage valid, decoded;
-    BOOST_REQUIRE(ECIESEncryptMessage("hello", {{address, pubkey}}, valid, error));
-    auto wire = [](const CECIESEncryptedMessage& value) {
-        CDataStream stream(SER_NETWORK, PROTOCOL_VERSION);
-        stream << value;
-        return std::vector<unsigned char>(stream.begin(), stream.end());
-    };
-    const auto bytes = wire(valid);
+    BOOST_REQUIRE(ECIESEncryptMessage("hello", {{address, pubkey}}, TestContext(), valid, error));
+    const auto bytes = Wire(valid);
+    BOOST_CHECK_EQUAL(bytes[0], 0);
+    BOOST_CHECK_EQUAL(bytes[1], 3);
+    BOOST_CHECK_EQUAL(bytes.size(), 2 + 34 + 32 + 1 + 5 + DEPIN_GCM_OVERHEAD + 1 + 21 + 1 + DEPIN_WRAPPED_KEY_SIZE);
     const DepinRecipient id(pubkey.GetID());
     BOOST_REQUIRE(DecodeDepinECIES(bytes, 5, 1, decoded, error, &id));
+    BOOST_CHECK(decoded.commitment == valid.commitment);
     BOOST_CHECK(!DecodeDepinECIES(bytes, 4, 1, decoded, error));
     for (size_t length = 0; length < bytes.size(); ++length) {
         BOOST_CHECK(!DecodeDepinECIES(std::vector<unsigned char>(bytes.begin(), bytes.begin() + length),
@@ -407,60 +402,127 @@ BOOST_AUTO_TEST_CASE(strict_wire_decoder_bounds_and_canonical_form)
     auto changed = bytes;
     changed.push_back(0);
     BOOST_CHECK(!DecodeDepinECIES(changed, 5, 1, decoded, error));
+    // Formats 1 and 2 are not read: neither the old prefix nor none at all
+    changed = bytes;
+    changed[1] = 2;
+    BOOST_CHECK(!DecodeDepinECIES(changed, 5, 1, decoded, error));
+    BOOST_CHECK(error.find("unsupported envelope format") != std::string::npos);
+    BOOST_CHECK(!DecodeDepinECIES(std::vector<unsigned char>(bytes.begin() + 2, bytes.end()), 5, 1, decoded, error));
+    const auto header = [&](CDataStream& out) {
+        out << uint8_t(0) << uint8_t(3) << valid.ephemeralPubKey << valid.commitment << valid.encryptedPayload;
+    };
     CDataStream duplicate(SER_NETWORK, PROTOCOL_VERSION);
-    duplicate << valid.ephemeralPubKey << valid.encryptedPayload;
+    header(duplicate);
     WriteCompactSize(duplicate, 2);
-    duplicate << id.LegacyID() << valid.recipientKeys.at(id) << id.LegacyID() << valid.recipientKeys.at(id);
+    duplicate << id << valid.recipientKeys.at(id) << id << valid.recipientKeys.at(id);
     BOOST_CHECK(!DecodeDepinECIES(std::vector<unsigned char>(duplicate.begin(), duplicate.end()), 5, 2, decoded, error));
     // A declared huge payload cannot trigger a huge vector allocation.
     CDataStream oversized(SER_NETWORK, PROTOCOL_VERSION);
-    oversized << valid.ephemeralPubKey;
+    oversized << uint8_t(0) << uint8_t(3) << valid.ephemeralPubKey << valid.commitment;
     WriteCompactSize(oversized, uint64_t(32) * 1024 * 1024);
     BOOST_CHECK(!DecodeDepinECIES(std::vector<unsigned char>(oversized.begin(), oversized.end()), 5, 1, decoded, error));
     CECIESEncryptedMessage malformed = valid;
     malformed.recipientKeys[id].resize(59);
-    BOOST_CHECK(!DecodeDepinECIES(wire(malformed), 5, 1, decoded, error));
+    BOOST_CHECK(!DecodeDepinECIES(Wire(malformed), 5, 1, decoded, error));
     malformed = valid;
     malformed.recipientKeys.clear();
-    BOOST_CHECK(!DecodeDepinECIES(wire(malformed), 5, 1, decoded, error));
+    BOOST_CHECK(!DecodeDepinECIES(Wire(malformed), 5, 1, decoded, error));
     malformed = valid;
     malformed.encryptedPayload.resize(28);
-    BOOST_CHECK(!DecodeDepinECIES(wire(malformed), 5, 1, decoded, error));
+    BOOST_CHECK(!DecodeDepinECIES(Wire(malformed), 5, 1, decoded, error));
     malformed = valid;
     std::vector<unsigned char> invalidKey(33, 0xff);
     invalidKey[0] = 2; // compressed, but x is outside the field
     malformed.ephemeralPubKey = CPubKey(invalidKey.begin(), invalidKey.end());
-    BOOST_CHECK(!DecodeDepinECIES(wire(malformed), 5, 1, decoded, error));
+    BOOST_CHECK(!DecodeDepinECIES(Wire(malformed), 5, 1, decoded, error));
     changed = bytes;
-    changed.erase(changed.begin());
-    changed.insert(changed.begin(), {253, 33, 0}); // nonminimal CompactSize
+    changed.erase(changed.begin() + 2);
+    changed.insert(changed.begin() + 2, {253, 33, 0}); // nonminimal CompactSize
     BOOST_CHECK(!DecodeDepinECIES(changed, 5, 1, decoded, error));
     CKey other;
     other.MakeNewKey(true);
     const DepinRecipient otherId(other.GetPubKey().GetID());
     malformed = valid;
     malformed.recipientKeys[otherId] = valid.recipientKeys.at(id);
-    BOOST_REQUIRE(DecodeDepinECIES(wire(malformed), 5, 2, decoded, error));
-    BOOST_CHECK(!DecodeDepinECIES(wire(malformed), 5, 1, decoded, error));
+    BOOST_REQUIRE(DecodeDepinECIES(Wire(malformed), 5, 2, decoded, error));
+    BOOST_CHECK(!DecodeDepinECIES(Wire(malformed), 5, 1, decoded, error));
     CDataStream unordered(SER_NETWORK, PROTOCOL_VERSION);
-    unordered << valid.ephemeralPubKey << valid.encryptedPayload;
+    header(unordered);
     WriteCompactSize(unordered, 2);
     for (auto it = malformed.recipientKeys.rbegin(); it != malformed.recipientKeys.rend(); ++it)
-        unordered << it->first.LegacyID() << it->second;
+        unordered << it->first << it->second;
     BOOST_CHECK(!DecodeDepinECIES(std::vector<unsigned char>(unordered.begin(), unordered.end()), 5, 2, decoded, error));
+    CDataStream unknownType(SER_NETWORK, PROTOCOL_VERSION);
+    header(unknownType);
+    WriteCompactSize(unknownType, 1);
+    unknownType << uint8_t(2); // unsupported destination tag
+    BOOST_CHECK(!DecodeDepinECIES(std::vector<unsigned char>(unknownType.begin(), unknownType.end()), 5, 1, decoded, error));
     BOOST_CHECK(!DecodeDepinECIES(bytes, 5, 1, decoded, error, &otherId));
-    // Structurally sound authentication corruption remains the recipient's check.
+    // Structurally sound corruption is the recipient's check, and it is told apart
+    std::string plaintext;
+    DepinOpenFailure failure;
     malformed = valid;
     malformed.encryptedPayload.back() ^= 1;
-    BOOST_REQUIRE(DecodeDepinECIES(wire(malformed), 5, 1, decoded, error));
-    std::string plaintext;
-    BOOST_CHECK(!ECIESDecryptMessage(decoded, key, address, plaintext, error));
+    BOOST_REQUIRE(DecodeDepinECIES(Wire(malformed), 5, 1, decoded, error));
+    BOOST_CHECK(!ECIESDecryptMessage(decoded, key, address, TestContext(), plaintext, error, &failure));
+    BOOST_CHECK(failure == DepinOpenFailure::DECRYPT);
+    malformed = valid;
+    *malformed.commitment.begin() ^= 1;
+    BOOST_REQUIRE(DecodeDepinECIES(Wire(malformed), 5, 1, decoded, error));
+    BOOST_CHECK(!ECIESDecryptMessage(decoded, key, address, TestContext(), plaintext, error, &failure));
+    BOOST_CHECK(failure == DepinOpenFailure::COMMITMENT);
+    malformed = valid;
+    malformed.recipientKeys[id].back() ^= 1;
+    BOOST_REQUIRE(DecodeDepinECIES(Wire(malformed), 5, 1, decoded, error));
+    BOOST_CHECK(!ECIESDecryptMessage(decoded, key, address, TestContext(), plaintext, error, &failure));
+    BOOST_CHECK(failure == DepinOpenFailure::UNWRAP);
     for (unsigned int n = 0; n < 256; ++n) {
         std::vector<unsigned char> noise(n, static_cast<unsigned char>(n));
         BOOST_CHECK(!DecodeDepinECIES(noise, 1024, 50, decoded, error));
     }
 }
 
+// Each field of the context, the network and the use of the envelope: an
+// envelope made under one does not open under another
+BOOST_AUTO_TEST_CASE(envelope_opens_only_under_its_context)
+{
+    CKey key;
+    key.MakeNewKey(true);
+    const std::string address = EncodeDestination(key.GetPubKey().GetID());
+    const std::vector<unsigned char> network = DepinNetworkId();
+    std::vector<unsigned char> otherNetwork = network;
+    otherNetwork[0] ^= 1;
+    const uint256 context = DepinMessageContext(network, "&TEST/A", address, 1800000000, 2);
+    BOOST_CHECK(context == DepinMessageContext("&TEST/A", address, 1800000000, 2));
+    const std::vector<uint256> others{
+        DepinMessageContext(network, "&TEST/B", address, 1800000000, 2),
+        DepinMessageContext(network, "&TEST/A", EncodeDestination(CKeyID(uint160())), 1800000000, 2),
+        DepinMessageContext(network, "&TEST/A", address, 1800000001, 2),
+        DepinMessageContext(network, "&TEST/A", address, 1800000000, 1),
+        DepinMessageContext(otherNetwork, "&TEST/A", address, 1800000000, 2),
+        DepinTransportContext(network, DepinTransport::REPLY),
+        DepinTransportContext(network, DepinTransport::SUBMIT),
+    };
+    BOOST_CHECK(DepinTransportContext(DepinTransport::REPLY) == others[5]);
+    BOOST_CHECK(others[5] != others[6]);
+    BOOST_CHECK(DepinTransportContext(otherNetwork, DepinTransport::REPLY) != others[5]);
+
+    std::string error, plaintext;
+    CECIESEncryptedMessage envelope;
+    BOOST_REQUIRE(ECIESEncryptMessage("bound", {{address, key.GetPubKey()}}, context, envelope, error));
+    BOOST_REQUIRE(ECIESDecryptMessage(envelope, key, address, context, plaintext, error));
+    BOOST_CHECK_EQUAL(plaintext, "bound");
+    for (const uint256& otherContext : others) {
+        BOOST_CHECK(otherContext != context);
+        DepinOpenFailure failure;
+        BOOST_CHECK(!ECIESDecryptMessage(envelope, key, address, otherContext, plaintext, error, &failure));
+        BOOST_CHECK(failure == DepinOpenFailure::UNWRAP);
+    }
+    // A reply is not a submission
+    BOOST_REQUIRE(ECIESEncryptMessage("reply", {{address, key.GetPubKey()}}, others[5], envelope, error));
+    BOOST_CHECK(ECIESDecryptMessage(envelope, key, address, others[5], plaintext, error));
+    BOOST_CHECK(!ECIESDecryptMessage(envelope, key, address, others[6], plaintext, error));
+}
 
 BOOST_AUTO_TEST_CASE(strict_ecdsa_identity_and_wallet_key_resolution)
 {
@@ -505,7 +567,7 @@ BOOST_AUTO_TEST_CASE(strict_ecdsa_identity_and_wallet_key_resolution)
     BOOST_CHECK(!GetDepinKeyID(store, address, id));
 }
 
-BOOST_AUTO_TEST_CASE(mixed_ecdsa_ecies_preserves_exact_destinations_and_legacy_bytes)
+BOOST_AUTO_TEST_CASE(one_envelope_format_for_both_destination_families)
 {
     CKey key; key.MakeNewKey(true);
     WitnessStrictAuthScript strict;
@@ -513,52 +575,33 @@ BOOST_AUTO_TEST_CASE(mixed_ecdsa_ecies_preserves_exact_destinations_and_legacy_b
     const auto legacy = EncodeDestination(key.GetPubKey().GetID()), address = EncodeDestination(strict);
     DepinRecipient id; BOOST_REQUIRE(DepinRecipient::FromAddress(address, id));
     CECIESEncryptedMessage message, decoded; std::string error, plain;
-    BOOST_REQUIRE(ECIESEncryptMessage("hello", {{legacy, key.GetPubKey()}}, message, error));
-    CDataStream v1(SER_NETWORK, PROTOCOL_VERSION); v1 << message;
-    CDataStream original(SER_NETWORK, PROTOCOL_VERSION);
-    original << message.ephemeralPubKey << message.encryptedPayload;
-    WriteCompactSize(original, 1); original << key.GetPubKey().GetID() << message.recipientKeys.begin()->second;
-    BOOST_CHECK(std::vector<unsigned char>(v1.begin(), v1.end()) == std::vector<unsigned char>(original.begin(), original.end()));
-    BOOST_CHECK(!ECIESDecryptMessage(message, key, address, plain, error));
-    BOOST_REQUIRE(ECIESEncryptMessage("hello", {{address, key.GetPubKey()}, {legacy, key.GetPubKey()}}, message, error));
+    // Legacy-only: the same format, with typed ids
+    BOOST_REQUIRE(ECIESEncryptMessage("hello", {{legacy, key.GetPubKey()}}, TestContext(), message, error));
+    std::vector<unsigned char> bytes = Wire(message);
+    BOOST_CHECK_EQUAL(bytes[0], 0); BOOST_CHECK_EQUAL(bytes[1], 3);
+    CDataStream expected(SER_NETWORK, PROTOCOL_VERSION);
+    expected << uint8_t(0) << uint8_t(3) << message.ephemeralPubKey << message.commitment << message.encryptedPayload;
+    WriteCompactSize(expected, 1); expected << DepinRecipient(key.GetPubKey().GetID()) << message.recipientKeys.begin()->second;
+    BOOST_CHECK(bytes == std::vector<unsigned char>(expected.begin(), expected.end()));
+    BOOST_CHECK(!ECIESDecryptMessage(message, key, address, TestContext(), plain, error));
+    // Both families
+    BOOST_REQUIRE(ECIESEncryptMessage("hello", {{address, key.GetPubKey()}, {legacy, key.GetPubKey()}}, TestContext(), message, error));
     BOOST_REQUIRE_EQUAL(message.recipientKeys.size(), 2U);
-    CDataStream v2(SER_NETWORK, PROTOCOL_VERSION); v2 << message;
-    const std::vector<unsigned char> bytes(v2.begin(), v2.end());
-    BOOST_CHECK_EQUAL(bytes[0], 0); BOOST_CHECK_EQUAL(bytes[1], 2);
+    bytes = Wire(message);
+    BOOST_CHECK_EQUAL(bytes[0], 0); BOOST_CHECK_EQUAL(bytes[1], 3);
     BOOST_REQUIRE(DecodeDepinECIES(bytes, 5, 2, decoded, error, &id));
     for (const auto& recipient : {legacy, address}) {
-        BOOST_REQUIRE(ECIESDecryptMessage(decoded, key, recipient, plain, error));
+        BOOST_REQUIRE(ECIESDecryptMessage(decoded, key, recipient, TestContext(), plain, error));
         BOOST_CHECK_EQUAL(plain, "hello");
     }
     CDataStream stream(bytes, SER_NETWORK, PROTOCOL_VERSION); CECIESEncryptedMessage direct; stream >> direct;
     BOOST_CHECK(direct.recipientKeys == decoded.recipientKeys);
+    BOOST_CHECK(direct.commitment == decoded.commitment);
     BOOST_CHECK(!DecodeDepinECIES(bytes, 5, 1, decoded, error));
     for (size_t n = 0; n < bytes.size(); ++n)
         BOOST_CHECK(!DecodeDepinECIES({bytes.begin(), bytes.begin() + n}, 5, 2, decoded, error));
-    auto bad = bytes; bad[1] = 3;
-    BOOST_CHECK(!DecodeDepinECIES(bad, 5, 2, decoded, error));
-    bad = bytes; bad.push_back(0);
-    BOOST_CHECK(!DecodeDepinECIES(bad, 5, 2, decoded, error));
-    CDataStream unordered(SER_NETWORK, PROTOCOL_VERSION);
-    unordered << uint8_t(0) << uint8_t(2) << message.ephemeralPubKey << message.encryptedPayload;
-    WriteCompactSize(unordered, 2);
-    for (auto it = message.recipientKeys.rbegin(); it != message.recipientKeys.rend(); ++it) unordered << it->first << it->second;
-    BOOST_CHECK(!DecodeDepinECIES({unordered.begin(), unordered.end()}, 5, 2, decoded, error));
-    CDataStream duplicate(SER_NETWORK, PROTOCOL_VERSION);
-    duplicate << uint8_t(0) << uint8_t(2) << message.ephemeralPubKey << message.encryptedPayload;
-    WriteCompactSize(duplicate, 2);
-    duplicate << id << message.recipientKeys.at(id) << id << message.recipientKeys.at(id);
-    BOOST_CHECK(!DecodeDepinECIES({duplicate.begin(), duplicate.end()}, 5, 2, decoded, error));
-    CDataStream invalid(SER_NETWORK, PROTOCOL_VERSION);
-    invalid << uint8_t(0) << uint8_t(2) << message.ephemeralPubKey << message.encryptedPayload;
-    WriteCompactSize(invalid, 1); invalid << uint8_t(2); // unsupported destination tag
-    BOOST_CHECK(!DecodeDepinECIES({invalid.begin(), invalid.end()}, 5, 2, decoded, error));
-    CDataStream noncanonical(SER_NETWORK, PROTOCOL_VERSION);
-    noncanonical << uint8_t(0) << uint8_t(2) << message.ephemeralPubKey << message.encryptedPayload;
-    WriteCompactSize(noncanonical, 1); noncanonical << DepinRecipient(key.GetPubKey().GetID()) << message.recipientKeys.begin()->second;
-    BOOST_CHECK(!DecodeDepinECIES({noncanonical.begin(), noncanonical.end()}, 5, 2, decoded, error));
     CKey wrong; wrong.MakeNewKey(true);
-    BOOST_CHECK(!ECIESEncryptMessage("hello", {{address, wrong.GetPubKey()}}, message, error));
+    BOOST_CHECK(!ECIESEncryptMessage("hello", {{address, wrong.GetPubKey()}}, TestContext(), message, error));
     BOOST_CHECK(message.recipientKeys.empty());
 }
 
@@ -574,16 +617,104 @@ BOOST_AUTO_TEST_CASE(strict_ecdsa_recipient_and_plaintext_limits)
     }
     CECIESEncryptedMessage message, decoded; std::string error;
     const std::string plain(10240, 'x');
-    BOOST_REQUIRE(ECIESEncryptMessage(plain, recipients, message, error));
-    CDataStream tooMany(SER_NETWORK, PROTOCOL_VERSION); tooMany << message;
-    BOOST_CHECK(!DecodeDepinECIES({tooMany.begin(), tooMany.end()}, plain.size(), 50, decoded, error));
+    BOOST_REQUIRE(ECIESEncryptMessage(plain, recipients, TestContext(), message, error));
+    BOOST_CHECK(!DecodeDepinECIES(Wire(message), plain.size(), 50, decoded, error));
     message.recipientKeys.erase(message.recipientKeys.begin());
-    CDataStream allowed(SER_NETWORK, PROTOCOL_VERSION); allowed << message;
-    const std::vector<unsigned char> bytes(allowed.begin(), allowed.end());
+    const std::vector<unsigned char> bytes = Wire(message);
     BOOST_CHECK(bytes.size() <= DepinECIESWireLimit(plain.size(), 50));
     BOOST_REQUIRE(DecodeDepinECIES(bytes, plain.size(), 50, decoded, error));
     BOOST_CHECK(!DecodeDepinECIES(bytes, plain.size() - 1, 50, decoded, error));
     BOOST_CHECK(!DecodeDepinECIES(bytes, plain.size(), 49, decoded, error));
+}
+
+// The vectors of contrib/devtools/depin-format3-vectors.py, an implementation
+// that shares no code with the node: every intermediate value matches, and
+// each reader stops where the protocol says
+BOOST_AUTO_TEST_CASE(format3_independent_vectors)
+{
+    UniValue data;
+    BOOST_REQUIRE(data.read(std::string(json_tests::depin_format3, json_tests::depin_format3 + sizeof(json_tests::depin_format3))));
+    const std::vector<unsigned char> network = ParseHex(data["network"].get_str());
+    const std::string section = data["section_being_read"].get_str();
+    struct Reader { CKey key; CPubKey pubkey; DepinRecipient id; };
+    std::map<std::string, Reader> people;
+    for (const std::string& name : data["people"].getKeys()) {
+        const UniValue& person = data["people"][name];
+        const auto secret = ParseHex(person["secret"].get_str());
+        Reader reader;
+        reader.key.Set(secret.begin(), secret.end(), true);
+        reader.pubkey = reader.key.GetPubKey();
+        BOOST_REQUIRE_EQUAL(HexStr(reader.pubkey.begin(), reader.pubkey.end()), person["public"].get_str());
+        CDataStream id(ParseHex(person["recipient_id"].get_str()), SER_NETWORK, PROTOCOL_VERSION);
+        id >> reader.id;
+        BOOST_REQUIRE(id.empty());
+        people[name] = reader;
+    }
+    BOOST_CHECK(DepinPubKeyMatchesAddress(data["people"]["ana"]["address"].get_str(), people["ana"].pubkey));
+
+    // The intermediate values of the valid message
+    const UniValue& inputs = data["inputs"];
+    const UniValue& steps = data["steps"];
+    const uint256 context = DepinMessageContext(network, inputs["token"].get_str(), inputs["sender"].get_str(),
+                                                inputs["timestamp"].get_int64(), uint8_t(inputs["type"].get_int()));
+    BOOST_CHECK_EQUAL(HexStr(context.begin(), context.end()), steps["context"].get_str());
+    const auto contentKey = ParseHex(inputs["content_key"].get_str());
+    const uint256 commitment = DepinKeyCommitment(context, contentKey);
+    BOOST_CHECK_EQUAL(HexStr(commitment.begin(), commitment.end()), steps["commitment"].get_str());
+    const auto envelope = ParseHex(data["cases"][0]["message"]["envelope"].get_str());
+    const uint256 hash = DepinMessageHash(context, envelope);
+    BOOST_CHECK_EQUAL(HexStr(hash.begin(), hash.end()), steps["message_hash"].get_str());
+    BOOST_CHECK_EQUAL(hash.ToString(), steps["message_hash_displayed"].get_str());
+    CKey ephemeral;
+    const auto ephemeralSecret = ParseHex(inputs["ephemeral_secret"].get_str());
+    ephemeral.Set(ephemeralSecret.begin(), ephemeralSecret.end(), true);
+    BOOST_CHECK_EQUAL(HexStr(ephemeral.GetPubKey()), steps["ephemeral_public"].get_str());
+    for (const auto& person : people) {
+        std::vector<unsigned char> shared;
+        BOOST_REQUIRE(ECDH_ComputeSecret(ephemeral, person.second.pubkey, shared));
+        const UniValue& expected = steps["recipients"][person.first];
+        BOOST_CHECK_EQUAL(HexStr(shared), expected["shared_secret"].get_str());
+        BOOST_CHECK_EQUAL(HexStr(DepinWrapKey(context, shared, ephemeral.GetPubKey(), person.second.id)),
+                          expected["wrap_key"].get_str());
+    }
+
+    // Each case, read by each reader
+    for (const UniValue& c : data["cases"].getValues()) {
+        const UniValue& m = c["message"];
+        CDepinMessage message;
+        message.token = m["token"].get_str();
+        message.senderAddress = m["sender"].get_str();
+        message.timestamp = m["timestamp"].get_int64();
+        message.messageType = uint8_t(m["type"].get_int());
+        message.encryptedPayload = ParseHex(m["envelope"].get_str());
+        message.signature = ParseHex(m["signature"].get_str());
+        const auto signer = ParseHex(m["sender_pubkey"].get_str());
+        const CPubKey senderKey(signer.begin(), signer.end());
+        for (const std::string& name : c["stops_at"].getKeys()) {
+            std::string plaintext, error;
+            const DepinReadStage stage = ReadDepinMessage(message, senderKey, people[name].key, people[name].id,
+                                                          plaintext, error, &section, &network);
+            BOOST_CHECK_MESSAGE(DepinReadStageName(stage) == c["stops_at"][name].get_str(),
+                                c["name"].get_str() << " read by " << name << ": stopped at " << DepinReadStageName(stage)
+                                << ", expected " << c["stops_at"][name].get_str() << " (" << error << ")");
+            if (stage == DepinReadStage::OK) BOOST_CHECK_EQUAL(HexStr(plaintext), inputs["plaintext"].get_str());
+            else BOOST_CHECK(plaintext.empty());
+        }
+    }
+
+    // A reply opens under the context of replies only
+    const UniValue& transport = data["transport"];
+    BOOST_CHECK_EQUAL(HexStr(DepinTransportContext(network, DepinTransport::REPLY)), transport["reply_context"].get_str());
+    BOOST_CHECK_EQUAL(HexStr(DepinTransportContext(network, DepinTransport::SUBMIT)), transport["submit_context"].get_str());
+    CECIESEncryptedMessage reply;
+    std::string error, plaintext;
+    BOOST_REQUIRE(DecodeDepinECIES(ParseHex(transport["reply"]["envelope"].get_str()), 1024, 1, reply, error));
+    const Reader& luis = people["luis"];
+    BOOST_REQUIRE(ECIESDecryptFor(reply, luis.key, luis.id, DepinTransportContext(network, DepinTransport::REPLY), plaintext, error));
+    BOOST_CHECK_EQUAL(HexStr(plaintext), transport["reply"]["plaintext"].get_str());
+    DepinOpenFailure failure;
+    BOOST_CHECK(!ECIESDecryptFor(reply, luis.key, luis.id, DepinTransportContext(network, DepinTransport::SUBMIT), plaintext, error, &failure));
+    BOOST_CHECK(failure == DepinOpenFailure::UNWRAP);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -16,6 +16,8 @@ JSON_TEST_FILES = \
   test/data/depin_rpc_v3.json \
   test/data/depin_rpc_v4.json \
   test/data/depin_rpc_v5.json \
+  test/data/depin_rpc_v6.json \
+  test/data/depin_format3.json \
   test/data/c5_public_tree.json \
   test/data/c6_public_tree.json \
   test/data/nip043_b3_fixture.json \
@@ -42,6 +44,7 @@ GENERATED_TEST_FILES = $(JSON_TEST_FILES:.json=.json.h) $(RAW_TEST_FILES:.raw=.r
 # test_neurai binary #
 NEURAI_TESTS =\
   test/depin_test_utils.h \
+  test/depin_gcm_two_keys.h \
   test/mcl_backend_tests.cpp \
   test/groth16_tests.cpp \
   test/public_tree_tests.cpp \

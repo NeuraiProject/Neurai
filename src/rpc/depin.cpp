@@ -26,7 +26,7 @@
 #include <algorithm>
 #include <map>
 
-// Public, non-authenticating business queries. Only the v5 dispatcher below is
+// Public, non-authenticating business queries. Only the protocol dispatcher below is
 // registered: their old positional forms are not reachable through the table.
 UniValue DepinMsgInfo(const CDepinServiceStatus& status);
 UniValue depinpoolstats(const JSONRPCRequest&);
@@ -100,7 +100,10 @@ UniValue Message(const CDepinMessage& m)
     UniValue item(UniValue::VOBJ);item.pushKV("hash",m.GetHash().ToString());item.pushKV("token",m.token);
     item.pushKV("sender",m.senderAddress);item.pushKV("timestamp",m.timestamp);
     item.pushKV("message_type",m.messageType==1?"private":"group");
-    item.pushKV("encrypted_payload_hex",HexStr(m.encryptedPayload));item.pushKV("signature_hex",HexStr(m.signature));return item;
+    item.pushKV("encrypted_payload_hex",HexStr(m.encryptedPayload));item.pushKV("signature_hex",HexStr(m.signature));
+    // The key the pool verified the signature with. The reader checks that it
+    // belongs to the sender and verifies the signature itself.
+    item.pushKV("sender_pubkey_hex",HexStr(m.verifiedSenderKey.begin(),m.verifiedSenderKey.end()));return item;
 }
 UniValue Run(const DepinRpcRequest& r, const JSONRPCRequest& original, MainLockTime& lockTime)
 {
@@ -124,7 +127,7 @@ UniValue Run(const DepinRpcRequest& r, const JSONRPCRequest& original, MainLockT
             info.pushKV("membership_policy","pool_challenges_and_signed_requests");
             UniValue families(UniValue::VARR);families.push_back("legacy");families.push_back("ecdsa");
             info.pushKV("address_types",families);
-            UniValue formats(UniValue::VARR);formats.push_back(1);formats.push_back(2);
+            UniValue formats(UniValue::VARR);formats.push_back(int(DEPIN_ENVELOPE_FORMAT));
             info.pushKV("ecies_formats",formats);return info;
         }
         // These two read the pool and the worker only
@@ -149,7 +152,7 @@ UniValue Run(const DepinRpcRequest& r, const JSONRPCRequest& original, MainLockT
         CECIESEncryptedMessage envelope;const DepinRecipient poolId(pub.GetID());
         if (!DecodeDepinECIES(ParseHex(r.args["encrypted"].get_str()),MAX_DEPIN_MESSAGE_WIRE_BYTES*2,1,envelope,error,&poolId)) throw JSONRPCError(RPC_DESERIALIZATION_ERROR,error);
         std::string inner;bool opened;
-        { WithoutMainLock unlocked(lockTime);opened=ECIESDecryptMessage(envelope,key,poolId.Address(),inner,error); }
+        { WithoutMainLock unlocked(lockTime);opened=ECIESDecryptMessage(envelope,key,poolId.Address(),DepinTransportContext(DepinTransport::SUBMIT),inner,error); }
         if (!opened) throw JSONRPCError(RPC_VERIFY_ERROR,"Failed to decrypt outer privacy shell: "+error);
         if (inner.empty() || inner.size()>MAX_DEPIN_MESSAGE_WIRE_BYTES*2 || !IsHex(inner)) throw JSONRPCError(RPC_INVALID_PARAMETER,"Message must be bounded hex");
         CDepinMessage message;
@@ -250,8 +253,8 @@ UniValue Run(const DepinRpcRequest& r, const JSONRPCRequest& original, MainLockT
 
 UniValue DepinRpcV4(const JSONRPCRequest& request)
 {
-    if (request.fHelp) throw std::runtime_error(request.strMethod+" request\nDePIN protocol 5. One JSON object; legacy signatures are rejected.\nSee doc/depin-request-signatures.md. Use depinsignrpc method request on the signing wallet.\n");
-    if (request.params.size()!=1 || !request.params[0].isObject()) throw DepinRpcError(RPC_INVALID_PARAMETER,"unsupported_protocol","DePIN unsupported_protocol: one protocol 5 request object required");
+    if (request.fHelp) throw std::runtime_error(request.strMethod+" request\nDePIN protocol "+std::to_string(DEPIN_RPC_PROTOCOL_VERSION)+". One JSON object; legacy signatures are rejected.\nSee doc/depin-request-signatures.md. Use depinsignrpc method request on the signing wallet.\n");
+    if (request.params.size()!=1 || !request.params[0].isObject()) throw DepinRpcError(RPC_INVALID_PARAMETER,"unsupported_protocol","DePIN unsupported_protocol: one protocol "+std::to_string(DEPIN_RPC_PROTOCOL_VERSION)+" request object required");
     const auto r=ParseDepinRpcRequest(request.strMethod,request.params[0]);
     // cs_main is held while the request is checked and answered from the
     // chain state. The answer is encrypted and signed after it is released,
@@ -311,7 +314,7 @@ UniValue DepinRpcV4(const JSONRPCRequest& request)
 #ifdef ENABLE_WALLET
 UniValue DepinSignRpc(const JSONRPCRequest& request)
 {
-    if (request.fHelp || request.params.size()!=2) throw std::runtime_error("depinsignrpc method request\nSign a complete protocol 5 request for the explicit remote destination. Returns request, preimage and request_hash.\n");
+    if (request.fHelp || request.params.size()!=2) throw std::runtime_error("depinsignrpc method request\nSign a complete protocol "+std::to_string(DEPIN_RPC_PROTOCOL_VERSION)+" request for the explicit remote destination. Returns request, preimage and request_hash.\n");
     auto* wallet=GetWalletForJSONRPCRequest(request);if (!EnsureWalletIsAvailable(wallet,request.fHelp)) return NullUniValue;
     const auto method=request.params[0].get_str();const auto object=request.params[1];const auto parsed=ParseDepinRpcRequest(method,object);
     if (!parsed.kind) throw JSONRPCError(RPC_INVALID_PARAMETER,"Public requests do not need a user signature");

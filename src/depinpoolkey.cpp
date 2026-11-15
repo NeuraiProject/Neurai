@@ -143,7 +143,7 @@ UniValue FinishDepinResponse(const UniValue& result, const std::string& method,
         const std::string plaintext = result.write();
         if (plaintext.size() > MAX_DEPIN_REPLY_PLAINTEXT)
             throw JSONRPCError(RPC_INVALID_PARAMETER, "DePIN response exceeds 4 MiB plaintext budget; use smaller pages");
-        if (!ECIESEncryptMessage(plaintext, recipients, ecies, error)) {
+        if (!ECIESEncryptMessage(plaintext, recipients, DepinTransportContext(DepinTransport::REPLY), ecies, error)) {
             throw JSONRPCError(RPC_INTERNAL_ERROR, strprintf("Failed to encrypt response: %s", error));
         }
         CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);

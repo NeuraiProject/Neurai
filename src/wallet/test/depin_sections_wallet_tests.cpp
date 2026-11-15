@@ -241,7 +241,7 @@ CDepinMessage MakeMessage(const std::string& token, const std::string& sender)
     CPubKey pubkey;
     BOOST_REQUIRE_MESSAGE(CheckAddressHasPublicKey(sender, pubkey, error), error);
     BOOST_REQUIRE_MESSAGE(ECIESEncryptMessage("section test",
-        {{EncodeDestination(pubkey.GetID()), pubkey}}, ecies, error), error);
+        {{EncodeDestination(pubkey.GetID()), pubkey}}, msg.GetContext(), ecies, error), error);
     CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
     ss << ecies;
     msg.encryptedPayload.assign(ss.begin(), ss.end());

@@ -1,14 +1,14 @@
 # Legacy and strict ECDSA DePIN messaging
 
-RPC 5 supports Legacy P2PKH and strict ECDSA witness-v3 addresses
+DePIN messaging supports Legacy P2PKH and strict ECDSA witness-v3 addresses
 (`nq1r…` on mainnet, `tnq1r…` on testnet/regtest). The service uses the
 network's existing activation and asset rules; it introduces no consensus
 change. P2SH, generic AuthScript v1 and strict PQ are not messaging identities.
 
 Bootstrap advertises `address_types: ["legacy", "ecdsa"]`,
-`ecies_formats: [1, 2]` and `accepted_protocols: [5]`. RPC 4 and earlier
+`ecies_formats: [3]` and `accepted_protocols: [6]`. RPC 5 and earlier
 requests are rejected. RPC fields and membership context retain their RPC 4
-layout, but U16 version and request/response signature domains are now 5/v5.
+layout; the U16 version and request/response signature domains are 6/v6.
 External SDKs and applications must migrate separately.
 
 ## Exact identities and public keys
@@ -46,47 +46,33 @@ spend data, verify the public key against the destination, and use the selected
 wallet. This supports an ECDSA client wallet alongside the separate service
 wallet; it does not require sharing client private keys with a remote relay.
 
-## ECIES formats
+## Destination ids in the envelope
 
-The AES-256-GCM content cipher, ECDH, KDF and 60-byte wrapped key packages are
-unchanged. Only recipient identity framing is extended. A single ephemeral
-compressed key and encrypted payload are shared by all recipients.
-
-ECIES 1 is the existing canonical Legacy-only encoding:
+Both families use the one envelope format, format 3
+([the protocol](depin-messaging-protocol.md#4-envelope-format-3-ceciesencryptedmessage)).
+A recipient is identified by its typed destination id:
 
 ```
-CompactSize(33) || ephemeral_pubkey33
-CompactSize(payload_length) || nonce12 || ciphertext || tag16
-CompactSize(recipient_count)
-  repeated: hash160_raw20 || CompactSize(60) || wrapped_package60
+00 || hash160_raw20          Legacy
+03 || commitment_raw32       strict ECDSA
 ```
 
-ECIES 2 is used whenever at least one recipient is strict ECDSA:
-
-```
-00 02
-CompactSize(33) || ephemeral_pubkey33
-CompactSize(payload_length) || nonce12 || ciphertext || tag16
-CompactSize(recipient_count)
-  repeated:
-    (00 || hash160_raw20) OR (03 || commitment_raw32)
-    CompactSize(60) || wrapped_package60
-```
-
-The map sorts first by type, then lexicographically by raw payload bytes.
-The commitment's raw bytes are the reverse of `validateaddress.commitment`'s
-usual uint256 display hex. ECIES 1 remains byte-for-byte unchanged. ECIES 2
-with only Legacy recipients is rejected as noncanonical. Unknown versions or
-types, duplicate/unsorted identities, nonminimal CompactSize, truncated fields,
-wrong package lengths, invalid ephemeral points and trailing bytes are rejected.
+The entries sort by the serialized id, byte by byte (so first by type). The
+commitment's raw bytes are the reverse of `validateaddress.commitment`'s usual
+uint256 display hex. The id enters the derivation of the recipient's wrap key
+as serialized, type byte included: a wrapped key does not open under another
+id, even of the same public key. Unknown types, duplicate or unsorted ids,
+nonminimal CompactSize, truncated fields, wrong package lengths, invalid
+ephemeral points and trailing bytes are rejected. Formats 1 and 2, which used
+untyped Legacy ids or a separate framing for strict ids, are not read.
 
 All existing plaintext, recipient-count and reply limits remain. The conservative
-wire bound for plaintext budget P and recipient budget R is `82 + P + 94*R`.
-The outer submission shell still has exactly one recipient, the pool's Legacy
-service identity, and therefore normally remains ECIES 1. An addressed reply
-uses its request's exact destination, so ECDSA replies use ECIES 2. Inner content
-can target any nonempty authorized subset mixing both families. Admission checks
-every decoded destination without rewriting the sender's signed bytes.
+wire bound for plaintext budget P and recipient budget R is `114 + P + 94*R`.
+The outer submission shell has exactly one recipient, the pool's Legacy
+service identity. An addressed reply uses its request's exact destination.
+Inner content can target any nonempty authorized subset mixing both families.
+Admission checks every decoded destination without rewriting the sender's
+signed bytes.
 
 ## Membership, history and clients
 
@@ -95,11 +81,10 @@ membership changes renew the pool revision and invalidate all RECEIVE/ADMIN
 challenges. Current permissions are still checked on every operation, and recipient
 authorization rejects an entire publication containing a disabled destination with `-26`.
 
-Message framing, hashes, storage version 2 and cursor version 1 are unchanged.
-Historical Legacy ECIES decodes as before. Mixed/strict messages persist their
-verified sender key and restore without requiring the sender to remain enabled,
-while future downloads still require the reader's current permissions.
-Previously downloaded copies remain decryptable after revocation.
+Messages persist their verified sender key and restore without requiring the
+sender to remain enabled, while future downloads still require the reader's
+current permissions. Previously downloaded copies remain readable after
+revocation.
 
 Tests include independent Python encoding, mixed sends in every direction,
 separate wallets, typed malformed input, exact destination isolation, first

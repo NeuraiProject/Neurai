@@ -20,8 +20,8 @@ Files in the data directory (`~/.neurai` on Linux, `~/Library/Application Suppor
 * mempool.dat: dump of the mempool's transactions; since 0.14.0.
 * peers.dat: peer IP address database (custom format); since 0.7.0
 * wallet.dat: personal wallet (BDB) with keys and transactions
-* depinstate-v2/<hash>/*: DePIN pool state for the active `-depinmsgtoken` (LevelDB): moderation hashes, and messages when `-depinpoolpersist=1`; see [depin-pool-state.md](depin-pool-state.md)
-* depinpool.dat, depinpool.dat.v1.bak: message pool file of older releases; imported once into `depinstate-v2` when `-depinpoolpersist=1`, then kept with a `.v1.bak` copy
+* depinstate-v3/<hash>/*: DePIN pool state for the active `-depinmsgtoken` (LevelDB): moderation hashes, and messages when `-depinpoolpersist=1`; see [depin-pool-state.md](depin-pool-state.md)
+* depinstate-v2/, depinpool.dat: DePIN pool state of earlier builds, in envelope formats that are no longer read; not loaded, and can be removed
 * mcp_processed.dat: messages already answered by the DePIN MCP worker (`-depinmcp`)
 * .cookie: session RPC authentication cookie (written at start when cookie authentication is used, deleted on shutdown): since 0.12.0
 * onion_private_key: cached Tor hidden service private key for `-listenonion`: since 0.12.0

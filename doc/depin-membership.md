@@ -1,11 +1,13 @@
-# DePIN pool membership context (RPC 5)
+# DePIN pool membership context (RPC 6)
 
 The membership context was implemented over `4c460b3`; RPC 5 extends it to strict ECDSA over
 `d39ef51` on 2026-10-22. Renewal after membership changes is
 pool-wide, including RECEIVE and ADMIN challenges,
-plus a signed current-context requirement on remote submission. This extends
-request signing with **RPC protocol 5**, rejecting protocol 4 and older requests. Content cryptography/message signatures, persistence version 2 and cursor version 1
-stay unchanged. RPC 5 adds [typed ECIES 2 identities](depin-ecdsa.md). External libraries remain for the later migration.
+plus a signed current-context requirement on remote submission. It is part
+of request signing in **RPC protocol 6**, which rejects protocol 5 and older
+requests. Messages use envelope format 3 with
+[typed destination ids](depin-ecdsa.md), storage version 3 and cursor
+version 1. External libraries remain for the later migration.
 
 ## Context and confirmed transitions
 
@@ -74,7 +76,7 @@ Every response wrapper adds signed fields:
 - `membership_height`: integer reference height, -1 only without a chain tip.
 - `membership_blockhash`: displayed reference block hash, 32 decoded bytes.
 
-They enter the v5 response preimage after instance_id, before request_hash.
+They enter the v6 response preimage after instance_id, before request_hash.
 Bootstrap repeats them inside its body and advertises
 `membership_policy: "pool_challenges_and_signed_requests"`. Permission-check readiness
 still controls availability; a diagnostic context does not override ready=false.

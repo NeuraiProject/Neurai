@@ -6,6 +6,7 @@
 #include "depinecies.h"
 #include "test/test_neurai.h"
 #include "test/depin_test_utils.h"
+#include "test/depin_gcm_two_keys.h"
 #include "assets/assetdb.h"
 #include "assets/assets.h"
 #include "assets/restricteddb.h"
@@ -67,6 +68,13 @@ static std::string NewAddress(CKey& keyOut)
     return EncodeDestination(keyOut.GetPubKey().GetID());
 }
 
+// The texts of the envelopes in the delivery tests below are never opened:
+// they are made under an arbitrary context
+static uint256 DeliveryOnlyContext()
+{
+    return uint256S("01");
+}
+
 static CDepinMessage BuildMessage(uint8_t messageType, const std::string& senderAddress,
                                    const CECIESEncryptedMessage& eciesMsg)
 {
@@ -100,7 +108,7 @@ BOOST_AUTO_TEST_CASE(group_message_recipient_is_delivered)
 
     CECIESEncryptedMessage eciesMsg;
     std::string error;
-    BOOST_REQUIRE(ECIESEncryptMessage("hello group", recipients, eciesMsg, error));
+    BOOST_REQUIRE(ECIESEncryptMessage("hello group", recipients, DeliveryOnlyContext(), eciesMsg, error));
 
     CDepinMessage msg = BuildMessage(0x02, senderAddress, eciesMsg);
 
@@ -128,7 +136,7 @@ BOOST_AUTO_TEST_CASE(group_message_non_recipient_is_not_delivered)
 
     CECIESEncryptedMessage eciesMsg;
     std::string error;
-    BOOST_REQUIRE(ECIESEncryptMessage("hello group", recipients, eciesMsg, error));
+    BOOST_REQUIRE(ECIESEncryptMessage("hello group", recipients, DeliveryOnlyContext(), eciesMsg, error));
 
     CDepinMessage msg = BuildMessage(0x02, senderAddress, eciesMsg);
 
@@ -192,7 +200,7 @@ BOOST_AUTO_TEST_CASE(malformed_input_is_rejected_without_throwing)
     recipients[queryAddress] = queryKey.GetPubKey();
     CECIESEncryptedMessage eciesMsg;
     std::string error;
-    BOOST_REQUIRE(ECIESEncryptMessage("hello", recipients, eciesMsg, error));
+    BOOST_REQUIRE(ECIESEncryptMessage("hello", recipients, DeliveryOnlyContext(), eciesMsg, error));
     CDepinMessage validMsg = BuildMessage(0x02, senderAddress, eciesMsg);
 
     DepinRecipient unusedHash;
@@ -224,14 +232,14 @@ BOOST_AUTO_TEST_CASE(filter_keeps_only_deliverable_messages_in_order)
     std::map<std::string, CPubKey> toMe;
     toMe[mineAddress] = mineKey.GetPubKey();
     CECIESEncryptedMessage eciesToMe;
-    BOOST_REQUIRE(ECIESEncryptMessage("for me", toMe, eciesToMe, error));
+    BOOST_REQUIRE(ECIESEncryptMessage("for me", toMe, DeliveryOnlyContext(), eciesToMe, error));
     CDepinMessage msgToMe = BuildMessage(0x02, senderAddress, eciesToMe);
 
     // (2) Addressed to somebody else -> filtered out
     std::map<std::string, CPubKey> toOther;
     toOther[otherAddress] = otherKey.GetPubKey();
     CECIESEncryptedMessage eciesToOther;
-    BOOST_REQUIRE(ECIESEncryptMessage("not for me", toOther, eciesToOther, error));
+    BOOST_REQUIRE(ECIESEncryptMessage("not for me", toOther, DeliveryOnlyContext(), eciesToOther, error));
     CDepinMessage msgToOther = BuildMessage(0x02, senderAddress, eciesToOther);
 
     // (3) Sent by me, addressed to somebody else -> delivered (sender shortcut)
@@ -396,7 +404,7 @@ struct DepinSignatureSetup : public TestingSetup {
         CPubKey pubkey;
         BOOST_REQUIRE_MESSAGE(CheckAddressHasPublicKey(sender, pubkey, error), error);
         BOOST_REQUIRE_MESSAGE(ECIESEncryptMessage("signature test",
-            {{EncodeDestination(pubkey.GetID()), pubkey}}, ecies, error), error);
+            {{EncodeDestination(pubkey.GetID()), pubkey}}, msg.GetContext(), ecies, error), error);
         CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
         ss << ecies;
         msg.encryptedPayload.assign(ss.begin(), ss.end());
@@ -490,16 +498,41 @@ BOOST_FIXTURE_TEST_CASE(addmessage_enforces_current_signature_format, DepinSigna
     BOOST_CHECK_MESSAGE(error.find("signature") != std::string::npos, error);
 }
 
-// What ties an encrypted payload to its sender is the signature of the message
-// that carries it, and nothing inside the encryption. A member that received a
-// group message can therefore publish the same payload again under its own
-// name: the pool admits it as a new message and the recipients read the same
-// text from the new sender. The pool hands a payload only to its sender and to
-// the addresses it is encrypted for, so whoever can do this could also have
-// read the text and encrypted it again. This test records that behaviour: it
-// has to change with the message format if the sender and the token are ever
-// authenticated inside the encryption.
-BOOST_FIXTURE_TEST_CASE(payload_is_tied_to_its_sender_by_the_message_signature_only, DepinSignatureSetup)
+namespace {
+// A message signed by its sender, its envelope made under its header
+CDepinMessage SealedMessage(const std::string& sender, const CKey& key, const std::string& text,
+                            const std::map<std::string, CPubKey>& recipients, int64_t timestamp)
+{
+    CDepinMessage msg;
+    msg.token = "&TEST";
+    msg.senderAddress = sender;
+    msg.timestamp = timestamp;
+    msg.messageType = 0x02;
+    CECIESEncryptedMessage ecies;
+    std::string error;
+    BOOST_REQUIRE_MESSAGE(ECIESEncryptMessage(text, recipients, msg.GetContext(), ecies, error), error);
+    CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
+    ss << ecies;
+    msg.encryptedPayload.assign(ss.begin(), ss.end());
+    BOOST_REQUIRE(key.Sign(msg.GetHash(), msg.signature));
+    return msg;
+}
+
+DepinRecipient RecipientOf(const std::string& address)
+{
+    DepinRecipient recipient;
+    BOOST_REQUIRE(DepinRecipient::FromAddress(address, recipient));
+    return recipient;
+}
+}
+
+// The envelope of a message is made under its header. A member that received
+// a group message can publish the same envelope again under its own name, and
+// the pool, which cannot open envelopes, admits it as a new message. Under
+// the new header the envelope does not open: the recipients do not read it as
+// the new sender's. (A recipient can still read the text and write it again:
+// nothing can prevent that.)
+BOOST_FIXTURE_TEST_CASE(envelope_opens_only_under_the_header_it_was_made_for, DepinSignatureSetup)
 {
     ScopedInitializedPool pool("&TEST");
 
@@ -510,36 +543,18 @@ BOOST_FIXTURE_TEST_CASE(payload_is_tied_to_its_sender_by_the_message_signature_o
     for (const std::string& holder : {alice, mallory, bob})
         BOOST_REQUIRE(passetsdb->WriteAssetAddressQuantity("&TEST", holder, 10));
 
-    const auto message = [&](const std::string& sender, const CKey& key, const std::string& text,
-                             const std::map<std::string, CPubKey>& recipients, int64_t timestamp) {
-        CECIESEncryptedMessage ecies;
-        std::string error;
-        BOOST_REQUIRE_MESSAGE(ECIESEncryptMessage(text, recipients, ecies, error), error);
-        CDepinMessage msg;
-        msg.token = "&TEST";
-        msg.senderAddress = sender;
-        msg.timestamp = timestamp;
-        msg.messageType = 0x02;
-        CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
-        ss << ecies;
-        msg.encryptedPayload.assign(ss.begin(), ss.end());
-        BOOST_REQUIRE(key.Sign(msg.GetHash(), msg.signature));
-        return msg;
-    };
-    const auto recipientOf = [](const std::string& address) {
-        DepinRecipient recipient;
-        BOOST_REQUIRE(DepinRecipient::FromAddress(address, recipient));
-        return recipient;
-    };
-
-    // Alice writes to the three of them
+    // Alice writes to the three of them, and Bob reads her
     const int64_t now = GetTime();
-    const CDepinMessage original = message(alice, aliceKey, "written by alice",
+    const CDepinMessage original = SealedMessage(alice, aliceKey, "written by alice",
         {{alice, aliceKey.GetPubKey()}, {mallory, malloryKey.GetPubKey()}, {bob, bobKey.GetPubKey()}}, now);
-    std::string error;
+    std::string error, plaintext;
     BOOST_REQUIRE_MESSAGE(pDepinMsgPool->AddMessage(original, error, /*skipSignatureCheck=*/false), error);
+    const DepinRecipient bobId = RecipientOf(bob), malloryId = RecipientOf(mallory);
+    BOOST_CHECK(ReadDepinMessage(original, aliceKey.GetPubKey(), bobKey, bobId, plaintext, error) == DepinReadStage::OK);
+    BOOST_CHECK_EQUAL(plaintext, "written by alice");
 
-    // Mallory publishes the same payload as hers: a new message for the pool
+    // Mallory publishes the same envelope as hers, with a valid signature of
+    // her own: a new message for the pool...
     CDepinMessage copy = original;
     copy.senderAddress = mallory;
     copy.timestamp = now + 1;
@@ -548,24 +563,113 @@ BOOST_FIXTURE_TEST_CASE(payload_is_tied_to_its_sender_by_the_message_signature_o
     BOOST_CHECK(copy.GetHash() != original.GetHash());
     BOOST_CHECK_MESSAGE(pDepinMsgPool->AddMessage(copy, error, /*skipSignatureCheck=*/false), error);
 
-    // ...and Bob reads Alice's text in it
-    CECIESEncryptedMessage received;
-    CDataStream in(copy.encryptedPayload, SER_NETWORK, PROTOCOL_VERSION);
-    in >> received;
-    std::string plaintext;
-    BOOST_REQUIRE_MESSAGE(ECIESDecryptMessage(received, bobKey, bob, plaintext, error), error);
-    BOOST_CHECK_EQUAL(plaintext, "written by alice");
+    // ...that Bob does not read: it is addressed to him and not authentic
+    BOOST_CHECK(ReadDepinMessage(copy, malloryKey.GetPubKey(), bobKey, bobId, plaintext, error) == DepinReadStage::UNWRAP);
+    BOOST_CHECK(plaintext.empty());
+    // The same for each field of the header alone, signed again by Alice
+    for (int field = 0; field < 3; ++field) {
+        CDepinMessage moved = original;
+        if (field == 0) moved.token = "&TEST/OTHER";
+        if (field == 1) moved.timestamp = now - 60;
+        if (field == 2) moved.messageType = 0x01;
+        moved.signature.clear();
+        BOOST_REQUIRE(aliceKey.Sign(moved.GetHash(), moved.signature));
+        BOOST_CHECK(ReadDepinMessage(moved, aliceKey.GetPubKey(), bobKey, bobId, plaintext, error) == DepinReadStage::UNWRAP);
+    }
 
     // Alice's signature does not carry over: the copy is not hers
     copy.senderAddress = alice;
     BOOST_CHECK(!VerifyDepinMessageSignature(copy));
+    BOOST_CHECK(ReadDepinMessage(copy, aliceKey.GetPubKey(), bobKey, bobId, plaintext, error) == DepinReadStage::SIGNATURE);
 
     // A payload that is not encrypted for Mallory is not handed to her
-    const CDepinMessage forBob = message(alice, aliceKey, "for bob only",
+    const CDepinMessage forBob = SealedMessage(alice, aliceKey, "for bob only",
         {{alice, aliceKey.GetPubKey()}, {bob, bobKey.GetPubKey()}}, now + 2);
-    const DepinRecipient malloryId = recipientOf(mallory), bobId = recipientOf(bob);
     BOOST_CHECK(!ShouldDeliverDepinMessageToAddress(forBob, mallory, &malloryId));
     BOOST_CHECK(ShouldDeliverDepinMessageToAddress(forBob, bob, &bobId));
+    BOOST_CHECK(ReadDepinMessage(forBob, aliceKey.GetPubKey(), malloryKey, malloryId, plaintext, error) == DepinReadStage::RECIPIENT);
+}
+
+// A sender can give each recipient a different content key and a text that
+// opens under both (AES-GCM does not commit to its key). The pool admits the
+// message: it cannot open envelopes. The envelope commits to one key, so only
+// the recipients holding that key accept it, and they all read the same text.
+BOOST_FIXTURE_TEST_CASE(recipients_that_accept_a_message_read_the_same_text, DepinSignatureSetup)
+{
+    ScopedInitializedPool pool("&TEST");
+    std::string alice, bob, carol;
+    CKey aliceKey = NewRevealedSender(alice);
+    CKey bobKey = NewRevealedSender(bob);
+    CKey carolKey = NewRevealedSender(carol);
+    for (const std::string& holder : {alice, bob, carol})
+        BOOST_REQUIRE(passetsdb->WriteAssetAddressQuantity("&TEST", holder, 10));
+    const DepinRecipient bobId = RecipientOf(bob), carolId = RecipientOf(carol);
+
+    std::vector<unsigned char> key1(32), key2(32), nonce(12);
+    GetStrongRandBytes(key1.data(), key1.size());
+    GetStrongRandBytes(key2.data(), key2.size());
+    GetStrongRandBytes(nonce.data(), nonce.size());
+    for (const std::vector<unsigned char>* committed : {&key1, &key2}) {
+        CDepinMessage message;
+        message.token = "&TEST";
+        message.senderAddress = alice;
+        message.timestamp = GetTime() - (committed == &key1 ? 1 : 0);
+        message.messageType = 0x02;
+        const uint256 context = message.GetContext();
+        const std::vector<unsigned char> aad(context.begin(), context.end());
+
+        // Alice builds the envelope by hand: Bob gets key1 and Carol key2
+        CKey ephemeral;
+        ephemeral.MakeNewKey(true);
+        CECIESEncryptedMessage ecies;
+        ecies.ephemeralPubKey = ephemeral.GetPubKey();
+        ecies.encryptedPayload = depin_test::GcmTwoKeys(key1, key2, nonce, aad,
+                                                        "Bob reads: meeting at 10", "Carol reads: meeting at 12");
+        ecies.commitment = DepinKeyCommitment(context, *committed);
+        const auto wrapFor = [&](const DepinRecipient& id, const CPubKey& pubkey, const std::vector<unsigned char>& contentKey) {
+            std::vector<unsigned char> secret, wrapNonce(12), wrapped, tag;
+            BOOST_REQUIRE(ECDH_ComputeSecret(ephemeral, pubkey, secret));
+            GetStrongRandBytes(wrapNonce.data(), wrapNonce.size());
+            BOOST_REQUIRE(AES256_GCM_Encrypt(contentKey, DepinWrapKey(context, secret, ecies.ephemeralPubKey, id),
+                                             wrapNonce, wrapped, tag));
+            std::vector<unsigned char> package = wrapNonce;
+            package.insert(package.end(), wrapped.begin(), wrapped.end());
+            package.insert(package.end(), tag.begin(), tag.end());
+            ecies.recipientKeys[id] = package;
+        };
+        wrapFor(bobId, bobKey.GetPubKey(), key1);
+        wrapFor(carolId, carolKey.GetPubKey(), key2);
+        CDataStream wire(SER_NETWORK, PROTOCOL_VERSION);
+        wire << ecies;
+        message.encryptedPayload.assign(wire.begin(), wire.end());
+        BOOST_REQUIRE(aliceKey.Sign(message.GetHash(), message.signature));
+
+        // The text really opens under both keys
+        const std::vector<unsigned char>& payload = ecies.encryptedPayload;
+        const std::vector<unsigned char> ciphertext(payload.begin() + 12, payload.end() - 16);
+        const std::vector<unsigned char> tag(payload.end() - 16, payload.end());
+        std::vector<unsigned char> underKey1, underKey2;
+        BOOST_REQUIRE(AES256_GCM_Decrypt(ciphertext, key1, nonce, tag, underKey1, aad));
+        BOOST_REQUIRE(AES256_GCM_Decrypt(ciphertext, key2, nonce, tag, underKey2, aad));
+        BOOST_CHECK(underKey1 != underKey2);
+
+        // The pool admits the message; only the holder of the committed key accepts it
+        std::string error, forBob, forCarol;
+        BOOST_REQUIRE_MESSAGE(pDepinMsgPool->AddMessage(message, error, false), error);
+        const DepinReadStage bobReads = ReadDepinMessage(message, aliceKey.GetPubKey(), bobKey, bobId, forBob, error);
+        const DepinReadStage carolReads = ReadDepinMessage(message, aliceKey.GetPubKey(), carolKey, carolId, forCarol, error);
+        if (committed == &key1) {
+            BOOST_CHECK(bobReads == DepinReadStage::OK);
+            BOOST_CHECK_EQUAL(forBob.substr(0, 24), "Bob reads: meeting at 10");
+            BOOST_CHECK(carolReads == DepinReadStage::COMMITMENT);
+            BOOST_CHECK(forCarol.empty());
+        } else {
+            BOOST_CHECK(bobReads == DepinReadStage::COMMITMENT);
+            BOOST_CHECK(forBob.empty());
+            BOOST_CHECK(carolReads == DepinReadStage::OK);
+            BOOST_CHECK(forCarol.find("Carol reads: meeting at 12") != std::string::npos);
+        }
+    }
 }
 
 namespace {
@@ -585,14 +689,15 @@ struct ScopedSizedPool {
 // A signed message of about 10 KB from `sender` to itself
 CDepinMessage LargeMessage(const std::string& sender, const CKey& key)
 {
-    CECIESEncryptedMessage ecies;
-    std::string error;
-    BOOST_REQUIRE_MESSAGE(ECIESEncryptMessage(std::string(MAX_DEPIN_MESSAGE_SIZE - 64, 'x'), {{sender, key.GetPubKey()}}, ecies, error), error);
     CDepinMessage msg;
     msg.token = "&TEST";
     msg.senderAddress = sender;
     msg.timestamp = GetTime();
     msg.messageType = 0x02;
+    CECIESEncryptedMessage ecies;
+    std::string error;
+    BOOST_REQUIRE_MESSAGE(ECIESEncryptMessage(std::string(MAX_DEPIN_MESSAGE_SIZE - 64, 'x'), {{sender, key.GetPubKey()}},
+                                              msg.GetContext(), ecies, error), error);
     CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
     ss << ecies;
     msg.encryptedPayload.assign(ss.begin(), ss.end());

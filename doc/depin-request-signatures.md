@@ -1,12 +1,16 @@
-# DePIN RPC 5: complete request and response signatures
+# DePIN RPC 6: complete request and response signatures
 
 Date: 2026-10-22. ECDSA extension base: `d39ef51` (request signing and
 membership renewal implemented).
 
 **Status: implemented in the node over this base.** The service is on testnet:
 the change goes into the node first, and libraries and applications are
-updated afterward. Protocol **5**, without accepting protocol 2/3/4 formats or
-signatures in the migrated operations. The executable contract is in
+updated afterward. Protocol **6**, without accepting protocol 2/3/4/5 formats
+or signatures in the migrated operations. Protocol 6 has the fields of
+protocol 5; it changes the version and both signature domains because every
+encrypted body uses envelope format 3
+([the protocol](depin-messaging-protocol.md#4-envelope-format-3-ceciesencryptedmessage)),
+which a protocol 5 client cannot open. The executable contract is in
 `depinrpc.cpp` and `rpc/depin.cpp`.
 
 ## Scope and migration
@@ -82,12 +86,12 @@ The preimage does not depend on re-serializing JSON. Definitions:
 In fixed order:
 
 ```text
-R = S("Neurai/DePIN/RPC/request") || U16(5) || S(method) || U8(auth_kind)
+R = S("Neurai/DePIN/RPC/request") || U16(6) || S(method) || U8(auth_kind)
     || H(network) || B(pool_pubkey) || S(pool_root) || H(instance_id)
     || H(membership_revision) || H(request_id) || I64(timestamp_ms) || S(token) || S(address)
     || B(challenge) || B(method_args)
 request_hash = SHA256(R)
-preimage = "DEPIN-RPC-REQUEST-v5|" + lowercase_hex(request_hash)
+preimage = "DEPIN-RPC-REQUEST-v6|" + lowercase_hex(request_hash)
 ```
 
 The recoverable compact secp256k1 Base64 signature scheme used by
@@ -130,12 +134,13 @@ no signature is valid for another. The default mode explicitly signs
 `expired`, never an ambiguous absence. The time semantics of hour-based
 purging are unchanged.
 
-For submission, the empty common token avoids revealing, outside the ECIES,
-the section that currently travels inside the envelope. The operation
+For submission, the empty common token avoids revealing, outside the
+envelope, the section that currently travels inside it. The envelope is made
+under the submit context. The operation
 signature covers all bytes of the envelope; the inner signature still covers
 content and metadata. After decryption, the sender, scope and current
 permissions of all participants are checked as before. The inner signature
-alone no longer authorizes an RPC v5 submission, and the outer signature does
+alone no longer authorizes an RPC v6 submission, and the outer signature does
 not authorize content that fails inner validation.
 
 Public queries do not need a user key: the server binds
@@ -160,15 +165,16 @@ expects, when it already knows it.
 All migrated remote responses use a separate domain:
 
 ```text
-Q = S("Neurai/DePIN/RPC/response") || U16(5) || S(method)
+Q = S("Neurai/DePIN/RPC/response") || U16(6) || S(method)
     || H(served_network) || B(served_pool_pubkey) || S(served_pool_root)
     || H(served_instance_id) || H(served_membership_revision)
     || I64(membership_height) || H(membership_blockhash)
     || request_hash || U8(body_kind) || B(body_bytes)
-preimage = "DEPIN-RPC-RESPONSE-v5|" + lowercase_hex(SHA256(Q))
+preimage = "DEPIN-RPC-RESPONSE-v6|" + lowercase_hex(SHA256(Q))
 ```
 
-`body_kind=0` corresponds to public JSON and `1` to ECIES. `body_bytes` are the
+`body_kind=0` corresponds to public JSON and `1` to an envelope made under
+the reply context. `body_bytes` are the
 bytes decoded from the hex carried in `body` or `encrypted`, exactly one
 of those fields. The wrapper advertises protocol, served identity, request_hash,
 body type and poolsig. The client computes its own request_hash and requires it
@@ -268,9 +274,9 @@ needs one. Keep the message cursor as long as the stream does not change; member
 does not reset the history or the sequences. Use bounded retries and backoff
 under repeated changes. The server does not rewrite the keys of a signed message.
 
-Earlier protocols are rejected. The domain changes to v5 and U16(5), in
-addition to the new fields: adding an outer field without changing its
-signature is not valid. External libraries and the proxy must migrate after
+Earlier protocols are rejected. The domain changes to v6 and U16(6): adding
+an outer field, or changing what a body contains, without changing the
+signature domain is not valid. External libraries and the proxy must migrate after
 the node.
 
 ## RPC usage and helpers
@@ -279,14 +285,14 @@ Every remote method takes **one** `request` parameter, as `[object]` or
 `{"request": object}` in JSON-RPC. Bootstrap:
 
 ```json
-{"protocol":5,"request_id":"<fresh random 32-byte lowercase hex>","timestamp_ms":1792660000000}
+{"protocol":6,"request_id":"<fresh random 32-byte lowercase hex>","timestamp_ms":1792660000000}
 ```
 
 Complete object (the placeholders must be replaced with valid values):
 
 ```json
 {
-  "protocol":5,"network":"<genesis>","pool_pubkey":"<pinned key>",
+  "protocol":6,"network":"<genesis>","pool_pubkey":"<pinned key>",
   "pool_root":"&GROUP","instance_id":"<verified current instance>",
   "membership_revision":"<verified directory revision>",
   "request_id":"<fresh random 32-byte hex>","timestamp_ms":1792660000000,
@@ -304,14 +310,16 @@ The helper signs the requested object; it neither checks that the remote
 destination is honest nor contacts it. Do not expose it on the proxy.
 
 `depinsignrequest`, `depinsignchallenge` and `depinsignreadseq` have been removed
-from the RPC table. `depinsendmsg`, `depingetmsg`, `depindecrypt` and
-`depinpoolpkey` remain local; the internal bot uses local admission/reads and keeps
+from the RPC table. `depinsendmsg`, `depingetmsg`, `depindecrypt`,
+`depinopenmsg` and `depinpoolpkey` remain local. `depindecrypt` only decrypts a
+reply: verify the whole reply (poolsig and request_hash) first, as it does
+not. `depinopenmsg` opens a message the way its recipient reads it; the internal bot uses local admission/reads and keeps
 its permission checks. There is no public fallback to old signatures.
 
 ## Vectors and validation
 
-- [15 request vectors](../src/test/data/depin_rpc_v5.json) with bytes,
-  SHA256 and preimage, generated by [independent Python struct/hashlib code](../contrib/devtools/depin-v5-vectors.py).
+- [15 request vectors](../src/test/data/depin_rpc_v6.json) with bytes,
+  SHA256 and preimage, generated by [independent Python struct/hashlib code](../contrib/devtools/depin-v6-vectors.py).
 - [C++ tests](../src/test/depinrpc_tests.cpp): codec, defaults/null, integers,
   duplicates, cursor, response, capacity, clock and concurrent replay.
 - [Independent functional client](../test/functional/test_framework/depin.py):
@@ -323,25 +331,25 @@ its permission checks. There is no public fallback to old signatures.
   concurrency, restart and clock; complemented by the permission and state
   regtests, and the signed rejection of a purge that exceeds the moderation-mark capacity.
 
-Consensus, mining, P2P, content encryption, state format 2 and cursor 1 are
-unchanged. The physical full-disk test of durable moderation is not re-run here:
-its earlier evidence is retained, and the protocol 5 capacity RPC error is
-added. Nor are all failure possibilities, the GUI, the deployed proxy
+Consensus, mining, P2P and cursor 1 are unchanged by the RPC version; content
+encryption (format 3) and storage (state 3) changed with it. The physical
+full-disk test of durable moderation is not re-run here: its earlier evidence
+is retained. Nor are all failure possibilities, the GUI, the deployed proxy
 configuration, production load or external libraries certified.
 
 Membership renewal is implemented in the node; each external library/application requires its own integration and testing. Request signing does not
 turn a signed directory into proof of asset holding: keep the client's
 independent comparison and recipient policy. Theft of
 a Legacy key can expose historical messages encrypted for it; the ephemeral
-ECIES key and its per-response rotation do not provide forward secrecy
+key of each envelope and its per-response rotation do not provide forward secrecy
 against theft of that recipient key.
 
-## Strict ECDSA addresses and RPC 5
+## Strict ECDSA addresses and RPC 6
 
-RPC 5 keeps the RPC 4 fields and changes the version integer and both
-signature domains to `v5`. It accepts canonical Legacy and strict ECDSA addresses;
-it does not accept RPC 4 or earlier requests. Bootstrap advertises
-`address_types: ["legacy", "ecdsa"]` and `ecies_formats: [1, 2]`. Clients
-must implement [the exact identities and ECIES 2](depin-ecdsa.md) before
-using this version. Historical Legacy ECIES, storage 2 and cursor 1 are
-retained. The RPC 3 and 4 vectors remain as historical references.
+RPC 6 keeps the RPC 4 fields. It accepts canonical Legacy and strict ECDSA
+addresses; it does not accept RPC 5 or earlier requests. Bootstrap advertises
+`address_types: ["legacy", "ecdsa"]` and `ecies_formats: [3]`. Clients must
+implement [the typed destination ids](depin-ecdsa.md) and
+[envelope format 3](depin-messaging-protocol.md#4-envelope-format-3-ceciesencryptedmessage)
+before using this version. Cursor 1 is retained. The RPC 3, 4 and 5 vectors
+remain as historical references.

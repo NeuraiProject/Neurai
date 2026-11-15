@@ -10,94 +10,77 @@
 #include "key.h"
 #include "pubkey.h"
 #include "serialize.h"
+#include "uint256.h"
 #include "depinaddress.h"
 #include "depinserialization.h"
 #include <map>
 
 /**
- * ECIES (Elliptic Curve Integrated Encryption Scheme) implementation for DePIN Messaging
+ * Envelope of DePIN messages, replies and submissions: format 3.
  *
- * This implements hybrid encryption compatible with the web interface:
- * https://github.com/NeuraiProject/DePIN-Messaging/tree/main/website
+ * One envelope carries one text for one or more recipients:
+ * 1. A random content key K encrypts the text once with AES-256-GCM. The
+ *    context of the envelope is its additional authenticated data.
+ * 2. For each recipient, ECDH between a one-time ephemeral key and the
+ *    recipient's key gives a shared secret. HKDF-SHA256, salted with the
+ *    context, turns it into the key that wraps K for that recipient.
+ * 3. A commitment to K under the context tells every recipient which K is the
+ *    one: two recipients that accept the same envelope read the same text.
  *
- * Encryption scheme:
- * 1. Generate ephemeral key pair (one per message)
- * 2. Encrypt plaintext once with AES-256-GCM using key derived from ephemeral private key
- * 3. For each recipient:
- *    - Compute shared secret: ECDH(ephemeral_privkey, recipient_pubkey)
- *    - Derive encryption key from shared secret (SHA256)
- *    - Encrypt the AES key used in step 2 with AES-256-GCM
- *    - Package: [nonce, encrypted_aes_key, auth_tag]
- * 4. Attach single encrypted message payload to all recipients
+ * The context is a SHA-256 digest of what the envelope belongs to. For a
+ * message, its signed header (section, sender, time, type) on one network;
+ * for a reply or a submission, that use on one network. An envelope opens only
+ * under the context it was made for: copied under another header, it does not.
  *
- * Decryption:
- * 1. Extract ephemeral public key
- * 2. Compute shared secret: ECDH(recipient_privkey, ephemeral_pubkey)
- * 3. Derive decryption key from shared secret
- * 4. Decrypt AES key (GCM tag verified automatically)
- * 5. Decrypt message with recovered AES key (GCM tag verified automatically)
- *
- * Note: GCM provides authenticated encryption, eliminating the need for separate HMAC
+ * Wire: 00 03 || var(E) || commitment (32) || var(payload) || CompactSize(n)
+ *       || n x (recipient id || var(wrapped key))
+ * payload = nonce (12) || ciphertext || tag (16)
+ * wrapped key = nonce (12) || encrypted K (32) || tag (16)
+ * See doc/depin-messaging-protocol.md for the byte-exact contract.
  */
 
 static const size_t DEPIN_GCM_OVERHEAD = 28;
 static const size_t DEPIN_WRAPPED_KEY_SIZE = 60;
+static const size_t DEPIN_KEY_COMMITMENT_SIZE = 32;
 static const size_t MAX_DEPIN_REPLY_PLAINTEXT = 4 * 1024 * 1024;
+static const uint8_t DEPIN_ENVELOPE_FORMAT = 3;
 
-// Legacy-only messages keep their original bytes. Mixed/strict messages use
-// 00 02 followed by the same key/payload and type-tagged destination ids.
 class CECIESEncryptedMessage {
 public:
     CPubKey ephemeralPubKey;
+    uint256 commitment;
     std::vector<unsigned char> encryptedPayload;
     std::map<DepinRecipient, std::vector<unsigned char>> recipientKeys;
     CECIESEncryptedMessage() { SetNull(); }
-    void SetNull() { ephemeralPubKey = CPubKey(); encryptedPayload.clear(); recipientKeys.clear(); }
+    void SetNull() { ephemeralPubKey = CPubKey(); commitment.SetNull(); encryptedPayload.clear(); recipientKeys.clear(); }
 
     template <typename Stream> void Serialize(Stream& s) const {
-        bool extended = false;
-        for (const auto& entry : recipientKeys) if (!entry.first.IsLegacy()) extended = true;
-        if (extended) { s << uint8_t(0) << uint8_t(2); }
-        s << ephemeralPubKey << encryptedPayload;
+        s << uint8_t(0) << DEPIN_ENVELOPE_FORMAT << ephemeralPubKey << commitment << encryptedPayload;
         WriteCompactSize(s, recipientKeys.size());
-        for (const auto& entry : recipientKeys) {
-            if (extended) s << entry.first;
-            else s << entry.first.LegacyID();
-            s << entry.second;
-        }
+        for (const auto& entry : recipientKeys) s << entry.first << entry.second;
     }
     template <typename Stream> void Unserialize(Stream& s) { Read(s, MAX_DEPIN_REPLY_PLAINTEXT, 50); }
     template <typename Stream> void Read(Stream& s, size_t maxPlaintext, size_t maxRecipients) {
         SetNull();
-        uint8_t marker; s >> marker;
-        const bool extended = marker == 0;
-        std::vector<unsigned char> key;
-        if (extended) {
-            uint8_t version; s >> version;
-            if (version != 2) throw std::ios_base::failure("unsupported ECIES version");
-            key = ReadDepinBytes(s, 33, 33);
-        } else {
-            if (marker != 33) throw std::ios_base::failure("invalid ephemeral key length");
-            key.resize(33); s.read(reinterpret_cast<char*>(key.data()), key.size());
-        }
+        uint8_t marker, format;
+        s >> marker >> format;
+        if (marker != 0 || format != DEPIN_ENVELOPE_FORMAT) throw std::ios_base::failure("unsupported envelope format");
+        const auto key = ReadDepinBytes(s, 33, 33);
         ephemeralPubKey = CPubKey(key);
         if (!ephemeralPubKey.IsCompressed() || !ephemeralPubKey.IsFullyValid())
             throw std::ios_base::failure("invalid compressed ephemeral key");
+        s >> commitment;
         encryptedPayload = ReadDepinBytes(s, maxPlaintext + DEPIN_GCM_OVERHEAD, DEPIN_GCM_OVERHEAD + 1);
         const uint64_t count = ReadCompactSize(s);
         if (!count || count > maxRecipients) throw std::ios_base::failure("number of recipients out of range");
         DepinRecipient previous;
-        bool hasStrict = false;
         for (uint64_t i = 0; i < count; ++i) {
             DepinRecipient id;
-            if (extended) s >> id;
-            else { uint160 legacy; s >> legacy; id = DepinRecipient(legacy); }
+            s >> id;
             if (i && !(previous < id)) throw std::ios_base::failure("duplicate or unordered recipient");
-            hasStrict |= !id.IsLegacy();
             recipientKeys.emplace(id, ReadDepinBytes(s, DEPIN_WRAPPED_KEY_SIZE, DEPIN_WRAPPED_KEY_SIZE));
             previous = id;
         }
-        if (extended && !hasStrict) throw std::ios_base::failure("noncanonical Legacy-only ECIES v2");
     }
 };
 
@@ -108,35 +91,90 @@ bool DecodeDepinECIES(const std::vector<unsigned char>& bytes, size_t maxPlainte
                       size_t maxRecipients, CECIESEncryptedMessage& message,
                       std::string& error, const DepinRecipient* requiredRecipient = nullptr);
 
+/** The network an envelope is bound to: the hash of its genesis block, in the
+ *  order it is displayed (as the "network" field of the protocol). */
+std::vector<unsigned char> DepinNetworkId();
+
+/** Context of a message envelope: its signed header on one network. */
+uint256 DepinMessageContext(const std::vector<unsigned char>& network, const std::string& token,
+                            const std::string& sender, int64_t timestamp, uint8_t type);
+uint256 DepinMessageContext(const std::string& token, const std::string& sender, int64_t timestamp, uint8_t type);
+
+/** Envelopes that do not carry a message */
+enum class DepinTransport {
+    REPLY,  //!< an answer of the pool, encrypted for the client
+    SUBMIT, //!< a signed message on its way to the pool
+};
+uint256 DepinTransportContext(const std::vector<unsigned char>& network, DepinTransport use);
+uint256 DepinTransportContext(DepinTransport use);
+
+/** The key that wraps the content key for one recipient (HKDF-SHA256, RFC 5869) */
+std::vector<unsigned char> DepinWrapKey(const uint256& context, const std::vector<unsigned char>& sharedSecret,
+                                        const CPubKey& ephemeralPubKey, const DepinRecipient& recipient);
+
+/** The commitment to the content key under a context */
+uint256 DepinKeyCommitment(const uint256& context, const std::vector<unsigned char>& contentKey);
+
 /**
- * Encrypt a message for multiple recipients using hybrid ECIES
+ * Encrypt a text for one or more recipients, under the context of its use.
  *
- * @param plaintext The message to encrypt
- * @param recipientPubKeys Map of address -> public key for each recipient
- * @param encryptedMsg Output encrypted message structure
- * @param error Output error message if fails
- * @return true if successful, false otherwise
+ * @param plaintext The text
+ * @param recipientPubKeys Address -> public key of each recipient
+ * @param context What the envelope belongs to (DepinMessageContext, DepinTransportContext)
+ * @param encryptedMsg The envelope
+ * @param error Why it failed
  */
 bool ECIESEncryptMessage(const std::string& plaintext,
                          const std::map<std::string, CPubKey>& recipientPubKeys,
+                         const uint256& context,
                          CECIESEncryptedMessage& encryptedMsg,
                          std::string& error);
 
+/** Why an envelope did not open */
+enum class DepinOpenFailure {
+    NONE,
+    INVALID_KEY,   //!< the key does not belong to the address, or the envelope key is invalid
+    NOT_RECIPIENT, //!< the envelope is not encrypted for this key: not an error
+    UNWRAP,        //!< the wrapped content key does not open under this context
+    COMMITMENT,    //!< the content key is not the one the envelope commits to
+    DECRYPT,       //!< the text does not open under this context
+};
+/** The envelope is addressed to this key and is not authentic */
+inline bool IsDepinEnvelopeForged(DepinOpenFailure failure)
+{
+    return failure == DepinOpenFailure::UNWRAP || failure == DepinOpenFailure::COMMITMENT ||
+           failure == DepinOpenFailure::DECRYPT;
+}
+std::string DepinOpenFailureName(DepinOpenFailure failure);
+
 /**
- * Decrypt an ECIES encrypted message for a specific recipient
+ * Open an envelope for one recipient, under the context it was made for.
  *
- * @param encryptedMsg The encrypted message structure
+ * @param encryptedMsg The envelope
  * @param recipientPrivKey Private key of the recipient
- * @param recipientAddress Address of the recipient (for key lookup)
- * @param plaintext Output decrypted message
- * @param error Output error message if fails
- * @return true if successful, false otherwise
+ * @param recipient The recipient id the envelope uses for that key
+ * @param context What the envelope belongs to
+ * @param plaintext The text
+ * @param error Why it failed
+ * @param failure Why it failed, for the caller to tell a message that is not
+ *                for it from one that is for it and is not authentic
  */
+bool ECIESDecryptFor(const CECIESEncryptedMessage& encryptedMsg,
+                     const CKey& recipientPrivKey,
+                     const DepinRecipient& recipient,
+                     const uint256& context,
+                     std::string& plaintext,
+                     std::string& error,
+                     DepinOpenFailure* failure = nullptr);
+
+/** The same, for the recipient at an address that the key must belong to */
 bool ECIESDecryptMessage(const CECIESEncryptedMessage& encryptedMsg,
                          const CKey& recipientPrivKey,
                          const std::string& recipientAddress,
+                         const uint256& context,
                          std::string& plaintext,
-                         std::string& error);
+                         std::string& error,
+                         DepinOpenFailure* failure = nullptr);
 
 /**
  * Generate HMAC-SHA256 for message authentication
@@ -229,15 +267,5 @@ bool AES256_GCM_Decrypt(const std::vector<unsigned char>& ciphertext,
 bool ECDH_ComputeSecret(const CKey& privKey,
                         const CPubKey& pubKey,
                         std::vector<unsigned char>& secret);
-
-/**
- * Key Derivation Function (KDF) using SHA256
- *
- * @param secret Input secret material
- * @param outputLen Desired output length
- * @return Derived key
- */
-std::vector<unsigned char> KDF_SHA256(const std::vector<unsigned char>& secret,
-                                       size_t outputLen);
 
 #endif // NEURAI_DEPINECIES_H

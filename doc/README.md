@@ -81,7 +81,7 @@ DePIN messaging (testnet and regtest)
 - [Client integration guide](depinreceivemsg.md)
 - [Authorization](depin-authorization.md)
 - [Membership epochs](depin-membership.md)
-- [Legacy and strict ECDSA messaging / ECIES 2](depin-ecdsa.md)
+- [Legacy and strict ECDSA messaging](depin-ecdsa.md)
 - [Pool state](depin-pool-state.md)
 
 Asset services

@@ -4,8 +4,8 @@
 """Mixed Legacy/strict ECDSA messaging, exact permissions and durable history."""
 import copy
 from decimal import Decimal
-from feature_depin_pool_state import encrypt, message_wire, private_key
-from test_framework.depin import DepinClient, pool_address
+from feature_depin_pool_state import context_of, encrypt, message_wire, private_key
+from test_framework.depin import PROTOCOL, SUBMIT_TAG, DepinClient, pool_address, transport_context
 from test_framework.test_framework import NeuraiTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error, sync_blocks, sync_mempools, connect_nodes_bi
 
@@ -66,18 +66,24 @@ class DepinECDSATest(NeuraiTestFramework):
         import hashlib
         return b'\x00' + hashlib.new('ripemd160', hashlib.sha256(raw).digest()).digest()
 
+    def network(self):
+        return bytes.fromhex(self.legacy_client.bootstrap()[1]['network'])
+
     def prepare_message(self, source, signer, recipients, content):
+        """A message of `signer` in the header of `source`, its envelope bound to that header."""
         message = copy.deepcopy(source)
         message['sender'] = signer
+        network = self.network()
         message['encrypted_payload_hex'] = encrypt(content.encode(),
             [bytes.fromhex(self.primary.getpubkey(a)['pubkey']) for a in recipients],
-            [self.identity(a) for a in recipients]).hex()
+            context_of(message, network), [self.identity(a) for a in recipients]).hex()
         key = private_key(self.secondary.dumpprivkey(signer))
-        return message, message_wire(message, key)
+        return message, message_wire(message, key, network)
 
     def submit(self, client, address, wire):
         info = client.bootstrap()[1]
-        outer = encrypt(wire.hex().encode(), [bytes.fromhex(info['depinpoolpkey'])])
+        outer = encrypt(wire.hex().encode(), [bytes.fromhex(info['depinpoolpkey'])],
+                        transport_context(SUBMIT_TAG, bytes.fromhex(info['network'])))
         return client.call('depinsubmitmsg', '', address, args={'encrypted': outer.hex()})
 
     def run_test(self):
@@ -97,10 +103,10 @@ class DepinECDSATest(NeuraiTestFramework):
         self.log.info('An independent ECDSA wallet signs and decrypts against the Legacy relay node')
         self.clients()
         info = self.legacy_client.bootstrap()[1]
-        assert_equal(info['protocol'], 5)
+        assert_equal(info['protocol'], PROTOCOL)
         assert_equal(info['address_types'], ['legacy', 'ecdsa'])
-        assert_equal(info['ecies_formats'], [1, 2])
-        assert_equal(self.primary.depindecrypt(bob, self.receive(self.legacy_client, bob)[0]['encrypted_payload_hex']),
+        assert_equal(info['ecies_formats'], [3])
+        assert_equal(self.primary.depinopenmsg(bob, self.receive(self.legacy_client, bob)[0]),
                      'Legacy before mixed addresses')
         carlos, marta, hidden, outsider = [self.secondary.getnewaddress() for _ in range(4)]
         assert carlos.startswith('tnq1r')
@@ -135,10 +141,9 @@ class DepinECDSATest(NeuraiTestFramework):
                                         (self.strict_client, self.secondary, marta)):
             messages = {m['hash']: m for m in self.receive(client, address)}
             for hash_, text in ((sent, 'from Legacy to both families'), (strict_sent, 'from ECDSA to both families')):
-                payload = messages[hash_]['encrypted_payload_hex']
-                assert payload.startswith('0002')
-                assert_equal(wallet.depindecrypt(address, payload), text)
-                assert_raises_rpc_error(-22, 'required recipient missing', self.secondary.depindecrypt, alias, payload)
+                assert messages[hash_]['encrypted_payload_hex'].startswith('0003')
+                assert_equal(wallet.depinopenmsg(address, messages[hash_]), text)
+                assert_raises_rpc_error(-22, 'required recipient missing', self.secondary.depinopenmsg, alias, messages[hash_])
         source = next(m for m in self.receive(self.strict_client, carlos) if m['hash'] == strict_sent)
         subset, wire = self.prepare_message(source, carlos, [bob, carlos], 'independent mixed subset')
         accepted = self.submit(self.strict_client, carlos, wire)['hash']
@@ -146,7 +151,7 @@ class DepinECDSATest(NeuraiTestFramework):
         assert accepted not in {m['hash'] for m in self.receive(self.strict_client, marta)}
         tampered = copy.deepcopy(subset); tampered['sender'] = alias
         assert_raises_rpc_error(None, 'no active balance', self.submit, self.strict_client, alias,
-                               message_wire(tampered, private_key(self.secondary.dumpprivkey(carlos))))
+                               message_wire(tampered, private_key(self.secondary.dumpprivkey(carlos)), self.network()))
 
         self.log.info('Mixed sequence cursors and exact recipient checks survive freezes and reorganizations')
         page = self.strict_client.call('depinreceiveseq', TOKEN, carlos, self.challenge(self.strict_client, carlos), {'limit': 1})
@@ -166,9 +171,8 @@ class DepinECDSATest(NeuraiTestFramework):
         _, later_wire = self.prepare_message(source, carlos, sorted(self.directory()), 'after strict freeze')
         later = self.submit(self.strict_client, carlos, later_wire)['hash']
         new_message = next(m for m in self.receive(self.legacy_client, bob) if m['hash'] == later)
-        assert_raises_rpc_error(-22, 'required recipient missing', self.secondary.depindecrypt,
-                                marta, new_message['encrypted_payload_hex'])
-        assert_equal(self.secondary.depindecrypt(marta, original_marta['encrypted_payload_hex']), 'from ECDSA to both families')
+        assert_raises_rpc_error(-22, 'required recipient missing', self.secondary.depinopenmsg, marta, new_message)
+        assert_equal(self.secondary.depinopenmsg(marta, original_marta), 'from ECDSA to both families')
         self.primary.invalidateblock(freeze)
         self.challenge(self.strict_client, marta)
         self.primary.reconsiderblock(freeze)
@@ -181,8 +185,8 @@ class DepinECDSATest(NeuraiTestFramework):
         _, alias_wire = self.prepare_message(source, alias, [bob, carlos, alias], 'Legacy identity from ECDSA wallet')
         alias_sent = self.submit(self.strict_client, alias, alias_wire)['hash']
         alias_message = next(m for m in self.receive(self.strict_client, alias) if m['hash'] == alias_sent)
-        assert_equal(self.secondary.depindecrypt(alias, alias_message['encrypted_payload_hex']), 'Legacy identity from ECDSA wallet')
-        assert_equal(self.secondary.depindecrypt(carlos, alias_message['encrypted_payload_hex']), 'Legacy identity from ECDSA wallet')
+        assert_equal(self.secondary.depinopenmsg(alias, alias_message), 'Legacy identity from ECDSA wallet')
+        assert_equal(self.secondary.depinopenmsg(carlos, alias_message), 'Legacy identity from ECDSA wallet')
 
         self.log.info('Strict owner administration, self-revocation and historical verification survive restart')
         self.primary.transfer(TOKEN + '!', 1, carlos)

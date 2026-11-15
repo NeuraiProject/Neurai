@@ -147,6 +147,8 @@ BASE_SCRIPTS= [
     'feature_depin_service_start.py',
     'feature_depin_pool_space.py',
     'feature_depin_purge_by_date.py',
+    'feature_depin_envelope_binding.py',
+    'feature_depin_mcp_envelope.py',
     'feature_depin_messaging_permissions.py',
     'feature_depin_request_signatures.py',
     'feature_depin_membership.py',

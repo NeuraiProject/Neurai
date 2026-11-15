@@ -23,11 +23,11 @@ Is a private and temporary messaging system for Neurai that enables encrypted co
   up to 30 days); owners can purge earlier with `depinclearmsg`.
 - **Token ownership verification**: for sending, and challenge/signature
   authentication for every read or purge bound to an address.
-- **Signed, encrypted replies**: every response of the remote protocol 5
+- **Signed, encrypted replies**: every response of the remote protocol 6
   methods is signed with the node's pool key; replies bound to an address are
   encrypted for that address's revealed public key. Local wallet RPCs
-  (`depinsendmsg`, `depingetmsg`, `depindecrypt`, `depinsignrpc`,
-  `depinpoolpkey`) are not signed.
+  (`depinsendmsg`, `depingetmsg`, `depindecrypt`, `depinopenmsg`,
+  `depinsignrpc`, `depinpoolpkey`) are not signed.
 - **Dedicated service wallet**: the pool key is derived from a legacy BIP44
   wallet configured on the node; without it the service does not start.
 
@@ -36,15 +36,21 @@ Is a private and temporary messaging system for Neurai that enables encrypted co
 
 ### 1. Hybrid encryption
 
-- Message content is encrypted once with a fresh symmetric key.
-- The symmetric key is ECIES-wrapped once for every recipient public key.
+- Message content is encrypted once with a fresh symmetric key, bound to the
+  header of the message (section, sender, time, type, network).
+- The symmetric key is wrapped once for every recipient public key, and the
+  envelope commits to it: recipients that accept a message read the same text.
 - A recipient needs its private key and a matching wrapped key to decrypt the
   content. An address without a revealed public key cannot be included.
+- The same envelope published under another header does not open for its
+  recipients: a member cannot pass someone else's message off as its own by
+  copying it. It can still read a text and write it again.
 - Recipient keys are a snapshot at send time. A later holder cannot decrypt
   historic content that was not encrypted for that key.
 
-Strict ECIES bounds, the additive `depinreceiveseq` API, durable moderation
-and state v2 migration are specified in
+The envelope format, strict bounds, the additive `depinreceiveseq` API,
+durable moderation and state v3 are specified in
+[depin-messaging-protocol.md](depin-messaging-protocol.md) and
 [depin-pool-state.md](depin-pool-state.md). Message plaintext size and the
 4 MiB receive-response budget are independent. External library updates
 remain a later integration step.
@@ -176,9 +182,9 @@ does, because it aggregates the holders of all its ancestors.
 ```
 
 
-### Authenticated RPC flow (protocol 5)
+### Authenticated RPC flow (protocol 6)
 
-Remote DePIN methods take one JSON request object with protocol 5, network,
+Remote DePIN methods take one JSON request object with protocol 6, network,
 pool identity/root/instance, fresh request ID, timestamp, scope/address/nonce,
 typed args and operation signature. Legacy formats and signatures are rejected.
 Bootstrap is a reduced depingetmsginfo request. Verify the pinned pool signature
@@ -186,13 +192,13 @@ and locally computed request hash before trusting any response. Private
 responses, including correlatable operation errors, are encrypted for the
 address. The node rechecks current on-chain permission when using a challenge.
 
-See [the RPC 5 contract](depin-request-signatures.md) for canonical bytes,
+See [the RPC 6 contract](depin-request-signatures.md) for canonical bytes,
 limits, errors and examples, and [the client guide](depinreceivemsg.md) for
 complete flows. The local signing helper is `depinsignrpc method request`;
 it signs for the explicit destination and must not be exposed by a proxy.
 Purge mode/age, read cursor/filter and the submission privacy envelope are all
-covered by the signature. Content cryptography and storage framing remain unchanged; RPC 5 adds
-[typed ECIES 2 destinations](depin-ecdsa.md) alongside Legacy ECIES.
+covered by the signature. Content, replies and submissions use envelope
+format 3 with [typed destinations](depin-ecdsa.md) for both address families.
 
 The pool does not decrypt user content. Its signature does not prove that a
 malicious directory lists eligible recipients: clients need independent
@@ -257,15 +263,16 @@ thoroughly tested, so DePIN messaging cannot be used on mainnet for now.
 2. Client verifies that FROM_ADDRESS holds the selected section or an ancestor
                                     ↓
 3. Resolve active holders with public keys, stopping at the pool root
-   (protocol 5 request with token and args.max_results/stop_at)
+   (protocol 6 request with token and args.max_results/stop_at)
                                     ↓
 4. Refuse the send if the complete recipient set exceeds the pool's limit
                                     ↓
-5. Encrypt the content once; ECIES-wrap the content key for each recipient
+5. Fix the header (section, sender, time, type); encrypt the content once
+   under its context and wrap the content key for each recipient
                                     ↓
-6. Sign the serialized message with FROM_ADDRESS
+6. Sign the message with FROM_ADDRESS
                                     ↓
-7. Wrap the serialized hex for depinpoolpkey, put it in args.encrypted,
+7. Wrap the serialized hex for depinpoolpkey (submit context), put it in args.encrypted,
    and sign the complete depinsubmitmsg request as FROM_ADDRESS (token="")
                                     ↓
 8. Pool opens the envelope, verifies scope, sender access, signature and size
@@ -288,7 +295,8 @@ struct CDepinMessage {
     uint8_t messageType;             // 0x01 = private, 0x02 = group (default)
     vector<unsigned char> signature; // Sender's ECDSA signature
 
-    // One symmetric ciphertext plus one ECIES-wrapped content key per recipient
+    // Envelope format 3: one ciphertext bound to the header above, one
+    // wrapped content key per recipient and a commitment to that key
     vector<unsigned char> encryptedPayload;
 };
 ```
@@ -403,10 +411,10 @@ depinmsgmaxusers=50
 ### Verify DePIN messaging status
 
 ```bash
-neurai-cli depingetmsginfo '{"protocol":5,"request_id":"<fresh 32-byte hex>","timestamp_ms":<now_ms>}'
+neurai-cli depingetmsginfo '{"protocol":6,"request_id":"<fresh 32-byte hex>","timestamp_ms":<now_ms>}'
 ```
 
-Verify the v5 signed wrapper before reading active root, counters and limits.
+Verify the v6 signed wrapper before reading active root, counters and limits.
 
 The service is optional for the node. If a part of it cannot start (no asset
 index, no token, an unusable pool key, a damaged pool state, an invalid limit)
@@ -466,13 +474,21 @@ neurai-cli depingetmsg "TOKEN_OR_SECTION" ("FROM_ADDRESS")
   the wallet tries all of its relevant branch addresses and de-duplicates by
   message hash.
 
-**Any pool, any client**: follow [the protocol 5 guide](depinreceivemsg.md).
+**Any pool, any client**: follow [the protocol 6 guide](depinreceivemsg.md).
 Obtain verified bootstrap, sign the complete challenge request, decrypt its
 nonce, sign the complete read request with `depinsignrpc`, then verify/decrypt
 the response. Prefer admission-sequence reads. Every remote method receives
 one request object; previous positional calls and signing helpers are gone.
+Each served message carries `sender_pubkey_hex`, the key the pool verified it
+with. With a wallet key, `depinopenmsg "ADDRESS" message` opens a served
+message the way its recipient reads it: the key belongs to the sender, the
+signature is valid and the envelope opens under the header. A message
+addressed to the wallet that does not open is not authentic and is refused.
 
-`contrib/depin/regtest_walkthrough.sh` runs the disposable HTTP/CLI protocol 5
+`depingetmsg` does not show messages addressed to the wallet that do not open
+under their header; the node logs each one and how many it left out.
+
+`contrib/depin/regtest_walkthrough.sh` runs the disposable HTTP/CLI protocol 6
 regressions and leaves existing node data untouched.
 
 **`depingetmsg` output**:
@@ -503,10 +519,10 @@ regressions and leaves existing node data untouched.
 
 #### 3. DePIN Messaging Information
 
-Call `depingetmsginfo request` with the reduced protocol 5 bootstrap object
+Call `depingetmsginfo request` with the reduced protocol 6 bootstrap object
 from [the contract](depin-request-signatures.md). Its signed wrapper binds
 the exact request hash and includes the served network/key/root/instance.
-The verified body includes protocol 5, accepted_protocols, server_time_ms,
+The verified body includes protocol 6, accepted_protocols, `ecies_formats: [3]`, server_time_ms,
 limits, counters and persistence/sequence capabilities. A first self-signed
 response does not replace an independent pin.
 
@@ -523,15 +539,15 @@ is a failed operation. Automatic expiry does not need an administrative call.
 Call `depinlistsections request`: public root-scoped objects have empty
 address/challenge/signature and return names, labels and depths. Personal
 objects require a receive nonce/signature and return current scoped access
-and counters. Both use the protocol 5 signed response wrapper. There is no
+and counters. Both use the protocol 6 signed response wrapper. There is no
 separate unauthenticated messaging port.
 
 #### 6. Resolve recipient public keys
 
 ```bash
-# Full common v5 object: token="&MYTOKEN/GENERAL",
+# Full common v6 object: token="&MYTOKEN/GENERAL",
 # args={"max_results":100,"stop_at":"&MYTOKEN"}, public authentication fields empty.
-neurai-cli depingetancestorrecipients '<complete v5 request object>'
+neurai-cli depingetancestorrecipients '<complete v6 request object>'
 ```
 
 This informational RPC returns active recipient addresses and their revealed
@@ -577,10 +593,10 @@ a DePIN recipient list.
 ## Related documents
 
 - [DePIN messaging protocol](depin-messaging-protocol.md)
-- [RPC 5 request and response signatures](depin-request-signatures.md)
+- [RPC 6 request and response signatures](depin-request-signatures.md)
 - [Client integration guide](depinreceivemsg.md)
 - [Authorization](depin-authorization.md)
 - [Membership epochs](depin-membership.md)
-- [Legacy and strict ECDSA messaging / ECIES 2](depin-ecdsa.md)
+- [Legacy and strict ECDSA messaging](depin-ecdsa.md)
 - [Pool state](depin-pool-state.md)
 - [DEPIN assets: rules an operator should know](depin-assets.md)

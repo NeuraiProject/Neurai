@@ -93,7 +93,8 @@ std::string Decrypt(const UniValue& response, const Holder& client)
     CDataStream ss(ParseHex(response["encrypted"].get_str()), SER_NETWORK, PROTOCOL_VERSION);
     ss >> ecies;
     std::string plaintext, error;
-    BOOST_REQUIRE_MESSAGE(ECIESDecryptMessage(ecies, client.key, client.address, plaintext, error), error);
+    BOOST_REQUIRE_MESSAGE(ECIESDecryptMessage(ecies, client.key, client.address, DepinTransportContext(DepinTransport::REPLY),
+                                              plaintext, error), error);
     return plaintext;
 }
 

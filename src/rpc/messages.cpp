@@ -598,7 +598,7 @@ UniValue DepinMsgInfo(const CDepinServiceStatus& status)
     obj.push_back(Pair("stream_id", pDepinMsgPool->GetStreamId().ToString()));
     obj.push_back(Pair("admission_sequence", int64_t(pDepinMsgPool->GetHighWater())));
     obj.push_back(Pair("tombstones", int64_t(pDepinMsgPool->GetTombstoneCount())));
-    obj.push_back(Pair("state_format", 2));
+    obj.push_back(Pair("state_format", 3));
     obj.push_back(Pair("sequence_rpc", "depinreceiveseq"));
     obj.push_back(Pair("max_message_wire_bytes", int64_t(MAX_DEPIN_MESSAGE_WIRE_BYTES)));
     obj.push_back(Pair("max_reply_plaintext_bytes", int64_t(MAX_DEPIN_REPLY_PLAINTEXT)));
@@ -770,15 +770,15 @@ UniValue depinsendmsg(const JSONRPCRequest& request)
                                    "or has no revealed public key", token));
     }
 
-    // Create message
+    // The header first: the envelope is bound to it
     CDepinMessage chatMsg;
     chatMsg.token = token;
     chatMsg.senderAddress = senderAddress;
     chatMsg.timestamp = GetTime();
+    chatMsg.messageType = 0x02;
 
-    // Encrypt ONCE for ALL holders (ECIES hybrid encryption)
-    // This creates a shared AES-encrypted message + encrypted AES keys for each holder
-    if (!EncryptMessageForAllRecipients(message, holders, chatMsg.encryptedPayload, error)) {
+    // One envelope for all the holders
+    if (!EncryptMessageForAllRecipients(message, holders, chatMsg.GetContext(), chatMsg.encryptedPayload, error)) {
         throw JSONRPCError(RPC_MISC_ERROR,
                           strprintf("Failed to encrypt message: %s", error));
     }
@@ -830,7 +830,9 @@ UniValue depindecrypt(const JSONRPCRequest& request)
                 "depindecrypt \"address\" \"encrypted\"\n"
                 "\nOpen an encrypted DePIN reply (depinchallenge, depinreceivemsg, ...) with a\n"
                 "wallet key: the client half of the transport layer, for scripting with\n"
-                "neurai-cli. Verify the reply's poolsig first; this RPC does not.\n"
+                "neurai-cli. It only decrypts. Verify the whole reply first, poolsig and\n"
+                "request_hash included; this RPC does not, and what it returns is not\n"
+                "authentic until that is done. Messages are opened with depinopenmsg.\n"
                 "\nArguments:\n"
                 "1. \"address\"    (string, required) Wallet address the reply was encrypted for\n"
                 "2. \"encrypted\"  (string, required) The reply's \"encrypted\" hex\n"
@@ -874,7 +876,7 @@ UniValue depindecrypt(const JSONRPCRequest& request)
 
     std::string plaintext;
     std::string error;
-    if (!ECIESDecryptMessage(ecies, key, address, plaintext, error)) {
+    if (!ECIESDecryptMessage(ecies, key, address, DepinTransportContext(DepinTransport::REPLY), plaintext, error)) {
         throw JSONRPCError(RPC_VERIFY_ERROR, strprintf("Failed to decrypt: %s", error));
     }
 
@@ -883,6 +885,110 @@ UniValue depindecrypt(const JSONRPCRequest& request)
         return UniValue(plaintext);
     }
     return decoded;
+}
+
+UniValue depinopenmsg(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 2)
+        throw std::runtime_error(
+                "depinopenmsg \"address\" message\n"
+                "\nOpen a DePIN message, as served by depinreceivemsg or depinreceiveseq, with a\n"
+                "wallet key, the way its recipient reads it: the public key belongs to the\n"
+                "sender, the signature is valid, and the envelope opens under the header of\n"
+                "the message. The envelope only opens with the header it was made for.\n"
+                "Check that the message is in the section you are reading: its token is part\n"
+                "of what is verified, not of what is chosen.\n"
+                "\nArguments:\n"
+                "1. \"address\"   (string, required) Wallet address the message is encrypted for\n"
+                "2. message     (object, required) The message as served:\n"
+                "   {\n"
+                "     \"token\": \"name\",                 (string, required)\n"
+                "     \"sender\": \"address\",             (string, required)\n"
+                "     \"timestamp\": n,                    (numeric, required)\n"
+                "     \"message_type\": \"private|group\", (string, required)\n"
+                "     \"encrypted_payload_hex\": \"hex\",  (string, required)\n"
+                "     \"signature_hex\": \"hex\",          (string, required)\n"
+                "     \"sender_pubkey_hex\": \"hex\"       (string, optional) Looked up on chain when absent\n"
+                "   }\n"
+                "\nResult:\n"
+                "\"text\"        (string) The text of the message\n"
+                "\nExamples:\n"
+                + HelpExampleCli("depinopenmsg", "\"NXholder...\" '{\"token\":\"&TEST\",...}'")
+                + HelpExampleRpc("depinopenmsg", "\"NXholder...\", {\"token\":\"&TEST\",...}")
+        );
+
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+
+    const std::string address = request.params[0].get_str();
+    const UniValue& served = request.params[1].get_obj();
+    DepinRecipient recipient;
+    if (!DepinRecipient::FromAddress(address, recipient))
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Legacy or strict ECDSA address required");
+
+    const auto field = [&](const std::string& name) -> const UniValue& {
+        const UniValue& value = find_value(served, name);
+        if (value.isNull()) throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Message field %s is missing", name));
+        return value;
+    };
+    const auto hex = [&](const std::string& name, size_t maximum) {
+        const std::string& text = field(name).get_str();
+        if (text.size() > 2 * maximum || !IsHex(text))
+            throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Message field %s exceeds its budget or is not hex", name));
+        return ParseHex(text);
+    };
+    CDepinMessage message;
+    message.token = field("token").get_str();
+    message.senderAddress = field("sender").get_str();
+    message.timestamp = field("timestamp").get_int64();
+    const std::string type = field("message_type").get_str();
+    if (type != "private" && type != "group")
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "message_type must be private or group");
+    message.messageType = type == "private" ? 0x01 : 0x02;
+    message.encryptedPayload = hex("encrypted_payload_hex", MAX_DEPIN_MESSAGE_WIRE_BYTES);
+    message.signature = hex("signature_hex", 80);
+
+    LOCK2(cs_main, pwallet->cs_wallet);
+    EnsureWalletIsUnlocked(pwallet);
+
+    CPubKey senderKey;
+    const UniValue& givenKey = find_value(served, "sender_pubkey_hex");
+    if (!givenKey.isNull()) {
+        const auto bytes = hex("sender_pubkey_hex", 65);
+        senderKey = CPubKey(bytes.begin(), bytes.end());
+    } else {
+        std::string lookupError;
+        if (!CheckAddressHasPublicKey(message.senderAddress, senderKey, lookupError))
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, lookupError);
+    }
+
+    CKey key;
+    CKeyID keyID;
+    if (!GetDepinKeyID(*pwallet, address, keyID) || !pwallet->GetKey(keyID, key))
+        throw JSONRPCError(RPC_WALLET_ERROR, strprintf("Private key for %s not in wallet", address));
+
+    std::string plaintext, error;
+    switch (ReadDepinMessage(message, senderKey, key, recipient, plaintext, error)) {
+    case DepinReadStage::OK:
+        return UniValue(plaintext);
+    case DepinReadStage::FORMAT:
+        throw JSONRPCError(RPC_DESERIALIZATION_ERROR, error);
+    case DepinReadStage::RECIPIENT:
+        throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Invalid ECIES message payload: required recipient missing");
+    case DepinReadStage::SIGNER:
+    case DepinReadStage::SIGNATURE:
+        throw JSONRPCError(RPC_VERIFY_ERROR, error);
+    case DepinReadStage::UNWRAP:
+    case DepinReadStage::COMMITMENT:
+    case DepinReadStage::DECRYPT:
+        throw JSONRPCError(RPC_VERIFY_ERROR, strprintf("Message is addressed to %s and is not authentic: %s", address, error));
+    case DepinReadStage::EXPECTED:
+    case DepinReadStage::KEY:
+        break;
+    }
+    throw JSONRPCError(RPC_WALLET_ERROR, error);
 }
 #endif // ENABLE_WALLET
 
@@ -1013,6 +1119,7 @@ UniValue depingetmsg(const JSONRPCRequest& request)
     // Unexpired pool snapshot; address filtering happens during decryption.
     std::vector<CDepinMessage> allMessages = pDepinMsgPool->GetAllMessages(/*includeExpired=*/false);
     std::set<uint256> processedMessages;  // To avoid duplicates
+    unsigned int unauthentic = 0;         // addressed to this wallet, and do not open
 
     for (const CDepinMessage& msg : allMessages) {
         // Tab scope: only the requested token's subtree.
@@ -1027,7 +1134,7 @@ UniValue depingetmsg(const JSONRPCRequest& request)
         }
 
         // Try to decrypt with each owned address
-        bool decrypted = false;
+        bool decrypted = false, forged = false;
         for (const std::string& myAddress : myAddresses) {
             std::string accessError;
             if (!HasDepinSectionAccess(myAddress, msg.token, pDepinMsgPool->GetActiveToken(), accessError)) {
@@ -1036,9 +1143,17 @@ UniValue depingetmsg(const JSONRPCRequest& request)
             std::string decryptedMessage;
             std::string error;
 
-            // ECIES shared message contains an AES key encrypted for each holder
-            // DecryptMessageForAddress will find and decrypt the key for myAddress
-            if (DecryptMessageForAddress(msg.encryptedPayload, myAddress, decryptedMessage, error, pwallet)) {
+            // The envelope opens under the header of the message, or not at all
+            DepinOpenFailure failure;
+            if (!DecryptMessageForAddress(msg, myAddress, decryptedMessage, error, pwallet, &failure)) {
+                if (IsDepinEnvelopeForged(failure)) {
+                    forged = true;
+                    LogPrintf("depingetmsg: message %s is addressed to %s and is not authentic (%s); not shown\n",
+                              msgHash.ToString(), myAddress, DepinOpenFailureName(failure));
+                }
+                continue;
+            }
+            {
                 UniValue msgObj(UniValue::VOBJ);
                 msgObj.push_back(Pair("recipient", myAddress));
                 msgObj.push_back(Pair("sender", msg.senderAddress));
@@ -1056,7 +1171,10 @@ UniValue depingetmsg(const JSONRPCRequest& request)
                 break;  // Only add once per message
             }
         }
+        if (forged && !decrypted) ++unauthentic;
     }
+    if (unauthentic)
+        LogPrintf("depingetmsg: %u messages addressed to this wallet are not authentic and are not shown\n", unauthentic);
 
     return result;
 }
@@ -1491,6 +1609,7 @@ static const CRPCCommand commands[] =
 #ifdef ENABLE_WALLET
             { "depin messaging",          "depinpoolpkey",              &depinpoolpkey,              {}},
             { "depin messaging",          "depindecrypt",               &depindecrypt,               {"address", "encrypted"}},
+            { "depin messaging",          "depinopenmsg",               &depinopenmsg,               {"address", "message"}},
             // Local pool + this node's wallet; never reachable through a proxy.
             { "depin messaging",          "depinsendmsg",               &depinsendmsg,               {"token", "message", "fromaddress"}},
             { "depin messaging",          "depingetmsg",                &depingetmsg,                {"token", "fromaddress"}},

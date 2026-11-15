@@ -146,15 +146,14 @@ struct DepinAuthRpcSetup : public TestingSetup {
         RefreshDepinTestTipTime();
         std::map<std::string, CPubKey> keys;
         for (const Holder& r : recipients) keys[r.address] = r.pubkey;
-        CECIESEncryptedMessage ecies;
-        std::string error;
-        BOOST_REQUIRE_MESSAGE(ECIESEncryptMessage(text, keys, ecies, error), error);
-
         CDepinMessage msg;
         msg.token = token;
         msg.senderAddress = sender.address;
         msg.timestamp = GetTime();
         msg.messageType = 0x02;
+        CECIESEncryptedMessage ecies;
+        std::string error;
+        BOOST_REQUIRE_MESSAGE(ECIESEncryptMessage(text, keys, msg.GetContext(), ecies, error), error);
         CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
         ss << ecies;
         msg.encryptedPayload.assign(ss.begin(), ss.end());
@@ -199,7 +198,8 @@ struct DepinAuthRpcSetup : public TestingSetup {
         CDataStream ss(ParseHex(response["encrypted"].get_str()), SER_NETWORK, PROTOCOL_VERSION);
         ss >> ecies;
         std::string plaintext, error;
-        BOOST_REQUIRE_MESSAGE(ECIESDecryptMessage(ecies, holder.key, holder.address, plaintext, error), error);
+        BOOST_REQUIRE_MESSAGE(ECIESDecryptMessage(ecies, holder.key, holder.address, DepinTransportContext(DepinTransport::REPLY),
+                                                  plaintext, error), error);
         UniValue inner;
         BOOST_REQUIRE(inner.read(plaintext));
         return inner;

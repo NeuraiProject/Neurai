@@ -108,10 +108,18 @@ std::string DepinServiceDisabledMessage()
     return "DePIN messaging pool is not running: " + g_depinServiceFailure;
 }
 
-uint256 CDepinMessage::GetHash() const {
+uint256 CDepinMessage::GetContext() const {
+    return DepinMessageContext(token, senderAddress, timestamp, messageType);
+}
+
+uint256 DepinMessageHash(const uint256& context, const std::vector<unsigned char>& envelope) {
     CHashWriter ss(SER_GETHASH, 0);
-    ss << token << senderAddress << timestamp << messageType << encryptedPayload;
+    ss << context << envelope;
     return ss.GetHash();
+}
+
+uint256 CDepinMessage::GetHash() const {
+    return DepinMessageHash(GetContext(), encryptedPayload);
 }
 
 bool CDepinMessage::IsExpired(int64_t currentTime, int64_t expiryTimeSeconds) const {
@@ -1532,6 +1540,7 @@ bool GetDepinAncestorRecipients(const std::string& token,
 
 bool EncryptMessageForAllRecipients(const std::string& message,
                                      const std::vector<std::string>& recipientAddresses,
+                                     const uint256& context,
                                      std::vector<unsigned char>& encryptedData,
                                      std::string& error) {
     if (recipientAddresses.empty()) {
@@ -1556,10 +1565,9 @@ bool EncryptMessageForAllRecipients(const std::string& message,
         return false;
     }
 
-    // Create single ECIES message for ALL recipients
-    // This encrypts the message ONCE and creates encrypted keys for each recipient
+    // One envelope for all of them, bound to the header of the message
     CECIESEncryptedMessage eciesMsg;
-    if (!ECIESEncryptMessage(message, recipients, eciesMsg, error)) {
+    if (!ECIESEncryptMessage(message, recipients, context, eciesMsg, error)) {
         return false;
     }
 
@@ -1574,9 +1582,10 @@ bool EncryptMessageForAllRecipients(const std::string& message,
     return true;
 }
 
-bool DecryptMessageForAddress(const std::vector<unsigned char>& encryptedData,
+bool DecryptMessageForAddress(const CDepinMessage& message,
                                const std::string& address, std::string& decryptedMessage,
-                               std::string& error, CWallet* wallet) {
+                               std::string& error, CWallet* wallet, DepinOpenFailure* failure) {
+    if (failure) *failure = DepinOpenFailure::INVALID_KEY;
 #ifdef ENABLE_WALLET
     // Get wallet
     if (!wallet && vpwallets.empty()) {
@@ -1605,24 +1614,76 @@ bool DecryptMessageForAddress(const std::vector<unsigned char>& encryptedData,
         return false;
     }
 
-    // Deserialize ECIES message
     CECIESEncryptedMessage eciesMsg;
     try {
-        if (!DecodeDepinECIES(encryptedData, MAX_DEPIN_MESSAGE_SIZE, MAX_DEPIN_RECIPIENTS, eciesMsg, error))
+        if (!DecodeDepinECIES(message.encryptedPayload, MAX_DEPIN_MESSAGE_SIZE, MAX_DEPIN_RECIPIENTS, eciesMsg, error))
             return false;
     } catch (const std::exception& e) {
         error = strprintf("Failed to deserialize encrypted message: %s", e.what());
         return false;
     }
 
-    // Decrypt using ECIES
-    if (!ECIESDecryptMessage(eciesMsg, privKey, address, decryptedMessage, error)) {
-        return false;
-    }
-
-    return true;
+    // Under the context of the header it was published with
+    return ECIESDecryptMessage(eciesMsg, privKey, address, message.GetContext(), decryptedMessage, error, failure);
 #else
     error = "Wallet support not enabled";
     return false;
 #endif
+}
+
+std::string DepinReadStageName(DepinReadStage stage)
+{
+    switch (stage) {
+    case DepinReadStage::FORMAT: return "format";
+    case DepinReadStage::EXPECTED: return "expected";
+    case DepinReadStage::SIGNER: return "signer";
+    case DepinReadStage::SIGNATURE: return "signature";
+    case DepinReadStage::KEY: return "key";
+    case DepinReadStage::RECIPIENT: return "recipient";
+    case DepinReadStage::UNWRAP: return "unwrap";
+    case DepinReadStage::COMMITMENT: return "commitment";
+    case DepinReadStage::DECRYPT: return "decrypt";
+    case DepinReadStage::OK: return "ok";
+    }
+    return "unknown";
+}
+
+DepinReadStage ReadDepinMessage(const CDepinMessage& message, const CPubKey& senderKey,
+                                const CKey& recipientKey, const DepinRecipient& recipient,
+                                std::string& plaintext, std::string& error,
+                                const std::string* scope, const std::vector<unsigned char>* network)
+{
+    plaintext.clear();
+    CECIESEncryptedMessage envelope;
+    if (!DecodeDepinECIES(message.encryptedPayload, MAX_DEPIN_MESSAGE_SIZE, MAX_DEPIN_RECIPIENTS, envelope, error))
+        return DepinReadStage::FORMAT;
+    // The envelope proves the header was not changed, not that it is the one
+    // the reader is after: the network is its own, the section it chooses
+    if (scope && !IsDepinSectionOrRoot(message.token, *scope)) {
+        error = strprintf("Message of section %s is not in %s", message.token, *scope);
+        return DepinReadStage::EXPECTED;
+    }
+    const uint256 context = network
+        ? DepinMessageContext(*network, message.token, message.senderAddress, message.timestamp, message.messageType)
+        : message.GetContext();
+    if (!senderKey.IsFullyValid() || !DepinPubKeyMatchesAddress(message.senderAddress, senderKey)) {
+        error = "Public key does not belong to the sender";
+        return DepinReadStage::SIGNER;
+    }
+    if (!senderKey.Verify(DepinMessageHash(context, message.encryptedPayload), message.signature)) {
+        error = "Invalid message signature";
+        return DepinReadStage::SIGNATURE;
+    }
+    DepinOpenFailure failure;
+    if (ECIESDecryptFor(envelope, recipientKey, recipient, context, plaintext, error, &failure))
+        return DepinReadStage::OK;
+    switch (failure) {
+    case DepinOpenFailure::NOT_RECIPIENT: return DepinReadStage::RECIPIENT;
+    case DepinOpenFailure::UNWRAP: return DepinReadStage::UNWRAP;
+    case DepinOpenFailure::COMMITMENT: return DepinReadStage::COMMITMENT;
+    case DepinOpenFailure::DECRYPT: return DepinReadStage::DECRYPT;
+    case DepinOpenFailure::NONE:
+    case DepinOpenFailure::INVALID_KEY: break;
+    }
+    return DepinReadStage::KEY;
 }

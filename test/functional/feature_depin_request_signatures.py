@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import urlparse, unquote
 
 from feature_depin_messaging_permissions import DepinMessagingPermissionsTest, TOKEN
-from test_framework.depin import DepinClient, preimage, request_bytes, digest
+from test_framework.depin import PROTOCOL, DepinClient, preimage, request_bytes, digest
 from test_framework.authproxy import JSONRPCException
 from test_framework.util import assert_equal, assert_raises_rpc_error, get_rpc_proxy
 
@@ -49,16 +49,17 @@ class DepinRequestSignaturesTest(DepinMessagingPermissionsTest):
             node.depinsendmsg(TOKEN, name, owner)
         client = DepinClient(node)
         bootstrap, info = client.bootstrap()
-        assert_equal(info['accepted_protocols'], [5])
-        assert_equal(info['protocol'], 5)
+        assert_equal(info['accepted_protocols'], [PROTOCOL])
+        assert_equal(info['protocol'], PROTOCOL)
+        assert_equal(info['ecies_formats'], [3])
 
         # Exercise the actual CLI as well as HTTP: both positional and named
         # requests must preserve the JSON object and its integer values.
-        cli_bootstrap = {'protocol': 5, 'request_id': os.urandom(32).hex(), 'timestamp_ms': 0}
+        cli_bootstrap = {'protocol': PROTOCOL, 'request_id': os.urandom(32).hex(), 'timestamp_ms': 0}
         for response in [node.cli.depingetmsginfo(json.dumps(cli_bootstrap)),
                          node.cli.depingetmsginfo(request=json.dumps(cli_bootstrap))]:
             assert_equal(client.verify('depingetmsginfo', cli_bootstrap, response,
-                                       bootstrap['pool_pubkey'])['protocol'], 5)
+                                       bootstrap['pool_pubkey'])['protocol'], PROTOCOL)
 
         self.log.info('Every clear parameter and service binding is signed, without consuming valid nonces')
         nonce = self.challenge(owner, 'admin')
@@ -73,7 +74,7 @@ class DepinRequestSignaturesTest(DepinMessagingPermissionsTest):
                   'request_hash': digest(request_bytes('depinclearmsg', original)).hex(),
                   'preimage': cli_signed['preimage'],
                   'signer_pubkey': node.validateaddress(owner)['pubkey']}
-        (Path(self.options.tmpdir) / 'depin-v5-interoperability.json').write_text(json.dumps(vector, indent=2) + '\n')
+        (Path(self.options.tmpdir) / ('depin-v%d-interoperability.json' % PROTOCOL)).write_text(json.dumps(vector, indent=2) + '\n')
 
         def refuse(method, request, code=-32600, message=''):
             # Check a correlatable server error against the known real key,
@@ -97,10 +98,10 @@ class DepinRequestSignaturesTest(DepinMessagingPermissionsTest):
         changed = copy.deepcopy(original)
         changed['pool_pubkey'] = node.validateaddress(reader)['pubkey']
         refuse('depinclearmsg', changed)
-        for obsolete in (2, 3, 4):
+        for obsolete in (2, 3, 4, 5):
             changed = copy.deepcopy(original)
             changed['protocol'] = obsolete
-            refuse('depinclearmsg', changed, -8, 'protocol 5')
+            refuse('depinclearmsg', changed, -8, 'protocol %d' % PROTOCOL)
         changed = copy.deepcopy(original)
         changed['args'] = {'mode': 'hours', 'hours': '0'}
         refuse('depinclearmsg', changed, -8, 'integer')
@@ -108,7 +109,7 @@ class DepinRequestSignaturesTest(DepinMessagingPermissionsTest):
         changed = copy.deepcopy(original)
         changed['signature'] = node.signmessage(owner, 'DEPIN-CLEAR|{}|{}|{}'.format(TOKEN, owner, nonce))
         refuse('depinclearmsg', changed, message='Signature does not match')
-        assert_raises_rpc_error(-8, 'protocol 5', node.depinclearmsg,
+        assert_raises_rpc_error(-8, 'protocol %d' % PROTOCOL, node.depinclearmsg,
                                 TOKEN, owner, nonce, changed['signature'], 'all')
         assert_equal(client.call_request('depinclearmsg', original)['removed'], 0)
         refuse('depinclearmsg', original)

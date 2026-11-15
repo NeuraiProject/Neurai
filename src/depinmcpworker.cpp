@@ -398,9 +398,16 @@ bool CDepinMCPWorker::ValidateMessage(const CDepinMessage& msg, std::string& dec
     }
 
     // Decrypt the message ONCE here; the decrypted text is reused by the task thread.
+    // A message addressed to the bot that does not open under its header is
+    // not authentic and is never acted on.
     std::string error;
-    if (!DecryptMessageForAddress(msg.encryptedPayload, nodeAddress, decryptedOut, error)) {
-        LogPrint(BCLog::NET, "MCPWorker: Could not decrypt message from %s: %s\n", msg.senderAddress, error);
+    DepinOpenFailure failure;
+    if (!DecryptMessageForAddress(msg, nodeAddress, decryptedOut, error, nullptr, &failure)) {
+        if (IsDepinEnvelopeForged(failure))
+            LogPrintf("MCPWorker: ignored message %s from %s: addressed to the bot and not authentic (%s)\n",
+                      msg.GetHash().ToString(), msg.senderAddress, DepinOpenFailureName(failure));
+        else
+            LogPrint(BCLog::NET, "MCPWorker: Could not decrypt message from %s: %s\n", msg.senderAddress, error);
         return false;
     }
 
@@ -461,13 +468,15 @@ bool CDepinMCPWorker::SendPooledMessage(const std::string& text, const std::vect
         return false;
     }
 
+    // The header first: the envelope is bound to it
     CDepinMessage newMsg;
     newMsg.token = msgToken;
     newMsg.senderAddress = nodeAddress;
     newMsg.timestamp = GetTime();
+    newMsg.messageType = 0x02;
 
     std::string error;
-    if (!EncryptMessageForAllRecipients(text, holders, newMsg.encryptedPayload, error)) {
+    if (!EncryptMessageForAllRecipients(text, holders, newMsg.GetContext(), newMsg.encryptedPayload, error)) {
         LogPrintf("MCPWorker: Failed to encrypt message: %s\n", error);
         return false;
     }

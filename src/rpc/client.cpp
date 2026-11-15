@@ -80,6 +80,7 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "depingetancestorrecipients", 0, "request" },
     { "depinlistsections", 0, "request" },
     { "depinclearmsg", 0, "request" },
+    { "depinopenmsg", 1, "message" },
     { "depinsignrpc", 1, "request" },
     { "setmocktime", 0, "timestamp" },
     { "generate", 0, "nblocks" },

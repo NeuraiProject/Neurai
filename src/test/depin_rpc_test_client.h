@@ -97,7 +97,7 @@ inline UniValue DepinTestOpen(const UniValue& response, const std::string& addre
     const auto it=DepinTestKeys().find(address);if (it==DepinTestKeys().end()) throw std::runtime_error("Test key not registered");
     CECIESEncryptedMessage ecies;std::string error,plain;
     if (!DecodeDepinECIES(ParseHex(response["encrypted"].get_str()),MAX_DEPIN_REPLY_PLAINTEXT,MAX_DEPIN_RECIPIENTS,ecies,error) ||
-        !ECIESDecryptMessage(ecies,it->second,address,plain,error)) throw std::runtime_error(error);
+        !ECIESDecryptMessage(ecies,it->second,address,DepinTransportContext(DepinTransport::REPLY),plain,error)) throw std::runtime_error(error);
     UniValue result;if (!result.read(plain)) throw std::runtime_error("Invalid test response JSON");return result;
 }
 inline UniValue CallDepinTestRpc(const std::string& method, const UniValue& params)

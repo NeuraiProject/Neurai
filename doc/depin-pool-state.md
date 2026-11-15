@@ -1,30 +1,36 @@
 # DePIN strict encoding, sequence reads and durable moderation
 
 Node contract for strict encoding, sequence reads, durable moderation and
-durable pool state, 2026-10-22. Authorization follows
-[depin-authorization.md](depin-authorization.md). The user message and
-Legacy-only ECIES wire encodings stay unchanged; RPC 5 adds typed ECIES 2
-destinations ([depin-ecdsa.md](depin-ecdsa.md)). Remote RPCs now use protocol **5** and the
+durable pool state. Authorization follows
+[depin-authorization.md](depin-authorization.md). Messages use envelope
+format 3 ([the protocol](depin-messaging-protocol.md), typed destinations in
+[depin-ecdsa.md](depin-ecdsa.md)). Remote RPCs use protocol **6** and the
 common request/signature contract in
-[depin-request-signatures.md](depin-request-signatures.md). Storage version 2
-and cursor version 1 are independent of the RPC version. Discover capabilities
-through the verified `depingetmsginfo` body: `sequence_rpc`, `state_format: 2`,
+[depin-request-signatures.md](depin-request-signatures.md). Storage version 3,
+envelope format 3 and cursor version 1 are numbered independently of the RPC
+version. Discover capabilities through the verified `depingetmsginfo` body:
+`sequence_rpc`, `state_format: 3`, `ecies_formats: [3]`,
 `stream_id`, `admission_sequence`, `tombstones`, `max_message_wire_bytes` and
 `max_reply_plaintext_bytes`.
 
 ## Strict encoding and resource budgets
 
 The dedicated decoder checks lengths before allocating vectors. CompactSize
-integers must use their shortest encoding. ECIES must have:
+integers must use their shortest encoding. An envelope must have:
 
+- The prefix `00 03` (format 3; formats 1 and 2 are rejected).
 - Exactly one compressed, valid 33-byte secp256k1 ephemeral public key.
+- A 32-byte commitment to the content key.
 - A payload of `12-byte nonce || nonempty ciphertext || 16-byte GCM tag`.
 - A nonempty recipient map, in ascending serialized destination byte order,
-  with no duplicate IDs. Legacy-only ECIES uses 20-byte IDs; mixed/strict
-  ECIES 2 uses a type byte and a 20-byte Legacy or 32-byte strict ECDSA ID.
-  See [the exact format and canonical rules](depin-ecdsa.md). Each entry has a vector of exactly
+  with no duplicate IDs: a type byte and a 20-byte Legacy or 32-byte strict
+  ECDSA ID ([depin-ecdsa.md](depin-ecdsa.md)). Each entry has a vector of exactly
   60 bytes: `12-byte nonce || 32-byte wrapped key || 16-byte GCM tag`.
 - No trailing bytes.
+
+The node cannot check the commitment or the GCM tags: it has no recipient
+key. Each recipient does, under the context of the header it received
+([the protocol](depin-messaging-protocol.md#44-decryption-recipient-with-private-key-d-and-destination-id-id)).
 
 `-depinmsgsize` / `maxmessagesize` now explicitly bounds **content plaintext
 bytes**, excluding nonce, tag and recipient key overhead: default 1024,
@@ -33,28 +39,29 @@ rule. The ciphertext length exposes the plaintext length; the node does not
 need to decrypt content to enforce it. Recipient count is configured
 separately, default 20, maximum 50.
 
-For plaintext budget `P` and recipient budget `R`, the conservative ECIES
-wire budget is `82 + P + 94*R` bytes. Actual canonical encoding is usually
+For plaintext budget `P` and recipient budget `R`, the conservative envelope
+wire budget is `114 + P + 94*R` bytes. Actual canonical encoding is usually
 smaller because the two CompactSize fields do not need nine bytes each.
 The signed inner `CDepinMessage` has an independent **16384-byte** total
 decode budget; token, sender and signature fields are bounded at 128, 64
 and 80 bytes. Every accepted configuration fits within that total.
 
-The submission transport is a separate ECIES envelope. It must have **only
-the pool as recipient**. Its plaintext is ASCII hex of the serialized signed
-message, at most 32768 bytes. Before `ParseHex`, the RPC rejects hex longer
-than `2 * (82 + 32768 + 94)` characters, invalid hex and malformed ECIES.
-After decryption it bounds the hex again and rejects trailing inner bytes.
-The outer request `address` must match the signed sender and its protocol 5
-operation signature must verify. That proof does not replace inner signature
+The submission transport is a separate envelope, made under the submit
+context. It must have **only the pool as recipient**. Its plaintext is ASCII
+hex of the serialized signed message, at most 32768 bytes. Before `ParseHex`,
+the RPC rejects hex longer than `2 * (114 + 32768 + 94)` characters, invalid
+hex and malformed envelopes. After decryption it bounds the hex again and
+rejects trailing inner bytes. The outer request `address` must match the
+signed sender and its protocol 6 operation signature must verify. That proof does not replace inner signature
 or current permission checks.
 
 Encrypted RPC replies have a **4 MiB plaintext JSON budget**, independent of
 content size. Both receive RPCs build bounded pages under the pool lock;
 their conservative per-message charge covers hex expansion and JSON
 metadata. Even legacy `limit=0` may return `has_more=true` because of this
-byte budget. `depindecrypt` also bounds hex before parsing and uses the
-strict decoder, including the required recipient ID.
+byte budget. `depindecrypt` (replies) and `depinopenmsg` (messages) also
+bound hex before parsing and use the strict decoder, including the required
+recipient ID.
 
 Malformed submission errors retain existing classes: `-8` for invalid
 outer parameters/size, `-22` for decoding/structure errors (including a
@@ -127,7 +134,7 @@ rejects admissions explicitly rather than wrapping.
 
 ### Request and response signatures
 
-Both sequence and timestamp reads use the complete protocol 5 signature in
+Both sequence and timestamp reads use the complete protocol 6 signature in
 [the RPC contract](depin-request-signatures.md). This covers method, network/pool
 identity, instance, unique request ID, timestamp, scope/address/nonce and every
 effective argument. The cursor's stream and sequence are signature-bound; its
@@ -141,7 +148,7 @@ page/cursor. Challenges are memory-only; restart changes the RPC instance and
 requires a fresh challenge even if the durable cursor survives.
 
 `depinreceivemsg` retains its timestamp/after_hash semantics **inside args**,
-but also requires the v5 common signature. Its anchor may disappear through
+but also requires the v6 common signature. Its anchor may disappear through
 expiry/deletion and its time cursor can miss late timestamps. Prefer the
 sequence method when updating libraries. Operators must add it to their proxy
 allowlist.
@@ -190,18 +197,18 @@ storage outcome of an I/O error can be uncertain: recovery may find the
 entire batch or none, never an intentionally acknowledged partial batch.
 Do not retry by discarding the state directory.
 
-Protocol 5 binds administrative mode and age to the exact operation.
+Protocol 6 binds administrative mode and age to the exact operation.
 Changing expired to all, or altering hours, cannot reuse the proof. A purge
 error is a signed/encrypted error body, never a success result. If the nonce
 was consumed before storage failed, obtain a new one explicitly; do not
 automatically repeat an administrative action after a lost response.
 
-## Persistence and migration
+## Persistence
 
-State lives at `depinstate-v2/<hash(serialized pool root)>` under the selected
+State lives at `depinstate-v3/<hash(serialized pool root)>` under the selected
 network datadir. It reuses the node's LevelDB wrapper: WAL framing/checksums,
 checksum verification, paranoid recovery and atomic synchronous batches.
-There is no new ad hoc flat-file journal. Logical state version 2 stores:
+There is no new ad hoc flat-file journal. Logical state version 3 stores:
 
 - Critical version/root/stream/high-water/retention/migration metadata and
   the minimum accepted timestamp.
@@ -231,16 +238,12 @@ holes without rotating a retained stream. No repair tool scans ciphertext
 for invented record boundaries. Checksums detect accidental corruption;
 they do not authenticate operator-controlled storage against malicious edits.
 
-On first retained startup, `depinpool.dat` version 1 is imported once using
-bounded reads. It checks magic, version, count, file budget and trailing
-data. Complete semantically invalid records can be skipped; truncation or a
-length that prevents framing aborts migration. Historical permission rules
-remain those of historical message restoration
-([depin-authorization.md](depin-authorization.md#restoring-historical-messages)). A new stream and new local sequences are assigned in
-file order; v1 never recorded admission order, so it cannot be reconstructed.
-The original remains untouched; a `.v1.bak` copy is also kept on successful
-import. Migration completion and imported entries commit together. An
-initial volatile startup does not suppress a later first migration.
+What earlier versions stored is not read: `depinstate-v2` and the flat
+`depinpool.dat` hold messages in envelope formats 1 and 2, with the hash of
+those formats, and their moderation marks are keyed by those hashes. The
+node leaves both where they are, says once in its log that they are not
+loaded, and starts state 3 empty. They can be removed. DePIN messaging only
+exists on testnet and regtest, where messages are not migrated.
 
 These guarantees assume the filesystem/device honors synchronous writes.
 They cover normal process crashes and detected corruption; they do not
@@ -257,7 +260,7 @@ metadata or remove tombstones to resume service.
 
 The focused C++ tests cover strict encodings, bounded lengths, tags at
 decryption, sequences/gaps/late timestamps, scope/age, retention toggles,
-capacity exhaustion, clock rollback, v1 migration, quarantine and critical
+capacity exhaustion, clock rollback, earlier state left unread, quarantine and critical
 corruption. `feature_depin_pool_state.py` uses an independent Python encoder
 and system OpenSSL, real regtest submissions and abrupt process kills. It
 also crosses the reply byte budget with 250 maximum-size messages.

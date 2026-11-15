@@ -109,18 +109,18 @@ This only concerns testnet and regtest users of earlier builds of the
 `DePIN-Test` branch (for example the `1.0.6b1_DePIN` and `2.0.0_101326_TEST`
 tags):
 
-- The remote DePIN RPCs accept **protocol 5 only**: each takes one signed
-  `request` object. Positional protocol 2 calls and protocol 3/4 requests are
-  rejected. Upgrade the node first, then clients, libraries and the RPC proxy
+- The remote DePIN RPCs accept **protocol 6 only**: each takes one signed
+  `request` object. Positional protocol 2 calls and protocol 3/4/5 requests are
+  rejected. Messages, replies and submissions use envelope format 3 only. Upgrade the node first, then clients, libraries and the RPC proxy
   (add `depinreceiveseq` to its allowlist). The signing helpers
   `depinsignchallenge`, `depinsignrequest` and `depinsignreadseq` were
   replaced by `depinsignrpc`. See [depinreceivemsg.md](depinreceivemsg.md).
-- A service node that ran with `-depinpoolpersist=1` imports its
-  `depinpool.dat` (version 1) once into `depinstate-v2/<hash>/` (LevelDB) on
-  the first start with retention enabled. The original file is left
-  untouched and a `.v1.bak` copy is kept. Moderation marks are always stored
-  there, even with `-depinpoolpersist=0`. Back up the whole stopped state
-  directory, not single files. See [depin-pool-state.md](depin-pool-state.md).
+- The pool state lives in `depinstate-v3/<hash>/` (LevelDB). Messages and
+  moderation marks stored by earlier builds (`depinpool.dat`,
+  `depinstate-v2`) use other envelope formats and are not read; the node
+  leaves them as they are and they can be removed. Moderation marks are
+  always stored, even with `-depinpoolpersist=0`. Back up the whole stopped
+  state directory, not single files. See [depin-pool-state.md](depin-pool-state.md).
 - Generic AuthScript (witness v1) addresses are encoded as `nc1p…` /
   `tnc1p…`; the former `nq1p…` / `tnq1p…` strings are rejected.
 - `-pqwallet` is refused at startup; use `-addresstype=pq` for a new wallet.
@@ -345,7 +345,7 @@ covenants.md. -->
 
 ### DePIN messaging service
 
-- **Requests no longer hold the node for their whole duration.** A protocol 5
+- **Requests no longer hold the node for their whole duration.** A protocol
   request kept the node lock (`cs_main`) while it went through the pool,
   encrypted its answer and signed it, so reads of a large pool delayed the
   validation of blocks and every other command. The lock is now held while the
@@ -379,6 +379,35 @@ covenants.md. -->
   part failed at start-up and in the warnings of `getnetworkinfo`, and the
   `depin` commands answer with that reason. When only the MCP worker fails,
   the messaging keeps running.
+- **A message only opens with the header it was published with.** The
+  envelope of a message is now bound to its section, sender, time, type and
+  network: published again under another header, the same envelope does not
+  open. Before, a member that received a message could publish the same
+  envelope under its own name and the other recipients read it as theirs. The
+  envelope also commits to its content key, so all the recipients that accept
+  a message read the same text; before, a sender could give two recipients
+  two different texts in one message. This is envelope format 3 (prefix
+  `00 03`). Formats 1 and 2 are neither written nor read, the content key is
+  random and the recipient keys are derived with HKDF-SHA256.
+- **Protocol 6.** Replies and submissions use format 3 too, each with a
+  context of its own, so a protocol 5 client could not open them: requests
+  of protocol 5 and earlier are rejected. The fields of a request are those of
+  protocol 5; the version and the signature domains (`DEPIN-RPC-REQUEST-v6`,
+  `DEPIN-RPC-RESPONSE-v6`) change. `depingetmsginfo` reports
+  `ecies_formats: [3]` and `state_format: 3`. The JavaScript and ESP32
+  libraries and NeuraiWallet are updated separately and do not work with this
+  version until then.
+- **Reading a message.** Every served message carries `sender_pubkey_hex`,
+  the public key the pool verified it with, so that a reader can verify the
+  signature itself. The new wallet command `depinopenmsg "address" message`
+  opens a served message the way its recipient reads it, and refuses one that
+  is addressed to it and does not open. `depindecrypt` opens replies only.
+  `depingetmsg` and the MCP bot leave out messages addressed to them that do
+  not open, and log them.
+- **Stored messages of earlier versions are not read.** The pool state is now
+  `depinstate-v3`. `depinstate-v2` and `depinpool.dat` are left as they are
+  and can be removed; the node says so once in its log. DePIN messaging only
+  exists on testnet and regtest.
 
 ### No-RBF sequence rule
 
@@ -629,13 +658,14 @@ reorganizations:
 **Messaging.** An off-chain, encrypted and expiring message pool for the
 holders of one token subtree (`-depinmsgtoken`), served over the node's
 JSON-RPC port, usually behind an RPC proxy. Content is encrypted for each
-recipient (ECIES with AES-256-GCM). Access follows on-chain holdings,
+recipient (ECIES with AES-256-GCM, envelope format 3), bound to the header of
+the message. Access follows on-chain holdings,
 inherited from ancestor sections. A service node needs `-assetindex`,
 `-pubkeyindex`, a wallet-enabled build and an unencrypted legacy BIP44
 service wallet for the pool key (`-depinwallet` when several wallets are
 loaded).
 
-- **Protocol 5.** Each remote method takes one `request` object that binds
+- **Protocol 6.** Each remote method takes one `request` object that binds
   the method, network, pool key and root, the instance, the membership
   revision, a fresh request ID, a millisecond timestamp, the token, address
   and challenge, and every effective argument. Private operations are signed
@@ -652,8 +682,8 @@ loaded).
   revision gets a signed `membership_stale` error. See
   [depin-membership.md](depin-membership.md).
 - **Identities.** Legacy P2PKH and strict ECDSA (witness v3) addresses can
-  authenticate and receive. Messages that include a strict ECDSA recipient
-  use the typed ECIES 2 format. See [depin-ecdsa.md](depin-ecdsa.md).
+  authenticate and receive. Both families are typed destinations of the same
+  envelope format. See [depin-ecdsa.md](depin-ecdsa.md).
 - **Authorization** follows the connected active chain, not the mempool.
   Permission-dependent calls fail with `-10` during import, reindex or IBD,
   when the tip is older than `-depinmaxtipage` (3600 s) or when known headers
@@ -664,7 +694,7 @@ loaded).
   plaintext bytes (default 1024, maximum 10240); up to 20 recipients by
   default (maximum 50); expiry 168 hours by default (maximum 720). New
   admission-order reads with a durable cursor (`depinreceiveseq`). Moderation
-  marks are written synchronously to `depinstate-v2/` before `depinclearmsg`
+  marks are written synchronously to `depinstate-v3/` before `depinclearmsg`
   succeeds (`-depintombstonelimit`, default 100,000). Message retention across
   restarts stays optional (`-depinpoolpersist`, default 0). See
   [depin-pool-state.md](depin-pool-state.md).
@@ -672,7 +702,8 @@ loaded).
   a command prefix (`-depinmcpkey`, default `/ai`) by querying an HTTP
   chat-completions endpoint (`-depinmcpurl` and `-depinmcpendpoint`, default
   `http://localhost:1234` and `/v1/chat/completions`), and signs its replies
-  with `-depinmcpaddress`. Status: `depinmcpstatus`.
+  with `-depinmcpaddress`. A message addressed to the bot that does not open
+  under its header is never acted on. Status: `depinmcpstatus`.
 
 The service node guide is [depin-guide.md](depin-guide.md); the protocol
 specification is [depin-messaging-protocol.md](depin-messaging-protocol.md).
@@ -856,15 +887,16 @@ development builds, is refused at startup with a pointer to
 Low-level RPC changes
 ----------------------
 
-New RPCs (52):
+New RPCs (53):
 
-- DePIN messaging, remote protocol 5, one `request` argument each:
+- DePIN messaging, remote protocol 6, one `request` argument each:
   `depingetmsginfo`, `depinchallenge`, `depinreceivemsg`, `depinreceiveseq`,
   `depinsubmitmsg`, `depinclearmsg`, `depinlistsections`,
   `depingetancestorrecipients`, `depinpoolstats`, `depinmcpstatus`.
 - DePIN messaging, local: `depinsignrpc "method" request`,
   `depinsendmsg "token" "message" "fromaddress"`,
   `depingetmsg "token" ( "fromaddress" )`, `depindecrypt "address" "encrypted"`,
+  `depinopenmsg "address" message`,
   `depinpoolpkey`, `listdepinaddresses "asset_name" ( count start )`.
 - DePIN assets: `checkdepinvalidity`, `listdepinholders`, `freezedepin`,
   `unfreezedepin`, `selfrevokedepin`, `opendepin`, `closedepin`, `sealdepin`.
@@ -979,7 +1011,7 @@ For users of DePIN-Test development builds: `depinsignchallenge`,
 `depinsignrequest` and `depinsignreadseq` were removed in favour of
 `depinsignrpc`, `depingetpoolcontent` (present in `1.0.6b1_DePIN`) was
 removed, and the remote DePIN RPCs listed above replaced their positional
-arguments with the single protocol 5 `request` object.
+arguments with the single protocol 6 `request` object.
 
 Credits
 =======

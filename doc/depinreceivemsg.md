@@ -1,10 +1,11 @@
-# DePIN client integration guide (protocol 5)
+# DePIN client integration guide (protocol 6)
 
-The node accepts RPC protocol **5** only for remote messaging calls. Upgrade
-the node first, then libraries/applications. Positional protocol 2/3 calls and
-GET/CLEAR/REQ/READ-SEQUENCE-v1 proofs are rejected. The content wire format,
-Legacy-only ECIES, storage version 2 and cursor version 1 remain unchanged;
-RPC 5 adds typed ECIES 2 destinations ([depin-ecdsa.md](depin-ecdsa.md)).
+The node accepts RPC protocol **6** only for remote messaging calls. Upgrade
+the node first, then libraries/applications. Positional protocol 2/3 calls,
+protocol 5 requests and GET/CLEAR/REQ/READ-SEQUENCE-v1 proofs are rejected.
+Messages, replies and submissions use envelope format 3 only, with typed
+destinations ([depin-ecdsa.md](depin-ecdsa.md)); storage is version 3 and the
+cursor version 1.
 
 The byte-exact request/response contract, field types, defaults and limits
 are in [depin-request-signatures.md](depin-request-signatures.md). Content
@@ -29,7 +30,7 @@ request hash before decoding its body. A pin should include endpoint, network,
 pool root and compressed pool key. A self-signed first contact without a known
 pin provides self-consistency only: obtain the pin independently or apply an
 explicit trust-on-first-use policy. Never silently replace it from a reply.
-The signed body advertises protocol 5, `accepted_protocols: [5]`, network,
+The signed body advertises protocol 6, `accepted_protocols: [6]`, `ecies_formats: [3]`, network,
 `instance_id`, `server_time_ms`, pool key/root, limits and state capabilities.
 
 Bootstrap/public queries do not enforce a clock window. Generate a new random
@@ -92,14 +93,16 @@ Require the exact wrapper schema: protocol, network, pool_pubkey, pool_root,
 instance_id, membership_revision, membership_height, membership_blockhash,
 request_hash, body_kind, exactly one of body/encrypted, poolsig.
 Compare request_hash with your own canonical request, enforce confidentiality,
-and verify the v5 response preimage against the pinned key. The signature
+and verify the v6 response preimage against the pinned key. The signature
 covers decoded body bytes, method and service context. It does **not** use
 the old DEPIN-RESP string/hash-of-hex construction.
 
-Public bodies are hex of exact JSON bytes. Private bodies are ECIES for the
-request address; after verification, decrypt and authenticate both GCM layers.
-Local `depindecrypt address encrypted` can open it when that wallet owns the
-key. A private success body must never be accepted in cleartext.
+Public bodies are hex of exact JSON bytes. Private bodies are envelopes for
+the request address, made under the reply context; after verification, open
+them under that context (commitment and both GCM layers). Local
+`depindecrypt address encrypted` can open it when that wallet owns the key;
+it does not verify the reply, which must be done first. A private success
+body must never be accepted in cleartext.
 
 A body containing `error` is a failure, even though JSON-RPC returned a
 result wrapper. Check its code and `data.depin_error`. Syntax, unavailable
@@ -142,8 +145,9 @@ See [depin-membership.md](depin-membership.md) for exact events and semantics.
   actual max_results and stop_at query. Default stop_at is the serving root.
   A valid pool signature proves the service answered; verify eligibility
   through independent sources and your own recipient policy.
-- `depinsubmitmsg`: build and content-sign CDepinMessage, wrap its hex for
-  the pool using ECIES, put that hex in args.encrypted, keep common token
+- `depinsubmitmsg`: build the header of the CDepinMessage, encrypt the
+  content under its context, sign it, wrap its hex for the pool in an
+  envelope under the submit context, put that hex in args.encrypted, keep common token
   empty, and sign the whole request as the same sender in address. Its
   timestamp proof is replay-protected. Inner signature and every declared
   recipient's current permission are still checked.
@@ -156,7 +160,7 @@ See [depin-membership.md](depin-membership.md) for exact events and semantics.
   empty args and authentication fields; useful for service diagnostics.
 
 If instance changes (restart/key reset/clock rollback), verify bootstrap
-again and prepare a newly signed request. The v5 request is not portable
+again and prepare a newly signed request. The v6 request is not portable
 between nodes, methods, roots or networks. Do not reuse request_id.
 
 On -10 use bounded backoff. On -26 refresh membership and recipient policy,
@@ -165,14 +169,20 @@ can leave its outcome unknown; inspect by hash before a deliberate retry.
 Never automatically repeat a destructive operation after a lost response.
 No exactly-once guarantee spans process failure or full process snapshots.
 
-For each delivered message reconstruct its content digest, verify the DER
-sender signature, decode strict ECIES and authenticate GCM before displaying
-plaintext. Neither pool signatures nor a successful download prove that
-arbitrary content ciphertext will decrypt correctly.
+For each delivered message, check that it is in the section you are reading,
+compute the context of its header and the digest, check that
+`sender_pubkey_hex` belongs to the sender and that the DER signature verifies,
+and open the envelope under that context: commitment and both GCM layers
+([the protocol](depin-messaging-protocol.md#521-reading-a-message)). A message
+whose envelope is addressed to you and does not open is not authentic: do not
+show or act on it, and never retry with another format. Neither pool
+signatures nor a successful download prove that arbitrary content ciphertext
+will decrypt correctly. With a wallet key, `depinopenmsg address message`
+does these checks except the section, on the message object as served.
 
 ## Executable examples and remaining work
 
-`contrib/depin/regtest_walkthrough.sh` runs the disposable protocol 5
+`contrib/depin/regtest_walkthrough.sh` runs the disposable protocol 6
 functional walkthrough. It exercises actual HTTP and positional/named CLI,
 parameter tampering, replay, clock rollback, restart and signed replies.
 It creates independent test wallets and does not reuse DATADIR. Configure
@@ -182,7 +192,7 @@ permission and durable-state regressions remain separate tests.
 A challenge is an authorization nonce, not a content-decryption key. A node
 with a wallet/bot recipient key can decrypt content addressed to that key; a
 relay with only the pool key cannot. Legacy P2PKH and strict ECDSA witness v3 authenticate/decrypt; see
-[the address and ECIES contract](depin-ecdsa.md).
+[the address contract](depin-ecdsa.md).
 Content uses per-message random keys,
 but stealing a recipient's static secp256k1 key can expose captured historical
 ciphertexts. A freeze denies future authorized downloads; it cannot revoke

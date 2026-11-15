@@ -15,7 +15,9 @@
 
 namespace {
 const char META = 'V', MESSAGE = 'M', TOMBSTONE = 'T', QUARANTINE = 'Q', FLOOR = 'F';
-const uint32_t STATE_VERSION = 2;
+// 3: messages carry envelope format 3 and the hash of format 3. What earlier
+// versions stored (depinstate-v2, depinpool.dat) is not read.
+const uint32_t STATE_VERSION = 3;
 const int64_t MAX_RETENTION = int64_t(MAX_DEPIN_MESSAGE_EXPIRY_HOURS) * 3600;
 
 struct StateMeta {
@@ -25,7 +27,7 @@ struct StateMeta {
     uint64_t high = 0;
     uint8_t keep = 0;
     int64_t minimumTimestamp = 0;
-    uint8_t legacyDone = 0;
+    uint8_t legacyDone = 0; // kept in the layout; the v1 pool file is no longer read
     template <typename Stream> void Serialize(Stream& s) const {
         s << version << root << stream << high << keep << minimumTimestamp << legacyDone;
     }
@@ -62,7 +64,19 @@ fs::path StatePath(const std::string& root)
 {
     CHashWriter hash(SER_GETHASH, 0);
     hash << root;
-    return GetDataDir() / "depinstate-v2" / hash.GetHash().ToString();
+    return GetDataDir() / "depinstate-v3" / hash.GetHash().ToString();
+}
+
+/** Say once that messages stored by an earlier version are left as they are */
+void ReportEarlierState()
+{
+    static std::atomic<bool> reported{false};
+    if (reported.exchange(true)) return;
+    for (const auto* name : {"depinstate-v2", "depinpool.dat"}) {
+        if (fs::exists(GetDataDir() / name))
+            LogPrintf("DePIN: %s was written by an earlier version. Its messages use an envelope format this "
+                      "version does not read and are not loaded. It can be removed.\n", name);
+    }
 }
 
 void Require(bool condition, const std::string& error)
@@ -430,36 +444,7 @@ bool CDepinMsgPool::InitializeStorage(bool keepMessages, std::string& error, siz
         }
         it->CheckStatus();
         if (existed && keepMessages && meta.keep) highWater = meta.high;
-        // First-time v1 migration is all-or-nothing. Never guess record borders
-        // after truncation, and preserve the original file even on success.
-        const fs::path legacy = GetDataDir() / "depinpool.dat";
-        if (!legacyImported && keepMessages && fs::exists(legacy)) {
-            Require(fs::file_size(legacy) <= size_t(nMaxPoolSizeMB) * 1024 * 1024 + (1 << 20), "legacy pool exceeds migration budget");
-            CAutoFile file(fsbridge::fopen(legacy, "rb"), SER_DISK, CLIENT_VERSION);
-            Require(!file.IsNull(), "cannot open legacy pool");
-            uint32_t magic, version;
-            int64_t saved;
-            uint64_t count;
-            file >> magic >> version >> saved >> count;
-            Require(magic == DEPINPOOL_MAGIC_BYTES && version == 1 && count <= 1000000, "invalid legacy pool header");
-            for (uint64_t n = 0; n < count; ++n) {
-                CDepinMessage message;
-                // Old releases admitted a larger payload before applying
-                // semantic validation. Consume a complete old record within
-                // that historical bound, then reject it without losing the
-                // following record. Truncation still aborts initialization.
-                ReadDepinMessageBounded(file, message, MAX_DEPIN_MESSAGE_SIZE * MAX_DEPIN_RECIPIENTS);
-                std::string validationError;
-                if (AddMessageInternal(message, validationError, false, true)) {
-                    const uint256 hash = message.GetHash();
-                    batch.Write(std::make_pair(MESSAGE, hash), EncodeRecord(mapMessages.at(hash), sequenceByHash.at(hash)));
-                } else LogPrintf("DePIN v1 migration: skipped complete invalid record: %s\n", validationError);
-            }
-            Require(feof(file.Get()) || fgetc(file.Get()) == EOF, "trailing legacy pool data");
-            file.fclose();
-            const fs::path backup = legacy.string() + ".v1.bak";
-            if (!fs::exists(backup)) fs::copy_file(legacy, backup);
-        }
+        ReportEarlierState();
         if (keepMessages) legacyImported = true;
         if (lostRecord) streamId = GetRandHash();
         checkpointStream = keepMessages ? streamId : GetRandHash();

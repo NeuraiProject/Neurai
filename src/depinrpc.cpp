@@ -31,7 +31,7 @@ void Fixed(Bytes& out, const std::string& hex) { const auto b=ParseHex(hex);out.
 std::string Digest(const Bytes& bytes) { unsigned char hash[32];CSHA256().Write(bytes.data(),bytes.size()).Finalize(hash);return HexStr(hash,hash+32); }
 [[noreturn]] void Bad(const std::string& reason)
 {
-    throw DepinRpcError(RPC_INVALID_PARAMETER,reason.find("unsupported_protocol")==0?"unsupported_protocol":"invalid_parameters","DePIN v5: "+reason);
+    throw DepinRpcError(RPC_INVALID_PARAMETER,reason.find("unsupported_protocol")==0?"unsupported_protocol":"invalid_parameters","DePIN v"+std::to_string(DEPIN_RPC_PROTOCOL_VERSION)+": "+reason);
 }
 void Keys(const UniValue& o, const std::set<std::string>& allowed, const std::set<std::string>& required = {})
 {
@@ -93,13 +93,13 @@ std::vector<unsigned char> DepinRpcRequest::Bytes() const
     return out;
 }
 std::string DepinRpcRequest::Hash() const { return Digest(Bytes()); }
-std::string DepinRpcRequest::Preimage() const { return "DEPIN-RPC-REQUEST-v5|"+Hash(); }
+std::string DepinRpcRequest::Preimage() const { return "DEPIN-RPC-REQUEST-v"+std::to_string(DEPIN_RPC_PROTOCOL_VERSION)+"|"+Hash(); }
 
 DepinRpcRequest ParseDepinRpcRequest(const std::string& method, const UniValue& o)
 {
     DepinRpcRequest r;r.method=method;
     if (!o.isObject() || !o.exists("protocol") || !o["protocol"].isNum() || Integer(o["protocol"])!=DEPIN_RPC_PROTOCOL_VERSION)
-        Bad("unsupported_protocol: protocol 5 required; legacy signatures are not accepted");
+        Bad("unsupported_protocol: protocol "+std::to_string(DEPIN_RPC_PROTOCOL_VERSION)+" required; legacy signatures are not accepted");
     if (method=="depingetmsginfo") {
         Keys(o,{"protocol","request_id","timestamp_ms"},{"protocol","request_id","timestamp_ms"});
         r.bootstrap=true;r.target.network=r.target.instance=r.target.membership.revision=std::string(64,'0');
@@ -239,7 +239,7 @@ std::string DepinRpcResponsePreimage(const DepinRpcIdentity& i, const std::strin
 {
     Bytes q;Text(q,"Neurai/DePIN/RPC/response");Number(q,DEPIN_RPC_PROTOCOL_VERSION,2);Text(q,method);
     Fixed(q,i.network);Blob(q,ParseHex(i.poolKey));Text(q,i.root);Fixed(q,i.instance);Fixed(q,i.membership.revision);Number(q,uint64_t(i.membership.height),8);Fixed(q,i.membership.block);Fixed(q,requestHash);Number(q,kind,1);Blob(q,body);
-    return "DEPIN-RPC-RESPONSE-v5|"+Digest(q);
+    return "DEPIN-RPC-RESPONSE-v"+std::to_string(DEPIN_RPC_PROTOCOL_VERSION)+"|"+Digest(q);
 }
 UniValue FinishDepinRpcResponse(const UniValue& result, const DepinRpcRequest& r, const CPubKey* clientKey, const DepinRpcIdentity* answeredUnder)
 {
@@ -248,7 +248,7 @@ UniValue FinishDepinRpcResponse(const UniValue& result, const DepinRpcRequest& r
     Bytes body;std::string error;
     if (clientKey) {
         CECIESEncryptedMessage e;
-        if (!ECIESEncryptMessage(plain,{{r.address,*clientKey}},e,error)) throw JSONRPCError(RPC_INTERNAL_ERROR,error);
+        if (!ECIESEncryptMessage(plain,{{r.address,*clientKey}},DepinTransportContext(DepinTransport::REPLY),e,error)) throw JSONRPCError(RPC_INTERNAL_ERROR,error);
         CDataStream stream(SER_NETWORK,PROTOCOL_VERSION);stream<<e;body.assign(stream.begin(),stream.end());
     } else body.assign(plain.begin(),plain.end());
     CKey key;CPubKey pub;if (!GetDepinPoolKey(key,pub)) throw JSONRPCError(RPC_MISC_ERROR,"DePIN pool key unavailable");

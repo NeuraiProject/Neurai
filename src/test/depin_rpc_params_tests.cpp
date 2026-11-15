@@ -261,7 +261,7 @@ struct DepinRpcParamsSetup : public TestingSetup {
         CECIESEncryptedMessage ecies;
         std::string error;
         BOOST_REQUIRE_MESSAGE(ECIESEncryptMessage(std::string(32, tag),
-            {{EncodeDestination(pubkey.GetID()), pubkey}}, ecies, error), error);
+            {{EncodeDestination(pubkey.GetID()), pubkey}}, msg.GetContext(), ecies, error), error);
         CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
         ss << ecies;
         msg.encryptedPayload.assign(ss.begin(), ss.end());
@@ -279,7 +279,8 @@ UniValue OpenResponse(const UniValue& response, const CKey& key, const std::stri
     CDataStream ss(ParseHex(response["encrypted"].get_str()), SER_NETWORK, PROTOCOL_VERSION);
     ss >> ecies;
     std::string plaintext, error;
-    BOOST_REQUIRE_MESSAGE(ECIESDecryptMessage(ecies, key, address, plaintext, error), error);
+    BOOST_REQUIRE_MESSAGE(ECIESDecryptMessage(ecies, key, address, DepinTransportContext(DepinTransport::REPLY),
+                                              plaintext, error), error);
     UniValue inner;
     BOOST_REQUIRE(inner.read(plaintext));
     return inner;

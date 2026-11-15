@@ -3,8 +3,10 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "depinecies.h"
+#include "chainparams.h"
 #include "depinserialization.h"
 #include "streams.h"
+#include "support/cleanse.h"
 #include "version.h"
 #include "hash.h"
 #include "random.h"
@@ -14,6 +16,9 @@
 #include "uint256.h"
 #include "util.h"
 #include "base58.h"
+
+#include <algorithm>
+#include <stdexcept>
 
 #include <secp256k1.h>
 #include <secp256k1_ecdh.h>
@@ -25,9 +30,115 @@
 
 size_t DepinECIESWireLimit(size_t maxPlaintext, size_t maxRecipients)
 {
-    // Extended prefix, compressed key, CompactSizes, and largest typed id.
-    return 2 + 34 + 9 + DEPIN_GCM_OVERHEAD + maxPlaintext + 9 +
+    // Prefix, compressed key, commitment, CompactSizes, and largest typed id.
+    return 2 + 34 + DEPIN_KEY_COMMITMENT_SIZE + 9 + DEPIN_GCM_OVERHEAD + maxPlaintext + 9 +
            maxRecipients * (33 + 1 + DEPIN_WRAPPED_KEY_SIZE);
+}
+
+namespace {
+const char* const MESSAGE_CONTEXT_TAG = "Neurai/DePIN/message/v3";
+const char* const REPLY_CONTEXT_TAG = "Neurai/DePIN/reply/v3";
+const char* const SUBMIT_CONTEXT_TAG = "Neurai/DePIN/submit/v3";
+const char* const WRAP_TAG = "Neurai/DePIN/wrap/v3";
+const char* const COMMIT_TAG = "Neurai/DePIN/commit/v3";
+
+uint256 Sha256(const CDataStream& data)
+{
+    const std::vector<unsigned char> bytes(data.begin(), data.end());
+    uint256 out;
+    CSHA256().Write(bytes.data(), bytes.size()).Finalize(out.begin());
+    return out;
+}
+
+void WriteNetwork(CDataStream& data, const std::vector<unsigned char>& network)
+{
+    if (network.size() != 32) throw std::invalid_argument("DePIN network id must be 32 bytes");
+    data.write(reinterpret_cast<const char*>(network.data()), network.size());
+}
+
+bool SameBytes(const unsigned char* a, const unsigned char* b, size_t size)
+{
+    unsigned char difference = 0;
+    for (size_t i = 0; i < size; ++i) difference |= a[i] ^ b[i];
+    return difference == 0;
+}
+}
+
+std::vector<unsigned char> DepinNetworkId()
+{
+    const uint256& genesis = GetParams().GetConsensus().hashGenesisBlock;
+    std::vector<unsigned char> id(genesis.begin(), genesis.end());
+    std::reverse(id.begin(), id.end());
+    return id;
+}
+
+uint256 DepinMessageContext(const std::vector<unsigned char>& network, const std::string& token,
+                            const std::string& sender, int64_t timestamp, uint8_t type)
+{
+    CDataStream data(SER_NETWORK, PROTOCOL_VERSION);
+    data << std::string(MESSAGE_CONTEXT_TAG);
+    WriteNetwork(data, network);
+    data << token << sender << timestamp << type;
+    return Sha256(data);
+}
+
+uint256 DepinMessageContext(const std::string& token, const std::string& sender, int64_t timestamp, uint8_t type)
+{
+    return DepinMessageContext(DepinNetworkId(), token, sender, timestamp, type);
+}
+
+uint256 DepinTransportContext(const std::vector<unsigned char>& network, DepinTransport use)
+{
+    CDataStream data(SER_NETWORK, PROTOCOL_VERSION);
+    data << std::string(use == DepinTransport::REPLY ? REPLY_CONTEXT_TAG : SUBMIT_CONTEXT_TAG);
+    WriteNetwork(data, network);
+    return Sha256(data);
+}
+
+uint256 DepinTransportContext(DepinTransport use)
+{
+    return DepinTransportContext(DepinNetworkId(), use);
+}
+
+std::vector<unsigned char> DepinWrapKey(const uint256& context, const std::vector<unsigned char>& sharedSecret,
+                                        const CPubKey& ephemeralPubKey, const DepinRecipient& recipient)
+{
+    // HKDF-Extract: the context is the salt, the shared secret the input
+    unsigned char prk[CHMAC_SHA256::OUTPUT_SIZE];
+    CHMAC_SHA256(context.begin(), context.size()).Write(sharedSecret.data(), sharedSecret.size()).Finalize(prk);
+    // HKDF-Expand, one block: info = tag || var(E) || var(recipient id) || 01
+    CDataStream id(SER_NETWORK, PROTOCOL_VERSION);
+    id << recipient;
+    CDataStream info(SER_NETWORK, PROTOCOL_VERSION);
+    info << std::string(WRAP_TAG) << ephemeralPubKey << std::vector<unsigned char>(id.begin(), id.end()) << uint8_t(1);
+    const std::vector<unsigned char> infoBytes(info.begin(), info.end());
+    std::vector<unsigned char> key(CHMAC_SHA256::OUTPUT_SIZE);
+    CHMAC_SHA256(prk, sizeof(prk)).Write(infoBytes.data(), infoBytes.size()).Finalize(key.data());
+    memory_cleanse(prk, sizeof(prk));
+    return key;
+}
+
+uint256 DepinKeyCommitment(const uint256& context, const std::vector<unsigned char>& contentKey)
+{
+    CDataStream data(SER_NETWORK, PROTOCOL_VERSION);
+    data << std::string(COMMIT_TAG) << context;
+    data.write(reinterpret_cast<const char*>(contentKey.data()), contentKey.size());
+    const uint256 commitment = Sha256(data);
+    if (!data.empty()) memory_cleanse(&data[0], data.size());
+    return commitment;
+}
+
+std::string DepinOpenFailureName(DepinOpenFailure failure)
+{
+    switch (failure) {
+    case DepinOpenFailure::NONE: return "none";
+    case DepinOpenFailure::INVALID_KEY: return "invalid_key";
+    case DepinOpenFailure::NOT_RECIPIENT: return "not_recipient";
+    case DepinOpenFailure::UNWRAP: return "unwrap";
+    case DepinOpenFailure::COMMITMENT: return "commitment";
+    case DepinOpenFailure::DECRYPT: return "decrypt";
+    }
+    return "unknown";
 }
 
 bool DecodeDepinECIES(const std::vector<unsigned char>& bytes, size_t maxPlaintext,
@@ -63,36 +174,6 @@ std::vector<unsigned char> HMAC_SHA256(const std::vector<unsigned char>& key,
 }
 
 // Key Derivation Function using SHA256
-std::vector<unsigned char> KDF_SHA256(const std::vector<unsigned char>& secret,
-                                       size_t outputLen) {
-    std::vector<unsigned char> output;
-    output.reserve(outputLen);
-
-    uint32_t counter = 1;
-    while (output.size() < outputLen) {
-        CSHA256 sha;
-        sha.Write(secret.data(), secret.size());
-
-        // Add counter (big-endian)
-        unsigned char counterBytes[4];
-        counterBytes[0] = (counter >> 24) & 0xFF;
-        counterBytes[1] = (counter >> 16) & 0xFF;
-        counterBytes[2] = (counter >> 8) & 0xFF;
-        counterBytes[3] = counter & 0xFF;
-        sha.Write(counterBytes, 4);
-
-        unsigned char hash[CSHA256::OUTPUT_SIZE];
-        sha.Finalize(hash);
-
-        size_t copyLen = std::min(outputLen - output.size(), (size_t)CSHA256::OUTPUT_SIZE);
-        output.insert(output.end(), hash, hash + copyLen);
-
-        counter++;
-    }
-
-    return output;
-}
-
 // ECDH shared secret computation
 bool ECDH_ComputeSecret(const CKey& privKey,
                         const CPubKey& pubKey,
@@ -396,207 +477,169 @@ bool AES256_GCM_Decrypt(const std::vector<unsigned char>& ciphertext,
     return success;
 }
 
-// Hybrid ECIES encryption for multiple recipients
 bool ECIESEncryptMessage(const std::string& plaintext,
                          const std::map<std::string, CPubKey>& recipientPubKeys,
+                         const uint256& context,
                          CECIESEncryptedMessage& encryptedMsg,
                          std::string& error) {
     encryptedMsg.SetNull();
-    for (const auto& entry : recipientPubKeys) {
-        if (!DepinPubKeyMatchesAddress(entry.first, entry.second)) {
-            error = "Recipient public key does not match a supported address";
-            return false;
-        }
-    }
     if (plaintext.empty()) {
         error = "Plaintext is empty";
         return false;
     }
-
     if (recipientPubKeys.empty()) {
         error = "No recipients provided";
         return false;
     }
+    std::map<DepinRecipient, CPubKey> recipients;
+    for (const auto& entry : recipientPubKeys) {
+        DepinRecipient id;
+        if (!DepinRecipient::FromAddress(entry.first, id) || !DepinPubKeyMatchesAddress(entry.first, entry.second)) {
+            error = "Recipient public key does not match a supported address";
+            return false;
+        }
+        recipients.emplace(id, entry.second);
+    }
 
-    // Step 1: Generate ephemeral key pair (one per message)
+    // One ephemeral key for the envelope, and a content key of its own
     CKey ephemeralPrivKey;
-    ephemeralPrivKey.MakeNewKey(true); // compressed
-    CPubKey ephemeralPubKey = ephemeralPrivKey.GetPubKey();
-
+    ephemeralPrivKey.MakeNewKey(true);
+    const CPubKey ephemeralPubKey = ephemeralPrivKey.GetPubKey();
     if (!ephemeralPubKey.IsValid()) {
         error = "Failed to generate ephemeral key pair";
         return false;
     }
+    std::vector<unsigned char> contentKey(32);
+    GetStrongRandBytes(contentKey.data(), contentKey.size());
 
-    encryptedMsg.ephemeralPubKey = ephemeralPubKey;
-
-    // Step 2: Derive AES key from ephemeral private key
-    std::vector<unsigned char> ephemeralSecret(ephemeralPrivKey.begin(), ephemeralPrivKey.end());
-    std::vector<unsigned char> aesKey = KDF_SHA256(ephemeralSecret, 32);
-
-    // Generate random nonce for AES-GCM (12 bytes)
+    // The text, once, with the context as additional authenticated data
     std::vector<unsigned char> nonce(12);
-    GetStrongRandBytes(nonce.data(), 12);
-
-    // Step 3: Encrypt plaintext once with AES-256-GCM
-    std::vector<unsigned char> plaintextVec(plaintext.begin(), plaintext.end());
-    std::vector<unsigned char> ciphertext;
-    std::vector<unsigned char> tag;
-
-    if (!AES256_GCM_Encrypt(plaintextVec, aesKey, nonce, ciphertext, tag)) {
+    GetStrongRandBytes(nonce.data(), nonce.size());
+    const std::vector<unsigned char> plaintextVec(plaintext.begin(), plaintext.end());
+    const std::vector<unsigned char> aad(context.begin(), context.end());
+    std::vector<unsigned char> ciphertext, tag;
+    if (!AES256_GCM_Encrypt(plaintextVec, contentKey, nonce, ciphertext, tag, aad)) {
+        memory_cleanse(contentKey.data(), contentKey.size());
         error = "AES-GCM encryption failed";
         return false;
     }
-
-    // Step 4: Package encrypted payload: [Nonce (12) || ciphertext || Tag (16)]
-    // GCM provides authenticated encryption, no separate HMAC needed
-    encryptedMsg.encryptedPayload.clear();
-    encryptedMsg.encryptedPayload.insert(encryptedMsg.encryptedPayload.end(), nonce.begin(), nonce.end());
+    encryptedMsg.ephemeralPubKey = ephemeralPubKey;
+    encryptedMsg.encryptedPayload = nonce;
     encryptedMsg.encryptedPayload.insert(encryptedMsg.encryptedPayload.end(), ciphertext.begin(), ciphertext.end());
     encryptedMsg.encryptedPayload.insert(encryptedMsg.encryptedPayload.end(), tag.begin(), tag.end());
 
-    // Step 6: For each recipient, encrypt the AES key using ECDH
-    for (const auto& recipient : recipientPubKeys) {
-        const std::string& address = recipient.first;
-        const CPubKey& recipientPubKey = recipient.second;
-
-        // Compute shared secret: ECDH(ephemeral_privkey, recipient_pubkey)
+    // The content key, wrapped for each recipient: nonce || encrypted key || tag
+    for (const auto& recipient : recipients) {
         std::vector<unsigned char> sharedSecret;
-        if (!ECDH_ComputeSecret(ephemeralPrivKey, recipientPubKey, sharedSecret)) {
-            error = "ECDH failed for recipient " + address;
+        if (!ECDH_ComputeSecret(ephemeralPrivKey, recipient.second, sharedSecret)) {
+            memory_cleanse(contentKey.data(), contentKey.size());
             encryptedMsg.SetNull();
+            error = "ECDH failed for recipient " + recipient.first.Address();
             return false;
         }
-
-        // Derive encryption key from shared secret
-        std::vector<unsigned char> encKey = KDF_SHA256(sharedSecret, 32);
-
-        // Generate random nonce for this recipient's key encryption (12 bytes)
-        std::vector<unsigned char> recipientNonce(12);
-        GetStrongRandBytes(recipientNonce.data(), 12);
-
-        // Encrypt the AES key with GCM
-        std::vector<unsigned char> encryptedAESKey;
-        std::vector<unsigned char> recipientTag;
-        if (!AES256_GCM_Encrypt(aesKey, encKey, recipientNonce, encryptedAESKey, recipientTag)) {
-            error = "Failed to encrypt AES key for recipient " + address;
+        std::vector<unsigned char> wrapKey = DepinWrapKey(context, sharedSecret, ephemeralPubKey, recipient.first);
+        memory_cleanse(sharedSecret.data(), sharedSecret.size());
+        std::vector<unsigned char> wrapNonce(12), wrapped, wrapTag;
+        GetStrongRandBytes(wrapNonce.data(), wrapNonce.size());
+        const bool sealed = AES256_GCM_Encrypt(contentKey, wrapKey, wrapNonce, wrapped, wrapTag);
+        memory_cleanse(wrapKey.data(), wrapKey.size());
+        if (!sealed) {
+            memory_cleanse(contentKey.data(), contentKey.size());
             encryptedMsg.SetNull();
+            error = "Failed to wrap the content key for recipient " + recipient.first.Address();
             return false;
         }
-
-        // Package for this recipient: [Nonce (12) || encrypted_aes_key || Tag (16)]
-        // GCM provides authenticated encryption, no separate HMAC needed
-        std::vector<unsigned char> recipientPackage;
-        recipientPackage.insert(recipientPackage.end(), recipientNonce.begin(), recipientNonce.end());
-        recipientPackage.insert(recipientPackage.end(), encryptedAESKey.begin(), encryptedAESKey.end());
-        recipientPackage.insert(recipientPackage.end(), recipientTag.begin(), recipientTag.end());
-
-        DepinRecipient identity;
-        if (!DepinRecipient::FromAddress(address, identity) || !DepinPubKeyMatchesAddress(address, recipientPubKey)) {
-            error = "Recipient public key does not match a supported address";
-            encryptedMsg.SetNull();
-            return false;
-        }
-        encryptedMsg.recipientKeys[identity] = recipientPackage;
+        std::vector<unsigned char> package = wrapNonce;
+        package.insert(package.end(), wrapped.begin(), wrapped.end());
+        package.insert(package.end(), wrapTag.begin(), wrapTag.end());
+        encryptedMsg.recipientKeys[recipient.first] = package;
     }
 
-    if (encryptedMsg.recipientKeys.empty()) {
-        error = "Failed to encrypt for any recipient";
-        return false;
-    }
-
+    encryptedMsg.commitment = DepinKeyCommitment(context, contentKey);
+    memory_cleanse(contentKey.data(), contentKey.size());
     return true;
 }
 
-// Hybrid ECIES decryption
-bool ECIESDecryptMessage(const CECIESEncryptedMessage& encryptedMsg,
-                         const CKey& recipientPrivKey,
-                         const std::string& recipientAddress,
-                         std::string& plaintext,
-                         std::string& error) {
-    if (!recipientPrivKey.IsValid()) {
-        error = "Invalid recipient private key";
+bool ECIESDecryptFor(const CECIESEncryptedMessage& encryptedMsg,
+                     const CKey& recipientPrivKey,
+                     const DepinRecipient& recipient,
+                     const uint256& context,
+                     std::string& plaintext,
+                     std::string& error,
+                     DepinOpenFailure* failure) {
+    const auto fail = [&](DepinOpenFailure why, const std::string& reason) {
+        if (failure) *failure = why;
+        error = reason;
         return false;
-    }
+    };
+    if (failure) *failure = DepinOpenFailure::NONE;
+    if (!recipientPrivKey.IsValid()) return fail(DepinOpenFailure::INVALID_KEY, "Invalid recipient private key");
+    if (!encryptedMsg.ephemeralPubKey.IsFullyValid())
+        return fail(DepinOpenFailure::INVALID_KEY, "Invalid ephemeral public key in message");
 
-    if (!encryptedMsg.ephemeralPubKey.IsValid()) {
-        error = "Invalid ephemeral public key in message";
-        return false;
-    }
+    const auto it = encryptedMsg.recipientKeys.find(recipient);
+    if (it == encryptedMsg.recipientKeys.end())
+        return fail(DepinOpenFailure::NOT_RECIPIENT, "This message is not encrypted for this recipient");
+    const std::vector<unsigned char>& package = it->second;
+    if (package.size() != DEPIN_WRAPPED_KEY_SIZE)
+        return fail(DepinOpenFailure::UNWRAP, "Recipient key package has the wrong size");
 
-    DepinRecipient recipient;
-    if (!DepinRecipient::FromAddress(recipientAddress, recipient) ||
-        !DepinPubKeyMatchesAddress(recipientAddress, recipientPrivKey.GetPubKey())) {
-        error = "Private key does not match a supported recipient address";
-        return false;
-    }
-    auto it = encryptedMsg.recipientKeys.find(recipient);
-    if (it == encryptedMsg.recipientKeys.end()) {
-        error = "This message is not encrypted for this recipient";
-        return false;
-    }
-
-    const std::vector<unsigned char>& recipientPackage = it->second;
-
-    // Package format: [Nonce (12) || encrypted_aes_key (32, no padding in GCM) || Tag (16)]
-    // Minimum size: 12 + 32 + 16 = 60 bytes
-    if (recipientPackage.size() < 60) {
-        error = "Recipient key package is too small";
-        return false;
-    }
-
-    // Extract Nonce (first 12 bytes)
-    std::vector<unsigned char> recipientNonce(recipientPackage.begin(), recipientPackage.begin() + 12);
-
-    // Extract Tag (last 16 bytes)
-    std::vector<unsigned char> recipientTag(recipientPackage.end() - 16, recipientPackage.end());
-
-    // Extract encrypted AES key (everything between Nonce and Tag)
-    std::vector<unsigned char> encryptedAESKey(recipientPackage.begin() + 12, recipientPackage.end() - 16);
-
-    // Step 1: Compute shared secret using recipient's private key and ephemeral public key
     std::vector<unsigned char> sharedSecret;
-    if (!ECDH_ComputeSecret(recipientPrivKey, encryptedMsg.ephemeralPubKey, sharedSecret)) {
-        error = "ECDH computation failed";
-        return false;
+    if (!ECDH_ComputeSecret(recipientPrivKey, encryptedMsg.ephemeralPubKey, sharedSecret))
+        return fail(DepinOpenFailure::INVALID_KEY, "ECDH computation failed");
+    std::vector<unsigned char> wrapKey = DepinWrapKey(context, sharedSecret, encryptedMsg.ephemeralPubKey, recipient);
+    memory_cleanse(sharedSecret.data(), sharedSecret.size());
+
+    // The content key: it only opens under the context the envelope was made for
+    const std::vector<unsigned char> wrapNonce(package.begin(), package.begin() + 12);
+    const std::vector<unsigned char> wrapped(package.begin() + 12, package.end() - 16);
+    const std::vector<unsigned char> wrapTag(package.end() - 16, package.end());
+    std::vector<unsigned char> contentKey;
+    const bool unwrapped = AES256_GCM_Decrypt(wrapped, wrapKey, wrapNonce, wrapTag, contentKey);
+    memory_cleanse(wrapKey.data(), wrapKey.size());
+    if (!unwrapped || contentKey.size() != 32) {
+        if (!contentKey.empty()) memory_cleanse(contentKey.data(), contentKey.size());
+        return fail(DepinOpenFailure::UNWRAP, "Failed to decrypt the content key (authentication failed)");
     }
 
-    // Step 2: Derive decryption key from shared secret
-    std::vector<unsigned char> decKey = KDF_SHA256(sharedSecret, 32);
-
-    // Step 3: Decrypt AES key (GCM tag verified automatically)
-    std::vector<unsigned char> aesKey;
-    if (!AES256_GCM_Decrypt(encryptedAESKey, decKey, recipientNonce, recipientTag, aesKey)) {
-        error = "Failed to decrypt AES key (authentication failed)";
-        return false;
+    // ...and it is the key every recipient that accepts the envelope gets
+    const uint256 commitment = DepinKeyCommitment(context, contentKey);
+    if (!SameBytes(commitment.begin(), encryptedMsg.commitment.begin(), DEPIN_KEY_COMMITMENT_SIZE)) {
+        memory_cleanse(contentKey.data(), contentKey.size());
+        return fail(DepinOpenFailure::COMMITMENT, "The content key is not the one the envelope commits to");
     }
 
-    if (aesKey.size() != 32) {
-        error = "Decrypted AES key has invalid size";
-        return false;
+    const std::vector<unsigned char>& payload = encryptedMsg.encryptedPayload;
+    if (payload.size() < DEPIN_GCM_OVERHEAD) {
+        memory_cleanse(contentKey.data(), contentKey.size());
+        return fail(DepinOpenFailure::DECRYPT, "Encrypted payload is too small");
     }
-
-    // Step 4: Extract Nonce, ciphertext, and Tag from encrypted payload
-    // Payload format: [Nonce (12) || ciphertext || Tag (16)]
-    if (encryptedMsg.encryptedPayload.size() < 28) { // 12 + 0 + 16
-        error = "Encrypted payload is too small";
-        return false;
-    }
-
-    std::vector<unsigned char> payloadNonce(encryptedMsg.encryptedPayload.begin(),
-                                             encryptedMsg.encryptedPayload.begin() + 12);
-    std::vector<unsigned char> payloadTag(encryptedMsg.encryptedPayload.end() - 16,
-                                           encryptedMsg.encryptedPayload.end());
-    std::vector<unsigned char> payloadCiphertext(encryptedMsg.encryptedPayload.begin() + 12,
-                                                  encryptedMsg.encryptedPayload.end() - 16);
-
-    // Step 5: Decrypt message (GCM tag verified automatically)
+    const std::vector<unsigned char> nonce(payload.begin(), payload.begin() + 12);
+    const std::vector<unsigned char> ciphertext(payload.begin() + 12, payload.end() - 16);
+    const std::vector<unsigned char> tag(payload.end() - 16, payload.end());
+    const std::vector<unsigned char> aad(context.begin(), context.end());
     std::vector<unsigned char> plaintextVec;
-    if (!AES256_GCM_Decrypt(payloadCiphertext, aesKey, payloadNonce, payloadTag, plaintextVec)) {
-        error = "Failed to decrypt message (authentication failed)";
-        return false;
-    }
+    const bool opened = AES256_GCM_Decrypt(ciphertext, contentKey, nonce, tag, plaintextVec, aad);
+    memory_cleanse(contentKey.data(), contentKey.size());
+    if (!opened) return fail(DepinOpenFailure::DECRYPT, "Failed to decrypt message (authentication failed)");
 
     plaintext = std::string(plaintextVec.begin(), plaintextVec.end());
     return true;
+}
+
+bool ECIESDecryptMessage(const CECIESEncryptedMessage& encryptedMsg,
+                         const CKey& recipientPrivKey,
+                         const std::string& recipientAddress,
+                         const uint256& context,
+                         std::string& plaintext,
+                         std::string& error,
+                         DepinOpenFailure* failure) {
+    DepinRecipient recipient;
+    if (!recipientPrivKey.IsValid() || !DepinRecipient::FromAddress(recipientAddress, recipient) ||
+        !DepinPubKeyMatchesAddress(recipientAddress, recipientPrivKey.GetPubKey())) {
+        if (failure) *failure = DepinOpenFailure::INVALID_KEY;
+        error = "Private key does not match a supported recipient address";
+        return false;
+    }
+    return ECIESDecryptFor(encryptedMsg, recipientPrivKey, recipient, context, plaintext, error, failure);
 }

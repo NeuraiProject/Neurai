@@ -1,0 +1,393 @@
+{
+ "format": 3,
+ "about": "DePIN envelope format 3, see contrib/devtools/depin-format3-vectors.py. Hex unless a field says otherwise. `secret` values are test keys; `message_hash_displayed` is the hash as the node prints it.",
+ "tags": {
+  "message": "Neurai/DePIN/message/v3",
+  "reply": "Neurai/DePIN/reply/v3",
+  "submit": "Neurai/DePIN/submit/v3",
+  "wrap": "Neurai/DePIN/wrap/v3",
+  "commit": "Neurai/DePIN/commit/v3"
+ },
+ "network": "000000c710413a4265a996d30c86043aedef6a563900f1bc43fea61d5b2dc77d",
+ "section_being_read": "&TEST/A",
+ "people": {
+  "ana": {
+   "secret": "48d32c92e64486d1cd57e1952c0f76ba36e48d0ba10d1db0c4ebc981666c9ed5",
+   "public": "036361e26b23bfe63c5208216a8252eecfe75de75d46fbb1ab73e3bcfff2e3c3a0",
+   "address": "tLfoB6752dvwWHiUA7Jg5iWKWCmS9Y1BAB",
+   "recipient_id": "0096c4cf14c55029402faaa84ef1b1ca0e301e76c7"
+  },
+  "luis": {
+   "secret": "d80455bbd1d98df2f84e7386941810d9a4509d2aa05149ecc5dd2e681a16fad5",
+   "public": "020efb3627f5b8df888966ce0fd378517c7d9de800ea8400b7c58b746b87f55eba",
+   "address": "tExE8Z11nEcuRVAKmvjA8BSeUmeQnxqW3x",
+   "recipient_id": "00580f8ac34cf57a74f1ade312a59606b40f7f9d81"
+  },
+  "marta": {
+   "secret": "8602535ad5389be4ada3c79dc1685d3dae5b16bcaad525a93e3ee7a4ce3daad6",
+   "public": "020889d34f5cab1ce0910661adf30bb88d7197551e19bf5f5094a9f8def33a9109",
+   "address": "tFA6tPZRUjXZf2pA2oE5ESaUEkyuyUqGhH",
+   "recipient_id": "03c99bd8f62c707a2df4164b849b9f297961d35f263575d3ec4661d256d0fce2d7"
+  }
+ },
+ "inputs": {
+  "token": "&TEST/A",
+  "sender": "tLfoB6752dvwWHiUA7Jg5iWKWCmS9Y1BAB",
+  "timestamp": 1794736920,
+  "type": 2,
+  "plaintext_utf8": "Reunión a las 10",
+  "plaintext": "5265756e69c3b36e2061206c6173203130",
+  "ephemeral_secret": "3f739ae89f1805cc7805bda037c495875fc3a874232cbf5c8251321d25dadb6d",
+  "content_key": "4a3f9e463618baf31e2f21df18723bb5c7a40a27c7370dc61c3bbb64006808f0",
+  "payload_nonce": "9f2eda471fb42a5a314fb22b",
+  "wrap_nonces": {
+   "ana": "3a12a7a96c395e31cf851387",
+   "luis": "5175ee7d276cefef25a44067",
+   "marta": "b6c231bf01b92234a49ea8e4"
+  }
+ },
+ "steps": {
+  "context": "45dbb90715b74f8b14f0b3855f7b458561c85654286484a4386a9b3f62b43386",
+  "ephemeral_public": "0259ca1950ba0193e12db24ea7ad73b09483442c485e247d6e9125f1dd4c81df6a",
+  "content_key": "4a3f9e463618baf31e2f21df18723bb5c7a40a27c7370dc61c3bbb64006808f0",
+  "commitment": "35289d8165f2c5ab898825634a9927b6c01bb46e3988985d87c18525e27b3dc1",
+  "payload": "9f2eda471fb42a5a314fb22bbd0b2f10bd24ae0e67f40c7ba6b8a2e7e44c8b4effb4224a16175d5c38d78b0fa8",
+  "message_hash": "394379a579c6589e337db37111ac5cc85a31414ee318563b4c28f22a1ae5e645",
+  "message_hash_displayed": "45e6e51a2af2284c3b5618e34e41315ac85cac1171b37d339e58c679a5794339",
+  "recipients": {
+   "ana": {
+    "shared_secret": "bad6911f9e0111f80987ec56d93a21863e5a6e8e71e1ca2e608f103c22f928c6",
+    "wrap_key": "45b66fb09ba3c253169f96db2be6e7f05c070ba4a82985d694119399d9a2c1b5",
+    "wrapped_key": "3a12a7a96c395e31cf8513877a8de640ad2c7faeb1e2b38c4a299671d62a367fa81918bbb0f115200ef394b2d19d1ddb56e90580ad35cc158be7df29"
+   },
+   "luis": {
+    "shared_secret": "a247bf6a46029eddddb017d9f77b91bf1fdf90afac243bb7b5e3ebbea10882df",
+    "wrap_key": "73ab5fd9b11959a7756874e2bd22c5b7ed1db8e6aefd381740c0b4c8fec60f06",
+    "wrapped_key": "5175ee7d276cefef25a440676eaec49bfde290232b040564361f4a4fdef46e616a56de3968efb448eb0fc6aacbd3cd654feed181f4d58567b6b78f96"
+   },
+   "marta": {
+    "shared_secret": "f495fb085005f45fbc783b5799e8773369132e4f491e859e9184d3b30c2b6e37",
+    "wrap_key": "7321a2f6c1b06798abc37b9e4bbd097da58fd250b4e9282d65310edbbadb7a71",
+    "wrapped_key": "b6c231bf01b92234a49ea8e4566a3d536a8a47a74b125c19a6f7dca97a750003278946548116b313d56a4b5de368f3e26feab7071202c541d6bd6d0c"
+   }
+  }
+ },
+ "cases": [
+  {
+   "name": "valid",
+   "what": "the message as its author published it",
+   "message": {
+    "token": "&TEST/A",
+    "sender": "tLfoB6752dvwWHiUA7Jg5iWKWCmS9Y1BAB",
+    "timestamp": 1794736920,
+    "type": 2,
+    "envelope": "0003210259ca1950ba0193e12db24ea7ad73b09483442c485e247d6e9125f1dd4c81df6a35289d8165f2c5ab898825634a9927b6c01bb46e3988985d87c18525e27b3dc12d9f2eda471fb42a5a314fb22bbd0b2f10bd24ae0e67f40c7ba6b8a2e7e44c8b4effb4224a16175d5c38d78b0fa80300580f8ac34cf57a74f1ade312a59606b40f7f9d813c5175ee7d276cefef25a440676eaec49bfde290232b040564361f4a4fdef46e616a56de3968efb448eb0fc6aacbd3cd654feed181f4d58567b6b78f960096c4cf14c55029402faaa84ef1b1ca0e301e76c73c3a12a7a96c395e31cf8513877a8de640ad2c7faeb1e2b38c4a299671d62a367fa81918bbb0f115200ef394b2d19d1ddb56e90580ad35cc158be7df2903c99bd8f62c707a2df4164b849b9f297961d35f263575d3ec4661d256d0fce2d73cb6c231bf01b92234a49ea8e4566a3d536a8a47a74b125c19a6f7dca97a750003278946548116b313d56a4b5de368f3e26feab7071202c541d6bd6d0c",
+    "signature": "3045022100a10231abbfaeb019f95b008808fd82575a0114a5d94d869a2bfc44d1bad75601022008d7d2f967f74fe0c2909f72be6582bf2bbd83d754a484aef8aafb90280a75d3",
+    "sender_pubkey": "036361e26b23bfe63c5208216a8252eecfe75de75d46fbb1ab73e3bcfff2e3c3a0"
+   },
+   "stops_at": {
+    "ana": "ok",
+    "luis": "ok",
+    "marta": "ok"
+   }
+  },
+  {
+   "name": "republished_by_another_member",
+   "what": "Luis publishes the envelope under his name and signs it",
+   "message": {
+    "token": "&TEST/A",
+    "sender": "tExE8Z11nEcuRVAKmvjA8BSeUmeQnxqW3x",
+    "timestamp": 1794736920,
+    "type": 2,
+    "envelope": "0003210259ca1950ba0193e12db24ea7ad73b09483442c485e247d6e9125f1dd4c81df6a35289d8165f2c5ab898825634a9927b6c01bb46e3988985d87c18525e27b3dc12d9f2eda471fb42a5a314fb22bbd0b2f10bd24ae0e67f40c7ba6b8a2e7e44c8b4effb4224a16175d5c38d78b0fa80300580f8ac34cf57a74f1ade312a59606b40f7f9d813c5175ee7d276cefef25a440676eaec49bfde290232b040564361f4a4fdef46e616a56de3968efb448eb0fc6aacbd3cd654feed181f4d58567b6b78f960096c4cf14c55029402faaa84ef1b1ca0e301e76c73c3a12a7a96c395e31cf8513877a8de640ad2c7faeb1e2b38c4a299671d62a367fa81918bbb0f115200ef394b2d19d1ddb56e90580ad35cc158be7df2903c99bd8f62c707a2df4164b849b9f297961d35f263575d3ec4661d256d0fce2d73cb6c231bf01b92234a49ea8e4566a3d536a8a47a74b125c19a6f7dca97a750003278946548116b313d56a4b5de368f3e26feab7071202c541d6bd6d0c",
+    "signature": "3045022100bedf294d33d4a95c842c4b978e388872e83c9499095000b17fbb51b3a65790930220760b2f1453dea31bee67bdb9c58a3e1e335d7923501e8f10aa0cc8ead4b968ee",
+    "sender_pubkey": "020efb3627f5b8df888966ce0fd378517c7d9de800ea8400b7c58b746b87f55eba"
+   },
+   "stops_at": {
+    "ana": "unwrap",
+    "marta": "unwrap"
+   }
+  },
+  {
+   "name": "moved_to_another_section",
+   "what": "the author signs the same envelope for another section",
+   "message": {
+    "token": "&TEST/B",
+    "sender": "tLfoB6752dvwWHiUA7Jg5iWKWCmS9Y1BAB",
+    "timestamp": 1794736920,
+    "type": 2,
+    "envelope": "0003210259ca1950ba0193e12db24ea7ad73b09483442c485e247d6e9125f1dd4c81df6a35289d8165f2c5ab898825634a9927b6c01bb46e3988985d87c18525e27b3dc12d9f2eda471fb42a5a314fb22bbd0b2f10bd24ae0e67f40c7ba6b8a2e7e44c8b4effb4224a16175d5c38d78b0fa80300580f8ac34cf57a74f1ade312a59606b40f7f9d813c5175ee7d276cefef25a440676eaec49bfde290232b040564361f4a4fdef46e616a56de3968efb448eb0fc6aacbd3cd654feed181f4d58567b6b78f960096c4cf14c55029402faaa84ef1b1ca0e301e76c73c3a12a7a96c395e31cf8513877a8de640ad2c7faeb1e2b38c4a299671d62a367fa81918bbb0f115200ef394b2d19d1ddb56e90580ad35cc158be7df2903c99bd8f62c707a2df4164b849b9f297961d35f263575d3ec4661d256d0fce2d73cb6c231bf01b92234a49ea8e4566a3d536a8a47a74b125c19a6f7dca97a750003278946548116b313d56a4b5de368f3e26feab7071202c541d6bd6d0c",
+    "signature": "30450221009c851246f7faecdd30fce8c27644fcaa8de830909d4f165bfbc12f02ffc4268b022054f603fff282b1f8b6ad5631631d5cca98a76d617c52748f21e31fa494a8180a",
+    "sender_pubkey": "036361e26b23bfe63c5208216a8252eecfe75de75d46fbb1ab73e3bcfff2e3c3a0"
+   },
+   "stops_at": {
+    "luis": "expected"
+   }
+  },
+  {
+   "name": "moved_to_a_subsection",
+   "what": "the author signs the same envelope for a section inside the one being read",
+   "message": {
+    "token": "&TEST/A/X",
+    "sender": "tLfoB6752dvwWHiUA7Jg5iWKWCmS9Y1BAB",
+    "timestamp": 1794736920,
+    "type": 2,
+    "envelope": "0003210259ca1950ba0193e12db24ea7ad73b09483442c485e247d6e9125f1dd4c81df6a35289d8165f2c5ab898825634a9927b6c01bb46e3988985d87c18525e27b3dc12d9f2eda471fb42a5a314fb22bbd0b2f10bd24ae0e67f40c7ba6b8a2e7e44c8b4effb4224a16175d5c38d78b0fa80300580f8ac34cf57a74f1ade312a59606b40f7f9d813c5175ee7d276cefef25a440676eaec49bfde290232b040564361f4a4fdef46e616a56de3968efb448eb0fc6aacbd3cd654feed181f4d58567b6b78f960096c4cf14c55029402faaa84ef1b1ca0e301e76c73c3a12a7a96c395e31cf8513877a8de640ad2c7faeb1e2b38c4a299671d62a367fa81918bbb0f115200ef394b2d19d1ddb56e90580ad35cc158be7df2903c99bd8f62c707a2df4164b849b9f297961d35f263575d3ec4661d256d0fce2d73cb6c231bf01b92234a49ea8e4566a3d536a8a47a74b125c19a6f7dca97a750003278946548116b313d56a4b5de368f3e26feab7071202c541d6bd6d0c",
+    "signature": "3044022039f5ce9bc149978c3e39dc7fa18512998ec1df1a96049bf38bc18a51498c8879022020137845cf27bda14bc8dfd1c3eaf4356d67d6bdda91bee94b5b0c70514fe05f",
+    "sender_pubkey": "036361e26b23bfe63c5208216a8252eecfe75de75d46fbb1ab73e3bcfff2e3c3a0"
+   },
+   "stops_at": {
+    "luis": "unwrap",
+    "marta": "unwrap"
+   }
+  },
+  {
+   "name": "dated_again",
+   "what": "the author signs the same envelope with another date",
+   "message": {
+    "token": "&TEST/A",
+    "sender": "tLfoB6752dvwWHiUA7Jg5iWKWCmS9Y1BAB",
+    "timestamp": 1794736980,
+    "type": 2,
+    "envelope": "0003210259ca1950ba0193e12db24ea7ad73b09483442c485e247d6e9125f1dd4c81df6a35289d8165f2c5ab898825634a9927b6c01bb46e3988985d87c18525e27b3dc12d9f2eda471fb42a5a314fb22bbd0b2f10bd24ae0e67f40c7ba6b8a2e7e44c8b4effb4224a16175d5c38d78b0fa80300580f8ac34cf57a74f1ade312a59606b40f7f9d813c5175ee7d276cefef25a440676eaec49bfde290232b040564361f4a4fdef46e616a56de3968efb448eb0fc6aacbd3cd654feed181f4d58567b6b78f960096c4cf14c55029402faaa84ef1b1ca0e301e76c73c3a12a7a96c395e31cf8513877a8de640ad2c7faeb1e2b38c4a299671d62a367fa81918bbb0f115200ef394b2d19d1ddb56e90580ad35cc158be7df2903c99bd8f62c707a2df4164b849b9f297961d35f263575d3ec4661d256d0fce2d73cb6c231bf01b92234a49ea8e4566a3d536a8a47a74b125c19a6f7dca97a750003278946548116b313d56a4b5de368f3e26feab7071202c541d6bd6d0c",
+    "signature": "3044022041688e112ebd4eefda5fdd898eb216529833513da1ebe91abd1e4372978b6be702202ff0307effb539e0c81c0fa2de75961af7f675351533d003f62ac43a20d54771",
+    "sender_pubkey": "036361e26b23bfe63c5208216a8252eecfe75de75d46fbb1ab73e3bcfff2e3c3a0"
+   },
+   "stops_at": {
+    "luis": "unwrap"
+   }
+  },
+  {
+   "name": "type_changed",
+   "what": "the author signs the same envelope as a private message",
+   "message": {
+    "token": "&TEST/A",
+    "sender": "tLfoB6752dvwWHiUA7Jg5iWKWCmS9Y1BAB",
+    "timestamp": 1794736920,
+    "type": 1,
+    "envelope": "0003210259ca1950ba0193e12db24ea7ad73b09483442c485e247d6e9125f1dd4c81df6a35289d8165f2c5ab898825634a9927b6c01bb46e3988985d87c18525e27b3dc12d9f2eda471fb42a5a314fb22bbd0b2f10bd24ae0e67f40c7ba6b8a2e7e44c8b4effb4224a16175d5c38d78b0fa80300580f8ac34cf57a74f1ade312a59606b40f7f9d813c5175ee7d276cefef25a440676eaec49bfde290232b040564361f4a4fdef46e616a56de3968efb448eb0fc6aacbd3cd654feed181f4d58567b6b78f960096c4cf14c55029402faaa84ef1b1ca0e301e76c73c3a12a7a96c395e31cf8513877a8de640ad2c7faeb1e2b38c4a299671d62a367fa81918bbb0f115200ef394b2d19d1ddb56e90580ad35cc158be7df2903c99bd8f62c707a2df4164b849b9f297961d35f263575d3ec4661d256d0fce2d73cb6c231bf01b92234a49ea8e4566a3d536a8a47a74b125c19a6f7dca97a750003278946548116b313d56a4b5de368f3e26feab7071202c541d6bd6d0c",
+    "signature": "3044022073507dbf9433c98a25c456e9f5c0b9ebd3a735d50cbd7cc71136bacf1dfcec3b02207c15b7199e2937aa956617a5a239d874def8d1149cc11566a0ca26bd56039baa",
+    "sender_pubkey": "036361e26b23bfe63c5208216a8252eecfe75de75d46fbb1ab73e3bcfff2e3c3a0"
+   },
+   "stops_at": {
+    "luis": "unwrap"
+   }
+  },
+  {
+   "name": "made_for_another_network",
+   "what": "an envelope made on another network, signed for this one",
+   "message": {
+    "token": "&TEST/A",
+    "sender": "tLfoB6752dvwWHiUA7Jg5iWKWCmS9Y1BAB",
+    "timestamp": 1794736920,
+    "type": 2,
+    "envelope": "0003210259ca1950ba0193e12db24ea7ad73b09483442c485e247d6e9125f1dd4c81df6a1e692044664fe6b7db42e6161185b5cf164817be225741bf2b61bf5885862f9c2d9f2eda471fb42a5a314fb22bbd0b2f10bd24ae0e67f40c7ba6b8a2e7e40d10ad3237b35da4bafe41b74490b0750300580f8ac34cf57a74f1ade312a59606b40f7f9d813c5175ee7d276cefef25a44067079da250390991fd769b268fc63efbbaf7c4b29ffaf5d61b83900fb196ea9ffcf51216e028212c89d9c5af4e236143ab0096c4cf14c55029402faaa84ef1b1ca0e301e76c73c3a12a7a96c395e31cf851387138ca419ed51d70a177f59b495b4918370e620607788e0b77cfc2d86d785cbc618dd746a77e354a275ec5f88f607173803c99bd8f62c707a2df4164b849b9f297961d35f263575d3ec4661d256d0fce2d73cb6c231bf01b92234a49ea8e43aa980a8f2969b13e11333ae6036c7379860e4362213b02b6c3c0c11ff3f71422a42f57e2c3f8f2bd92011c3754dcda0",
+    "signature": "30440220375d50ccf85042c9742c5f007134a0af8c0ff015b6afe24d9c51cdb0e3dfd2c102206a5fb02e447b7f5142c52d1ab43a2e3b7c9512d000f0f78e179c27731809fa60",
+    "sender_pubkey": "036361e26b23bfe63c5208216a8252eecfe75de75d46fbb1ab73e3bcfff2e3c3a0"
+   },
+   "stops_at": {
+    "luis": "unwrap"
+   }
+  },
+  {
+   "name": "signature_altered",
+   "what": "one bit of the signature is changed",
+   "message": {
+    "token": "&TEST/A",
+    "sender": "tLfoB6752dvwWHiUA7Jg5iWKWCmS9Y1BAB",
+    "timestamp": 1794736920,
+    "type": 2,
+    "envelope": "0003210259ca1950ba0193e12db24ea7ad73b09483442c485e247d6e9125f1dd4c81df6a35289d8165f2c5ab898825634a9927b6c01bb46e3988985d87c18525e27b3dc12d9f2eda471fb42a5a314fb22bbd0b2f10bd24ae0e67f40c7ba6b8a2e7e44c8b4effb4224a16175d5c38d78b0fa80300580f8ac34cf57a74f1ade312a59606b40f7f9d813c5175ee7d276cefef25a440676eaec49bfde290232b040564361f4a4fdef46e616a56de3968efb448eb0fc6aacbd3cd654feed181f4d58567b6b78f960096c4cf14c55029402faaa84ef1b1ca0e301e76c73c3a12a7a96c395e31cf8513877a8de640ad2c7faeb1e2b38c4a299671d62a367fa81918bbb0f115200ef394b2d19d1ddb56e90580ad35cc158be7df2903c99bd8f62c707a2df4164b849b9f297961d35f263575d3ec4661d256d0fce2d73cb6c231bf01b92234a49ea8e4566a3d536a8a47a74b125c19a6f7dca97a750003278946548116b313d56a4b5de368f3e26feab7071202c541d6bd6d0c",
+    "signature": "3045022100a10231abbfaeb019f95b008808fd82575a0114a5d94d869a2bfc44d1bad75601022008d7d2f967f74fe0c2909f72be6582bf2bbd83d754a484aef8aafb90280a75d2",
+    "sender_pubkey": "036361e26b23bfe63c5208216a8252eecfe75de75d46fbb1ab73e3bcfff2e3c3a0"
+   },
+   "stops_at": {
+    "luis": "signature"
+   }
+  },
+  {
+   "name": "public_key_of_someone_else",
+   "what": "the message arrives with the public key of another member",
+   "message": {
+    "token": "&TEST/A",
+    "sender": "tLfoB6752dvwWHiUA7Jg5iWKWCmS9Y1BAB",
+    "timestamp": 1794736920,
+    "type": 2,
+    "envelope": "0003210259ca1950ba0193e12db24ea7ad73b09483442c485e247d6e9125f1dd4c81df6a35289d8165f2c5ab898825634a9927b6c01bb46e3988985d87c18525e27b3dc12d9f2eda471fb42a5a314fb22bbd0b2f10bd24ae0e67f40c7ba6b8a2e7e44c8b4effb4224a16175d5c38d78b0fa80300580f8ac34cf57a74f1ade312a59606b40f7f9d813c5175ee7d276cefef25a440676eaec49bfde290232b040564361f4a4fdef46e616a56de3968efb448eb0fc6aacbd3cd654feed181f4d58567b6b78f960096c4cf14c55029402faaa84ef1b1ca0e301e76c73c3a12a7a96c395e31cf8513877a8de640ad2c7faeb1e2b38c4a299671d62a367fa81918bbb0f115200ef394b2d19d1ddb56e90580ad35cc158be7df2903c99bd8f62c707a2df4164b849b9f297961d35f263575d3ec4661d256d0fce2d73cb6c231bf01b92234a49ea8e4566a3d536a8a47a74b125c19a6f7dca97a750003278946548116b313d56a4b5de368f3e26feab7071202c541d6bd6d0c",
+    "signature": "3045022100a10231abbfaeb019f95b008808fd82575a0114a5d94d869a2bfc44d1bad75601022008d7d2f967f74fe0c2909f72be6582bf2bbd83d754a484aef8aafb90280a75d3",
+    "sender_pubkey": "020efb3627f5b8df888966ce0fd378517c7d9de800ea8400b7c58b746b87f55eba"
+   },
+   "stops_at": {
+    "luis": "signer"
+   }
+  },
+  {
+   "name": "commitment_altered",
+   "what": "one bit of the commitment is changed; the author signs again",
+   "message": {
+    "token": "&TEST/A",
+    "sender": "tLfoB6752dvwWHiUA7Jg5iWKWCmS9Y1BAB",
+    "timestamp": 1794736920,
+    "type": 2,
+    "envelope": "0003210259ca1950ba0193e12db24ea7ad73b09483442c485e247d6e9125f1dd4c81df6a34289d8165f2c5ab898825634a9927b6c01bb46e3988985d87c18525e27b3dc12d9f2eda471fb42a5a314fb22bbd0b2f10bd24ae0e67f40c7ba6b8a2e7e44c8b4effb4224a16175d5c38d78b0fa80300580f8ac34cf57a74f1ade312a59606b40f7f9d813c5175ee7d276cefef25a440676eaec49bfde290232b040564361f4a4fdef46e616a56de3968efb448eb0fc6aacbd3cd654feed181f4d58567b6b78f960096c4cf14c55029402faaa84ef1b1ca0e301e76c73c3a12a7a96c395e31cf8513877a8de640ad2c7faeb1e2b38c4a299671d62a367fa81918bbb0f115200ef394b2d19d1ddb56e90580ad35cc158be7df2903c99bd8f62c707a2df4164b849b9f297961d35f263575d3ec4661d256d0fce2d73cb6c231bf01b92234a49ea8e4566a3d536a8a47a74b125c19a6f7dca97a750003278946548116b313d56a4b5de368f3e26feab7071202c541d6bd6d0c",
+    "signature": "3045022100c3f82b35421def330ed3b0e442ecefbca4551e55b03e32f35e742c6756cf6adb02205669c86505739bdee03f0fa748d7aef7183cb7ade0d9a2088a9a3b2cbd1cd8fb",
+    "sender_pubkey": "036361e26b23bfe63c5208216a8252eecfe75de75d46fbb1ab73e3bcfff2e3c3a0"
+   },
+   "stops_at": {
+    "luis": "commitment",
+    "marta": "commitment"
+   }
+  },
+  {
+   "name": "two_keys_commitment_to_the_first",
+   "what": "Luis is given another key; the commitment and the text are of the key of Ana and Marta",
+   "message": {
+    "token": "&TEST/A",
+    "sender": "tLfoB6752dvwWHiUA7Jg5iWKWCmS9Y1BAB",
+    "timestamp": 1794736920,
+    "type": 2,
+    "envelope": "0003210259ca1950ba0193e12db24ea7ad73b09483442c485e247d6e9125f1dd4c81df6a35289d8165f2c5ab898825634a9927b6c01bb46e3988985d87c18525e27b3dc12d9f2eda471fb42a5a314fb22bbd0b2f10bd24ae0e67f40c7ba6b8a2e7e44c8b4effb4224a16175d5c38d78b0fa80300580f8ac34cf57a74f1ade312a59606b40f7f9d813c5175ee7d276cefef25a44067edb8411e64dc193926a3186941b40715524a45d0378d0431a17cb39f2edf4f6520e953daa4c2d8030af362c27f17166c0096c4cf14c55029402faaa84ef1b1ca0e301e76c73c3a12a7a96c395e31cf8513877a8de640ad2c7faeb1e2b38c4a299671d62a367fa81918bbb0f115200ef394b2d19d1ddb56e90580ad35cc158be7df2903c99bd8f62c707a2df4164b849b9f297961d35f263575d3ec4661d256d0fce2d73cb6c231bf01b92234a49ea8e4566a3d536a8a47a74b125c19a6f7dca97a750003278946548116b313d56a4b5de368f3e26feab7071202c541d6bd6d0c",
+    "signature": "3045022100ece927f71eb89630c9ffc980fde6d0438f474f2a38b1b60d920adb7e1cf29106022074a1efd47288b3d3c12b332506155ee32ce3b6df646c8616ec565b585b2ef7ff",
+    "sender_pubkey": "036361e26b23bfe63c5208216a8252eecfe75de75d46fbb1ab73e3bcfff2e3c3a0"
+   },
+   "stops_at": {
+    "ana": "ok",
+    "marta": "ok",
+    "luis": "commitment"
+   }
+  },
+  {
+   "name": "two_keys_commitment_to_the_second",
+   "what": "Luis is given another key; the commitment is of his key, the text of the other",
+   "message": {
+    "token": "&TEST/A",
+    "sender": "tLfoB6752dvwWHiUA7Jg5iWKWCmS9Y1BAB",
+    "timestamp": 1794736920,
+    "type": 2,
+    "envelope": "0003210259ca1950ba0193e12db24ea7ad73b09483442c485e247d6e9125f1dd4c81df6a34832cf71161ce5e82738ed18bacabe5c5501e4e883b090cf884536bca9ca0292d9f2eda471fb42a5a314fb22bbd0b2f10bd24ae0e67f40c7ba6b8a2e7e44c8b4effb4224a16175d5c38d78b0fa80300580f8ac34cf57a74f1ade312a59606b40f7f9d813c5175ee7d276cefef25a44067edb8411e64dc193926a3186941b40715524a45d0378d0431a17cb39f2edf4f6520e953daa4c2d8030af362c27f17166c0096c4cf14c55029402faaa84ef1b1ca0e301e76c73c3a12a7a96c395e31cf8513877a8de640ad2c7faeb1e2b38c4a299671d62a367fa81918bbb0f115200ef394b2d19d1ddb56e90580ad35cc158be7df2903c99bd8f62c707a2df4164b849b9f297961d35f263575d3ec4661d256d0fce2d73cb6c231bf01b92234a49ea8e4566a3d536a8a47a74b125c19a6f7dca97a750003278946548116b313d56a4b5de368f3e26feab7071202c541d6bd6d0c",
+    "signature": "304402203ff9216f82d5d40007bd3e24cf7e467ab6898673351c61b51816fe63dcbbab01022012a3d1a86803087ab9f4680a243d9b419a24d5a764da444f82a0ef3cb7dd385f",
+    "sender_pubkey": "036361e26b23bfe63c5208216a8252eecfe75de75d46fbb1ab73e3bcfff2e3c3a0"
+   },
+   "stops_at": {
+    "ana": "commitment",
+    "marta": "commitment",
+    "luis": "decrypt"
+   }
+  },
+  {
+   "name": "two_keys_commitment_to_neither",
+   "what": "Luis is given another key; the commitment is of a third key",
+   "message": {
+    "token": "&TEST/A",
+    "sender": "tLfoB6752dvwWHiUA7Jg5iWKWCmS9Y1BAB",
+    "timestamp": 1794736920,
+    "type": 2,
+    "envelope": "0003210259ca1950ba0193e12db24ea7ad73b09483442c485e247d6e9125f1dd4c81df6af44a278c697741266117cfd0c9793e0550e8a1d11e9e8ea1405f63dfb052e09d2d9f2eda471fb42a5a314fb22bbd0b2f10bd24ae0e67f40c7ba6b8a2e7e44c8b4effb4224a16175d5c38d78b0fa80300580f8ac34cf57a74f1ade312a59606b40f7f9d813c5175ee7d276cefef25a44067edb8411e64dc193926a3186941b40715524a45d0378d0431a17cb39f2edf4f6520e953daa4c2d8030af362c27f17166c0096c4cf14c55029402faaa84ef1b1ca0e301e76c73c3a12a7a96c395e31cf8513877a8de640ad2c7faeb1e2b38c4a299671d62a367fa81918bbb0f115200ef394b2d19d1ddb56e90580ad35cc158be7df2903c99bd8f62c707a2df4164b849b9f297961d35f263575d3ec4661d256d0fce2d73cb6c231bf01b92234a49ea8e4566a3d536a8a47a74b125c19a6f7dca97a750003278946548116b313d56a4b5de368f3e26feab7071202c541d6bd6d0c",
+    "signature": "3044022001cc4942ca7de379fa0fc9d5bb94f1b60768991d3c2a23d7590f3b25368ae6c402204135f4e36308a7313aacfd6e79714d0136900066e6241f7242ef34ca265213b6",
+    "sender_pubkey": "036361e26b23bfe63c5208216a8252eecfe75de75d46fbb1ab73e3bcfff2e3c3a0"
+   },
+   "stops_at": {
+    "ana": "commitment",
+    "marta": "commitment",
+    "luis": "commitment"
+   }
+  },
+  {
+   "name": "wrapped_keys_swapped",
+   "what": "the wrapped keys of Ana and Luis change places; the author signs again",
+   "message": {
+    "token": "&TEST/A",
+    "sender": "tLfoB6752dvwWHiUA7Jg5iWKWCmS9Y1BAB",
+    "timestamp": 1794736920,
+    "type": 2,
+    "envelope": "0003210259ca1950ba0193e12db24ea7ad73b09483442c485e247d6e9125f1dd4c81df6a35289d8165f2c5ab898825634a9927b6c01bb46e3988985d87c18525e27b3dc12d9f2eda471fb42a5a314fb22bbd0b2f10bd24ae0e67f40c7ba6b8a2e7e44c8b4effb4224a16175d5c38d78b0fa80300580f8ac34cf57a74f1ade312a59606b40f7f9d813c3a12a7a96c395e31cf8513877a8de640ad2c7faeb1e2b38c4a299671d62a367fa81918bbb0f115200ef394b2d19d1ddb56e90580ad35cc158be7df290096c4cf14c55029402faaa84ef1b1ca0e301e76c73c5175ee7d276cefef25a440676eaec49bfde290232b040564361f4a4fdef46e616a56de3968efb448eb0fc6aacbd3cd654feed181f4d58567b6b78f9603c99bd8f62c707a2df4164b849b9f297961d35f263575d3ec4661d256d0fce2d73cb6c231bf01b92234a49ea8e4566a3d536a8a47a74b125c19a6f7dca97a750003278946548116b313d56a4b5de368f3e26feab7071202c541d6bd6d0c",
+    "signature": "304402203c88a1f2ef9de17790c6be791eb530091a414bacd6bc8e8349688a32d187131a02200e0c8db79b8675fcee71153cea506805e9b2d9caf3acc43d92be7633420df2e4",
+    "sender_pubkey": "036361e26b23bfe63c5208216a8252eecfe75de75d46fbb1ab73e3bcfff2e3c3a0"
+   },
+   "stops_at": {
+    "ana": "unwrap",
+    "luis": "unwrap",
+    "marta": "ok"
+   }
+  },
+  {
+   "name": "text_sealed_under_another_header",
+   "what": "the keys are derived with the header, the text sealed with another",
+   "message": {
+    "token": "&TEST/A",
+    "sender": "tLfoB6752dvwWHiUA7Jg5iWKWCmS9Y1BAB",
+    "timestamp": 1794736920,
+    "type": 2,
+    "envelope": "0003210259ca1950ba0193e12db24ea7ad73b09483442c485e247d6e9125f1dd4c81df6a35289d8165f2c5ab898825634a9927b6c01bb46e3988985d87c18525e27b3dc12d9f2eda471fb42a5a314fb22bbd0b2f10bd24ae0e67f40c7ba6b8a2e7e477e39e184586cb4692392c2a99205a910300580f8ac34cf57a74f1ade312a59606b40f7f9d813c5175ee7d276cefef25a440676eaec49bfde290232b040564361f4a4fdef46e616a56de3968efb448eb0fc6aacbd3cd654feed181f4d58567b6b78f960096c4cf14c55029402faaa84ef1b1ca0e301e76c73c3a12a7a96c395e31cf8513877a8de640ad2c7faeb1e2b38c4a299671d62a367fa81918bbb0f115200ef394b2d19d1ddb56e90580ad35cc158be7df2903c99bd8f62c707a2df4164b849b9f297961d35f263575d3ec4661d256d0fce2d73cb6c231bf01b92234a49ea8e4566a3d536a8a47a74b125c19a6f7dca97a750003278946548116b313d56a4b5de368f3e26feab7071202c541d6bd6d0c",
+    "signature": "3045022100a60491cbe638b8a2a94f543c99babb25fc26b68d47968fc1671f6c00bec3254202207d1a43392e3c8b4ce91d8ad7ff9f88bbc9a63a712e646a48123c44785d8fae51",
+    "sender_pubkey": "036361e26b23bfe63c5208216a8252eecfe75de75d46fbb1ab73e3bcfff2e3c3a0"
+   },
+   "stops_at": {
+    "luis": "decrypt"
+   }
+  },
+  {
+   "name": "not_a_recipient",
+   "what": "a valid message read by someone it is not encrypted for",
+   "message": {
+    "token": "&TEST/A",
+    "sender": "tLfoB6752dvwWHiUA7Jg5iWKWCmS9Y1BAB",
+    "timestamp": 1794736920,
+    "type": 2,
+    "envelope": "0003210259ca1950ba0193e12db24ea7ad73b09483442c485e247d6e9125f1dd4c81df6a35289d8165f2c5ab898825634a9927b6c01bb46e3988985d87c18525e27b3dc12d9f2eda471fb42a5a314fb22bbd0b2f10bd24ae0e67f40c7ba6b8a2e7e44c8b4effb4224a16175d5c38d78b0fa8010096c4cf14c55029402faaa84ef1b1ca0e301e76c73c3a12a7a96c395e31cf8513877a8de640ad2c7faeb1e2b38c4a299671d62a367fa81918bbb0f115200ef394b2d19d1ddb56e90580ad35cc158be7df29",
+    "signature": "3044022058ea2399b2b7331e74db54371781ab0984c4ba0bbb547ba2240891d386fbd82102203b0d92a526d36d83342791c41d674e11d02f4fa25aa1ef4704c0221cc5ee171d",
+    "sender_pubkey": "036361e26b23bfe63c5208216a8252eecfe75de75d46fbb1ab73e3bcfff2e3c3a0"
+   },
+   "stops_at": {
+    "ana": "ok",
+    "luis": "recipient"
+   }
+  },
+  {
+   "name": "format_2_prefix",
+   "what": "the envelope says it is format 2; the author signs again",
+   "message": {
+    "token": "&TEST/A",
+    "sender": "tLfoB6752dvwWHiUA7Jg5iWKWCmS9Y1BAB",
+    "timestamp": 1794736920,
+    "type": 2,
+    "envelope": "0002210259ca1950ba0193e12db24ea7ad73b09483442c485e247d6e9125f1dd4c81df6a35289d8165f2c5ab898825634a9927b6c01bb46e3988985d87c18525e27b3dc12d9f2eda471fb42a5a314fb22bbd0b2f10bd24ae0e67f40c7ba6b8a2e7e44c8b4effb4224a16175d5c38d78b0fa80300580f8ac34cf57a74f1ade312a59606b40f7f9d813c5175ee7d276cefef25a440676eaec49bfde290232b040564361f4a4fdef46e616a56de3968efb448eb0fc6aacbd3cd654feed181f4d58567b6b78f960096c4cf14c55029402faaa84ef1b1ca0e301e76c73c3a12a7a96c395e31cf8513877a8de640ad2c7faeb1e2b38c4a299671d62a367fa81918bbb0f115200ef394b2d19d1ddb56e90580ad35cc158be7df2903c99bd8f62c707a2df4164b849b9f297961d35f263575d3ec4661d256d0fce2d73cb6c231bf01b92234a49ea8e4566a3d536a8a47a74b125c19a6f7dca97a750003278946548116b313d56a4b5de368f3e26feab7071202c541d6bd6d0c",
+    "signature": "3045022100d27a60741e0814781dd8d8fd8a54516c8973273ac9055d9973fb7f03645b8e5302207b4d48b87b3a0c18811d4c5ea14d71f7a8b8cdd45c861337c4d7c412dac78ea2",
+    "sender_pubkey": "036361e26b23bfe63c5208216a8252eecfe75de75d46fbb1ab73e3bcfff2e3c3a0"
+   },
+   "stops_at": {
+    "luis": "format"
+   }
+  },
+  {
+   "name": "trailing_byte",
+   "what": "one byte after the last recipient; the author signs again",
+   "message": {
+    "token": "&TEST/A",
+    "sender": "tLfoB6752dvwWHiUA7Jg5iWKWCmS9Y1BAB",
+    "timestamp": 1794736920,
+    "type": 2,
+    "envelope": "0003210259ca1950ba0193e12db24ea7ad73b09483442c485e247d6e9125f1dd4c81df6a35289d8165f2c5ab898825634a9927b6c01bb46e3988985d87c18525e27b3dc12d9f2eda471fb42a5a314fb22bbd0b2f10bd24ae0e67f40c7ba6b8a2e7e44c8b4effb4224a16175d5c38d78b0fa80300580f8ac34cf57a74f1ade312a59606b40f7f9d813c5175ee7d276cefef25a440676eaec49bfde290232b040564361f4a4fdef46e616a56de3968efb448eb0fc6aacbd3cd654feed181f4d58567b6b78f960096c4cf14c55029402faaa84ef1b1ca0e301e76c73c3a12a7a96c395e31cf8513877a8de640ad2c7faeb1e2b38c4a299671d62a367fa81918bbb0f115200ef394b2d19d1ddb56e90580ad35cc158be7df2903c99bd8f62c707a2df4164b849b9f297961d35f263575d3ec4661d256d0fce2d73cb6c231bf01b92234a49ea8e4566a3d536a8a47a74b125c19a6f7dca97a750003278946548116b313d56a4b5de368f3e26feab7071202c541d6bd6d0c00",
+    "signature": "3045022100f2263213d1179716d3cdeabb66bb3f7ecbec550b7690d822443db2f7ae8d796402200a44ac1a3c5cf5010ef02eea725a8a39106b8011bafba918a48d73deaac04c12",
+    "sender_pubkey": "036361e26b23bfe63c5208216a8252eecfe75de75d46fbb1ab73e3bcfff2e3c3a0"
+   },
+   "stops_at": {
+    "luis": "format"
+   }
+  }
+ ],
+ "transport": {
+  "reply_context": "190aea71db2d6854407db34f891d3b7e80ba010e76e54d63aa603172120d229d",
+  "submit_context": "5c42be44fe533e05db84a3c087a9f45e34e68f6e26287676019c7d390ed46b0b",
+  "reply": {
+   "recipient": "luis",
+   "plaintext": "7b22726573756c74223a226f6b227d",
+   "envelope": "00032102babebcbcdf6550ddea78bd38c0d5641b490bf52b09334d57afe1424767aaba413d348063ba92ee5213d9e7b9f4246b57fb30405f8193bd942df8e22188444ce32bd3768a79f666ffd7ad7a5149ad6641baae152d05ea451526259befd343eda7cfaeea4caae0860b3f224aab0100580f8ac34cf57a74f1ade312a59606b40f7f9d813c0b5dc0b15a74426462c8d50d7d56bf1a71c67817ebedb4e196e78877582a002c8b55797c1b5852c4e188963c9d425aed94d7f13b966e40d03481544d",
+   "opens_with": "reply_context",
+   "stops_at": {
+    "submit_context": "unwrap",
+    "as_a_message": "unwrap"
+   }
+  }
+ }
+}

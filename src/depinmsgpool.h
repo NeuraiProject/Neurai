@@ -22,6 +22,7 @@
 #include "depinchallenge.h"
 #include "depinserialization.h"
 #include "depinaddress.h"
+#include "depinecies.h"
 
 class CWallet;
 
@@ -71,9 +72,6 @@ static const unsigned int DEFAULT_DEPIN_POOL_SENDER_SIZE_MB = 10;
 // When the pool, or the space of a sender, is full: drop the oldest messages
 // to admit the new one, instead of refusing it.
 static const bool DEFAULT_DEPIN_POOL_ROLLING = false;
-static const uint32_t DEPINPOOL_MAGIC_BYTES = 0xD0D1D2D3;
-// Legacy flat file only; current transactional state is version 2.
-static const uint32_t DEPINPOOL_FILE_VERSION = 1;
 
 // Ancestor-recipient queries (GetDepinAncestorRecipients, below).
 // These are query limits, NOT messaging limits: they have nothing to do with
@@ -95,14 +93,11 @@ static const size_t MAX_DEPIN_ANCESTOR_SCAN_ROWS = 100000;
 // corrupted input from producing an unbounded vector.
 static const size_t MAX_DEPIN_ANCESTOR_DEPTH = 64;
 
-// Primary chat message structure with ECIES hybrid encryption
-// Uses a single CECIESEncryptedMessage shared by all recipients
-// The ECIES structure contains:
-//   - encryptedPayload: AES-256-GCM [nonce (12) || ciphertext || tag (16)]
-//   - recipientKeys: exact typed destination -> GCM-wrapped AES key (60 bytes:
-//     nonce (12) || encrypted_AES_key (32) || tag (16))
-// Each recipient can decrypt the AES key with their private key,
-// then decrypt the shared payload.
+// A DePIN message: a signed header and one envelope shared by all its
+// recipients (CECIESEncryptedMessage, format 3). The envelope is made under
+// the context of the header, so it only opens with the header it was made
+// for. The hash covers that context and the envelope; it identifies the
+// message and is what the sender signs.
 class CDepinMessage {
 public:
     std::string token;                      // Required token
@@ -138,6 +133,8 @@ public:
     bool IsPrivateMessage() const { return messageType == 0x01; }
     bool IsGroupMessage() const { return messageType == 0x02; }
 
+    //! What the envelope is bound to: this header, on this network
+    uint256 GetContext() const;
     uint256 GetHash() const;
     bool IsExpired(int64_t currentTime, int64_t expiryTimeSeconds) const;
     std::string ToString() const;
@@ -153,6 +150,9 @@ public:
         READWRITE(signature);
     }
 };
+
+/** SHA-256d( context || var(envelope) ): the identifier of a message, and what its sender signs */
+uint256 DepinMessageHash(const uint256& context, const std::vector<unsigned char>& envelope);
 
 // The serialized user message remains unchanged. Only its decoder is bounded.
 static const size_t MAX_DEPIN_MESSAGE_WIRE_BYTES = 16384;
@@ -582,22 +582,51 @@ std::vector<CDepinMessage> FilterDepinMessagesForAddress(const std::vector<const
                                                          const DepinRecipient* recipient,
                                                          const std::string& scopeToken = "");
 
-// Encrypt message for ALL recipients at once (ECIES hybrid encryption)
-// Creates a single CECIESEncryptedMessage with:
-//   - Message encrypted once with AES
-//   - AES key encrypted for each recipient
+// One envelope for all the recipients, under `context`: the context of the
+// header the message will be published with (CDepinMessage::GetContext), so
+// set the token, sender, time and type before encrypting.
 bool EncryptMessageForAllRecipients(const std::string& message,
                                      const std::vector<std::string>& recipientAddresses,
+                                     const uint256& context,
                                      std::vector<unsigned char>& encryptedData,
                                      std::string& error);
 
-// Decrypt message for a specific address
-// Extracts the recipient's encrypted AES key from CECIESEncryptedMessage,
-// decrypts it with private key, then decrypts the shared payload
-bool DecryptMessageForAddress(const std::vector<unsigned char>& encryptedData,
+// Open a message with the wallet key of `address`, under the context of its
+// header. `failure` tells a message that is not for this address from one
+// that is and is not authentic (IsDepinEnvelopeForged).
+bool DecryptMessageForAddress(const CDepinMessage& message,
                                const std::string& address,
                                std::string& decryptedMessage,
-                               std::string& error, CWallet* wallet = nullptr);
+                               std::string& error, CWallet* wallet = nullptr,
+                               DepinOpenFailure* failure = nullptr);
+
+/** Where a reader stops with a message, in the order it checks */
+enum class DepinReadStage {
+    FORMAT,     //!< the envelope is not format 3
+    EXPECTED,   //!< the message is not in the section being read
+    SIGNER,     //!< the public key is not the sender's
+    SIGNATURE,  //!< the signature is not valid
+    KEY,        //!< the reader's own key is not usable
+    RECIPIENT,  //!< the message is not for this reader: not an error
+    UNWRAP,     //!< addressed to this reader and not authentic
+    COMMITMENT, //!< addressed to this reader and not authentic
+    DECRYPT,    //!< addressed to this reader and not authentic
+    OK,
+};
+std::string DepinReadStageName(DepinReadStage stage);
+
+/**
+ * Read a message as its recipient does (doc/depin-messaging-protocol.md):
+ * well-formed envelope, inside `scope` when one is given, `senderKey` belongs
+ * to the sender, the signature over the hash is valid, and the envelope opens
+ * for `recipient` under the context of the header. `network` defaults to the
+ * network of this node. Only OK gives a text.
+ */
+DepinReadStage ReadDepinMessage(const CDepinMessage& message, const CPubKey& senderKey,
+                                const CKey& recipientKey, const DepinRecipient& recipient,
+                                std::string& plaintext, std::string& error,
+                                const std::string* scope = nullptr,
+                                const std::vector<unsigned char>* network = nullptr);
 
 
 

@@ -1,14 +1,24 @@
 # Copyright (c) 2026 The Neurai developers
 # Distributed under the MIT software license, see COPYING.
-"""Independent protocol-5 test client; no project client libraries or C++ codec."""
+"""Independent protocol 6 test client; no project client libraries or C++ codec.
+
+It builds and opens envelopes of format 3 itself: secp256k1 from the test
+framework, HKDF and SHA-256 from hashlib, AES-GCM from the system OpenSSL.
+"""
 import copy
+import ctypes
+import ctypes.util
 import hashlib
+import hmac
 import json
 import os
 import re
 import struct
 import time
 from test_framework.authproxy import JSONRPCException
+from test_framework.key import ECKey, ECPubKey, SECP256K1
+
+PROTOCOL = 6
 
 
 def blob(value):
@@ -57,14 +67,110 @@ def request_bytes(method, request):
     if method == 'depinclearmsg' and not r['token']:
         r['token'] = r['pool_root']
     kind, args = arguments(method, r)
-    return (text('Neurai/DePIN/RPC/request') + struct.pack('<H', 5) + text(method) + bytes([kind]) +
+    return (text('Neurai/DePIN/RPC/request') + struct.pack('<H', PROTOCOL) + text(method) + bytes([kind]) +
             bytes.fromhex(r['network']) + blob(bytes.fromhex(r['pool_pubkey'])) + text(r['pool_root']) +
             bytes.fromhex(r['instance_id']) + bytes.fromhex(r['membership_revision']) + bytes.fromhex(r['request_id']) + struct.pack('<q', r['timestamp_ms']) +
             text(r['token']) + text(r['address']) + blob(bytes.fromhex(r['challenge'])) + blob(args))
 
 
 def preimage(method, request):
-    return 'DEPIN-RPC-REQUEST-v5|' + digest(request_bytes(method, request)).hex()
+    return 'DEPIN-RPC-REQUEST-v%d|' % PROTOCOL + digest(request_bytes(method, request)).hex()
+
+
+# --- Envelope format 3 --------------------------------------------------------
+
+MESSAGE_TAG = 'Neurai/DePIN/message/v3'
+REPLY_TAG = 'Neurai/DePIN/reply/v3'
+SUBMIT_TAG = 'Neurai/DePIN/submit/v3'
+WRAP_TAG = 'Neurai/DePIN/wrap/v3'
+COMMIT_TAG = 'Neurai/DePIN/commit/v3'
+
+
+def compact(size):
+    if size < 253:
+        return bytes([size])
+    if size <= 0xffff:
+        return b'\xfd' + struct.pack('<H', size)
+    return b'\xfe' + struct.pack('<I', size)
+
+
+def var(data):
+    """Bytes with their CompactSize length in front, as the node serializes them."""
+    return compact(len(data)) + data
+
+
+def label(value):
+    return var(value.encode('ascii'))
+
+
+def message_context(network, token, sender, timestamp, kind):
+    """What a message envelope is bound to: its signed header on one network."""
+    return digest(label(MESSAGE_TAG) + network + var(token.encode()) + var(sender.encode()) +
+                  struct.pack('<qB', timestamp, kind))
+
+
+def transport_context(tag, network):
+    return digest(label(tag) + network)
+
+
+def message_hash(context, envelope):
+    return digest(digest(context + var(envelope)))
+
+
+def aes_gcm(key, nonce, plaintext, aad=b''):
+    """nonce || ciphertext || tag, with the system OpenSSL."""
+    crypto = ctypes.CDLL(ctypes.util.find_library('crypto'))
+    pointer = ctypes.c_void_p
+    crypto.EVP_CIPHER_CTX_new.restype = pointer
+    crypto.EVP_aes_256_gcm.restype = pointer
+    crypto.EVP_CIPHER_CTX_free.argtypes = [pointer]
+    crypto.EVP_EncryptInit_ex.argtypes = [pointer, pointer, pointer, pointer, pointer]
+    crypto.EVP_EncryptUpdate.argtypes = [pointer, pointer, pointer, pointer, ctypes.c_int]
+    crypto.EVP_EncryptFinal_ex.argtypes = [pointer, pointer, pointer]
+    crypto.EVP_CIPHER_CTX_ctrl.argtypes = [pointer, ctypes.c_int, ctypes.c_int, pointer]
+    context = crypto.EVP_CIPHER_CTX_new()
+    assert context
+    output = ctypes.create_string_buffer(len(plaintext) + 16)
+    count, final = ctypes.c_int(), ctypes.c_int()
+    tag = ctypes.create_string_buffer(16)
+    try:
+        assert crypto.EVP_EncryptInit_ex(context, crypto.EVP_aes_256_gcm(), None, None, None) == 1
+        assert crypto.EVP_CIPHER_CTX_ctrl(context, 9, 12, None) == 1  # SET_IVLEN
+        assert crypto.EVP_EncryptInit_ex(context, None, None, ctypes.create_string_buffer(key), ctypes.create_string_buffer(nonce)) == 1
+        if aad:
+            assert crypto.EVP_EncryptUpdate(context, None, ctypes.byref(count), ctypes.create_string_buffer(aad), len(aad)) == 1
+        assert crypto.EVP_EncryptUpdate(context, output, ctypes.byref(count), ctypes.create_string_buffer(plaintext), len(plaintext)) == 1
+        assert crypto.EVP_EncryptFinal_ex(context, ctypes.byref(output, count.value), ctypes.byref(final)) == 1
+        assert crypto.EVP_CIPHER_CTX_ctrl(context, 16, 16, tag) == 1  # GET_TAG
+        return nonce + output.raw[:count.value + final.value] + tag.raw
+    finally:
+        crypto.EVP_CIPHER_CTX_free(context)
+
+
+def legacy_recipient(pubkey):
+    """The recipient id of the Legacy address of a public key."""
+    return b'\x00' + hashlib.new('ripemd160', digest(pubkey)).digest()
+
+
+def seal(plaintext, recipients, context):
+    """An envelope of format 3 for [(public key, recipient id)], bound to `context`."""
+    ephemeral = ECKey()
+    ephemeral.generate()
+    ephemeral_public = ephemeral.get_pubkey().get_bytes()
+    content_key = os.urandom(32)
+    payload = aes_gcm(content_key, os.urandom(12), plaintext, context)
+    entries = []
+    for raw, recipient in recipients:
+        public = ECPubKey()
+        public.set(raw)
+        point = SECP256K1.affine(SECP256K1.mul([(public.p, ephemeral.secret)]))
+        shared = digest(bytes([2 + (point[1] & 1)]) + point[0].to_bytes(32, 'big'))
+        prk = hmac.new(context, shared, hashlib.sha256).digest()
+        wrap_key = hmac.new(prk, label(WRAP_TAG) + var(ephemeral_public) + var(recipient) + b'\x01', hashlib.sha256).digest()
+        entries.append((recipient, aes_gcm(wrap_key, os.urandom(12), content_key)))
+    commitment = digest(label(COMMIT_TAG) + context + content_key)
+    return (b'\x00\x03' + var(ephemeral_public) + commitment + var(payload) + compact(len(entries)) +
+            b''.join(recipient + var(wrapped) for recipient, wrapped in sorted(entries)))
 
 
 def pool_address(pubkey):
@@ -82,11 +188,11 @@ def pool_address(pubkey):
 def response_preimage(method, response):
     kind = response['body_kind']
     body = bytes.fromhex(response['encrypted' if kind else 'body'])
-    q = (text('Neurai/DePIN/RPC/response') + struct.pack('<H', 5) + text(method) +
+    q = (text('Neurai/DePIN/RPC/response') + struct.pack('<H', PROTOCOL) + text(method) +
          bytes.fromhex(response['network']) + blob(bytes.fromhex(response['pool_pubkey'])) + text(response['pool_root']) +
          bytes.fromhex(response['instance_id']) + bytes.fromhex(response['membership_revision']) +
          struct.pack('<q', response['membership_height']) + bytes.fromhex(response['membership_blockhash']) + bytes.fromhex(response['request_hash']) + bytes([kind]) + blob(body))
-    return 'DEPIN-RPC-RESPONSE-v5|' + digest(q).hex()
+    return 'DEPIN-RPC-RESPONSE-v%d|' % PROTOCOL + digest(q).hex()
 
 
 class DepinClient:
@@ -95,7 +201,7 @@ class DepinClient:
         self.wallet = wallet or node
 
     def verify(self, method, request, response, pinned=None):
-        assert response['protocol'] == 5
+        assert response['protocol'] == PROTOCOL
         assert response['body_kind'] in (0, 1)
         assert set(response) == {'protocol', 'network', 'pool_pubkey', 'pool_root', 'instance_id',
                                  'membership_revision', 'membership_height', 'membership_blockhash',
@@ -126,7 +232,7 @@ class DepinClient:
         return result
 
     def bootstrap(self):
-        r = {'protocol': 5, 'request_id': os.urandom(32).hex(), 'timestamp_ms': int(time.time()*1000)}
+        r = {'protocol': PROTOCOL, 'request_id': os.urandom(32).hex(), 'timestamp_ms': int(time.time()*1000)}
         response = self.node.depingetmsginfo(r)
         info = self.verify('depingetmsginfo', r, response)
         assert info['network'] == response['network'] and info['instance_id'] == response['instance_id']
@@ -140,7 +246,7 @@ class DepinClient:
         else:
             timestamp = int(time.time()*1000)
         r = {key: identity[key] for key in ['network', 'pool_pubkey', 'pool_root', 'instance_id', 'membership_revision']}
-        r.update(protocol=5, request_id=os.urandom(32).hex(), timestamp_ms=timestamp,
+        r.update(protocol=PROTOCOL, request_id=os.urandom(32).hex(), timestamp_ms=timestamp,
                  token=token, address=address, challenge=nonce, args=args or {}, signature='')
         if arguments(method, r)[0]:
             expected = preimage(method, r)
