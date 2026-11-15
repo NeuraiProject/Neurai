@@ -1088,6 +1088,15 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         entry.SetPoseidonWork(consensusPoseidonWork ? consensusPoseidonWork->Used() : 0);
         entry.SetAssetAuthWork(consensusAssetAuthWork ? consensusAssetAuthWork->Used() : 0);
 
+        // NIP-026: every entry that exercised OP_CHAINCONTEXT runs its scripts
+        // again at each tip change, on one thread and under cs_main. Bound the
+        // weight of those entries so that this work stays bounded too.
+        if (fUsesChainContext_local) {
+            const int64_t nMaxChainContextWeight = gArgs.GetArg("-maxmempoolchaincontext", DEFAULT_MAX_MEMPOOL_CHAINCONTEXT_WEIGHT);
+            if ((int64_t)(pool.GetChainContextWeight() + entry.GetTxWeight()) > nMaxChainContextWeight)
+                return state.DoS(0, false, REJECT_NONSTANDARD, "chaincontext-mempool-full");
+        }
+
         // DEPIN: at most one pending transfer state operation per asset in
         // the mempool. Checked here, under pool.cs, before anything is
         // inserted: a second operation is rejected without mutating the pool
@@ -1911,17 +1920,11 @@ void InitScriptExecutionCache() {
             (nElems*sizeof(uint256)) >>20, (nMaxCacheSize*2)>>20, nElems);
 }
 
-// NIP-026: invalidate the entire script-execution cache by rotating the
-// per-process nonce. The nonce is mixed into every cache key
-// (scriptExecutionCache at line 1748), so a rotation makes all prior
-// entries unreachable without touching storage. Called on each tip
-// change so that OP_CHAINCONTEXT results tied to HEIGHT / MTP cannot
-// be re-served after the tip advances. Gated by callers on a scheduled
-// nCHAINCONTEXTEnabled to avoid a pointless perf regression on chains
-// where the opcode is not scheduled.
-static void FlushScriptExecutionCache() {
-    scriptExecutionCacheNonce = GetRandHash();
-}
+// NIP-026: the script-execution cache is not flushed on tip changes. A result
+// that read the chain position (OP_CHAINCONTEXT, or OP_CHECKASSETAUTH using
+// the height) is never stored there (see CheckInputs), so every cached entry
+// stays valid at any tip, and transactions already checked in the mempool are
+// not executed again by every block template and block.
 
 // NIP-026: drive mempool eviction of OP_CHAINCONTEXT-using entries that
 // no longer validate against the new tip. Called from ConnectTip /
@@ -2296,13 +2299,30 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
             static_assert(55 - sizeof(flagsInt) - 32 >= 120/8, "Want at least 120 bits of nonce for script execution cache");
             CSHA256().Write(scriptExecutionCacheNonce.begin(), 55 - sizeof(flagsInt) - 32).Write(tx.GetWitnessHash().begin(), 32).Write((unsigned char*)&flagsInt, sizeof(flagsInt)).Finalize(hashCacheEntry.begin());
             AssertLockHeld(cs_main); //TODO: Remove this requirement by making CuckooCache not require external locks
-            // This cache stores validity only, not resource cost. Re-execute
-            // metered scripts; the separate signature cache remains usable.
-            // NIP-054: the same holds for metered OP_CHECKASSETAUTH executions.
+            // This cache records validity, not resource cost. An execution
+            // that is metered (Poseidon work, NIP-054 OP_CHECKASSETAUTH work)
+            // may only be skipped when an earlier execution under the same
+            // flags charged no metered work at all, because it then adds
+            // nothing to any budget. Those records live under their own key,
+            // which also names the meters that were present: a zero measured
+            // by one meter says nothing about a meter that was absent.
+            // Without this, every block template and every block re-executed
+            // all the scripts of transactions already checked in the mempool.
             const bool fMeteredAssetAuth = assetAuthWork && TxMayExecuteAssetAuth(tx);
-            if (!poseidonWork && !fMeteredAssetAuth && scriptExecutionCache.contains(hashCacheEntry, !cacheFullScriptStore)) {
+            const bool fMetered = poseidonWork || fMeteredAssetAuth;
+            uint256 hashZeroWorkEntry;
+            if (fMetered) {
+                static const unsigned char ZERO_WORK_TAG[] = "zero-metered-work";
+                const unsigned char meters = (poseidonWork ? 1 : 0) | (assetAuthWork ? 2 : 0);
+                CSHA256().Write(hashCacheEntry.begin(), 32).Write(ZERO_WORK_TAG, sizeof(ZERO_WORK_TAG) - 1)
+                    .Write(&meters, 1).Finalize(hashZeroWorkEntry.begin());
+            }
+            if (scriptExecutionCache.contains(fMetered ? hashZeroWorkEntry : hashCacheEntry, !cacheFullScriptStore)) {
                 return true;
             }
+            const uint64_t nPoseidonUsedBefore = poseidonWork ? poseidonWork->Used() : 0;
+            const uint64_t nAssetAuthUsedBefore = assetAuthWork ? assetAuthWork->Used() : 0;
+            bool fObservedChainContext = false;
 
             std::shared_ptr<std::vector<CTxOut>> pAllPrevouts;
             // Prevouts feed every opcode that reads sibling inputs:
@@ -2370,16 +2390,25 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                     // AcceptToMemoryPool forgives the peer.
 
                     return state.DoS(100,false, REJECT_INVALID, strprintf("mandatory-script-verify-flag-failed (%s)", ScriptErrorString(check.GetScriptError())));
-                } else if (pfUsesChainContext) {
+                } else {
                     // Success path — record observation for the mempool.
-                    *pfUsesChainContext |= check.fChainContextObserved;
+                    fObservedChainContext |= check.fChainContextObserved;
+                    if (pfUsesChainContext) *pfUsesChainContext |= check.fChainContextObserved;
                 }
             }
 
-            if (cacheFullScriptStore && !pvChecks && !poseidonWork && !fMeteredAssetAuth) {
-                // We executed all of the provided scripts, and were told to
-                // cache the result. Do so now.
-                scriptExecutionCache.insert(hashCacheEntry);
+            // We executed all of the provided scripts, and were told to cache
+            // the result. A result that depends on the chain position
+            // (OP_CHAINCONTEXT, or OP_CHECKASSETAUTH reading the height) is
+            // not a property of the transaction and is never stored. Scripts
+            // ran inline here, so the budgets' growth is this transaction's.
+            if (cacheFullScriptStore && !pvChecks && !fObservedChainContext) {
+                if (!fMetered) {
+                    scriptExecutionCache.insert(hashCacheEntry);
+                } else if ((!poseidonWork || poseidonWork->Used() == nPoseidonUsedBefore) &&
+                           (!assetAuthWork || assetAuthWork->Used() == nAssetAuthUsedBefore)) {
+                    scriptExecutionCache.insert(hashZeroWorkEntry);
+                }
             }
         }
     }
@@ -4237,13 +4266,10 @@ bool static DisconnectTip(CValidationState& state, const CChainParams& chainpara
     if (!disconnectpool) {
         g_fScriptRuleTransitionPending = false;
     }
-    // NIP-026: flush the script-execution cache so that HEIGHT / MTP
-    // observations baked into prior hits cannot be re-served at the new
-    // tip, then evict mempool entries whose OP_CHAINCONTEXT-dependent
-    // scripts no longer validate. Gated to avoid paying the cost on
+    // NIP-026: evict mempool entries whose OP_CHAINCONTEXT-dependent scripts
+    // no longer validate at the new tip. Gated to avoid paying the cost on
     // chains where the opcode is not scheduled.
     if (chainparams.GetConsensus().IsOptInScheduled(chainparams.GetConsensus().nCHAINCONTEXTEnabled)) {
-        FlushScriptExecutionCache();
         if (pindexDelete->pprev)
             MempoolRemoveForNewTip(mempool, *pindexDelete->pprev, chainparams);
     }
@@ -4444,11 +4470,9 @@ bool static ConnectTip(CValidationState& state, const CChainParams& chainparams,
     MempoolCheckScriptRuleTransition(mempool, pindexNew->nHeight,
                                            pindexNew->nHeight + 1,
                                            chainparams.GetConsensus());
-    // NIP-026: see DisconnectTip — flushing here closes the stale-cache
-    // window for every tip advance, including the reorg case (which
-    // goes DisconnectTip → ConnectTip; both sides must flush).
+    // NIP-026: see DisconnectTip. A reorg goes DisconnectTip → ConnectTip, so
+    // both sides re-validate the tagged entries.
     if (chainparams.GetConsensus().IsOptInScheduled(chainparams.GetConsensus().nCHAINCONTEXTEnabled)) {
-        FlushScriptExecutionCache();
         MempoolRemoveForNewTip(mempool, *pindexNew, chainparams);
     }
 

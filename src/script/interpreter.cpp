@@ -120,10 +120,28 @@ static bool MulOverflow64(int64_t a, int64_t b, int64_t& result)
 #endif
 }
 
+// Selector 0x07: the asset type code of a name. The classification is the
+// consensus one (IsAssetNameValid); the memo only avoids repeating it.
+static bool AssetTypeOfName(const std::string& name, AssetNameTypeMemo* memo, std::vector<unsigned char>& result)
+{
+    const bool strict = IsStrictAuthScriptActiveInContext();
+    int code;
+    if (!memo || !memo->Get(strict, name, code)) {
+        AssetType type;
+        code = IsAssetNameValid(name, type) ? IntFromAssetType(type) : -1;
+        if (memo) memo->Put(strict, name, code);
+    }
+    if (code < 0)
+        return false;
+    result = {static_cast<unsigned char>(code)};
+    return true;
+}
+
 static bool ExtractAssetField_Transfer(
     const CAssetTransfer& t,
     unsigned char selector,
-    std::vector<unsigned char>& result)
+    std::vector<unsigned char>& result,
+    AssetNameTypeMemo* memo)
 {
     switch (selector) {
         case 0x01:
@@ -135,13 +153,8 @@ static bool ExtractAssetField_Transfer(
             memcpy(result.data(), &v, 8);
             return true;
         }
-        case 0x07: {
-            AssetType type;
-            if (!IsAssetNameValid(t.strName, type))
-                return false;
-            result = {static_cast<unsigned char>(IntFromAssetType(type))};
-            return true;
-        }
+        case 0x07:
+            return AssetTypeOfName(t.strName, memo, result);
         default:
             return false;
     }
@@ -150,7 +163,8 @@ static bool ExtractAssetField_Transfer(
 static bool ExtractAssetField_New(
     const CNewAsset& a,
     unsigned char selector,
-    std::vector<unsigned char>& result)
+    std::vector<unsigned char>& result,
+    AssetNameTypeMemo* memo)
 {
     switch (selector) {
         case 0x01:
@@ -176,13 +190,8 @@ static bool ExtractAssetField_New(
                 return false;
             result.assign(a.strIPFSHash.begin(), a.strIPFSHash.end());
             return true;
-        case 0x07: {
-            AssetType type;
-            if (!IsAssetNameValid(a.strName, type))
-                return false;
-            result = {static_cast<unsigned char>(IntFromAssetType(type))};
-            return true;
-        }
+        case 0x07:
+            return AssetTypeOfName(a.strName, memo, result);
         default:
             return false;
     }
@@ -617,9 +626,15 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
     const bool budget = (flags & SCRIPT_VERIFY_AUTHSCRIPT_BUDGET) && sigversion == SIGVERSION_AUTHSCRIPT;
     const int maxOps = budget ? MAX_OPS_PER_AUTHSCRIPT : MAX_OPS_PER_SCRIPT;
     if (budget && !CheckAuthScriptBudgetStack(stack, 0, stack.size(), flags, serror)) return false;
+    // NIP-046 meters hashing in AuthScript. Other script versions keep the
+    // hashing they always allowed, but the hashing that only the newer rules
+    // make possible -- elements wider than the legacy 520 bytes, and the
+    // multi-hash OP_CHECKMERKLEINCLUSION -- draws on the same per-script
+    // budget, so wider elements cannot multiply a script's hashing cost.
+    const bool meterBeyondLegacy = !budget && (flags & SCRIPT_VERIFY_AUTHSCRIPT_BUDGET);
     size_t classicHashUnits = 0;
-    auto chargeHash = [&](size_t cost) {
-        if (!budget) return true;
+    auto chargeHash = [&](size_t cost, bool beyondLegacy) {
+        if (!budget && !(meterBeyondLegacy && beyondLegacy)) return true;
         if (cost > MAX_CLASSIC_HASH_UNITS_PER_AUTHSCRIPT - classicHashUnits)
             return set_error(serror, SCRIPT_ERR_AUTHSCRIPT_HASH_BUDGET);
         classicHashUnits += cost;
@@ -863,7 +878,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                             return false;
                         }
 
-                        if (!chargeHash(vchMsg.size() + 64)) return false;
+                        if (!chargeHash(vchMsg.size() + 64, vchMsg.size() > MAX_SCRIPT_ELEMENT_SIZE)) return false;
                         bool fSuccess = checker.CheckSigFromStack(vchSig, vchMsg, vchPubKey);
 
                         if (!fSuccess && (flags & SCRIPT_VERIFY_NULLFAIL) && vchSig.size())
@@ -1213,7 +1228,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                                         (scheme != nip031::SCHEME_BITCOIN_NEURAI || vchLeaf.size() == 32)) {
                                         const size_t cost = scheme == nip031::SCHEME_BITCOIN_NEURAI ?
                                             224 * depth : vchLeaf.size() + 64 + 128 * depth;
-                                        if (!chargeHash(cost)) return false;
+                                        if (!chargeHash(cost, true)) return false;
                                     }
                                 }
                                 // Charge before any Poseidon work. Malformed proof shapes
@@ -2221,7 +2236,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         if (stack.size() < 1)
                             return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
                         valtype &vch = stacktop(-1);
-                        if (!chargeHash(vch.size() + ((opcode == OP_HASH160 || opcode == OP_HASH256) ? 160 : 64))) return false;
+                        if (!chargeHash(vch.size() + ((opcode == OP_HASH160 || opcode == OP_HASH256) ? 160 : 64), vch.size() > MAX_SCRIPT_ELEMENT_SIZE)) return false;
                         valtype vchHash(
                                 (opcode == OP_RIPEMD160 || opcode == OP_SHA1 || opcode == OP_HASH160) ? 20 : 32);
                         if (opcode == OP_RIPEMD160)
@@ -2251,7 +2266,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         if (stack.size() < 1)
                             return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
                         valtype &vch = stacktop(-1);
-                        if (!chargeHash(vch.size() + 64)) return false;
+                        if (!chargeHash(vch.size() + 64, vch.size() > MAX_SCRIPT_ELEMENT_SIZE)) return false;
                         valtype vchHash(32);
                         if (opcode == OP_KECCAK256)
                             crypto::Keccak256(vch.data(), vch.size(), vchHash.data());
@@ -2277,7 +2292,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         if (stack.size() < 1)
                             return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
                         valtype &vch = stacktop(-1);
-                        if (!chargeHash(vch.size() + 64)) return false;
+                        if (!chargeHash(vch.size() + 64, vch.size() > MAX_SCRIPT_ELEMENT_SIZE)) return false;
                         if (opcode == OP_SHA512) {
                             valtype vchHash(64);
                             crypto::SHA512_Wrap(vch.data(), vch.size(), vchHash.data());
@@ -2647,9 +2662,13 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
             // permitted. Non-widened scripts keep the implicit 520 KB bound
             // from MAX_STACK_SIZE × MAX_SCRIPT_ELEMENT_SIZE. Must stay in
             // lockstep with EffectiveMaxScriptElementSize() in interpreter.h.
-            if (budget || (flags & (SCRIPT_VERIFY_CHECKSIGFROMSTACK
+            // An opcode in a non-executed branch changes neither stack: the
+            // total is the one checked after the previous opcode (the first
+            // opcode always executes), so recounting it would only turn a
+            // long unexecuted branch into quadratic work.
+            if (fExec && (budget || (flags & (SCRIPT_VERIFY_CHECKSIGFROMSTACK
                        | SCRIPT_VERIFY_MERKLE_INCLUSION
-                       | SCRIPT_VERIFY_CHECKSIGADD | SCRIPT_VERIFY_ZKVERIFY))) {
+                       | SCRIPT_VERIFY_CHECKSIGADD | SCRIPT_VERIFY_ZKVERIFY)))) {
                 size_t stack_bytes = 0;
                 for (const auto& item : stack)    stack_bytes += item.size();
                 for (const auto& item : altstack) stack_bytes += item.size();
@@ -2831,14 +2850,13 @@ namespace
 
 PrecomputedTransactionData::PrecomputedTransactionData(const CTransaction &txTo)
 {
-    // BIP143 cache: calculated only for transactions with witness
-    if (txTo.HasWitness())
-    {
-        hashPrevouts = GetPrevoutHash(txTo);
-        hashSequence = GetSequenceHash(txTo);
-        hashOutputs = GetOutputsHash(txTo);
-        ready = true;
-    }
+    // BIP143 cache, for every transaction: OP_TXHASH reads these hashes in
+    // legacy and P2SH scripts too, and recomputing them on each execution
+    // made a transaction without witness cost quadratic time in its inputs.
+    hashPrevouts = GetPrevoutHash(txTo);
+    hashSequence = GetSequenceHash(txTo);
+    hashOutputs = GetOutputsHash(txTo);
+    ready = true;
 
     // BIP119 CTV cache: precompute single-SHA256 sub-hashes to avoid
     // quadratic hashing when multiple inputs each evaluate OP_CTV.
@@ -3744,20 +3762,20 @@ bool TransactionSignatureChecker::GetOutputAssetField(unsigned int nOut,
 
     CAssetTransfer transfer;
     if (TransferAssetFromScript(scriptPubKey, transfer, strAddress))
-        return ExtractAssetField_Transfer(transfer, selector, result);
+        return ExtractAssetField_Transfer(transfer, selector, result, AssetNameTypes());
 
     CNewAsset newAsset;
     if (AssetFromScript(scriptPubKey, newAsset, strAddress))
-        return ExtractAssetField_New(newAsset, selector, result);
+        return ExtractAssetField_New(newAsset, selector, result, AssetNameTypes());
 
     if (MsgChannelAssetFromScript(scriptPubKey, newAsset, strAddress))
-        return ExtractAssetField_New(newAsset, selector, result);
+        return ExtractAssetField_New(newAsset, selector, result, AssetNameTypes());
 
     if (QualifierAssetFromScript(scriptPubKey, newAsset, strAddress))
-        return ExtractAssetField_New(newAsset, selector, result);
+        return ExtractAssetField_New(newAsset, selector, result, AssetNameTypes());
 
     if (RestrictedAssetFromScript(scriptPubKey, newAsset, strAddress))
-        return ExtractAssetField_New(newAsset, selector, result);
+        return ExtractAssetField_New(newAsset, selector, result, AssetNameTypes());
 
     CReissueAsset reissue;
     if (ReissueAssetFromScript(scriptPubKey, reissue, strAddress))
@@ -3783,20 +3801,20 @@ bool TransactionSignatureChecker::GetInputAssetField(unsigned int nInput,
 
     CAssetTransfer transfer;
     if (TransferAssetFromScript(scriptPubKey, transfer, strAddress))
-        return ExtractAssetField_Transfer(transfer, selector, result);
+        return ExtractAssetField_Transfer(transfer, selector, result, AssetNameTypes());
 
     CNewAsset newAsset;
     if (AssetFromScript(scriptPubKey, newAsset, strAddress))
-        return ExtractAssetField_New(newAsset, selector, result);
+        return ExtractAssetField_New(newAsset, selector, result, AssetNameTypes());
 
     if (MsgChannelAssetFromScript(scriptPubKey, newAsset, strAddress))
-        return ExtractAssetField_New(newAsset, selector, result);
+        return ExtractAssetField_New(newAsset, selector, result, AssetNameTypes());
 
     if (QualifierAssetFromScript(scriptPubKey, newAsset, strAddress))
-        return ExtractAssetField_New(newAsset, selector, result);
+        return ExtractAssetField_New(newAsset, selector, result, AssetNameTypes());
 
     if (RestrictedAssetFromScript(scriptPubKey, newAsset, strAddress))
-        return ExtractAssetField_New(newAsset, selector, result);
+        return ExtractAssetField_New(newAsset, selector, result, AssetNameTypes());
 
     CReissueAsset reissue;
     if (ReissueAssetFromScript(scriptPubKey, reissue, strAddress))
@@ -3914,20 +3932,20 @@ bool TransactionSignatureChecker::GetRefInputAssetField(unsigned int nRef, unsig
 
     CAssetTransfer transfer;
     if (TransferAssetFromScript(scriptPubKey, transfer, strAddress))
-        return ExtractAssetField_Transfer(transfer, selector, result);
+        return ExtractAssetField_Transfer(transfer, selector, result, AssetNameTypes());
 
     CNewAsset newAsset;
     if (AssetFromScript(scriptPubKey, newAsset, strAddress))
-        return ExtractAssetField_New(newAsset, selector, result);
+        return ExtractAssetField_New(newAsset, selector, result, AssetNameTypes());
 
     if (MsgChannelAssetFromScript(scriptPubKey, newAsset, strAddress))
-        return ExtractAssetField_New(newAsset, selector, result);
+        return ExtractAssetField_New(newAsset, selector, result, AssetNameTypes());
 
     if (QualifierAssetFromScript(scriptPubKey, newAsset, strAddress))
-        return ExtractAssetField_New(newAsset, selector, result);
+        return ExtractAssetField_New(newAsset, selector, result, AssetNameTypes());
 
     if (RestrictedAssetFromScript(scriptPubKey, newAsset, strAddress))
-        return ExtractAssetField_New(newAsset, selector, result);
+        return ExtractAssetField_New(newAsset, selector, result, AssetNameTypes());
 
     CReissueAsset reissue;
     if (ReissueAssetFromScript(scriptPubKey, reissue, strAddress))

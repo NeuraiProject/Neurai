@@ -401,4 +401,38 @@ BOOST_AUTO_TEST_CASE(outputassetfield_depin_type_activation_matrix)
     }
 }
 
+// Selector 0x07 classifies each name once per transaction. The answer depends
+// on the strict AuthScript context (DEPIN names, 120-character names), so one
+// transaction asked under both contexts, in any order, must get the answers it
+// gets without the memo.
+BOOST_AUTO_TEST_CASE(outputassetfield_type_memo_follows_the_context)
+{
+    const std::string longName(120, 'A');
+    for (const std::string& chain : {CBaseChainParams::TESTNET, CBaseChainParams::MAIN}) {
+        CMutableTransaction mtx = BuildDEPINTxForNetwork(chain);
+        CTxOut out;
+        out.scriptPubKey = GetScriptForDestination(DecodeDestination(GetParams().GlobalBurnAddress()));
+        CAssetTransfer(longName, COIN).ConstructTransaction(out.scriptPubKey, AssetMarker::LEGACY_RVN);
+        mtx.vout.push_back(out);
+        const CTransaction tx(mtx);
+        const PrecomputedTransactionData data(tx);
+        const TransactionSignatureChecker memoised(&tx, 0, 0, data);
+        for (bool strict : {true, false, false, true}) {
+            CStrictAuthScriptContext context(strict);
+            for (unsigned int n : {0u, 1u, 0u, 1u}) {
+                std::vector<unsigned char> expected, actual;
+                const bool expectedOk = DirectGetOutputAssetField(tx, n, 0x07, expected);
+                BOOST_CHECK_EQUAL(expectedOk, strict);
+                BOOST_CHECK_EQUAL(memoised.GetOutputAssetField(n, 0x07, actual), expectedOk);
+                BOOST_CHECK(actual == expected);
+            }
+        }
+        int code = 0;
+        BOOST_CHECK(data.assetNameTypes->Get(true, longName, code));
+        BOOST_CHECK_EQUAL(code, IntFromAssetType(AssetType::ROOT));
+        BOOST_CHECK(data.assetNameTypes->Get(false, longName, code));
+        BOOST_CHECK_EQUAL(code, -1);
+    }
+}
+
 BOOST_AUTO_TEST_SUITE_END()

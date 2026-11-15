@@ -86,6 +86,7 @@ BASE_SCRIPTS= [
     'feature_reward_eligibility.py',
     'wallet_basic.py',
     'mempool_limit.py',
+    'mempool_chaincontext_limit.py',
     'feature_assets.py',
     'feature_pq_assets.py',
     'feature_authscript_activation.py',

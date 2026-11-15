@@ -40,6 +40,9 @@ static constexpr uint64_t MAX_STANDARD_TX_ASSETAUTH_WORK = 45000;
 static const unsigned int MAX_STANDARD_TX_SIGOPS_COST = MAX_BLOCK_SIGOPS_COST/5;
 /** Default for -maxmempool, maximum megabytes of mempool memory usage */
 static const unsigned int DEFAULT_MAX_MEMPOOL_SIZE = 300;
+/** Default for -maxmempoolchaincontext: total weight of the mempool entries
+ *  that exercised OP_CHAINCONTEXT (NIP-026), re-validated on every tip change */
+static const unsigned int DEFAULT_MAX_MEMPOOL_CHAINCONTEXT_WEIGHT = 2000000;
 /** Default for -incrementalrelayfee, which sets the minimum feerate increase for mempool limiting or BIP 125 replacement **/
 static const unsigned int DEFAULT_INCREMENTAL_RELAY_FEE = 1000;
 /** Default for -bytespersigop */

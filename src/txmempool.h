@@ -437,6 +437,7 @@ private:
 
     uint64_t totalTxSize;      //!< sum of all mempool tx's virtual sizes. Differs from serialized tx size since witness data is discounted. Defined in BIP 141.
     uint64_t cachedInnerUsage; //!< sum of dynamic memory usage of all the map elements (NOT the maps themselves)
+    uint64_t nChainContextWeight; //!< NIP-026: total weight of entries re-validated on every tip change
 
     mutable int64_t lastRollingFeeUpdate;
     mutable bool blockSinceLastRollingFeeBump;
@@ -738,6 +739,13 @@ public:
     {
         LOCK(cs);
         return totalTxSize;
+    }
+
+    /** NIP-026: total weight of the entries re-validated on every tip change. */
+    uint64_t GetChainContextWeight() const
+    {
+        LOCK(cs);
+        return nChainContextWeight;
     }
 
     bool exists(uint256 hash) const

@@ -466,6 +466,61 @@ BOOST_AUTO_TEST_CASE(poseidon_merkle_shares_only_poseidon_budget)
         BOOST_CHECK_EQUAL(err,expected?SCRIPT_ERR_OK:SCRIPT_ERR_POSEIDON_BUDGET);
     }
 }
+// Outside AuthScript the budget meters only the hashing that the newer rules
+// make possible: elements wider than 520 bytes and OP_CHECKMERKLEINCLUSION.
+// Hashing legacy-sized elements keeps the allowance it always had.
+BOOST_AUTO_TEST_CASE(beyond_legacy_hashing_is_metered_in_every_version)
+{
+    const auto flags=GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());
+    BOOST_REQUIRE(flags&SCRIPT_VERIFY_AUTHSCRIPT_BUDGET);
+    for(auto version : {SIGVERSION_BASE,SIGVERSION_WITNESS_V0}) for(bool enabled : {false,true}) {
+        const auto vf=enabled?flags:flags&~SCRIPT_VERIFY_AUTHSCRIPT_BUDGET;
+        // 20 wide hashes cost 20*3136 = 62720 units; a 21st crosses 65536.
+        for(int count : {20,21}) {
+            std::vector<Bytes> stack(count,Bytes(3072,0x42));
+            CScript script;for(int i=0;i<count;++i)script<<OP_SHA256<<OP_DROP;script<<OP_1;
+            ScriptError err;const bool expected=!enabled||count==20;
+            BOOST_CHECK_EQUAL(Run(stack,script,vf,version,err),expected);
+            BOOST_CHECK_EQUAL(err,expected?SCRIPT_ERR_OK:SCRIPT_ERR_AUTHSCRIPT_HASH_BUDGET);
+        }
+        // 100 HASH256 of 520 bytes would be 68000 units; legacy sizes are not metered.
+        {
+            std::vector<Bytes> stack(100,Bytes(520,0x42));
+            CScript script;for(int i=0;i<100;++i)script<<OP_HASH256<<OP_DROP;script<<OP_1;
+            ScriptError err;
+            BOOST_CHECK(Run(stack,script,vf,version,err));
+            BOOST_CHECK_EQUAL(err,SCRIPT_ERR_OK);
+        }
+        // A depth-32 SHA-256d proof costs 7168 units: nine fit, ten do not.
+        for(int count : {9,10}) {
+            Bytes proof(1+32*32+4);proof[0]=32;
+            std::vector<Bytes> stack{Bytes(32),Bytes{1},proof,Bytes(32)};
+            CScript script;
+            for(int i=0;i<count;++i)script<<OP_2OVER<<OP_2OVER<<OP_CHECKMERKLEINCLUSION<<OP_DROP;
+            script<<OP_2DROP<<OP_2DROP<<OP_1;
+            ScriptError err;const bool expected=!enabled||count==9;
+            BOOST_CHECK_EQUAL(Run(stack,script,vf,version,err),expected);
+            BOOST_CHECK_EQUAL(err,expected?SCRIPT_ERR_OK:SCRIPT_ERR_AUTHSCRIPT_HASH_BUDGET);
+        }
+    }
+}
+// The stack-bytes cap is checked after every executed opcode; opcodes of a
+// dead branch change no stack and cannot move the result.
+BOOST_AUTO_TEST_CASE(stack_bytes_checked_after_executed_opcodes)
+{
+    const auto flags=GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());
+    for(auto version : {SIGVERSION_BASE,SIGVERSION_AUTHSCRIPT}) for(int push : {1024,1025}) {
+        std::vector<Bytes> stack(85,Bytes(3072,0x42)); // 261120 bytes, 1024 under the cap
+        CScript script;
+        script<<OP_0<<OP_IF<<Bytes(3000,1)<<Bytes(3000,1)<<OP_ENDIF;
+        script<<Bytes(push,1)<<OP_DROP;
+        for(int i=0;i<85;++i)script<<OP_DROP;
+        script<<OP_1;
+        ScriptError err;const bool expected=push==1024;
+        BOOST_CHECK_EQUAL(Run(stack,script,flags,version,err),expected);
+        BOOST_CHECK_EQUAL(err,expected?SCRIPT_ERR_OK:SCRIPT_ERR_STACK_SIZE);
+    }
+}
 BOOST_AUTO_TEST_CASE(network_schedule)
 {
     auto main=CreateChainParams(CBaseChainParams::MAIN);

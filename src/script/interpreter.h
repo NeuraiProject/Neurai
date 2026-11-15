@@ -14,8 +14,12 @@
 
 #include <vector>
 #include <atomic>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <stdint.h>
 #include <string>
+#include <utility>
 
 class CPubKey;
 
@@ -358,11 +362,47 @@ inline unsigned int EffectiveMaxScriptElementSize(script_verify_flags flags)
 
 bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, script_verify_flags flags, ScriptError *serror);
 
+/** Asset type of each asset name a transaction's scripts ask about.
+ *
+ * Selector 0x07 of OP_OUTPUTASSETFIELD, OP_INPUTASSETFIELD and
+ * OP_REFINPUTASSETFIELD classifies a name with IsAssetNameValid, a chain of
+ * regular expressions that costs tens of microseconds, and a script may ask
+ * about the same names hundreds of times per input. The answer depends only
+ * on the name and on the strict AuthScript context, so it is computed once
+ * per transaction and context. The script checks of a transaction's inputs
+ * share one instance and may run on different threads. */
+class AssetNameTypeMemo
+{
+public:
+    /** Stored code for (strict, name): the asset type, or -1 for an invalid name. */
+    bool Get(bool strict, const std::string& name, int& code) const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        const auto it = m_codes.find(std::make_pair(strict, name));
+        if (it == m_codes.end()) return false;
+        code = it->second;
+        return true;
+    }
+    void Put(bool strict, const std::string& name, int code)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_codes.emplace(std::make_pair(strict, name), code);
+    }
+
+private:
+    mutable std::mutex m_mutex;
+    std::map<std::pair<bool, std::string>, int> m_codes;
+};
+
 struct PrecomputedTransactionData
 {
     // BIP143 double-SHA256 hashes (used by SignatureHash and OP_TXHASH)
     uint256 hashPrevouts, hashSequence, hashOutputs;
     bool ready = false;
+
+    // Held by pointer so this struct stays copyable and movable; every input
+    // check reaches the same instance through its txdata pointer.
+    std::shared_ptr<AssetNameTypeMemo> assetNameTypes{std::make_shared<AssetNameTypeMemo>()};
 
     // BIP119 CTV single-SHA256 sub-hashes (anti-DoS precomputation)
     uint256 ctvHashSequences, ctvHashOutputs, ctvHashScriptSigs;
@@ -672,6 +712,8 @@ private:
     const std::vector<CTxOut>* m_allPrevouts;
     const std::vector<CTxOut>* m_refOutputs;  // NIP-014: resolved reference outputs
     ChainContext m_chainContext{};            // NIP-026: chain-position view
+
+    AssetNameTypeMemo* AssetNameTypes() const { return txdata ? txdata->assetNameTypes.get() : nullptr; }
 
 protected:
     virtual bool VerifySignature(const std::vector<unsigned char> &vchSig, const CPubKey &vchPubKey, const uint256 &sighash) const;

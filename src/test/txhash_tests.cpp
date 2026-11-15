@@ -815,6 +815,31 @@ BOOST_AUTO_TEST_CASE(txhash_partial_cache)
     }
 }
 
+// OP_TXHASH runs in legacy and P2SH scripts too. Without witness the BIP143
+// hashes must still be precomputed, or every execution rehashes all inputs
+// and outputs and a transaction costs quadratic time in its size.
+BOOST_AUTO_TEST_CASE(txhash_cache_without_witness)
+{
+    CMutableTransaction mtx = BuildTestTx(5, 3);
+    for (auto& in : mtx.vin) in.scriptWitness.SetNull();
+    const CTransaction tx(mtx);
+    BOOST_REQUIRE(!tx.HasWitness());
+    const PrecomputedTransactionData data(tx);
+    BOOST_CHECK(data.ready);
+    PrecomputedTransactionData uncached(tx);
+    uncached.ready = false;
+    const TransactionSignatureChecker cachedChecker(&tx, 0, 0, data);
+    const TransactionSignatureChecker uncachedChecker(&tx, 0, 0, uncached);
+    for (uint16_t mask = 1; mask < 512; ++mask) {
+        std::vector<unsigned char> a, b, c;
+        BOOST_REQUIRE(cachedChecker.GetTxFieldHash(mask, a));
+        BOOST_REQUIRE(uncachedChecker.GetTxFieldHash(mask, b));
+        BOOST_REQUIRE(DirectTxFieldHash(tx, 0, mask, c, false));
+        BOOST_CHECK(a == b);
+        BOOST_CHECK(a == c);
+    }
+}
+
 
 BOOST_AUTO_TEST_CASE(txhash_csfs_fixed_vectors)
 {

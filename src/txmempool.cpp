@@ -418,6 +418,7 @@ bool CTxMemPool::addUnchecked(const uint256& hash, const CTxMemPoolEntry &entry,
 
     nTransactionsUpdated++;
     totalTxSize += entry.GetTxSize();
+    if (entry.GetUsesChainContext()) nChainContextWeight += entry.GetTxWeight();
     if (minerPolicyEstimator) {minerPolicyEstimator->processTransaction(entry, validFeeEstimate);}
 
     vTxHashes.emplace_back(tx.GetWitnessHash(), newit);
@@ -628,6 +629,7 @@ void CTxMemPool::removeUnchecked(txiter it, MemPoolRemovalReason reason)
         vTxHashes.clear();
 
     totalTxSize -= it->GetTxSize();
+    if (it->GetUsesChainContext()) nChainContextWeight -= it->GetTxWeight();
     cachedInnerUsage -= it->DynamicMemoryUsage();
     cachedInnerUsage -= memusage::DynamicUsage(mapLinks[it].parents) + memusage::DynamicUsage(mapLinks[it].children);
     mapLinks.erase(it);
@@ -1340,6 +1342,7 @@ void CTxMemPool::_clear()
     mapRefTx.clear(); // NIP-014
     totalTxSize = 0;
     cachedInnerUsage = 0;
+    nChainContextWeight = 0;
     lastRollingFeeUpdate = GetTime();
     blockSinceLastRollingFeeBump = false;
     rollingMinimumFeeRate = 0;
@@ -1413,6 +1416,7 @@ void CTxMemPool::check(const CCoinsViewCache *pcoins) const
     LogPrint(BCLog::MEMPOOL, "Checking mempool with %u transactions and %u inputs\n", (unsigned int)mapTx.size(), (unsigned int)mapNextTx.size());
 
     uint64_t checkTotal = 0;
+    uint64_t checkChainContextWeight = 0;
     uint64_t innerUsage = 0;
 
     CCoinsViewCache mempoolDuplicate(const_cast<CCoinsViewCache*>(pcoins));
@@ -1423,6 +1427,7 @@ void CTxMemPool::check(const CCoinsViewCache *pcoins) const
     for (indexed_transaction_set::const_iterator it = mapTx.begin(); it != mapTx.end(); it++) {
         unsigned int i = 0;
         checkTotal += it->GetTxSize();
+        if (it->GetUsesChainContext()) checkChainContextWeight += it->GetTxWeight();
         innerUsage += it->DynamicMemoryUsage();
         const CTransaction& tx = it->GetTx();
         txlinksMap::const_iterator linksiter = mapLinks.find(it);
@@ -1521,6 +1526,7 @@ void CTxMemPool::check(const CCoinsViewCache *pcoins) const
     }
 
     assert(totalTxSize == checkTotal);
+    assert(nChainContextWeight == checkChainContextWeight);
     assert(innerUsage == cachedInnerUsage);
 }
 

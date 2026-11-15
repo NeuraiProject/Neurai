@@ -651,4 +651,91 @@ BOOST_AUTO_TEST_CASE(cached_execution_cannot_skip_work_and_workers_share_budget)
         BOOST_CHECK_EQUAL(work->Exceeded(), limit == 1);
     }
 }
+
+// A metered execution that charged no work may reuse the script execution
+// cache, so block templates and blocks do not run again the scripts of
+// transactions the mempool already checked. A result that read the chain
+// position is never stored, metered or not.
+BOOST_AUTO_TEST_CASE(zero_work_execution_uses_the_cache)
+{
+    LOCK(cs_main);
+    CCoinsView dummy;
+    CCoinsViewCache view(&dummy);
+    const ChainContext context{200, 0, 2, true};
+    const auto spend = [&](const CScript& leaf) {
+        const CScript spk = CScript() << OP_1 << ToByteVector(GetAuthScriptCommitment(0, nullptr, leaf));
+        CMutableTransaction mtx;
+        mtx.nVersion = 2;
+        const COutPoint prev(GetRandHash(), 0);
+        view.AddCoin(prev, Coin(CTxOut(COIN, spk), 1, false), false);
+        mtx.vin.emplace_back(prev);
+        mtx.vin.back().scriptWitness.stack = {{0}, std::vector<unsigned char>(leaf.begin(), leaf.end())};
+        mtx.vout.emplace_back(COIN, CScript() << OP_TRUE);
+        return CTransaction(mtx);
+    };
+    const CTransaction plain = spend(CScript() << OP_TRUE);
+    const CTransaction contextual = spend(CScript() << OP_1 << OP_CHAINCONTEXT << OP_DROP << OP_TRUE);
+    const auto metered = GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());
+    BOOST_REQUIRE(metered & SCRIPT_VERIFY_POSEIDON_WORK);
+    const auto unmetered = metered & ~SCRIPT_VERIFY_POSEIDON_WORK & ~SCRIPT_VERIFY_ASSETAUTH;
+    for (const auto flags : {metered, unmetered}) {
+        for (const CTransaction* tx : {&plain, &contextual}) {
+            const bool fContextual = tx == &contextual;
+            PrecomputedTransactionData data(*tx);
+            CValidationState warm;
+            bool observed = false;
+            BOOST_REQUIRE_MESSAGE(CheckInputs(*tx, warm, view, true, flags, true, true, data, nullptr, nullptr, context, &observed),
+                                  FormatStateMessage(warm));
+            BOOST_CHECK_EQUAL(observed, fContextual);
+            std::vector<CScriptCheck> checks;
+            CValidationState again;
+            BOOST_REQUIRE(CheckInputs(*tx, again, view, true, flags, true, true, data, &checks, nullptr, context));
+            BOOST_CHECK_EQUAL(checks.size(), fContextual ? 1U : 0U);
+        }
+    }
+}
+
+// A zero measured by one meter says nothing about another. Under the same
+// flags, a result recorded while only OP_CHECKASSETAUTH was metered must not
+// let a later execution that brings a Poseidon meter skip its Poseidon work;
+// it still serves executions with the same meters.
+BOOST_AUTO_TEST_CASE(zero_work_record_names_its_meters)
+{
+    LOCK(cs_main);
+    CCoinsView dummy;
+    CCoinsViewCache view(&dummy);
+    // Poseidon executes; OP_CHECKASSETAUTH sits in a dead branch, so the
+    // static filter meters AssetAuth, which then charges nothing.
+    const CScript leaf = CScript() << OP_0 << OP_POSEIDON << OP_DROP
+                                   << OP_0 << OP_IF << OP_CHECKASSETAUTH << OP_ENDIF << OP_TRUE;
+    const CScript spk = CScript() << OP_1 << ToByteVector(GetAuthScriptCommitment(0, nullptr, leaf));
+    const auto flags = GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus()) & ~SCRIPT_VERIFY_POSEIDON_WORK;
+    BOOST_REQUIRE(flags & SCRIPT_VERIFY_POSEIDON);
+    BOOST_REQUIRE(flags & SCRIPT_VERIFY_ASSETAUTH);
+    for (bool warmed : {true, false}) {
+        CMutableTransaction mtx;
+        mtx.nVersion = 2;
+        const COutPoint prev(GetRandHash(), 0);
+        view.AddCoin(prev, Coin(CTxOut(COIN, spk), 1, false), false);
+        mtx.vin.emplace_back(prev);
+        mtx.vin.back().scriptWitness.stack = {{0}, std::vector<unsigned char>(leaf.begin(), leaf.end())};
+        mtx.vout.emplace_back(COIN, CScript() << OP_TRUE);
+        const CTransaction tx(mtx);
+        PrecomputedTransactionData data(tx);
+        if (warmed) {
+            // No Poseidon meter: the automatic AssetAuth meter records zero.
+            CValidationState warm;
+            BOOST_REQUIRE(CheckInputs(tx, warm, view, true, flags, true, true, data, nullptr));
+        }
+        auto zero = std::make_shared<PoseidonWorkBudget>(0);
+        CValidationState state;
+        BOOST_CHECK(!CheckInputs(tx, state, view, true, flags, true, true, data, nullptr, nullptr, {}, nullptr, zero));
+        BOOST_CHECK(zero->Exceeded());
+        BOOST_CHECK_EQUAL(state.GetRejectReason(), "bad-txns-poseidon-work");
+        std::vector<CScriptCheck> checks;
+        CValidationState same;
+        BOOST_REQUIRE(CheckInputs(tx, same, view, true, flags, true, true, data, &checks));
+        BOOST_CHECK_EQUAL(checks.size(), warmed ? 0U : 1U);
+    }
+}
 BOOST_AUTO_TEST_SUITE_END()

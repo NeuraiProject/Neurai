@@ -344,6 +344,12 @@ There is no opcode that returns the index of the input being evaluated. A
 covenant that needs its own value can require a single input
 (`OP_INPUTCOUNT 1 OP_NUMEQUALVERIFY`) and read `0 OP_INPUTVALUE`.
 
+A pending transaction whose scripts executed `OP_CHAINCONTEXT` runs them again
+at every tip change, since its validity can depend on the new position. The
+node keeps the total weight of such mempool entries under
+`-maxmempoolchaincontext` (default 2000000); beyond it, new ones are refused
+with `chaincontext-mempool-full` until pending ones confirm.
+
 #### Value encodings
 
 Some fields are script numbers, ready for arithmetic; others are raw
@@ -891,10 +897,14 @@ total bytes held on `stack + altstack`.
 ### Quadratic Hashing Prevention
 
 CTV and TXHASH use precomputed sub-hashes (`PrecomputedTransactionData`) for
-O(1) evaluation per opcode. The CTV sub-hashes are computed for every
-transaction. TXHASH reuses the BIP143 lists, which are only computed for
-transactions with witness data; in a transaction without witness data, each
-execution that selects a list hashes it again in O(n) time.
+O(1) evaluation per opcode. The CTV sub-hashes and the BIP143 lists that
+TXHASH reuses are computed for every transaction, with or without witness
+data, so no execution hashes a list again.
+
+Selector `0x07` of `OP_OUTPUTASSETFIELD`, `OP_INPUTASSETFIELD` and
+`OP_REFINPUTASSETFIELD` classifies the asset name with the consensus name
+rules. The result is kept per transaction and per strict AuthScript context,
+so repeated queries about the same name do not repeat the classification.
 
 From the consensus cleanup height (`nConsensusCleanupHeight`), a non-coinbase
 transaction may execute at most 2500 legacy signature operations
@@ -1352,6 +1362,13 @@ their false result without charges. Well-formed incorrect proofs pay. Charges
 precede hashing; exhaustion returns `AuthScript hash budget exceeded`.
 Poseidon retains its separate 30720-byte budget, shared with Merkle scheme 05.
 
+Under the same flag, legacy, P2SH and witness v0 executions keep the hashing
+they always allowed, but draw on a 65536-unit budget of their own for the
+hashing that only the widened rules make possible: hash opcodes and the CSFS
+message hash over elements longer than 520 bytes, and every classic Merkle
+proof of `OP_CHECKMERKLEINCLUSION`, with the costs above. Hashing elements of
+at most 520 bytes is not charged there.
+
 Initial arguments are limited to 1000 elements and 262144 bytes, with existing
 per-element limits. Envelope signatures, pubkeys, leaf script and MAST control
 are not execution arguments. Main stack plus altstack obey the same byte cap
@@ -1361,6 +1378,10 @@ cannot conceal an initially oversized stack.
 Flags follow the height of the block being validated; mempool uses the next
 height. Both activation directions revalidate pending transactions and remove
 invalid entries and descendants. Script-cache results remain flag-specific.
+A metered execution (Poseidon or `OP_CHECKASSETAUTH` work) reuses a cached
+result only when an execution with the same meters charged no metered work; results that
+read the chain position (`OP_CHAINCONTEXT`, or `OP_CHECKASSETAUTH` reading the
+height) are never cached.
 These are consensus rules, not only relay policy. Testnet activation is for
 experimentation; resource benchmarks and mainnet deployment review remain
 separate from functional correctness tests.

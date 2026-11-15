@@ -498,6 +498,7 @@ std::string HelpMessage(HelpMessageMode mode)
     strUsage += HelpMessageOpt("-minreorgage=<n>", strprintf(_("Set the Minimum tip age (in seconds) required to allow reorg of a chain of depth >= maxreorg on a node with more than minreorgpeers peers. (default: %u)"), defaultChainParams->MinReorganizationAge()));
     strUsage += HelpMessageOpt("-maxorphantx=<n>", strprintf(_("Keep at most <n> unconnectable transactions in memory (default: %u)"), DEFAULT_MAX_ORPHAN_TRANSACTIONS));
     strUsage += HelpMessageOpt("-maxmempool=<n>", strprintf(_("Keep the transaction memory pool below <n> megabytes (default: %u)"), DEFAULT_MAX_MEMPOOL_SIZE));
+    strUsage += HelpMessageOpt("-maxmempoolchaincontext=<n>", strprintf(_("Keep the total weight of mempool transactions that read the chain position (OP_CHAINCONTEXT), re-validated on every new block, below <n> (default: %u)"), DEFAULT_MAX_MEMPOOL_CHAINCONTEXT_WEIGHT));
     strUsage += HelpMessageOpt("-mempoolexpiry=<n>", strprintf(_("Do not keep transactions in the mempool longer than <n> hours (default: %u)"), DEFAULT_MEMPOOL_EXPIRY));
     if (showDebug) {
         strUsage += HelpMessageOpt("-minimumchainwork=<hex>", strprintf("Minimum work assumed to exist on a valid chain in hex (default: %s, testnet: %s)", defaultChainParams->GetConsensus().nMinimumChainWork.GetHex(), testnetChainParams->GetConsensus().nMinimumChainWork.GetHex()));
