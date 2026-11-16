@@ -83,6 +83,7 @@ BASE_SCRIPTS= [
     'rpc_fundrawtransaction.py',
     'wallet_create_tx.py',
     # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv Tests less than 30s vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+    'feature_poseidon_work_cache.py',
     'mempool_packages.py',
     'p2p_segwit.py',
     'p2p_compactblocks.py',

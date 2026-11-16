@@ -554,6 +554,12 @@ class AssetAuthTest(NeuraiTestFramework):
         # (415350), eleven do not (456885).
         txids = [self.send(spend(195, name + "!")) for name in names]
         assert_equal(set(txids), set(node.getrawmempool()))
+        # The mempool stored their script results with the work they measured,
+        # and a block that brings them is served from that cache. The cache
+        # charges the recorded work, so all eleven still exceed the budget.
+        cached = [from_hex(CTransaction(), node.getrawtransaction(txid)) for txid in txids]
+        assert_equal(self.submit_block(cached), "bad-blk-assetauth-work")
+        assert_equal(node.getbestblockhash(), tip)
         template = node.getblocktemplate()
         assert_equal(len(template["transactions"]), 10)
         block_hash = self.mine()[0]
