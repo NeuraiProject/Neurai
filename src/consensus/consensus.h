@@ -21,6 +21,11 @@ static const unsigned int MAX_BLOCK_WEIGHT_RIP2 = 8000000;
 /** The maximum allowed size for a serialized block, in bytes after RIP 2(only for buffer size limits) */
 static const unsigned int MAX_BLOCK_SERIALIZED_SIZE_RIP2 = 8000000;
 
+/** From the NIP-028 height on (30 s blocks), the serialized size of a block,
+ *  witness included, may not exceed this (network rule). It bounds what every
+ *  node has to relay and store; the weight limit no longer binds below it. */
+static const unsigned int MAX_BLOCK_SERIALIZED_SIZE_NIP028 = 2000000;
+
 // Deterministic Poseidon permutations, enforced after its height activation.
 static constexpr uint64_t MAX_BLOCK_POSEIDON_WORK = 200000;
 // NIP-054: OP_CHECKASSETAUTH work units per block (consensus). Sized from the
@@ -53,6 +58,10 @@ UNUSED_VAR static bool fCheckCoinbaseAssetsIsActive = false;
 
 unsigned int GetMaxBlockWeight();
 unsigned int GetMaxBlockSerializedSize();
+
+namespace Consensus { struct Params; }
+/** Serialized size limit, witness included, of a block at nHeight. */
+unsigned int GetMaxBlockSerializedSizeAtHeight(int nHeight, const Consensus::Params& params);
 int GetCoinbaseMaturity();
 
 /** Flags for nSequence and nLockTime locks */

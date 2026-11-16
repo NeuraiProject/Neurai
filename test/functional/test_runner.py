@@ -111,6 +111,7 @@ BASE_SCRIPTS= [
     'feature_maxreorgdepth.py 4 --height=60 --tip_age=43400 --should_reorg=1',  # Reorg (not caught up)
     'feature_maxreorgdepth.py 4 --height=59 --tip_age=0 --should_reorg=1',      # Reorg (<60)
     # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv Tests less than 15s vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+    'feature_block_size_limit.py',
     'p2p_sendheaders.py',
     'mining_basic.py',
     'p2p_fingerprint.py',

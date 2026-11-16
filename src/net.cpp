@@ -23,6 +23,9 @@
 #include "ui_interface.h"
 #include "utilstrencodings.h"
 
+static_assert(MAX_PROTOCOL_MESSAGE_LENGTH >= MAX_BLOCK_SERIALIZED_SIZE_RIP2,
+              "every valid block must fit in one protocol message");
+
 #ifdef WIN32
 #include <string.h>
 #else

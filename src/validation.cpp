@@ -5769,6 +5769,13 @@ static bool ContextualCheckBlock(const CBlock& block, CValidationState& state, c
         return state.DoS(100, false, REJECT_INVALID, "bad-blk-weight", false, strprintf("%s : weight limit failed", __func__));
     }
 
+    // From the NIP-028 height on, the serialized size, witness included, is
+    // limited as well. Checked here for the same reason as the weight: the
+    // witness is now committed, so an oversized block is permanently invalid.
+    if (::GetSerializeSize(block, SER_NETWORK, PROTOCOL_VERSION) > GetMaxBlockSerializedSizeAtHeight(nHeight, consensusParams)) {
+        return state.DoS(100, false, REJECT_INVALID, "bad-blk-length", false, strprintf("%s : size limit failed", __func__));
+    }
+
     return true;
 }
 

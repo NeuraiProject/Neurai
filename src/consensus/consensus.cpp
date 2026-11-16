@@ -29,6 +29,13 @@ unsigned int GetMaxBlockSerializedSize()
 //    return MAX_BLOCK_SERIALIZED_SIZE;
 }
 
+unsigned int GetMaxBlockSerializedSizeAtHeight(int nHeight, const Consensus::Params& params)
+{
+    return nHeight >= params.nBlockTimeReductionHeight
+        ? MAX_BLOCK_SERIALIZED_SIZE_NIP028
+        : MAX_BLOCK_SERIALIZED_SIZE_RIP2;
+}
+
 int GetCoinbaseMaturity()
 {
     return GetParams().GetConsensus().nCoinbaseMaturity;

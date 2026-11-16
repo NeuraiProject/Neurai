@@ -34,8 +34,8 @@ VB_SIGNAL_VERSION = 0x30000000 | (1 << 15)
 MAX_BLOCK_WEIGHT = 8000000
 MAX_BLOCK_VSIZE = MAX_BLOCK_WEIGHT // 4
 MAX_SIGOP_COST = 80000
-# Largest P2P message (MAX_PROTOCOL_MESSAGE_LENGTH).
-MAX_PROTOCOL_MESSAGE_LENGTH = 4000000
+# Largest P2P message (MAX_PROTOCOL_MESSAGE_LENGTH): the largest valid block.
+MAX_PROTOCOL_MESSAGE_LENGTH = 8000000
 # Largest stack element: the regtest opt-ins (NIP-018 and others) widen it
 # from 520 to 3072 bytes, in consensus and in the P2WSH policy.
 MAX_SCRIPT_ELEMENT_SIZE = 3072
@@ -590,9 +590,9 @@ class SegWitTest(NeuraiTestFramework):
         # Skipping this test for now; this is covered in feature_block.py
 
         # Test that witness-bearing blocks are limited at a weight of 8M
-        # (vsize 2M). A P2P message is limited to 4,000,000 bytes: the block
-        # carries non-witness bulk so that it reaches the weight limit below
-        # that size.
+        # (vsize 2M). The block carries non-witness bulk, so it reaches the
+        # weight limit at about 3.5 MB; feature_block_size_limit relays a
+        # witness-only block of nearly 8 MB.
         block = self.build_next_block()
 
         assert (len(self.utxo) > 0)

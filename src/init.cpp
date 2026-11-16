@@ -712,7 +712,7 @@ std::string HelpMessage(HelpMessageMode mode)
 
     strUsage += HelpMessageGroup(_("Block creation options:"));
     strUsage += HelpMessageOpt("-blockmaxweight=<n>", strprintf(_("Set maximum BIP141 block weight (default: %d)"), MAX_BLOCK_WEIGHT - 4000));
-    strUsage += HelpMessageOpt("-blockmaxsize=<n>", _("Set maximum BIP141 block weight to this * 4. Deprecated, use blockmaxweight"));
+    strUsage += HelpMessageOpt("-blockmaxsize=<n>", _("Set maximum serialized block size in bytes, witness included, and maximum BIP141 block weight to this * 4"));
     strUsage += HelpMessageOpt("-blockmintxfee=<amt>", strprintf(_("Set lowest fee rate (in %s/kB) for transactions to be included in block creation. (default: %s)"), CURRENCY_UNIT, FormatMoney(DEFAULT_BLOCK_MIN_TX_FEE)));
     if (showDebug)
         strUsage += HelpMessageOpt("-blockversion=<n>", "Override block version to test forking scenarios");
@@ -1040,9 +1040,9 @@ void InitParameterInteraction()
     if (gArgs.IsArgSet("-blockmaxsize")) {
         unsigned int max_size = gArgs.GetArg("-blockmaxsize", 0);
         if (gArgs.SoftSetArg("-blockmaxweight", strprintf("%d", max_size * WITNESS_SCALE_FACTOR))) {
-            LogPrintf("%s: parameter interaction: -blockmaxsize=%d -> setting -blockmaxweight=%d (-blockmaxsize is deprecated!)\n", __func__, max_size, max_size * WITNESS_SCALE_FACTOR);
+            LogPrintf("%s: parameter interaction: -blockmaxsize=%d -> setting -blockmaxweight=%d\n", __func__, max_size, max_size * WITNESS_SCALE_FACTOR);
         } else {
-            LogPrintf("%s: Ignoring blockmaxsize setting which is overridden by blockmaxweight", __func__);
+            LogPrintf("%s: -blockmaxweight is set, so -blockmaxsize=%d only limits the serialized size\n", __func__, max_size);
         }
     }
 }

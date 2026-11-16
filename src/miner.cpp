@@ -86,6 +86,7 @@ int64_t UpdateTime(CBlockHeader* pblock, const Consensus::Params& consensusParam
 BlockAssembler::Options::Options() {
     blockMinFeeRate = CFeeRate(DEFAULT_BLOCK_MIN_TX_FEE);
     nBlockMaxWeight = GetMaxBlockWeight() - 4000;
+    nBlockMaxSize = GetMaxBlockSerializedSize() - 1000;
 }
 
 BlockAssembler::BlockAssembler(const CChainParams& params, const Options& options) : chainparams(params)
@@ -93,6 +94,10 @@ BlockAssembler::BlockAssembler(const CChainParams& params, const Options& option
     blockMinFeeRate = options.blockMinFeeRate;
     // Limit weight to between 4K and MAX_BLOCK_WEIGHT-4K for sanity:
     nBlockMaxWeight = std::max<size_t>(4000, std::min<size_t>(GetMaxBlockWeight() - 4000, options.nBlockMaxWeight));
+    // Limit size to between 1K and MAX_BLOCK_SERIALIZED_SIZE_RIP2-1K for sanity;
+    // CreateNewBlock lowers it to the limit at the height of the block.
+    nBlockMaxSizeOption = std::max<size_t>(1000, std::min<size_t>(GetMaxBlockSerializedSize() - 1000, options.nBlockMaxSize));
+    nBlockMaxSize = nBlockMaxSizeOption;
 }
 
 static BlockAssembler::Options DefaultOptions(const CChainParams& params)
@@ -103,6 +108,7 @@ static BlockAssembler::Options DefaultOptions(const CChainParams& params)
     // If both are given, restrict both.
     BlockAssembler::Options options;
     options.nBlockMaxWeight = gArgs.GetArg("-blockmaxweight",  GetMaxBlockWeight() - 4000);
+    options.nBlockMaxSize = gArgs.GetArg("-blockmaxsize", GetMaxBlockSerializedSize() - 1000);
     if (gArgs.IsArgSet("-blockmintxfee")) {
         CAmount n = 0;
         ParseMoney(gArgs.GetArg("-blockmintxfee", ""), n);
@@ -121,6 +127,7 @@ void BlockAssembler::resetBlock()
 
     // Reserve space for coinbase tx
     nBlockWeight = 4000;
+    nBlockSize = 1000;
     nBlockSigOpsCost = 400;
     nBlockPoseidonWork = 0;
     nBlockAssetAuthWork = 0;
@@ -152,6 +159,8 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
     CBlockIndex* pindexPrev = chainActive.Tip();
     assert(pindexPrev != nullptr);
     nHeight = pindexPrev->nHeight + 1;
+    nBlockMaxSize = std::min<size_t>(nBlockMaxSizeOption,
+                                     GetMaxBlockSerializedSizeAtHeight(nHeight, chainparams.GetConsensus()) - 1000);
 
     pblock->nVersion = ComputeBlockVersion(pindexPrev, chainparams.GetConsensus());
     // -regtest only: allow overriding block.nVersion with
@@ -195,7 +204,7 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
     pblocktemplate->vchCoinbaseCommitment = GenerateCoinbaseCommitment(*pblock, pindexPrev, chainparams.GetConsensus());
     pblocktemplate->vTxFees[0] = -nFees;
 
-    LogPrintf("CreateNewBlock(): block weight: %u txs: %u fees: %ld sigops %d\n", GetBlockWeight(*pblock), nBlockTx, nFees, nBlockSigOpsCost);
+    LogPrintf("CreateNewBlock(): block weight: %u size: %u txs: %u fees: %ld sigops %d\n", GetBlockWeight(*pblock), ::GetSerializeSize(*pblock, SER_NETWORK, PROTOCOL_VERSION), nBlockTx, nFees, nBlockSigOpsCost);
 
     // Fill in header
     pblock->hashPrevBlock  = pindexPrev->GetBlockHash();
@@ -256,6 +265,11 @@ void BlockAssembler::onlyUnconfirmed(CTxMemPool::setEntries& testSet)
     }
 }
 
+bool BlockAssembler::BlockAlmostFull() const
+{
+    return nBlockWeight > nBlockMaxWeight - 4000 || nBlockSize > nBlockMaxSize - 1000;
+}
+
 bool BlockAssembler::TestPackage(uint64_t packageSize, int64_t packageSigOpsCost) const
 {
     // TODO: switch to weight-based accounting for packages instead of vsize-based accounting.
@@ -264,6 +278,17 @@ bool BlockAssembler::TestPackage(uint64_t packageSize, int64_t packageSigOpsCost
     if (nBlockSigOpsCost + packageSigOpsCost >= MAX_BLOCK_SIGOPS_COST)
         return false;
     return true;
+}
+
+bool BlockAssembler::TestPackageSize(const CTxMemPool::setEntries& package) const
+{
+    // The weight does not bound the serialized size once the NIP-028 limit
+    // applies: witness data counts in full there.
+    uint64_t nPackageSize = 0;
+    for (const CTxMemPool::txiter it : package) {
+        nPackageSize += ::GetSerializeSize(it->GetTx(), SER_NETWORK, PROTOCOL_VERSION);
+    }
+    return nBlockSize + nPackageSize < nBlockMaxSize;
 }
 
 // Perform transaction-level checks before adding to block:
@@ -314,6 +339,7 @@ void BlockAssembler::AddToBlock(CTxMemPool::txiter iter)
     pblocktemplate->vTxFees.push_back(iter->GetFee());
     pblocktemplate->vTxSigOpsCost.push_back(iter->GetSigOpCost());
     nBlockWeight += iter->GetTxWeight();
+    nBlockSize += ::GetSerializeSize(iter->GetTx(), SER_NETWORK, PROTOCOL_VERSION);
     ++nBlockTx;
     nBlockSigOpsCost += iter->GetSigOpCost();
     nBlockPoseidonWork += iter->GetPoseidonWork();
@@ -482,8 +508,7 @@ void BlockAssembler::addPackageTxs(int &nPackagesSelected, int &nDescendantsUpda
 
             ++nConsecutiveFailed;
 
-            if (nConsecutiveFailed > MAX_CONSECUTIVE_FAILURES && nBlockWeight >
-                    nBlockMaxWeight - 4000) {
+            if (nConsecutiveFailed > MAX_CONSECUTIVE_FAILURES && BlockAlmostFull()) {
                 // Give up if we're close to full and haven't succeeded in a while
                 break;
             }
@@ -497,6 +522,22 @@ void BlockAssembler::addPackageTxs(int &nPackagesSelected, int &nDescendantsUpda
 
         onlyUnconfirmed(ancestors);
         ancestors.insert(iter);
+
+        // The serialized size is a block limit like the weight: a package
+        // that does not fit counts towards giving up on a full block.
+        if (!TestPackageSize(ancestors)) {
+            if (fUsingModified) {
+                mapModifiedTx.get<ancestor_score>().erase(modit);
+                failedTx.insert(iter);
+            }
+
+            ++nConsecutiveFailed;
+
+            if (nConsecutiveFailed > MAX_CONSECUTIVE_FAILURES && BlockAlmostFull()) {
+                break;
+            }
+            continue;
+        }
 
         // Test if all tx's are Final
         if (!TestPackageTransactions(ancestors)) {

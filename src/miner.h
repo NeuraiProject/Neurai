@@ -144,10 +144,15 @@ private:
     // Configuration parameters for the block size
     bool fIncludeWitness;
     unsigned int nBlockMaxWeight;
+    // Serialized size, witness included: the -blockmaxsize option and, for the
+    // block being built, the lower of it and the consensus limit at its height.
+    unsigned int nBlockMaxSizeOption;
+    unsigned int nBlockMaxSize;
     CFeeRate blockMinFeeRate;
 
     // Information on the current status of the block
     uint64_t nBlockWeight;
+    uint64_t nBlockSize;
     uint64_t nBlockTx;
     uint64_t nBlockSigOpsCost;
     uint64_t nBlockPoseidonWork;
@@ -165,6 +170,7 @@ public:
     struct Options {
         Options();
         size_t nBlockMaxWeight;
+        size_t nBlockMaxSize;
         CFeeRate blockMinFeeRate;
     };
 
@@ -192,8 +198,12 @@ private:
     void onlyUnconfirmed(CTxMemPool::setEntries& testSet);
     /** Test if a new package would "fit" in the block */
     bool TestPackage(uint64_t packageSize, int64_t packageSigOpsCost) const;
+    /** Test if a package fits in the serialized size limit, witness included */
+    bool TestPackageSize(const CTxMemPool::setEntries& package) const;
+    /** Whether the block is within a transaction of its weight or size limit */
+    bool BlockAlmostFull() const;
     /** Perform checks on each transaction in a package:
-      * locktime, premature-witness, serialized size (if necessary)
+      * locktime, premature-witness
       * These checks should always succeed, and they're here
       * only as an extra check in case of suboptimal node configuration */
     bool TestPackageTransactions(const CTxMemPool::setEntries& package);

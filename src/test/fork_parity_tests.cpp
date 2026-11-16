@@ -251,6 +251,34 @@ BOOST_AUTO_TEST_CASE(op_return_limit_follows_the_fork_height)
     SelectParams(CBaseChainParams::MAIN);
 }
 
+BOOST_AUTO_TEST_CASE(block_size_limit_follows_the_fork_height)
+{
+    // Mainnet keeps the RIP2 limit until its fork height is set.
+    const auto mainnet = CreateChainParams(CBaseChainParams::MAIN);
+    const Consensus::Params& main = mainnet->GetConsensus();
+    BOOST_CHECK_EQUAL(GetMaxBlockSerializedSizeAtHeight(0, main), MAX_BLOCK_SERIALIZED_SIZE_RIP2);
+    BOOST_CHECK_EQUAL(GetMaxBlockSerializedSizeAtHeight(std::numeric_limits<int>::max() - 1, main), MAX_BLOCK_SERIALIZED_SIZE_RIP2);
+
+    // Testnet and mainnet past the fork: 2 MB from the NIP-028 height on.
+    const auto testnet = CreateChainParams(CBaseChainParams::TESTNET);
+    const Consensus::Params& test = testnet->GetConsensus();
+    BOOST_CHECK_EQUAL(GetMaxBlockSerializedSizeAtHeight(test.nBlockTimeReductionHeight - 1, test), MAX_BLOCK_SERIALIZED_SIZE_RIP2);
+    BOOST_CHECK_EQUAL(GetMaxBlockSerializedSizeAtHeight(test.nBlockTimeReductionHeight, test), MAX_BLOCK_SERIALIZED_SIZE_NIP028);
+    BOOST_CHECK_EQUAL(MAX_BLOCK_SERIALIZED_SIZE_NIP028, 2000000U);
+
+    // Regtest moves it with -forkheight.
+    SelectParams(CBaseChainParams::REGTEST);
+    BOOST_CHECK_EQUAL(GetMaxBlockSerializedSizeAtHeight(1000, GetParams().GetConsensus()), MAX_BLOCK_SERIALIZED_SIZE_RIP2);
+    UpdateUnifiedForkHeight(500);
+    BOOST_CHECK_EQUAL(GetMaxBlockSerializedSizeAtHeight(499, GetParams().GetConsensus()), MAX_BLOCK_SERIALIZED_SIZE_RIP2);
+    BOOST_CHECK_EQUAL(GetMaxBlockSerializedSizeAtHeight(500, GetParams().GetConsensus()), MAX_BLOCK_SERIALIZED_SIZE_NIP028);
+    SelectParams(CBaseChainParams::MAIN);
+
+    // Below 2 MB the weight limit cannot bind: a block of 2 MB weighs at most 8M.
+    static_assert(MAX_BLOCK_SERIALIZED_SIZE_NIP028 * WITNESS_SCALE_FACTOR <= MAX_BLOCK_WEIGHT_RIP2,
+                  "the size limit must be the one that binds");
+}
+
 BOOST_AUTO_TEST_CASE(mandatory_flags_are_consensus_on_every_network)
 {
     // A mempool script failure under the mandatory flags bans the peer, so
