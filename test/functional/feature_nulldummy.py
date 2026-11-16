@@ -5,15 +5,18 @@
 # file COPYING or http://www.opensource.org/licenses/mit-mit-license.php.
 
 """
-Test NULLDUMMY softfork.
+Test the NULLDUMMY rule.
+
+On this chain NULLDUMMY is part of the witness rules, enforced from genesis.
 
 Connect to a single node.
 Generate 2 blocks (save the coinbases for later).
 Generate 427 more blocks.
 [Policy/Consensus] Check that NULLDUMMY compliant transactions are accepted in the 430th block.
-[Policy] Check that non-NULLDUMMY transactions are rejected before activation.
-[Consensus] Check that the new NULLDUMMY rules are not enforced on the 431st block.
-[Policy/Consensus] Check that the new NULLDUMMY rules are enforced on the 432nd block.
+[Policy/Consensus] Check that a non-NULLDUMMY base multisig spend is rejected by
+the mempool and in a block.
+[Policy/Consensus] Check the same for a P2WSH multisig spend.
+[Policy/Consensus] Check that the compliant versions are accepted in the 431st block.
 """
 
 from io import BytesIO
@@ -24,7 +27,8 @@ from test_framework.mininode import CTransaction, NetworkThread
 from test_framework.blocktools import create_coinbase, create_block, add_witness_commitment
 from test_framework.script import CScript
 
-NULLDUMMY_ERROR = "64: non-mandatory-script-verify-flag (Dummy CHECKMULTISIG argument must be zero)"
+# NULLDUMMY is a consensus rule here, so the mempool reports it as mandatory.
+NULLDUMMY_ERROR = "16: mandatory-script-verify-flag-failed (Dummy CHECKMULTISIG argument must be zero)"
 
 
 def true_dummy(tx):
@@ -65,7 +69,7 @@ class NULLDUMMYTest(NeuraiTestFramework):
         self.lastblockheight = 429
         self.lastblocktime = int(time.time()) + 429
 
-        self.log.info("Test 1: NULLDUMMY compliant base transactions should be accepted to mempool and mined before activation [430]")
+        self.log.info("Test 1: NULLDUMMY compliant base transactions are accepted to mempool and mined [430]")
         test1txs = [self.create_transaction(self.nodes[0], coinbase_txid[0], self.ms_address, 49)]
         txid1 = self.nodes[0].sendrawtransaction(test1txs[0].serialize_with_witness().hex(), True)
         test1txs.append(self.create_transaction(self.nodes[0], txid1, self.ms_address, 48))
@@ -74,32 +78,24 @@ class NULLDUMMYTest(NeuraiTestFramework):
         txid3 = self.nodes[0].sendrawtransaction(test1txs[2].serialize_with_witness().hex(), True)
         self.block_submit(self.nodes[0], test1txs, False, True)
 
-        self.log.info("Test 2: Non-NULLDUMMY base multisig transaction should not be accepted to mempool before activation")
-        test2tx = self.create_transaction(self.nodes[0], txid2, self.ms_address, 47)
+        self.log.info("Test 2: Non-NULLDUMMY base multisig transaction is rejected by the mempool and in a block")
+        test2tx = self.create_transaction(self.nodes[0], txid2, self.address, 47)
+        test4txs = [CTransaction(test2tx)]
         true_dummy(test2tx)
         assert_raises_rpc_error(-26, NULLDUMMY_ERROR, self.nodes[0].sendrawtransaction, test2tx.serialize_with_witness().hex(), True)
+        self.block_submit(self.nodes[0], [test2tx])
 
-        self.log.info("Test 3: Non-NULLDUMMY base transactions should be accepted in a block before activation [431]")
-        self.block_submit(self.nodes[0], [test2tx], False, True)
+        self.log.info("Test 3: Non-NULLDUMMY P2WSH multisig transaction is rejected by the mempool and in a block")
+        test3tx = self.create_transaction(self.nodes[0], txid3, self.wit_address, 48)
+        test4txs.append(CTransaction(test3tx))
+        test3tx.wit.vtxinwit[0].scriptWitness.stack[0] = b'\x01'
+        assert_raises_rpc_error(-26, NULLDUMMY_ERROR, self.nodes[0].sendrawtransaction, test3tx.serialize_with_witness().hex(), True)
+        self.block_submit(self.nodes[0], [test3tx], True)
 
-        self.log.info("Test 4: Non-NULLDUMMY base multisig transaction is invalid after activation")
-        test4tx = self.create_transaction(self.nodes[0], test2tx.hash, self.address, 46)
-        test6txs = [CTransaction(test4tx)]
-        true_dummy(test4tx)
-        assert_raises_rpc_error(-26, NULLDUMMY_ERROR, self.nodes[0].sendrawtransaction, test4tx.serialize_with_witness().hex(), True)
-        self.block_submit(self.nodes[0], [test4tx])
-
-        self.log.info("Test 5: Non-NULLDUMMY P2WSH multisig transaction invalid after activation")
-        test5tx = self.create_transaction(self.nodes[0], txid3, self.wit_address, 48)
-        test6txs.append(CTransaction(test5tx))
-        test5tx.wit.vtxinwit[0].scriptWitness.stack[0] = b'\x01'
-        assert_raises_rpc_error(-26, NULLDUMMY_ERROR, self.nodes[0].sendrawtransaction, test5tx.serialize_with_witness().hex(), True)
-        self.block_submit(self.nodes[0], [test5tx], True)
-
-        self.log.info("Test 6: NULLDUMMY compliant base/witness transactions should be accepted to mempool and in block after activation [432]")
-        for i in test6txs:
+        self.log.info("Test 4: NULLDUMMY compliant base/witness transactions are accepted to mempool and in a block [431]")
+        for i in test4txs:
             self.nodes[0].sendrawtransaction(i.serialize_with_witness().hex(), True)
-        self.block_submit(self.nodes[0], test6txs, True, True)
+        self.block_submit(self.nodes[0], test4txs, True, True)
 
     @staticmethod
     def create_transaction(node, txid, to_address, amount):
@@ -113,8 +109,12 @@ class NULLDUMMYTest(NeuraiTestFramework):
         return tx
 
     def block_submit(self, node, txs, witness=False, accept=False):
-        block = create_block(self.tip, create_coinbase(self.lastblockheight + 1), self.lastblocktime + 1)
-        block.nVersion = 4
+        # One second after the tip: a later block would get the regtest
+        # minimum difficulty and fail on its bits.
+        tip_header = node.getblock(self.lastblockhash)
+        block = create_block(self.tip, create_coinbase(self.lastblockheight + 1), tip_header['time'] + 1)
+        block.nVersion = tip_header['version']
+        block.nBits = int(tip_header['bits'], 16)
         for tx in txs:
             tx.rehash()
             block.vtx.append(tx)

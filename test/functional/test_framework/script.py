@@ -632,7 +632,7 @@ def signature_hash(script, tx_to, in_idx, hash_type):
 
     for txin in tx_tmp.vin:
         txin.scriptSig = b''
-    tx_tmp.vin[in_idx].scriptSig = find_and_delete(script, CScript(OP_CODESEPARATOR))
+    tx_tmp.vin[in_idx].scriptSig = find_and_delete(script, CScript([OP_CODESEPARATOR]))
 
     if (hash_type & 0x1f) == SIGHASH_NONE:
         tx_tmp.vout = []

@@ -6,6 +6,7 @@
 
 """Class for neuraid node under test"""
 
+import contextlib
 import decimal
 import errno
 import http.client
@@ -16,7 +17,7 @@ import re
 import subprocess
 import time
 
-from .util import assert_equal, get_rpc_proxy, rpc_url, wait_until
+from .util import assert_equal, delete_cookie_file, get_rpc_proxy, rpc_url, wait_until
 from .authproxy import JSONRPCException, AuthServiceProxy
 
 NEURAID_PROC_WAIT_TIMEOUT = 60
@@ -86,6 +87,9 @@ class TestNode:
             extra_args = self.extra_args
         if stderr is None:
             stderr = self.stderr
+        # A cookie file left by an unclean shutdown would be read before the
+        # new neuraid overwrites it, and authentication would fail.
+        delete_cookie_file(self.datadir)
         self.process = subprocess.Popen(self.args + extra_args, stderr=stderr)
         self.running = True
         AuthServiceProxy.running = True
@@ -157,9 +161,11 @@ class TestNode:
     def wait_until_stopped(self, timeout=NEURAID_PROC_WAIT_TIMEOUT):
         wait_until(self.is_node_stopped, err_msg="Wait until Stopped", timeout=timeout)
 
+    @contextlib.contextmanager
     def assert_debug_log(self, expected_msgs, timeout=2):
         time_end = time.time() + timeout
-        debug_log = os.path.join(self.datadir, self.chain, 'debug.log')
+        # Test nodes always run regtest; TestNode has no chain attribute.
+        debug_log = os.path.join(self.datadir, 'regtest', 'debug.log')
         with open(debug_log, encoding='utf-8') as dl:
             dl.seek(0, 2)
             prev_size = dl.tell()

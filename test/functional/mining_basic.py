@@ -18,6 +18,9 @@ from test_framework.mininode import CBlock
 from test_framework.test_framework import NeuraiTestFramework
 from test_framework.util import (assert_equal, assert_raises_rpc_error)
 
+# Compact form of the regtest proof-of-work limit (2**256 - 1).
+REGTEST_MIN_DIFFICULTY_BITS = 0x2100ffff
+
 def b2x(b):
     return b2a_hex(b).decode('ascii')
 
@@ -52,7 +55,8 @@ class MiningTest(NeuraiTestFramework):
         assert 'proposal' in tmpl['capabilities']
         assert 'coinbasetxn' not in tmpl
 
-        coinbase_tx = create_coinbase(height=int(tmpl["height"]) + 1)
+        # The template height is the new block's (BIP34 applies from height 1 here).
+        coinbase_tx = create_coinbase(height=int(tmpl["height"]))
         # sequence numbers must not be max for nLockTime to have effect
         coinbase_tx.vin[0].nSequence = 2 ** 32 - 2
         coinbase_tx.rehash()
@@ -123,7 +127,14 @@ class MiningTest(NeuraiTestFramework):
         self.log.info("getblocktemplate: Test bad timestamps")
         bad_block = copy.deepcopy(block)
         bad_block.nTime = 2 ** 31 - 1
+        # On this regtest a block more than two spacings after its parent gets
+        # the minimum difficulty, and the difficulty is checked before the
+        # time: with the template's bits the block fails on bits, with the
+        # minimum-difficulty bits it reaches the time check.
+        assert_template(node, bad_block, 'bad-diffbits')
+        bad_block.nBits = REGTEST_MIN_DIFFICULTY_BITS
         assert_template(node, bad_block, 'time-too-new')
+        bad_block.nBits = block.nBits
         bad_block.nTime = 0
         assert_template(node, bad_block, 'time-too-old')
 
@@ -131,6 +142,18 @@ class MiningTest(NeuraiTestFramework):
         bad_block = copy.deepcopy(block)
         bad_block.hashPrevBlock = 123
         assert_template(node, bad_block, 'inconclusive-not-best-prevblk')
+
+        self.log.info("-blockmaxsize limits the blocks the node mines")
+        # -blockmaxsize is translated to -blockmaxweight (4 x size).
+        self.restart_node(0, ['-blockmaxsize=5000'])
+        node = self.nodes[0]
+        for _ in range(40):
+            node.sendtoaddress(node.getnewaddress(), 1)
+        assert_equal(len(node.getrawmempool()), 40)
+        mined = node.getblock(node.generate(1)[0])
+        assert mined['weight'] <= 5000 * 4, mined['weight']
+        assert len(mined['tx']) > 1
+        assert len(node.getrawmempool()) > 0
 
 if __name__ == '__main__':
     MiningTest().main()

@@ -16,7 +16,11 @@ MAX_DESCENDANTS = 25
 class MempoolPackagesTest(NeuraiTestFramework):
     def set_test_params(self):
         self.num_nodes = 2
-        self.extra_args = [["-maxorphantx=1000"], ["-maxorphantx=1000", "-limitancestorcount=5"]]
+        # Neurai's default chain limits are 500; node0 runs with the 25 this
+        # test was written for.
+        self.extra_args = [["-maxorphantx=1000", "-limitancestorcount=%d" % MAX_ANCESTORS,
+                            "-limitdescendantcount=%d" % MAX_DESCENDANTS],
+                           ["-maxorphantx=1000", "-limitancestorcount=5"]]
 
     # Build a transaction that spends parent_txid:vout
     # Return amount sent
@@ -42,7 +46,9 @@ class MempoolPackagesTest(NeuraiTestFramework):
         vout = utxo[0]['vout']
         value = utxo[0]['amount']
 
-        fee = Decimal("0.0001")
+        # Neurai's minimum relay fee is 0.01 XNA/kB; this covers the 10-output
+        # transactions below too.
+        fee = Decimal("0.01")
         # MAX_ANCESTORS transactions off a confirmed tx should be fine
         chain = []
         for i in range(MAX_ANCESTORS):

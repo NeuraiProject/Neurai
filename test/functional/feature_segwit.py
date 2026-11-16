@@ -4,19 +4,50 @@
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-"""Test the SegWit changeover logic."""
+"""Test segwit transactions through the wallet and RPC.
+
+Witness is active from genesis on this regtest: there is no segwit
+deployment, so the checks of the old changeover (lock-in, activation) do
+not apply. This checks that witness outputs are created, signed, rejected
+without a witness, mined, served by the RPCs and seen by the wallet.
+"""
 
 from io import BytesIO
 from test_framework.test_framework import NeuraiTestFramework
 from test_framework.util import hex_str_to_bytes, connect_nodes, Decimal, assert_equal, sync_blocks, assert_raises_rpc_error, try_rpc
 from test_framework.mininode import sha256, CTransaction, CTxIn, COutPoint, CTxOut, COIN, to_hex, from_hex
-from test_framework.address import script_to_p2sh, key_to_p2pkh
+from test_framework.address import script_to_p2sh, key_to_p2pkh, keyhash_to_p2pkh
 from test_framework.script import CScript, OP_HASH160, OP_CHECKSIG, hash160, OP_EQUAL, OP_DUP, OP_EQUALVERIFY, OP_0, OP_1, OP_2, OP_CHECKMULTISIG, OP_TRUE
 
 NODE_0 = 0
 NODE_2 = 2
 WIT_V0 = 0
 WIT_V1 = 1
+
+# Block subsidy on regtest (no halving below height 14400).
+SUBSIDY = Decimal("50000")
+# Witness outputs created from a coinbase, and the spends of those outputs.
+WIT_AMOUNT = SUBSIDY - Decimal("0.1")
+SPEND_AMOUNT = WIT_AMOUNT - Decimal("0.1")
+# Block limits of this chain (weight 8M since the RIP2 size increase).
+MAX_BLOCK_WEIGHT = 8000000
+MAX_BLOCK_SERIALIZED_SIZE = 8000000
+MAX_BLOCK_SIGOPS_COST = 80000
+
+B58_CHARS = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+
+
+def regtest_p2pkh(testnet_address):
+    """Regtest P2PKH address with the key hash of a Bitcoin testnet one.
+
+    The key data of this test comes from Bitcoin; P2PKH addresses use
+    another version byte here (P2SH ones use the same)."""
+    value = 0
+    for c in testnet_address:
+        value = value * 58 + B58_CHARS.index(c)
+    payload = value.to_bytes(25, 'big')
+    assert_equal(payload[0], 111)
+    return keyhash_to_p2pkh(payload[1:21])
 
 
 # Create a scriptPubKey corresponding to either a P2WPKH output for the
@@ -57,7 +88,7 @@ def send_to_witness(use_p2wsh, node, utxo, pubkey, encode_p2sh, amount, sign=Tru
     tx_to_witness = create_witness_program(use_p2wsh, utxo, pubkey, encode_p2sh, amount)
     if sign:
         signed = node.signrawtransaction(tx_to_witness)
-        assert ("errors" not in signed or len(["errors"]) == 0)
+        assert "errors" not in signed or len(signed["errors"]) == 0
         return node.sendrawtransaction(signed["hex"])
     else:
         if insert_redeem_script:
@@ -83,9 +114,13 @@ class SegWitTest(NeuraiTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 3
-        self.extra_args = [["-walletprematurewitness", "-rpcserialversion=0"],
-                           ["-blockversion=4", "-promiscuousmempoolflags=517", "-prematurewitness", "-walletprematurewitness", "-rpcserialversion=1"],
-                           ["-blockversion=536870915", "-promiscuousmempoolflags=517", "-prematurewitness", "-walletprematurewitness"]]
+        # Standard transactions are required by default on every chain here.
+        # node0 returns raw data without witness, node1 and node2 with it.
+        # node1 and node2 run a mempool that does not check witnesses
+        # (P2SH|DERSIG|CHECKLOCKTIMEVERIFY): consensus still requires them.
+        self.extra_args = [["-acceptnonstdtxn=1", "-rpcserialversion=0"],
+                           ["-acceptnonstdtxn=1", "-promiscuousmempoolflags=517", "-rpcserialversion=1"],
+                           ["-acceptnonstdtxn=1", "-promiscuousmempoolflags=517"]]
 
     def setup_network(self):
         super().setup_network()
@@ -93,43 +128,16 @@ class SegWitTest(NeuraiTestFramework):
         self.sync_all()
 
     def success_mine(self, node, txid, sign, redeem_script=""):
-        send_to_witness(1, node, getutxo(txid), self.pubkey[0], False, Decimal("4999.8"), sign, redeem_script)
+        send_to_witness(1, node, getutxo(txid), self.pubkey[0], False, SPEND_AMOUNT, sign, redeem_script)
         block = node.generate(1)
         assert_equal(len(node.getblock(block[0])["tx"]), 2)
         sync_blocks(self.nodes)
 
-    def skip_mine(self, node, txid, sign, redeem_script=""):
-        send_to_witness(1, node, getutxo(txid), self.pubkey[0], False, Decimal("4999.8"), sign, redeem_script)
-        block = node.generate(1)
-        assert_equal(len(node.getblock(block[0])["tx"]), 1)
-        sync_blocks(self.nodes)
-
     def fail_accept(self, node, error_msg, txid, sign, redeem_script=""):
-        assert_raises_rpc_error(-26, error_msg, send_to_witness, 1, node, getutxo(txid), self.pubkey[0], False, Decimal("4999.8"), sign, redeem_script)
-
-    def fail_mine(self, node, txid, sign, redeem_script=""):
-        send_to_witness(1, node, getutxo(txid), self.pubkey[0], False, Decimal("4999.8"), sign, redeem_script)
-        assert_raises_rpc_error(-1, "CreateNewBlock: TestBlockValidity failed", node.generate, 1)
-        sync_blocks(self.nodes)
+        assert_raises_rpc_error(-26, error_msg, send_to_witness, 1, node, getutxo(txid), self.pubkey[0], False, SPEND_AMOUNT, sign, redeem_script)
 
     def run_test(self):
-        self.nodes[0].generate(161)  # block 161
-
-        #         self.log.info("Verify sigops are counted in GBT with pre-BIP141 rules before the fork")
-        #         txid = self.nodes[0].sendtoaddress(self.nodes[0].getnewaddress(), 1)
-        #         tmpl = self.nodes[0].getblocktemplate({})
-        #         assert(tmpl['sizelimit'] == 1000000)
-        #         assert('weightlimit' not in tmpl)
-        #         assert(tmpl['sigoplimit'] == 20000)
-        #         assert(tmpl['transactions'][0]['hash'] == txid)
-        #         assert(tmpl['transactions'][0]['sigops'] == 2)
-        #         tmpl = self.nodes[0].getblocktemplate({'rules':['segwit']})
-        #         assert(tmpl['sizelimit'] == 1000000)
-        #         assert('weightlimit' not in tmpl)
-        #         assert(tmpl['sigoplimit'] == 20000)
-        #         assert(tmpl['transactions'][0]['hash'] == txid)
-        #         assert(tmpl['transactions'][0]['sigops'] == 2)
-        self.nodes[0].generate(1)  # block 162
+        self.nodes[0].generate(162)  # block 162
 
         balance_presetup = self.nodes[0].getbalance()
         self.pubkey = []
@@ -150,20 +158,25 @@ class SegWitTest(NeuraiTestFramework):
         for i in range(5):
             for n in range(3):
                 for v in range(2):
-                    wit_ids[n][v].append(send_to_witness(v, self.nodes[0], find_unspent(self.nodes[0], 5000), self.pubkey[n], False, Decimal("4999.9")))
-                    p2sh_ids[n][v].append(send_to_witness(v, self.nodes[0], find_unspent(self.nodes[0], 5000), self.pubkey[n], True, Decimal("4999.9")))
+                    utxo = find_unspent(self.nodes[0], SUBSIDY)
+                    assert_equal(utxo['amount'], SUBSIDY)
+                    wit_ids[n][v].append(send_to_witness(v, self.nodes[0], utxo, self.pubkey[n], False, WIT_AMOUNT))
+                    utxo = find_unspent(self.nodes[0], SUBSIDY)
+                    assert_equal(utxo['amount'], SUBSIDY)
+                    p2sh_ids[n][v].append(send_to_witness(v, self.nodes[0], utxo, self.pubkey[n], True, WIT_AMOUNT))
 
         self.nodes[0].generate(1)  # block 163
         sync_blocks(self.nodes)
 
         # Make sure all nodes recognize the transactions as theirs
-        assert_equal(self.nodes[0].getbalance(), balance_presetup - 60 * 5000 + 20 * Decimal("4999.9") + 5000)
-        assert_equal(self.nodes[1].getbalance(), 20 * Decimal("4999.9"))
-        assert_equal(self.nodes[2].getbalance(), 20 * Decimal("4999.9"))
+        assert_equal(self.nodes[0].getbalance(), balance_presetup - 60 * SUBSIDY + 20 * WIT_AMOUNT + SUBSIDY)
+        assert_equal(self.nodes[1].getbalance(), 20 * WIT_AMOUNT)
+        assert_equal(self.nodes[2].getbalance(), 20 * WIT_AMOUNT)
 
         self.nodes[0].generate(260)  # block 423
         sync_blocks(self.nodes)
 
+        self.log.info("Verify witness txs without witness data are invalid")
         # unsigned, no scriptsig
         self.fail_accept(self.nodes[0], "mandatory-script-verify-flag", wit_ids[NODE_0][WIT_V0][0], False)
         self.fail_accept(self.nodes[0], "mandatory-script-verify-flag", wit_ids[NODE_0][WIT_V1][0], False)
@@ -172,35 +185,25 @@ class SegWitTest(NeuraiTestFramework):
         # unsigned with redeem script
         self.fail_accept(self.nodes[0], "mandatory-script-verify-flag", p2sh_ids[NODE_0][WIT_V0][0], False, witness_script(False, self.pubkey[0]))
         self.fail_accept(self.nodes[0], "mandatory-script-verify-flag", p2sh_ids[NODE_0][WIT_V1][0], False, witness_script(True, self.pubkey[0]))
-        # signed
-        #         self.fail_accept(self.nodes[0], "no-witness-yet", wit_ids[NODE_0][WIT_V0][0], True)
-        #         self.fail_accept(self.nodes[0], "no-witness-yet", wit_ids[NODE_0][WIT_V1][0], True)
-        #         self.fail_accept(self.nodes[0], "no-witness-yet", p2sh_ids[NODE_0][WIT_V0][0], True)
-        #         self.fail_accept(self.nodes[0], "no-witness-yet", p2sh_ids[NODE_0][WIT_V1][0], True)
 
-        #         self.log.info("Verify witness txs are skipped for mining before the fork")
-        #         self.skip_mine(self.nodes[2], wit_ids[NODE_2][WIT_V0][0], True) #block 424
-        #         self.skip_mine(self.nodes[2], wit_ids[NODE_2][WIT_V1][0], True) #block 425
-        #         self.skip_mine(self.nodes[2], p2sh_ids[NODE_2][WIT_V0][0], True) #block 426
-        #         self.skip_mine(self.nodes[2], p2sh_ids[NODE_2][WIT_V1][0], True) #block 427
-
-        # TODO: An old node would see these txs without witnesses and be able to mine them
-
-        self.log.info("Verify unsigned bare witness txs in versionbits-setting blocks are valid before the fork")
-        self.success_mine(self.nodes[2], wit_ids[NODE_2][WIT_V0][1], False)  # block 428
-        self.success_mine(self.nodes[2], wit_ids[NODE_2][WIT_V1][1], False)  # block 429
-
-        self.log.info("Verify unsigned p2sh witness txs without a redeem script are invalid")
+        self.log.info("Verify a mempool that skips witness checks still refuses txs without witness data")
+        # The witness rules are consensus (MANDATORY_SCRIPT_VERIFY_FLAGS), so
+        # -promiscuousmempoolflags cannot let these into node2's mempool.
+        self.fail_accept(self.nodes[2], "mandatory-script-verify-flag", wit_ids[NODE_2][WIT_V0][1], False)
+        self.fail_accept(self.nodes[2], "mandatory-script-verify-flag", wit_ids[NODE_2][WIT_V1][1], False)
         self.fail_accept(self.nodes[2], "mandatory-script-verify-flag", p2sh_ids[NODE_2][WIT_V0][1], False)
         self.fail_accept(self.nodes[2], "mandatory-script-verify-flag", p2sh_ids[NODE_2][WIT_V1][1], False)
+        self.fail_accept(self.nodes[2], "mandatory-script-verify-flag", p2sh_ids[NODE_2][WIT_V0][1], False, witness_script(False, self.pubkey[2]))
+        self.fail_accept(self.nodes[2], "mandatory-script-verify-flag", p2sh_ids[NODE_2][WIT_V1][1], False, witness_script(True, self.pubkey[2]))
+        assert_equal(len(self.nodes[2].getrawmempool()), 0)
 
-        self.log.info("Verify unsigned p2sh witness txs with a redeem script in versionbits-settings blocks are valid before the fork")
-        self.success_mine(self.nodes[2], p2sh_ids[NODE_2][WIT_V0][1], False, witness_script(False, self.pubkey[2]))  # block 430
-        self.success_mine(self.nodes[2], p2sh_ids[NODE_2][WIT_V1][1], False, witness_script(True, self.pubkey[2]))  # block 431
-
-        self.log.info("Verify previous witness txs skipped for mining can now be mined")
+        self.log.info("Verify signed witness txs are mined")
+        send_to_witness(1, self.nodes[2], getutxo(wit_ids[NODE_2][WIT_V0][1]), self.pubkey[0], False, SPEND_AMOUNT)
+        send_to_witness(1, self.nodes[2], getutxo(wit_ids[NODE_2][WIT_V1][1]), self.pubkey[0], False, SPEND_AMOUNT)
+        send_to_witness(1, self.nodes[2], getutxo(p2sh_ids[NODE_2][WIT_V0][1]), self.pubkey[0], False, SPEND_AMOUNT)
+        send_to_witness(1, self.nodes[2], getutxo(p2sh_ids[NODE_2][WIT_V1][1]), self.pubkey[0], False, SPEND_AMOUNT)
         assert_equal(len(self.nodes[2].getrawmempool()), 4)
-        block = self.nodes[2].generate(1)  # block 432 (first block with new rules: 432 = 144 * 3)
+        block = self.nodes[2].generate(1)  # block 424
         sync_blocks(self.nodes)
         assert_equal(len(self.nodes[2].getrawmempool()), 0)
         segwit_tx_list = self.nodes[2].getblock(block[0])["tx"]
@@ -217,35 +220,34 @@ class SegWitTest(NeuraiTestFramework):
             assert (self.nodes[1].getrawtransaction(segwit_tx_list[i]) == self.nodes[2].gettransaction(segwit_tx_list[i])["hex"])
             assert (self.nodes[0].getrawtransaction(segwit_tx_list[i]) == tx.serialize_without_witness().hex())
 
-        self.log.info("Verify witness txs without witness data are invalid after the fork")
-        self.fail_mine(self.nodes[2], wit_ids[NODE_2][WIT_V0][2], False)
-        self.fail_mine(self.nodes[2], wit_ids[NODE_2][WIT_V1][2], False)
-        self.fail_mine(self.nodes[2], p2sh_ids[NODE_2][WIT_V0][2], False, witness_script(False, self.pubkey[2]))
-        self.fail_mine(self.nodes[2], p2sh_ids[NODE_2][WIT_V1][2], False, witness_script(True, self.pubkey[2]))
+        self.log.info("Verify default node can use witness txs")
+        self.success_mine(self.nodes[0], wit_ids[NODE_0][WIT_V0][0], True)  # block 425
+        self.success_mine(self.nodes[0], wit_ids[NODE_0][WIT_V1][0], True)  # block 426
+        self.success_mine(self.nodes[0], p2sh_ids[NODE_0][WIT_V0][0], True)  # block 427
+        self.success_mine(self.nodes[0], p2sh_ids[NODE_0][WIT_V1][0], True)  # block 428
 
-        self.log.info("Verify default node can now use witness txs")
-        self.success_mine(self.nodes[0], wit_ids[NODE_0][WIT_V0][0], True)  # block 432
-        self.success_mine(self.nodes[0], wit_ids[NODE_0][WIT_V1][0], True)  # block 433
-        self.success_mine(self.nodes[0], p2sh_ids[NODE_0][WIT_V0][0], True)  # block 434
-        self.success_mine(self.nodes[0], p2sh_ids[NODE_0][WIT_V1][0], True)  # block 435
-
-        self.log.info("Verify sigops are counted in GBT with BIP141 rules after the fork")
+        self.log.info("Verify sigops are counted in GBT with BIP141 rules")
         txid = self.nodes[0].sendtoaddress(self.nodes[0].getnewaddress(), 1)
+        raw_tx = self.nodes[0].getrawtransaction(txid, True)
         tmpl = self.nodes[0].getblocktemplate({'rules': ['segwit']})
-        assert (tmpl['sizelimit'] >= 3999577)  # actual maximum size is lower due to minimum mandatory non-witness data
-        assert (tmpl['weightlimit'] == 4000000)
-        assert (tmpl['sigoplimit'] == 80000)
-        assert (tmpl['transactions'][0]['txid'] == txid)
-        assert (tmpl['transactions'][0]['sigops'] == 8)
+        assert_equal(tmpl['sizelimit'], MAX_BLOCK_SERIALIZED_SIZE)
+        assert_equal(tmpl['weightlimit'], MAX_BLOCK_WEIGHT)
+        assert_equal(tmpl['sigoplimit'], MAX_BLOCK_SIGOPS_COST)
+        assert_equal(tmpl['transactions'][0]['txid'], txid)
+        # Two P2PKH outputs cost 4 each; a witness input (P2WPKH or 1-of-1
+        # P2WSH multisig from the wallet) adds one witness sigop.
+        expected_sigops = 9 if 'txinwitness' in raw_tx["vin"][0] else 8
+        assert_equal(tmpl['transactions'][0]['sigops'], expected_sigops)
 
         self.nodes[0].generate(1)  # Mine a block to clear the gbt cache
 
-        self.log.info("Non-segwit miners are able to use GBT response after activation.")
+        self.log.info("GBT serves witness transactions, with or without the segwit rule")
         # Create a 3-tx chain: tx1 (non-segwit input, paying to a segwit output) ->
         #                      tx2 (segwit input, paying to a non-segwit output) ->
         #                      tx3 (non-segwit input, paying to a non-segwit output).
-        # tx1 is allowed to appear in the block, but no others.
-        txid1 = send_to_witness(1, self.nodes[0], find_unspent(self.nodes[0], 50), self.pubkey[0], False, Decimal("49.996"))
+        # Witness is always active here, so every template may carry all three.
+        utxo = find_unspent(self.nodes[0], SUBSIDY)
+        txid1 = send_to_witness(1, self.nodes[0], utxo, self.pubkey[0], False, utxo['amount'] - Decimal("0.004"))
         hex_tx = self.nodes[0].gettransaction(txid)['hex']
         tx = from_hex(CTransaction(), hex_tx)
         assert (tx.wit.is_null())  # This should not be a segwit input
@@ -254,7 +256,7 @@ class SegWitTest(NeuraiTestFramework):
         # Now create tx2, which will spend from txid1.
         tx = CTransaction()
         tx.vin.append(CTxIn(COutPoint(int(txid1, 16), 0), b''))
-        tx.vout.append(CTxOut(int(49.99 * COIN), CScript([OP_TRUE])))
+        tx.vout.append(CTxOut(int((utxo['amount'] - Decimal("0.01")) * COIN), CScript([OP_TRUE])))
         tx2_hex = self.nodes[0].signrawtransaction(to_hex(tx))['hex']
         txid2 = self.nodes[0].sendrawtransaction(tx2_hex)
         tx = from_hex(CTransaction(), tx2_hex)
@@ -263,19 +265,18 @@ class SegWitTest(NeuraiTestFramework):
         # Now create tx3, which will spend from txid2
         tx = CTransaction()
         tx.vin.append(CTxIn(COutPoint(int(txid2, 16), 0), b""))
-        tx.vout.append(CTxOut(int(49.95 * COIN), CScript([OP_TRUE])))  # Huge fee
+        tx.vout.append(CTxOut(int((utxo['amount'] - Decimal("0.05")) * COIN), CScript([OP_TRUE])))  # Huge fee
         tx.calc_x16r()
         txid3 = self.nodes[0].sendrawtransaction(to_hex(tx))
         assert (tx.wit.is_null())
         assert (txid3 in self.nodes[0].getrawmempool())
 
-        # Now try calling getblocktemplate() without segwit support.
+        # A template requested without the segwit rule has all three too.
         template = self.nodes[0].getblocktemplate()
-
-        # Check that tx1 is the only transaction of the 3 in the template.
         template_txids = [t['txid'] for t in template['transactions']]
-        assert (txid2 not in template_txids and txid3 not in template_txids)
         assert (txid1 in template_txids)
+        assert (txid2 in template_txids)
+        assert (txid3 in template_txids)
 
         # Check that running with segwit support results in all 3 being included.
         template = self.nodes[0].getblocktemplate({"rules": ["segwit"]})
@@ -286,9 +287,12 @@ class SegWitTest(NeuraiTestFramework):
 
         # Check that wtxid is properly reported in mempool entry
         assert_equal(int(self.nodes[0].getmempoolentry(txid3)["wtxid"], 16), tx.calc_x16r(True))
+        tx2 = from_hex(CTransaction(), tx2_hex)
+        assert_equal(int(self.nodes[0].getmempoolentry(txid2)["wtxid"], 16), tx2.calc_x16r(True))
 
         # Mine a block to clear the gbt cache again.
         self.nodes[0].generate(1)
+        assert_equal(len(self.nodes[0].getrawmempool()), 0)
 
         self.log.info("Verify behaviour of importaddress, addwitnessaddress and listunspent")
 
@@ -305,9 +309,9 @@ class SegWitTest(NeuraiTestFramework):
 
         # Import a compressed key and an uncompressed key, generate some multisig addresses
         self.nodes[0].importprivkey("92e6XLo5jVAVwrQKPNTs93oQco8f8sDNBcpv73Dsrs397fQtFQn")
-        uncompressed_spendable_address = ["mvozP4UwyGD2mGZU4D2eMvMLPB9WkMmMQu"]
+        uncompressed_spendable_address = [regtest_p2pkh("mvozP4UwyGD2mGZU4D2eMvMLPB9WkMmMQu")]
         self.nodes[0].importprivkey("cNC8eQ5dg3mFAVePDX4ddmPYpPbw41r9bm2jd1nLJT77e6RrzTRR")
-        compressed_spendable_address = ["mmWQubrDomqpgSYekvsU7HWEVjLFHAakLe"]
+        compressed_spendable_address = [regtest_p2pkh("mmWQubrDomqpgSYekvsU7HWEVjLFHAakLe")]
         assert (self.nodes[0].validateaddress(uncompressed_spendable_address[0])['iscompressed'] == False)
         assert (self.nodes[0].validateaddress(compressed_spendable_address[0])['iscompressed'] == True)
 
@@ -331,7 +335,7 @@ class SegWitTest(NeuraiTestFramework):
         uncompressed_solvable_address.append(self.nodes[0].addmultisigaddress(2, [compressed_spendable_address[0], uncompressed_solvable_address[0]]))
         compressed_solvable_address.append(self.nodes[0].addmultisigaddress(2, [compressed_spendable_address[0], compressed_solvable_address[0]]))
         compressed_solvable_address.append(self.nodes[0].addmultisigaddress(2, [compressed_solvable_address[0], compressed_solvable_address[1]]))
-        unknown_address = ["mtKKyoHabkk6e4ppT7NaM7THqPUt7AzPrT", "2NDP3jLWAFT8NDAiUa9qiE6oBt2awmMq7Dx"]
+        unknown_address = [regtest_p2pkh("mtKKyoHabkk6e4ppT7NaM7THqPUt7AzPrT"), "2NDP3jLWAFT8NDAiUa9qiE6oBt2awmMq7Dx"]
 
         # Test multisig_without_privkey
         # We have 2 public keys without private keys, use addmultisigaddress to add to wallet.
@@ -406,7 +410,7 @@ class SegWitTest(NeuraiTestFramework):
         op1 = CScript([OP_1])
         op0 = CScript([OP_0])
         # 2N7MGY19ti4KDMSzRfPAssP6Pxyuxoi6jLe is the P2SH(P2PKH) version of mjoE3sSrb8ByYEvgnC3Aox86u1CHnfJA4V
-        unsolvable_address = ["mjoE3sSrb8ByYEvgnC3Aox86u1CHnfJA4V", "2N7MGY19ti4KDMSzRfPAssP6Pxyuxoi6jLe", script_to_p2sh(op1), script_to_p2sh(op0)]
+        unsolvable_address = [regtest_p2pkh("mjoE3sSrb8ByYEvgnC3Aox86u1CHnfJA4V"), "2N7MGY19ti4KDMSzRfPAssP6Pxyuxoi6jLe", script_to_p2sh(op1), script_to_p2sh(op0)]
         unsolvable_address_key = hex_str_to_bytes("02341AEC7587A51CDE5279E0630A531AEA2615A9F80B17E8D9376327BAEAA59E3D")
         unsolvablep2pkh = CScript([OP_DUP, OP_HASH160, hash160(unsolvable_address_key), OP_EQUALVERIFY, OP_CHECKSIG])
         unsolvablep2wshp2pkh = CScript([OP_0, sha256(unsolvablep2pkh)])
@@ -481,9 +485,9 @@ class SegWitTest(NeuraiTestFramework):
         # Repeat some tests. This time we don't add witness scripts with importaddress
         # Import a compressed key and an uncompressed key, generate some multisig addresses
         self.nodes[0].importprivkey("927pw6RW8ZekycnXqBQ2JS5nPyo1yRfGNN8oq74HeddWSpafDJH")
-        uncompressed_spendable_address = ["mguN2vNSCEUh6rJaXoAVwY3YZwZvEmf5xi"]
+        uncompressed_spendable_address = [regtest_p2pkh("mguN2vNSCEUh6rJaXoAVwY3YZwZvEmf5xi")]
         self.nodes[0].importprivkey("cMcrXaaUC48ZKpcyydfFo8PxHAjpsYLhdsp6nmtB3E2ER9UUHWnw")
-        compressed_spendable_address = ["n1UNmpmbVUJ9ytXYXiurmGPQ3TRrXqPWKL"]
+        compressed_spendable_address = [regtest_p2pkh("n1UNmpmbVUJ9ytXYXiurmGPQ3TRrXqPWKL")]
 
         self.nodes[0].importpubkey(pubkeys[5])
         compressed_solvable_address = [key_to_p2pkh(pubkeys[5])]

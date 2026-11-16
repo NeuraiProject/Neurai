@@ -446,6 +446,14 @@ def get_auth_cookie(datadir):
     return user, password
 
 
+def delete_cookie_file(datadir):
+    """Delete the cookie file if it exists, e.g. left behind by a crashed node."""
+    cookie = os.path.join(datadir, "regtest", ".cookie")
+    if os.path.isfile(cookie):
+        logger.debug("Deleting leftover cookie file")
+        os.remove(cookie)
+
+
 def log_filename(dirname, n_node, log_name):
     return os.path.join(dirname, "node" + str(n_node), "regtest", log_name)
 

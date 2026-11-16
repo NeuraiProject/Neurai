@@ -11,6 +11,8 @@ says which part in its warnings and in the answers of the depin commands, and
 goes on validating blocks.
 """
 
+import tempfile
+
 from test_framework.test_framework import NeuraiTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error
 
@@ -25,16 +27,25 @@ class DepinServiceStartTest(NeuraiTestFramework):
     def starts_without_the_service(self, extra_args, part):
         """The node starts with these options, without the service, and names the part that failed."""
         node = self.nodes[0]
-        self.restart_node(0, extra_args)
-        warnings = node.getnetworkinfo()['warnings']
-        assert NOT_RUNNING in warnings and part in warnings, warnings
-        assert "The node runs without it" in warnings, warnings
-        # the commands of the service say why they cannot answer
-        assert_raises_rpc_error(-1, "is not running: ", node.depinsendmsg, "&TOKEN", "hello", node.getnewaddress())
-        # ...and the node is a node: it connects blocks
-        height = node.getblockcount()
-        node.generate(1)
-        assert_equal(node.getblockcount(), height + 1)
+        self.stop_node(0)
+        # The node also prints the warning on its console (stderr). Keep it out
+        # of this test's own stderr, which the test runner counts as a failure,
+        # and check it once the node has stopped.
+        with tempfile.TemporaryFile() as node_stderr:
+            self.start_node(0, extra_args, stderr=node_stderr)
+            warnings = node.getnetworkinfo()['warnings']
+            assert NOT_RUNNING in warnings and part in warnings, warnings
+            assert "The node runs without it" in warnings, warnings
+            # the commands of the service say why they cannot answer
+            assert_raises_rpc_error(-1, "is not running: ", node.depinsendmsg, "&TOKEN", "hello", node.getnewaddress())
+            # ...and the node is a node: it connects blocks
+            height = node.getblockcount()
+            node.generate(1)
+            assert_equal(node.getblockcount(), height + 1)
+            self.stop_node(0)
+            node_stderr.seek(0)
+            console = node_stderr.read().decode('utf-8')
+        assert NOT_RUNNING in console and part in console, console
 
     def run_test(self):
         node = self.nodes[0]

@@ -20,7 +20,9 @@ class MaxReorgTest(NeuraiTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 6
-        if len(sys.argv) > 1:
+        # A bare number as first argument sets the node count; the test runner
+        # passes options (--configfile=...) there.
+        if len(sys.argv) > 1 and sys.argv[1].isdigit():
             self.num_nodes = int(sys.argv[1])
         self.max_reorg_depth = 60
         self.min_reorg_peers = 4

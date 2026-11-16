@@ -63,9 +63,11 @@ EXTENDED_SCRIPTS = [
     # These tests are not run by the build process.
     # Longest test should go first, to favor running tests in parallel
     # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv Tests less than 20m vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+    'feature_pruning.py',
     'feature_fee_estimation.py',
     # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv Tests less than 5m vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
     'feature_dbcrash.py',
+    'feature_assumevalid.py',
 ]
 
 BASE_SCRIPTS= [
@@ -81,6 +83,10 @@ BASE_SCRIPTS= [
     'rpc_fundrawtransaction.py',
     'wallet_create_tx.py',
     # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv Tests less than 30s vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+    'mempool_packages.py',
+    'p2p_segwit.py',
+    'p2p_compactblocks.py',
+    'feature_segwit.py',
     'feature_rewards.py',
     'feature_reward_batches.py',
     'feature_reward_eligibility.py',
@@ -105,6 +111,10 @@ BASE_SCRIPTS= [
     'feature_maxreorgdepth.py 4 --height=60 --tip_age=43400 --should_reorg=1',  # Reorg (not caught up)
     'feature_maxreorgdepth.py 4 --height=59 --tip_age=0 --should_reorg=1',      # Reorg (<60)
     # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv Tests less than 15s vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+    'p2p_sendheaders.py',
+    'mining_basic.py',
+    'p2p_fingerprint.py',
+    'feature_dersig.py',
     'rpc_rawtransaction.py',
     'rpc_addressindex.py',
     'wallet_dump.py',
@@ -159,6 +169,10 @@ BASE_SCRIPTS= [
     'wallet_labels.py',
     'wallet_import_with_label.py',
     # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv Tests less than 5s vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+    'feature_cltv.py',
+    'example_test.py',
+    'p2p_unrequested_blocks.py',
+    'feature_nulldummy.py',
     'wallet_listtransactions.py',
     'feature_minchainwork.py',
     'wallet_encryption.py',
@@ -218,20 +232,6 @@ BASE_SCRIPTS= [
 
 SKIPPED_TESTS = [
     # List of tests that are not going to be run (usually means test is broken)
-    'example_test.py',
-    'feature_assumevalid.py',
-    'feature_cltv.py',              #TODO - fix mininode rehash methods to use X16R
-    'feature_dersig.py',            #TODO - fix mininode rehash methods to use X16R
-    'feature_nulldummy.py',         #TODO - fix mininode rehash methods to use X16R
-    'feature_pruning.py',
-    'feature_segwit.py',            #TODO - fix mininode rehash methods to use X16R
-    'mempool_packages.py',
-    'mining_basic.py',              #TODO - fix mininode rehash methods to use X16R
-    'p2p_compactblocks.py',         #TODO - refactor to assume segwit is always active
-    'p2p_fingerprint.py',           #TODO - fix mininode rehash methods to use X16R
-    'p2p_segwit.py',                #TODO - refactor to assume segwit is always active
-    'p2p_sendheaders.py',           #TODO - fix mininode rehash methods to use X16R
-    'p2p_unrequested_blocks.py',
 ]
 
 # Place EXTENDED_SCRIPTS first since it has the 3 longest running tests

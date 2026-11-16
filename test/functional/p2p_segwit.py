@@ -6,26 +6,41 @@
 
 """
 Test segwit transactions and blocks on P2P network.
+
+Witness is active from genesis on this regtest: there is no segwit
+deployment, so only the rules of an active segwit are tested. Limits that
+differ from Bitcoin are those of this chain: block weight 8M, stack elements
+up to 3072 bytes, P2P messages up to 4,000,000 bytes, and witness programs of
+versions 1 to 3 with 32 bytes are AuthScript.
 """
 
 import time
 import random
 from binascii import hexlify
 from test_framework.mininode import (NodeConnCB, mininode_lock, MsgInv, CInv, MsgBlock, CBlockHeader, MsgHeaders, MsgGetdata, MsgTx, MsgWitnessTx, MsgWitnessBlock, NODE_WITNESS, CTxIn, COutPoint,
-                                     CTxInWitness, CTxWitness, MAX_BLOCK_BASE_SIZE, ser_vector, MSG_WITNESS_FLAG, CBlock, NodeConn, NODE_NETWORK, NetworkThread)
+                                     CTxInWitness, CTxWitness, ser_vector, MSG_WITNESS_FLAG, CBlock, NodeConn, NODE_NETWORK, NetworkThread, hash256)
 from test_framework.test_framework import NeuraiTestFramework
-from test_framework.util import assert_equal, connect_nodes, get_bip9_status, sync_blocks, bytes_to_hex_str, hex_str_to_bytes, sync_mempools, p2p_port
-from test_framework.script import (CScript, CScriptOp, OP_DUP, OP_HASH160, OP_EQUALVERIFY, OP_CHECKMULTISIG, segwit_version1_signature_hash, OP_CHECKSIG, CTransaction, CTxOut, OP_TRUE, CScriptNum,
-                                   hash160, OP_EQUAL, sha256, OP_0, OP_RETURN, ser_uint256, OP_2DROP, uint256_from_str, OP_DROP, struct, OP_1, OP_16, SIGHASH_ANYONECANPAY, SIGHASH_ALL, SIGHASH_NONE,
-                                   SIGHASH_SINGLE, OP_IF, OP_ELSE, OP_ENDIF, signature_hash)
+from test_framework.util import assert_equal, connect_nodes, sync_blocks, bytes_to_hex_str, hex_str_to_bytes, sync_mempools, p2p_port
+from test_framework.script import (CScript, CScriptOp, OP_DUP, OP_HASH160, OP_EQUALVERIFY, OP_CHECKMULTISIG, segwit_version1_signature_hash, signature_hash, OP_CHECKSIG, CTransaction, CTxOut, OP_TRUE, CScriptNum,
+                                   hash160, OP_EQUAL, sha256, OP_0, OP_RETURN, ser_uint256, OP_2DROP, uint256_from_str, OP_DROP, struct, OP_1, OP_2, OP_3, OP_4, OP_16, SIGHASH_ANYONECANPAY, SIGHASH_ALL,
+                                   SIGHASH_NONE, SIGHASH_SINGLE, OP_IF, OP_ELSE, OP_ENDIF)
 from test_framework.blocktools import create_block, create_coinbase, add_witness_commitment, get_witness_script, WITNESS_COMMITMENT_HEADER
 from test_framework.key import ECKey
 
-# The versionbit bit used to signal activation of SegWit
-VB_WITNESS_BIT = 1
-VB_PERIOD = 144
-VB_TOP_BITS = 0x20000000
+# Version bits block version that signals bit 15 (assets need the top bits
+# 0x30000000 from height 1).
+VB_SIGNAL_VERSION = 0x30000000 | (1 << 15)
+# Block limits of this chain: weight 8M since the RIP2 size increase.
+MAX_BLOCK_WEIGHT = 8000000
+MAX_BLOCK_VSIZE = MAX_BLOCK_WEIGHT // 4
 MAX_SIGOP_COST = 80000
+# Largest P2P message (MAX_PROTOCOL_MESSAGE_LENGTH).
+MAX_PROTOCOL_MESSAGE_LENGTH = 4000000
+# Largest stack element: the regtest opt-ins (NIP-018 and others) widen it
+# from 520 to 3072 bytes, in consensus and in the P2WSH policy.
+MAX_SCRIPT_ELEMENT_SIZE = 3072
+# The min relay fee is 0.01 XNA/kB: this fee covers transactions up to 1 kB.
+FEE = 1000000
 
 
 class UTXO:
@@ -34,7 +49,6 @@ class UTXO:
         self.x16r = x16r
         self.n = n
         self.nValue = n_value
-
 
 
 def get_p2pkh_script(pubkeyhash):
@@ -76,47 +90,8 @@ def get_virtual_size(witness_block):
     return vsize
 
 
-def test_transaction_acceptance(self, tx, with_witness, accepted, reason=None):
-    """
-
-    :param self:
-    :param tx:
-    :param with_witness:
-    :param accepted:
-    :param reason:
-    :return:
-    """
-    tx_message = MsgTx(tx)
-    if with_witness:
-        tx_message = MsgWitnessTx(tx)
-    self.send_message(tx_message)
-    self.sync_with_ping()
-    assert_equal(tx.hash in self.connection.rpc.getrawmempool(), accepted)
-    if reason is not None and not accepted:
-        # Check the rejection reason as well.
-        with mininode_lock:
-            assert_equal(self.last_message["reject"].reason, reason)
-
-
-def test_witness_block(node, p2p, block, accepted, with_witness=True, reason=None):
-    """
-    Send a block to the node and check that it's accepted
-    - Submit the block over the p2p interface
-    - use the getbestblockhash rpc to check for acceptance.
-    :param node:
-    :param p2p:
-    :param block:
-    :param accepted:
-    :param with_witness:
-    :param reason:
-    :return:
-    """
-    reason = [reason] if reason else []
-    with node.assert_debug_log(expected_msgs=reason):
-        p2p.send_message(msg_block(block) if with_witness else msg_no_witness_block(block))
-        p2p.sync_with_ping()
-        assert_equal(node.getbestblockhash() == block.hash, accepted)
-
+def get_weight(witness_block):
+    return 3 * len(witness_block.serialize()) + len(witness_block.serialize(with_witness=True))
 
 
 class TestNode(NodeConnCB):
@@ -155,16 +130,26 @@ class TestNode(NodeConnCB):
         self.wait_for_block(blockhash, timeout)
         return self.last_message["block"].block
 
+    def test_transaction_acceptance(self, tx, with_witness, accepted, reason=None):
+        """Send a transaction and check whether it entered the mempool.
 
+        A reason, if given, must be the one of the reject message."""
+        tx_message = MsgWitnessTx(tx) if with_witness else MsgTx(tx)
+        with mininode_lock:
+            self.last_message.pop("reject", None)
+        self.send_message(tx_message)
+        self.sync_with_ping()
+        assert_equal(tx.hash in self.connection.rpc.getrawmempool(), accepted)
+        if reason is not None and not accepted:
+            # Check the rejection reason as well.
+            with mininode_lock:
+                assert_equal(self.last_message["reject"].reason, reason)
 
-
-
-
-
-
-
-
-
+    def test_witness_block(self, block, accepted, with_witness=True):
+        """Send a block and check whether it became the tip."""
+        self.send_message(MsgWitnessBlock(block) if with_witness else MsgBlock(block))
+        self.sync_with_ping()
+        assert_equal(self.connection.rpc.getbestblockhash() == block.hash, accepted)
 
 
 # noinspection PyPep8Naming
@@ -172,7 +157,9 @@ class SegWitTest(NeuraiTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 3
-        self.extra_args = [["-whitelist=127.0.0.1"], ["-whitelist=127.0.0.1", "-acceptnonstdtxn=0"], ["-whitelist=127.0.0.1"]]
+        # Standard transactions are required by default on every chain here:
+        # node1 keeps that, node0 and node2 accept non-standard ones.
+        self.extra_args = [["-whitelist=127.0.0.1", "-acceptnonstdtxn=1"], ["-whitelist=127.0.0.1", "-acceptnonstdtxn=0"], ["-whitelist=127.0.0.1", "-acceptnonstdtxn=1"]]
 
     def setup_network(self):
         self.setup_nodes()
@@ -182,13 +169,17 @@ class SegWitTest(NeuraiTestFramework):
 
     ''' Helpers '''
 
-    # Build a block on top of node0's tip.
-    def build_next_block(self, n_version=4):
+    # Build a block on top of node0's tip, with the tip's version and bits.
+    def build_next_block(self, n_version=None):
         tip = self.nodes[0].getbestblockhash()
-        height = self.nodes[0].getblockcount() + 1
-        block_time = self.nodes[0].getblockheader(tip)["mediantime"] + 1
+        tip_header = self.nodes[0].getblockheader(tip)
+        height = tip_header["height"] + 1
+        # Not before the tip: the consensus cleanup limits how far a block may
+        # go back from its parent.
+        block_time = max(tip_header["mediantime"] + 1, tip_header["time"])
         block = create_block(int(tip, 16), create_coinbase(height), block_time)
-        block.nVersion = n_version
+        block.nVersion = tip_header["version"] if n_version is None else n_version
+        block.nBits = int(tip_header["bits"], 16)
         block.rehash()
         return block
 
@@ -223,42 +214,14 @@ class SegWitTest(NeuraiTestFramework):
 
         # Test logic begins here
         self.test_node.wait_for_verack()
-
-        self.log.info("Starting tests before segwit lock in:")
+        self.old_node.wait_for_verack()
+        self.std_node.wait_for_verack()
 
         self.test_witness_services()  # Verifies NODE_WITNESS
         self.test_non_witness_transaction()  # non-witness tx's are accepted
-        # self.test_unnecessary_witness_before_segwit_activation()
-        # self.test_block_relay(segwit_activated=False)
-
-        # Advance to segwit being 'started'
-        # self.advance_to_segwit_started()
-        sync_blocks(self.nodes)
-        self.test_getblocktemplate_before_lockin()
-
-        sync_blocks(self.nodes)
-
-        # At lockin, nothing should change.
-        self.log.info("Testing behavior post lockin, pre-activation")
-        self.advance_to_segwit_lockin()
-
-        # Retest unnecessary witnesses
-        self.test_unnecessary_witness_before_segwit_activation()
-        self.test_witness_tx_relay_before_segwit_activation()
-        self.test_block_relay(segwit_activated=False)
-        self.test_p2sh_witness(segwit_activated=False)
-        self.test_standardness_v0(segwit_activated=False)
-
-        sync_blocks(self.nodes)
-
-        # Now activate segwit
-        self.log.info("Testing behavior after segwit activation")
-        self.advance_to_segwit_active()
-
-        sync_blocks(self.nodes)
-
-        # Test P2SH witness handling again
-        self.test_p2sh_witness(segwit_activated=True)
+        self.test_block_relay()
+        self.test_getblocktemplate()
+        self.test_p2sh_witness()
         self.test_witness_commitments()
         self.test_block_malleability()
         self.test_witness_block_size()
@@ -267,16 +230,15 @@ class SegWitTest(NeuraiTestFramework):
         self.test_max_witness_push_length()
         self.test_max_witness_program_length()
         self.test_witness_input_length()
-        self.test_block_relay(segwit_activated=True)
-        self.test_tx_relay_after_segwit_activation()
-        self.test_standardness_v0(segwit_activated=True)
+        self.test_tx_relay()
+        self.test_standardness_v0()
         self.test_segwit_versions()
         self.test_premature_coinbase_witness_spend()
         self.test_uncompressed_pubkey()
         self.test_signature_version_1()
         self.test_non_standard_witness()
         sync_blocks(self.nodes)
-        self.test_upgrade_after_activation(node_id=2)
+        self.test_restart_node(node_id=2)
         self.test_witness_sigops()
 
     ''' Individual tests '''
@@ -291,10 +253,11 @@ class SegWitTest(NeuraiTestFramework):
         # Mine a block with an anyone-can-spend coinbase,
         # let it mature, then try to spend it.
         self.log.info("Testing non-witness transaction")
-        block = self.build_next_block(n_version=1)
+        block = self.build_next_block()
         block.solve()
         self.test_node.send_message(MsgBlock(block))
         self.test_node.sync_with_ping()  # make sure the block was processed
+        assert_equal(self.nodes[0].getbestblockhash(), block.hash)
         txid = block.vtx[0].x16r
 
         self.nodes[0].generate(99)  # let the block mature
@@ -302,7 +265,7 @@ class SegWitTest(NeuraiTestFramework):
         # Create a transaction that spends the coinbase
         tx = CTransaction()
         tx.vin.append(CTxIn(COutPoint(txid, 0), b""))
-        tx.vout.append(CTxOut(49 * 100000000, CScript([OP_TRUE])))
+        tx.vout.append(CTxOut(block.vtx[0].vout[0].nValue - FEE, CScript([OP_TRUE])))
         tx.calc_x16r()
 
         # Check that serializing it with or without witness is the same
@@ -313,133 +276,186 @@ class SegWitTest(NeuraiTestFramework):
         self.test_node.sync_with_ping()  # make sure the tx was processed
         assert (tx.hash in self.nodes[0].getrawmempool())
         # Save this transaction for later
-        self.utxo.append(UTXO(tx.x16r, 0, 49 * 100000000))
+        self.utxo.append(UTXO(tx.x16r, 0, tx.vout[0].nValue))
         self.nodes[0].generate(1)
+        sync_blocks(self.nodes)
 
-    # Verify that blocks with witnesses are rejected before activation.
-    def test_unnecessary_witness_before_segwit_activation(self):
-        self.log.info("Testing behavior of unnecessary witnesses")
-        # For now, rely on earlier tests to have created at least one utxo for
-        # us to use
-        assert (len(self.utxo) > 0)
-        assert (get_bip9_status(self.nodes[0], 'segwit')['status'] != 'active')
+    # Test that block requests to NODE_WITNESS peer are with MSG_WITNESS_FLAG
+    # Also test that we don't ask for blocks from unupgraded peers
+    def test_block_relay(self):
+        self.log.info("Testing block relay")
 
+        blocktype = 2 | MSG_WITNESS_FLAG
+
+        # test_node has set NODE_WITNESS, so all getdata requests should be for
+        # witness blocks.
+        # Test announcing a block via inv results in a getdata, and that
+        # announcing a block with a header, of the tip version or of a random
+        # VB version, results in a getdata
+        block1 = self.build_next_block()
+        block1.solve()
+
+        self.test_node.announce_block_and_wait_for_getdata(block1, use_header=False)
+        assert (self.test_node.last_message["getdata"].inv[0].type == blocktype)
+        self.test_node.test_witness_block(block1, True)
+
+        block2 = self.build_next_block()
+        block2.solve()
+
+        self.test_node.announce_block_and_wait_for_getdata(block2, use_header=True)
+        assert (self.test_node.last_message["getdata"].inv[0].type == blocktype)
+        self.test_node.test_witness_block(block2, True)
+
+        block3 = self.build_next_block(n_version=VB_SIGNAL_VERSION)
+        block3.solve()
+        self.test_node.announce_block_and_wait_for_getdata(block3, use_header=True)
+        assert (self.test_node.last_message["getdata"].inv[0].type == blocktype)
+        self.test_node.test_witness_block(block3, True)
+
+        # Check that we can getdata for witness blocks or regular blocks,
+        # and the right thing happens: witness blocks and non-witness
+        # blocks differ. Verify rpc getblock() returns witness blocks, while
+        # getdata respects the requested type.
+        block = self.build_next_block()
+        self.update_witness_block_with_transactions(block, [])
+        # This gives us a witness commitment.
+        assert (len(block.vtx[0].wit.vtxinwit) == 1)
+        assert (len(block.vtx[0].wit.vtxinwit[0].scriptWitness.stack) == 1)
+        self.test_node.test_witness_block(block, accepted=True)
+        # Now try to retrieve it...
+        rpc_block = self.nodes[0].getblock(block.hash, False)
+        non_wit_block = self.test_node.request_block(block.x16r, 2)
+        wit_block = self.test_node.request_block(block.x16r, 2 | MSG_WITNESS_FLAG)
+        assert_equal(wit_block.serialize(True), hex_str_to_bytes(rpc_block))
+        assert_equal(wit_block.serialize(False), non_wit_block.serialize())
+        assert_equal(wit_block.serialize(True), block.serialize(True))
+
+        # Test size, vsize, weight
+        rpc_details = self.nodes[0].getblock(block.hash, True)
+        assert_equal(rpc_details["size"], len(block.serialize(True)))
+        assert_equal(rpc_details["strippedsize"], len(block.serialize(False)))
+        weight = 3 * len(block.serialize(False)) + len(block.serialize(True))
+        assert_equal(rpc_details["weight"], weight)
+
+        # Upgraded node should not ask for blocks from unupgraded
+        block4 = self.build_next_block()
+        block4.solve()
+        self.old_node.getdataset = set()
+
+        # Blocks can be requested via direct-fetch (immediately upon processing the announcement)
+        # or via parallel download (with an indeterminate delay from processing the announcement)
+        # so to test that a block is NOT requested, we could guess a time period to sleep for,
+        # and then check. We can avoid the sleep() by taking advantage of transaction getdata's
+        # being processed after block getdata's, and announce a transaction as well,
+        # and then check to see if that particular getdata has been received.
+        # Since 0.14, inv's will only be responded to with a getheaders, so send a header
+        # to announce this block.
+        msg = MsgHeaders()
+        msg.headers = [CBlockHeader(block4)]
+        self.old_node.send_message(msg)
+        self.old_node.announce_tx_and_wait_for_getdata(block4.vtx[0])
+        assert (block4.x16r not in self.old_node.getdataset)
+        sync_blocks(self.nodes)
+
+    def test_getblocktemplate(self):
+        self.log.info("Testing getblocktemplate witness commitment")
+        # Witness is always active: every template has a witness commitment,
+        # whether or not the caller sets the segwit rule.
+        for node in [self.nodes[0], self.nodes[2]]:
+            assert ('default_witness_commitment' in node.getblocktemplate())
+            assert ('default_witness_commitment' in node.getblocktemplate({"rules": ["segwit"]}))
+
+        # Workaround:
+        # Can either change the tip, or change the mempool and wait 5 seconds
+        # to trigger a re-computation of getblocktemplate.
+        txid = self.nodes[0].sendtoaddress(self.nodes[0].getnewaddress(), 1)
+        wtxid = int(self.nodes[0].getrawtransaction(txid, True)["hash"], 16)
+        # Using mocktime lets us avoid sleep()
+        sync_mempools(self.nodes)
+        self.nodes[0].setmocktime(int(time.time()) + 10)
+        self.nodes[2].setmocktime(int(time.time()) + 10)
+
+        for node in [self.nodes[0], self.nodes[2]]:
+            for gbt_results in [node.getblocktemplate(), node.getblocktemplate({"rules": ["segwit"]})]:
+                assert_equal([t['txid'] for t in gbt_results['transactions']], [txid])
+                witness_commitment = gbt_results['default_witness_commitment']
+
+                # Check that default_witness_commitment is present.
+                witness_root = CBlock.get_merkle_root([ser_uint256(0),
+                                                       ser_uint256(wtxid)])
+                script = get_witness_script(witness_root, 0)
+                assert_equal(witness_commitment, bytes_to_hex_str(script))
+
+        # undo mocktime
+        self.nodes[0].setmocktime(0)
+        self.nodes[2].setmocktime(0)
+
+        # Clean up the mempool for the next tests.
+        self.nodes[0].generate(1)
+        sync_blocks(self.nodes)
+        assert_equal(len(self.nodes[0].getrawmempool()), 0)
+
+    # Test P2SH wrapped witness programs.
+    def test_p2sh_witness(self):
+        self.log.info("Testing P2SH witness transactions")
+
+        assert (len(self.utxo))
+
+        # Prepare the p2sh-wrapped witness output
+        witness_program = CScript([OP_DROP, OP_TRUE])
+        witness_hash = sha256(witness_program)
+        p2wsh_pubkey = CScript([OP_0, witness_hash])
+        p2sh_witness_hash = hash160(p2wsh_pubkey)
+        scriptPubKey = CScript([OP_HASH160, p2sh_witness_hash, OP_EQUAL])
+        scriptSig = CScript([p2wsh_pubkey])  # a push of the redeem script
+
+        # Fund the P2SH output
         tx = CTransaction()
         tx.vin.append(CTxIn(COutPoint(self.utxo[0].x16r, self.utxo[0].n), b""))
-        tx.vout.append(CTxOut(self.utxo[0].nValue - 1000, CScript([OP_TRUE])))
-        tx.wit.vtxinwit.append(CTxInWitness())
-        tx.wit.vtxinwit[0].scriptWitness.stack = [CScript([CScriptNum(1)])]
-
-        # Verify the hash with witness differs from the txid
-        # (otherwise our testing framework must be broken!)
+        tx.vout.append(CTxOut(self.utxo[0].nValue - FEE, scriptPubKey))
         tx.rehash()
-        assert (tx.x16r != tx.calc_x16r(with_witness=True))
 
-        # Construct a segwit-signaling block that includes the transaction.
-        block = self.build_next_block(n_version=(VB_TOP_BITS | (1 << VB_WITNESS_BIT)))
+        # Verify mempool acceptance and block validity
+        self.test_node.test_transaction_acceptance(tx, with_witness=False, accepted=True)
+        block = self.build_next_block()
         self.update_witness_block_with_transactions(block, [tx])
-        # Sending witness data before activation is not allowed (anti-spam
-        # rule).
-        self.test_node.test_witness_block(block, accepted=False)
-        # TODO: fix synchronization so we can test reject reason
-        # Right now, neuraid delays sending reject messages for blocks
-        # until the future, making synchronization here difficult.
-        # assert_equal(self.test_node.last_message["reject"].reason, "unexpected-witness")
-
-        # But it should not be permanently marked bad...
-        # Resend without witness information.
-        self.test_node.send_message(MsgBlock(block))
-        self.test_node.sync_with_ping()
-        assert_equal(self.nodes[0].getbestblockhash(), block.hash)
-
+        self.test_node.test_witness_block(block, accepted=True, with_witness=True)
         sync_blocks(self.nodes)
 
-        # Create a p2sh output -- this is so we can pass the standard-ness
-        # rules (an anyone-can-spend OP_TRUE would be rejected, if not wrapped
-        # in P2SH).
-        p2sh_program = CScript([OP_TRUE])
-        p2sh_pubkey = hash160(p2sh_program)
-        scriptPubKey = CScript([OP_HASH160, p2sh_pubkey, OP_EQUAL])
+        # Now test attempts to spend the output.
+        spend_tx = CTransaction()
+        spend_tx.vin.append(CTxIn(COutPoint(tx.x16r, 0), scriptSig))
+        spend_tx.vout.append(CTxOut(tx.vout[0].nValue - FEE, CScript([OP_TRUE])))
+        spend_tx.rehash()
 
-        # Now check that unnecessary witnesses can't be used to blind a node
-        # to a transaction, eg by violating standard-ness checks.
-        tx2 = CTransaction()
-        tx2.vin.append(CTxIn(COutPoint(tx.x16r, 0), b""))
-        tx2.vout.append(CTxOut(tx.vout[0].nValue - 1000, scriptPubKey))
-        tx2.rehash()
-        self.test_node.test_transaction_acceptance(tx2, False, True)
-        self.nodes[0].generate(1)
-        sync_blocks(self.nodes)
+        # This transaction should not be accepted into the mempool: mempool
+        # acceptance uses SCRIPT_VERIFY_WITNESS, which requires a witness to
+        # spend a witness program.
+        self.test_node.test_transaction_acceptance(spend_tx, with_witness=False, accepted=False)
 
-        # We'll add an unnecessary witness to this transaction that would cause
-        # it to be non-standard, to test that violating policy with a witness before
-        # segwit activation doesn't blind a node to a transaction.  Transactions
-        # rejected for having a witness before segwit activation shouldn't be added
-        # to the rejection cache.
-        tx3 = CTransaction()
-        tx3.vin.append(CTxIn(COutPoint(tx2.x16r, 0), CScript([p2sh_program])))
-        tx3.vout.append(CTxOut(tx2.vout[0].nValue - 1000, scriptPubKey))
-        tx3.wit.vtxinwit.append(CTxInWitness())
-        tx3.wit.vtxinwit[0].scriptWitness.stack = [b'a' * 400000]
-        tx3.rehash()
-        # Note that this should be rejected for the premature witness reason,
-        # rather than a policy check, since segwit hasn't activated yet.
-        self.std_node.test_transaction_acceptance(tx3, True, False, b'no-witness-yet')
+        # Try to put the witness script in the scriptSig, should also fail.
+        spend_tx.vin[0].scriptSig = CScript([p2wsh_pubkey, b'a'])
+        spend_tx.rehash()
+        self.test_node.test_transaction_acceptance(spend_tx, with_witness=False, accepted=False)
 
-        # If we send without witness, it should be accepted.
-        self.std_node.test_transaction_acceptance(tx3, False, True)
+        # Now put the witness script in the witness, should succeed.
+        spend_tx.vin[0].scriptSig = scriptSig
+        spend_tx.rehash()
+        spend_tx.wit.vtxinwit.append(CTxInWitness())
+        spend_tx.wit.vtxinwit[0].scriptWitness.stack = [b'a', witness_program]
 
-        # Now create a new anyone-can-spend utxo for the next test.
-        tx4 = CTransaction()
-        tx4.vin.append(CTxIn(COutPoint(tx3.x16r, 0), CScript([p2sh_program])))
-        tx4.vout.append(CTxOut(tx3.vout[0].nValue - 1000, CScript([OP_TRUE])))
-        tx4.rehash()
-        self.test_node.test_transaction_acceptance(tx3, False, True)
-        self.test_node.test_transaction_acceptance(tx4, False, True)
+        # Verify mempool acceptance
+        self.test_node.test_transaction_acceptance(spend_tx, with_witness=True, accepted=True)
+        block = self.build_next_block()
+        self.update_witness_block_with_transactions(block, [spend_tx])
 
-        self.nodes[0].generate(1)
-        sync_blocks(self.nodes)
+        # Sending this with witnesses should be valid.
+        self.test_node.test_witness_block(block, accepted=True)
 
-        # Update our utxo list; we spent the first entry.
+        # Update self.utxo
         self.utxo.pop(0)
-        self.utxo.append(UTXO(tx4.x16r, 0, tx4.vout[0].nValue))
+        self.utxo.append(UTXO(spend_tx.x16r, 0, spend_tx.vout[0].nValue))
 
-    # Mine enough blocks for segwit's vb state to be 'started'.
-    def advance_to_segwit_started(self):
-        height = self.nodes[0].getblockcount()
-        # Will need to rewrite the tests here if we are past the first period
-        assert (height < VB_PERIOD - 1)
-        # Genesis block is 'defined'.
-        assert_equal(get_bip9_status(self.nodes[0], 'segwit')['status'], 'defined')
-        # Advance to end of period, status should now be 'started'
-        self.nodes[0].generate(VB_PERIOD - height - 1)
-        assert_equal(get_bip9_status(self.nodes[0], 'segwit')['status'], 'started')
-
-    # Mine enough blocks to lock in segwit, but don't activate.
-    # TODO: we could verify that lockin only happens at the right threshold of
-    # signalling blocks, rather than just at the right period boundary.
-    def advance_to_segwit_lockin(self):
-        assert_equal(get_bip9_status(self.nodes[0], 'segwit')['status'], 'started')
-        # Advance to end of period, and verify lock-in happens at the end
-        self.nodes[0].generate(VB_PERIOD - 1)
-        height = self.nodes[0].getblockcount()
-        assert ((height % VB_PERIOD) == VB_PERIOD - 2)
-        assert_equal(get_bip9_status(self.nodes[0], 'segwit')['status'], 'started')
-        self.nodes[0].generate(1)
-        assert_equal(get_bip9_status(self.nodes[0], 'segwit')['status'], 'locked_in')
-
-    # Mine enough blocks to activate segwit.
-    # TODO: we could verify that activation only happens at the right threshold
-    # of signalling blocks, rather than just at the right period boundary.
-    def advance_to_segwit_active(self):
-        assert_equal(get_bip9_status(self.nodes[0], 'segwit')['status'], 'locked_in')
-        height = self.nodes[0].getblockcount()
-        self.nodes[0].generate(VB_PERIOD - (height % VB_PERIOD) - 2)
-        assert_equal(get_bip9_status(self.nodes[0], 'segwit')['status'], 'locked_in')
-        self.nodes[0].generate(1)
-        assert_equal(get_bip9_status(self.nodes[0], 'segwit')['status'], 'active')
-
-    # This test can only be run after segwit has activated
     def test_witness_commitments(self):
         self.log.info("Testing witness commitments")
 
@@ -538,8 +554,8 @@ class SegWitTest(NeuraiTestFramework):
         add_witness_commitment(block)
         block.solve()
 
-        block.vtx[0].wit.vtxinwit[0].scriptWitness.stack.append(b'a' * 5000000)
-        assert (get_virtual_size(block) > MAX_BLOCK_BASE_SIZE)
+        block.vtx[0].wit.vtxinwit[0].scriptWitness.stack.append(b'a' * (MAX_BLOCK_WEIGHT + 1000))
+        assert (get_virtual_size(block) > MAX_BLOCK_VSIZE)
 
         # We can't send over the p2p network, because this is too big to relay
         # TODO: repeat this test with a block that can be relayed
@@ -548,7 +564,7 @@ class SegWitTest(NeuraiTestFramework):
         assert (self.nodes[0].getbestblockhash() != block.hash)
 
         block.vtx[0].wit.vtxinwit[0].scriptWitness.stack.pop()
-        assert (get_virtual_size(block) < MAX_BLOCK_BASE_SIZE)
+        assert (get_virtual_size(block) < MAX_BLOCK_VSIZE)
         self.nodes[0].submitblock(bytes_to_hex_str(block.serialize(True)))
 
         assert (self.nodes[0].getbestblockhash() == block.hash)
@@ -573,7 +589,10 @@ class SegWitTest(NeuraiTestFramework):
         # TODO: Test that non-witness carrying blocks can't exceed 1MB
         # Skipping this test for now; this is covered in feature_block.py
 
-        # Test that witness-bearing blocks are limited at ceil(base + wit/4) <= 1MB.
+        # Test that witness-bearing blocks are limited at a weight of 8M
+        # (vsize 2M). A P2P message is limited to 4,000,000 bytes: the block
+        # carries non-witness bulk so that it reaches the weight limit below
+        # that size.
         block = self.build_next_block()
 
         assert (len(self.utxo) > 0)
@@ -583,7 +602,10 @@ class SegWitTest(NeuraiTestFramework):
         # This should give us plenty of room to tweak the spending tx's
         # virtual size.
         NUM_DROPS = 200  # 201 max ops per script!
-        NUM_OUTPUTS = 50
+        NUM_OUTPUTS = 25
+        # Outputs of 514 bytes each, about 1.5 MB of non-witness data.
+        NUM_BULK_OUTPUTS = 2900
+        bulk_script = CScript([b'\x01' * 500])
 
         witness_program = CScript([OP_2DROP] * NUM_DROPS + [OP_TRUE])
         witness_hash = uint256_from_str(sha256(witness_program))
@@ -599,6 +621,8 @@ class SegWitTest(NeuraiTestFramework):
             parent_tx.vout.append(CTxOut(child_value, scriptPubKey))
         parent_tx.vout[0].nValue -= 50000
         assert (parent_tx.vout[0].nValue > 0)
+        for i in range(NUM_BULK_OUTPUTS):
+            parent_tx.vout.append(CTxOut(0, bulk_script))
         parent_tx.rehash()
 
         child_tx = CTransaction()
@@ -611,12 +635,13 @@ class SegWitTest(NeuraiTestFramework):
         child_tx.rehash()
         self.update_witness_block_with_transactions(block, [parent_tx, child_tx])
 
-        vsize = get_virtual_size(block)
-        additional_bytes = (MAX_BLOCK_BASE_SIZE - vsize) * 4
+        additional_bytes = MAX_BLOCK_WEIGHT + 1 - get_weight(block)
+        assert (additional_bytes > 0)
         i = 0
         while additional_bytes > 0:
-            # Add some more bytes to each input until we hit MAX_BLOCK_BASE_SIZE+1
-            extra_bytes = min(additional_bytes + 1, 55)
+            # Grow witness elements up to MAX_BLOCK_WEIGHT + 1. Below 253
+            # bytes an element keeps a 1-byte length: a byte adds 1 to the weight.
+            extra_bytes = min(additional_bytes, 55)
             block.vtx[-1].wit.vtxinwit[int(i / (2 * NUM_DROPS))].scriptWitness.stack[i % (2 * NUM_DROPS)] = b'a' * (195 + extra_bytes)
             additional_bytes -= extra_bytes
             i += 1
@@ -624,11 +649,12 @@ class SegWitTest(NeuraiTestFramework):
         block.vtx[0].vout.pop()  # Remove old commitment
         add_witness_commitment(block)
         block.solve()
-        vsize = get_virtual_size(block)
-        assert_equal(vsize, MAX_BLOCK_BASE_SIZE + 1)
-        # Make sure that our test case would exceed the old max-network-message
-        # limit
+        assert_equal(get_weight(block), MAX_BLOCK_WEIGHT + 1)
+        assert_equal(get_virtual_size(block), MAX_BLOCK_VSIZE + 1)
+        # Make sure that our test case exceeds the old 1MB vsize limit and
+        # still fits in one P2P message.
         assert (len(block.serialize(True)) > 2 * 1024 * 1024)
+        assert (len(block.serialize(True)) < MAX_PROTOCOL_MESSAGE_LENGTH)
 
         self.test_node.test_witness_block(block, accepted=False)
 
@@ -638,7 +664,8 @@ class SegWitTest(NeuraiTestFramework):
         block.vtx[0].vout.pop()
         add_witness_commitment(block)
         block.solve()
-        assert (get_virtual_size(block) == MAX_BLOCK_BASE_SIZE)
+        assert_equal(get_weight(block), MAX_BLOCK_WEIGHT)
+        assert (get_virtual_size(block) == MAX_BLOCK_VSIZE)
 
         self.test_node.test_witness_block(block, accepted=True)
 
@@ -649,6 +676,7 @@ class SegWitTest(NeuraiTestFramework):
     # submitblock will try to add the nonce automatically, so that mining
     # software doesn't need to worry about doing so itself.
     def test_submit_block(self):
+        self.log.info("Testing submitblock witness nonce")
         block = self.build_next_block()
 
         # Try using a custom nonce and then don't supply it.
@@ -758,9 +786,8 @@ class SegWitTest(NeuraiTestFramework):
         self.utxo.append(UTXO(tx2.x16r, 0, tx2.vout[0].nValue))
 
     def test_max_witness_push_length(self):
-        """ Should only allow up to 520 byte pushes in witness stack """
+        """ Should only allow up to MAX_SCRIPT_ELEMENT_SIZE byte pushes in witness stack """
         self.log.info("Testing maximum witness push size")
-        MAX_SCRIPT_ELEMENT_SIZE = 520
         assert (len(self.utxo))
 
         block = self.build_next_block()
@@ -778,7 +805,7 @@ class SegWitTest(NeuraiTestFramework):
         tx2.vin.append(CTxIn(COutPoint(tx.x16r, 0), b""))
         tx2.vout.append(CTxOut(tx.vout[0].nValue - 1000, CScript([OP_TRUE])))
         tx2.wit.vtxinwit.append(CTxInWitness())
-        # First try a 521-byte stack element
+        # First try a stack element one byte over the limit
         tx2.wit.vtxinwit[0].scriptWitness.stack = [b'a' * (MAX_SCRIPT_ELEMENT_SIZE + 1), witness_program]
         tx2.rehash()
 
@@ -928,58 +955,11 @@ class SegWitTest(NeuraiTestFramework):
         self.utxo.pop()
         self.utxo.append(UTXO(tx2.x16r, 0, tx2.vout[0].nValue))
 
-    def test_witness_tx_relay_before_segwit_activation(self):
-        self.log.info("Testing relay of witness transactions")
-        # Generate a transaction that doesn't require a witness, but send it
-        # with a witness.  Should be rejected for premature-witness, but should
-        # not be added to recently rejected list.
-        assert (len(self.utxo))
-        tx = CTransaction()
-        tx.vin.append(CTxIn(COutPoint(self.utxo[0].x16r, self.utxo[0].n), b""))
-        tx.vout.append(CTxOut(self.utxo[0].nValue - 1000, CScript([OP_TRUE])))
-        tx.wit.vtxinwit.append(CTxInWitness())
-        tx.wit.vtxinwit[0].scriptWitness.stack = [b'a']
-        tx.rehash()
-
-        tx_hash = tx.x16r
-        tx_value = tx.vout[0].nValue
-
-        # Verify that if a peer doesn't set nServices to include NODE_WITNESS,
-        # the getdata is just for the non-witness portion.
-        self.old_node.announce_tx_and_wait_for_getdata(tx)
-        assert (self.old_node.last_message["getdata"].inv[0].type == 1)
-
-        # Since we haven't delivered the tx yet, inv'ing the same tx from
-        # a witness transaction ought not result in a getdata.
-        try:
-            self.test_node.announce_tx_and_wait_for_getdata(tx, timeout=2)
-            self.log.error("Error: duplicate tx getdata!")
-            assert False
-        except AssertionError:
-            pass
-
-        # Delivering this transaction with witness should fail (no matter who
-        # its from)
-        assert_equal(len(self.nodes[0].getrawmempool()), 0)
-        assert_equal(len(self.nodes[1].getrawmempool()), 0)
-        self.old_node.test_transaction_acceptance(tx, with_witness=True, accepted=False)
-        self.test_node.test_transaction_acceptance(tx, with_witness=True, accepted=False)
-
-        # But eliminating the witness should fix it
-        self.test_node.test_transaction_acceptance(tx, with_witness=False, accepted=True)
-
-        # Cleanup: mine the first transaction and update utxo
-        self.nodes[0].generate(1)
-        assert_equal(len(self.nodes[0].getrawmempool()), 0)
-
-        self.utxo.pop(0)
-        self.utxo.append(UTXO(tx_hash, 0, tx_value))
-
-    # After segwit activates, verify that mempool:
+    # Verify that mempool:
     # - rejects transactions with unnecessary/extra witnesses
     # - accepts transactions with valid witnesses
     # and that witness transactions are relayed to non-upgraded peers.
-    def test_tx_relay_after_segwit_activation(self):
+    def test_tx_relay(self):
         self.log.info("Testing relay of witness transactions")
         # Generate a transaction that doesn't require a witness, but send it
         # with a witness.  Should be rejected because we can't use a witness
@@ -987,7 +967,7 @@ class SegWitTest(NeuraiTestFramework):
         assert (len(self.utxo))
         tx = CTransaction()
         tx.vin.append(CTxIn(COutPoint(self.utxo[0].x16r, self.utxo[0].n), b""))
-        tx.vout.append(CTxOut(self.utxo[0].nValue - 1000, CScript([OP_TRUE])))
+        tx.vout.append(CTxOut(self.utxo[0].nValue - FEE, CScript([OP_TRUE])))
         tx.wit.vtxinwit.append(CTxInWitness())
         tx.wit.vtxinwit[0].scriptWitness.stack = [b'a']
         tx.rehash()
@@ -999,7 +979,8 @@ class SegWitTest(NeuraiTestFramework):
         assert_equal(len(self.nodes[0].getrawmempool()), 0)
         self.test_node.test_transaction_acceptance(tx, with_witness=True, accepted=False)
 
-        # Verify that removing the witness succeeds.
+        # Verify that removing the witness succeeds. A transaction refused
+        # with a witness is not kept as rejected, so it is requested again.
         self.test_node.announce_tx_and_wait_for_getdata(tx)
         self.test_node.test_transaction_acceptance(tx, with_witness=False, accepted=True)
 
@@ -1009,7 +990,7 @@ class SegWitTest(NeuraiTestFramework):
         scriptPubKey = CScript([OP_0, witness_hash])
         tx2 = CTransaction()
         tx2.vin.append(CTxIn(COutPoint(tx_hash, 0), b""))
-        tx2.vout.append(CTxOut(tx.vout[0].nValue - 1000, scriptPubKey))
+        tx2.vout.append(CTxOut(tx.vout[0].nValue - FEE, scriptPubKey))
         tx2.rehash()
 
         tx3 = CTransaction()
@@ -1020,7 +1001,7 @@ class SegWitTest(NeuraiTestFramework):
         p2sh_program = CScript([OP_TRUE])
         p2sh_pubkey = hash160(p2sh_program)
         witness_program2 = CScript([b'a' * 400000])
-        tx3.vout.append(CTxOut(tx2.vout[0].nValue - 1000, CScript([OP_HASH160, p2sh_pubkey, OP_EQUAL])))
+        tx3.vout.append(CTxOut(tx2.vout[0].nValue - FEE, CScript([OP_HASH160, p2sh_pubkey, OP_EQUAL])))
         tx3.wit.vtxinwit[0].scriptWitness.stack = [witness_program2]
         tx3.rehash()
 
@@ -1031,7 +1012,7 @@ class SegWitTest(NeuraiTestFramework):
         self.std_node.test_transaction_acceptance(tx3, True, False, b'tx-size')
 
         # Remove witness stuffing, instead add extra witness push on stack
-        tx3.vout[0] = CTxOut(tx2.vout[0].nValue - 1000, CScript([OP_TRUE]))
+        tx3.vout[0] = CTxOut(tx2.vout[0].nValue - FEE, CScript([OP_TRUE]))
         tx3.wit.vtxinwit[0].scriptWitness.stack = [CScript([CScriptNum(1)]), witness_program]
         tx3.rehash()
 
@@ -1051,7 +1032,7 @@ class SegWitTest(NeuraiTestFramework):
         raw_tx = self.nodes[0].getrawtransaction(tx3.hash, 1)
         assert_equal(int(raw_tx["hash"], 16), tx3.calc_x16r(True))
         assert_equal(raw_tx["size"], len(tx3.serialize_with_witness()))
-        vsize = (len(tx3.serialize_with_witness()) + 3 * len(tx3.serialize_without_witness()) + 3) / 4
+        vsize = (len(tx3.serialize_with_witness()) + 3 * len(tx3.serialize_without_witness()) + 3) // 4
         assert_equal(raw_tx["vsize"], vsize)
         assert_equal(len(raw_tx["vin"][0]["txinwitness"]), 1)
         assert_equal(raw_tx["vin"][0]["txinwitness"][0], hexlify(witness_program).decode('ascii'))
@@ -1060,108 +1041,14 @@ class SegWitTest(NeuraiTestFramework):
         # Cleanup: mine the transactions and update utxo for next test
         self.nodes[0].generate(1)
         assert_equal(len(self.nodes[0].getrawmempool()), 0)
+        sync_blocks(self.nodes)
 
         self.utxo.pop(0)
         self.utxo.append(UTXO(tx3.x16r, 0, tx3.vout[0].nValue))
 
-    # Test that block requests to NODE_WITNESS peer are with MSG_WITNESS_FLAG
-    # This is true regardless of segwit activation.
-    # Also test that we don't ask for blocks from unupgraded peers
-    def test_block_relay(self, segwit_activated):
-        self.log.info("Testing block relay")
-
-        blocktype = 2 | MSG_WITNESS_FLAG
-
-        # test_node has set NODE_WITNESS, so all getdata requests should be for
-        # witness blocks.
-        # Test announcing a block via inv results in a getdata, and that
-        # announcing a version 4 or random VB block with a header results in a getdata
-        block1 = self.build_next_block()
-        block1.solve()
-
-        self.test_node.announce_block_and_wait_for_getdata(block1, use_header=False)
-        assert (self.test_node.last_message["getdata"].inv[0].type == blocktype)
-        self.test_node.test_witness_block(block1, True)
-
-        block2 = self.build_next_block(n_version=4)
-        block2.solve()
-
-        self.test_node.announce_block_and_wait_for_getdata(block2, use_header=True)
-        assert (self.test_node.last_message["getdata"].inv[0].type == blocktype)
-        self.test_node.test_witness_block(block2, True)
-
-        block3 = self.build_next_block(n_version=(VB_TOP_BITS | (1 << 15)))
-        block3.solve()
-        self.test_node.announce_block_and_wait_for_getdata(block3, use_header=True)
-        assert (self.test_node.last_message["getdata"].inv[0].type == blocktype)
-        self.test_node.test_witness_block(block3, True)
-
-        # Check that we can getdata for witness blocks or regular blocks,
-        # and the right thing happens.
-        if not segwit_activated:
-            # Before activation, we should be able to request old blocks with
-            # or without witness, and they should be the same.
-            chain_height = self.nodes[0].getblockcount()
-            # Pick 10 random blocks on main chain, and verify that getdata's
-            # for MSG_BLOCK, MSG_WITNESS_BLOCK, and rpc getblock() are equal.
-            all_heights = list(range(chain_height + 1))
-            random.shuffle(all_heights)
-            all_heights = all_heights[0:10]
-            for height in all_heights:
-                block_hash = self.nodes[0].getblockhash(height)
-                rpc_block = self.nodes[0].getblock(block_hash, False)
-                block_hash = int(block_hash, 16)
-                block = self.test_node.request_block(block_hash, 2)
-                wit_block = self.test_node.request_block(block_hash, 2 | MSG_WITNESS_FLAG)
-                assert_equal(block.serialize(True), wit_block.serialize(True))
-                assert_equal(block.serialize(), hex_str_to_bytes(rpc_block))
-        else:
-            # After activation, witness blocks and non-witness blocks should
-            # be different.  Verify rpc getblock() returns witness blocks, while
-            # getdata respects the requested type.
-            block = self.build_next_block()
-            self.update_witness_block_with_transactions(block, [])
-            # This gives us a witness commitment.
-            assert (len(block.vtx[0].wit.vtxinwit) == 1)
-            assert (len(block.vtx[0].wit.vtxinwit[0].scriptWitness.stack) == 1)
-            self.test_node.test_witness_block(block, accepted=True)
-            # Now try to retrieve it...
-            rpc_block = self.nodes[0].getblock(block.hash, False)
-            non_wit_block = self.test_node.request_block(block.x16r, 2)
-            wit_block = self.test_node.request_block(block.x16r, 2 | MSG_WITNESS_FLAG)
-            assert_equal(wit_block.serialize(True), hex_str_to_bytes(rpc_block))
-            assert_equal(wit_block.serialize(False), non_wit_block.serialize())
-            assert_equal(wit_block.serialize(True), block.serialize(True))
-
-            # Test size, vsize, weight
-            rpc_details = self.nodes[0].getblock(block.hash, True)
-            assert_equal(rpc_details["size"], len(block.serialize(True)))
-            assert_equal(rpc_details["strippedsize"], len(block.serialize(False)))
-            weight = 3 * len(block.serialize(False)) + len(block.serialize(True))
-            assert_equal(rpc_details["weight"], weight)
-
-            # Upgraded node should not ask for blocks from unupgraded
-            block4 = self.build_next_block(n_version=4)
-            block4.solve()
-            self.old_node.getdataset = set()
-
-            # Blocks can be requested via direct-fetch (immediately upon processing the announcement)
-            # or via parallel download (with an indeterminate delay from processing the announcement)
-            # so to test that a block is NOT requested, we could guess a time period to sleep for,
-            # and then check. We can avoid the sleep() by taking advantage of transaction getdata's
-            # being processed after block getdata's, and announce a transaction as well,
-            # and then check to see if that particular getdata has been received.
-            # Since 0.14, inv's will only be responded to with a getheaders, so send a header
-            # to announce this block.
-            msg = MsgHeaders()
-            msg.headers = [CBlockHeader(block4)]
-            self.old_node.send_message(msg)
-            self.old_node.announce_tx_and_wait_for_getdata(block4.vtx[0])
-            assert (block4.x16r not in self.old_node.getdataset)
-
-    # V0 segwit outputs should be standard after activation, but not before.
-    def test_standardness_v0(self, segwit_activated):
-        self.log.info("Testing standardness of v0 outputs (%s activation)" % ("after" if segwit_activated else "before"))
+    # V0 segwit outputs and inputs are standard.
+    def test_standardness_v0(self):
+        self.log.info("Testing standardness of v0 outputs")
         assert (len(self.utxo))
 
         witness_program = CScript([OP_TRUE])
@@ -1174,7 +1061,7 @@ class SegWitTest(NeuraiTestFramework):
         # First prepare a p2sh output (so that spending it will pass standardness)
         p2sh_tx = CTransaction()
         p2sh_tx.vin = [CTxIn(COutPoint(self.utxo[0].x16r, self.utxo[0].n), b"")]
-        p2sh_tx.vout = [CTxOut(self.utxo[0].nValue - 1000, p2sh_scriptPubKey)]
+        p2sh_tx.vout = [CTxOut(self.utxo[0].nValue - FEE, p2sh_scriptPubKey)]
         p2sh_tx.rehash()
 
         # Mine it on test_node to create the confirmed output.
@@ -1186,47 +1073,35 @@ class SegWitTest(NeuraiTestFramework):
         # Start by creating a transaction with two outputs.
         tx = CTransaction()
         tx.vin = [CTxIn(COutPoint(p2sh_tx.x16r, 0), CScript([witness_program]))]
-        tx.vout = [CTxOut(p2sh_tx.vout[0].nValue - 10000, scriptPubKey)]
-        tx.vout.append(CTxOut(8000, scriptPubKey))  # Might burn this later
+        tx.vout = [CTxOut(p2sh_tx.vout[0].nValue - 3 * FEE, scriptPubKey)]
+        tx.vout.append(CTxOut(2 * FEE, scriptPubKey))  # Might burn this later
         tx.rehash()
 
-        self.std_node.test_transaction_acceptance(tx, with_witness=True, accepted=segwit_activated)
+        self.std_node.test_transaction_acceptance(tx, with_witness=True, accepted=True)
 
         # Now create something that looks like a P2PKH output. This won't be spendable.
         scriptPubKey = CScript([OP_0, hash160(witness_hash)])
         tx2 = CTransaction()
-        if segwit_activated:
-            # if tx was accepted, then we spend the second output.
-            tx2.vin = [CTxIn(COutPoint(tx.x16r, 1), b"")]
-            tx2.vout = [CTxOut(7000, scriptPubKey)]
-            tx2.wit.vtxinwit.append(CTxInWitness())
-            tx2.wit.vtxinwit[0].scriptWitness.stack = [witness_program]
-        else:
-            # if tx wasn't accepted, we just re-spend the p2sh output we started with.
-            tx2.vin = [CTxIn(COutPoint(p2sh_tx.x16r, 0), CScript([witness_program]))]
-            tx2.vout = [CTxOut(p2sh_tx.vout[0].nValue - 1000, scriptPubKey)]
+        # tx was accepted, so we spend the second output.
+        tx2.vin = [CTxIn(COutPoint(tx.x16r, 1), b"")]
+        tx2.vout = [CTxOut(FEE, scriptPubKey)]
+        tx2.wit.vtxinwit.append(CTxInWitness())
+        tx2.wit.vtxinwit[0].scriptWitness.stack = [witness_program]
         tx2.rehash()
 
-        self.std_node.test_transaction_acceptance(tx2, with_witness=True, accepted=segwit_activated)
+        self.std_node.test_transaction_acceptance(tx2, with_witness=True, accepted=True)
 
         # Now update self.utxo for later tests.
         tx3 = CTransaction()
-        if segwit_activated:
-            # tx and tx2 were both accepted.  Don't bother trying to reclaim the
-            # P2PKH output; just send tx's first output back to an anyone-can-spend.
-            sync_mempools([self.nodes[0], self.nodes[1]])
-            tx3.vin = [CTxIn(COutPoint(tx.x16r, 0), b"")]
-            tx3.vout = [CTxOut(tx.vout[0].nValue - 1000, CScript([OP_TRUE]))]
-            tx3.wit.vtxinwit.append(CTxInWitness())
-            tx3.wit.vtxinwit[0].scriptWitness.stack = [witness_program]
-            tx3.rehash()
-            self.test_node.test_transaction_acceptance(tx3, with_witness=True, accepted=True)
-        else:
-            # tx and tx2 didn't go anywhere; just clean up the p2sh_tx output.
-            tx3.vin = [CTxIn(COutPoint(p2sh_tx.x16r, 0), CScript([witness_program]))]
-            tx3.vout = [CTxOut(p2sh_tx.vout[0].nValue - 1000, witness_program)]
-            tx3.rehash()
-            self.test_node.test_transaction_acceptance(tx3, with_witness=True, accepted=True)
+        # tx and tx2 were both accepted.  Don't bother trying to reclaim the
+        # P2PKH output; just send tx's first output back to an anyone-can-spend.
+        sync_mempools([self.nodes[0], self.nodes[1]])
+        tx3.vin = [CTxIn(COutPoint(tx.x16r, 0), b"")]
+        tx3.vout = [CTxOut(tx.vout[0].nValue - FEE, CScript([OP_TRUE]))]
+        tx3.wit.vtxinwit.append(CTxInWitness())
+        tx3.wit.vtxinwit[0].scriptWitness.stack = [witness_program]
+        tx3.rehash()
+        self.test_node.test_transaction_acceptance(tx3, with_witness=True, accepted=True)
 
         self.nodes[0].generate(1)
         sync_blocks(self.nodes)
@@ -1235,7 +1110,7 @@ class SegWitTest(NeuraiTestFramework):
         assert_equal(len(self.nodes[1].getrawmempool()), 0)
 
     # Verify that future segwit upgraded transactions are non-standard,
-    # but valid in blocks. Can run this before and after segwit activation.
+    # but valid in blocks.
     def test_segwit_versions(self):
         self.log.info("Testing standardness/consensus for segwit versions (0-16)")
         assert (len(self.utxo))
@@ -1264,9 +1139,14 @@ class SegWitTest(NeuraiTestFramework):
         for version in list(range(OP_1, OP_16 + 1)) + [OP_0]:
             count += 1
             # First try to spend to a future version segwit scriptPubKey.
-            scriptPubKey = CScript([CScriptOp(version), witness_hash])
+            if version in (OP_1, OP_2, OP_3):
+                # A 32-byte program of versions 1 to 3 is AuthScript here: use
+                # a 33-byte one, which no rule defines.
+                scriptPubKey = CScript([CScriptOp(version), witness_hash + b'\x00'])
+            else:
+                scriptPubKey = CScript([CScriptOp(version), witness_hash])
             tx.vin = [CTxIn(COutPoint(self.utxo[0].x16r, self.utxo[0].n), b"")]
-            tx.vout = [CTxOut(self.utxo[0].nValue - 1000, scriptPubKey)]
+            tx.vout = [CTxOut(self.utxo[0].nValue - FEE, scriptPubKey)]
             tx.rehash()
             self.std_node.test_transaction_acceptance(tx, with_witness=True, accepted=False)
             self.test_node.test_transaction_acceptance(tx, with_witness=True, accepted=True)
@@ -1277,19 +1157,19 @@ class SegWitTest(NeuraiTestFramework):
         sync_blocks(self.nodes)
         assert (len(self.nodes[0].getrawmempool()) == 0)
 
-        # Finally, verify that version 0 -> version 1 transactions
+        # Finally, verify that version 0 -> version 4 transactions
         # are non-standard
-        scriptPubKey = CScript([CScriptOp(OP_1), witness_hash])
+        scriptPubKey = CScript([CScriptOp(OP_4), witness_hash])
         tx2 = CTransaction()
         tx2.vin = [CTxIn(COutPoint(tx.x16r, 0), b"")]
-        tx2.vout = [CTxOut(tx.vout[0].nValue - 1000, scriptPubKey)]
+        tx2.vout = [CTxOut(tx.vout[0].nValue - FEE, scriptPubKey)]
         tx2.wit.vtxinwit.append(CTxInWitness())
         tx2.wit.vtxinwit[0].scriptWitness.stack = [witness_program]
         tx2.rehash()
         # Gets accepted to test_node, because standardness of outputs isn't
         # checked with fRequireStandard
         self.test_node.test_transaction_acceptance(tx2, with_witness=True, accepted=True)
-        self.std_node.test_transaction_acceptance(tx2, with_witness=True, accepted=False)
+        self.std_node.test_transaction_acceptance(tx2, with_witness=True, accepted=False, reason=b'scriptpubkey')
         temp_utxo.pop()  # last entry in temp_utxo was the output we just spent
         temp_utxo.append(UTXO(tx2.x16r, 0, tx2.vout[0].nValue))
 
@@ -1301,7 +1181,7 @@ class SegWitTest(NeuraiTestFramework):
             tx3.wit.vtxinwit.append(CTxInWitness())
             total_value += i.nValue
         tx3.wit.vtxinwit[-1].scriptWitness.stack = [witness_program]
-        tx3.vout.append(CTxOut(total_value - 1000, CScript([OP_TRUE])))
+        tx3.vout.append(CTxOut(total_value - FEE, CScript([OP_TRUE])))
         tx3.rehash()
         # Spending a higher version witness output is not allowed by policy,
         # even with fRequireStandard=false.
@@ -1316,8 +1196,32 @@ class SegWitTest(NeuraiTestFramework):
         self.test_node.test_witness_block(block, accepted=True)
         sync_blocks(self.nodes)
 
+        # Versions 1 to 3 with a 32-byte program are AuthScript, which an
+        # OP_TRUE witness does not satisfy: they are not upgradable here.
+        tx4 = CTransaction()
+        tx4.vin.append(CTxIn(COutPoint(tx3.x16r, 0), b""))
+        authscript_versions = [OP_1, OP_2, OP_3]
+        for version in authscript_versions:
+            tx4.vout.append(CTxOut(1000, CScript([CScriptOp(version), witness_hash])))
+        tx4.vout.append(CTxOut(tx3.vout[0].nValue - 1000 * (len(authscript_versions) + 1), CScript([OP_TRUE])))
+        tx4.rehash()
+        block = self.build_next_block()
+        self.update_witness_block_with_transactions(block, [tx4])
+        self.test_node.test_witness_block(block, accepted=True)
+        for n in range(len(authscript_versions)):
+            tx5 = CTransaction()
+            tx5.vin.append(CTxIn(COutPoint(tx4.x16r, n), b""))
+            tx5.vout.append(CTxOut(0, CScript([OP_TRUE])))
+            tx5.wit.vtxinwit.append(CTxInWitness())
+            tx5.wit.vtxinwit[0].scriptWitness.stack = [witness_program]
+            tx5.rehash()
+            block = self.build_next_block()
+            self.update_witness_block_with_transactions(block, [tx5])
+            self.test_node.test_witness_block(block, accepted=False)
+        sync_blocks(self.nodes)
+
         # Add utxo to our list
-        self.utxo.append(UTXO(tx3.x16r, 0, tx3.vout[0].nValue))
+        self.utxo.append(UTXO(tx4.x16r, len(authscript_versions), tx4.vout[-1].nValue))
 
     def test_premature_coinbase_witness_spend(self):
         self.log.info("Testing premature coinbase witness spend")
@@ -1367,7 +1271,7 @@ class SegWitTest(NeuraiTestFramework):
         assert (len(self.utxo))
         tx = CTransaction()
         tx.vin.append(CTxIn(COutPoint(self.utxo[0].x16r, self.utxo[0].n), b""))
-        tx.vout.append(CTxOut(self.utxo[0].nValue - 1000, scriptPubKey))
+        tx.vout.append(CTxOut(self.utxo[0].nValue - FEE, scriptPubKey))
         tx.rehash()
 
         self.test_node.test_transaction_acceptance(tx, with_witness=True, accepted=True)
@@ -1467,7 +1371,7 @@ class SegWitTest(NeuraiTestFramework):
             block.vtx.append(tx)
 
             # Test the block periodically, if we're close to maxblocksize
-            if get_virtual_size(block) > MAX_BLOCK_BASE_SIZE - 1000:
+            if get_virtual_size(block) > MAX_BLOCK_VSIZE - 1000:
                 self.update_witness_block_with_transactions(block, [])
                 self.test_node.test_witness_block(block, accepted=True)
                 block = self.build_next_block()
@@ -1532,98 +1436,26 @@ class SegWitTest(NeuraiTestFramework):
 
         for i in range(len(tx.vout)):
             self.utxo.append(UTXO(tx.x16r, i, tx.vout[i].nValue))
+        # The random splits above can leave outputs too small to pay the fees
+        # of the tests that follow, which spend self.utxo[0]. Put the largest
+        # first.
+        self.utxo.sort(key=lambda u: u.nValue, reverse=True)
 
-    # Test P2SH wrapped witness programs.
-    def test_p2sh_witness(self, segwit_activated):
-        self.log.info("Testing P2SH witness transactions")
+    # Test the behavior of restarting a node: the witness blocks it stored
+    # must load again and match those of node0.
+    def test_restart_node(self, node_id):
+        self.log.info("Testing node restart with stored witness blocks")
 
-        assert (len(self.utxo))
-
-        # Prepare the p2sh-wrapped witness output
-        witness_program = CScript([OP_DROP, OP_TRUE])
-        witness_hash = sha256(witness_program)
-        p2wsh_pubkey = CScript([OP_0, witness_hash])
-        p2sh_witness_hash = hash160(p2wsh_pubkey)
-        scriptPubKey = CScript([OP_HASH160, p2sh_witness_hash, OP_EQUAL])
-        scriptSig = CScript([p2wsh_pubkey])  # a push of the redeem script
-
-        # Fund the P2SH output
-        tx = CTransaction()
-        tx.vin.append(CTxIn(COutPoint(self.utxo[0].x16r, self.utxo[0].n), b""))
-        tx.vout.append(CTxOut(self.utxo[0].nValue - 1000, scriptPubKey))
-        tx.rehash()
-
-        # Verify mempool acceptance and block validity
-        self.test_node.test_transaction_acceptance(tx, with_witness=False, accepted=True)
-        block = self.build_next_block()
-        self.update_witness_block_with_transactions(block, [tx])
-        self.test_node.test_witness_block(block, accepted=True, with_witness=segwit_activated)
-        sync_blocks(self.nodes)
-
-        # Now test attempts to spend the output.
-        spend_tx = CTransaction()
-        spend_tx.vin.append(CTxIn(COutPoint(tx.x16r, 0), scriptSig))
-        spend_tx.vout.append(CTxOut(tx.vout[0].nValue - 1000, CScript([OP_TRUE])))
-        spend_tx.rehash()
-
-        # This transaction should not be accepted into the mempool pre- or
-        # post-segwit.  Mempool acceptance will use SCRIPT_VERIFY_WITNESS which
-        # will require a witness to spend a witness program regardless of
-        # segwit activation.  Note that older neuraid's that are not
-        # segwit-aware would also reject this for failing CLEANSTACK.
-        self.test_node.test_transaction_acceptance(spend_tx, with_witness=False, accepted=False)
-
-        # Try to put the witness script in the scriptSig, should also fail.
-        spend_tx.vin[0].scriptSig = CScript([p2wsh_pubkey, b'a'])
-        spend_tx.rehash()
-        self.test_node.test_transaction_acceptance(spend_tx, with_witness=False, accepted=False)
-
-        # Now put the witness script in the witness, should succeed after
-        # segwit activates.
-        spend_tx.vin[0].scriptSig = scriptSig
-        spend_tx.rehash()
-        spend_tx.wit.vtxinwit.append(CTxInWitness())
-        spend_tx.wit.vtxinwit[0].scriptWitness.stack = [b'a', witness_program]
-
-        # Verify mempool acceptance
-        self.test_node.test_transaction_acceptance(spend_tx, with_witness=True, accepted=segwit_activated)
-        block = self.build_next_block()
-        self.update_witness_block_with_transactions(block, [spend_tx])
-
-        # If we're before activation, then sending this without witnesses
-        # should be valid.  If we're after activation, then sending this with
-        # witnesses should be valid.
-        if segwit_activated:
-            self.test_node.test_witness_block(block, accepted=True)
-        else:
-            self.test_node.test_witness_block(block, accepted=True, with_witness=False)
-
-        # Update self.utxo
-        self.utxo.pop(0)
-        self.utxo.append(UTXO(spend_tx.x16r, 0, spend_tx.vout[0].nValue))
-
-    # Test the behavior of starting up a segwit-aware node after the softfork
-    # has activated.  As segwit requires different block data than pre-segwit
-    # nodes would have stored, this requires special handling.
-    # To enable this test, pass --oldbinary=<path-to-pre-segwit-neuraid> to
-    # the test.
-    def test_upgrade_after_activation(self, node_id):
-        self.log.info("Testing software upgrade after softfork activation")
-
-        assert (node_id != 0)  # node0 is assumed to be a segwit-active neuraid
+        assert (node_id != 0)  # node0 keeps the p2p connections
 
         # Make sure the nodes are all up
         sync_blocks(self.nodes)
 
-        # Restart with the new binary
         self.stop_node(node_id)
-        self.start_node(node_id, extra_args=[])
+        self.start_node(node_id, extra_args=self.extra_args[node_id])
         connect_nodes(self.nodes[0], node_id)
 
         sync_blocks(self.nodes)
-
-        # Make sure that this peer thinks segwit has activated.
-        assert (get_bip9_status(self.nodes[node_id], 'segwit')['status'] == "active")
 
         # Make sure this peers blocks match those of node0.
         height = self.nodes[node_id].getblockcount()
@@ -1736,53 +1568,6 @@ class SegWitTest(NeuraiTestFramework):
 
         # TODO: test p2sh sigop counting
 
-    def test_getblocktemplate_before_lockin(self):
-        self.log.info("Testing getblocktemplate setting of segwit versionbit (before lockin)")
-        # Node0 is segwit aware, node2 is not.
-        for node in [self.nodes[0], self.nodes[2]]:
-            gbt_results = node.getblocktemplate()
-            block_version = gbt_results['version']
-            # If we're not indicating segwit support, we will still be
-            # signalling for segwit activation.
-            assert_equal((block_version & (1 << VB_WITNESS_BIT) != 0), node == self.nodes[0])
-            # If we don't specify the segwit rule, then we won't get a default
-            # commitment.
-            assert ('default_witness_commitment' not in gbt_results)
-
-        # Workaround:
-        # Can either change the tip, or change the mempool and wait 5 seconds
-        # to trigger a re-computation of getblocktemplate.
-        txid = int(self.nodes[0].sendtoaddress(self.nodes[0].getnewaddress(), 1), 16)
-        # Using mocktime lets us avoid sleep()
-        sync_mempools(self.nodes)
-        self.nodes[0].setmocktime(int(time.time()) + 10)
-        self.nodes[2].setmocktime(int(time.time()) + 10)
-
-        for node in [self.nodes[0], self.nodes[2]]:
-            gbt_results = node.getblocktemplate({"rules": ["segwit"]})
-            block_version = gbt_results['version']
-            if node == self.nodes[2]:
-                # If this is a non-segwit node, we should still not get a witness
-                # commitment, nor a version bit signalling segwit.
-                assert_equal(block_version & (1 << VB_WITNESS_BIT), 0)
-                assert ('default_witness_commitment' not in gbt_results)
-            else:
-                # For segwit-aware nodes, check the version bit and the witness
-                # commitment are correct.
-                assert (block_version & (1 << VB_WITNESS_BIT) != 0)
-                assert ('default_witness_commitment' in gbt_results)
-                witness_commitment = gbt_results['default_witness_commitment']
-
-                # Check that default_witness_commitment is present.
-                witness_root = CBlock.get_merkle_root([ser_uint256(0),
-                                                       ser_uint256(txid)])
-                script = get_witness_script(witness_root, 0)
-                assert_equal(witness_commitment, bytes_to_hex_str(script))
-
-        # undo mocktime
-        self.nodes[0].setmocktime(0)
-        self.nodes[2].setmocktime(0)
-
     # Uncompressed pubkeys are no longer supported in default relay policy,
     # but (for now) are still valid in blocks.
     def test_uncompressed_pubkey(self):
@@ -1803,7 +1588,7 @@ class SegWitTest(NeuraiTestFramework):
         scriptPKH = CScript([OP_0, pubkeyhash])
         tx = CTransaction()
         tx.vin.append(CTxIn(COutPoint(utxo.x16r, utxo.n), b""))
-        tx.vout.append(CTxOut(utxo.nValue - 1000, scriptPKH))
+        tx.vout.append(CTxOut(utxo.nValue - FEE, scriptPKH))
         tx.rehash()
 
         # Confirm it in a block.
@@ -1819,7 +1604,7 @@ class SegWitTest(NeuraiTestFramework):
 
         tx2 = CTransaction()
         tx2.vin.append(CTxIn(COutPoint(tx.x16r, 0), b""))
-        tx2.vout.append(CTxOut(tx.vout[0].nValue - 1000, scriptWSH))
+        tx2.vout.append(CTxOut(tx.vout[0].nValue - FEE, scriptWSH))
         script = get_p2pkh_script(pubkeyhash)
         sig_hash = segwit_version1_signature_hash(script, tx2, 0, SIGHASH_ALL, tx.vout[0].nValue)
         signature = key.sign_ecdsa(sig_hash) + b'\x01'  # 0x1 is SIGHASH_ALL
@@ -1843,7 +1628,7 @@ class SegWitTest(NeuraiTestFramework):
 
         tx3 = CTransaction()
         tx3.vin.append(CTxIn(COutPoint(tx2.x16r, 0), b""))
-        tx3.vout.append(CTxOut(tx2.vout[0].nValue - 1000, scriptP2SH))
+        tx3.vout.append(CTxOut(tx2.vout[0].nValue - FEE, scriptP2SH))
         tx3.wit.vtxinwit.append(CTxInWitness())
         sign_p2pk_witness_input(witness_program, tx3, 0, SIGHASH_ALL, tx2.vout[0].nValue, key)
 
@@ -1860,7 +1645,7 @@ class SegWitTest(NeuraiTestFramework):
         scriptPubKey = get_p2pkh_script(pubkeyhash)
         tx4 = CTransaction()
         tx4.vin.append(CTxIn(COutPoint(tx3.x16r, 0), scriptSig))
-        tx4.vout.append(CTxOut(tx3.vout[0].nValue - 1000, scriptPubKey))
+        tx4.vout.append(CTxOut(tx3.vout[0].nValue - FEE, scriptPubKey))
         tx4.wit.vtxinwit.append(CTxInWitness())
         sign_p2pk_witness_input(witness_program, tx4, 0, SIGHASH_ALL, tx3.vout[0].nValue, key)
 
@@ -1874,8 +1659,8 @@ class SegWitTest(NeuraiTestFramework):
         # transactions.
         tx5 = CTransaction()
         tx5.vin.append(CTxIn(COutPoint(tx4.x16r, 0), b""))
-        tx5.vout.append(CTxOut(tx4.vout[0].nValue - 1000, CScript([OP_TRUE])))
-        (sig_hash, _) = signature_hash(scriptPubKey, tx5, 0, SIGHASH_ALL)
+        tx5.vout.append(CTxOut(tx4.vout[0].nValue - FEE, CScript([OP_TRUE])))
+        (sig_hash, err) = signature_hash(scriptPubKey, tx5, 0, SIGHASH_ALL)
         signature = key.sign_ecdsa(sig_hash) + b'\x01'  # 0x1 is SIGHASH_ALL
         tx5.vin[0].scriptSig = CScript([signature, pubkey])
         tx5.rehash()
@@ -1889,9 +1674,13 @@ class SegWitTest(NeuraiTestFramework):
     def test_non_standard_witness(self):
         self.log.info("Testing detection of non-standard P2WSH witness")
         pad = chr(1).encode('latin-1')
+        # These transactions carry up to about 31 kB of witness.
+        fee = 10 * FEE
 
         # Create scripts for tests
-        scripts = [CScript([OP_DROP] * 100), CScript([OP_DROP] * 99), CScript([pad * 59] * 59 + [OP_DROP] * 60),
+        # scripts[1] takes 10 elements: 10 of the largest size (3072 bytes)
+        # stay below the 256 KiB stack limit of the widened elements.
+        scripts = [CScript([OP_DROP] * 100), CScript([OP_DROP] * 9), CScript([pad * 59] * 59 + [OP_DROP] * 60),
                    CScript([pad * 59] * 59 + [OP_DROP] * 61)]
 
         p2wsh_scripts = []
@@ -1901,7 +1690,7 @@ class SegWitTest(NeuraiTestFramework):
         tx.vin.append(CTxIn(COutPoint(self.utxo[0].x16r, self.utxo[0].n), b""))
 
         # For each script, generate a pair of P2WSH and P2SH-P2WSH output.
-        outputvalue = (self.utxo[0].nValue - 1000) // (len(scripts) * 2)
+        outputvalue = (self.utxo[0].nValue - FEE) // (len(scripts) * 2)
         for i in scripts:
             p2wsh = CScript([OP_0, sha256(i)])
             p2sh = hash160(p2wsh)
@@ -1921,13 +1710,13 @@ class SegWitTest(NeuraiTestFramework):
         for i in range(len(scripts)):
             p2wsh_tx = CTransaction()
             p2wsh_tx.vin.append(CTxIn(COutPoint(txid, i * 2)))
-            p2wsh_tx.vout.append(CTxOut(outputvalue - 5000, CScript([OP_0, hash160(hex_str_to_bytes(""))])))
+            p2wsh_tx.vout.append(CTxOut(outputvalue - fee, CScript([OP_0, hash160(hex_str_to_bytes(""))])))
             p2wsh_tx.wit.vtxinwit.append(CTxInWitness())
             p2wsh_tx.rehash()
             p2wsh_txs.append(p2wsh_tx)
             p2sh_tx = CTransaction()
             p2sh_tx.vin.append(CTxIn(COutPoint(txid, i * 2 + 1), CScript([p2wsh_scripts[i]])))
-            p2sh_tx.vout.append(CTxOut(outputvalue - 5000, CScript([OP_0, hash160(hex_str_to_bytes(""))])))
+            p2sh_tx.vout.append(CTxOut(outputvalue - fee, CScript([OP_0, hash160(hex_str_to_bytes(""))])))
             p2sh_tx.wit.vtxinwit.append(CTxInWitness())
             p2sh_tx.rehash()
             p2sh_txs.append(p2sh_tx)
@@ -1939,14 +1728,15 @@ class SegWitTest(NeuraiTestFramework):
         # Non-standard nodes should accept
         self.test_node.test_transaction_acceptance(p2wsh_txs[0], True, True)
 
-        # Stack element size over 80 bytes is non-standard
-        p2wsh_txs[1].wit.vtxinwit[0].scriptWitness.stack = [pad * 81] * 100 + [scripts[1]]
+        # Stack element size over 3072 bytes is non-standard. It is also over
+        # the consensus limit here, so no node accepts it.
+        p2wsh_txs[1].wit.vtxinwit[0].scriptWitness.stack = [pad * (MAX_SCRIPT_ELEMENT_SIZE + 1)] * 10 + [scripts[1]]
         self.std_node.test_transaction_acceptance(p2wsh_txs[1], True, False, b'bad-witness-nonstandard')
-        # Non-standard nodes should accept
-        self.test_node.test_transaction_acceptance(p2wsh_txs[1], True, True)
-        # Standard nodes should accept if element size is not over 80 bytes
-        p2wsh_txs[1].wit.vtxinwit[0].scriptWitness.stack = [pad * 80] * 100 + [scripts[1]]
+        self.test_node.test_transaction_acceptance(p2wsh_txs[1], True, False)
+        # Standard nodes should accept if element size is not over 3072 bytes
+        p2wsh_txs[1].wit.vtxinwit[0].scriptWitness.stack = [pad * MAX_SCRIPT_ELEMENT_SIZE] * 10 + [scripts[1]]
         self.std_node.test_transaction_acceptance(p2wsh_txs[1], True, True)
+        self.test_node.test_transaction_acceptance(p2wsh_txs[1], True, True)
 
         # witnessScript size at 3600 bytes is standard
         p2wsh_txs[2].wit.vtxinwit[0].scriptWitness.stack = [pad, pad, scripts[2]]
@@ -1963,11 +1753,12 @@ class SegWitTest(NeuraiTestFramework):
         p2sh_txs[0].wit.vtxinwit[0].scriptWitness.stack = [pad] * 101 + [scripts[0]]
         self.std_node.test_transaction_acceptance(p2sh_txs[0], True, False, b'bad-witness-nonstandard')
         self.test_node.test_transaction_acceptance(p2sh_txs[0], True, True)
-        p2sh_txs[1].wit.vtxinwit[0].scriptWitness.stack = [pad * 81] * 100 + [scripts[1]]
+        p2sh_txs[1].wit.vtxinwit[0].scriptWitness.stack = [pad * (MAX_SCRIPT_ELEMENT_SIZE + 1)] * 10 + [scripts[1]]
         self.std_node.test_transaction_acceptance(p2sh_txs[1], True, False, b'bad-witness-nonstandard')
-        self.test_node.test_transaction_acceptance(p2sh_txs[1], True, True)
-        p2sh_txs[1].wit.vtxinwit[0].scriptWitness.stack = [pad * 80] * 100 + [scripts[1]]
+        self.test_node.test_transaction_acceptance(p2sh_txs[1], True, False)
+        p2sh_txs[1].wit.vtxinwit[0].scriptWitness.stack = [pad * MAX_SCRIPT_ELEMENT_SIZE] * 10 + [scripts[1]]
         self.std_node.test_transaction_acceptance(p2sh_txs[1], True, True)
+        self.test_node.test_transaction_acceptance(p2sh_txs[1], True, True)
         p2sh_txs[2].wit.vtxinwit[0].scriptWitness.stack = [pad, pad, scripts[2]]
         self.test_node.test_transaction_acceptance(p2sh_txs[2], True, True)
         self.std_node.test_transaction_acceptance(p2sh_txs[2], True, True)

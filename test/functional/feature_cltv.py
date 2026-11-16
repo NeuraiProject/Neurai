@@ -6,8 +6,10 @@
 
 """
 Test BIP65 (CHECKLOCKTIMEVERIFY).
-Test that the CHECKLOCKTIMEVERIFY soft-fork activates at (regtest) block height
-1351.
+
+On this chain BIP65 is enforced from genesis: blocks must be version 4 or
+later, and a block with a transaction that fails CHECKLOCKTIMEVERIFY is
+invalid at any height.
 """
 
 from io import BytesIO
@@ -64,7 +66,7 @@ def create_transaction(node, coinbase, to_address, amount):
 class BIP65Test(NeuraiTestFramework):
     def set_test_params(self):
         self.num_nodes = 1
-        self.extra_args = [['-promiscuousmempoolflags=1', '-whitelist=127.0.0.1']]
+        self.extra_args = [['-acceptnonstdtxn=1', '-whitelist=127.0.0.1']]
         self.setup_clean_chain = True
 
     def run_test(self):
@@ -81,32 +83,17 @@ class BIP65Test(NeuraiTestFramework):
         self.coinbase_blocks = self.nodes[0].generate(CLTV_HEIGHT - 2)
         self.nodeaddress = self.nodes[0].getnewaddress()
 
-        self.log.info("Test that an invalid-according-to-CLTV transaction can still appear in a block")
-
-        spendtx = create_transaction(self.nodes[0], self.coinbase_blocks[0],
-                self.nodeaddress, 1.0)
-        cltv_invalidate(spendtx)
-        spendtx.rehash()
-
+        self.log.info("Test that blocks must be at least version 4")
         tip = self.nodes[0].getbestblockhash()
-        block_time = self.nodes[0].getblockheader(tip)['mediantime'] + 1
+        tip_header = self.nodes[0].getblock(tip)
+        block_time = tip_header['time'] + 1
         block = create_block(int(tip, 16), create_coinbase(CLTV_HEIGHT - 1), block_time)
         block.nVersion = 3
-        block.vtx.append(spendtx)
-        block.hashMerkleRoot = block.calc_merkle_root()
-        block.solve()
-
-        node0.send_and_ping(MsgBlock(block))
-        assert_equal(self.nodes[0].getbestblockhash(), block.hash)
-
-        self.log.info("Test that blocks must now be at least version 4")
-        tip = block.sha256
-        block_time += 1
-        block = create_block(tip, create_coinbase(CLTV_HEIGHT), block_time)
-        block.nVersion = 3
+        block.nBits = int(tip_header['bits'], 16)
         block.solve()
         node0.send_and_ping(MsgBlock(block))
-        assert_equal(int(self.nodes[0].getbestblockhash(), 16), tip)
+        assert_equal(self.nodes[0].getbestblockhash(), tip)
+        tip = int(tip, 16)
 
         wait_until(lambda: "reject" in node0.last_message.keys(), lock=mininode_lock, err_msg="last_message")
         with mininode_lock:
@@ -116,18 +103,18 @@ class BIP65Test(NeuraiTestFramework):
             del node0.last_message["reject"]
 
         self.log.info("Test that invalid-according-to-cltv transactions cannot appear in a block")
-        block.nVersion = 4
+        block.nVersion = tip_header['version']
 
         spendtx = create_transaction(self.nodes[0], self.coinbase_blocks[1],
                 self.nodeaddress, 1.0)
         cltv_invalidate(spendtx)
         spendtx.rehash()
 
-        # First we show that this tx is valid except for CLTV by getting it
-        # accepted to the mempool (which we can achieve with
-        # -promiscuousmempoolflags).
-        node0.send_and_ping(MsgTx(spendtx))
-        assert spendtx.hash in self.nodes[0].getrawmempool()
+        # The mempool applies BIP65 as a consensus rule: it refuses the
+        # transaction for its script (-acceptnonstdtxn lets its non-push-only scriptSig reach the script check).
+        result = self.nodes[0].testmempoolaccept([to_hex(spendtx)], True)[0]  # the coinbase pays a high fee
+        assert not result['allowed']
+        assert 'Negative locktime' in result['reject-reason'], result
 
         # Now we verify that a block with this transaction is invalid.
         block.vtx.append(spendtx)
@@ -147,8 +134,10 @@ class BIP65Test(NeuraiTestFramework):
             else:
                 assert b'Negative locktime' in node0.last_message["reject"].reason
 
-        self.log.info("Test that a version 4 block with a valid-according-to-CLTV transaction is accepted")
-        spendtx = cltv_validate(self.nodes[0], spendtx, CLTV_HEIGHT - 1)
+        self.log.info("Test that a block with a valid-according-to-CLTV transaction is accepted")
+        # The block is at height CLTV_HEIGHT - 1: a lock time of the tip's height
+        # is final there and satisfies the CHECKLOCKTIMEVERIFY.
+        spendtx = cltv_validate(self.nodes[0], spendtx, CLTV_HEIGHT - 2)
         spendtx.rehash()
 
         block.vtx.pop(1)

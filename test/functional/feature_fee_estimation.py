@@ -22,6 +22,9 @@ P2SH_2 = CScript([OP_HASH160, hash160(redeem_script_2), OP_EQUAL])
 # Associated ScriptSig's to spend satisfy P2SH_1 and P2SH_2
 SCRIPT_SIG = [CScript([OP_TRUE, redeem_script_1]), CScript([OP_TRUE, redeem_script_2])]
 
+# Neurai's minimum relay fee, with a small margin.
+MIN_RELAY_FEE_PER_KB = Decimal("0.0105")
+
 # noinspection PyGlobalUndefined
 global log
 
@@ -54,6 +57,20 @@ def small_tx_puzzle_rand_fee(from_node, conflist, unconflist, amount, min_fee, f
             tx.vin.append(CTxIn(COutPoint(int(t["txid"], 16), t["vout"]), b""))
         if total_in <= amount + fee:
             raise RuntimeError("Insufficient funds: need %d, have %d"%(amount+fee, total_in))
+    # Never below the minimum relay fee (0.01 XNA/kB): a transaction with many
+    # inputs is larger than the fee range above assumes. 46 bytes per input,
+    # 74 for the rest.
+    min_relay_fee = satoshi_round(MIN_RELAY_FEE_PER_KB * Decimal(74 + 46 * len(tx.vin)) / 1000)
+    if fee < min_relay_fee:
+        fee = min_relay_fee
+        while total_in <= amount + fee:
+            pool = conflist if len(conflist) > 0 else unconflist
+            if len(pool) == 0:
+                raise RuntimeError("Insufficient funds: need %d, have %d"%(amount+fee, total_in))
+            t = pool.pop(0)
+            total_in += t["amount"]
+            tx.vin.append(CTxIn(COutPoint(int(t["txid"], 16), t["vout"]), b""))
+            fee = max(fee, satoshi_round(MIN_RELAY_FEE_PER_KB * Decimal(74 + 46 * len(tx.vin)) / 1000))
     tx.vout.append(CTxOut(int((total_in - amount - fee)*COIN), P2SH_1))
     tx.vout.append(CTxOut(int(amount*COIN), P2SH_2))
     # These transactions don't need to be signed, but we still have to insert
@@ -167,7 +184,14 @@ class EstimateFeeTest(NeuraiTestFramework):
 
 
     def transact_and_mine(self, numblocks, mining_node):
-        min_fee = Decimal("0.0100000")
+        # The estimator's buckets span 1000 to 1e7 sat/kB (0.1 XNA/kB); every
+        # rate above that shares one overflow bucket, so the estimates could
+        # not tell the test's fee rates apart. The minimum relay fee is
+        # 0.01 XNA/kB, so keep every fee rate between the two: transactions of
+        # about 120-170 bytes pay 0.002 to about 0.011 XNA, roughly 0.012 to
+        # 0.09 XNA/kB.
+        min_fee = Decimal("0.002")
+        fee_increment = Decimal("0.00007")
         # We will now mine numblocks blocks generating on average 100 transactions between each block
         # We shuffle our confirmed txout set before each set of transactions
         # small_tx_puzzle_rand_fee will use the transactions that have inputs already in the chain when possible
@@ -177,7 +201,7 @@ class EstimateFeeTest(NeuraiTestFramework):
             for _ in range(random.randrange(100-50,100+50)):
                 from_index = random.randint(1,2)
                 (txhex, fee) = small_tx_puzzle_rand_fee(self.nodes[from_index], self.confutxo,
-                                                        self.memutxo, Decimal("0.005"), min_fee, min_fee)
+                                                        self.memutxo, Decimal("0.005"), min_fee, fee_increment)
                 tx_kbytes = (len(txhex) // 2) / 1000.0
                 self.fees_per_kb.append(float(fee)/tx_kbytes)
             sync_mempools(self.nodes[0:3], wait=.1)
