@@ -21,6 +21,7 @@
 #include "cuckoocache.h"
 #include "depinmembership.h"
 #include "fs.h"
+#include "crypto/common.h"
 #include "hash.h"
 #include "init.h"
 #include "policy/fees.h"
@@ -2264,6 +2265,13 @@ static bool TxMayExecuteAssetAuth(const CTransaction& tx)
  */
 bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks, std::shared_ptr<std::vector<CTxOut>> pRefOutputs, ChainContext chainCtx, bool* pfUsesChainContext, std::shared_ptr<PoseidonWorkBudget> poseidonWork, std::shared_ptr<ScriptExecutionStatus> executionStatus, bool fBlockValidation, std::shared_ptr<AssetAuthWorkBudget> assetAuthWork)
 {
+    return CheckInputs(tx, state, inputs, fScriptChecks, flags, cacheSigStore, cacheFullScriptStore, txdata, pvChecks,
+                       pRefOutputs, chainCtx, pfUsesChainContext, poseidonWork, executionStatus, fBlockValidation,
+                       assetAuthWork, nullptr);
+}
+
+bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks, std::shared_ptr<std::vector<CTxOut>> pRefOutputs, ChainContext chainCtx, bool* pfUsesChainContext, std::shared_ptr<PoseidonWorkBudget> poseidonWork, std::shared_ptr<ScriptExecutionStatus> executionStatus, bool fBlockValidation, std::shared_ptr<AssetAuthWorkBudget> assetAuthWork, const MeteredWork* pRecordedWork)
+{
     if (!executionStatus) executionStatus = std::make_shared<ScriptExecutionStatus>();
     if (!executionStatus->Apply(state)) return false;
     if (!poseidonWork && (flags & SCRIPT_VERIFY_POSEIDON_WORK))
@@ -2299,25 +2307,40 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
             static_assert(55 - sizeof(flagsInt) - 32 >= 120/8, "Want at least 120 bits of nonce for script execution cache");
             CSHA256().Write(scriptExecutionCacheNonce.begin(), 55 - sizeof(flagsInt) - 32).Write(tx.GetWitnessHash().begin(), 32).Write((unsigned char*)&flagsInt, sizeof(flagsInt)).Finalize(hashCacheEntry.begin());
             AssertLockHeld(cs_main); //TODO: Remove this requirement by making CuckooCache not require external locks
-            // This cache records validity, not resource cost. An execution
-            // that is metered (Poseidon work, NIP-054 OP_CHECKASSETAUTH work)
-            // may only be skipped when an earlier execution under the same
-            // flags charged no metered work at all, because it then adds
-            // nothing to any budget. Those records live under their own key,
-            // which also names the meters that were present: a zero measured
-            // by one meter says nothing about a meter that was absent.
-            // Without this, every block template and every block re-executed
-            // all the scripts of transactions already checked in the mempool.
+            // A metered execution (Poseidon work, NIP-054 OP_CHECKASSETAUTH
+            // work) adds to the budgets of its block, so its result is stored
+            // under a key that also names the meters present and the work
+            // each one measured: a zero measured by one meter says nothing
+            // about a meter that was absent. Skipping the scripts on a hit
+            // then charges exactly what running them would. The caller looks
+            // the result up by the work it expects (block validation takes it
+            // from the mempool entry); without one, only a zero-work result
+            // can match. Without this, every block template and every block
+            // ran again all the metered scripts the mempool had already run.
             const bool fMeteredAssetAuth = assetAuthWork && TxMayExecuteAssetAuth(tx);
             const bool fMetered = poseidonWork || fMeteredAssetAuth;
-            uint256 hashZeroWorkEntry;
-            if (fMetered) {
-                static const unsigned char ZERO_WORK_TAG[] = "zero-metered-work";
+            const auto meteredEntry = [&](uint64_t nPoseidon, uint64_t nAssetAuth) {
+                static const unsigned char METERED_WORK_TAG[] = "metered-work";
                 const unsigned char meters = (poseidonWork ? 1 : 0) | (assetAuthWork ? 2 : 0);
-                CSHA256().Write(hashCacheEntry.begin(), 32).Write(ZERO_WORK_TAG, sizeof(ZERO_WORK_TAG) - 1)
-                    .Write(&meters, 1).Finalize(hashZeroWorkEntry.begin());
-            }
-            if (scriptExecutionCache.contains(fMetered ? hashZeroWorkEntry : hashCacheEntry, !cacheFullScriptStore)) {
+                unsigned char amounts[16];
+                WriteLE64(amounts, poseidonWork ? nPoseidon : 0);
+                WriteLE64(amounts + 8, assetAuthWork ? nAssetAuth : 0);
+                uint256 entry;
+                CSHA256().Write(hashCacheEntry.begin(), 32).Write(METERED_WORK_TAG, sizeof(METERED_WORK_TAG) - 1)
+                    .Write(&meters, 1).Write(amounts, sizeof(amounts)).Finalize(entry.begin());
+                return entry;
+            };
+            if (fMetered) {
+                const uint64_t nPoseidon = (pRecordedWork && poseidonWork) ? pRecordedWork->poseidon : 0;
+                const uint64_t nAssetAuth = (pRecordedWork && assetAuthWork) ? pRecordedWork->assetAuth : 0;
+                if (scriptExecutionCache.contains(meteredEntry(nPoseidon, nAssetAuth), !cacheFullScriptStore)) {
+                    if (nPoseidon && !poseidonWork->Charge(nPoseidon))
+                        return state.Invalid(false, REJECT_INVALID, "bad-txns-poseidon-work");
+                    if (nAssetAuth && !assetAuthWork->Charge(nAssetAuth))
+                        return state.Invalid(false, REJECT_INVALID, "bad-txns-assetauth-work");
+                    return true;
+                }
+            } else if (scriptExecutionCache.contains(hashCacheEntry, !cacheFullScriptStore)) {
                 return true;
             }
             const uint64_t nPoseidonUsedBefore = poseidonWork ? poseidonWork->Used() : 0;
@@ -2405,9 +2428,10 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
             if (cacheFullScriptStore && !pvChecks && !fObservedChainContext) {
                 if (!fMetered) {
                     scriptExecutionCache.insert(hashCacheEntry);
-                } else if ((!poseidonWork || poseidonWork->Used() == nPoseidonUsedBefore) &&
-                           (!assetAuthWork || assetAuthWork->Used() == nAssetAuthUsedBefore)) {
-                    scriptExecutionCache.insert(hashZeroWorkEntry);
+                } else {
+                    scriptExecutionCache.insert(meteredEntry(
+                        poseidonWork ? poseidonWork->Used() - nPoseidonUsedBefore : 0,
+                        assetAuthWork ? assetAuthWork->Used() - nAssetAuthUsedBefore : 0));
                 }
             }
         }
@@ -3246,6 +3270,19 @@ static bool CheckBlockHeightTxRules(const CBlock& block, CValidationState& state
 /** Apply the effects of this block (with given index) on the UTXO set represented by coins.
  *  Validity checks that depend on the UTXO set are also done; ConnectBlock()
  *  can fail if those validity checks fail (among other reasons). */
+/** The metered work the mempool recorded for this exact transaction, witness
+ * included. Only a hint: CheckInputs uses it to find a stored result, and a
+ * result stored under another amount (or none) makes the scripts run. */
+static bool GetMempoolRecordedWork(const CTransaction& tx, MeteredWork& work)
+{
+    LOCK(mempool.cs);
+    const auto it = mempool.mapTx.find(tx.GetHash());
+    if (it == mempool.mapTx.end() || it->GetTx().GetWitnessHash() != tx.GetWitnessHash()) return false;
+    work.poseidon = it->GetPoseidonWork();
+    work.assetAuth = it->GetAssetAuthWork();
+    return true;
+}
+
 static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockIndex* pindex,
                   CCoinsViewCache& view, const CChainParams& chainparams, CAssetsCache* assetsCache = nullptr, bool fJustCheck = false, bool ignoreAddressIndex = false,
                   std::set<std::string>* depinRevealedKeys = nullptr)
@@ -3615,7 +3652,13 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
                 GetChainIdForParams(chainparams),
                 true
             };
-            if (!CheckInputs(tx, state, view, fScriptChecks, flags, fCacheResults, fCacheResults, txdata[i], nScriptCheckThreads ? &vChecks : nullptr, pRefOutputs, chainCtx, nullptr, blockPoseidonWork, blockExecutionStatus, /*fBlockValidation=*/true, blockAssetAuthWork)) {
+            // The mempool already ran the scripts of the transactions it
+            // relayed and recorded their metered work; with that work the
+            // script execution cache can serve them (see CheckInputs).
+            MeteredWork recordedWork;
+            const bool fRecorded = fScriptChecks && (blockPoseidonWork || blockAssetAuthWork) &&
+                                   GetMempoolRecordedWork(tx, recordedWork);
+            if (!CheckInputs(tx, state, view, fScriptChecks, flags, fCacheResults, fCacheResults, txdata[i], nScriptCheckThreads ? &vChecks : nullptr, pRefOutputs, chainCtx, nullptr, blockPoseidonWork, blockExecutionStatus, /*fBlockValidation=*/true, blockAssetAuthWork, fRecorded ? &recordedWork : nullptr)) {
                 if (blockPoseidonWork && blockPoseidonWork->Exceeded())
                     return state.DoS(100, false, REJECT_INVALID, "bad-blk-poseidon-work");
                 if (blockAssetAuthWork && blockAssetAuthWork->Exceeded())

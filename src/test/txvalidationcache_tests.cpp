@@ -738,4 +738,93 @@ BOOST_AUTO_TEST_CASE(zero_work_record_names_its_meters)
         BOOST_CHECK_EQUAL(checks.size(), warmed ? 0U : 1U);
     }
 }
+
+// A metered result that charged work is stored under a key naming that work.
+// A caller that knows it (block validation, from the mempool entry) skips the
+// scripts and charges the work in full, so the block budget adds up as if
+// they had run; with any other amount, or none, the scripts run. A result
+// that read the chain position is never stored, whatever its work.
+BOOST_AUTO_TEST_CASE(recorded_work_serves_metered_results)
+{
+    LOCK(cs_main);
+    CCoinsView dummy;
+    CCoinsViewCache view(&dummy);
+    const auto spend = [&](const CScript& leaf) {
+        const CScript spk = CScript() << OP_1 << ToByteVector(GetAuthScriptCommitment(0, nullptr, leaf));
+        CMutableTransaction mtx;
+        mtx.nVersion = 2;
+        for (int i = 0; i < 2; ++i) {
+            const COutPoint prev(GetRandHash(), 0);
+            view.AddCoin(prev, Coin(CTxOut(COIN, spk), 1, false), false);
+            mtx.vin.emplace_back(prev);
+            mtx.vin.back().scriptWitness.stack = {{0}, std::vector<unsigned char>(leaf.begin(), leaf.end())};
+        }
+        mtx.vout.emplace_back(COIN, CScript() << OP_TRUE);
+        return CTransaction(mtx);
+    };
+    // Two inputs, one permutation each.
+    const CTransaction tx = spend(CScript() << OP_0 << OP_POSEIDON << OP_DROP << OP_TRUE);
+    const auto flags = GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());
+    BOOST_REQUIRE(flags & SCRIPT_VERIFY_POSEIDON_WORK);
+    PrecomputedTransactionData data(tx);
+    const ChainContext context{200, 0, 2, true};
+    const auto check = [&](const CTransaction& t, PrecomputedTransactionData& d, const MeteredWork* recorded,
+                           std::shared_ptr<PoseidonWorkBudget> budget, std::vector<CScriptCheck>* checks,
+                           CValidationState& state) {
+        return CheckInputs(t, state, view, true, flags, true, true, d, checks, nullptr, context, nullptr,
+                           budget, nullptr, true, nullptr, recorded);
+    };
+
+    // The mempool runs the scripts inline and stores the result with its work.
+    {
+        auto budget = std::make_shared<PoseidonWorkBudget>(100);
+        CValidationState state;
+        BOOST_REQUIRE(check(tx, data, nullptr, budget, nullptr, state));
+        BOOST_REQUIRE_EQUAL(budget->Used(), 2U);
+    }
+    // The recorded work finds it: nothing to run, the work is charged.
+    const MeteredWork recorded{2, 0};
+    {
+        auto budget = std::make_shared<PoseidonWorkBudget>(100);
+        std::vector<CScriptCheck> checks;
+        CValidationState state;
+        BOOST_REQUIRE(check(tx, data, &recorded, budget, &checks, state));
+        BOOST_CHECK(checks.empty());
+        BOOST_CHECK_EQUAL(budget->Used(), 2U);
+    }
+    // Any other amount, or none, runs the scripts.
+    const MeteredWork lower{1, 0}, extra{2, 1};
+    for (const MeteredWork* other : {static_cast<const MeteredWork*>(nullptr), &lower, &extra}) {
+        auto budget = std::make_shared<PoseidonWorkBudget>(100);
+        std::vector<CScriptCheck> checks;
+        CValidationState state;
+        BOOST_REQUIRE(check(tx, data, other, budget, &checks, state));
+        BOOST_CHECK_EQUAL(checks.size(), 2U);
+    }
+    // A budget without room for the recorded work rejects as running would.
+    {
+        auto budget = std::make_shared<PoseidonWorkBudget>(1);
+        CValidationState state;
+        BOOST_CHECK(!check(tx, data, &recorded, budget, nullptr, state));
+        BOOST_CHECK(budget->Exceeded());
+        BOOST_CHECK_EQUAL(state.GetRejectReason(), "bad-txns-poseidon-work");
+    }
+    // Reading the chain position keeps a result out of the cache.
+    const CTransaction contextual = spend(CScript() << OP_0 << OP_POSEIDON << OP_DROP
+                                                    << OP_1 << OP_CHAINCONTEXT << OP_DROP << OP_TRUE);
+    PrecomputedTransactionData contextualData(contextual);
+    {
+        auto budget = std::make_shared<PoseidonWorkBudget>(100);
+        CValidationState state;
+        BOOST_REQUIRE(check(contextual, contextualData, nullptr, budget, nullptr, state));
+        BOOST_REQUIRE_EQUAL(budget->Used(), 2U);
+    }
+    {
+        auto budget = std::make_shared<PoseidonWorkBudget>(100);
+        std::vector<CScriptCheck> checks;
+        CValidationState state;
+        BOOST_REQUIRE(check(contextual, contextualData, &recorded, budget, &checks, state));
+        BOOST_CHECK_EQUAL(checks.size(), 2U);
+    }
+}
 BOOST_AUTO_TEST_SUITE_END()

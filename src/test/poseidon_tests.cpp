@@ -35,6 +35,7 @@ using crypto::poseidon_bn254_detail::FrToCanonical;
 using crypto::poseidon_bn254_detail::FrFromBytesBE;
 using crypto::poseidon_bn254_detail::FrToBytesBE;
 using crypto::poseidon_bn254_detail::Permutation;
+using crypto::poseidon_bn254_detail::PermutationReference;
 using crypto::poseidon_bn254_detail::MODULUS_R;
 
 namespace {
@@ -241,6 +242,67 @@ BOOST_AUTO_TEST_CASE(permutation_diffuses_input)
     Permutation(s2);
 
     BOOST_CHECK(!FrEqual(s1[0], s2[0]));
+}
+
+// Permutation() moves the partial-round constants forward and factors their
+// matrices into sparse ones; it must stay the function that the textbook
+// PermutationReference() computes, on every state.
+BOOST_AUTO_TEST_CASE(permutation_matches_reference)
+{
+    const auto check = [](const Fr in[3]) {
+        Fr fast[3] = {in[0], in[1], in[2]};
+        Fr reference[3] = {in[0], in[1], in[2]};
+        Permutation(fast);
+        PermutationReference(reference);
+        return FrEqual(fast[0], reference[0]) && FrEqual(fast[1], reference[1]) && FrEqual(fast[2], reference[2]);
+    };
+
+    // 0, 1 and r - 1 in every position.
+    uint64_t r_minus_one[4] = {MODULUS_R[0] - 1, MODULUS_R[1], MODULUS_R[2], MODULUS_R[3]};
+    const Fr edges[3] = {FrFromU64(0), FrFromU64(1), FrFromCanonical(r_minus_one)};
+    for (const Fr& a : edges) {
+        for (const Fr& b : edges) {
+            for (const Fr& c : edges) {
+                const Fr state[3] = {a, b, c};
+                BOOST_CHECK(check(state));
+            }
+        }
+    }
+
+    // Deterministic pseudo-random states over the whole field (splitmix64,
+    // values at or above r rejected).
+    uint64_t seed = 0x9e3779b97f4a7c15ULL;
+    const auto next = [&seed]() {
+        uint64_t z = (seed += 0x9e3779b97f4a7c15ULL);
+        z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+        z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+        return z ^ (z >> 31);
+    };
+    const auto element = [&next]() {
+        for (;;) {
+            uint64_t limbs[4] = {next(), next(), next(), next() & 0x3fffffffffffffffULL};
+            bool below = false;
+            for (int i = 3; i >= 0; --i) {
+                if (limbs[i] != MODULUS_R[i]) { below = limbs[i] < MODULUS_R[i]; break; }
+            }
+            if (below) return FrFromCanonical(limbs);
+        }
+    };
+    int mismatches = 0;
+    for (int n = 0; n < 20000; ++n) {
+        const Fr state[3] = {element(), element(), element()};
+        if (!check(state)) ++mismatches;
+    }
+    BOOST_CHECK_EQUAL(mismatches, 0);
+
+    // A long chain, each output fed back as the next input.
+    Fr fast[3] = {FrFromU64(0), FrFromU64(1), FrFromU64(2)};
+    Fr reference[3] = {FrFromU64(0), FrFromU64(1), FrFromU64(2)};
+    for (int n = 0; n < 2000; ++n) {
+        Permutation(fast);
+        PermutationReference(reference);
+    }
+    BOOST_CHECK(FrEqual(fast[0], reference[0]) && FrEqual(fast[1], reference[1]) && FrEqual(fast[2], reference[2]));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -101,6 +101,11 @@ bool FrEqual(const Fr& a, const Fr& b);
  *  arnaucube/poseidon-rs. */
 void Permutation(Fr state[3]);
 
+/** The same permutation computed round by round as the Poseidon paper
+ *  defines it. Permutation() uses an equivalent, cheaper round structure;
+ *  tests compare the two. */
+void PermutationReference(Fr state[3]);
+
 } // namespace poseidon_bn254_detail
 } // namespace crypto
 

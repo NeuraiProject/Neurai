@@ -545,6 +545,24 @@ public:
     ScriptError GetScriptError() const { return error; }
 };
 
+/** Work that the scripts of a transaction were measured to charge (NIP-036
+ * Poseidon permutations, NIP-054 OP_CHECKASSETAUTH units), as the mempool
+ * recorded it. */
+struct MeteredWork {
+    uint64_t poseidon{0};
+    uint64_t assetAuth{0};
+};
+
+/** CheckInputs, told the work an earlier execution of these scripts measured.
+ * A metered result stored under the same flags and that same work lets the
+ * scripts be skipped; the work is then charged to the budgets in full. */
+bool CheckInputs(const CTransaction& tx, CValidationState& state, const CCoinsViewCache& inputs, bool fScriptChecks,
+                 script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata,
+                 std::vector<CScriptCheck>* pvChecks, std::shared_ptr<std::vector<CTxOut>> pRefOutputs, ChainContext chainCtx,
+                 bool* pfUsesChainContext, std::shared_ptr<PoseidonWorkBudget> poseidonWork,
+                 std::shared_ptr<ScriptExecutionStatus> executionStatus, bool fBlockValidation,
+                 std::shared_ptr<AssetAuthWorkBudget> assetAuthWork, const MeteredWork* pRecordedWork);
+
 /** Initializes the script-execution cache */
 void InitScriptExecutionCache();
 

@@ -67,6 +67,7 @@ constexpr uint64_t kRSquared[4] = {
 // Canonical "1" in non-Montgomery form. Used to convert Montgomery ->
 // canonical via mont_mul(X*R, 1) = X*R*1*R^-1 = X.
 constexpr uint64_t kOneCanonical[4] = {1, 0, 0, 0};
+constexpr uint64_t kZeroCanonical[4] = {0, 0, 0, 0};
 
 // Word-pair return type for arithmetic helpers: 64-bit low half plus a
 // 64-bit high half (carry / borrow / multiplication overflow).
@@ -297,10 +298,10 @@ bool FrEqual(const Fr& a, const Fr& b)
 }
 
 // =====================================================================
-// Poseidon permutation (t = 3, R_F = 8, R_P = 57, x^5 S-box).
+// Reference Poseidon permutation (t = 3, R_F = 8, R_P = 57, x^5 S-box).
 //
-// Standard Poseidon paper algorithm (unoptimized). For each of the 65
-// rounds:
+// Standard Poseidon paper algorithm (unoptimized), kept as the reference
+// that tests compare Permutation() against. For each of the 65 rounds:
 //   1. ARK   — add round constants C[round*t + i] to state[i] for all i.
 //   2. S-box — apply x^5; full rounds touch all t elements, partial
 //              rounds touch only state[0].
@@ -338,7 +339,7 @@ const MontConstants& GetMontConstants()
 
 } // anonymous
 
-void Permutation(Fr state[3])
+void PermutationReference(Fr state[3])
 {
     constexpr int T = 3;
     constexpr int R_F_HALF = 4;        // R_F / 2
@@ -378,6 +379,227 @@ void Permutation(Fr state[3])
         }
         for (int i = 0; i < T; ++i) state[i] = new_state[i];
     }
+}
+
+
+// =====================================================================
+// Optimized Poseidon permutation: same function as PermutationReference.
+//
+// 1. Field arithmetic: Montgomery multiplication unrolled with the
+//    "no-carry" CIOS variant, valid because the top limb of r leaves a
+//    spare bit (as in gnark-crypto), and branchless final reductions.
+// 2. Round structure (Poseidon paper, appendix B):
+//    - In a partial round only state[0] goes through the S-box, so the
+//      constants of state[1] and state[2] can be added after it, that is,
+//      pushed through the MDS matrix into the next round. Each partial
+//      round is left with one constant, on state[0]; the last one pushes
+//      its remainder into the first full round after them.
+//    - The matrix D of a partial round factors as B * A, with
+//      A = diag(1, Ahat). A commutes with that round's S-box and constant
+//      (both only touch state[0]), so it moves into the matrix of the
+//      round before. B = [[d00, b01, b02], [d10, 1, 0], [d20, 0, 1]] costs
+//      5 multiplications instead of 9. What is left after the first
+//      partial round goes into the last full round before them.
+// The transformed constants are derived from the pinned ones at first use.
+// =====================================================================
+
+namespace {
+
+using u128 = unsigned __int128;
+
+constexpr uint64_t Q0 = MODULUS_R[0], Q1 = MODULUS_R[1], Q2 = MODULUS_R[2], Q3 = MODULUS_R[3];
+static_assert(Q3 < 0x7fffffffffffffffULL, "no-carry Montgomery multiplication needs a spare top bit");
+
+inline void ReduceOnce(uint64_t& t0, uint64_t& t1, uint64_t& t2, uint64_t& t3)
+{
+    u128 d;
+    uint64_t b, r0, r1, r2, r3;
+    d = (u128)t0 - Q0;     r0 = (uint64_t)d; b = (uint64_t)(d >> 64) & 1;
+    d = (u128)t1 - Q1 - b; r1 = (uint64_t)d; b = (uint64_t)(d >> 64) & 1;
+    d = (u128)t2 - Q2 - b; r2 = (uint64_t)d; b = (uint64_t)(d >> 64) & 1;
+    d = (u128)t3 - Q3 - b; r3 = (uint64_t)d; b = (uint64_t)(d >> 64) & 1;
+    const uint64_t keep = 0 - b; // all ones when t < r
+    t0 = (t0 & keep) | (r0 & ~keep);
+    t1 = (t1 & keep) | (r1 & ~keep);
+    t2 = (t2 & keep) | (r2 & ~keep);
+    t3 = (t3 & keep) | (r3 & ~keep);
+}
+
+inline Fr FastMul(const Fr& a, const Fr& b)
+{
+    const uint64_t* x = a.limbs;
+    const uint64_t* y = b.limbs;
+    uint64_t t0, t1, t2, t3, c0, c1, c2, m;
+    u128 r;
+    {
+        const uint64_t v = x[0];
+        r = (u128)v * y[0];          c1 = (uint64_t)(r >> 64); c0 = (uint64_t)r;
+        m = c0 * kInvNeg;
+        c2 = (uint64_t)(((u128)m * Q0 + c0) >> 64);
+        r = (u128)v * y[1] + c1;     c1 = (uint64_t)(r >> 64); c0 = (uint64_t)r;
+        r = (u128)m * Q1 + c2 + c0;  c2 = (uint64_t)(r >> 64); t0 = (uint64_t)r;
+        r = (u128)v * y[2] + c1;     c1 = (uint64_t)(r >> 64); c0 = (uint64_t)r;
+        r = (u128)m * Q2 + c2 + c0;  c2 = (uint64_t)(r >> 64); t1 = (uint64_t)r;
+        r = (u128)v * y[3] + c1;     c1 = (uint64_t)(r >> 64); c0 = (uint64_t)r;
+        r = (u128)m * Q3 + c0 + c2;  t3 = (uint64_t)(r >> 64) + c1; t2 = (uint64_t)r;
+    }
+    for (int i = 1; i < 4; ++i) {
+        const uint64_t v = x[i];
+        r = (u128)v * y[0] + t0;      c1 = (uint64_t)(r >> 64); c0 = (uint64_t)r;
+        m = c0 * kInvNeg;
+        c2 = (uint64_t)(((u128)m * Q0 + c0) >> 64);
+        r = (u128)v * y[1] + c1 + t1; c1 = (uint64_t)(r >> 64); c0 = (uint64_t)r;
+        r = (u128)m * Q1 + c2 + c0;   c2 = (uint64_t)(r >> 64); t0 = (uint64_t)r;
+        r = (u128)v * y[2] + c1 + t2; c1 = (uint64_t)(r >> 64); c0 = (uint64_t)r;
+        r = (u128)m * Q2 + c2 + c0;   c2 = (uint64_t)(r >> 64); t1 = (uint64_t)r;
+        r = (u128)v * y[3] + c1 + t3; c1 = (uint64_t)(r >> 64); c0 = (uint64_t)r;
+        r = (u128)m * Q3 + c0 + c2;   t3 = (uint64_t)(r >> 64) + c1; t2 = (uint64_t)r;
+    }
+    ReduceOnce(t0, t1, t2, t3);
+    return Fr{{t0, t1, t2, t3}};
+}
+
+inline Fr FastAdd(const Fr& a, const Fr& b)
+{
+    // Both below r < 2^254: the sum fits in 256 bits.
+    u128 s;
+    uint64_t t0, t1, t2, t3;
+    s = (u128)a.limbs[0] + b.limbs[0];                       t0 = (uint64_t)s;
+    s = (u128)a.limbs[1] + b.limbs[1] + (uint64_t)(s >> 64); t1 = (uint64_t)s;
+    s = (u128)a.limbs[2] + b.limbs[2] + (uint64_t)(s >> 64); t2 = (uint64_t)s;
+    t3 = a.limbs[3] + b.limbs[3] + (uint64_t)(s >> 64);
+    ReduceOnce(t0, t1, t2, t3);
+    return Fr{{t0, t1, t2, t3}};
+}
+
+inline Fr FastPow5(const Fr& x)
+{
+    const Fr x2 = FastMul(x, x);
+    const Fr x4 = FastMul(x2, x2);
+    return FastMul(x4, x);
+}
+
+// x^(r-2), by Fermat. Only used to derive the constants.
+Fr Inverse(const Fr& x)
+{
+    const uint64_t e[4] = {Q0 - 2, Q1, Q2, Q3};
+    Fr result = FrFromCanonical(kOneCanonical), base = x;
+    for (int limb = 0; limb < 4; ++limb) {
+        for (int bit = 0; bit < 64; ++bit) {
+            if ((e[limb] >> bit) & 1) result = FastMul(result, base);
+            base = FastMul(base, base);
+        }
+    }
+    return result;
+}
+
+constexpr int R_F_HALF = 4, R_P = 57, R_TOTAL = 2 * R_F_HALF + R_P;
+
+struct OptimizedConstants {
+    Fr full[2 * R_F_HALF][3]; // full rounds, in order
+    Fr partial[R_P];          // one constant per partial round, on state[0]
+    Fr mds[3][3];             // matrix of the full rounds
+    Fr pre[3][3];             // matrix of the last full round before the partial ones
+    Fr s00[R_P], s01[R_P], s02[R_P], s10[R_P], s20[R_P]; // sparse partial-round matrices
+};
+
+const OptimizedConstants& GetOptimizedConstants()
+{
+    static const OptimizedConstants cache = [] {
+        OptimizedConstants out;
+        const Fr zero = FrFromCanonical(kZeroCanonical);
+        const Fr one = FrFromCanonical(kOneCanonical);
+        Fr rc[R_TOTAL][3];
+        for (int r = 0; r < R_TOTAL; ++r) {
+            for (int i = 0; i < 3; ++i) rc[r][i] = FrFromCanonical(POSEIDON_BN254_RC[3 * r + i]);
+        }
+        for (int i = 0; i < 3; ++i) {
+            for (int j = 0; j < 3; ++j) out.mds[i][j] = FrFromCanonical(POSEIDON_BN254_MDS[i][j]);
+        }
+
+        // Constants of the partial rounds, pushed forward.
+        for (int r = R_F_HALF; r < R_F_HALF + R_P; ++r) {
+            for (int i = 0; i < 3; ++i) {
+                rc[r + 1][i] = FastAdd(rc[r + 1][i], FastAdd(FastMul(out.mds[i][1], rc[r][1]),
+                                                             FastMul(out.mds[i][2], rc[r][2])));
+            }
+            out.partial[r - R_F_HALF] = rc[r][0];
+        }
+        for (int r = 0; r < R_F_HALF; ++r) {
+            for (int i = 0; i < 3; ++i) {
+                out.full[r][i] = rc[r][i];
+                out.full[R_F_HALF + r][i] = rc[R_F_HALF + R_P + r][i];
+            }
+        }
+
+        // Matrices of the partial rounds, factored from the last one back.
+        Fr d[3][3];
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) d[i][j] = out.mds[i][j];
+        for (int p = R_P - 1; p >= 0; --p) {
+            const Fr a11 = d[1][1], a12 = d[1][2], a21 = d[2][1], a22 = d[2][2];
+            const Fr det = FrSub(FastMul(a11, a22), FastMul(a12, a21));
+            const Fr inv = Inverse(det);
+            // Ahat^-1 = det^-1 * [[a22, -a12], [-a21, a11]]
+            const Fr i11 = FastMul(inv, a22), i12 = FastMul(inv, FrSub(zero, a12));
+            const Fr i21 = FastMul(inv, FrSub(zero, a21)), i22 = FastMul(inv, a11);
+            out.s00[p] = d[0][0];
+            out.s01[p] = FastAdd(FastMul(d[0][1], i11), FastMul(d[0][2], i21));
+            out.s02[p] = FastAdd(FastMul(d[0][1], i12), FastMul(d[0][2], i22));
+            out.s10[p] = d[1][0];
+            out.s20[p] = d[2][0];
+            // The matrix of the round before becomes A * M.
+            const Fr a[3][3] = {{one, zero, zero}, {zero, a11, a12}, {zero, a21, a22}};
+            for (int i = 0; i < 3; ++i) {
+                for (int j = 0; j < 3; ++j) {
+                    d[i][j] = FastAdd(FastAdd(FastMul(a[i][0], out.mds[0][j]), FastMul(a[i][1], out.mds[1][j])),
+                                      FastMul(a[i][2], out.mds[2][j]));
+                }
+            }
+        }
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) out.pre[i][j] = d[i][j];
+        return out;
+    }();
+    return cache;
+}
+
+inline void Dense(const Fr m[3][3], Fr& a, Fr& b, Fr& c)
+{
+    const Fr na = FastAdd(FastAdd(FastMul(m[0][0], a), FastMul(m[0][1], b)), FastMul(m[0][2], c));
+    const Fr nb = FastAdd(FastAdd(FastMul(m[1][0], a), FastMul(m[1][1], b)), FastMul(m[1][2], c));
+    const Fr nc = FastAdd(FastAdd(FastMul(m[2][0], a), FastMul(m[2][1], b)), FastMul(m[2][2], c));
+    a = na;
+    b = nb;
+    c = nc;
+}
+
+} // anonymous
+
+void Permutation(Fr state[3])
+{
+    const OptimizedConstants& k = GetOptimizedConstants();
+    Fr a = state[0], b = state[1], c = state[2];
+    for (int r = 0; r < R_F_HALF; ++r) {
+        a = FastPow5(FastAdd(a, k.full[r][0]));
+        b = FastPow5(FastAdd(b, k.full[r][1]));
+        c = FastPow5(FastAdd(c, k.full[r][2]));
+        Dense(r == R_F_HALF - 1 ? k.pre : k.mds, a, b, c);
+    }
+    for (int p = 0; p < R_P; ++p) {
+        a = FastPow5(FastAdd(a, k.partial[p]));
+        const Fr na = FastAdd(FastAdd(FastMul(k.s00[p], a), FastMul(k.s01[p], b)), FastMul(k.s02[p], c));
+        b = FastAdd(FastMul(k.s10[p], a), b);
+        c = FastAdd(FastMul(k.s20[p], a), c);
+        a = na;
+    }
+    for (int r = R_F_HALF; r < 2 * R_F_HALF; ++r) {
+        a = FastPow5(FastAdd(a, k.full[r][0]));
+        b = FastPow5(FastAdd(b, k.full[r][1]));
+        c = FastPow5(FastAdd(c, k.full[r][2]));
+        Dense(k.mds, a, b, c);
+    }
+    state[0] = a;
+    state[1] = b;
+    state[2] = c;
 }
 
 } // namespace poseidon_bn254_detail
