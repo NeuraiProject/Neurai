@@ -24,6 +24,9 @@
 int64_t GetTime();
 int64_t GetTimeMillis();
 int64_t GetTimeMicros();
+/** CPU time used by the calling thread, in microseconds; wall time where the
+ *  platform has no per-thread clock. Not affected by mocktime. */
+int64_t GetThreadCpuMicros();
 int64_t GetSystemTimeInSeconds(); // Like GetTime(), but not mockable
 void SetMockTime(int64_t nMockTimeIn);
 int64_t GetMockTime();

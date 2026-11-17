@@ -9,6 +9,7 @@
 #include "chainparams.h"
 #include "keystore.h"
 #include "net.h"
+#include "netbase.h"
 #include "net_processing.h"
 #include "pow.h"
 #include "script/sign.h"
@@ -282,5 +283,150 @@ BOOST_FIXTURE_TEST_SUITE(DoS_tests, TestingSetup)
         LimitOrphanTxSize(0);
         BOOST_CHECK(mapOrphanTransactions.empty());
     }
+
+// Admission CPU of rejected transactions: a credit per address that refills
+// and, once used up, ignores the address for a while; shared, inbound and
+// reserved accounts per one-minute window, exceeded at most by one admission.
+BOOST_AUTO_TEST_CASE(tx_admission_budget)
+{
+    using Budget = TxAdmissionBudget;
+    const int64_t t = 1000000;
+
+    {
+        // 3 s of credit per address, refilled at 1 s per minute; using it up
+        // ignores the address for 10 minutes. Checks are 30 s or more apart,
+        // so the shared buckets have refilled.
+        Budget budget;
+        BOOST_CHECK(budget.MayAdmit("a", false, false, t));
+        budget.ChargeRejected("a", false, false, 2000000, t);           // 1 s left
+        BOOST_CHECK(budget.MayAdmit("a", false, false, t + 30));         // 1.5 s
+        budget.ChargeRejected("a", false, false, 1600000, t + 30);      // used up
+        BOOST_CHECK(!budget.MayAdmit("a", false, false, t + 60));
+        BOOST_CHECK(budget.MayAdmit("b", false, false, t + 60));
+        BOOST_CHECK(!budget.MayAdmit("a", false, false, t + 30 + Budget::IGNORE_SECONDS - 1));
+        BOOST_CHECK(budget.MayAdmit("a", false, false, t + 30 + Budget::IGNORE_SECONDS));
+    }
+    {
+        // The credit refills up to 3 s at most.
+        Budget budget;
+        budget.ChargeRejected("a", false, false, 2500000, t);           // 0.5 s
+        budget.ChargeRejected("a", false, false, 2400000, t + 120);     // 2.5 s - 2.4 s
+        BOOST_CHECK(budget.MayAdmit("a", false, false, t + 180));        // 1.1 s
+        budget.ChargeRejected("a", false, false, 1200000, t + 180);
+        BOOST_CHECK(!budget.MayAdmit("a", false, false, t + 240));
+        BOOST_CHECK(budget.MayAdmit("b", false, false, t + 240));
+    }
+    {
+        Budget budget;
+        budget.ChargeRejected("c", false, false, 2900000, t);
+        budget.ChargeRejected("c", false, false, 3000000, t + 3600);    // refilled to 3 s at most
+        BOOST_CHECK(!budget.MayAdmit("c", false, false, t + 3700));
+        BOOST_CHECK(budget.MayAdmit("d", false, false, t + 3700));
+    }
+    {
+        // Inbound peers share a bucket of 1 s refilled at 9 s per minute. It
+        // may go below zero by the admission in progress, and then waits for
+        // refills to pay that back.
+        Budget budget;
+        BOOST_CHECK(budget.MayAdmit("i1", false, false, t));
+        budget.ChargeRejected("i1", false, false, 600000, t);           // inbound 0.4 s
+        BOOST_CHECK(budget.MayAdmit("i2", false, false, t));
+        budget.ChargeRejected("i2", false, false, 700000, t);           // inbound -0.3 s
+        BOOST_CHECK(!budget.MayAdmit("i3", false, false, t));
+        // Outbound and whitelisted peers keep their own bucket.
+        BOOST_CHECK(budget.MayAdmit("o1", true, false, t));
+        BOOST_CHECK(budget.MayAdmit("w", true, true, t));
+        BOOST_CHECK(!budget.MayAdmit("i3", false, false, t + 2));        // 0.15 s per second: 0
+        BOOST_CHECK(budget.MayAdmit("i3", false, false, t + 3));         // 0.15 s
+    }
+    {
+        // The shared bucket (2 s, 13 s per minute) lets one admission run
+        // past it in total, not one per group.
+        Budget budget;
+        budget.ChargeRejected("i1", false, false, 900000, t);           // inbound 0.1 s, shared 1.1 s
+        budget.ChargeRejected("o1", true, false, 900000, t);            // reserved 0.1 s, shared 0.2 s
+        BOOST_CHECK(budget.MayAdmit("o2", true, false, t));
+        budget.ChargeRejected("o2", true, false, 500000, t);            // shared -0.3 s
+        BOOST_CHECK(!budget.MayAdmit("i2", false, false, t));            // inbound has 0.1 s left
+        BOOST_CHECK(!budget.MayAdmit("o3", true, false, t));
+        BOOST_CHECK(!budget.MayAdmit("w", true, true, t));
+        BOOST_CHECK(budget.MayAdmit("i2", false, false, t + 2));
+    }
+    {
+        // Sustained load from fresh addresses of both groups, 0.4 s per
+        // admission: over 60 s, at most 10 s inbound, 5 s reserved and 15 s
+        // in total, each plus the admission in progress, and the rates are
+        // actually available.
+        Budget budget;
+        int64_t usedInbound = 0, usedReserved = 0;
+        for (int64_t second = 0; second < 60; ++second) {
+            for (int k = 0; k < 10; ++k) {
+                const std::string key = "s" + std::to_string(second * 10 + k);
+                if (budget.MayAdmit(key, false, false, t + second)) {
+                    budget.ChargeRejected(key, false, false, 400000, t + second);
+                    usedInbound += 400000;
+                }
+                if (budget.MayAdmit(key + "o", true, false, t + second)) {
+                    budget.ChargeRejected(key + "o", true, false, 400000, t + second);
+                    usedReserved += 400000;
+                }
+            }
+        }
+        BOOST_CHECK(usedInbound <= 10000000 + 400000);
+        BOOST_CHECK(usedReserved <= 5000000 + 400000);
+        BOOST_CHECK(usedInbound + usedReserved <= 15000000 + 400000);
+        BOOST_CHECK(usedInbound >= 9000000);
+        BOOST_CHECK(usedReserved >= 4000000);
+    }
+    {
+        // Whitelisted peers have no per-address credit.
+        Budget budget;
+        budget.ChargeRejected("w", true, true, 4000000, t);
+        budget.ChargeRejected("x", true, false, 4000000, t);
+        BOOST_CHECK(!budget.MayAdmit("w", true, true, t));               // the buckets are empty
+        BOOST_CHECK(budget.MayAdmit("w", true, true, t + 180));
+        BOOST_CHECK(!budget.MayAdmit("x", true, false, t + 180));
+    }
+    {
+        // What the queue of waiting transactions asks: whether an address is
+        // ignored, whether a group has room, when an address was last charged.
+        Budget budget;
+        BOOST_CHECK_EQUAL(budget.LastCharge("a"), 0);
+        BOOST_CHECK(!budget.IsIgnored("a", false, t));
+        BOOST_CHECK(budget.HasRoom(false, t));
+        budget.ChargeRejected("a", false, false, 1500000, t);           // 1.5 s left
+        BOOST_CHECK_EQUAL(budget.LastCharge("a"), t);
+        BOOST_CHECK(!budget.HasRoom(false, t));                           // inbound -0.5 s
+        BOOST_CHECK(budget.HasRoom(true, t));                             // reserved 1 s, shared 0.5 s
+        BOOST_CHECK(!budget.IsIgnored("a", false, t));
+        budget.ChargeRejected("a", false, false, 1700000, t + 10);      // 1.67 s - 1.7 s
+        BOOST_CHECK(budget.IsIgnored("a", false, t + 10));
+        BOOST_CHECK(!budget.IsIgnored("a", true, t + 10));                // whitelisted: never
+        BOOST_CHECK_EQUAL(budget.LastCharge("a"), t + 10);
+        BOOST_CHECK(!budget.IsIgnored("a", false, t + 10 + Budget::IGNORE_SECONDS));
+    }
+    {
+        // One account per IPv4 address and per IPv6 /48.
+        CNetAddr a4, b4, a6, b6, c6;
+        BOOST_REQUIRE(LookupHost("192.0.2.1", a4, false));
+        BOOST_REQUIRE(LookupHost("192.0.2.2", b4, false));
+        BOOST_REQUIRE(LookupHost("2001:db8:1:2::1", a6, false));
+        BOOST_REQUIRE(LookupHost("2001:db8:1:ff00::9", b6, false));
+        BOOST_REQUIRE(LookupHost("2001:db8:2::1", c6, false));
+        BOOST_CHECK(Budget::Key(a4) != Budget::Key(b4));
+        BOOST_CHECK_EQUAL(Budget::Key(a6), Budget::Key(b6));
+        BOOST_CHECK(Budget::Key(a6) != Budget::Key(c6));
+    }
+    {
+        // The table is bounded: past MAX_ADDRESSES the oldest account goes.
+        Budget budget;
+        budget.ChargeRejected("first", false, false, 3000000, t);
+        BOOST_CHECK(!budget.MayAdmit("first", false, false, t + 60));
+        for (size_t i = 0; i < Budget::MAX_ADDRESSES; ++i) {
+            budget.ChargeRejected("x" + std::to_string(i), false, false, 1, t + 61);
+        }
+        BOOST_CHECK(budget.MayAdmit("first", false, false, t + 62));
+    }
+}
 
 BOOST_AUTO_TEST_SUITE_END()

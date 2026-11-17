@@ -18,6 +18,8 @@
 #include "util.h"
 #include "utilstrencodings.h"
 
+#include <limits>
+
 static size_t EstimateWitnessInputVBytes(int witnessversion, const std::vector<unsigned char>& witnessprogram)
 {
     // Native segwit v0 keyhash spend, kept as the historical baseline.
@@ -381,6 +383,22 @@ bool IsWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs,
 CFeeRate incrementalRelayFee = CFeeRate(DEFAULT_INCREMENTAL_RELAY_FEE);
 CFeeRate dustRelayFee = CFeeRate(DUST_RELAY_TX_FEE);
 unsigned int nBytesPerSigOp = DEFAULT_BYTES_PER_SIGOP;
+
+uint64_t GetMaxStandardTxPoseidonWork(int nHeight, const Consensus::Params& params)
+{
+    return nHeight >= params.nBlockTimeReductionHeight ? MAX_STANDARD_TX_POSEIDON_WORK_NIP028 : MAX_STANDARD_TX_POSEIDON_WORK;
+}
+
+uint64_t GetMaxStandardTxAssetAuthWork(int nHeight, const Consensus::Params& params)
+{
+    return nHeight >= params.nBlockTimeReductionHeight ? MAX_STANDARD_TX_ASSETAUTH_WORK_NIP028 : MAX_STANDARD_TX_ASSETAUTH_WORK;
+}
+
+int64_t GetMaxStandardTxWitnessSigOps(int nHeight, const Consensus::Params& params)
+{
+    return nHeight >= params.nBlockTimeReductionHeight ? MAX_STANDARD_TX_WITNESS_SIGOPS_NIP028
+                                                       : std::numeric_limits<int64_t>::max();
+}
 
 int64_t GetVirtualTransactionSize(int64_t nWeight, int64_t nSigOpCost)
 {

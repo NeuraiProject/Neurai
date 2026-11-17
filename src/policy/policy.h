@@ -36,6 +36,20 @@ static constexpr uint64_t MAX_STANDARD_TX_POSEIDON_WORK = 20000;
 /** NIP-054: maximum OP_CHECKASSETAUTH work relayed in a single transaction,
  *  a tenth of the block budget. */
 static constexpr uint64_t MAX_STANDARD_TX_ASSETAUTH_WORK = 45000;
+/** From the NIP-028 height on, the work a standard transaction may run is
+ *  lower: admission runs its scripts under cs_main, so these bound each pause.
+ *  Admission of an accepted transaction at each limit, on one E-core of an
+ *  i9-14900K: 0.21 s of Poseidon work, 0.18 s of asset-auth work with the
+ *  costliest names. The C7 pool needs at most 1,523 Poseidon permutations per
+ *  operation. */
+static constexpr uint64_t MAX_STANDARD_TX_POSEIDON_WORK_NIP028 = 5000;
+static constexpr uint64_t MAX_STANDARD_TX_ASSETAUTH_WORK_NIP028 = 15000;
+/** From the NIP-028 height on, the signature checks a standard transaction
+ *  may run in witness scripts (its witness sigop count). The general sigop
+ *  limit also counts legacy outputs; this one only counts executed checks.
+ *  Admission at the limit on the same core: 0.35 s with ECDSA, 1.0 s with
+ *  Ed25519, which counts one sigop per check. */
+static constexpr int64_t MAX_STANDARD_TX_WITNESS_SIGOPS_NIP028 = 2000;
 /** The maximum number of sigops we're willing to relay/mine in a single tx */
 static const unsigned int MAX_STANDARD_TX_SIGOPS_COST = MAX_BLOCK_SIGOPS_COST/5;
 /** Default for -maxmempool, maximum megabytes of mempool memory usage */
@@ -66,6 +80,9 @@ static_assert(MAX_STANDARD_TX_WEIGHT <= MAX_BLOCK_WEIGHT, "standard weight above
 static_assert(MAX_STANDARD_TX_SIGOPS_COST <= MAX_BLOCK_SIGOPS_COST, "standard sigops above the block limit");
 static_assert(MAX_STANDARD_TX_POSEIDON_WORK <= MAX_BLOCK_POSEIDON_WORK, "standard Poseidon work above the block limit");
 static_assert(MAX_STANDARD_TX_ASSETAUTH_WORK <= MAX_BLOCK_ASSETAUTH_WORK, "standard asset-auth work above the block limit");
+static_assert(MAX_STANDARD_TX_POSEIDON_WORK_NIP028 <= MAX_STANDARD_TX_POSEIDON_WORK, "the NIP-028 limit only lowers the Poseidon work");
+static_assert(MAX_STANDARD_TX_ASSETAUTH_WORK_NIP028 <= MAX_STANDARD_TX_ASSETAUTH_WORK, "the NIP-028 limit only lowers the asset-auth work");
+static_assert(MAX_STANDARD_TX_WITNESS_SIGOPS_NIP028 <= MAX_STANDARD_TX_SIGOPS_COST, "witness sigops above the standard sigop limit");
 static_assert(MAX_STANDARD_P2WSH_SCRIPT_SIZE <= unsigned(MAX_SCRIPT_SIZE), "standard witness script above the script limit");
 static_assert(MAX_STANDARD_P2WSH_STACK_ITEMS <= unsigned(MAX_STACK_SIZE), "standard witness items above the stack limit");
 static_assert(MAX_STANDARD_P2WSH_STACK_ITEM_SIZE <= MAX_SCRIPT_ELEMENT_SIZE, "standard witness item above the element limit");
@@ -238,6 +255,11 @@ extern unsigned int nBytesPerSigOp;
 
 /** Compute the virtual transaction size (weight reinterpreted as bytes). */
 int64_t GetVirtualTransactionSize(int64_t nWeight, int64_t nSigOpCost);
+
+/** Relay limits per transaction at a candidate height (lower from NIP-028). */
+uint64_t GetMaxStandardTxPoseidonWork(int nHeight, const Consensus::Params& params);
+uint64_t GetMaxStandardTxAssetAuthWork(int nHeight, const Consensus::Params& params);
+int64_t GetMaxStandardTxWitnessSigOps(int nHeight, const Consensus::Params& params);
 int64_t GetVirtualTransactionSize(const CTransaction& tx, int64_t nSigOpCost = 0);
 
 #endif // NEURAI_POLICY_POLICY_H

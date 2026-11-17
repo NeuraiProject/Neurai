@@ -13,6 +13,8 @@
 #include "consensus/params.h"
 
 #include <cstdint>
+#include <map>
+#include <string>
 #include <vector>
 
 class CBlockHeader;
@@ -123,5 +125,74 @@ bool ProcessHeadersMessage(CNode* peer, CConnman* connman, std::vector<CBlockHea
 bool GetNodeStateStats(NodeId nodeid, CNodeStateStats &stats);
 /** Increase a node's misbehavior score. */
 void Misbehaving(NodeId nodeid, int howmuch);
+
+/** Bounds the admission CPU spent on transactions that peers send and that are
+ *  then rejected, which no fee pays for (CPU review, 16-11-2026).
+ *
+ *  - Per address (IPv4 address, IPv6 /48), so that reconnecting does not
+ *    reset it: a credit of PER_ADDRESS_MAX microseconds, refilled at
+ *    PER_ADDRESS_REFILL per minute. An address that uses it up is ignored for
+ *    IGNORE_SECONDS. Whitelisted peers have no per-address credit.
+ *  - In total, three buckets refilled every second: one for inbound peers
+ *    (INBOUND_PER_MINUTE, holding at most INBOUND_BURST), one reserved for
+ *    outbound and whitelisted peers (RESERVED_PER_MINUTE, RESERVED_BURST)
+ *    and a shared one with the sum of both. Admission checks the shared
+ *    bucket and the one of its group before each transaction and charges
+ *    both after it; a bucket may go below zero, and nothing more is admitted
+ *    from it until refills pay that back. Admissions of peer transactions run
+ *    one at a time, so in any 60 seconds they spend at most 15 s in total
+ *    (10 s inbound, 5 s reserved) plus the one admission in progress, without
+ *    bursts that would hold cs_main for seconds.
+ *  Times are GetTime() seconds (mockable); charges are thread CPU microseconds.
+ */
+class TxAdmissionBudget
+{
+public:
+    static constexpr int64_t PER_ADDRESS_MAX = 3000000;
+    static constexpr int64_t PER_ADDRESS_REFILL = 1000000;
+    static constexpr int64_t IGNORE_SECONDS = 10 * 60;
+    static constexpr int64_t INBOUND_PER_MINUTE = 9000000;
+    static constexpr int64_t INBOUND_BURST = 1000000;
+    static constexpr int64_t RESERVED_PER_MINUTE = 4000000;
+    static constexpr int64_t RESERVED_BURST = 1000000;
+    static constexpr size_t MAX_ADDRESSES = 10000;
+
+    /** The account an address belongs to. */
+    static std::string Key(const CNetAddr& addr);
+    /** Whether transactions from this address are ignored now. */
+    bool IsIgnored(const std::string& key, bool fWhitelisted, int64_t now);
+    /** Whether the buckets of a group have room for another admission now. */
+    bool HasRoom(bool fReserved, int64_t now);
+    /** Whether a transaction from this account may be admitted now. */
+    bool MayAdmit(const std::string& key, bool fReserved, bool fWhitelisted, int64_t now);
+    /** When this address was last charged for a rejection; 0 if never (or
+     *  since its account was dropped from the table). */
+    int64_t LastCharge(const std::string& key);
+    /** Charge the CPU time of an admission that ended in a rejection. */
+    void ChargeRejected(const std::string& key, bool fReserved, bool fWhitelisted, int64_t cpuMicros, int64_t now);
+
+private:
+    struct Account {
+        int64_t credit;
+        int64_t updated;
+        int64_t ignoredUntil;
+        int64_t lastCharge;
+    };
+    struct Bucket {
+        const int64_t perMinute;
+        const int64_t burst;
+        int64_t level;
+        int64_t updated;
+        void Refill(int64_t now);
+    };
+    CCriticalSection cs;
+    std::map<std::string, Account> accounts;
+    Bucket inbound{INBOUND_PER_MINUTE, INBOUND_BURST, INBOUND_BURST, 0};
+    Bucket reserved{RESERVED_PER_MINUTE, RESERVED_BURST, RESERVED_BURST, 0};
+    Bucket shared{INBOUND_PER_MINUTE + RESERVED_PER_MINUTE, INBOUND_BURST + RESERVED_BURST,
+                  INBOUND_BURST + RESERVED_BURST, 0};
+
+    Account& Get(const std::string& key, int64_t now);
+};
 
 #endif // NEURAI_NET_PROCESSING_H

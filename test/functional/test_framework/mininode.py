@@ -281,12 +281,24 @@ class NodeConn(asyncore.dispatcher):
 
     # Witness is active from genesis on this regtest, and a node only fetches
     # blocks from peers that signal NODE_WITNESS.
-    def __init__(self, dstaddr, dstport, rpc, callback, net="regtest", services=NODE_NETWORK | NODE_WITNESS, send_version=True):
+    # srcaddr: local address to connect from (e.g. "127.0.0.2"), so that a
+    # node sees several peers with distinct addresses.
+    def __init__(self, dstaddr, dstport, rpc, callback, net="regtest", services=NODE_NETWORK | NODE_WITNESS, send_version=True,
+                 srcaddr=None):
         asyncore.dispatcher.__init__(self, map=mininode_socket_map)
         self.dstaddr = dstaddr
         self.dstport = dstport
-        self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        # The socket joins the map that the network thread polls only after
+        # connect(): polled before, Linux reports it as hung up and asyncore
+        # closes it, which happens when a connection is opened while the
+        # network thread runs.
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setblocking(False)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        if srcaddr is not None:
+            sock.bind((srcaddr, 0))
+        self.socket = sock
+        self._fileno = sock.fileno()
         self.sendbuf = b""
         self.recvbuf = b""
         self.ver_send = 209
@@ -310,11 +322,13 @@ class NodeConn(asyncore.dispatcher):
 
         logger.info('Connecting to Neurai Node: %s:%d' % (self.dstaddr, self.dstport))
 
+        self.rpc = rpc
         try:
             self.connect((dstaddr, dstport))
         except OSError:
             self.handle_close()
-        self.rpc = rpc
+            return
+        self.add_channel(mininode_socket_map)
 
     def handle_connect(self):
         if self.state != "connected":

@@ -885,6 +885,16 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
             ApplyConsensusOptIns(STANDARD_SCRIPT_VERIFY_FLAGS, consensus, fStrictAuthScriptActive, chainActive.Height() + 1);
         int64_t nSigOpsCost = GetTransactionSigOpCost(tx, view, sigOpFlags);
 
+        // From the NIP-028 height on, a standard transaction runs a bounded
+        // number of signature checks in witness scripts: admission pays each
+        // of them, under cs_main (CPU review, 16-11-2026).
+        if (fRequireStandard) {
+            const int64_t nWitnessSigOps = GetTransactionWitnessSigOpCost(tx, view, sigOpFlags);
+            if (nWitnessSigOps > GetMaxStandardTxWitnessSigOps(chainActive.Height() + 1, consensus))
+                return state.DoS(0, false, REJECT_NONSTANDARD, "bad-txns-too-many-witness-sigops", false,
+                    strprintf("%d", nWitnessSigOps));
+        }
+
         // nModifiedFees includes any fee deltas from PrioritiseTransaction
         CAmount nModifiedFees = nFees;
         pool.ApplyDelta(hash, nModifiedFees);
@@ -995,14 +1005,14 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         std::shared_ptr<PoseidonWorkBudget> txPoseidonWork;
         if (scriptVerifyFlags & (SCRIPT_VERIFY_POSEIDON | SCRIPT_VERIFY_MERKLE_POSEIDON | SCRIPT_VERIFY_POSEIDON_WORK))
             txPoseidonWork = std::make_shared<PoseidonWorkBudget>(poseidonWorkActive ?
-                MAX_STANDARD_TX_POSEIDON_WORK : std::numeric_limits<uint64_t>::max());
+                GetMaxStandardTxPoseidonWork(chainActive.Height() + 1, consensus) : std::numeric_limits<uint64_t>::max());
 
         // NIP-054: the relay limit of OP_CHECKASSETAUTH work per transaction.
         const bool assetAuthActive = consensus.IsAssetAuthActive(chainActive.Height() + 1);
         std::shared_ptr<AssetAuthWorkBudget> txAssetAuthWork;
         if (scriptVerifyFlags & SCRIPT_VERIFY_ASSETAUTH)
             txAssetAuthWork = std::make_shared<AssetAuthWorkBudget>(assetAuthActive ?
-                MAX_STANDARD_TX_ASSETAUTH_WORK : std::numeric_limits<uint64_t>::max());
+                GetMaxStandardTxAssetAuthWork(chainActive.Height() + 1, consensus) : std::numeric_limits<uint64_t>::max());
 
         if (!CheckInputs(tx, state, view, true, scriptVerifyFlags, true, false, txdata, nullptr, pRefOutputs, chainCtx, &fUsesChainContext_local, txPoseidonWork, nullptr, false, txAssetAuthWork)) {
             if (state.IsError()) return false;
@@ -1056,13 +1066,13 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         std::shared_ptr<PoseidonWorkBudget> consensusPoseidonWork;
         if (currentBlockScriptVerifyFlags & (SCRIPT_VERIFY_POSEIDON | SCRIPT_VERIFY_MERKLE_POSEIDON | SCRIPT_VERIFY_POSEIDON_WORK))
             consensusPoseidonWork = std::make_shared<PoseidonWorkBudget>(poseidonWorkActive ?
-                MAX_STANDARD_TX_POSEIDON_WORK : std::numeric_limits<uint64_t>::max());
+                GetMaxStandardTxPoseidonWork(chainActive.Height() + 1, consensus) : std::numeric_limits<uint64_t>::max());
         // NIP-054: the work recorded on the entry is the consensus cost that
         // block assembly adds up against MAX_BLOCK_ASSETAUTH_WORK.
         std::shared_ptr<AssetAuthWorkBudget> consensusAssetAuthWork;
         if (currentBlockScriptVerifyFlags & SCRIPT_VERIFY_ASSETAUTH)
             consensusAssetAuthWork = std::make_shared<AssetAuthWorkBudget>(assetAuthActive ?
-                MAX_STANDARD_TX_ASSETAUTH_WORK : std::numeric_limits<uint64_t>::max());
+                GetMaxStandardTxAssetAuthWork(chainActive.Height() + 1, consensus) : std::numeric_limits<uint64_t>::max());
         if (!CheckInputsFromMempoolAndCache(tx, state, view, pool, currentBlockScriptVerifyFlags, true, txdata, pRefOutputs, chainCtx, consensusPoseidonWork, &fUsesChainContext_local, consensusAssetAuthWork))
         {
             if (state.IsError()) return false;
@@ -1970,8 +1980,10 @@ static void MempoolRemoveForNewTip(CTxMemPool& pool,
         // return here means the tx's scripts no longer pass — most
         // commonly, a deadline-based covenant whose HEIGHT / MTP
         // constraint flipped when the tip advanced.
-        auto work = std::make_shared<PoseidonWorkBudget>((flags & SCRIPT_VERIFY_POSEIDON_WORK) ? MAX_STANDARD_TX_POSEIDON_WORK : std::numeric_limits<uint64_t>::max());
-        auto assetAuthWork = std::make_shared<AssetAuthWorkBudget>((flags & SCRIPT_VERIFY_ASSETAUTH) ? MAX_STANDARD_TX_ASSETAUTH_WORK : std::numeric_limits<uint64_t>::max());
+        auto work = std::make_shared<PoseidonWorkBudget>((flags & SCRIPT_VERIFY_POSEIDON_WORK) ?
+            GetMaxStandardTxPoseidonWork(tipNew.nHeight + 1, chainparams.GetConsensus()) : std::numeric_limits<uint64_t>::max());
+        auto assetAuthWork = std::make_shared<AssetAuthWorkBudget>((flags & SCRIPT_VERIFY_ASSETAUTH) ?
+            GetMaxStandardTxAssetAuthWork(tipNew.nHeight + 1, chainparams.GetConsensus()) : std::numeric_limits<uint64_t>::max());
         const bool valid = CheckInputs(tx, stateDummy, view, true, flags,
                             /*cacheSigStore=*/true,
                             /*cacheFullScriptStore=*/false,
@@ -2179,8 +2191,10 @@ static void MempoolEvictScriptRuleEntries(CTxMemPool& pool)
         }
         CValidationState stateDummy;
         PrecomputedTransactionData txdata(tx);
-        auto work = std::make_shared<PoseidonWorkBudget>((flags & SCRIPT_VERIFY_POSEIDON_WORK) ? MAX_STANDARD_TX_POSEIDON_WORK : std::numeric_limits<uint64_t>::max());
-        auto assetAuthWork = std::make_shared<AssetAuthWorkBudget>((flags & SCRIPT_VERIFY_ASSETAUTH) ? MAX_STANDARD_TX_ASSETAUTH_WORK : std::numeric_limits<uint64_t>::max());
+        auto work = std::make_shared<PoseidonWorkBudget>((flags & SCRIPT_VERIFY_POSEIDON_WORK) ?
+            GetMaxStandardTxPoseidonWork(nCandidateHeight, consensus) : std::numeric_limits<uint64_t>::max());
+        auto assetAuthWork = std::make_shared<AssetAuthWorkBudget>((flags & SCRIPT_VERIFY_ASSETAUTH) ?
+            GetMaxStandardTxAssetAuthWork(nCandidateHeight, consensus) : std::numeric_limits<uint64_t>::max());
         const bool valid = CheckInputs(tx, stateDummy, view, true, flags,
                             /*cacheSigStore=*/true, /*cacheFullScriptStore=*/false,
                             txdata, nullptr, pRefOutputs, candidateCtx, nullptr, work,

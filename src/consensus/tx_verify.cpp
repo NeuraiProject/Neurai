@@ -371,6 +371,18 @@ int64_t GetTransactionSigOpCost(const CTransaction& tx, const CCoinsViewCache& i
     return nSigOps;
 }
 
+int64_t GetTransactionWitnessSigOpCost(const CTransaction& tx, const CCoinsViewCache& inputs, script_verify_flags flags)
+{
+    if (tx.IsCoinBase()) return 0;
+    int64_t nSigOps = 0;
+    for (const CTxIn& txin : tx.vin) {
+        const Coin& coin = inputs.AccessCoin(txin.prevout);
+        assert(!coin.IsSpent());
+        nSigOps += CountWitnessSigOps(txin.scriptSig, coin.out.scriptPubKey, &txin.scriptWitness, flags);
+    }
+    return nSigOps;
+}
+
 unsigned int GetLegacyExecutedSigOpCount(const CTransaction& tx, const CCoinsViewCache& inputs, script_verify_flags flags)
 {
     if (tx.IsCoinBase())

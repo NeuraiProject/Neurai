@@ -73,6 +73,8 @@ EXTENDED_SCRIPTS = [
 BASE_SCRIPTS= [
     # Scripts that are run by the build process.
     # Longest test should go first, to favor running tests in parallel
+    # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv Tests less than 5m vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+    'feature_tx_admission_budget.py',
     # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv Tests less than 2m vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
     'wallet_backup.py',
     'wallet_hd.py',
@@ -83,6 +85,7 @@ BASE_SCRIPTS= [
     'rpc_fundrawtransaction.py',
     'wallet_create_tx.py',
     # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv Tests less than 30s vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+    'feature_relay_work_limits.py',
     'feature_poseidon_work_cache.py',
     'mempool_packages.py',
     'p2p_segwit.py',

@@ -123,6 +123,10 @@ unsigned int GetP2SHSigOpCount(const CTransaction& tx, const CCoinsViewCache& ma
  */
 int64_t GetTransactionSigOpCost(const CTransaction& tx, const CCoinsViewCache& inputs, script_verify_flags flags);
 
+/** The sigops of the witness scripts a transaction executes: the signature
+ *  checks run when its inputs are verified, without its legacy outputs. */
+int64_t GetTransactionWitnessSigOpCost(const CTransaction& tx, const CCoinsViewCache& inputs, script_verify_flags flags);
+
 /**
  * Count the legacy signature operations a transaction may execute when its
  * inputs are validated (Neurai port of the BIP-54 per-transaction limit).

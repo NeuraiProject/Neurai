@@ -61,6 +61,7 @@ struct COrphanTx {
 std::map<uint256, COrphanTx> mapOrphanTransactions GUARDED_BY(cs_main);
 std::map<COutPoint, std::set<std::map<uint256, COrphanTx>::iterator, IteratorComparator>> mapOrphanTransactionsByPrev GUARDED_BY(cs_main);
 void EraseOrphansFor(NodeId peer) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
+static void DropPendingTxs(NodeId nodeid) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
 
 static size_t vExtraTxnForCompactIt = 0;
 static std::vector<std::pair<uint256, CTransactionRef>> vExtraTxnForCompact GUARDED_BY(cs_main);
@@ -648,6 +649,7 @@ void PeerLogicValidation::FinalizeNode(NodeId nodeid, bool& fUpdateConnectionTim
         mapBlocksInFlight.erase(entry.hash);
     }
     EraseOrphansFor(nodeid);
+    DropPendingTxs(nodeid);
     nPreferredDownload -= state->fPreferredDownload;
     nPeersWithValidatedDownloads -= (state->nBlocksInFlightValidHeaders != 0);
     assert(nPeersWithValidatedDownloads >= 0);
@@ -802,6 +804,98 @@ unsigned int LimitOrphanTxSize(unsigned int nMaxOrphans) EXCLUSIVE_LOCKS_REQUIRE
 }
 
 // Requires cs_main.
+std::string TxAdmissionBudget::Key(const CNetAddr& addr)
+{
+    // One account per IPv4 address and per IPv6 /48: what a single host or
+    // site usually controls (a /64 costs nothing to multiply). Reconnecting
+    // from the same address keeps the account.
+    if (addr.IsIPv6() && !addr.IsTor()) return CSubNet(addr, 48).ToString();
+    return addr.ToStringIP();
+}
+
+void TxAdmissionBudget::Bucket::Refill(int64_t now)
+{
+    if (updated == 0 || now < updated) {
+        // First use, or the clock went back: start from now.
+        updated = now;
+        return;
+    }
+    level = std::min(burst, level + (now - updated) * perMinute / 60);
+    updated = now;
+}
+
+TxAdmissionBudget::Account& TxAdmissionBudget::Get(const std::string& key, int64_t now)
+{
+    auto it = accounts.find(key);
+    if (it == accounts.end()) {
+        if (accounts.size() >= MAX_ADDRESSES) {
+            auto oldest = std::min_element(accounts.begin(), accounts.end(),
+                [](const std::pair<const std::string, Account>& a, const std::pair<const std::string, Account>& b) {
+                    return a.second.updated < b.second.updated;
+                });
+            accounts.erase(oldest);
+        }
+        it = accounts.emplace(key, Account{PER_ADDRESS_MAX, now, 0, 0}).first;
+    }
+    Account& account = it->second;
+    if (now > account.updated) {
+        account.credit = std::min(PER_ADDRESS_MAX, account.credit + (now - account.updated) * PER_ADDRESS_REFILL / 60);
+        account.updated = now;
+    }
+    return account;
+}
+
+bool TxAdmissionBudget::IsIgnored(const std::string& key, bool fWhitelisted, int64_t now)
+{
+    if (fWhitelisted) return false;
+    LOCK(cs);
+    const auto it = accounts.find(key);
+    return it != accounts.end() && it->second.ignoredUntil > now;
+}
+
+bool TxAdmissionBudget::HasRoom(bool fReserved, int64_t now)
+{
+    LOCK(cs);
+    Bucket& group = fReserved ? reserved : inbound;
+    shared.Refill(now);
+    group.Refill(now);
+    return shared.level > 0 && group.level > 0;
+}
+
+bool TxAdmissionBudget::MayAdmit(const std::string& key, bool fReserved, bool fWhitelisted, int64_t now)
+{
+    return HasRoom(fReserved, now) && !IsIgnored(key, fWhitelisted, now);
+}
+
+int64_t TxAdmissionBudget::LastCharge(const std::string& key)
+{
+    LOCK(cs);
+    const auto it = accounts.find(key);
+    return it == accounts.end() ? 0 : it->second.lastCharge;
+}
+
+void TxAdmissionBudget::ChargeRejected(const std::string& key, bool fReserved, bool fWhitelisted, int64_t cpuMicros, int64_t now)
+{
+    if (cpuMicros <= 0) return;
+    LOCK(cs);
+    Bucket& group = fReserved ? reserved : inbound;
+    shared.Refill(now);
+    group.Refill(now);
+    shared.level -= cpuMicros;
+    group.level -= cpuMicros;
+    if (fWhitelisted) return;
+    Account& account = Get(key, now);
+    account.credit -= cpuMicros;
+    account.lastCharge = now;
+    if (account.credit <= 0) {
+        account.credit = 0;
+        account.ignoredUntil = now + IGNORE_SECONDS;
+        LogPrint(BCLog::MEMPOOLREJ, "admission budget: transactions from %s ignored for %d s\n", key, IGNORE_SECONDS);
+    }
+}
+
+static TxAdmissionBudget g_tx_admission_budget;
+
 void Misbehaving(NodeId pnode, int howmuch)
 {
     if (howmuch == 0)
@@ -1619,6 +1713,379 @@ bool ProcessHeadersMessage(CNode *pfrom, CConnman *connman, std::vector<CBlockHe
     return true;
 }
 
+/** Transactions from peers that wait for room in the admission budget.
+ *
+ *  A new transaction is not dropped because the bucket of its peer's group
+ *  is empty: it waits here (bounded per peer and in total) and is admitted
+ *  as the bucket refills. The address charged least recently goes first, so
+ *  one that never had a transaction rejected (a wallet, a node behind NAT)
+ *  goes ahead of addresses that keep sending rejected ones. Among equals, the
+ *  peer with fewer transactions waiting goes first (a flood fills its queue),
+ *  then the one that has waited longest. When the queue is full, a transaction from a never charged
+ *  address takes the place of the newest one of the address charged most
+ *  recently; one from an address already charged is dropped. Waiting
+ *  transactions expire after PENDING_TX_EXPIRY seconds, and those of an
+ *  address that becomes ignored, or of a peer that disconnects, are dropped.
+ */
+namespace {
+struct PendingTx {
+    CTransactionRef tx;
+    uint256 wtxid; // GetWitnessHash() hashes the whole transaction each call
+    int64_t nTime;
+    uint64_t nOrder;
+    size_t nBytes;
+};
+struct PendingPeer {
+    std::string budgetKey;
+    bool fReserved{false};
+    bool fWhitelisted{false};
+    std::deque<PendingTx> txs;
+};
+std::map<NodeId, PendingPeer> mapPendingTx GUARDED_BY(cs_main);
+size_t nPendingTx GUARDED_BY(cs_main) = 0;
+size_t nPendingBytes GUARDED_BY(cs_main) = 0;
+uint64_t nPendingOrder GUARDED_BY(cs_main) = 0;
+} // namespace
+
+static constexpr size_t MAX_PENDING_TX_PER_PEER = 100;
+static constexpr size_t MAX_PENDING_TX = 1000;
+static constexpr size_t MAX_PENDING_TX_BYTES = 20 * 1000 * 1000;
+static constexpr int64_t PENDING_TX_EXPIRY = 10 * 60;
+/** Admissions from the queue per call: one, so that cs_main is released
+ *  between admissions. Calls come with every message and every send round. */
+static constexpr int MAX_PENDING_ADMISSIONS_PER_CALL = 1;
+
+static void PopPendingTx(PendingPeer& peer, bool fNewest) EXCLUSIVE_LOCKS_REQUIRED(cs_main)
+{
+    const PendingTx& entry = fNewest ? peer.txs.back() : peer.txs.front();
+    nPendingTx--;
+    nPendingBytes -= entry.nBytes;
+    if (fNewest) {
+        peer.txs.pop_back();
+    } else {
+        peer.txs.pop_front();
+    }
+}
+
+static void DropPendingTxs(NodeId nodeid) EXCLUSIVE_LOCKS_REQUIRED(cs_main)
+{
+    const auto it = mapPendingTx.find(nodeid);
+    if (it == mapPendingTx.end()) return;
+    while (!it->second.txs.empty()) PopPendingTx(it->second, true);
+    mapPendingTx.erase(it);
+}
+
+/** Order of a peer's waiting transactions: when its address was last charged
+ *  (0 if never); lower goes first. Whitelisted peers always go first. */
+static int64_t PendingPriority(const PendingPeer& peer) EXCLUSIVE_LOCKS_REQUIRED(cs_main)
+{
+    return peer.fWhitelisted ? 0 : g_tx_admission_budget.LastCharge(peer.budgetKey);
+}
+
+static bool IsPendingTx(NodeId nodeid, const uint256& wtxid) EXCLUSIVE_LOCKS_REQUIRED(cs_main)
+{
+    const auto it = mapPendingTx.find(nodeid);
+    if (it == mapPendingTx.end()) return false;
+    for (const PendingTx& entry : it->second.txs) {
+        if (entry.wtxid == wtxid) return true;
+    }
+    return false;
+}
+
+static bool QueuePendingTx(NodeId nodeid, const std::string& budgetKey, bool fReserved, bool fWhitelisted,
+                           const CTransactionRef& ptx, const uint256& wtxid) EXCLUSIVE_LOCKS_REQUIRED(cs_main)
+{
+    if (IsPendingTx(nodeid, wtxid)) return true;
+    PendingPeer& peer = mapPendingTx[nodeid];
+    peer.budgetKey = budgetKey;
+    peer.fReserved = fReserved;
+    peer.fWhitelisted = fWhitelisted;
+    const size_t nBytes = RecursiveDynamicUsage(*ptx);
+    bool fRoom = peer.txs.size() < MAX_PENDING_TX_PER_PEER;
+    if (fRoom && (nPendingTx >= MAX_PENDING_TX || nPendingBytes + nBytes > MAX_PENDING_TX_BYTES)) {
+        // Full. Only a never charged address may take a place, from the
+        // address charged most recently; for the addresses that keep sending
+        // rejected transactions this check is all it costs.
+        fRoom = PendingPriority(peer) == 0;
+        while (fRoom && (nPendingTx >= MAX_PENDING_TX || nPendingBytes + nBytes > MAX_PENDING_TX_BYTES)) {
+            auto worst = mapPendingTx.end();
+            int64_t nWorst = 0;
+            for (auto it = mapPendingTx.begin(); it != mapPendingTx.end(); ++it) {
+                if (it->second.txs.empty()) continue;
+                const int64_t nPriority = PendingPriority(it->second);
+                if (nPriority > nWorst) {
+                    worst = it;
+                    nWorst = nPriority;
+                }
+            }
+            if (worst == mapPendingTx.end()) {
+                fRoom = false;
+            } else {
+                LogPrint(BCLog::MEMPOOLREJ, "%s from peer=%d dropped: admission queue full\n",
+                    worst->second.txs.back().tx->GetHash().ToString(), worst->first);
+                PopPendingTx(worst->second, true);
+                if (worst->second.txs.empty()) mapPendingTx.erase(worst);
+            }
+        }
+    }
+    if (!fRoom) {
+        const auto it = mapPendingTx.find(nodeid);
+        if (it != mapPendingTx.end() && it->second.txs.empty()) mapPendingTx.erase(it);
+        return false;
+    }
+    PendingPeer& queue = mapPendingTx[nodeid];
+    queue.budgetKey = budgetKey;
+    queue.fReserved = fReserved;
+    queue.fWhitelisted = fWhitelisted;
+    queue.txs.push_back(PendingTx{ptx, wtxid, GetTime(), nPendingOrder++, nBytes});
+    nPendingTx++;
+    nPendingBytes += nBytes;
+    return true;
+}
+
+static void AdmitTransaction(CNode* pfrom, const CTransactionRef& ptx, CConnman* connman,
+                             const std::string& budgetKey, bool fReservedShare) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
+
+/** Admits the waiting transaction that goes first among the groups with room.
+ *  Returns whether one was taken from the queue. */
+static bool AdmitPendingTx(CConnman* connman) EXCLUSIVE_LOCKS_REQUIRED(cs_main)
+{
+    if (mapPendingTx.empty()) return false;
+    const int64_t now = GetTime();
+    const bool fRoomInbound = g_tx_admission_budget.HasRoom(false, now);
+    const bool fRoomReserved = g_tx_admission_budget.HasRoom(true, now);
+    if (!fRoomInbound && !fRoomReserved) return false;
+    auto best = mapPendingTx.end();
+    int64_t nBestPriority = 0;
+    for (auto it = mapPendingTx.begin(); it != mapPendingTx.end();) {
+        PendingPeer& peer = it->second;
+        while (!peer.txs.empty() && peer.txs.front().nTime + PENDING_TX_EXPIRY < now) {
+            LogPrint(BCLog::MEMPOOLREJ, "%s from peer=%d dropped: waited too long for the admission budget\n",
+                peer.txs.front().tx->GetHash().ToString(), it->first);
+            PopPendingTx(peer, false);
+        }
+        if (!peer.txs.empty() && g_tx_admission_budget.IsIgnored(peer.budgetKey, peer.fWhitelisted, now)) {
+            for (const PendingTx& entry : peer.txs) {
+                LogPrint(BCLog::MEMPOOLREJ, "%s from peer=%d not processed: address ignored by the admission budget\n",
+                    entry.tx->GetHash().ToString(), it->first);
+            }
+            while (!peer.txs.empty()) PopPendingTx(peer, true);
+        }
+        if (peer.txs.empty()) {
+            it = mapPendingTx.erase(it);
+            continue;
+        }
+        if (peer.fReserved ? fRoomReserved : fRoomInbound) {
+            const int64_t nPriority = PendingPriority(peer);
+            if (best == mapPendingTx.end() || nPriority < nBestPriority ||
+                (nPriority == nBestPriority &&
+                 std::make_pair(peer.txs.size(), peer.txs.front().nOrder) <
+                 std::make_pair(best->second.txs.size(), best->second.txs.front().nOrder))) {
+                best = it;
+                nBestPriority = nPriority;
+            }
+        }
+        ++it;
+    }
+    if (best == mapPendingTx.end()) return false;
+
+    const NodeId nodeid = best->first;
+    const std::string budgetKey = best->second.budgetKey;
+    const bool fReserved = best->second.fReserved;
+    const CTransactionRef ptx = best->second.txs.front().tx;
+    PopPendingTx(best->second, false);
+    if (best->second.txs.empty()) mapPendingTx.erase(best);
+
+    // The transaction may belong to another peer than the one being served:
+    // hold a reference to its node while it is admitted.
+    CNode* pnode = nullptr;
+    connman->ForNode(nodeid, [&](CNode* node) {
+        node->AddRef();
+        pnode = node;
+        return true;
+    });
+    if (pnode == nullptr) {
+        DropPendingTxs(nodeid);
+        return true;
+    }
+    AdmitTransaction(pnode, ptx, connman, budgetKey, fReserved);
+    pnode->Release();
+    return true;
+}
+
+static void ProcessPendingTxs(CConnman* connman) EXCLUSIVE_LOCKS_REQUIRED(cs_main)
+{
+    for (int i = 0; i < MAX_PENDING_ADMISSIONS_PER_CALL && AdmitPendingTx(connman); ++i) {}
+}
+
+/** Admission of a transaction from a peer, once the admission budget has
+ *  room for it (see the pending queue above). Charges the CPU of a rejection
+ *  to the peer's address and group; orphans it resolves join the queue of
+ *  the peer that sent them. */
+static void AdmitTransaction(CNode* pfrom, const CTransactionRef& ptx, CConnman* connman,
+                             const std::string& budgetKey, bool fReservedShare) EXCLUSIVE_LOCKS_REQUIRED(cs_main)
+{
+    const CTransaction& tx = *ptx;
+    const CInv inv(MSG_TX, tx.GetHash());
+    const CNetMsgMaker msgMaker(pfrom->GetSendVersion());
+    std::deque<COutPoint> vWorkQueue;
+    std::vector<uint256> vEraseQueue;
+    bool fMissingInputs = false;
+    CValidationState state;
+
+    const bool fAlreadyHave = AlreadyHave(inv);
+    // A rejected witness transaction is remembered by its wtxid, which
+    // commits to the witness: the same bytes are not validated again
+    // (another witness for the same txid still is).
+    if (!fAlreadyHave && tx.HasWitness() && recentRejects->contains(tx.GetWitnessHash())) {
+        LogPrint(BCLog::MEMPOOLREJ, "%s (wtxid %s) from peer=%d was already rejected\n",
+            tx.GetHash().ToString(), tx.GetWitnessHash().ToString(), pfrom->GetId());
+        return;
+    }
+
+    const int64_t nAdmissionCpuStart = GetThreadCpuMicros();
+    if (!fAlreadyHave &&
+        AcceptToMemoryPool(mempool, state, ptx, &fMissingInputs, false /* bypass_limits */, 0 /* nAbsurdFee */)) {
+        mempool.check(pcoinsTip);
+        RelayTransaction(tx, connman);
+        for (unsigned int i = 0; i < tx.vout.size(); i++) {
+            vWorkQueue.emplace_back(inv.hash, i);
+        }
+
+        pfrom->nLastTXTime = GetTime();
+
+        LogPrint(BCLog::MEMPOOL, "AcceptToMemoryPool: peer=%d: accepted %s (poolsz %u txn, %u kB)\n",
+            pfrom->GetId(),
+            tx.GetHash().ToString(),
+            mempool.size(), mempool.DynamicMemoryUsage() / 1000);
+
+        // Orphans that depended on this one can now run, each once, on the
+        // admission budget of the peer that sent it: they join its queue.
+        // Orphans of a peer that is gone or ignored are dropped.
+        std::set<uint256> setOrphansDone;
+        while (!vWorkQueue.empty()) {
+            auto itByPrev = mapOrphanTransactionsByPrev.find(vWorkQueue.front());
+            vWorkQueue.pop_front();
+            if (itByPrev == mapOrphanTransactionsByPrev.end())
+                continue;
+            for (auto mi = itByPrev->second.begin(); mi != itByPrev->second.end(); ++mi) {
+                const CTransactionRef& porphanTx = (*mi)->second.tx;
+                const uint256& orphanHash = porphanTx->GetHash();
+                const NodeId fromPeer = (*mi)->second.fromPeer;
+                if (!setOrphansDone.insert(orphanHash).second)
+                    continue;
+                vEraseQueue.push_back(orphanHash);
+                std::string orphanBudgetKey;
+                bool fOrphanReserved = false;
+                bool fOrphanWhitelisted = false;
+                const bool fOrphanPeer = connman->ForNode(fromPeer, [&](CNode* pnode) {
+                    orphanBudgetKey = TxAdmissionBudget::Key(pnode->addr);
+                    fOrphanReserved = !pnode->fInbound || pnode->fWhitelisted;
+                    fOrphanWhitelisted = pnode->fWhitelisted;
+                    return true;
+                });
+                if (!fOrphanPeer || g_tx_admission_budget.IsIgnored(orphanBudgetKey, fOrphanWhitelisted, GetTime()) ||
+                    !QueuePendingTx(fromPeer, orphanBudgetKey, fOrphanReserved, fOrphanWhitelisted, porphanTx,
+                                    porphanTx->GetWitnessHash())) {
+                    LogPrint(BCLog::MEMPOOLREJ, "orphan tx %s from peer=%d dropped by the admission budget\n",
+                        orphanHash.ToString(), fromPeer);
+                } else {
+                    LogPrint(BCLog::MEMPOOL, "   orphan tx %s from peer=%d resolved\n", orphanHash.ToString(), fromPeer);
+                }
+            }
+        }
+
+        for (uint256 hash : vEraseQueue)
+            EraseOrphanTx(hash);
+    }
+    else if (state.IsError())
+    {
+        // Local failure: do not poison recentRejects or relay an unverified tx.
+        LogPrint(BCLog::MEMPOOL, "Transaction validation failed locally: %s\n", FormatStateMessage(state));
+    }
+    else if (fMissingInputs)
+    {
+        bool fRejectedParents = false; // It may be the case that the orphans parents have all been rejected
+        for (const CTxIn& txin : tx.vin) {
+            if (recentRejects->contains(txin.prevout.hash)) {
+                fRejectedParents = true;
+                break;
+            }
+        }
+        if (!fRejectedParents) {
+            uint32_t nFetchFlags = GetFetchFlags(pfrom);
+            for (const CTxIn& txin : tx.vin) {
+                CInv _inv(MSG_TX | nFetchFlags, txin.prevout.hash);
+                pfrom->AddInventoryKnown(_inv);
+                if (!AlreadyHave(_inv)) pfrom->AskFor(_inv);
+            }
+            AddOrphanTx(ptx, pfrom->GetId());
+
+            // DoS prevention: do not allow mapOrphanTransactions to grow unbounded
+            unsigned int nMaxOrphanTx = (unsigned int)std::max((int64_t)0, gArgs.GetArg("-maxorphantx", DEFAULT_MAX_ORPHAN_TRANSACTIONS));
+            unsigned int nEvicted = LimitOrphanTxSize(nMaxOrphanTx);
+            if (nEvicted > 0) {
+                LogPrint(BCLog::MEMPOOL, "mapOrphan overflow, removed %u tx\n", nEvicted);
+            }
+        } else {
+            LogPrint(BCLog::MEMPOOL, "not keeping orphan with rejected parents %s\n",tx.GetHash().ToString());
+            // We will continue to reject this tx since it has rejected
+            // parents so avoid re-requesting it from other peers.
+            recentRejects->insert(tx.GetHash());
+        }
+    } else {
+        if (!tx.HasWitness() && !state.CorruptionPossible()) {
+            // Do not use rejection cache for witness transactions or
+            // witness-stripped transactions, as they can have been malleated.
+            // See https://github.com/bitcoin/bitcoin/issues/8279 for details.
+            assert(recentRejects);
+            recentRejects->insert(tx.GetHash());
+            if (RecursiveDynamicUsage(*ptx) < 100000) {
+                AddToCompactExtraTransactions(ptx);
+            }
+        } else if (tx.HasWitness() && RecursiveDynamicUsage(*ptx) < 100000) {
+            AddToCompactExtraTransactions(ptx);
+        }
+        if (tx.HasWitness() && !state.CorruptionPossible()) {
+            recentRejects->insert(tx.GetWitnessHash());
+        }
+
+        if (pfrom->fWhitelisted && gArgs.GetBoolArg("-whitelistforcerelay", DEFAULT_WHITELISTFORCERELAY)) {
+            // Always relay transactions received from whitelisted peers, even
+            // if they were already in the mempool or rejected from it due
+            // to policy, allowing the node to function as a gateway for
+            // nodes hidden behind it.
+            //
+            // Never relay transactions that we would assign a non-zero DoS
+            // score for, as we expect peers to do the same with us in that
+            // case.
+            int nDoS = 0;
+            if (!state.IsInvalid(nDoS) || nDoS == 0) {
+                LogPrintf("Force relaying tx %s from whitelisted peer=%d\n", tx.GetHash().ToString(), pfrom->GetId());
+                RelayTransaction(tx, connman);
+            } else {
+                LogPrintf("Not relaying invalid transaction %s from whitelisted peer=%d (%s)\n", tx.GetHash().ToString(), pfrom->GetId(), FormatStateMessage(state));
+            }
+        }
+    }
+
+    int nDoS = 0;
+    if (state.IsInvalid(nDoS))
+    {
+        g_tx_admission_budget.ChargeRejected(budgetKey, fReservedShare, pfrom->fWhitelisted,
+                                             GetThreadCpuMicros() - nAdmissionCpuStart, GetTime());
+        LogPrint(BCLog::MEMPOOLREJ, "%s from peer=%d was not accepted: %s\n", tx.GetHash().ToString(),
+            pfrom->GetId(),
+            FormatStateMessage(state));
+        if (state.GetRejectCode() > 0 && state.GetRejectCode() < REJECT_INTERNAL) // Never send AcceptToMemoryPool's internal codes over P2P
+            connman->PushMessage(pfrom, msgMaker.Make(NetMsgType::REJECT, std::string(NetMsgType::TX), (unsigned char)state.GetRejectCode(),
+                               state.GetRejectReason().substr(0, MAX_REJECT_MESSAGE_LENGTH), inv.hash));
+        if (nDoS > 0) {
+            Misbehaving(pfrom->GetId(), nDoS);
+        }
+    }
+}
+
 bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStream& vRecv, int64_t nTimeReceived, const CChainParams& chainparams, CConnman* connman, const std::atomic<bool>& interruptMsgProc)
 {
     LogPrint(BCLog::NET, "received: %s (%u bytes) peer=%d\n", SanitizeString(strCommand), vRecv.size(), pfrom->GetId());
@@ -2031,6 +2498,12 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
 
         uint32_t nFetchFlags = GetFetchFlags(pfrom);
 
+        // A transaction is not requested from an address ignored by the
+        // admission budget: another peer that announces it is then asked at
+        // once, instead of after this request times out.
+        const bool fIgnored = g_tx_admission_budget.IsIgnored(TxAdmissionBudget::Key(pfrom->addr),
+                                                             pfrom->fWhitelisted, GetTime());
+
         for (CInv &inv : vInv)
         {
             if (interruptMsgProc)
@@ -2060,7 +2533,7 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
                 pfrom->AddInventoryKnown(inv);
                 if (fBlocksOnly) {
                     LogPrint(BCLog::NET, "transaction (%s) inv sent in violation of protocol peer=%d\n", inv.hash.ToString(), pfrom->GetId());
-                } else if (!fAlreadyHave && !fImporting && !fReindex && !IsInitialBlockDownload()) {
+                } else if (!fAlreadyHave && !fImporting && !fReindex && !IsInitialBlockDownload() && !fIgnored) {
                     pfrom->AskFor(inv);
                 }
             }
@@ -2320,8 +2793,6 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
             return true;
         }
 
-        std::deque<COutPoint> vWorkQueue;
-        std::vector<uint256> vEraseQueue;
         CTransactionRef ptx;
         vRecv >> ptx;
         const CTransaction& tx = *ptx;
@@ -2331,168 +2802,45 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
 
         LOCK(cs_main);
 
-        bool fMissingInputs = false;
-        CValidationState state;
-
         pfrom->setAskFor.erase(inv.hash);
         mapAlreadyAskedFor.erase(inv.hash);
 
-        if (!AlreadyHave(inv) &&
-            AcceptToMemoryPool(mempool, state, ptx, &fMissingInputs, false /* bypass_limits */, 0 /* nAbsurdFee */)) {
-            mempool.check(pcoinsTip);
-            RelayTransaction(tx, connman);
-            for (unsigned int i = 0; i < tx.vout.size(); i++) {
-                vWorkQueue.emplace_back(inv.hash, i);
-            }
-
-            pfrom->nLastTXTime = GetTime();
-
-            LogPrint(BCLog::MEMPOOL, "AcceptToMemoryPool: peer=%d: accepted %s (poolsz %u txn, %u kB)\n",
-                pfrom->GetId(),
-                tx.GetHash().ToString(),
-                mempool.size(), mempool.DynamicMemoryUsage() / 1000);
-
-            // Recursively process any orphan transactions that depended on this one
-            std::set<NodeId> setMisbehaving;
-            while (!vWorkQueue.empty()) {
-                auto itByPrev = mapOrphanTransactionsByPrev.find(vWorkQueue.front());
-                vWorkQueue.pop_front();
-                if (itByPrev == mapOrphanTransactionsByPrev.end())
-                    continue;
-                for (auto mi = itByPrev->second.begin();
-                     mi != itByPrev->second.end();
-                     ++mi)
-                {
-                    const CTransactionRef& porphanTx = (*mi)->second.tx;
-                    const CTransaction& orphanTx = *porphanTx;
-                    const uint256& orphanHash = orphanTx.GetHash();
-                    NodeId fromPeer = (*mi)->second.fromPeer;
-                    bool fMissingInputs2 = false;
-                    // Use a dummy CValidationState so someone can't setup nodes to counter-DoS based on orphan
-                    // resolution (that is, feeding people an invalid transaction based on LegitTxX in order to get
-                    // anyone relaying LegitTxX banned)
-                    CValidationState stateDummy;
-
-
-                    if (setMisbehaving.count(fromPeer))
-                        continue;
-                    if (AcceptToMemoryPool(mempool, stateDummy, porphanTx, &fMissingInputs2, false /* bypass_limits */, 0 /* nAbsurdFee */)) {
-                        LogPrint(BCLog::MEMPOOL, "   accepted orphan tx %s\n", orphanHash.ToString());
-                        RelayTransaction(orphanTx, connman);
-                        for (unsigned int i = 0; i < orphanTx.vout.size(); i++) {
-                            vWorkQueue.emplace_back(orphanHash, i);
-                        }
-                        vEraseQueue.push_back(orphanHash);
-                    }
-                    else if (!fMissingInputs2 && !stateDummy.IsError())
-                    {
-                        int nDos = 0;
-                        if (stateDummy.IsInvalid(nDos) && nDos > 0)
-                        {
-                            // Punish peer that gave us an invalid orphan tx
-                            Misbehaving(fromPeer, nDos);
-                            setMisbehaving.insert(fromPeer);
-                            LogPrint(BCLog::MEMPOOL, "   invalid orphan tx %s\n", orphanHash.ToString());
-                        }
-                        // Has inputs but not accepted to mempool
-                        // Probably non-standard or insufficient fee
-                        LogPrint(BCLog::MEMPOOL, "   removed orphan tx %s\n", orphanHash.ToString());
-                        vEraseQueue.push_back(orphanHash);
-                        if (!orphanTx.HasWitness() && !stateDummy.CorruptionPossible()) {
-                            // Do not use rejection cache for witness transactions or
-                            // witness-stripped transactions, as they can have been malleated.
-                            // See https://github.com/bitcoin/bitcoin/issues/8279 for details.
-                            assert(recentRejects);
-                            recentRejects->insert(orphanHash);
-                        }
-                    }
-                    mempool.check(pcoinsTip);
-                }
-            }
-
-            for (uint256 hash : vEraseQueue)
-                EraseOrphanTx(hash);
+        // Admission of rejected transactions costs CPU that no fee pays for:
+        // it is bounded per address and in total (TxAdmissionBudget).
+        // Transactions from an address that used up its credit are dropped,
+        // without being marked as rejected, so another peer can still deliver
+        // them. Others wait in a queue while the bucket of their group is
+        // empty, and are admitted as it refills, clean addresses first.
+        const std::string budgetKey = TxAdmissionBudget::Key(pfrom->addr);
+        const bool fReservedShare = !pfrom->fInbound || pfrom->fWhitelisted;
+        if (g_tx_admission_budget.IsIgnored(budgetKey, pfrom->fWhitelisted, GetTime())) {
+            LogPrint(BCLog::MEMPOOLREJ, "%s from peer=%d not processed: address ignored by the admission budget\n",
+                tx.GetHash().ToString(), pfrom->GetId());
+            return true;
         }
-        else if (state.IsError())
-        {
-            // Local failure: do not poison recentRejects or relay an unverified tx.
-            LogPrint(BCLog::MEMPOOL, "Transaction validation failed locally: %s\n", FormatStateMessage(state));
+        if (AlreadyHave(inv)) {
+            // Nothing to run (forced relay for whitelisted peers still applies).
+            AdmitTransaction(pfrom, ptx, connman, budgetKey, fReservedShare);
+            return true;
         }
-        else if (fMissingInputs)
-        {
-            bool fRejectedParents = false; // It may be the case that the orphans parents have all been rejected
-            for (const CTxIn& txin : tx.vin) {
-                if (recentRejects->contains(txin.prevout.hash)) {
-                    fRejectedParents = true;
-                    break;
-                }
-            }
-            if (!fRejectedParents) {
-                uint32_t nFetchFlags = GetFetchFlags(pfrom);
-                for (const CTxIn& txin : tx.vin) {
-                    CInv _inv(MSG_TX | nFetchFlags, txin.prevout.hash);
-                    pfrom->AddInventoryKnown(_inv);
-                    if (!AlreadyHave(_inv)) pfrom->AskFor(_inv);
-                }
-                AddOrphanTx(ptx, pfrom->GetId());
-
-                // DoS prevention: do not allow mapOrphanTransactions to grow unbounded
-                unsigned int nMaxOrphanTx = (unsigned int)std::max((int64_t)0, gArgs.GetArg("-maxorphantx", DEFAULT_MAX_ORPHAN_TRANSACTIONS));
-                unsigned int nEvicted = LimitOrphanTxSize(nMaxOrphanTx);
-                if (nEvicted > 0) {
-                    LogPrint(BCLog::MEMPOOL, "mapOrphan overflow, removed %u tx\n", nEvicted);
-                }
-            } else {
-                LogPrint(BCLog::MEMPOOL, "not keeping orphan with rejected parents %s\n",tx.GetHash().ToString());
-                // We will continue to reject this tx since it has rejected
-                // parents so avoid re-requesting it from other peers.
-                recentRejects->insert(tx.GetHash());
-            }
-        } else {
-            if (!tx.HasWitness() && !state.CorruptionPossible()) {
-                // Do not use rejection cache for witness transactions or
-                // witness-stripped transactions, as they can have been malleated.
-                // See https://github.com/bitcoin/bitcoin/issues/8279 for details.
-                assert(recentRejects);
-                recentRejects->insert(tx.GetHash());
-                if (RecursiveDynamicUsage(*ptx) < 100000) {
-                    AddToCompactExtraTransactions(ptx);
-                }
-            } else if (tx.HasWitness() && RecursiveDynamicUsage(*ptx) < 100000) {
-                AddToCompactExtraTransactions(ptx);
-            }
-
-            if (pfrom->fWhitelisted && gArgs.GetBoolArg("-whitelistforcerelay", DEFAULT_WHITELISTFORCERELAY)) {
-                // Always relay transactions received from whitelisted peers, even
-                // if they were already in the mempool or rejected from it due
-                // to policy, allowing the node to function as a gateway for
-                // nodes hidden behind it.
-                //
-                // Never relay transactions that we would assign a non-zero DoS
-                // score for, as we expect peers to do the same with us in that
-                // case.
-                int nDoS = 0;
-                if (!state.IsInvalid(nDoS) || nDoS == 0) {
-                    LogPrintf("Force relaying tx %s from whitelisted peer=%d\n", tx.GetHash().ToString(), pfrom->GetId());
-                    RelayTransaction(tx, connman);
-                } else {
-                    LogPrintf("Not relaying invalid transaction %s from whitelisted peer=%d (%s)\n", tx.GetHash().ToString(), pfrom->GetId(), FormatStateMessage(state));
-                }
-            }
+        // A rejected witness transaction is remembered by its wtxid: the same
+        // bytes neither wait nor run again. (The wtxid hashes the whole
+        // transaction: compute it once.)
+        const uint256 wtxid = tx.GetWitnessHash();
+        if (tx.HasWitness() && recentRejects->contains(wtxid)) {
+            LogPrint(BCLog::MEMPOOLREJ, "%s (wtxid %s) from peer=%d was already rejected\n",
+                tx.GetHash().ToString(), wtxid.ToString(), pfrom->GetId());
+            return true;
         }
-
-        int nDoS = 0;
-        if (state.IsInvalid(nDoS))
-        {
-            LogPrint(BCLog::MEMPOOLREJ, "%s from peer=%d was not accepted: %s\n", tx.GetHash().ToString(),
-                pfrom->GetId(),
-                FormatStateMessage(state));
-            if (state.GetRejectCode() > 0 && state.GetRejectCode() < REJECT_INTERNAL) // Never send AcceptToMemoryPool's internal codes over P2P
-                connman->PushMessage(pfrom, msgMaker.Make(NetMsgType::REJECT, strCommand, (unsigned char)state.GetRejectCode(),
-                                   state.GetRejectReason().substr(0, MAX_REJECT_MESSAGE_LENGTH), inv.hash));
-            if (nDoS > 0) {
-                Misbehaving(pfrom->GetId(), nDoS);
-            }
+        if (!QueuePendingTx(pfrom->GetId(), budgetKey, fReservedShare, pfrom->fWhitelisted, ptx, wtxid)) {
+            LogPrint(BCLog::MEMPOOLREJ, "%s from peer=%d dropped: admission queue full\n",
+                tx.GetHash().ToString(), pfrom->GetId());
+            return true;
+        }
+        ProcessPendingTxs(connman);
+        if (IsPendingTx(pfrom->GetId(), wtxid)) {
+            LogPrint(BCLog::MEMPOOLREJ, "%s from peer=%d waits for the admission budget\n",
+                tx.GetHash().ToString(), pfrom->GetId());
         }
     }
 
@@ -3424,6 +3772,10 @@ bool PeerLogicValidation::SendMessages(CNode* pto, std::atomic<bool>& interruptM
         if (!lockMain)
             return true;
 
+        // Transactions that wait for room in the admission budget are
+        // admitted as it refills, whichever peer is being served.
+        ProcessPendingTxs(connman);
+
         if (SendRejectsAndCheckIfBanned(pto, connman))
             return true;
         CNodeState &state = *State(pto->GetId());
@@ -3888,21 +4240,40 @@ bool PeerLogicValidation::SendMessages(CNode* pto, std::atomic<bool>& interruptM
         //
         // Message: getdata (non-blocks)
         //
+        // A request queued before the peer's address was ignored by the
+        // admission budget is not sent: the answer would be dropped. If no
+        // later request for the same transaction is queued, it is forgotten,
+        // so that another peer that announces it is asked at once instead of
+        // two minutes later.
+        int nIgnored = -1; // checked on the first request that is due
         while (!pto->mapAskFor.empty() && (*pto->mapAskFor.begin()).first <= nNow)
         {
+            const int64_t nRequestTime = (*pto->mapAskFor.begin()).first;
             const CInv& inv = (*pto->mapAskFor.begin()).second;
-            if (!AlreadyHave(inv))
-            {
-                LogPrint(BCLog::NET, "Requesting %s peer=%d\n", inv.ToString(), pto->GetId());
-                vGetData.push_back(inv);
-                if (vGetData.size() >= 1000)
-                {
-                    connman->PushMessage(pto, msgMaker.Make(NetMsgType::GETDATA, vGetData));
-                    vGetData.clear();
-                }
-            } else {
+            if (AlreadyHave(inv)) {
                 //If we're not going to ask, don't expect a response.
                 pto->setAskFor.erase(inv.hash);
+            } else {
+                if (nIgnored < 0) {
+                    nIgnored = g_tx_admission_budget.IsIgnored(TxAdmissionBudget::Key(pto->addr),
+                        pto->fWhitelisted, GetTime()) ? 1 : 0;
+                }
+                if (!nIgnored) {
+                    LogPrint(BCLog::NET, "Requesting %s peer=%d\n", inv.ToString(), pto->GetId());
+                    vGetData.push_back(inv);
+                    if (vGetData.size() >= 1000)
+                    {
+                        connman->PushMessage(pto, msgMaker.Make(NetMsgType::GETDATA, vGetData));
+                        vGetData.clear();
+                    }
+                } else {
+                    LogPrint(BCLog::MEMPOOLREJ, "%s not requested from peer=%d: address ignored by the admission budget\n",
+                        inv.ToString(), pto->GetId());
+                    pto->setAskFor.erase(inv.hash);
+                    const auto it = mapAlreadyAskedFor.find(inv.hash);
+                    if (it != mapAlreadyAskedFor.end() && it->second == nRequestTime)
+                        mapAlreadyAskedFor.erase(inv.hash);
+                }
             }
             pto->mapAskFor.erase(pto->mapAskFor.begin());
         }

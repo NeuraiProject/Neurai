@@ -1005,11 +1005,15 @@ class SegWitTest(NeuraiTestFramework):
         tx3.wit.vtxinwit[0].scriptWitness.stack = [witness_program2]
         tx3.rehash()
 
-        # Node will not be blinded to the transaction
+        # Node will not be blinded to the transaction: its txid is requested
+        # again. The same bytes are remembered by their wtxid and dropped
+        # without being validated again, so no second reject message.
         self.std_node.announce_tx_and_wait_for_getdata(tx3)
         self.std_node.test_transaction_acceptance(tx3, True, False, b'tx-size')
         self.std_node.announce_tx_and_wait_for_getdata(tx3)
-        self.std_node.test_transaction_acceptance(tx3, True, False, b'tx-size')
+        self.std_node.test_transaction_acceptance(tx3, True, False)
+        with mininode_lock:
+            assert "reject" not in self.std_node.last_message
 
         # Remove witness stuffing, instead add extra witness push on stack
         tx3.vout[0] = CTxOut(tx2.vout[0].nValue - FEE, CScript([OP_TRUE]))

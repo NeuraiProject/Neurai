@@ -88,8 +88,11 @@ static const uint64_t MAX_UPLOAD_TIMEFRAME = 60 * 60 * 24;
 static const bool DEFAULT_BLOCKSONLY = false;
 
 static const bool DEFAULT_FORCEDNSSEED = false;
-static const size_t DEFAULT_MAXRECEIVEBUFFER = 500 * 1000;
-static const size_t DEFAULT_MAXSENDBUFFER    = 100 * 1000;
+// Per-connection queues, in kB. Receive: more than two protocol messages of
+// 8 MB. Send: 16 blocks in flight of 2 MB, with margin. Larger queues let one
+// peer hold hundreds of MB of unprocessed messages (CPU review, 16-11-2026).
+static const size_t DEFAULT_MAXRECEIVEBUFFER = 20 * 1000;
+static const size_t DEFAULT_MAXSENDBUFFER    = 40 * 1000;
 
 // NOTE: When adjusting this, update rpcnet:setban's help ("24h")
 static const unsigned int DEFAULT_MISBEHAVING_BANTIME = 60 * 60 * 24;  // Default 24-hour ban

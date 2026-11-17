@@ -12,6 +12,7 @@
 #include "utiltime.h"
 
 #include <atomic>
+#include <time.h>
 
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/thread.hpp>
@@ -44,6 +45,17 @@ int64_t GetTimeMillis()
                    boost::posix_time::ptime(boost::gregorian::date(1970,1,1))).total_milliseconds();
     assert(now > 0);
     return now;
+}
+
+int64_t GetThreadCpuMicros()
+{
+#ifdef CLOCK_THREAD_CPUTIME_ID
+    struct timespec ts;
+    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) == 0) {
+        return int64_t{ts.tv_sec} * 1000000 + ts.tv_nsec / 1000;
+    }
+#endif
+    return GetTimeMicros();
 }
 
 int64_t GetTimeMicros()

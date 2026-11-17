@@ -279,6 +279,28 @@ BOOST_AUTO_TEST_CASE(block_size_limit_follows_the_fork_height)
                   "the size limit must be the one that binds");
 }
 
+BOOST_AUTO_TEST_CASE(relay_work_limits_follow_the_fork_height)
+{
+    // Mainnet keeps the old relay limits until its fork height is set.
+    const auto mainnet = CreateChainParams(CBaseChainParams::MAIN);
+    const Consensus::Params& main = mainnet->GetConsensus();
+    const int never = std::numeric_limits<int>::max() - 1;
+    BOOST_CHECK_EQUAL(GetMaxStandardTxPoseidonWork(never, main), MAX_STANDARD_TX_POSEIDON_WORK);
+    BOOST_CHECK_EQUAL(GetMaxStandardTxAssetAuthWork(never, main), MAX_STANDARD_TX_ASSETAUTH_WORK);
+    BOOST_CHECK_EQUAL(GetMaxStandardTxWitnessSigOps(never, main), std::numeric_limits<int64_t>::max());
+
+    // Testnet: lower from the NIP-028 height on.
+    const auto testnet = CreateChainParams(CBaseChainParams::TESTNET);
+    const Consensus::Params& test = testnet->GetConsensus();
+    const int h = test.nBlockTimeReductionHeight;
+    BOOST_CHECK_EQUAL(GetMaxStandardTxPoseidonWork(h - 1, test), MAX_STANDARD_TX_POSEIDON_WORK);
+    BOOST_CHECK_EQUAL(GetMaxStandardTxPoseidonWork(h, test), 5000U);
+    BOOST_CHECK_EQUAL(GetMaxStandardTxAssetAuthWork(h - 1, test), MAX_STANDARD_TX_ASSETAUTH_WORK);
+    BOOST_CHECK_EQUAL(GetMaxStandardTxAssetAuthWork(h, test), 15000U);
+    BOOST_CHECK_EQUAL(GetMaxStandardTxWitnessSigOps(h - 1, test), std::numeric_limits<int64_t>::max());
+    BOOST_CHECK_EQUAL(GetMaxStandardTxWitnessSigOps(h, test), 2000);
+}
+
 BOOST_AUTO_TEST_CASE(mandatory_flags_are_consensus_on_every_network)
 {
     // A mempool script failure under the mandatory flags bans the peer, so
