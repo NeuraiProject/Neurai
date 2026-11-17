@@ -15,7 +15,8 @@ standard transaction may run is bounded. From the NIP-028 height on:
 
 Below the height a transaction of 5,001 permutations, 2,001 witness sigops or
 15,001 asset-auth units is standard; from the height it is not, and it is still
-valid in a block.
+valid in a block. One that waits in the mempool when the height is crossed is
+evicted.
 """
 
 import hashlib
@@ -34,7 +35,12 @@ from test_framework.util import assert_equal, bytes_to_hex_str, connect_nodes, s
 FORK_HEIGHT = 200
 COIN = 100000000
 VALUE = COIN
-FEE = COIN // 2   # 2,000 sigops count as 10,000 vB at 20 bytes per sigop
+# 2,000 sigops count as 10,000 vB at 20 bytes per sigop; from the NIP-028
+# height 5,000 permutations count as 50,000 vB (A1): 0.5 XNA is their minimum.
+FEE = COIN // 2
+# From the NIP-028 height the work counts in the fee too (A1): 15,000 units
+# weigh 270,000, 67,500 vbytes, 0.675 XNA at the minimum rate.
+ASSETAUTH_FEE = COIN
 CUSTODY_VALUE = COIN // 10
 CUSTODY_INPUTS = 100
 PAYMENTS = 33
@@ -138,7 +144,7 @@ class RelayWorkLimitsTest(NeuraiTestFramework):
             tx.nVersion = 2
             for prevout in [outpoint for outpoint, _ in custodies] + [(int(token["txid"], 16), token["vout"])]:
                 tx.vin.append(CTxIn(COutPoint(*prevout), b"", 0xffffffff))
-            amount = (len(custodies) * CUSTODY_VALUE - FEE) // PAYMENTS
+            amount = (len(custodies) * CUSTODY_VALUE - ASSETAUTH_FEE) // PAYMENTS
             tx.vout = [CTxOut(amount, pay) for _ in range(PAYMENTS)]
             role_spk = bytes.fromhex(node.validateaddress(role_addr[role])["scriptPubKey"])
             tx.vout.append(CTxOut(0, transfer_spk(role_spk, role, COIN)))
@@ -168,8 +174,8 @@ class RelayWorkLimitsTest(NeuraiTestFramework):
         kinds = {
             "p500": (poseidon(500), [b''], 40),
             "p1": (poseidon(1), [b''], 4),
-            "c170": (checks(170), sig_args, 44),
-            "c130": (checks(130), sig_args, 2),
+            "c170": (checks(170), sig_args, 66),
+            "c130": (checks(130), sig_args, 3),
             "c131": (checks(131), sig_args, 4),
         }
 
@@ -212,10 +218,23 @@ class RelayWorkLimitsTest(NeuraiTestFramework):
             assert_equal(self.verdict(tx), "accepted")
             self.log.info("  %s: accepted", label)
 
-        self.log.info("From the NIP-028 height the lower limits apply")
-        node.generate(FORK_HEIGHT - 1 - node.getblockcount())
+        self.log.info("Crossing the height evicts the transactions over the lower limits")
+        node.generate(FORK_HEIGHT - 2 - node.getblockcount())
         sync_blocks(self.nodes)
+        within = self.spend(take("c170", 11) + take("c130", 1), pay)
+        over = self.spend(take("c170", 11) + take("c131", 1), pay)
+        for tx in (within, over):
+            node.sendrawtransaction(bytes_to_hex_str(tx.serialize_with_witness()))
+        block = self.build_block([])
+        assert_equal(node.submitblock(bytes_to_hex_str(block.serialize(with_witness=True))), None)
         assert_equal(node.getblockcount() + 1, FORK_HEIGHT)
+        mempool = node.getrawmempool()
+        assert within.hash in mempool
+        assert over.hash not in mempool
+        self.log.info("  2,000 witness sigops: kept; 2,001: evicted")
+
+        self.log.info("From the NIP-028 height the lower limits apply")
+        sync_blocks(self.nodes)
         txs = cases()
         expected = {
             "5,000 permutations": "accepted",

@@ -78,6 +78,7 @@ private:
     bool spendsCoinbase;       //!< keep track of transactions that spend a coinbase
     uint64_t poseidonWork{0};
     uint64_t assetAuthWork{0};  //!< NIP-054: OP_CHECKASSETAUTH work, consensus cost
+    int64_t nWorkWeight{0};     //!< Weight of that work in the virtual size (from NIP-028)
     int64_t sigOpCost;         //!< Total sigop cost
     int64_t feeDelta;          //!< Used for determining the priority of the transaction for mining in a block
     LockPoints lockPoints;     //!< Track the height and time at which tx was final
@@ -114,6 +115,11 @@ public:
     void SetPoseidonWork(uint64_t work) { poseidonWork = work; }
     uint64_t GetAssetAuthWork() const { return assetAuthWork; }
     void SetAssetAuthWork(uint64_t work) { assetAuthWork = work; }
+    int64_t GetWorkWeight() const { return nWorkWeight; }
+    /** Sets the weight of the script work, which counts in GetTxSize(). Only
+     *  before the entry is added to a pool: its own share of the ancestor
+     *  and descendant sizes moves with it. */
+    void SetWorkWeight(int64_t workWeight);
     int64_t GetSigOpCost() const { return sigOpCost; }
     int64_t GetModifiedFee() const { return nFee + feeDelta; }
     size_t DynamicMemoryUsage() const { return nUsageSize; }

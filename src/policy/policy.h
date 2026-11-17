@@ -256,6 +256,30 @@ extern unsigned int nBytesPerSigOp;
 /** Compute the virtual transaction size (weight reinterpreted as bytes). */
 int64_t GetVirtualTransactionSize(int64_t nWeight, int64_t nSigOpCost);
 
+/** From the NIP-028 height on, the script work a transaction runs counts in
+ *  its virtual size, priced against the block: a block's whole budget of
+ *  Poseidon permutations, or of OP_CHECKASSETAUTH units, weighs as much as a
+ *  full block (MAX_BLOCK_WEIGHT_RIP2). Like sigops, work only raises the size
+ *  above the weight: the size is the largest of the three. */
+static constexpr int64_t WORK_WEIGHT_PER_POSEIDON_PERMUTATION =
+    (MAX_BLOCK_WEIGHT_RIP2 + MAX_BLOCK_POSEIDON_WORK - 1) / MAX_BLOCK_POSEIDON_WORK;
+static constexpr int64_t WORK_WEIGHT_PER_ASSETAUTH_UNIT =
+    (MAX_BLOCK_WEIGHT_RIP2 + MAX_BLOCK_ASSETAUTH_WORK - 1) / MAX_BLOCK_ASSETAUTH_WORK;
+static_assert(WORK_WEIGHT_PER_POSEIDON_PERMUTATION * MAX_BLOCK_POSEIDON_WORK >= MAX_BLOCK_WEIGHT_RIP2,
+              "a block of Poseidon work must weigh at least a full block");
+static_assert(WORK_WEIGHT_PER_ASSETAUTH_UNIT * MAX_BLOCK_ASSETAUTH_WORK >= MAX_BLOCK_WEIGHT_RIP2,
+              "a block of asset-auth work must weigh at least a full block");
+
+/** Whether the script work counts in the virtual size at a candidate height
+ *  (from NIP-028 on). It prices a transaction; it takes no room in a block. */
+bool IsWorkWeightActive(int nHeight, const Consensus::Params& params);
+/** The weight that a transaction's metered script work counts for at a
+ *  candidate height (0 below NIP-028). */
+int64_t GetTransactionWorkWeight(uint64_t nPoseidonWork, uint64_t nAssetAuthWork, int nHeight,
+                                 const Consensus::Params& params);
+/** The virtual size with the weight of the script work. */
+int64_t GetVirtualTransactionSize(int64_t nWeight, int64_t nSigOpCost, int64_t nWorkWeight);
+
 /** Relay limits per transaction at a candidate height (lower from NIP-028). */
 uint64_t GetMaxStandardTxPoseidonWork(int nHeight, const Consensus::Params& params);
 uint64_t GetMaxStandardTxAssetAuthWork(int nHeight, const Consensus::Params& params);

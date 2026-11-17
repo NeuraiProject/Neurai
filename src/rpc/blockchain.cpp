@@ -534,7 +534,7 @@ UniValue getdifficulty(const JSONRPCRequest& request)
 
 std::string EntryDescriptionString()
 {
-    return "    \"size\" : n,             (numeric) virtual transaction size as defined in BIP 141. This is different from actual serialized size for witness transactions as witness data is discounted.\n"
+    return "    \"size\" : n,             (numeric) virtual transaction size as defined in BIP 141. This is different from actual serialized size for witness transactions as witness data is discounted. From the NIP-028 height on it also counts the weight of the script work (Poseidon and OP_CHECKASSETAUTH).\n"
            "    \"fee\" : n,              (numeric) transaction fee in " + CURRENCY_UNIT + "\n"
            "    \"modifiedfee\" : n,      (numeric) transaction fee with fee deltas used for mining priority\n"
            "    \"time\" : n,             (numeric) local time transaction entered pool in seconds since 1 Jan 1970 GMT\n"
@@ -546,6 +546,7 @@ std::string EntryDescriptionString()
            "    \"ancestorsize\" : n,     (numeric) virtual transaction size of in-mempool ancestors (including this one)\n"
            "    \"ancestorfees\" : n,     (numeric) modified fees (see above) of in-mempool ancestors (including this one)\n"
            "    \"poseidonwork\" : n,     (numeric) reserved Poseidon permutations for this transaction\n"
+           "    \"assetauthwork\" : n,    (numeric) OP_CHECKASSETAUTH work units of this transaction\n"
            "    \"wtxid\" : hash,         (string) hash of serialized transaction, including witness data\n"
            "    \"depends\" : [           (array) unconfirmed transactions used as inputs for this transaction\n"
            "        \"transactionid\",    (string) parent transaction id\n"
@@ -568,6 +569,7 @@ void entryToJSON(UniValue &info, const CTxMemPoolEntry &e)
     info.push_back(Pair("ancestorsize", e.GetSizeWithAncestors()));
     info.push_back(Pair("ancestorfees", e.GetModFeesWithAncestors()));
     info.push_back(Pair("poseidonwork", e.GetPoseidonWork()));
+    info.push_back(Pair("assetauthwork", e.GetAssetAuthWork()));
     info.push_back(Pair("wtxid", mempool.vTxHashes[e.vTxHashesIdx].first.ToString()));
     const CTransaction& tx = e.GetTx();
     std::set<std::string> setDepends;

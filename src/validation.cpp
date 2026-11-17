@@ -660,10 +660,12 @@ static bool CreatesInactiveAuthScriptOutput(const CTransaction& tx, const Consen
 
 static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool& pool, CValidationState& state, const CTransactionRef& ptx,
                               bool* pfMissingInputs, int64_t nAcceptTime,
-                              bool bypass_limits, const CAmount& nAbsurdFee, std::vector<COutPoint>& coins_to_uncache, bool test_accept)
+                              bool bypass_limits, const CAmount& nAbsurdFee, std::vector<COutPoint>& coins_to_uncache, bool test_accept,
+                              int64_t* pnVSize)
 {
     const CTransaction& tx = *ptx;
     const uint256 hash = tx.GetHash();
+    if (pnVSize) *pnVSize = -1;
 
     // Mempool transactions are validated as candidates for the next block:
     // that is the strict AuthScript activation context for every asset parser
@@ -916,6 +918,14 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         // below populates `fUsesChainContext_local`; SetUsesChainContext
         // is called between CheckInputs and pool.addUnchecked.
         unsigned int nSize = entry.GetTxSize();
+        // From the NIP-028 height on the size counts the script work, only
+        // known once the scripts ran (A1). Before that height it is final now.
+        const bool fWorkWeight = IsWorkWeightActive(chainActive.Height() + 1, consensus);
+        if (pnVSize && !fWorkWeight) *pnVSize = nSize;
+        // A test of acceptance prices a transaction: when the work counts, it
+        // checks the fees once the size is final, so that a short fee reports
+        // that size. Admission checks them here too, before running scripts.
+        const bool fFeesAfterScripts = test_accept && fWorkWeight;
 
         // Check that the transaction doesn't have an excessive number of
         // sigops, making it impossible to mine. Since the coinbase transaction
@@ -935,12 +945,12 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
                 strprintf("%u", nLegacySigOps));
 
         CAmount mempoolRejectFee = pool.GetMinFee(gArgs.GetArg("-maxmempool", DEFAULT_MAX_MEMPOOL_SIZE) * 1000000).GetFee(nSize);
-        if (!bypass_limits && mempoolRejectFee > 0 && nModifiedFees < mempoolRejectFee) {
+        if (!bypass_limits && !fFeesAfterScripts && mempoolRejectFee > 0 && nModifiedFees < mempoolRejectFee) {
             return state.DoS(0, false, REJECT_INSUFFICIENTFEE, "mempool min fee not met", false, strprintf("%d < %d", nFees, mempoolRejectFee));
         }
 
         // No transactions are allowed below minRelayTxFee except from disconnected blocks
-        if (!bypass_limits && nModifiedFees < ::minRelayTxFee.GetFee(nSize)) {
+        if (!bypass_limits && !fFeesAfterScripts && nModifiedFees < ::minRelayTxFee.GetFee(nSize)) {
             LogPrintf("Modifed fees: %u, minrelayfee: %u\n", nModifiedFees, ::minRelayTxFee.GetFee(nSize));
             return state.DoS(0, false, REJECT_INSUFFICIENTFEE, "min relay fee not met");
         }
@@ -1098,6 +1108,35 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
 
         entry.SetPoseidonWork(consensusPoseidonWork ? consensusPoseidonWork->Used() : 0);
         entry.SetAssetAuthWork(consensusAssetAuthWork ? consensusAssetAuthWork->Used() : 0);
+
+        // From the NIP-028 height on, the script work counts in the virtual
+        // size (A1, CPU review 16-11-2026). It is only known now that the
+        // scripts ran: the fees and the package limits checked above with
+        // the weight alone are checked again with the final size (the fees
+        // of a test of acceptance, only here).
+        entry.SetWorkWeight(GetTransactionWorkWeight(entry.GetPoseidonWork(), entry.GetAssetAuthWork(),
+                                                     chainActive.Height() + 1, consensus));
+        const unsigned int nWeightSize = nSize;
+        nSize = entry.GetTxSize();
+        if (pnVSize) *pnVSize = nSize;
+        if (fFeesAfterScripts || nSize != nWeightSize) {
+            mempoolRejectFee = pool.GetMinFee(gArgs.GetArg("-maxmempool", DEFAULT_MAX_MEMPOOL_SIZE) * 1000000).GetFee(nSize);
+            if (!bypass_limits && mempoolRejectFee > 0 && nModifiedFees < mempoolRejectFee) {
+                return state.DoS(0, false, REJECT_INSUFFICIENTFEE, "mempool min fee not met", false,
+                    strprintf("%d < %d with the script work", nFees, mempoolRejectFee));
+            }
+            if (!bypass_limits && nModifiedFees < ::minRelayTxFee.GetFee(nSize)) {
+                return state.DoS(0, false, REJECT_INSUFFICIENTFEE, "min relay fee not met", false,
+                    strprintf("%d < %d with the script work", nModifiedFees, ::minRelayTxFee.GetFee(nSize)));
+            }
+        }
+        if (nSize != nWeightSize) {
+            setAncestors.clear();
+            if (!pool.CalculateMemPoolAncestors(entry, setAncestors, nLimitAncestors, nLimitAncestorSize, nLimitDescendants, nLimitDescendantSize, errString)) {
+                LogPrintf("%s - %s\n", __func__, errString);
+                return state.DoS(0, false, REJECT_NONSTANDARD, "too-long-mempool-chain", false, errString);
+            }
+        }
 
         // NIP-026: every entry that exercised OP_CHAINCONTEXT runs its scripts
         // again at each tip change, on one thread and under cs_main. Bound the
@@ -1356,10 +1395,10 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
 /** (try to) add transaction to memory pool with a specified acceptance time **/
 static bool AcceptToMemoryPoolWithTime(const CChainParams& chainparams, CTxMemPool& pool, CValidationState &state, const CTransactionRef &tx,
                         bool* pfMissingInputs, int64_t nAcceptTime,
-                        bool bypass_limits, const CAmount nAbsurdFee, bool test_accept)
+                        bool bypass_limits, const CAmount nAbsurdFee, bool test_accept, int64_t* pnVSize = nullptr)
 {
     std::vector<COutPoint> coins_to_uncache;
-    bool res = AcceptToMemoryPoolWorker(chainparams, pool, state, tx, pfMissingInputs, nAcceptTime, bypass_limits, nAbsurdFee, coins_to_uncache, test_accept);
+    bool res = AcceptToMemoryPoolWorker(chainparams, pool, state, tx, pfMissingInputs, nAcceptTime, bypass_limits, nAbsurdFee, coins_to_uncache, test_accept, pnVSize);
     if (!res) {
         for (const COutPoint& hashTx : coins_to_uncache)
             pcoinsTip->Uncache(hashTx);
@@ -1378,10 +1417,10 @@ static bool AcceptToMemoryPoolWithTime(const CChainParams& chainparams, CTxMemPo
 
 bool AcceptToMemoryPool(CTxMemPool& pool, CValidationState &state, const CTransactionRef &tx,
                         bool* pfMissingInputs,
-                        bool bypass_limits, const CAmount nAbsurdFee, bool test_accept)
+                        bool bypass_limits, const CAmount nAbsurdFee, bool test_accept, int64_t* pnVSize)
 {
     const CChainParams& chainparams = GetParams();
-    return AcceptToMemoryPoolWithTime(chainparams, pool, state, tx, pfMissingInputs, GetTime(), bypass_limits, nAbsurdFee, test_accept);
+    return AcceptToMemoryPoolWithTime(chainparams, pool, state, tx, pfMissingInputs, GetTime(), bypass_limits, nAbsurdFee, test_accept, pnVSize);
 }
 
 bool GetTimestampIndex(const unsigned int &high, const unsigned int &low, const bool fActiveOnly, std::vector<std::pair<uint256, unsigned int> > &hashes)
@@ -2074,6 +2113,9 @@ static void MempoolCheckScriptRuleTransition(CTxMemPool& pool,
         params.IsPoseidonWorkActive(nOldCandidateHeight) == params.IsPoseidonWorkActive(nNewCandidateHeight) &&
         params.IsAuthScriptBudgetActive(nOldCandidateHeight) == params.IsAuthScriptBudgetActive(nNewCandidateHeight) &&
         params.IsTxHashActive(nOldCandidateHeight) == params.IsTxHashActive(nNewCandidateHeight) &&
+        // NIP-028: the relay limits per transaction (A2) and the weight of
+        // the script work in the virtual size (A1).
+        IsWorkWeightActive(nOldCandidateHeight, params) == IsWorkWeightActive(nNewCandidateHeight, params) &&
         // Every opt-in switch (AuthScript, opcodes, tx v3, strict OP_XNA_ASSET
         // placement) shares nOptInFeaturesHeight.
         (nOldCandidateHeight >= params.nOptInFeaturesHeight) == (nNewCandidateHeight >= params.nOptInFeaturesHeight))
@@ -2117,6 +2159,13 @@ static void MempoolEvictScriptRuleEntries(CTxMemPool& pool)
     const Consensus::Params& consensus = chainparams.GetConsensus();
     pool.removeForStrictAuthScriptTransition([&](const CTxMemPoolEntry& entry) -> bool {
         const CTransaction& tx = entry.GetTx();
+        // NIP-028 (A1): the size of an entry counts the weight of its work
+        // at the candidate height; one sized under the other rule would be
+        // priced, limited and mined with a stale size.
+        if (GetTransactionWorkWeight(entry.GetPoseidonWork(), entry.GetAssetAuthWork(), nCandidateHeight, consensus) !=
+            entry.GetWorkWeight()) {
+            return true;
+        }
         // Structural rules that CheckInputs cannot see: reference inputs with
         // no special opcode, and the strict OP_XNA_ASSET output placement.
         if (!tx.vrefin.empty() && !consensus.IsRefInputsActive(nCandidateHeight)) {
@@ -2179,6 +2228,10 @@ static void MempoolEvictScriptRuleEntries(CTxMemPool& pool)
         // Evict affected entries and descendants so stored sigop costs and
         // ancestor/package sizes cannot survive an activation boundary stale.
         if (GetTransactionSigOpCost(tx, view, flags) != entry.GetSigOpCost()) return true;
+        // NIP-028 (A2): the witness sigops admission allows per transaction.
+        if (fRequireStandard &&
+            GetTransactionWitnessSigOpCost(tx, view, flags) > GetMaxStandardTxWitnessSigOps(nCandidateHeight, consensus))
+            return true;
         std::shared_ptr<std::vector<CTxOut>> pRefOutputs;
         if (tx.nVersion == 3 && !tx.vrefin.empty()) {
             pRefOutputs = std::make_shared<std::vector<CTxOut>>();

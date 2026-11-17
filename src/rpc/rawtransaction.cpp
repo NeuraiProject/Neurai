@@ -2399,6 +2399,9 @@ UniValue testmempoolaccept(const JSONRPCRequest& request)
                 " {\n"
                 "  \"txid\"           (string) The transaction hash in hex\n"
                 "  \"allowed\"        (boolean) If the mempool allows this tx to be inserted\n"
+                "  \"vsize\"          (numeric) Virtual size used for the fee, with the weight of the script work\n"
+                "                   from the NIP-028 height on. Only present when it is final: from that height,\n"
+                "                   once the scripts ran (also when the fee is short)\n"
                 "  \"reject-reason\"  (string) Rejection string (only present when 'allowed' is false)\n"
                 " }\n"
                 "]\n"
@@ -2441,12 +2444,16 @@ UniValue testmempoolaccept(const JSONRPCRequest& request)
     CValidationState state;
     bool missing_inputs;
     bool test_accept_res;
+    int64_t nVSize = -1;
     {
         LOCK(cs_main);
         test_accept_res = AcceptToMemoryPool(mempool, state, std::move(tx), &missing_inputs,
-                                             false /* bypass_limits */, max_raw_tx_fee, /* test_accpet */ true);
+                                             false /* bypass_limits */, max_raw_tx_fee, /* test_accpet */ true, &nVSize);
     }
     result_0.pushKV("allowed", test_accept_res);
+    if (nVSize >= 0) {
+        result_0.pushKV("vsize", nVSize);
+    }
     if (!test_accept_res) {
         if (state.IsInvalid()) {
             result_0.pushKV("reject-reason", strprintf("%i: %s", state.GetRejectCode(), state.GetRejectReason()));

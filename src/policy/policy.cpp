@@ -18,6 +18,7 @@
 #include "util.h"
 #include "utilstrencodings.h"
 
+#include <algorithm>
 #include <limits>
 
 static size_t EstimateWitnessInputVBytes(int witnessversion, const std::vector<unsigned char>& witnessprogram)
@@ -402,7 +403,30 @@ int64_t GetMaxStandardTxWitnessSigOps(int nHeight, const Consensus::Params& para
 
 int64_t GetVirtualTransactionSize(int64_t nWeight, int64_t nSigOpCost)
 {
-    return (std::max(nWeight, nSigOpCost * nBytesPerSigOp) + WITNESS_SCALE_FACTOR - 1) / WITNESS_SCALE_FACTOR;
+    return GetVirtualTransactionSize(nWeight, nSigOpCost, 0);
+}
+
+int64_t GetVirtualTransactionSize(int64_t nWeight, int64_t nSigOpCost, int64_t nWorkWeight)
+{
+    return (std::max({nWeight, nSigOpCost * nBytesPerSigOp, nWorkWeight}) + WITNESS_SCALE_FACTOR - 1) / WITNESS_SCALE_FACTOR;
+}
+
+bool IsWorkWeightActive(int nHeight, const Consensus::Params& params)
+{
+    return nHeight >= params.nBlockTimeReductionHeight;
+}
+
+int64_t GetTransactionWorkWeight(uint64_t nPoseidonWork, uint64_t nAssetAuthWork, int nHeight,
+                                 const Consensus::Params& params)
+{
+    if (!IsWorkWeightActive(nHeight, params)) return 0;
+    // Saturate instead of overflowing: no block can hold that much work.
+    const auto weigh = [](uint64_t work, int64_t factor) -> int64_t {
+        const uint64_t cap = static_cast<uint64_t>(std::numeric_limits<int64_t>::max() / factor);
+        return static_cast<int64_t>(std::min(work, cap)) * factor;
+    };
+    return std::max(weigh(nPoseidonWork, WORK_WEIGHT_PER_POSEIDON_PERMUTATION),
+                    weigh(nAssetAuthWork, WORK_WEIGHT_PER_ASSETAUTH_UNIT));
 }
 
 int64_t GetVirtualTransactionSize(const CTransaction& tx, int64_t nSigOpCost)

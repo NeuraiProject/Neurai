@@ -301,6 +301,41 @@ BOOST_AUTO_TEST_CASE(relay_work_limits_follow_the_fork_height)
     BOOST_CHECK_EQUAL(GetMaxStandardTxWitnessSigOps(h, test), 2000);
 }
 
+BOOST_AUTO_TEST_CASE(work_weight_follows_the_fork_height)
+{
+    // A block's budget of Poseidon permutations, or of OP_CHECKASSETAUTH
+    // units, weighs as much as a full block (8,000,000).
+    BOOST_CHECK_EQUAL(WORK_WEIGHT_PER_POSEIDON_PERMUTATION, 40);
+    BOOST_CHECK_EQUAL(WORK_WEIGHT_PER_ASSETAUTH_UNIT, 18);
+
+    // Mainnet: no work weight until its fork height is set.
+    const auto mainnet = CreateChainParams(CBaseChainParams::MAIN);
+    const int never = std::numeric_limits<int>::max() - 1;
+    BOOST_CHECK_EQUAL(GetTransactionWorkWeight(5000, 15000, never, mainnet->GetConsensus()), 0);
+
+    // Testnet: from the NIP-028 height on, the larger of the two works.
+    const auto testnet = CreateChainParams(CBaseChainParams::TESTNET);
+    const Consensus::Params& test = testnet->GetConsensus();
+    const int h = test.nBlockTimeReductionHeight;
+    BOOST_CHECK_EQUAL(GetTransactionWorkWeight(5000, 15000, h - 1, test), 0);
+    BOOST_CHECK_EQUAL(GetTransactionWorkWeight(5000, 0, h, test), 200000);
+    BOOST_CHECK_EQUAL(GetTransactionWorkWeight(0, 15000, h, test), 270000);
+    BOOST_CHECK_EQUAL(GetTransactionWorkWeight(5000, 15000, h, test), 270000);
+    BOOST_CHECK_EQUAL(GetTransactionWorkWeight(701, 0, h, test), 28040);   // a C7 operation measured on testnet
+    // No overflow.
+    BOOST_CHECK_EQUAL(GetTransactionWorkWeight(std::numeric_limits<uint64_t>::max(), 0, h, test),
+                      std::numeric_limits<int64_t>::max() / 40 * 40);
+
+    // The virtual size is the largest of the weight, the sigops and the work,
+    // rounded up to whole vbytes.
+    BOOST_CHECK_EQUAL(GetVirtualTransactionSize(4000, 0, 0), 1000);
+    BOOST_CHECK_EQUAL(GetVirtualTransactionSize(4001, 0, 0), 1001);
+    BOOST_CHECK_EQUAL(GetVirtualTransactionSize(4000, 0, 200000), 50000);
+    BOOST_CHECK_EQUAL(GetVirtualTransactionSize(4000, 20000, 200000), 100000);   // 20 bytes per sigop
+    BOOST_CHECK_EQUAL(GetVirtualTransactionSize(300000, 0, 200000), 75000);
+    BOOST_CHECK_EQUAL(GetVirtualTransactionSize(4000, 0), GetVirtualTransactionSize(4000, 0, 0));
+}
+
 BOOST_AUTO_TEST_CASE(mandatory_flags_are_consensus_on_every_network)
 {
     // A mempool script failure under the mandatory flags bans the peer, so

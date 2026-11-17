@@ -86,6 +86,7 @@ BASE_SCRIPTS= [
     'wallet_create_tx.py',
     # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv Tests less than 30s vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
     'feature_relay_work_limits.py',
+    'feature_work_fee.py',
     'feature_poseidon_work_cache.py',
     'mempool_packages.py',
     'p2p_segwit.py',

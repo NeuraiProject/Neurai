@@ -273,7 +273,10 @@ bool BlockAssembler::BlockAlmostFull() const
 bool BlockAssembler::TestPackage(uint64_t packageSize, int64_t packageSigOpsCost) const
 {
     // TODO: switch to weight-based accounting for packages instead of vsize-based accounting.
-    if (nBlockWeight + WITNESS_SCALE_FACTOR * packageSize >= nBlockMaxWeight)
+    // From the NIP-028 height on the virtual size counts the script work,
+    // which takes no room: TestPackageSize checks the weight then.
+    if (!IsWorkWeightActive(nHeight, chainparams.GetConsensus()) &&
+        nBlockWeight + WITNESS_SCALE_FACTOR * packageSize >= nBlockMaxWeight)
         return false;
     if (nBlockSigOpsCost + packageSigOpsCost >= MAX_BLOCK_SIGOPS_COST)
         return false;
@@ -285,9 +288,18 @@ bool BlockAssembler::TestPackageSize(const CTxMemPool::setEntries& package) cons
     // The weight does not bound the serialized size once the NIP-028 limit
     // applies: witness data counts in full there.
     uint64_t nPackageSize = 0;
+    int64_t nPackageWeight = 0;
     for (const CTxMemPool::txiter it : package) {
         nPackageSize += ::GetSerializeSize(it->GetTx(), SER_NETWORK, PROTOCOL_VERSION);
+        nPackageWeight += it->GetTxWeight();
     }
+    // From that height on the virtual size also counts the script work (A1):
+    // it orders and prices the packages, but the room they take is their
+    // weight. The work has block budgets of its own (TestPackageTransactions)
+    // and the sigops theirs (TestPackage).
+    if (IsWorkWeightActive(nHeight, chainparams.GetConsensus()) &&
+        nBlockWeight + nPackageWeight >= nBlockMaxWeight)
+        return false;
     return nBlockSize + nPackageSize < nBlockMaxSize;
 }
 

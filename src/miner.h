@@ -198,7 +198,8 @@ private:
     void onlyUnconfirmed(CTxMemPool::setEntries& testSet);
     /** Test if a new package would "fit" in the block */
     bool TestPackage(uint64_t packageSize, int64_t packageSigOpsCost) const;
-    /** Test if a package fits in the serialized size limit, witness included */
+    /** Test if a package fits in the serialized size limit, witness included,
+      * and from the NIP-028 height on in the weight limit */
     bool TestPackageSize(const CTxMemPool::setEntries& package) const;
     /** Whether the block is within a transaction of its weight or size limit */
     bool BlockAlmostFull() const;

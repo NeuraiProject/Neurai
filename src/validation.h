@@ -433,10 +433,15 @@ void PruneAndFlush();
 void PruneBlockFilesManual(int nManualPruneHeight);
 
 /** (try to) add transaction to memory pool. A transaction that conflicts with
- * one already in the pool is rejected (transaction replacement was removed). */
+ * one already in the pool is rejected (transaction replacement was removed).
+ * pnVSize, if given, receives the final virtual size once it is known, with
+ * the weight of the script work from the NIP-028 height on: from that height,
+ * only after the scripts ran (-1 otherwise). With test_accept the fees are
+ * then checked after the scripts, so that a short fee reports that size. */
 bool AcceptToMemoryPool(CTxMemPool& pool, CValidationState &state, const CTransactionRef &tx,
                         bool* pfMissingInputs,
-                        bool bypass_limits, const CAmount nAbsurdFee, bool test_accept=false);
+                        bool bypass_limits, const CAmount nAbsurdFee, bool test_accept=false,
+                        int64_t* pnVSize=nullptr);
 
 /** Convert CValidationState to a human-readable message for logging */
 std::string FormatStateMessage(const CValidationState &state);

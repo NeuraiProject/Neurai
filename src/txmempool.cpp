@@ -57,7 +57,16 @@ void CTxMemPoolEntry::UpdateLockPoints(const LockPoints& lp)
 
 size_t CTxMemPoolEntry::GetTxSize() const
 {
-    return GetVirtualTransactionSize(nTxWeight, sigOpCost);
+    return GetVirtualTransactionSize(nTxWeight, sigOpCost, nWorkWeight);
+}
+
+void CTxMemPoolEntry::SetWorkWeight(int64_t workWeight)
+{
+    const int64_t nOldSize = GetTxSize();
+    nWorkWeight = workWeight;
+    const int64_t nDelta = static_cast<int64_t>(GetTxSize()) - nOldSize;
+    nSizeWithDescendants += nDelta;
+    nSizeWithAncestors += nDelta;
 }
 
 // Update the given tx for any in-mempool descendants.

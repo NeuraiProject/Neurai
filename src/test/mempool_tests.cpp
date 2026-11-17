@@ -443,6 +443,74 @@ BOOST_FIXTURE_TEST_SUITE(mempool_tests, TestingSetup)
     }
 
 
+    BOOST_AUTO_TEST_CASE(mempool_work_weight_test)
+    {
+        // From the NIP-028 height on, the weight of the script work counts in
+        // the size of an entry: in the ancestor and descendant sizes of its
+        // package, and in the fee rate used to mine and to evict.
+        TestMemPoolEntryHelper entry;
+        {
+            CTxMemPool pool;
+            CMutableTransaction parent;
+            parent.vin.resize(1);
+            parent.vin[0].scriptSig = CScript() << OP_1;
+            parent.vout.resize(1);
+            parent.vout[0].scriptPubKey = CScript() << OP_1 << OP_EQUAL;
+            parent.vout[0].nValue = 10 * COIN;
+            CTxMemPoolEntry parentEntry = entry.Fee(100000LL).FromTx(parent);
+            parentEntry.SetWorkWeight(200000);   // 5,000 Poseidon permutations
+            BOOST_CHECK_EQUAL(parentEntry.GetWorkWeight(), 200000);
+            BOOST_CHECK_EQUAL(parentEntry.GetTxSize(), 50000U);
+            BOOST_CHECK_EQUAL(parentEntry.GetSizeWithAncestors(), 50000U);
+            BOOST_CHECK_EQUAL(parentEntry.GetSizeWithDescendants(), 50000U);
+            pool.addUnchecked(parent.GetHash(), parentEntry);
+
+            CMutableTransaction child;
+            child.vin.resize(1);
+            child.vin[0].prevout = COutPoint(parent.GetHash(), 0);
+            child.vin[0].scriptSig = CScript() << OP_1;
+            child.vout.resize(1);
+            child.vout[0].scriptPubKey = CScript() << OP_1 << OP_EQUAL;
+            child.vout[0].nValue = 9 * COIN;
+            pool.addUnchecked(child.GetHash(), entry.Fee(100000LL).FromTx(child));
+            const uint64_t nChild = GetVirtualTransactionSize(child);
+            BOOST_CHECK_EQUAL(pool.mapTx.find(parent.GetHash())->GetSizeWithDescendants(), 50000 + nChild);
+            BOOST_CHECK_EQUAL(pool.mapTx.find(child.GetHash())->GetSizeWithAncestors(), 50000 + nChild);
+            pool.removeRecursive(CTransaction(parent));
+            BOOST_CHECK_EQUAL(pool.size(), 0U);
+        }
+        {
+            // Same fee: the transaction that runs work has the lower fee
+            // rate, so it is mined after and evicted before the light one.
+            CTxMemPool pool;
+            CMutableTransaction light;
+            light.vin.resize(1);
+            light.vin[0].scriptSig = CScript() << OP_2;
+            light.vout.resize(1);
+            light.vout[0].scriptPubKey = CScript() << OP_2 << OP_EQUAL;
+            light.vout[0].nValue = 10 * COIN;
+            pool.addUnchecked(light.GetHash(), entry.Fee(20000LL).FromTx(light));
+            CMutableTransaction heavy;
+            heavy.vin.resize(1);
+            heavy.vin[0].scriptSig = CScript() << OP_3;
+            heavy.vout.resize(1);
+            heavy.vout[0].scriptPubKey = CScript() << OP_3 << OP_EQUAL;
+            heavy.vout[0].nValue = 10 * COIN;
+            CTxMemPoolEntry heavyEntry = entry.Fee(20000LL).FromTx(heavy);
+            heavyEntry.SetWorkWeight(200000);
+            pool.addUnchecked(heavy.GetHash(), heavyEntry);
+
+            const auto itLight = pool.mapTx.find(light.GetHash());
+            const auto itHeavy = pool.mapTx.find(heavy.GetHash());
+            BOOST_CHECK(CompareTxMemPoolEntryByAncestorFee()(*itLight, *itHeavy));
+            BOOST_CHECK(!CompareTxMemPoolEntryByAncestorFee()(*itHeavy, *itLight));
+
+            pool.TrimToSize(pool.DynamicMemoryUsage() - 1);
+            BOOST_CHECK(pool.exists(light.GetHash()));
+            BOOST_CHECK(!pool.exists(heavy.GetHash()));
+        }
+    }
+
     BOOST_AUTO_TEST_CASE(mempool_size_limit_test)
     {
         BOOST_TEST_MESSAGE("Running Mempool Size Limit Test");
