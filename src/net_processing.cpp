@@ -35,6 +35,8 @@
 #include "utilstrencodings.h"
 #include "validationinterface.h"
 
+#include <tuple>
+
 #if defined(NDEBUG)
 # error "Neurai cannot be compiled without assertions."
 #endif
@@ -1721,11 +1723,13 @@ bool ProcessHeadersMessage(CNode *pfrom, CConnman *connman, std::vector<CBlockHe
  *  one that never had a transaction rejected (a wallet, a node behind NAT)
  *  goes ahead of addresses that keep sending rejected ones. Among equals, the
  *  peer with fewer transactions waiting goes first (a flood fills its queue),
- *  then the one that has waited longest. When the queue is full, a transaction from a never charged
- *  address takes the place of the newest one of the address charged most
- *  recently; one from an address already charged is dropped. Waiting
- *  transactions expire after PENDING_TX_EXPIRY seconds, and those of an
- *  address that becomes ignored, or of a peer that disconnects, are dropped.
+ *  then the one that has waited longest. When the queue is full, a new
+ *  transaction takes the place of the newest one of the peer that would be
+ *  served last, if, once the transaction moves, that peer would still be
+ *  served after the newcomer in this same order. A peer that already holds
+ *  its share of the queue takes no place, so a flood is dropped at once. Waiting transactions expire after
+ *  PENDING_TX_EXPIRY seconds, and those of an address that becomes ignored,
+ *  or of a peer that disconnects, are dropped.
  */
 namespace {
 struct PendingTx {
@@ -1803,22 +1807,41 @@ static bool QueuePendingTx(NodeId nodeid, const std::string& budgetKey, bool fRe
     const size_t nBytes = RecursiveDynamicUsage(*ptx);
     bool fRoom = peer.txs.size() < MAX_PENDING_TX_PER_PEER;
     if (fRoom && (nPendingTx >= MAX_PENDING_TX || nPendingBytes + nBytes > MAX_PENDING_TX_BYTES)) {
-        // Full. Only a never charged address may take a place, from the
-        // address charged most recently; for the addresses that keep sending
-        // rejected transactions this check is all it costs.
-        fRoom = PendingPriority(peer) == 0;
+        // Full. A peer below the average share of the queue may take the
+        // place of the newest transaction of the peer that would be served
+        // last, if that one would still be served after it once the
+        // transaction moves. Both use the order of AdmitPendingTx: when the
+        // address was last charged, then transactions waiting, then the
+        // order of the first one; the highest is served last. Peers at or
+        // above the average (a flood) are dropped without looking further.
+        using Rank = std::tuple<int64_t, size_t, uint64_t>;
+        fRoom = peer.txs.size() * mapPendingTx.size() < nPendingTx;
+        const int64_t nPriority = fRoom ? PendingPriority(peer) : 0;
         while (fRoom && (nPendingTx >= MAX_PENDING_TX || nPendingBytes + nBytes > MAX_PENDING_TX_BYTES)) {
             auto worst = mapPendingTx.end();
-            int64_t nWorst = 0;
+            Rank worstRank;
             for (auto it = mapPendingTx.begin(); it != mapPendingTx.end(); ++it) {
-                if (it->second.txs.empty()) continue;
-                const int64_t nPriority = PendingPriority(it->second);
-                if (nPriority > nWorst) {
+                if (it->first == nodeid || it->second.txs.empty()) continue;
+                const Rank rank{PendingPriority(it->second), it->second.txs.size(), it->second.txs.front().nOrder};
+                if (worst == mapPendingTx.end() || rank > worstRank) {
                     worst = it;
-                    nWorst = nPriority;
+                    worstRank = rank;
                 }
             }
-            if (worst == mapPendingTx.end()) {
+            bool fGivesWay = false;
+            if (worst != mapPendingTx.end()) {
+                const PendingPeer& other = worst->second;
+                if (other.txs.size() == 1) {
+                    // It would leave the queue: only for a worse address.
+                    fGivesWay = std::get<0>(worstRank) > nPriority;
+                } else {
+                    const Rank otherAfter{std::get<0>(worstRank), other.txs.size() - 1, other.txs.front().nOrder};
+                    const Rank mineAfter{nPriority, peer.txs.size() + 1,
+                                         peer.txs.empty() ? nPendingOrder : peer.txs.front().nOrder};
+                    fGivesWay = otherAfter > mineAfter;
+                }
+            }
+            if (!fGivesWay) {
                 fRoom = false;
             } else {
                 LogPrint(BCLog::MEMPOOLREJ, "%s from peer=%d dropped: admission queue full\n",

@@ -24,6 +24,9 @@ peer is never penalised for them.
   charged (a wallet) goes ahead of those that arrived earlier from addresses
   that keep sending rejected ones. The ignored address is still dropped, and
   after 10 minutes it is admitted again.
+- When the queue is full of transactions from peers never charged, a new
+  clean peer still gets a place: the peer that would be served last (the one
+  with most transactions waiting) gives way, and the new payment goes first.
 - Orphans wait, when their parent arrives, in the queue of the peer that sent
   them, run on its budget, and once each even if they spend many outputs of
   the same parent.
@@ -307,11 +310,69 @@ class TxAdmissionBudgetTest(NeuraiTestFramework):
         a.sync_with_ping()
         assert self.not_processed(still)
 
+        self.log.info("A request queued before its peer was ignored is not sent; another peer is asked at once")
+        # The request was queued two minutes after the silent peer's; by the
+        # node's clock, 127.0.0.13 is still within its ten minutes.
+        wait_until(lambda: time.time() > queued_at + 125, err_msg="queued request due", timeout=180)
+        queued.sync_with_ping()
+        assert int(pending.hash, 16) not in queued.requested
+        assert re.search(r"%s not requested from peer=\d+: address ignored by the admission budget" % pending.hash,
+                         self.log_text())
+        self.advance(10)
+        assert honest.announce(pending)
+        honest.send_message(MsgWitnessTx(pending))
+        wait_until(lambda: pending.hash in node.getrawmempool(), err_msg="pending tx", timeout=30)
+
         self.log.info("After 10 minutes the ignored address is admitted again")
         self.advance(ignored_at + 601 - self.mocktime)
         a.send_message(MsgWitnessTx(still))
         wait_until(lambda: still.hash in node.getrawmempool(), err_msg="recovery", timeout=30)
         assert_equal(node.listbanned(), [])
+
+        self.log.info("A queue full of never charged peers makes room for a new clean peer")
+        # Empty the inbound bucket (the clock stays still, so it does not
+        # refill), then drop the peer that emptied it with its waiting
+        # transaction: only never charged peers are left to fill the queue.
+        self.advance(10)
+        drain = self.connect("127.0.0.14")
+        self.exhaust(drain, "127.0.0.14")
+        drain.connection.handle_close()
+        wait_until(lambda: not any(p["addr"].startswith("127.0.0.14:") for p in node.getpeerinfo()),
+                   err_msg="drain disconnected", timeout=30)
+        template = self.valid()
+        fillers = []
+        for i in range(10):
+            filler = self.connect("127.0.0.%d" % (30 + i))
+            fillers.append(filler)
+            for j in range(100):   # the most a peer may have waiting; 1,000 in all fill the queue
+                tx = CTransaction(template)
+                tx.vout[0].nValue -= 1 + 100 * i + j
+                tx.rehash()
+                filler.send_message(MsgWitnessTx(tx))
+            filler.sync_with_ping(timeout=120)
+        payer = self.connect("127.0.0.15")
+        payment = self.valid()
+        assert payer.announce(payment)
+        mark = len(self.log_text())
+        payer.send_message(MsgWitnessTx(payment))
+        payer.sync_with_ping()
+        assert self.waits(payment)
+        given_way = re.findall(r"([0-9a-f]{64}) from peer=\d+ dropped: admission queue full", self.log_text()[mark:])
+        assert_equal(len(given_way), 1)          # the newest transaction of one filler
+        assert given_way[0] != payment.hash
+        refill = len(self.log_text())
+        for _ in range(20):
+            self.advance(1)
+            if payment.hash in node.getrawmempool():
+                break
+            payer.sync_with_ping()
+        wait_until(lambda: payment.hash in node.getrawmempool(), err_msg="payment from a full queue", timeout=30)
+        # It goes first: one transaction waiting against 99 or 100 per filler.
+        first = re.search(r"accepted ([0-9a-f]{64})|([0-9a-f]{64}) from peer=\d+ was not accepted",
+                          self.log_text()[refill:])
+        assert_equal(first.group(1) or first.group(2), payment.hash)
+        for filler in fillers + [payer]:
+            filler.connection.handle_close()
 
         self.log.info("Orphans run once each, on the budget of the peer that sent them")
         # Each parent pays the orphans of one batch: 6 orphans of 40 inputs,
@@ -375,18 +436,6 @@ class TxAdmissionBudgetTest(NeuraiTestFramework):
         assert "transactions from 127.0.0.11 ignored" in log
         assert "transactions from 127.0.0.9 ignored" not in log
         assert_equal(node.listbanned(), [])
-
-        self.log.info("A request queued before its peer was ignored is not sent; another peer is asked at once")
-        # The request was queued two minutes after the silent peer's.
-        wait_until(lambda: time.time() > queued_at + 125, err_msg="queued request due", timeout=180)
-        queued.sync_with_ping()
-        assert int(pending.hash, 16) not in queued.requested
-        assert re.search(r"%s not requested from peer=\d+: address ignored by the admission budget" % pending.hash,
-                         self.log_text())
-        self.advance(10)
-        assert honest.announce(pending)
-        honest.send_message(MsgWitnessTx(pending))
-        wait_until(lambda: pending.hash in node.getrawmempool(), err_msg="pending tx", timeout=30)
 
 
 if __name__ == '__main__':
