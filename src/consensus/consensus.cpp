@@ -36,6 +36,16 @@ unsigned int GetMaxBlockSerializedSizeAtHeight(int nHeight, const Consensus::Par
         : MAX_BLOCK_SERIALIZED_SIZE_RIP2;
 }
 
+uint64_t GetMaxBlockPoseidonWork(int nHeight, const Consensus::Params& params)
+{
+    return nHeight >= params.nBlockTimeReductionHeight ? MAX_BLOCK_POSEIDON_WORK_NIP028 : MAX_BLOCK_POSEIDON_WORK;
+}
+
+uint64_t GetMaxBlockAssetAuthWork(int nHeight, const Consensus::Params& params)
+{
+    return nHeight >= params.nBlockTimeReductionHeight ? MAX_BLOCK_ASSETAUTH_WORK_NIP028 : MAX_BLOCK_ASSETAUTH_WORK;
+}
+
 int GetCoinbaseMaturity()
 {
     return GetParams().GetConsensus().nCoinbaseMaturity;

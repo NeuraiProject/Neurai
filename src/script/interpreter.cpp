@@ -4451,7 +4451,7 @@ size_t static WitnessSigOps(int witversion, const std::vector<unsigned char> &wi
         {
             CScript subscript(witness.stack.back().begin(), witness.stack.back().end());
             return subscript.GetSigOpCount(true, (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) != 0,
-                (flags & SCRIPT_VERIFY_CHECKSIGADD) != 0, (flags & SCRIPT_VERIFY_ED25519) != 0);
+                (flags & SCRIPT_VERIFY_CHECKSIGADD) != 0, GetEd25519SigOps(flags));
         }
     }
 
@@ -4466,7 +4466,7 @@ size_t static WitnessSigOps(int witversion, const std::vector<unsigned char> &wi
             const auto& bytes = witness.stack[witness.stack.size()-2];
             CScript leaf(bytes.begin(), bytes.end());
             return leaf.GetSigOpCount(true, (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) != 0,
-                (flags & SCRIPT_VERIFY_CHECKSIGADD) != 0, (flags & SCRIPT_VERIFY_ED25519) != 0)
+                (flags & SCRIPT_VERIFY_CHECKSIGADD) != 0, GetEd25519SigOps(flags))
                 + ((flags & SCRIPT_VERIFY_ZKVERIFY) ? leaf.CountZKVerify()*ZKVERIFY_SIGOP_COST : 0)
                 + (witness.stack[0][0] != 0x10 ? 1 : 0);
         }
@@ -4474,7 +4474,7 @@ size_t static WitnessSigOps(int witversion, const std::vector<unsigned char> &wi
         if (witness.stack.size() > 1) {
             CScript subscript(witness.stack.back().begin(), witness.stack.back().end());
             sigops = subscript.GetSigOpCount(true, (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) != 0,
-                (flags & SCRIPT_VERIFY_CHECKSIGADD) != 0, (flags & SCRIPT_VERIFY_ED25519) != 0);
+                (flags & SCRIPT_VERIFY_CHECKSIGADD) != 0, GetEd25519SigOps(flags));
             if (flags & SCRIPT_VERIFY_ZKVERIFY) sigops += subscript.CountZKVerify()*ZKVERIFY_SIGOP_COST;
         }
         if (witness.stack[0].size() == 1 && witness.stack[0][0] != 0x00) {

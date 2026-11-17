@@ -805,17 +805,19 @@ public:
      *  ... OP_N CHECKMULTISIG ...
      */
     // Optional opcodes count once when their respective verification flags are
-    // active. Defaults preserve context-free/historical callers. CHECKSIGADD
-    // also retains its separate dynamic per-script operation surcharge.
+    // active, except OP_CHECKSIG_ED25519, which counts nEd25519SigOps (see
+    // GetEd25519SigOps; 0 while it is not active). Defaults preserve
+    // context-free/historical callers. CHECKSIGADD also retains its separate
+    // dynamic per-script operation surcharge.
     unsigned int CountZKVerify() const;
 
-    unsigned int GetSigOpCount(bool fAccurate, bool countCSFS = false, bool countCheckSigAdd = false, bool countEd25519 = false) const;
+    unsigned int GetSigOpCount(bool fAccurate, bool countCSFS = false, bool countCheckSigAdd = false, unsigned int nEd25519SigOps = 0) const;
 
     /**
      * Accurately count sigOps, including sigOps in
      * pay-to-script-hash transactions:
      */
-    unsigned int GetSigOpCount(const CScript& scriptSig, bool countCSFS = false, bool countCheckSigAdd = false, bool countEd25519 = false) const;
+    unsigned int GetSigOpCount(const CScript& scriptSig, bool countCSFS = false, bool countCheckSigAdd = false, unsigned int nEd25519SigOps = 0) const;
 
     bool IsPayToPublicKeyHash() const;
 

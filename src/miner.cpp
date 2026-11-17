@@ -213,10 +213,13 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
     pblock->nNonce         = 0;
     pblock->nNonce64         = 0;
     pblock->nHeight          = nHeight;
+    // The coinbase counts its sigops as ConnectBlock does, with the flags of
+    // this block.
+    const script_verify_flags coinbaseFlags = ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, chainparams.GetConsensus(),
+        chainparams.GetConsensus().IsStrictAuthScriptActive(nHeight), nHeight);
     pblocktemplate->vTxSigOpsCost[0] = WITNESS_SCALE_FACTOR * GetLegacySigOpCount(*pblock->vtx[0],
-        (chainparams.GetConsensus().IsSignatureOpcodesActive(nHeight) && chainparams.GetConsensus().IsOptInActive(chainparams.GetConsensus().nCSFSEnabled, nHeight)),
-        (chainparams.GetConsensus().IsSignatureOpcodesActive(nHeight) && chainparams.GetConsensus().IsOptInActive(chainparams.GetConsensus().nCheckSigAddEnabled, nHeight)),
-        (chainparams.GetConsensus().IsSignatureOpcodesActive(nHeight) && chainparams.GetConsensus().IsOptInActive(chainparams.GetConsensus().nEd25519Enabled, nHeight)));
+        (coinbaseFlags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) != 0, (coinbaseFlags & SCRIPT_VERIFY_CHECKSIGADD) != 0,
+        GetEd25519SigOps(coinbaseFlags));
 
     CValidationState state;
     if (!TestBlockValidity(state, chainparams, *pblock, pindexPrev, false, false)) {
@@ -311,15 +314,17 @@ bool BlockAssembler::TestPackageTransactions(const CTxMemPool::setEntries& packa
 {
     uint64_t poseidonWork = nBlockPoseidonWork;
     uint64_t assetAuthWork = nBlockAssetAuthWork;
+    const uint64_t nMaxPoseidonWork = GetMaxBlockPoseidonWork(nHeight, chainparams.GetConsensus());
+    const uint64_t nMaxAssetAuthWork = GetMaxBlockAssetAuthWork(nHeight, chainparams.GetConsensus());
     for (const CTxMemPool::txiter it : package) {
         if (chainparams.GetConsensus().IsPoseidonWorkActive(nHeight)) {
-            if (it->GetPoseidonWork() > MAX_BLOCK_POSEIDON_WORK - poseidonWork) return false;
+            if (it->GetPoseidonWork() > nMaxPoseidonWork - poseidonWork) return false;
             poseidonWork += it->GetPoseidonWork();
         }
         // NIP-054: the template must stay within the block budget, or it
         // would fail TestBlockValidity.
         if (chainparams.GetConsensus().IsAssetAuthActive(nHeight)) {
-            if (it->GetAssetAuthWork() > MAX_BLOCK_ASSETAUTH_WORK - assetAuthWork) return false;
+            if (it->GetAssetAuthWork() > nMaxAssetAuthWork - assetAuthWork) return false;
             assetAuthWork += it->GetAssetAuthWork();
         }
         if (!IsFinalTx(it->GetTx(), nHeight, nLockTimeCutoff))

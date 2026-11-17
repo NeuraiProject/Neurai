@@ -218,7 +218,7 @@ unsigned int CScript::CountZKVerify() const
     return count;
 }
 
-unsigned int CScript::GetSigOpCount(bool fAccurate, bool countCSFS, bool countCheckSigAdd, bool countEd25519) const
+unsigned int CScript::GetSigOpCount(bool fAccurate, bool countCSFS, bool countCheckSigAdd, unsigned int nEd25519SigOps) const
 {
     unsigned int n = 0;
     const_iterator pc = begin();
@@ -230,9 +230,10 @@ unsigned int CScript::GetSigOpCount(bool fAccurate, bool countCSFS, bool countCh
             break;
         if (opcode == OP_CHECKSIG || opcode == OP_CHECKSIGVERIFY ||
             (countCSFS && opcode == OP_CHECKSIGFROMSTACK) ||
-            (countCheckSigAdd && opcode == OP_CHECKSIGADD) ||
-            (countEd25519 && opcode == OP_CHECKSIG_ED25519))
+            (countCheckSigAdd && opcode == OP_CHECKSIGADD))
             n++;
+        else if (opcode == OP_CHECKSIG_ED25519)
+            n += nEd25519SigOps;
         else if (opcode == OP_CHECKMULTISIG || opcode == OP_CHECKMULTISIGVERIFY)
         {
             if (fAccurate && lastOpcode >= OP_1 && lastOpcode <= OP_16)
@@ -245,10 +246,10 @@ unsigned int CScript::GetSigOpCount(bool fAccurate, bool countCSFS, bool countCh
     return n;
 }
 
-unsigned int CScript::GetSigOpCount(const CScript& scriptSig, bool countCSFS, bool countCheckSigAdd, bool countEd25519) const
+unsigned int CScript::GetSigOpCount(const CScript& scriptSig, bool countCSFS, bool countCheckSigAdd, unsigned int nEd25519SigOps) const
 {
     if (!IsPayToScriptHash())
-        return GetSigOpCount(true, countCSFS, countCheckSigAdd, countEd25519);
+        return GetSigOpCount(true, countCSFS, countCheckSigAdd, nEd25519SigOps);
 
     // This is a pay-to-script-hash scriptPubKey;
     // get the last item that the scriptSig
@@ -266,7 +267,7 @@ unsigned int CScript::GetSigOpCount(const CScript& scriptSig, bool countCSFS, bo
 
     /// ... and return its opcount:
     CScript subscript(vData.begin(), vData.end());
-    return subscript.GetSigOpCount(true, countCSFS, countCheckSigAdd, countEd25519);
+    return subscript.GetSigOpCount(true, countCSFS, countCheckSigAdd, nEd25519SigOps);
 }
 
 bool CScript::IsPayToPublicKeyHash() const

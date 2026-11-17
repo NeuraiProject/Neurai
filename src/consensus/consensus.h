@@ -32,6 +32,11 @@ static constexpr uint64_t MAX_BLOCK_POSEIDON_WORK = 200000;
 // worst-case benchmarks so that a full block costs no more to validate than
 // the worst OP_POSEIDON block.
 static constexpr uint64_t MAX_BLOCK_ASSETAUTH_WORK = 450000;
+// From the NIP-028 height on (30 s blocks) both budgets are halved, so that
+// the work a node validates per second stays the same and the worst block
+// stays within a tenth of the interval (CPU review 16-11-2026, B2-a).
+static constexpr uint64_t MAX_BLOCK_POSEIDON_WORK_NIP028 = 100000;
+static constexpr uint64_t MAX_BLOCK_ASSETAUTH_WORK_NIP028 = 225000;
 /** The maximum allowed number of signature check operations in a block (network rule) */
 static const int64_t MAX_BLOCK_SIGOPS_COST = 80000;
 /** The maximum number of legacy signature operations a transaction may execute,
@@ -62,6 +67,10 @@ unsigned int GetMaxBlockSerializedSize();
 namespace Consensus { struct Params; }
 /** Serialized size limit, witness included, of a block at nHeight. */
 unsigned int GetMaxBlockSerializedSizeAtHeight(int nHeight, const Consensus::Params& params);
+/** Poseidon permutations a block at nHeight may run (network rule). */
+uint64_t GetMaxBlockPoseidonWork(int nHeight, const Consensus::Params& params);
+/** OP_CHECKASSETAUTH work units a block at nHeight may run (network rule). */
+uint64_t GetMaxBlockAssetAuthWork(int nHeight, const Consensus::Params& params);
 int GetCoinbaseMaturity();
 
 /** Flags for nSequence and nLockTime locks */

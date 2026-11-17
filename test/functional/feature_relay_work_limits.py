@@ -36,11 +36,12 @@ FORK_HEIGHT = 200
 COIN = 100000000
 VALUE = COIN
 # 2,000 sigops count as 10,000 vB at 20 bytes per sigop; from the NIP-028
-# height 5,000 permutations count as 50,000 vB (A1): 0.5 XNA is their minimum.
-FEE = COIN // 2
+# height 5,000 permutations count as 100,000 vB (A1 with B2-a): 1 XNA is
+# their minimum.
+FEE = COIN
 # From the NIP-028 height the work counts in the fee too (A1): 15,000 units
-# weigh 270,000, 67,500 vbytes, 0.675 XNA at the minimum rate.
-ASSETAUTH_FEE = COIN
+# weigh 540,000, 135,000 vbytes, 1.35 XNA at the minimum rate.
+ASSETAUTH_FEE = 2 * COIN
 CUSTODY_VALUE = COIN // 10
 CUSTODY_INPUTS = 100
 PAYMENTS = 33

@@ -5,11 +5,11 @@
 
 """The script work of a transaction counts in its virtual size (A1).
 
-From the NIP-028 height on, each Poseidon permutation weighs 40 and each
-OP_CHECKASSETAUTH unit 18: a block's budget of either weighs as much as a full
+From the NIP-028 height on, each Poseidon permutation weighs 80 and each
+OP_CHECKASSETAUTH unit 36: a block's budget of either weighs as much as a full
 block. The virtual size is the largest of the weight, the sigops and the work.
 A transaction of 5,000 permutations (10 inputs x 500 OP_POSEIDON) weighs
-200,000 for its work: 50,000 vbytes, and a minimum relay fee of 0.5 XNA.
+400,000 for its work: 100,000 vbytes, and a minimum relay fee of 1 XNA.
 
 - Below the height the work does not count.
 - Crossing the height, in either direction, evicts the entries sized under the
@@ -38,8 +38,8 @@ COIN = 100000000
 VALUE = COIN
 HEAVY = bytes([0xc9]) * 500 + bytes([0x75, 0x51])   # 500 permutations
 LIGHT = bytes([0xc9, 0x75, 0x51])                    # 1 permutation
-HEAVY_VSIZE = 50000                                  # 10 inputs: 5,000 x 40 / 4
-MIN_FEE = 50000000                                   # 0.01 XNA per kvB
+HEAVY_VSIZE = 100000                                 # 10 inputs: 5,000 x 80 / 4
+MIN_FEE = 100000000                                  # 0.01 XNA per kvB
 
 
 def sha256(data):
@@ -56,10 +56,10 @@ class WorkFeeTest(NeuraiTestFramework):
         self.setup_clean_chain = True
         self.num_nodes = 2
         fork = "-blocktimereductionheight=%d" % FORK_HEIGHT
-        # A package of two transactions with work goes over 60 kvB. node1
+        # A package of two transactions with work goes over 150 kvB. node1
         # builds blocks of 150,000 weight units: a transaction with work
-        # weighs about 7,000, and 200,000 with its work.
-        self.extra_args = [[fork, "-limitancestorsize=60", "-limitdescendantsize=60"],
+        # weighs about 7,000, and 400,000 with its work.
+        self.extra_args = [[fork, "-limitancestorsize=150", "-limitdescendantsize=150"],
                            [fork, "-blockmaxweight=150000"]]
 
     def setup_network(self):
@@ -180,7 +180,7 @@ class WorkFeeTest(NeuraiTestFramework):
         assert_equal(result["allowed"], False)
         assert "Witness program hash mismatch" in result["reject-reason"]
         assert "vsize" not in result
-        self.log.info("  %d vbytes: 0.5 XNA accepted, one satoshi less refused", HEAVY_VSIZE)
+        self.log.info("  %d vbytes: 1 XNA accepted, one satoshi less refused", HEAVY_VSIZE)
 
         self.log.info("prioritisetransaction counts against the size with work")
         node.prioritisetransaction(cheap.hash, 0, MIN_FEE - COIN // 20)
@@ -189,7 +189,7 @@ class WorkFeeTest(NeuraiTestFramework):
         assert_equal(self.test(cheap)["allowed"], False)
 
         self.log.info("Package sizes and limits use the size with work")
-        # The parent pays 0.5 XNA and leaves an output for each kind of child.
+        # The parent pays 1 XNA and leaves an output for each kind of child.
         parent = self.spend(heavy_coins, MIN_FEE, [(authscript(LIGHT), VALUE), (authscript(HEAVY), VALUE)])
         self.send(parent)
         entry = node.getmempoolentry(parent.hash)
@@ -201,8 +201,8 @@ class WorkFeeTest(NeuraiTestFramework):
         child_size = node.getmempoolentry(light_child.hash)["size"]
         assert_equal(node.getmempoolentry(parent.hash)["descendantsize"], HEAVY_VSIZE + child_size)
         assert_equal(node.getmempoolentry(light_child.hash)["ancestorsize"], HEAVY_VSIZE + child_size)
-        # A second transaction with work on top: 100 kvB of package, over the
-        # 60 kvB limits of node0; node1 (default limits) takes it.
+        # A second transaction with work on top: 200 kvB of package, over the
+        # 150 kvB limits of node0; node1 (default limits) takes it.
         heavy_child = self.spend([((parent.x16r, 1), HEAVY)] + self.take(HEAVY, 9), MIN_FEE)
         result = self.test(heavy_child)
         assert_equal(result["allowed"], False)
@@ -213,8 +213,8 @@ class WorkFeeTest(NeuraiTestFramework):
         assert_equal(self.test(heavy_child, self.nodes[1])["allowed"], True)
 
         self.log.info("Block assembly puts, at the same fee, the transaction without work first")
-        light = self.spend(self.take(LIGHT, 1), MIN_FEE)
-        heavy = self.spend(self.take(HEAVY, 10), MIN_FEE)   # the minimum rate; the light one pays 250 times it
+        light = self.spend(self.take(LIGHT, 2), MIN_FEE)
+        heavy = self.spend(self.take(HEAVY, 10), MIN_FEE)   # the minimum rate; the light one pays far more per vbyte
         self.send(heavy)
         self.send(light)
         order = [t["txid"] for t in node.getblocktemplate({"rules": ["segwit"]})["transactions"]]

@@ -301,12 +301,84 @@ BOOST_AUTO_TEST_CASE(relay_work_limits_follow_the_fork_height)
     BOOST_CHECK_EQUAL(GetMaxStandardTxWitnessSigOps(h, test), 2000);
 }
 
+BOOST_AUTO_TEST_CASE(block_work_budgets_follow_the_fork_height)
+{
+    // Mainnet keeps the budgets until its fork height is set.
+    const auto mainnet = CreateChainParams(CBaseChainParams::MAIN);
+    const Consensus::Params& main = mainnet->GetConsensus();
+    const int never = std::numeric_limits<int>::max() - 1;
+    BOOST_CHECK_EQUAL(GetMaxBlockPoseidonWork(never, main), 200000U);
+    BOOST_CHECK_EQUAL(GetMaxBlockAssetAuthWork(never, main), 450000U);
+
+    // From the NIP-028 height on, half: the same work per second with blocks
+    // of 30 s (B2-a).
+    const auto testnet = CreateChainParams(CBaseChainParams::TESTNET);
+    const Consensus::Params& test = testnet->GetConsensus();
+    const int h = test.nBlockTimeReductionHeight;
+    BOOST_CHECK_EQUAL(GetMaxBlockPoseidonWork(h - 1, test), MAX_BLOCK_POSEIDON_WORK);
+    BOOST_CHECK_EQUAL(GetMaxBlockPoseidonWork(h, test), 100000U);
+    BOOST_CHECK_EQUAL(GetMaxBlockAssetAuthWork(h - 1, test), MAX_BLOCK_ASSETAUTH_WORK);
+    BOOST_CHECK_EQUAL(GetMaxBlockAssetAuthWork(h, test), 225000U);
+
+    // Regtest moves them with the NIP-028 height.
+    SelectParams(CBaseChainParams::REGTEST);
+    UpdateBlockTimeReductionHeight(500);
+    BOOST_CHECK_EQUAL(GetMaxBlockPoseidonWork(499, GetParams().GetConsensus()), MAX_BLOCK_POSEIDON_WORK);
+    BOOST_CHECK_EQUAL(GetMaxBlockPoseidonWork(500, GetParams().GetConsensus()), MAX_BLOCK_POSEIDON_WORK_NIP028);
+    BOOST_CHECK_EQUAL(GetMaxBlockAssetAuthWork(499, GetParams().GetConsensus()), MAX_BLOCK_ASSETAUTH_WORK);
+    BOOST_CHECK_EQUAL(GetMaxBlockAssetAuthWork(500, GetParams().GetConsensus()), MAX_BLOCK_ASSETAUTH_WORK_NIP028);
+    UpdateBlockTimeReductionHeight(std::numeric_limits<int>::max());
+    SelectParams(CBaseChainParams::MAIN);
+}
+
+BOOST_AUTO_TEST_CASE(ed25519_counts_three_sigops_from_the_fork_height)
+{
+    // The sigops of one OP_CHECKSIG_ED25519 under each set of flags.
+    BOOST_CHECK_EQUAL(GetEd25519SigOps(SCRIPT_VERIFY_NONE), 0U);
+    BOOST_CHECK_EQUAL(GetEd25519SigOps(SCRIPT_VERIFY_ED25519_COST), 0U);   // opcode not active
+    BOOST_CHECK_EQUAL(GetEd25519SigOps(SCRIPT_VERIFY_ED25519), 1U);
+    BOOST_CHECK_EQUAL(GetEd25519SigOps(SCRIPT_VERIFY_ED25519 | SCRIPT_VERIFY_ED25519_COST), 3U);
+    BOOST_CHECK(CONSENSUS_OPT_IN_FLAGS & SCRIPT_VERIFY_ED25519_COST);
+
+    // The flag follows the NIP-028 height, on its own as well.
+    const auto mainnet = CreateChainParams(CBaseChainParams::MAIN);
+    const int never = std::numeric_limits<int>::max() - 1;
+    BOOST_CHECK(!(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, mainnet->GetConsensus(), false, never) & SCRIPT_VERIFY_ED25519_COST));
+    const auto testnet = CreateChainParams(CBaseChainParams::TESTNET);
+    const Consensus::Params& test = testnet->GetConsensus();
+    const int h = test.nBlockTimeReductionHeight;
+    BOOST_CHECK(!(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, test, true, h - 1) & SCRIPT_VERIFY_ED25519_COST));
+    BOOST_CHECK_EQUAL(GetEd25519SigOps(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, test, true, h)), 3U);
+    SelectParams(CBaseChainParams::REGTEST);
+    UpdateBlockTimeReductionHeight(500);
+    BOOST_CHECK_EQUAL(GetEd25519SigOps(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, GetParams().GetConsensus(), true, 499)), 1U);
+    BOOST_CHECK_EQUAL(GetEd25519SigOps(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, GetParams().GetConsensus(), true, 500)), 3U);
+    UpdateBlockTimeReductionHeight(std::numeric_limits<int>::max());
+    SelectParams(CBaseChainParams::MAIN);
+
+    // Counting, in a script and in a witness script.
+    const CScript script = CScript() << OP_CHECKSIG_ED25519 << OP_CHECKSIG_ED25519 << OP_CHECKSIG;
+    BOOST_CHECK_EQUAL(script.GetSigOpCount(true, false, false, 0), 1U);
+    BOOST_CHECK_EQUAL(script.GetSigOpCount(true, false, false, 1), 3U);
+    BOOST_CHECK_EQUAL(script.GetSigOpCount(true, false, false, ED25519_SIGOP_COST), 7U);
+    CScriptWitness witness;
+    witness.stack.push_back(std::vector<unsigned char>(script.begin(), script.end()));
+    const CScript p2wsh = GetScriptForWitness(script);
+    const script_verify_flags flags = SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_ED25519;
+    BOOST_CHECK_EQUAL(CountWitnessSigOps(CScript(), p2wsh, &witness, flags), 3U);
+    BOOST_CHECK_EQUAL(CountWitnessSigOps(CScript(), p2wsh, &witness, flags | SCRIPT_VERIFY_ED25519_COST), 7U);
+
+    // A block holds 26,666 checks, 79,998 sigops; 26,667 are over the limit.
+    static_assert(26666 * ED25519_SIGOP_COST <= MAX_BLOCK_SIGOPS_COST, "26,666 checks fit");
+    static_assert(26667 * ED25519_SIGOP_COST > MAX_BLOCK_SIGOPS_COST, "26,667 checks do not");
+}
+
 BOOST_AUTO_TEST_CASE(work_weight_follows_the_fork_height)
 {
     // A block's budget of Poseidon permutations, or of OP_CHECKASSETAUTH
-    // units, weighs as much as a full block (8,000,000).
-    BOOST_CHECK_EQUAL(WORK_WEIGHT_PER_POSEIDON_PERMUTATION, 40);
-    BOOST_CHECK_EQUAL(WORK_WEIGHT_PER_ASSETAUTH_UNIT, 18);
+    // units, from the NIP-028 height weighs as much as a full block (8,000,000).
+    BOOST_CHECK_EQUAL(WORK_WEIGHT_PER_POSEIDON_PERMUTATION, 80);
+    BOOST_CHECK_EQUAL(WORK_WEIGHT_PER_ASSETAUTH_UNIT, 36);
 
     // Mainnet: no work weight until its fork height is set.
     const auto mainnet = CreateChainParams(CBaseChainParams::MAIN);
@@ -318,13 +390,13 @@ BOOST_AUTO_TEST_CASE(work_weight_follows_the_fork_height)
     const Consensus::Params& test = testnet->GetConsensus();
     const int h = test.nBlockTimeReductionHeight;
     BOOST_CHECK_EQUAL(GetTransactionWorkWeight(5000, 15000, h - 1, test), 0);
-    BOOST_CHECK_EQUAL(GetTransactionWorkWeight(5000, 0, h, test), 200000);
-    BOOST_CHECK_EQUAL(GetTransactionWorkWeight(0, 15000, h, test), 270000);
-    BOOST_CHECK_EQUAL(GetTransactionWorkWeight(5000, 15000, h, test), 270000);
-    BOOST_CHECK_EQUAL(GetTransactionWorkWeight(701, 0, h, test), 28040);   // a C7 operation measured on testnet
+    BOOST_CHECK_EQUAL(GetTransactionWorkWeight(5000, 0, h, test), 400000);
+    BOOST_CHECK_EQUAL(GetTransactionWorkWeight(0, 15000, h, test), 540000);
+    BOOST_CHECK_EQUAL(GetTransactionWorkWeight(5000, 15000, h, test), 540000);
+    BOOST_CHECK_EQUAL(GetTransactionWorkWeight(701, 0, h, test), 56080);   // a C7 operation measured on testnet
     // No overflow.
     BOOST_CHECK_EQUAL(GetTransactionWorkWeight(std::numeric_limits<uint64_t>::max(), 0, h, test),
-                      std::numeric_limits<int64_t>::max() / 40 * 40);
+                      std::numeric_limits<int64_t>::max() / 80 * 80);
 
     // The virtual size is the largest of the weight, the sigops and the work,
     // rounded up to whole vbytes.

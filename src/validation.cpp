@@ -864,7 +864,8 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         const int nNextHeight = chainActive.Height() + 1;
         const auto& optin = chainparams.GetConsensus();
         if (fRequireStandard && !AreInputsStandard(tx, view, (fSignatureOpcodesActive && optin.IsOptInActive(optin.nCSFSEnabled, nNextHeight)),
-                (fSignatureOpcodesActive && optin.IsOptInActive(optin.nCheckSigAddEnabled, nNextHeight)), (fSignatureOpcodesActive && optin.IsOptInActive(optin.nEd25519Enabled, nNextHeight))))
+                (fSignatureOpcodesActive && optin.IsOptInActive(optin.nCheckSigAddEnabled, nNextHeight)),
+                GetEd25519SigOps(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, optin, fStrictAuthScriptActive, nNextHeight))))
             return state.Invalid(false, REJECT_NONSTANDARD, "bad-txns-nonstandard-inputs");
 
         // Check for non-standard witness in P2WSH. The wider per-item cap
@@ -1078,7 +1079,7 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
             consensusPoseidonWork = std::make_shared<PoseidonWorkBudget>(poseidonWorkActive ?
                 GetMaxStandardTxPoseidonWork(chainActive.Height() + 1, consensus) : std::numeric_limits<uint64_t>::max());
         // NIP-054: the work recorded on the entry is the consensus cost that
-        // block assembly adds up against MAX_BLOCK_ASSETAUTH_WORK.
+        // block assembly adds up against the block budget (GetMaxBlockAssetAuthWork).
         std::shared_ptr<AssetAuthWorkBudget> consensusAssetAuthWork;
         if (currentBlockScriptVerifyFlags & SCRIPT_VERIFY_ASSETAUTH)
             consensusAssetAuthWork = std::make_shared<AssetAuthWorkBudget>(assetAuthActive ?
@@ -3465,12 +3466,12 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
     // are not executed and their validity is assumed, they have nothing to
     // account and do not force execution.
     if (flags & SCRIPT_VERIFY_POSEIDON_WORK) {
-        blockPoseidonWork = std::make_shared<PoseidonWorkBudget>(MAX_BLOCK_POSEIDON_WORK);
+        blockPoseidonWork = std::make_shared<PoseidonWorkBudget>(GetMaxBlockPoseidonWork(pindex->nHeight, chainparams.GetConsensus()));
     }
     // NIP-054: one OP_CHECKASSETAUTH budget shared by every script of the block.
     std::shared_ptr<AssetAuthWorkBudget> blockAssetAuthWork;
     if (flags & SCRIPT_VERIFY_ASSETAUTH) {
-        blockAssetAuthWork = std::make_shared<AssetAuthWorkBudget>(MAX_BLOCK_ASSETAUTH_WORK);
+        blockAssetAuthWork = std::make_shared<AssetAuthWorkBudget>(GetMaxBlockAssetAuthWork(pindex->nHeight, chainparams.GetConsensus()));
     }
 
     // NIP-014: reference inputs are valid from their activation height. Below

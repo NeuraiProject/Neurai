@@ -316,6 +316,12 @@ enum class script_verify_flag_name : uint8_t {
     // roles inside AuthScript. Flag off: 0xdf is a bad opcode.
     SCRIPT_VERIFY_ASSETAUTH = 52,
 
+    // From the NIP-028 height on (CPU review 16-11-2026, B1): an Ed25519
+    // verification costs about three ECDSA ones, so OP_CHECKSIG_ED25519 counts
+    // ED25519_SIGOP_COST sigops instead of one. It changes the accounting
+    // only, never how a script executes.
+    SCRIPT_VERIFY_ED25519_COST = 53,
+
     // End marker — must always be last.
     SCRIPT_VERIFY_END_MARKER
 };
@@ -325,6 +331,17 @@ using enum script_verify_flag_name;
 
 // NIP-018: calibrated x86-64 cost with margin; see cache-review evidence.
 static constexpr unsigned int ZKVERIFY_SIGOP_COST = 280;
+
+// B1: the sigops one OP_CHECKSIG_ED25519 counts under SCRIPT_VERIFY_ED25519_COST.
+static constexpr unsigned int ED25519_SIGOP_COST = 3;
+
+/** The sigops one OP_CHECKSIG_ED25519 counts under `flags`: none while the
+ *  opcode is not active, one, and ED25519_SIGOP_COST from the NIP-028 height. */
+inline unsigned int GetEd25519SigOps(script_verify_flags flags)
+{
+    if (!(flags & SCRIPT_VERIFY_ED25519)) return 0;
+    return (flags & SCRIPT_VERIFY_ED25519_COST) ? ED25519_SIGOP_COST : 1;
+}
 
 // Canonical empty-flags value.
 static constexpr script_verify_flags SCRIPT_VERIFY_NONE{};

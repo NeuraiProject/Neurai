@@ -47,8 +47,8 @@ static constexpr uint64_t MAX_STANDARD_TX_ASSETAUTH_WORK_NIP028 = 15000;
 /** From the NIP-028 height on, the signature checks a standard transaction
  *  may run in witness scripts (its witness sigop count). The general sigop
  *  limit also counts legacy outputs; this one only counts executed checks.
- *  Admission at the limit on the same core: 0.35 s with ECDSA, 1.0 s with
- *  Ed25519, which counts one sigop per check. */
+ *  Admission at the limit on the same core: 0.35 s with ECDSA; with Ed25519,
+ *  which counts three sigops per check from that height (B1), about 0.33 s. */
 static constexpr int64_t MAX_STANDARD_TX_WITNESS_SIGOPS_NIP028 = 2000;
 /** The maximum number of sigops we're willing to relay/mine in a single tx */
 static const unsigned int MAX_STANDARD_TX_SIGOPS_COST = MAX_BLOCK_SIGOPS_COST/5;
@@ -80,6 +80,8 @@ static_assert(MAX_STANDARD_TX_WEIGHT <= MAX_BLOCK_WEIGHT, "standard weight above
 static_assert(MAX_STANDARD_TX_SIGOPS_COST <= MAX_BLOCK_SIGOPS_COST, "standard sigops above the block limit");
 static_assert(MAX_STANDARD_TX_POSEIDON_WORK <= MAX_BLOCK_POSEIDON_WORK, "standard Poseidon work above the block limit");
 static_assert(MAX_STANDARD_TX_ASSETAUTH_WORK <= MAX_BLOCK_ASSETAUTH_WORK, "standard asset-auth work above the block limit");
+static_assert(MAX_STANDARD_TX_POSEIDON_WORK_NIP028 <= MAX_BLOCK_POSEIDON_WORK_NIP028, "standard Poseidon work above the block limit");
+static_assert(MAX_STANDARD_TX_ASSETAUTH_WORK_NIP028 <= MAX_BLOCK_ASSETAUTH_WORK_NIP028, "standard asset-auth work above the block limit");
 static_assert(MAX_STANDARD_TX_POSEIDON_WORK_NIP028 <= MAX_STANDARD_TX_POSEIDON_WORK, "the NIP-028 limit only lowers the Poseidon work");
 static_assert(MAX_STANDARD_TX_ASSETAUTH_WORK_NIP028 <= MAX_STANDARD_TX_ASSETAUTH_WORK, "the NIP-028 limit only lowers the asset-auth work");
 static_assert(MAX_STANDARD_TX_WITNESS_SIGOPS_NIP028 <= MAX_STANDARD_TX_SIGOPS_COST, "witness sigops above the standard sigop limit");
@@ -179,7 +181,11 @@ inline script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
     // NIP-036: OP_POSEIDON (SNARK-friendly Poseidon over BN254 Fr).
     if (consensus.IsOptInActive(consensus.nPoseidonEnabled, nHeight))          base |= SCRIPT_VERIFY_POSEIDON;
     // NIP-035: OP_CHECKSIG_ED25519 (strict-profile Ed25519 verifier).
-    if (consensus.IsOptInActive(consensus.nEd25519Enabled, nHeight) && consensus.IsSignatureOpcodesActive(nHeight))           base |= SCRIPT_VERIFY_ED25519;
+    if (consensus.IsOptInActive(consensus.nEd25519Enabled, nHeight) && consensus.IsSignatureOpcodesActive(nHeight)) {
+        base |= SCRIPT_VERIFY_ED25519;
+        // B1 (CPU review): from the NIP-028 height on Ed25519 counts three sigops.
+        if (nHeight >= consensus.nBlockTimeReductionHeight) base |= SCRIPT_VERIFY_ED25519_COST;
+    }
     // NIP-039: OP_CHECKSIGADD (generic legacy/PQ signature accumulator).
     if (consensus.IsOptInActive(consensus.nCheckSigAddEnabled, nHeight) && consensus.IsSignatureOpcodesActive(nHeight))       base |= SCRIPT_VERIFY_CHECKSIGADD;
     return base;
@@ -201,7 +207,7 @@ static constexpr script_verify_flags CONSENSUS_OPT_IN_FLAGS =
     SCRIPT_VERIFY_REFINPUTS | SCRIPT_VERIFY_OUTPUTAUTHCOMMITMENT | SCRIPT_VERIFY_INPUTVALUE |
     SCRIPT_VERIFY_CHAINCONTEXT | SCRIPT_VERIFY_KECCAK_BLAKE2B | SCRIPT_VERIFY_MERKLE_INCLUSION |
     SCRIPT_VERIFY_MODERN_HASHES | SCRIPT_VERIFY_POSEIDON | SCRIPT_VERIFY_ED25519 |
-    SCRIPT_VERIFY_CHECKSIGADD;
+    SCRIPT_VERIFY_CHECKSIGADD | SCRIPT_VERIFY_ED25519_COST;
 
 /** NIP-020: convenience wrapper — STANDARD_SCRIPT_VERIFY_FLAGS | opt-ins. */
 inline script_verify_flags GetStandardScriptVerifyFlagsWithConsensusOptIns(
@@ -231,7 +237,7 @@ bool IsStandardTx(const CTransaction& tx, std::string& reason, const bool witnes
      * @param[in] mapInputs    Map of previous transactions that have outputs we're spending
      * @return True if all inputs (scriptSigs) use only standard transaction forms
      */
-bool AreInputsStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs, bool countCSFS = false, bool countCheckSigAdd = false, bool countEd25519 = false);
+bool AreInputsStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs, bool countCSFS = false, bool countCheckSigAdd = false, unsigned int nEd25519SigOps = 0);
     /**
      * Check if the transaction is over standard P2WSH resources limit:
      * 3600bytes witnessScript size, 100 witness stack elements.
@@ -259,15 +265,16 @@ int64_t GetVirtualTransactionSize(int64_t nWeight, int64_t nSigOpCost);
 /** From the NIP-028 height on, the script work a transaction runs counts in
  *  its virtual size, priced against the block: a block's whole budget of
  *  Poseidon permutations, or of OP_CHECKASSETAUTH units, weighs as much as a
- *  full block (MAX_BLOCK_WEIGHT_RIP2). Like sigops, work only raises the size
- *  above the weight: the size is the largest of the three. */
+ *  full block (MAX_BLOCK_WEIGHT_RIP2). The budgets are those of that height
+ *  (B2-a). Like sigops, work only raises the size above the weight: the size
+ *  is the largest of the three. */
 static constexpr int64_t WORK_WEIGHT_PER_POSEIDON_PERMUTATION =
-    (MAX_BLOCK_WEIGHT_RIP2 + MAX_BLOCK_POSEIDON_WORK - 1) / MAX_BLOCK_POSEIDON_WORK;
+    (MAX_BLOCK_WEIGHT_RIP2 + MAX_BLOCK_POSEIDON_WORK_NIP028 - 1) / MAX_BLOCK_POSEIDON_WORK_NIP028;
 static constexpr int64_t WORK_WEIGHT_PER_ASSETAUTH_UNIT =
-    (MAX_BLOCK_WEIGHT_RIP2 + MAX_BLOCK_ASSETAUTH_WORK - 1) / MAX_BLOCK_ASSETAUTH_WORK;
-static_assert(WORK_WEIGHT_PER_POSEIDON_PERMUTATION * MAX_BLOCK_POSEIDON_WORK >= MAX_BLOCK_WEIGHT_RIP2,
+    (MAX_BLOCK_WEIGHT_RIP2 + MAX_BLOCK_ASSETAUTH_WORK_NIP028 - 1) / MAX_BLOCK_ASSETAUTH_WORK_NIP028;
+static_assert(WORK_WEIGHT_PER_POSEIDON_PERMUTATION * MAX_BLOCK_POSEIDON_WORK_NIP028 >= MAX_BLOCK_WEIGHT_RIP2,
               "a block of Poseidon work must weigh at least a full block");
-static_assert(WORK_WEIGHT_PER_ASSETAUTH_UNIT * MAX_BLOCK_ASSETAUTH_WORK >= MAX_BLOCK_WEIGHT_RIP2,
+static_assert(WORK_WEIGHT_PER_ASSETAUTH_UNIT * MAX_BLOCK_ASSETAUTH_WORK_NIP028 >= MAX_BLOCK_WEIGHT_RIP2,
               "a block of asset-auth work must weigh at least a full block");
 
 /** Whether the script work counts in the virtual size at a candidate height

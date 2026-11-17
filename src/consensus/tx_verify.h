@@ -103,7 +103,7 @@ bool CheckTxAssets(const CTransaction& tx, CValidationState& state, const CCoins
  * @return number of sigops this transaction's outputs will produce when spent
  * @see CTransaction::FetchInputs
  */
-unsigned int GetLegacySigOpCount(const CTransaction& tx, bool countCSFS = false, bool countCheckSigAdd = false, bool countEd25519 = false);
+unsigned int GetLegacySigOpCount(const CTransaction& tx, bool countCSFS = false, bool countCheckSigAdd = false, unsigned int nEd25519SigOps = 0);
 
 /**
  * Count ECDSA signature operations in pay-to-script-hash inputs.
@@ -112,7 +112,7 @@ unsigned int GetLegacySigOpCount(const CTransaction& tx, bool countCSFS = false,
  * @return maximum number of sigops required to validate this transaction's inputs
  * @see CTransaction::FetchInputs
  */
-unsigned int GetP2SHSigOpCount(const CTransaction& tx, const CCoinsViewCache& mapInputs, bool countCSFS = false, bool countCheckSigAdd = false, bool countEd25519 = false);
+unsigned int GetP2SHSigOpCount(const CTransaction& tx, const CCoinsViewCache& mapInputs, bool countCSFS = false, bool countCheckSigAdd = false, unsigned int nEd25519SigOps = 0);
 
 /**
  * Compute total signature operation cost of a transaction.
@@ -135,7 +135,8 @@ int64_t GetTransactionWitnessSigOpCost(const CTransaction& tx, const CCoinsViewC
  * by OP_1..OP_16 counts that many, any other CHECKMULTISIG counts 20). Unlike
  * GetLegacySigOpCount, the spent scriptPubKey is counted where it executes.
  * The optional signature opcodes enabled by `flags` (CHECKSIGFROMSTACK,
- * CHECKSIGADD, CHECKSIG_ED25519) count as CHECKSIG. Witness scripts are not
+ * CHECKSIGADD, CHECKSIG_ED25519) count as CHECKSIG, CHECKSIG_ED25519 as
+ * many sigops as GetEd25519SigOps(flags). Witness scripts are not
  * counted: their signature hash does not grow with the transaction.
  * @return 0 for a coinbase transaction
  * @pre every input of tx is available in `inputs`
