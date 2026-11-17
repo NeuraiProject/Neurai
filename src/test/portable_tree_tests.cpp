@@ -71,6 +71,10 @@ BOOST_AUTO_TEST_CASE(public_predicate_is_not_authorization)
         }
         size_t cost = 0;
         BOOST_REQUIRE(neurai::public_tree::PortableTransitionCost(raw, form, cost));
+        // Wallets price the work from the form alone, before the transcript exists.
+        size_t work = 0;
+        BOOST_REQUIRE(neurai::public_tree::PortableTransitionWork(form, work));
+        BOOST_CHECK_EQUAL(work, cost);
         BOOST_CHECK(neurai::public_tree::VerifyPortableTransition(raw, form,
                     ParseHex(f["old"].get_str()), ParseHex(f["new"].get_str()), inputs));
         uint64_t charged = 0;

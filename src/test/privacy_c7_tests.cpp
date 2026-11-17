@@ -7,7 +7,9 @@
 // instance derivation, every intermediate value of keys, addresses and
 // records, both scanners, and the negative cases with their reason.
 
+#include "crypto/public_tree_transition.h"
 #include "privacy/c6_wallet.h"
+#include "privacy/c6_world.h"
 #include "privacy/c7.h"
 #include "privacy/publication.h"
 
@@ -112,6 +114,25 @@ std::string FullOutcome(const Bytes& record, const Bytes32& cm, const Account& a
 } // namespace
 
 BOOST_FIXTURE_TEST_SUITE(privacy_c7_tests, BasicTestingSetup)
+
+BOOST_AUTO_TEST_CASE(pool_poseidon_work_by_form)
+{
+    // The transition, which OP_ZKVERIFY charges up front, and the hashes of the
+    // leaf. D0, T2 and J2 are the work measured on testnet and regtest: 339 and
+    // 701 for C7, 568 + 69 for a C6 join.
+    const std::map<std::string, uint64_t> expected = {
+        {"D0", 339}, {"D1", 339}, {"T1", 503}, {"T2", 701}, {"T3", 899},
+        {"W_partial_no_change", 173}, {"W_partial_change", 504}, {"W_full_no_change", 173}, {"J2", 637}};
+    for (const auto& [form, work] : expected) {
+        uint64_t measured = 0;
+        BOOST_CHECK(privacy::C6PoseidonWork(form, measured));
+        BOOST_CHECK_MESSAGE(measured == work, form << ": " << measured << " != " << work);
+    }
+    uint64_t unknown = 0;
+    BOOST_CHECK(!privacy::C6PoseidonWork("T4", unknown));
+    size_t transition = 0;
+    BOOST_CHECK(!neurai::public_tree::PortableTransitionWork(9, transition));
+}
 
 BOOST_AUTO_TEST_CASE(published_primitive_vectors)
 {

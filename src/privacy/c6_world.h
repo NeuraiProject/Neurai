@@ -17,6 +17,14 @@ namespace privacy {
 extern const char* const C6_FORMS[9];
 int C6FormIndex(const std::string& form);
 
+/** Poseidon permutations a pool transaction of `form` runs ("D0" .. "J2"):
+ *  the public-tree transition, which OP_ZKVERIFY charges before checking the
+ *  proof, and the OP_POSEIDON of its leaf over public data (the publication
+ *  hash, and the deposit or payout digest). It depends on the form alone. From
+ *  the NIP-028 height on this work counts in the virtual size, and so in the
+ *  network fee. Returns false for an unknown form. */
+bool C6PoseidonWork(const std::string& form, uint64_t& work);
+
 /** NIP-043 sparse binary tree of depth 32; missing leaves are zero. */
 class SparseTree
 {

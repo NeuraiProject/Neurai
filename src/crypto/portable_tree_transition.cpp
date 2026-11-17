@@ -58,7 +58,7 @@ bool Shape(const Bytes& raw,unsigned form,size_t& cost) {
     const unsigned nullifiers=form==8 ? 2 : spend;
     const size_t size=292+32*(nullifiers ? nullifiers : 1)+32*n+1028*spend+2120*nullifiers+3144*n+1024*(n>0);
     if(raw.size()!=size || size>15360) return false;
-    cost=6+134*nullifiers+198*n+32*spend+64*(n>0)+(form<2); return true;
+    return PortableTransitionWork(form,cost);
 }
 struct Verifier {
     size_t work=0,limit;
@@ -161,6 +161,15 @@ struct Verifier {
     }
 };
 } // namespace
+
+bool PortableTransitionWork(unsigned form, size_t& cost)
+{
+    if (form > 8) return false;
+    const unsigned n = Count(form), spend = form >= 2;
+    const unsigned nullifiers = form == 8 ? 2 : spend;
+    cost = 6 + 134 * nullifiers + 198 * n + 32 * spend + 64 * (n > 0) + (form < 2);
+    return true;
+}
 
 bool PortableTransitionCost(const Bytes& transcript, unsigned form, size_t& cost)
 {

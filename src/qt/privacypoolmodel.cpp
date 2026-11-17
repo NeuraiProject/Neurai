@@ -9,6 +9,7 @@
 
 #include "base58.h"
 #include "chainparams.h"
+#include "consensus/validation.h"
 #include "core_io.h"
 #include "init.h"
 #include "net.h"
@@ -17,6 +18,7 @@
 #include "privacy/c6_config.h"
 #include "privacy/c6_ops.h"
 #include "privacy/c6_scan.h"
+#include "privacy/c6_world.h"
 #include "privacy/c6_wallet.h"
 #include "privacy/nzk.h"
 #include "rpc/server.h"
@@ -38,6 +40,7 @@
 #include <QFile>
 #include <QFileInfo>
 
+#include <algorithm>
 #include <map>
 #include <optional>
 #include <set>
@@ -46,6 +49,18 @@ namespace privacy {
 
 namespace {
 
+/** Virtual size, for the next block, of a pool transaction of `weight` that
+ *  runs `work` Poseidon permutations: from the NIP-028 height on the work
+ *  counts (a block's budget of work weighs a full block). */
+int64_t PoolVirtualSize(int64_t weight, uint64_t work)
+{
+    int height;
+    {
+        LOCK(cs_main);
+        height = chainActive.Height() + 1;
+    }
+    return GetVirtualTransactionSize(weight, 0, GetTransactionWorkWeight(work, 0, height, GetParams().GetConsensus()));
+}
 
 bool ReadFile(const QString& path, std::vector<uint8_t>& out)
 {
@@ -362,8 +377,9 @@ private:
     }
 
     /** Builds the transaction with a placeholder proof (same size) and checks that
-     *  the pool fee covers the network fee the node asks for now. Done before
-     *  proving, so a too-low level fails at once. */
+     *  the pool fee covers the network fee the node asks for now, with the
+     *  Poseidon work of its form. Done before proving, so a too-low level fails
+     *  at once. */
     bool CheckNetworkFee(const C6Prepared& prepared, const CScript* fundingScript, std::string& error)
     {
         std::array<uint8_t, 128> placeholder{};
@@ -371,8 +387,14 @@ private:
         int fundingInput;
         std::string form;
         if (!BuildC6Transaction(m_config, m_scanner->State(), prepared, placeholder, mtx, fundingInput, form, error)) return false;
-        int64_t vsize = GetVirtualTransactionSize(CTransaction(mtx));
-        if (fundingScript) vsize += FundingSignatureVsize(*fundingScript);
+        uint64_t work = 0;
+        if (!C6PoseidonWork(form, work)) {
+            error = "unknown pool transaction form " + form;
+            return false;
+        }
+        int64_t weight = GetTransactionWeight(CTransaction(mtx));
+        if (fundingScript) weight += WITNESS_SCALE_FACTOR * FundingSignatureVsize(*fundingScript);
+        const int64_t vsize = PoolVirtualSize(weight, work);
         const CAmount needed = GetMinimumFee(static_cast<unsigned int>(vsize), CCoinControl(), ::mempool, ::feeEstimator, nullptr);
         if (static_cast<CAmount>(prepared.fee) < needed) {
             error = strprintf("the pool fee (%s XNA) does not cover the network fee this %s transaction needs now (%s XNA "
@@ -543,15 +565,26 @@ CFeeRate PrivacyPoolModel::networkFeeRate() const
 
 CAmount PrivacyPoolModel::requiredPoolFee(const QString& operation) const
 {
-    // Virtual sizes of the pool transactions measured on testnet (they depend
-    // only on the form), rounded up; deposits include a signed funding input.
+    // Virtual sizes without the script work of the pool transactions measured
+    // on testnet (they depend only on the form), rounded up; deposits include a
+    // signed funding input. The Poseidon work is that of the costliest form of
+    // the operation: a withdrawal with change.
     int64_t vsize = 4800;
-    if (operation == "D") vsize = 4100;
-    else if (operation == "T1") vsize = 4600;
-    else if (operation == "T2") vsize = 5400;
-    else if (operation == "T3") vsize = 6200;
+    std::vector<std::string> forms = {"W_partial_no_change", "W_partial_change", "W_full_no_change"};
+    if (operation == "D") {
+        vsize = 4100;
+        forms = {"D0", "D1"};
+    } else if (operation == "T1" || operation == "T2" || operation == "T3") {
+        vsize = operation == "T1" ? 4600 : operation == "T2" ? 5400 : 6200;
+        forms = {operation.toStdString()};
+    }
     if (operation == "D" && m_walletModel->getWallet()->GetAddressType() == WalletAddressType::PQ) vsize += 1000;
-    return networkFeeRate().GetFee(static_cast<size_t>(vsize));
+    uint64_t work = 0;
+    for (const std::string& form : forms) {
+        uint64_t formWork = 0;
+        if (privacy::C6PoseidonWork(form, formWork)) work = std::max(work, formWork);
+    }
+    return networkFeeRate().GetFee(static_cast<size_t>(privacy::PoolVirtualSize(WITNESS_SCALE_FACTOR * vsize, work)));
 }
 
 PrivacyPoolModel::Funding PrivacyPoolModel::fundingState(CAmount value) const

@@ -4,6 +4,10 @@
 
 #include "privacy/c6_world.h"
 
+#include "crypto/poseidon_bn254.h"
+#include "crypto/public_tree_transition.h"
+#include "privacy/publication.h"
+
 #include <algorithm>
 
 namespace privacy {
@@ -17,6 +21,28 @@ int C6FormIndex(const std::string& form)
         if (form == C6_FORMS[i]) return i;
     }
     return -1;
+}
+
+bool C6PoseidonWork(const std::string& form, uint64_t& work)
+{
+    const int index = C6FormIndex(form);
+    size_t transition = 0;
+    if (index < 0 || !neurai::public_tree::PortableTransitionWork(index, transition)) return false;
+    work = transition;
+    // The leaf hashes the 4096-byte publication in two halves after its tag:
+    // Poseidon(Poseidon(Poseidon(tag) || first) || second). The withdrawals
+    // without a publication commit to a constant instead.
+    const bool deposit = form == "D0" || form == "D1";
+    const bool withdrawal = form.compare(0, 2, "W_") == 0;
+    if (form != "W_partial_no_change" && form != "W_full_no_change") {
+        const size_t tag = form == "J2" ? std::string("NeuraiPoolC6/J2/data\x01").size() : std::string("NIP045/dat\x03").size();
+        work += crypto::PoseidonPermutationCost(tag) + 2 * crypto::PoseidonPermutationCost(32 + PUBLICATION_SIZE / 2);
+    }
+    // Deposit digest: tag, amount (8 bytes) and commitment.
+    if (deposit) work += crypto::PoseidonPermutationCost(std::string("NIP045/dep\x01").size() + 8 + 32);
+    // Payout digest: tag, a one-byte length and the payout script (34 bytes at most).
+    if (withdrawal) work += crypto::PoseidonPermutationCost(std::string("NeuraiPoolC6/pay\x01").size() + 1 + 34);
+    return true;
 }
 
 namespace {

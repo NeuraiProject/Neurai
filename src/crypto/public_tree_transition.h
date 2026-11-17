@@ -21,6 +21,9 @@ bool VerifyTransition(const Bytes& transcript, unsigned form, const Bytes& input
 // public predicate alone NEVER authorizes a spend. The contract must obtain
 // both digests by introspection and jointly require this predicate and Groth16.
 bool PortableTransitionCost(const Bytes& transcript, unsigned form, size_t& cost);
+// The work PortableTransitionCost charges, which depends on the form alone:
+// wallets price a transaction with it before building its transcript.
+bool PortableTransitionWork(unsigned form, size_t& cost);
 bool VerifyPortableTransition(const Bytes& transcript, unsigned form,
                               const Bytes& oldDigest, const Bytes& newDigest,
                               const Bytes& inputs);
