@@ -280,7 +280,10 @@ class AddressIndexTest(NeuraiTestFramework):
             CTxIn(COutPoint(int(mem_txid2, 16), 0)),
             CTxIn(COutPoint(int(mem_txid2, 16), 1))
         ]
-        tx.vout = [CTxOut(int(amount / 2 - 340000), script_pub_key2)]
+        # Spend exactly what the two outputs of tx2 hold, less a fee of 340000:
+        # amount / 2 truncated separately left the fee 1 satoshi short of the
+        # minimum when amount % 4 was 2 or 3.
+        tx.vout = [CTxOut(tx2.vout[0].nValue + tx2.vout[1].nValue - 340000, script_pub_key2)]
         tx.rehash()
         self.nodes[2].importprivkey(priv_key3)
         signed_tx3 = self.nodes[2].signrawtransaction(binascii.hexlify(tx.serialize()).decode("utf-8"))
