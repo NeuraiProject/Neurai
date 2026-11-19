@@ -428,6 +428,15 @@ BOOST_AUTO_TEST_CASE(explicit_message_signatures_and_csv)
     Bytes sig=ParseHex("e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b");
     BOOST_CHECK(run(CScript()<<Bytes{}<<pk<<OP_CHECKSIG_ED25519,sig,FLAGS|SCRIPT_VERIFY_ED25519));
     BOOST_CHECK(!run(CScript()<<Bytes{1}<<pk<<OP_CHECKSIG_ED25519,sig,FLAGS|SCRIPT_VERIFY_ED25519));
+    // NIP-060: OP_CHECKSIG_P256 inside a leaf (NIP §11 vector 1); a failing
+    // well-formed signature fails the leaf, and the opcode needs its flag.
+    Bytes p256pk=ParseHex("0301cfb7f8207152900493007ff3a86d1f83be039b6f17418ac3ad52c2debc35a9");
+    Bytes p256msg=ParseHex("4e6575726169503235362f76312f7465737400010203");
+    Bytes p256sig=ParseHex("03284da89332dae4ca1f4853777269f1c6659893c0830fdb2eaea3ecca4aee355ccf79bc073f56306cd3069d7ffe5b1447e7e6d6e4b52ca89d10c192d01bc1e3");
+    BOOST_CHECK(run(CScript()<<p256msg<<p256pk<<OP_CHECKSIG_P256,p256sig,FLAGS|SCRIPT_VERIFY_P256));
+    BOOST_CHECK(!run(CScript()<<p256msg<<p256pk<<OP_CHECKSIG_P256,p256sig,FLAGS));
+    BOOST_CHECK(run(CScript()<<p256msg<<p256pk<<OP_CHECKSIG_P256<<OP_NOT,Bytes{},FLAGS|SCRIPT_VERIFY_P256));
+    p256msg.back()^=1;BOOST_CHECK(!run(CScript()<<p256msg<<p256pk<<OP_CHECKSIG_P256<<OP_NOT,p256sig,FLAGS|SCRIPT_VERIFY_P256));
     for(int delay : {143,144,145})
         BOOST_CHECK_EQUAL(run(CScript()<<OP_DROP<<delay<<OP_CHECKSEQUENCEVERIFY<<OP_DROP<<OP_TRUE,Bytes{}),delay<=144);
 }

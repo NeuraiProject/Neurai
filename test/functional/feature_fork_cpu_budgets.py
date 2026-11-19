@@ -14,6 +14,8 @@ validate on the minimum hardware. From the NIP-028 height on:
   The fee and the standard limit count three per check too: a transaction of
   666 checks (1,998 witness sigops) is standard, one of 667 is not. A
   transaction admitted below the height leaves the mempool at the height.
+- NIP-060: each OP_CHECKSIG_P256 counts five sigops at any height, so a block
+  holds 16,000 checks (80,000 sigops), not 16,001.
 - B2-a: the budgets per block are halved, to keep the work per second: a block
   may run 100,000 Poseidon permutations (200,000 below) and 225,000
   OP_CHECKASSETAUTH units (450,000 below). Block assembly keeps to them.
@@ -37,6 +39,7 @@ COIN = 100000000
 VALUE = COIN
 CUSTODY_VALUE = COIN // 10
 OP_CHECKSIG_ED25519 = CScriptOp(0xdd)
+OP_CHECKSIG_P256 = CScriptOp(0xe0)
 DATA = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "..", "src", "test", "data")
 
 
@@ -58,6 +61,11 @@ def poseidon(calls):
 def ed25519_checks(count):
     """`count` OP_CHECKSIG_ED25519 verifications of the witness arguments."""
     return bytes(CScript([OP_3DUP, OP_CHECKSIG_ED25519, OP_VERIFY] * count + [OP_2DROP, OP_DROP, OP_TRUE]))
+
+
+def p256_unexecuted(count):
+    """`count` OP_CHECKSIG_P256 in a branch that never runs: sigops, no work."""
+    return bytes(CScript([OP_0, CScriptOp(0x63)] + [OP_CHECKSIG_P256] * count + [CScriptOp(0x68), OP_TRUE]))
 
 
 def assetauth_work(n):
@@ -179,6 +187,8 @@ class ForkCpuBudgetsTest(NeuraiTestFramework):
             "e146": (ed25519_checks(146), ed_args, 1),
             "p500": (poseidon(500), [b''], 610),
             "p1": (poseidon(1), [b''], 2),
+            "q500": (p256_unexecuted(500), [], 32),
+            "q1": (p256_unexecuted(1), [], 1),
         }
 
         node.generate(1)
@@ -245,6 +255,14 @@ class ForkCpuBudgetsTest(NeuraiTestFramework):
         assert_equal(node.getbestblockhash(), tip)
         assert_equal(self.submit([self.spend(checks + self.take("e146", 1))]), None)
         self.log.info("  666 checks standard, 667 not; a block of 26,666 accepted, 26,667 refused")
+
+        self.log.info("Each OP_CHECKSIG_P256 counts five sigops: a block holds 16,000")
+        checks = self.take("q500", 32)
+        tip = node.getbestblockhash()
+        assert_equal(self.submit([self.spend(checks + self.take("q1", 1))]), "bad-blk-sigops")
+        assert_equal(node.getbestblockhash(), tip)
+        assert_equal(self.submit([self.spend(checks)]), None)
+        self.log.info("  a block of 16,000 P-256 checks accepted, 16,001 refused")
 
         self.log.info("From the height a block runs at most 100,000 permutations")
         permutations = self.take("p500", 200)

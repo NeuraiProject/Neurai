@@ -351,6 +351,14 @@ struct Params {
      *  large-witness standardness gate so messages > 80 B can be relayed. */
     bool nEd25519Enabled;
 
+    /** NIP-060: enable OP_CHECKSIG_P256 (0xe0), the strict-profile ECDSA
+     *  P-256 / SHA-256 verifier. Slot was previously unassigned
+     *  (`bad-opcode`); activation is a hard fork. true on every network; it
+     *  applies only from nOptInFeaturesHeight and nSignatureOpcodesHeight
+     *  (block 10 of the reset testnet, genesis on regtest, MAINNET_FORK_HEIGHT
+     *  on mainnet), like OP_CHECKSIG_ED25519. */
+    bool nP256Enabled;
+
     /** NIP-039: enable OP_CHECKSIGADD (0xde), a generic signature
      *  accumulator compatible with legacy and PQ CPubKey encodings.
      *  Slot was previously unassigned (`bad-opcode`); activation is
@@ -370,7 +378,7 @@ struct Params {
 constexpr int Params::* const UNIFIED_FORK_HEIGHTS[] = {
     &Params::nOptInFeaturesHeight,      // every opt-in switch
     &Params::nStrictAuthScriptHeight,   // strict AuthScript families (witness v2/v3), NIP-041, DEPIN assets and long asset names
-    &Params::nSignatureOpcodesHeight,   // CSFS, Ed25519, CHECKSIGADD
+    &Params::nSignatureOpcodesHeight,   // CSFS, Ed25519, CHECKSIGADD, P-256 (NIP-060)
     &Params::nTxHashHeight,             // NIP-042
     &Params::nZKVerifyHeight,           // NIP-016
     &Params::nZKPublicTreeHeight,       // C5 profile-2 public transitions

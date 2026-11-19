@@ -19,7 +19,7 @@ gives the byte values, flags and error codes of the original set.
 | Byte manipulation | `OP_CAT`, `OP_SPLIT`, `OP_REVERSEBYTES` |
 | 64-bit arithmetic | `OP_MUL`, `OP_DIV`, `OP_MOD` (plus the existing numeric opcodes widened to 8 bytes) |
 | Hashes | `OP_KECCAK256`, `OP_BLAKE2B`, `OP_BLAKE3`, `OP_SHA3_256`, `OP_SHA512`, `OP_POSEIDON` |
-| Additional signatures | `OP_CHECKSIGADD`, `OP_CHECKSIG_ED25519` |
+| Additional signatures | `OP_CHECKSIGADD`, `OP_CHECKSIG_ED25519`, `OP_CHECKSIG_P256` |
 | Proof verification | `OP_CHECKMERKLEINCLUSION`, `OP_ZKVERIFY` |
 
 Each opcode is gated by its own consensus flag, not by the script version.
@@ -126,7 +126,7 @@ and **block 10** is the first block that applies all of them:
   and hash opcodes, 64-bit arithmetic, OP_CAT/OP_SPLIT/CTV, tx v3 with `vrefin`
   (NIP-014) and the strict OP_XNA_ASSET placement rule;
 - strict AuthScript families and NIP-041 (`nStrictAuthScriptHeight`);
-- CSFS, Ed25519 and CHECKSIGADD (`nSignatureOpcodesHeight`);
+- CSFS, Ed25519, CHECKSIGADD and P-256 (`nSignatureOpcodesHeight`);
 - TXHASH (NIP-042), the NIP-043 primitives, NIP-044 script trees, NIP-046
   budgets, `OP_ZKVERIFY` with its public-tree profile, and the Poseidon work
   budget;
@@ -248,6 +248,59 @@ OP_VERIFY
 As written, any earlier attestation above the threshold can be replayed. A
 real oracle message also carries a timestamp, or is bound to the spending
 transaction with `OP_TXHASH` (see below).
+
+### OP_CHECKSIG_P256 — Hardware Device Signatures (NIP-060)
+
+`OP_CHECKSIG_P256` (`0xe0`) verifies an ECDSA signature over NIST P-256
+(secp256r1) with SHA-256. P-256 is the curve that microcontroller peripherals
+(ESP32-P4, -C5, -H2), secure elements (ATECC608), TPM 2.0, Matter device
+certificates and phone secure enclaves sign with, without exposing the key.
+A covenant can therefore check that a datum was signed by a specific device
+whose key cannot be copied.
+
+```
+<sig> <msg> <pubkey> OP_CHECKSIG_P256  ->  <0 | 1>
+```
+
+- `pubkey`: exactly 33 bytes, SEC 1 compressed (`02`/`03` || X), X < p, on the
+  curve. Uncompressed and hybrid keys are rejected.
+- `sig`: empty, or exactly 64 bytes r || s (IEEE P1363), 1 <= r < n and
+  1 <= s <= n/2 (low S). Devices and wallets normalize S and convert DER.
+- `msg`: any element size; the digest is SHA-256(msg).
+- An empty signature pushes 0. A well-formed signature that does not verify
+  **fails the script** (as in Tapscript, independently of NULLFAIL), so
+  thresholds can add results without `OP_IF`.
+- Order (normative): flag, stack, key, signature, hash budget
+  (`len(msg) + 64` units, as CSFS), verification. Encodings are rejected
+  before any budget is charged; no curve work runs for a script over its
+  budget.
+- Errors: `SCRIPT_ERR_P256_PUBKEY_SIZE`, `_PUBKEY_ENCODING`, `_SIG_SIZE`,
+  `_SIG_ENCODING`, `_VERIFY`. Flag off: bad opcode.
+- Cost: five sigops per instruction (see the accounting section below).
+- Activation: with the other signature opcodes (`nSignatureOpcodesHeight`):
+  testnet block 10, regtest genesis, mainnet the unified fork.
+
+Field and scalar arithmetic come from Fiat Cryptography (formally verified,
+`src/crypto/p256/fiat`); the strict profile and the double scalar
+multiplication live in `src/crypto/p256.cpp`. The test vectors combine the
+NIP cases, Wycheproof and NIST CAVP (`src/test/data/p256_vectors.json`).
+
+**Spending with a P-256 key (no envelope key).** An AuthScript v1 output with
+authType `0x00` and the witness script
+
+```
+<ff01> OP_TXHASH 3 OP_TXFIELD OP_CAT 1 OP_TXFIELD OP_CAT <pubkey33> OP_CHECKSIG_P256
+```
+
+is spent with the witness `0x00 <sig64> <witnessScript>`. The device signs
+SHA-256(TXHASH || spent scriptPubKey || amount): `OP_TXHASH` with selector
+`0x01ff` commits to every field of the transaction and the input index, and
+the two `OP_TXFIELD` calls add the spent script (with its asset suffix) and the
+amount, which `OP_TXHASH` does not cover. `contrib/p256/p256_sign.py` builds
+the message and inserts a device signature; `src/test/data/p256_spend_vector.json`
+is a complete worked example. The NIP also describes a parametric-insurance
+covenant, 2-of-3 sensors, a minimal manufacturer certificate, a phone wallet
+with a recovery branch and NIP-054 roles held by P-256 keys.
 
 ### OP_TXHASH — Flexible Commitments (NIP-042)
 
@@ -871,7 +924,7 @@ upgrade.
 
 ### Post-Quantum Readiness
 
-AuthScript supports ML-DSA-44 (FIPS 204) signatures natively. Covenants that use AuthType `0x01` are protected against quantum attacks on the authentication layer, while the covenant logic itself (hash-based commitments, script evaluation) is inherently quantum-resistant. This holds only if every key checked inside the script (`OP_CHECKSIG`, multisig, CSFS oracles) is also ML-DSA-44; an ECDSA or Ed25519 key anywhere in the script is a classical point of failure.
+AuthScript supports ML-DSA-44 (FIPS 204) signatures natively. Covenants that use AuthType `0x01` are protected against quantum attacks on the authentication layer, while the covenant logic itself (hash-based commitments, script evaluation) is inherently quantum-resistant. This holds only if every key checked inside the script (`OP_CHECKSIG`, multisig, CSFS oracles) is also ML-DSA-44; an ECDSA, Ed25519 or P-256 key anywhere in the script is a classical point of failure.
 
 ### Asset-Native
 
@@ -909,8 +962,9 @@ so repeated queries about the same name do not repeat the classification.
 From the consensus cleanup height (`nConsensusCleanupHeight`), a non-coinbase
 transaction may execute at most 2500 legacy signature operations
 (`MAX_TX_LEGACY_SIGOPS`, BIP-54). They are counted in each input's scriptSig,
-spent scriptPubKey and P2SH redeem script, with CHECKSIGADD, CSFS and Ed25519
-counted as CHECKSIG when active. Witness v0 and AuthScript are not counted:
+spent scriptPubKey and P2SH redeem script, with the optional signature opcodes
+counted at their sigop cost when active: one for CHECKSIGADD and CSFS, one for
+Ed25519 (three from the NIP-028 height) and five for P-256. Witness v0 and AuthScript are not counted:
 their signature hash does not grow with the transaction.
 
 ### Merkle Inclusion Proofs of Bitcoin-Style Trees
@@ -946,11 +1000,17 @@ The old context-free counters retain their defaults and NOP5 contributes zero
 when the activation flag is absent. Mempool accounting uses the network's
 consensus opt-in flags, matching the contextual block-validation path.
 
-### CHECKSIGADD and Ed25519 Signature Operation Accounting
+### CHECKSIGADD, Ed25519 and P-256 Signature Operation Accounting
 
-With their respective verification flags enabled, `OP_CHECKSIGADD` and
-`OP_CHECKSIG_ED25519` each add one static sigop, using the same scale as CSFS:
-four cost units in legacy/P2SH, one in witness. The flags are independent;
+With their respective verification flags enabled, `OP_CHECKSIGADD`,
+`OP_CHECKSIG_ED25519` and `OP_CHECKSIG_P256` add static sigops on the same
+scale as CSFS: four cost units per sigop in legacy/P2SH, one in witness.
+`OP_CHECKSIGADD` counts one. `OP_CHECKSIG_ED25519` counts one, and three from
+the NIP-028 height on (`SCRIPT_VERIFY_ED25519_COST`, CPU review B1: an
+Ed25519 verification costs about three ECDSA ones). `OP_CHECKSIG_P256` counts
+`P256_SIGOP_COST` = 5 from its activation (NIP-060 §4.6: 112.0 us for the
+whole path against 26.8 us for a compressed secp256k1 check, a ratio of 4.17
+rounded up). The flags are independent;
 a disabled opcode contributes no optional sigops and its execution continues
 to fail with BAD_OPCODE. Unexecuted branches count; bytes inside pushes do not.
 Bare spent output scripts are charged at redemption as well as creation,
@@ -960,13 +1020,13 @@ the activated counters, as does the reported coinbase template cost.
 
 CHECKSIGADD's existing dynamic surcharge of eight against the per-script
 operation limit (201, or 512 in AuthScript under NIP-046) is unchanged and
-separate from the global sigop budget. One global sigop per
+separate from the global sigop budget. One global sigop per CHECKSIGADD
 signature is consistent with CSFS and AuthScript authentication; it is not a
-claim that ECDSA, ML-DSA and Ed25519 have equal CPU costs.
+claim that ECDSA and ML-DSA have equal CPU costs.
 
 ### Height activation of signature opcodes
 
-CSFS, CHECKSIGADD and Ed25519 share `nSignatureOpcodesHeight`. Their individual
+CSFS, CHECKSIGADD, Ed25519 and P-256 share `nSignatureOpcodesHeight`. Their individual
 capability switches only take effect at or above that height. Mainnet leaves
 the height unscheduled (`INT_MAX`); the reset testnet uses block 10 and regtest
 height zero.
@@ -1065,7 +1125,8 @@ NIP-021 ties the P2WSH per-stack-item relay cap in `IsWitnessStandard` to the
 opcodes that need large items: the cap is
 `MAX_CSFS_STANDARD_P2WSH_STACK_ITEM_SIZE` (3072 B, `MAX_PQ_SCRIPT_ELEMENT_SIZE`)
 when `OP_CHECKMERKLEINCLUSION` is active for the next block, or when the
-signature opcodes are (CSFS, Ed25519 or CHECKSIGADD), and
+signature opcodes are (CSFS, Ed25519 or CHECKSIGADD; P-256 shares their
+height, so it needs no term of its own), and
 `MAX_STANDARD_P2WSH_STACK_ITEM_SIZE` (80 B) otherwise. On testnet/regtest
 PQ-sized witness items relay normally once these rules are active; on mainnet,
 where their heights are unscheduled, the 80-byte cap remains in effect and
@@ -1290,7 +1351,7 @@ Transaction signatures use `TaggedHash("NeuraiAuthTreeSig", 0x01 || role ||
 authType || program || leafHash || baseSighash)`. The message is 99 bytes; role
 is 0 for global authentication and 1 for internal CHECKSIG/CHECKSIGADD/MULTISIG.
 The base is the ordinary AuthScript sighash using the complete witness marker.
-CSFS and Ed25519 still sign explicit messages using their existing conventions.
+CSFS, Ed25519 and P-256 still sign explicit messages using their existing conventions.
 
 Sigops come from the penultimate witness item, plus one for global authentication
 only. The control block is not Script. Initial arguments are limited to 1000;

@@ -5,6 +5,7 @@
 // NIP-014: Unit tests for transaction v3 reference inputs (vrefin)
 // NIP-017: Unit tests for OP_REFINPUT* opcode family
 
+#include "crypto/common.h"
 #include "assets/assets.h"
 #include "base58.h"
 #include "chainparams.h"
@@ -80,7 +81,7 @@ static constexpr script_verify_flags NO_REFINPUT_FLAGS_DISCOURAGE =
 std::vector<unsigned char> EncodeLE8(int64_t value)
 {
     std::vector<unsigned char> out(8);
-    memcpy(out.data(), &value, 8);
+    WriteLE64(out.data(), static_cast<uint64_t>(value));
     return out;
 }
 

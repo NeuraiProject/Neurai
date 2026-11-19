@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include "crypto/common.h"
 #include "script/interpreter.h"
 #include "script/script.h"
 #include "script/script_error.h"
@@ -256,8 +257,7 @@ BOOST_AUTO_TEST_CASE(txfield_spent_value_correct_little_endian)
     BOOST_CHECK(DirectGetTxFieldNoSPK(TXFIELD_SPENT_VALUE, amount, result));
     BOOST_REQUIRE_EQUAL(result.size(), 8U);
 
-    int64_t decoded;
-    memcpy(&decoded, result.data(), 8);
+    const int64_t decoded = static_cast<int64_t>(ReadLE64(result.data()));
     BOOST_CHECK_EQUAL(decoded, (int64_t)amount);
 }
 
@@ -521,6 +521,32 @@ BOOST_AUTO_TEST_CASE(txfield_split_extract_commitment_from_fullscript)
     std::vector<unsigned char> directResult;
     BOOST_CHECK(DirectGetTxField(TXFIELD_SPENT_AUTHCOMMITMENT, spk, 1000, directResult));
     BOOST_CHECK(result1[0] == directResult);
+}
+
+// Raw integers are little endian on every host, not in the CPU's byte order:
+// the NIP-060 §5 P-256 signer commits to these exact bytes (amount
+// 0x0102030405060708 -> 08 07 06 05 04 03 02 01).
+BOOST_AUTO_TEST_CASE(txfield_integers_are_little_endian)
+{
+    const CAmount amount = 0x0102030405060708;
+    const std::vector<unsigned char> expected{0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01};
+    std::vector<unsigned char> result;
+    BOOST_REQUIRE(DirectGetTxFieldNoSPK(TXFIELD_SPENT_VALUE, amount, result));
+    BOOST_CHECK(result == expected);
+
+    CMutableTransaction mtx = BuildTx(amount);
+    mtx.vout[0].nValue = amount;
+    mtx.nLockTime = 0x0a0b0c0d;
+    const CTransaction tx(mtx);
+    std::vector<CTxOut> prevouts{CTxOut(amount, CScript() << OP_TRUE)};
+    PrecomputedTransactionData txdata(tx);
+    TransactionSignatureChecker checker(&tx, 0, amount, txdata, CScript() << OP_TRUE, &prevouts);
+    BOOST_REQUIRE(checker.GetOutputValue(0, result));
+    BOOST_CHECK(result == expected);
+    BOOST_REQUIRE(checker.GetInputValue(0, result));
+    BOOST_CHECK(result == expected);
+    BOOST_REQUIRE(checker.GetTxLockTime(result));
+    BOOST_CHECK(result == (std::vector<unsigned char>{0x0d, 0x0c, 0x0b, 0x0a}));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

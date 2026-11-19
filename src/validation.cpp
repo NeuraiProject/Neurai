@@ -863,9 +863,8 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         // Check for non-standard pay-to-script-hash in inputs
         const int nNextHeight = chainActive.Height() + 1;
         const auto& optin = chainparams.GetConsensus();
-        if (fRequireStandard && !AreInputsStandard(tx, view, (fSignatureOpcodesActive && optin.IsOptInActive(optin.nCSFSEnabled, nNextHeight)),
-                (fSignatureOpcodesActive && optin.IsOptInActive(optin.nCheckSigAddEnabled, nNextHeight)),
-                GetEd25519SigOps(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, optin, fStrictAuthScriptActive, nNextHeight))))
+        if (fRequireStandard && !AreInputsStandard(tx, view,
+                GetOptionalSigOpCosts(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, optin, fStrictAuthScriptActive, nNextHeight))))
             return state.Invalid(false, REJECT_NONSTANDARD, "bad-txns-nonstandard-inputs");
 
         // Check for non-standard witness in P2WSH. The wider per-item cap
@@ -873,7 +872,9 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         // any of NIP-021 (CSFS / PQ signatures), NIP-031
         // (OP_CHECKMERKLEINCLUSION proofs), NIP-035 (Ed25519 bridge
         // messages), or NIP-039 (OP_CHECKSIGADD — PQ signatures 2421 B,
-        // PQ pubkeys 1313 B) is active in this chain.
+        // PQ pubkeys 1313 B) is active in this chain. NIP-060
+        // (OP_CHECKSIG_P256) shares their activation height, so it needs no
+        // term of its own.
         const auto& consensus = chainparams.GetConsensus();
         if (tx.HasWitness() && fRequireStandard &&
             !IsWitnessStandard(tx, view,

@@ -1,0 +1,42 @@
+menu "Neurai P-256 signer"
+
+choice NEURAI_P256_KEY_SOURCE
+    prompt "Where the P-256 private key lives"
+    default NEURAI_P256_KEY_EFUSE
+
+config NEURAI_P256_KEY_EFUSE
+    bool "eFuse key block, used through the ECDSA peripheral"
+    help
+        The key never leaves the hardware. Needs the ECDSA peripheral: ESP32-P4
+        revision v3.0 or later, ESP32-C5, ESP32-H2.
+
+config NEURAI_P256_KEY_SOFTWARE
+    bool "Software key in NVS (no hardware protection)"
+    help
+        A key generated with the TRNG and stored in NVS, signed in software. For
+        boards without a usable ECDSA peripheral (ESP32-P4 before v3.0, ESP32-S3):
+        it tests the signing flow, not the hardware guarantee.
+
+endchoice
+
+config NEURAI_P256_EFUSE_KEY_INDEX
+    int "eFuse key block (0-5 = BLOCK_KEY0..BLOCK_KEY5) holding the ECDSA P-256 key"
+    depends on NEURAI_P256_KEY_EFUSE
+    range 0 5
+    default 5
+    help
+        The block must have the key purpose ECDSA_KEY_P256. Blocks are shared with
+        Secure Boot digests and the flash encryption key: check which are free with
+        `idf.py efuse-summary` before choosing one.
+
+config NEURAI_P256_ALLOW_EFUSE_BURN
+    bool "Allow the genkey command to burn a new key into eFuse (IRREVERSIBLE)"
+    depends on NEURAI_P256_KEY_EFUSE
+    default n
+    help
+        With this option the firmware offers `genkey <index> BURN`, which generates the
+        private key inside the chip with its TRNG and writes it to the eFuse block as a
+        read-protected ECDSA_KEY_P256. Burning an eFuse cannot be undone and uses one of
+        the six key blocks. Leave it off unless you mean to provision this board.
+
+endmenu

@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include "crypto/common.h"
 #include "script/interpreter.h"
 #include "script/script.h"
 #include "script/script_error.h"
@@ -66,7 +67,7 @@ bool DirectGetTxLockTime(const CTransaction& tx, std::vector<unsigned char>& res
 std::vector<unsigned char> EncodeLockTimeLE(uint32_t value)
 {
     std::vector<unsigned char> result(4);
-    memcpy(result.data(), &value, 4);
+    WriteLE32(result.data(), value);
     return result;
 }
 

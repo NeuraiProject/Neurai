@@ -747,7 +747,8 @@ BOOST_AUTO_TEST_CASE(context_and_arguments)
 BOOST_AUTO_TEST_CASE(opcode_in_the_interpreter)
 {
     BOOST_CHECK_EQUAL(OP_CHECKASSETAUTH, 0xdf);
-    BOOST_CHECK_EQUAL(MAX_OPCODE, static_cast<unsigned int>(OP_CHECKASSETAUTH));
+    // NIP-060 moved MAX_OPCODE to OP_CHECKSIG_P256 (0xe0), the next slot.
+    BOOST_CHECK_EQUAL(MAX_OPCODE, static_cast<unsigned int>(OP_CHECKSIG_P256));
     BOOST_CHECK_EQUAL(std::string(GetOpName(OP_CHECKASSETAUTH)), "OP_CHECKASSETAUTH");
 
     Spend spend;

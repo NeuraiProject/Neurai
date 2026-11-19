@@ -38,7 +38,7 @@ The interface is defined in the C header `neuraiconsensus.h` located in  `src/sc
 
 The `flags` argument is 32 bits wide, so the library cannot express the newer
 flags (bit 32 and above: AuthScript strict families, NIP-041/043/044/046,
-`OP_ZKVERIFY`, hashes, Ed25519, CHECKSIGADD, ...); scripts that need them
+`OP_ZKVERIFY`, hashes, Ed25519, CHECKSIGADD, P-256, ...); scripts that need them
 cannot be verified with this API. Some opcodes also need data the library does
 not receive (all prevouts, reference inputs, chain context) and fail closed.
 

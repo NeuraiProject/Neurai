@@ -218,8 +218,7 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
     const script_verify_flags coinbaseFlags = ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, chainparams.GetConsensus(),
         chainparams.GetConsensus().IsStrictAuthScriptActive(nHeight), nHeight);
     pblocktemplate->vTxSigOpsCost[0] = WITNESS_SCALE_FACTOR * GetLegacySigOpCount(*pblock->vtx[0],
-        (coinbaseFlags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) != 0, (coinbaseFlags & SCRIPT_VERIFY_CHECKSIGADD) != 0,
-        GetEd25519SigOps(coinbaseFlags));
+        GetOptionalSigOpCosts(coinbaseFlags));
 
     CValidationState state;
     if (!TestBlockValidity(state, chainparams, *pblock, pindexPrev, false, false)) {

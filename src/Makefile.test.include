@@ -33,6 +33,8 @@ JSON_TEST_FILES = \
   test/data/poseidon_vectors.json \
   test/data/ed25519_vectors.json \
   test/data/wycheproof_ed25519.json \
+  test/data/p256_vectors.json \
+  test/data/p256_spend_vector.json \
   test/data/silentpayment_index_vectors.json \
   test/data/privacy_c7_vectors.json \
   test/data/nip048_vectors.json
@@ -114,6 +116,7 @@ NEURAI_TESTS =\
   test/sha512_op_tests.cpp \
   test/poseidon_tests.cpp \
   test/ed25519_tests.cpp \
+  test/p256_tests.cpp \
   test/key_tests.cpp \
   test/limitedmap_tests.cpp \
   test/dbwrapper_tests.cpp \

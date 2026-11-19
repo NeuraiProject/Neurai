@@ -178,6 +178,16 @@ const char* ScriptErrorString(const ScriptError serror)
             return "OP_CHECKSIG_ED25519 pubkey encoding invalid (non-canonical y, not on curve, or non-prime-order subgroup) (NIP-035 §4.4)";
         case SCRIPT_ERR_ED25519_SIG_ENCODING:
             return "OP_CHECKSIG_ED25519 signature encoding invalid (R non-canonical, R not on curve, R non-prime-order, or S >= l) (NIP-035 §4.4)";
+        case SCRIPT_ERR_P256_PUBKEY_SIZE:
+            return "OP_CHECKSIG_P256 pubkey size != 33 bytes (NIP-060 §4.4)";
+        case SCRIPT_ERR_P256_PUBKEY_ENCODING:
+            return "OP_CHECKSIG_P256 pubkey encoding invalid (prefix not 02/03, X >= p, or not on the curve) (NIP-060 §4.4)";
+        case SCRIPT_ERR_P256_SIG_SIZE:
+            return "OP_CHECKSIG_P256 signature size is neither 0 nor 64 bytes (NIP-060 §4.4)";
+        case SCRIPT_ERR_P256_SIG_ENCODING:
+            return "OP_CHECKSIG_P256 signature encoding invalid (r or s out of range, or high S) (NIP-060 §4.4)";
+        case SCRIPT_ERR_P256_VERIFY:
+            return "OP_CHECKSIG_P256 signature does not verify (NIP-060 §4.5)";
         case SCRIPT_ERR_PQ_PUBKEY_SIZE:
             return "OP_CHECKSIGADD: 0x05-prefixed PQ public key has non-canonical size (NIP-039 §3.4)";
         case SCRIPT_ERR_ASSETAUTH_SIGVERSION:

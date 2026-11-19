@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include "crypto/common.h"
 #include "script/interpreter.h"
 #include "script/script.h"
 #include "script/script_error.h"
@@ -51,6 +52,13 @@ CMutableTransaction BuildCtvTestTx(int numInputs = 1, int numOutputs = 1)
     return tx;
 }
 
+void HashLE32(CSHA256& hasher, uint32_t value)
+{
+    unsigned char buf[4];
+    WriteLE32(buf, value);
+    hasher.Write(buf, 4);
+}
+
 // Recompute the CTV hash (BIP 119 DefaultCheckTemplateVerifyHash) for testing.
 // This must match the implementation in interpreter.cpp.
 uint256 ComputeCtvHash(const CTransaction& tx, uint32_t nIn)
@@ -58,10 +66,10 @@ uint256 ComputeCtvHash(const CTransaction& tx, uint32_t nIn)
     CSHA256 ss;
 
     uint32_t nVersion = tx.nVersion;
-    ss.Write((const unsigned char*)&nVersion, 4);
+    HashLE32(ss, nVersion);
 
     uint32_t nLockTime = tx.nLockTime;
-    ss.Write((const unsigned char*)&nLockTime, 4);
+    HashLE32(ss, nLockTime);
 
     bool hasNonEmptyScriptSig = false;
     for (const auto& txin : tx.vin) {
@@ -83,19 +91,19 @@ uint256 ComputeCtvHash(const CTransaction& tx, uint32_t nIn)
     }
 
     uint32_t nInputs = tx.vin.size();
-    ss.Write((const unsigned char*)&nInputs, 4);
+    HashLE32(ss, nInputs);
 
     CSHA256 sequencesHash;
     for (const auto& txin : tx.vin) {
         uint32_t nSequence = txin.nSequence;
-        sequencesHash.Write((const unsigned char*)&nSequence, 4);
+        HashLE32(sequencesHash, nSequence);
     }
     unsigned char seqResult[CSHA256::OUTPUT_SIZE];
     sequencesHash.Finalize(seqResult);
     ss.Write(seqResult, CSHA256::OUTPUT_SIZE);
 
     uint32_t nOutputs = tx.vout.size();
-    ss.Write((const unsigned char*)&nOutputs, 4);
+    HashLE32(ss, nOutputs);
 
     CSHA256 outputsHash;
     for (const auto& txout : tx.vout) {
@@ -121,7 +129,7 @@ uint256 ComputeCtvHash(const CTransaction& tx, uint32_t nIn)
     }
 
     uint32_t inputIndex = nIn;
-    ss.Write((const unsigned char*)&inputIndex, 4);
+    HashLE32(ss, inputIndex);
 
     uint256 result;
     ss.Finalize(result.begin());
@@ -135,6 +143,29 @@ BOOST_FIXTURE_TEST_SUITE(ctv_tests, BasicTestingSetup)
 // ============================================================================
 // Correct hash succeeds
 // ============================================================================
+
+// The template hash is fixed bytes, the same on every host: every integer is
+// serialized little endian. Expected value computed independently with Python
+// hashlib for BuildCtvTestTx(2, 2), input 1.
+BOOST_AUTO_TEST_CASE(ctv_hash_pinned_vector)
+{
+    const CTransaction tx(BuildCtvTestTx(2, 2));
+    const uint256 expected = ComputeCtvHash(tx, 1);
+    BOOST_CHECK_EQUAL(HexStr(expected.begin(), expected.end()),
+                      "4bee5c2a6a334eb1464afff298b6e04de754923724d5dc15f4628f9bd7c6f6b3");
+    std::vector<unsigned char> vchHash(expected.begin(), expected.end());
+    CScript script;
+    script << vchHash << OP_CHECKTEMPLATEVERIFY << OP_DROP << OP_TRUE;
+    PrecomputedTransactionData txdata(tx);
+    for (bool cached : {false, true}) {
+        std::vector<std::vector<unsigned char>> stack;
+        ScriptError err;
+        const bool ok = cached
+            ? EvalScript(stack, script, SCRIPT_VERIFY_CHECKTEMPLATEVERIFY, TransactionSignatureChecker(&tx, 1, 0, txdata), SIGVERSION_BASE, &err)
+            : EvalScript(stack, script, SCRIPT_VERIFY_CHECKTEMPLATEVERIFY, TransactionSignatureChecker(&tx, 1, 0), SIGVERSION_BASE, &err);
+        BOOST_CHECK_MESSAGE(ok, (cached ? "cached" : "direct") << ": " << ScriptErrorString(err));
+    }
+}
 
 BOOST_AUTO_TEST_CASE(ctv_correct_hash_succeeds)
 {

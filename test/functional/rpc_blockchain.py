@@ -57,6 +57,7 @@ class BlockchainTest(NeuraiTestFramework):
             'headers',
             'mediantime',
             'pruned',
+            'signature_opcodes',
             'size_on_disk',
             'softforks',
             'verificationprogress',
@@ -68,6 +69,13 @@ class BlockchainTest(NeuraiTestFramework):
 
         # result should have these additional pruning keys if manual pruning is enabled
         assert_equal(sorted(res.keys()), sorted(['pruneheight', 'automatic_pruning'] + keys))
+
+        # CSFS, Ed25519, CHECKSIGADD and P-256 (NIP-060) share one activation
+        # height; regtest activates them at genesis.
+        assert_equal(res['signature_opcodes']['activation_height'], 0)
+        assert res['signature_opcodes']['active_for_next_block']
+        assert_equal(sorted(res['signature_opcodes']['opcodes']),
+                     ['checksig_ed25519', 'checksig_p256', 'checksigadd', 'checksigfromstack'])
 
         # size_on_disk should be > 0
         assert_greater_than(res['size_on_disk'], 0)

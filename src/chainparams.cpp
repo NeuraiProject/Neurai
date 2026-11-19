@@ -177,6 +177,7 @@ public:
         consensus.nModernHashesEnabled        = true;         // NIP-034a
         consensus.nPoseidonEnabled            = true;         // NIP-036
         consensus.nEd25519Enabled             = true;         // NIP-035: gated by nSignatureOpcodesHeight
+        consensus.nP256Enabled                = true;         // NIP-060: gated by nSignatureOpcodesHeight
         consensus.nCheckSigAddEnabled         = true;         // NIP-039: gated by nSignatureOpcodesHeight
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
@@ -452,6 +453,7 @@ public:
         consensus.nModernHashesEnabled        = true;         // NIP-034a: from nOptInFeaturesHeight
         consensus.nPoseidonEnabled            = true;         // NIP-036: from nOptInFeaturesHeight
         consensus.nEd25519Enabled             = true;         // NIP-035: from nOptInFeaturesHeight
+        consensus.nP256Enabled                = true;         // NIP-060: from nOptInFeaturesHeight and nSignatureOpcodesHeight
         consensus.nCheckSigAddEnabled         = true;         // NIP-039: from nOptInFeaturesHeight
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks
@@ -728,6 +730,7 @@ public:
         consensus.nModernHashesEnabled        = true;         // NIP-034a: active on regtest from genesis
         consensus.nPoseidonEnabled            = true;         // NIP-036: active on regtest from genesis
         consensus.nEd25519Enabled             = true;         // NIP-035: active on regtest from genesis
+        consensus.nP256Enabled                = true;         // NIP-060: active on regtest from genesis
         consensus.nCheckSigAddEnabled         = true;         // NIP-039: active on regtest from genesis
         consensus.powLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.kawpowLimit = uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Estimated starting diff for first 180 kawpow blocks

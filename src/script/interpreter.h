@@ -322,6 +322,16 @@ enum class script_verify_flag_name : uint8_t {
     // only, never how a script executes.
     SCRIPT_VERIFY_ED25519_COST = 53,
 
+    // NIP-060: enable OP_CHECKSIG_P256 (0xe0), strict-profile ECDSA over NIST
+    // P-256 with SHA-256. Stack contract is (sig, msg, pubkey -- 0|1): the
+    // key is 33-byte SEC 1 compressed, the signature empty or 64-byte r || s
+    // with low S. Encodings are checked before the hash budget is charged
+    // and the signature is verified after it. An empty signature pushes 0; a
+    // well-formed signature that does not verify fails the script. Each
+    // instruction counts P256_SIGOP_COST sigops. Flag off: 0xe0 is a bad
+    // opcode, as before.
+    SCRIPT_VERIFY_P256 = 54,
+
     // End marker — must always be last.
     SCRIPT_VERIFY_END_MARKER
 };
@@ -341,6 +351,33 @@ inline unsigned int GetEd25519SigOps(script_verify_flags flags)
 {
     if (!(flags & SCRIPT_VERIFY_ED25519)) return 0;
     return (flags & SCRIPT_VERIFY_ED25519_COST) ? ED25519_SIGOP_COST : 1;
+}
+
+// NIP-060 §4.6: the sigops one OP_CHECKSIG_P256 counts. Benchmarked on the
+// reference machine of the NIP-028 CPU review (19-11-2026): the slowest of
+// the valid/invalid x 32/72-byte cases takes 112.0 us for the whole path
+// (key decompression, SHA-256, verification) against 26.8 us for a
+// compressed secp256k1 key and DER signature, a ratio of 4.17; the cost is
+// the ratio rounded up. Fixed from activation: there is no cost flag.
+static constexpr unsigned int P256_SIGOP_COST = 5;
+
+/** The sigops one OP_CHECKSIG_P256 counts under `flags`: none while the
+ *  opcode is not active, P256_SIGOP_COST once it is. */
+inline unsigned int GetP256SigOps(script_verify_flags flags)
+{
+    return (flags & SCRIPT_VERIFY_P256) ? P256_SIGOP_COST : 0;
+}
+
+/** The sigops each optional signature opcode counts under `flags`, for
+ *  CScript::GetSigOpCount and the transaction sigop counters. */
+inline OptionalSigOpCosts GetOptionalSigOpCosts(script_verify_flags flags)
+{
+    OptionalSigOpCosts costs;
+    costs.csfs = (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) ? 1 : 0;
+    costs.checksigadd = (flags & SCRIPT_VERIFY_CHECKSIGADD) ? 1 : 0;
+    costs.ed25519 = GetEd25519SigOps(flags);
+    costs.p256 = GetP256SigOps(flags);
+    return costs;
 }
 
 // Canonical empty-flags value.

@@ -32,6 +32,7 @@ bench_bench_neurai_SOURCES = \
   bench/prevector_destructor.cpp \
   bench/bench_poseidon.cpp \
   bench/bench_ed25519.cpp \
+  bench/bench_p256.cpp \
   bench/bench_checksigadd.cpp \
   bench/bench_assetauth.cpp
 

@@ -248,7 +248,6 @@ BOOST_AUTO_TEST_CASE(optional_signature_cost_paths_and_activation)
     for (opcodetype opcode : {OP_CHECKSIGFROMSTACK, OP_CHECKSIGADD, OP_CHECKSIG_ED25519}) {
         const bool csfs = opcode == OP_CHECKSIGFROMSTACK;
         const bool csa = opcode == OP_CHECKSIGADD;
-        const bool ed = opcode == OP_CHECKSIG_ED25519;
         const script_verify_flags activation = csfs ? SCRIPT_VERIFY_CHECKSIGFROMSTACK :
             (csa ? SCRIPT_VERIFY_CHECKSIGADD : SCRIPT_VERIFY_ED25519);
         const script_verify_flags inactive = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_AUTHSCRIPT;
@@ -257,7 +256,7 @@ BOOST_AUTO_TEST_CASE(optional_signature_cost_paths_and_activation)
         const CScript script = CScript() << std::vector<unsigned char>{static_cast<unsigned char>(opcode)} << OP_DROP
             << OP_0 << OP_IF << opcode << OP_ENDIF << OP_TRUE;
         BOOST_CHECK_EQUAL(script.GetSigOpCount(true), 0U);
-        BOOST_CHECK_EQUAL(script.GetSigOpCount(true, csfs, csa, ed), 1U);
+        BOOST_CHECK_EQUAL(script.GetSigOpCount(true, GetOptionalSigOpCosts(activation)), 1U);
         // Other opcode flags must not accidentally activate this opcode's charge.
         const script_verify_flags otherFlags = inactive |
             ((SCRIPT_VERIFY_CHECKSIGFROMSTACK | SCRIPT_VERIFY_CHECKSIGADD | SCRIPT_VERIFY_ED25519) & ~activation);
@@ -318,10 +317,83 @@ BOOST_AUTO_TEST_CASE(optional_signature_cost_paths_and_activation)
             BuildTxs(spending, coins, creation, GetScriptForDestination(CScriptID(redeem)), CScript() << Serialize(redeem), empty);
             const CTransaction tx(spending);
             BOOST_CHECK(AreInputsStandard(tx, coins));
-            BOOST_CHECK_EQUAL(AreInputsStandard(tx, coins, csfs, csa, ed), count == 15);
+            BOOST_CHECK_EQUAL(AreInputsStandard(tx, coins, GetOptionalSigOpCosts(activation)), count == 15);
             BOOST_CHECK_EQUAL(GetTransactionSigOpCost(tx, coins, active), count * 4);
             BOOST_CHECK_EQUAL(GetTransactionSigOpCost(tx, coins, inactive), 0);
         }
+    }
+}
+
+BOOST_AUTO_TEST_CASE(p256_sigop_cost_paths)
+{
+    // NIP-060: one OP_CHECKSIG_P256 counts P256_SIGOP_COST sigops on every
+    // path the optional signature opcodes use: legacy (x4), P2SH (x4),
+    // witness v0 / AuthScript (x1), bare outputs again when spent, and the
+    // BIP-54 count of executed legacy sigops.
+    const unsigned int k = P256_SIGOP_COST;
+    const script_verify_flags inactive = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_AUTHSCRIPT;
+    const script_verify_flags active = inactive | SCRIPT_VERIFY_P256;
+    const script_verify_flags others = inactive | SCRIPT_VERIFY_CHECKSIGFROMSTACK | SCRIPT_VERIFY_CHECKSIGADD |
+        SCRIPT_VERIFY_ED25519 | SCRIPT_VERIFY_ED25519_COST;
+    const CScript script = CScript() << std::vector<unsigned char>{OP_CHECKSIG_P256} << OP_DROP
+        << OP_0 << OP_IF << OP_CHECKSIG_P256 << OP_ENDIF << OP_TRUE;
+    BOOST_CHECK_EQUAL(script.GetSigOpCount(true), 0U);
+    BOOST_CHECK_EQUAL(script.GetSigOpCount(true, GetOptionalSigOpCosts(active)), k);
+
+    CCoinsView base;
+    CCoinsViewCache coins(&base);
+    CMutableTransaction creation, spending;
+    CScriptWitness empty;
+    BuildTxs(spending, coins, creation, script, CScript(), empty);
+    BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(creation), coins, active), int64_t(4 * k));
+    BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(creation), coins, inactive), 0);
+    BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(spending), coins, active), int64_t(4 * k));
+    BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(spending), coins, others), 0);
+    BOOST_CHECK_EQUAL(GetLegacyExecutedSigOpCount(CTransaction(spending), coins, active), k);
+    BOOST_CHECK_EQUAL(GetLegacyExecutedSigOpCount(CTransaction(spending), coins, inactive), 0U);
+    spending.vin[0].scriptSig = CScript() << OP_CHECKSIG_P256;
+    BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(spending), coins, active), int64_t(8 * k));
+    BOOST_CHECK_EQUAL(GetLegacyExecutedSigOpCount(CTransaction(spending), coins, active), 2 * k);
+
+    const CScript p2sh = GetScriptForDestination(CScriptID(script));
+    BuildTxs(spending, coins, creation, p2sh, CScript() << Serialize(script), empty);
+    BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(spending), coins, active), int64_t(4 * k));
+    BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(spending), coins, others), 0);
+    BOOST_CHECK_EQUAL(GetLegacyExecutedSigOpCount(CTransaction(spending), coins, active), k);
+
+    uint256 scriptHash;
+    CSHA256().Write(script.data(), script.size()).Finalize(scriptHash.begin());
+    const CScript v0 = CScript() << OP_0 << ToByteVector(scriptHash);
+    const CScript v1 = CScript() << OP_1 << ToByteVector(GetAuthScriptCommitment(0, nullptr, script));
+    for (bool authscript : {false, true}) for (bool wrapped : {false, true}) {
+        const CScript program = authscript ? v1 : v0;
+        CScriptWitness witness;
+        if (authscript) witness.stack.push_back({0});
+        witness.stack.push_back(Serialize(script));
+        const CScript output = wrapped ? GetScriptForDestination(CScriptID(program)) : program;
+        const CScript scriptSig = wrapped ? CScript() << Serialize(program) : CScript();
+        BuildTxs(spending, coins, creation, output, scriptSig, witness);
+        BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(spending), coins, active), int64_t(k));
+        BOOST_CHECK_EQUAL(GetTransactionWitnessSigOpCost(CTransaction(spending), coins, active), int64_t(k));
+        BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(spending), coins, inactive), 0);
+        BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(spending), coins, others), 0);
+    }
+    CScript asset = v1;
+    CAssetTransfer("P256COUNT", COIN).ConstructTransaction(asset, AssetMarker::NEURAI_XNA);
+    CScriptWitness witness;
+    witness.stack = {{0}, Serialize(script)};
+    BuildTxs(spending, coins, creation, asset, CScript(), witness);
+    BOOST_CHECK_EQUAL(GetTransactionSigOpCost(CTransaction(spending), coins, active | SCRIPT_VERIFY_AUTHSCRIPT_STRICT), int64_t(k));
+
+    // P2SH policy: MAX_P2SH_SIGOPS (15) admits three checks, not four.
+    for (int count : {3, 4}) {
+        CScript redeem;
+        for (int i = 0; i < count; ++i) redeem << OP_CHECKSIG_P256;
+        BuildTxs(spending, coins, creation, GetScriptForDestination(CScriptID(redeem)), CScript() << Serialize(redeem), empty);
+        const CTransaction tx(spending);
+        BOOST_CHECK(AreInputsStandard(tx, coins));
+        BOOST_CHECK_EQUAL(AreInputsStandard(tx, coins, GetOptionalSigOpCosts(active)), count * k <= MAX_P2SH_SIGOPS);
+        BOOST_CHECK_EQUAL(GetTransactionSigOpCost(tx, coins, active), int64_t(count * 4 * k));
     }
 }
 

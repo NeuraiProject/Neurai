@@ -45,6 +45,7 @@ Bundled in the source tree (no installation needed):
 | BLAKE3 | 1.5.4 | `src/crypto/blake3` |
 | Ed25519 ref10 (from libsodium) | | `src/crypto/ed25519` |
 | mcl | commit `cbb18eb` ([herumi/mcl](https://github.com/herumi/mcl)) | `src/crypto/mcl` |
+| Fiat Cryptography P-256 field and scalar arithmetic (MIT) | commit `3d2880e` ([mit-plv/fiat-crypto](https://github.com/mit-plv/fiat-crypto)) | `src/crypto/p256/fiat` |
 | Monocypher | 4.0.2 | `src/monocypher` |
 | QRKude (GUI QR codes) | 0.1.0 | `src/qrkude` |
 | wasm3 | 0.5.0 | `src/wasm3` |

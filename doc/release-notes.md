@@ -239,7 +239,7 @@ height revalidates the mempool.
 | `OP_OUTPUTAUTHCOMMITMENT`, `OP_INPUTVALUE`, `OP_CHAINCONTEXT` | NIP-023, NIP-024, NIP-026 | not scheduled | 10 | 0, `-optinfeaturesheight` |
 | Hash and proof opcodes: `OP_KECCAK256`, `OP_BLAKE2B`, `OP_CHECKMERKLEINCLUSION`, `OP_BLAKE3`, `OP_SHA3_256`, `OP_SHA512`, `OP_POSEIDON` | NIP-030, NIP-031, NIP-034a, NIP-036 | not scheduled | 10 | 0, `-optinfeaturesheight` |
 | Strict `OP_XNA_ASSET` placement rule | — | not scheduled | 10 | 0, `-optinfeaturesheight` |
-| Signature opcodes `OP_CHECKSIGFROMSTACK`, `OP_CHECKSIG_ED25519`, `OP_CHECKSIGADD`. CSFS and CHECKSIGADD (as do `OP_CHECKMERKLEINCLUSION` and `OP_ZKVERIFY`) raise the stack element limit to 3072 bytes, enough for ML-DSA-44 keys (1313 bytes) and signatures (2421 bytes) | NIP-035, NIP-039, NIP-018 | not scheduled | 10 | 0, `-signatureopcodesheight` |
+| Signature opcodes `OP_CHECKSIGFROMSTACK`, `OP_CHECKSIG_ED25519`, `OP_CHECKSIGADD` and `OP_CHECKSIG_P256` (ECDSA over NIST P-256 for hardware devices; five sigops per check; `getblockchaininfo` reports them in `signature_opcodes`). CSFS and CHECKSIGADD (as do `OP_CHECKMERKLEINCLUSION` and `OP_ZKVERIFY`) raise the stack element limit to 3072 bytes, enough for ML-DSA-44 keys (1313 bytes) and signatures (2421 bytes) | NIP-035, NIP-039, NIP-060, NIP-018 | not scheduled | 10 | 0, `-signatureopcodesheight` |
 | `OP_TXHASH` with a 16-bit field mask | NIP-042 | not scheduled | 10 | 0, `-txhashheight` |
 | State-thread primitives: transfer-message selector `0x08`, `OP_INPUTFIELD`, Poseidon Merkle scheme `05` | NIP-043 | not scheduled | 10 | 0, `-assetmessageheight`, `-inputfieldheight`, `-merkleposeidonheight` |
 | AuthScript script trees | NIP-044 | not scheduled | 10 | 0, `-authscripttreeheight` |
@@ -792,8 +792,8 @@ Build system
 - New `--with-build-tag=TAG` appends a tag to the user agent, for example
   `/Neurai:2.0.0(20261014-28d3403)/`.
 - New bundled code: the `mcl` pairing library (pinned, private namespaces),
-  libsodium's ref10 Ed25519 backend, BLAKE3, `wasm3` 0.5.0 and Monocypher
-  4.0.2. They are listed in [dependencies.md](dependencies.md).
+  libsodium's ref10 Ed25519 backend, the Fiat Cryptography P-256 field and
+  scalar arithmetic, BLAKE3, `wasm3` 0.5.0 and Monocypher 4.0.2. They are listed in [dependencies.md](dependencies.md).
 - `neurai-tx` now links on Windows (it relied on weak symbols that MinGW
   does not resolve from static libraries).
 - libqrencode is no longer used: the GUI draws its QR codes with the bundled

@@ -98,4 +98,16 @@ inline constexpr script_verify_flags operator|(
     return script_verify_flags{f1} | f2;
 }
 
+/** Sigops each optional signature opcode counts; 0 means the opcode is not
+ *  active and counts nothing. Built from the script verification flags by
+ *  GetOptionalSigOpCosts (script/interpreter.h). Named fields keep callers
+ *  from passing one opcode's cost for another's. */
+struct OptionalSigOpCosts {
+    unsigned int csfs{0};        // OP_CHECKSIGFROMSTACK
+    unsigned int checksigadd{0}; // OP_CHECKSIGADD
+    unsigned int ed25519{0};     // OP_CHECKSIG_ED25519
+    unsigned int p256{0};        // OP_CHECKSIG_P256
+    bool Any() const { return csfs != 0 || checksigadd != 0 || ed25519 != 0 || p256 != 0; }
+};
+
 #endif // NEURAI_SCRIPT_VERIFY_FLAGS_H

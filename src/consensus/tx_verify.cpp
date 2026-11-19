@@ -307,21 +307,21 @@ bool SequenceLocks(const CTransaction &tx, int flags, std::vector<int>* prevHeig
     return EvaluateSequenceLocks(block, CalculateSequenceLocks(tx, flags, prevHeights, block));
 }
 
-unsigned int GetLegacySigOpCount(const CTransaction& tx, bool countCSFS, bool countCheckSigAdd, unsigned int nEd25519SigOps)
+unsigned int GetLegacySigOpCount(const CTransaction& tx, const OptionalSigOpCosts& optional)
 {
     unsigned int nSigOps = 0;
     for (const auto& txin : tx.vin)
     {
-        nSigOps += txin.scriptSig.GetSigOpCount(false, countCSFS, countCheckSigAdd, nEd25519SigOps);
+        nSigOps += txin.scriptSig.GetSigOpCount(false, optional);
     }
     for (const auto& txout : tx.vout)
     {
-        nSigOps += txout.scriptPubKey.GetSigOpCount(false, countCSFS, countCheckSigAdd, nEd25519SigOps);
+        nSigOps += txout.scriptPubKey.GetSigOpCount(false, optional);
     }
     return nSigOps;
 }
 
-unsigned int GetP2SHSigOpCount(const CTransaction& tx, const CCoinsViewCache& inputs, bool countCSFS, bool countCheckSigAdd, unsigned int nEd25519SigOps)
+unsigned int GetP2SHSigOpCount(const CTransaction& tx, const CCoinsViewCache& inputs, const OptionalSigOpCosts& optional)
 {
     if (tx.IsCoinBase())
         return 0;
@@ -333,23 +333,21 @@ unsigned int GetP2SHSigOpCount(const CTransaction& tx, const CCoinsViewCache& in
         assert(!coin.IsSpent());
         const CTxOut &prevout = coin.out;
         if (prevout.scriptPubKey.IsPayToScriptHash())
-            nSigOps += prevout.scriptPubKey.GetSigOpCount(tx.vin[i].scriptSig, countCSFS, countCheckSigAdd, nEd25519SigOps);
+            nSigOps += prevout.scriptPubKey.GetSigOpCount(tx.vin[i].scriptSig, optional);
     }
     return nSigOps;
 }
 
 int64_t GetTransactionSigOpCost(const CTransaction& tx, const CCoinsViewCache& inputs, script_verify_flags flags)
 {
-    const bool countCSFS = (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) != 0;
-    const bool countCheckSigAdd = (flags & SCRIPT_VERIFY_CHECKSIGADD) != 0;
-    const unsigned int nEd25519SigOps = GetEd25519SigOps(flags);
-    int64_t nSigOps = GetLegacySigOpCount(tx, countCSFS, countCheckSigAdd, nEd25519SigOps) * WITNESS_SCALE_FACTOR;
+    const OptionalSigOpCosts optional = GetOptionalSigOpCosts(flags);
+    int64_t nSigOps = GetLegacySigOpCount(tx, optional) * WITNESS_SCALE_FACTOR;
 
     if (tx.IsCoinBase())
         return nSigOps;
 
     if (flags & SCRIPT_VERIFY_P2SH) {
-        nSigOps += GetP2SHSigOpCount(tx, inputs, countCSFS, countCheckSigAdd, nEd25519SigOps) * WITNESS_SCALE_FACTOR;
+        nSigOps += GetP2SHSigOpCount(tx, inputs, optional) * WITNESS_SCALE_FACTOR;
     }
 
     for (unsigned int i = 0; i < tx.vin.size(); i++)
@@ -357,14 +355,14 @@ int64_t GetTransactionSigOpCost(const CTransaction& tx, const CCoinsViewCache& i
         const Coin& coin = inputs.AccessCoin(tx.vin[i].prevout);
         assert(!coin.IsSpent());
         const CTxOut &prevout = coin.out;
-        if (countCSFS || countCheckSigAdd || nEd25519SigOps) {
+        if (optional.Any()) {
             // A bare output may predate activation of these signature opcodes.
             // Charge its top-level optional signature instructions when spent as well; the
             // creation-time legacy scan alone cannot bound this block's work.
             // P2SH/witness programs contain no top-level optional signature instructions;
             // their revealed scripts are counted by their respective paths.
-            nSigOps += (prevout.scriptPubKey.GetSigOpCount(true, countCSFS, countCheckSigAdd, nEd25519SigOps) -
-                        prevout.scriptPubKey.GetSigOpCount(true, false)) * WITNESS_SCALE_FACTOR;
+            nSigOps += (prevout.scriptPubKey.GetSigOpCount(true, optional) -
+                        prevout.scriptPubKey.GetSigOpCount(true)) * WITNESS_SCALE_FACTOR;
         }
         nSigOps += CountWitnessSigOps(tx.vin[i].scriptSig, prevout.scriptPubKey, &tx.vin[i].scriptWitness, flags);
     }
@@ -388,16 +386,14 @@ unsigned int GetLegacyExecutedSigOpCount(const CTransaction& tx, const CCoinsVie
     if (tx.IsCoinBase())
         return 0;
 
-    const bool countCSFS = (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) != 0;
-    const bool countCheckSigAdd = (flags & SCRIPT_VERIFY_CHECKSIGADD) != 0;
-    const unsigned int nEd25519SigOps = GetEd25519SigOps(flags);
+    const OptionalSigOpCosts optional = GetOptionalSigOpCosts(flags);
     unsigned int nSigOps = 0;
     for (const auto& txin : tx.vin) {
         const Coin& coin = inputs.AccessCoin(txin.prevout);
         assert(!coin.IsSpent());
-        nSigOps += txin.scriptSig.GetSigOpCount(true, countCSFS, countCheckSigAdd, nEd25519SigOps);
+        nSigOps += txin.scriptSig.GetSigOpCount(true, optional);
         // For P2SH this counts the redeem script; otherwise the scriptPubKey itself.
-        nSigOps += coin.out.scriptPubKey.GetSigOpCount(txin.scriptSig, countCSFS, countCheckSigAdd, nEd25519SigOps);
+        nSigOps += coin.out.scriptPubKey.GetSigOpCount(txin.scriptSig, optional);
     }
     return nSigOps;
 }

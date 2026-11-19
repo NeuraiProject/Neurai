@@ -46,7 +46,8 @@ DIST_CONTRIB = $(top_srcdir)/contrib/neurai-cli.bash-completion \
 	       $(top_srcdir)/contrib/neurai-tx.bash-completion \
 	       $(top_srcdir)/contrib/neuraid.bash-completion \
 	       $(top_srcdir)/contrib/init \
-	       $(top_srcdir)/contrib/rpm
+	       $(top_srcdir)/contrib/rpm \
+	       $(top_srcdir)/contrib/p256/p256_sign.py
 DIST_SHARE = \
   $(top_srcdir)/share/genbuild.sh \
   $(top_srcdir)/share/rpcuser

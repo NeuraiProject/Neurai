@@ -146,6 +146,7 @@ BASE_SCRIPTS= [
     'feature_depin_transfer_state.py',
     'feature_norbf.py',
     'feature_assetauth.py',
+    'feature_p256.py',
     'feature_unified_fork.py',
     'feature_unified_fork_relay.py',
     'feature_unified_fork_p2p.py',

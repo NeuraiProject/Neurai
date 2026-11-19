@@ -82,6 +82,7 @@ std::vector<std::pair<std::string, bool>> ForkSwitches(const Consensus::Params& 
         {"nModernHashesEnabled", p.nModernHashesEnabled},
         {"nPoseidonEnabled", p.nPoseidonEnabled},
         {"nEd25519Enabled", p.nEd25519Enabled},
+        {"nP256Enabled", p.nP256Enabled},
         {"nCheckSigAddEnabled", p.nCheckSigAddEnabled},
     };
 }
@@ -358,9 +359,9 @@ BOOST_AUTO_TEST_CASE(ed25519_counts_three_sigops_from_the_fork_height)
 
     // Counting, in a script and in a witness script.
     const CScript script = CScript() << OP_CHECKSIG_ED25519 << OP_CHECKSIG_ED25519 << OP_CHECKSIG;
-    BOOST_CHECK_EQUAL(script.GetSigOpCount(true, false, false, 0), 1U);
-    BOOST_CHECK_EQUAL(script.GetSigOpCount(true, false, false, 1), 3U);
-    BOOST_CHECK_EQUAL(script.GetSigOpCount(true, false, false, ED25519_SIGOP_COST), 7U);
+    BOOST_CHECK_EQUAL(script.GetSigOpCount(true), 1U);
+    BOOST_CHECK_EQUAL(script.GetSigOpCount(true, OptionalSigOpCosts{.ed25519 = 1}), 3U);
+    BOOST_CHECK_EQUAL(script.GetSigOpCount(true, OptionalSigOpCosts{.ed25519 = ED25519_SIGOP_COST}), 7U);
     CScriptWitness witness;
     witness.stack.push_back(std::vector<unsigned char>(script.begin(), script.end()));
     const CScript p2wsh = GetScriptForWitness(script);
@@ -371,6 +372,41 @@ BOOST_AUTO_TEST_CASE(ed25519_counts_three_sigops_from_the_fork_height)
     // A block holds 26,666 checks, 79,998 sigops; 26,667 are over the limit.
     static_assert(26666 * ED25519_SIGOP_COST <= MAX_BLOCK_SIGOPS_COST, "26,666 checks fit");
     static_assert(26667 * ED25519_SIGOP_COST > MAX_BLOCK_SIGOPS_COST, "26,667 checks do not");
+}
+
+BOOST_AUTO_TEST_CASE(p256_follows_the_signature_opcode_height)
+{
+    // NIP-060: OP_CHECKSIG_P256 is enabled on every network and applies from
+    // nSignatureOpcodesHeight, like Ed25519: testnet block 10, regtest
+    // genesis, mainnet the unified fork height.
+    BOOST_CHECK(CONSENSUS_OPT_IN_FLAGS & SCRIPT_VERIFY_P256);
+    const auto mainnet = CreateChainParams(CBaseChainParams::MAIN);
+    const Consensus::Params& main = mainnet->GetConsensus();
+    BOOST_CHECK(main.nP256Enabled);
+    const int never = std::numeric_limits<int>::max() - 1;
+    BOOST_CHECK(!(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, main, false, never) & SCRIPT_VERIFY_P256));
+    BOOST_CHECK_EQUAL(GetP256SigOps(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, main, false, never)), 0U);
+
+    const auto testnet = CreateChainParams(CBaseChainParams::TESTNET);
+    const Consensus::Params& test = testnet->GetConsensus();
+    BOOST_CHECK(test.nP256Enabled);
+    BOOST_CHECK_EQUAL(test.nSignatureOpcodesHeight, 10);
+    BOOST_CHECK(!(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, test, true, 9) & SCRIPT_VERIFY_P256));
+    BOOST_CHECK(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, test, true, 10) & SCRIPT_VERIFY_P256);
+    BOOST_CHECK_EQUAL(GetP256SigOps(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, test, true, 10)), P256_SIGOP_COST);
+
+    // With the fork scheduled, mainnet activates it at the fork height with the rest.
+    SelectParams(CBaseChainParams::MAIN);
+    UpdateUnifiedForkHeight(1000);
+    const Consensus::Params& scheduled = GetParams().GetConsensus();
+    BOOST_CHECK(!(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, scheduled, true, 999) & SCRIPT_VERIFY_P256));
+    BOOST_CHECK(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, scheduled, true, 1000) & SCRIPT_VERIFY_P256);
+    BOOST_CHECK(ApplyConsensusOptIns(SCRIPT_VERIFY_NONE, scheduled, true, 1000) & SCRIPT_VERIFY_ED25519);
+    SelectParams(CBaseChainParams::MAIN);
+
+    // A block holds 16,000 checks, 80,000 sigops; one more is over the limit.
+    static_assert(16000 * P256_SIGOP_COST <= MAX_BLOCK_SIGOPS_COST, "16,000 checks fit");
+    static_assert(16001 * P256_SIGOP_COST > MAX_BLOCK_SIGOPS_COST, "16,001 checks do not");
 }
 
 BOOST_AUTO_TEST_CASE(work_weight_follows_the_fork_height)

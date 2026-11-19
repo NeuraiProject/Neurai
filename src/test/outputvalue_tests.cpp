@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include "crypto/common.h"
 #include "script/interpreter.h"
 #include "script/script.h"
 #include "script/script_error.h"
@@ -76,7 +77,7 @@ bool DirectGetOutputValue(const CTransaction& tx, unsigned int nOut, std::vector
 std::vector<unsigned char> EncodeAmountLE(int64_t value)
 {
     std::vector<unsigned char> result(8);
-    memcpy(result.data(), &value, 8);
+    WriteLE64(result.data(), static_cast<uint64_t>(value));
     return result;
 }
 

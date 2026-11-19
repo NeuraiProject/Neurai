@@ -11,6 +11,7 @@
 #include "prevector.h"
 #include "serialize.h"
 #include "amount.h"
+#include "script/verify_flags.h"
 
 #include <assert.h>
 #include <climits>
@@ -285,6 +286,13 @@ enum opcodetype
     // AuthScript only. Flag off → bad-opcode (slot was unassigned, not a NOP).
     OP_CHECKASSETAUTH = 0xdf,
 
+    // NIP-060: strict-profile ECDSA verifier over NIST P-256 (secp256r1) with
+    // SHA-256, in a previously unassigned slot (0xe0), the first free byte
+    // above OP_CHECKASSETAUTH. Stack contract is (sig, msg, pubkey33 -- 0|1):
+    // an empty signature pushes 0, a well-formed signature that does not
+    // verify fails the script. Flag off → bad-opcode (slot was unassigned).
+    OP_CHECKSIG_P256 = 0xe0,
+
     /** XNA START */
     OP_XNA_ASSET = 0xc0,
     /** XNA END */
@@ -300,11 +308,11 @@ enum opcodetype
 };
 
 // Maximum value that an opcode can be. Bumped by NIP-039 to
-// OP_CHECKSIGADD (0xde) and by NIP-054 to OP_CHECKASSETAUTH (0xdf). The
-// 0xd8..0xdc range remains unassigned (reserved for the NIP-033 BLS family)
-// and currently falls through to the EvalScript default branch returning
-// SCRIPT_ERR_BAD_OPCODE.
-static const unsigned int MAX_OPCODE = OP_CHECKASSETAUTH;
+// OP_CHECKSIGADD (0xde), by NIP-054 to OP_CHECKASSETAUTH (0xdf) and by
+// NIP-060 to OP_CHECKSIG_P256 (0xe0). The 0xd8..0xdc range remains unassigned
+// (reserved for the NIP-033 BLS family) and currently falls through to the
+// EvalScript default branch returning SCRIPT_ERR_BAD_OPCODE.
+static const unsigned int MAX_OPCODE = OP_CHECKSIG_P256;
 
 const char* GetOpName(opcodetype opcode);
 
@@ -804,20 +812,20 @@ public:
      * counted more accurately, assuming they are of the form
      *  ... OP_N CHECKMULTISIG ...
      */
-    // Optional opcodes count once when their respective verification flags are
-    // active, except OP_CHECKSIG_ED25519, which counts nEd25519SigOps (see
-    // GetEd25519SigOps; 0 while it is not active). Defaults preserve
-    // context-free/historical callers. CHECKSIGADD also retains its separate
-    // dynamic per-script operation surcharge.
+    // Each optional signature opcode counts the sigops `optional` gives it
+    // (GetOptionalSigOpCosts in script/interpreter.h; 0 while the opcode is
+    // not active). The default counts none, as context-free and historical
+    // callers expect. CHECKSIGADD also retains its separate dynamic per-script
+    // operation surcharge.
     unsigned int CountZKVerify() const;
 
-    unsigned int GetSigOpCount(bool fAccurate, bool countCSFS = false, bool countCheckSigAdd = false, unsigned int nEd25519SigOps = 0) const;
+    unsigned int GetSigOpCount(bool fAccurate, const OptionalSigOpCosts& optional = {}) const;
 
     /**
      * Accurately count sigOps, including sigOps in
      * pay-to-script-hash transactions:
      */
-    unsigned int GetSigOpCount(const CScript& scriptSig, bool countCSFS = false, bool countCheckSigAdd = false, unsigned int nEd25519SigOps = 0) const;
+    unsigned int GetSigOpCount(const CScript& scriptSig, const OptionalSigOpCosts& optional = {}) const;
 
     bool IsPayToPublicKeyHash() const;
 

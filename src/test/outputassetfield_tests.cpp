@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include "crypto/common.h"
 #include "assets/assets.h"
 #include "base58.h"
 #include "chainparams.h"
@@ -30,7 +31,7 @@ namespace {
 std::vector<unsigned char> EncodeLE8(int64_t value)
 {
     std::vector<unsigned char> out(8);
-    memcpy(out.data(), &value, 8);
+    WriteLE64(out.data(), static_cast<uint64_t>(value));
     return out;
 }
 

@@ -48,7 +48,9 @@ static constexpr uint64_t MAX_STANDARD_TX_ASSETAUTH_WORK_NIP028 = 15000;
  *  may run in witness scripts (its witness sigop count). The general sigop
  *  limit also counts legacy outputs; this one only counts executed checks.
  *  Admission at the limit on the same core: 0.35 s with ECDSA; with Ed25519,
- *  which counts three sigops per check from that height (B1), about 0.33 s. */
+ *  which counts three sigops per check from that height (B1), about 0.33 s;
+ *  OP_CHECKSIG_P256 counts five sigops per check (NIP-060), so at most 400
+ *  checks, about 0.045 s of P-256 verification at 112 us each. */
 static constexpr int64_t MAX_STANDARD_TX_WITNESS_SIGOPS_NIP028 = 2000;
 /** The maximum number of sigops we're willing to relay/mine in a single tx */
 static const unsigned int MAX_STANDARD_TX_SIGOPS_COST = MAX_BLOCK_SIGOPS_COST/5;
@@ -186,6 +188,8 @@ inline script_verify_flags ApplyConsensusOptIns(script_verify_flags base,
         // B1 (CPU review): from the NIP-028 height on Ed25519 counts three sigops.
         if (nHeight >= consensus.nBlockTimeReductionHeight) base |= SCRIPT_VERIFY_ED25519_COST;
     }
+    // NIP-060: OP_CHECKSIG_P256 (strict-profile ECDSA P-256 verifier).
+    if (consensus.IsOptInActive(consensus.nP256Enabled, nHeight) && consensus.IsSignatureOpcodesActive(nHeight))           base |= SCRIPT_VERIFY_P256;
     // NIP-039: OP_CHECKSIGADD (generic legacy/PQ signature accumulator).
     if (consensus.IsOptInActive(consensus.nCheckSigAddEnabled, nHeight) && consensus.IsSignatureOpcodesActive(nHeight))       base |= SCRIPT_VERIFY_CHECKSIGADD;
     return base;
@@ -207,7 +211,7 @@ static constexpr script_verify_flags CONSENSUS_OPT_IN_FLAGS =
     SCRIPT_VERIFY_REFINPUTS | SCRIPT_VERIFY_OUTPUTAUTHCOMMITMENT | SCRIPT_VERIFY_INPUTVALUE |
     SCRIPT_VERIFY_CHAINCONTEXT | SCRIPT_VERIFY_KECCAK_BLAKE2B | SCRIPT_VERIFY_MERKLE_INCLUSION |
     SCRIPT_VERIFY_MODERN_HASHES | SCRIPT_VERIFY_POSEIDON | SCRIPT_VERIFY_ED25519 |
-    SCRIPT_VERIFY_CHECKSIGADD | SCRIPT_VERIFY_ED25519_COST;
+    SCRIPT_VERIFY_CHECKSIGADD | SCRIPT_VERIFY_ED25519_COST | SCRIPT_VERIFY_P256;
 
 /** NIP-020: convenience wrapper — STANDARD_SCRIPT_VERIFY_FLAGS | opt-ins. */
 inline script_verify_flags GetStandardScriptVerifyFlagsWithConsensusOptIns(
@@ -237,7 +241,7 @@ bool IsStandardTx(const CTransaction& tx, std::string& reason, const bool witnes
      * @param[in] mapInputs    Map of previous transactions that have outputs we're spending
      * @return True if all inputs (scriptSigs) use only standard transaction forms
      */
-bool AreInputsStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs, bool countCSFS = false, bool countCheckSigAdd = false, unsigned int nEd25519SigOps = 0);
+bool AreInputsStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs, const OptionalSigOpCosts& optional = {});
     /**
      * Check if the transaction is over standard P2WSH resources limit:
      * 3600bytes witnessScript size, 100 witness stack elements.
@@ -249,7 +253,10 @@ bool AreInputsStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs,
      * exceed 80 B as the on-stack message), or NIP-039 (OP_CHECKSIGADD —
      * PQ signatures are 2421 B and PQ pubkeys 1313 B).
      * Callers pass `nCSFSEnabled || nMerkleInclusionEnabled ||
-     * nEd25519Enabled || nCheckSigAddEnabled`.
+     * nEd25519Enabled || nCheckSigAddEnabled`. NIP-060 (OP_CHECKSIG_P256)
+     * needs messages over 80 B too, but adds nothing here: it activates at
+     * nSignatureOpcodesHeight, together with CSFS, Ed25519 and CHECKSIGADD,
+     * so the wider cap is always active wherever P-256 is.
      * These limits are adequate for multi-signature up to n-of-100 using OP_CHECKSIG, OP_ADD, and OP_EQUAL,
      */
 bool IsWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs,

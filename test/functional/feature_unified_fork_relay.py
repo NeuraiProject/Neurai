@@ -15,7 +15,7 @@ block it assembles itself.
 - AuthScript v1 (authType 0x00) spends of: OP_CAT, OP_SPLIT, OP_REVERSEBYTES,
   64-bit OP_MUL/OP_DIV/OP_MOD, Keccak-256/BLAKE2b (NIP-030), BLAKE3/SHA3-256/
   SHA-512 (NIP-034a), OP_POSEIDON (NIP-036), OP_CHECKMERKLEINCLUSION (NIP-031),
-  Ed25519 (NIP-035), CSFS with ECDSA and ML-DSA-44 keys (NIP-021),
+  Ed25519 (NIP-035), P-256 (NIP-060), CSFS with ECDSA and ML-DSA-44 keys (NIP-021),
   OP_CHECKSIGADD (NIP-039), CTV, OP_TXHASH (NIP-042), OP_TXFIELD,
   OP_TXLOCKTIME, OP_OUTPUTVALUE/OP_OUTPUTSCRIPT, OP_INPUTCOUNT/OP_OUTPUTCOUNT,
   OP_INPUTVALUE (NIP-024), OP_CHAINCONTEXT (NIP-026), OP_INPUTFIELD (NIP-043),
@@ -80,6 +80,7 @@ OP_OUTPUTAUTHCOMMITMENT = CScriptOp(0xd5)
 OP_INPUTVALUE = CScriptOp(0xd6)
 OP_CHAINCONTEXT = CScriptOp(0xd7)
 OP_CHECKSIG_ED25519 = CScriptOp(0xdd)
+OP_CHECKSIG_P256 = CScriptOp(0xe0)
 OP_CHECKSIGADD = CScriptOp(0xde)
 
 # Reference values from the unit tests (keccak256_tests.cpp, blake3_tests.cpp).
@@ -245,6 +246,7 @@ class UnifiedForkRelayTest(NeuraiTestFramework):
         pq = next(v for v in csfs if v["algorithm"] == "pq")
         ecdsa_pub, pq_pub = bytes.fromhex(ecdsa["pubkey"]), bytes.fromhex(pq["pubkey"])
         ed25519 = load_json("ed25519_vectors.json")["rfc8032_pure_ed25519"][0]
+        p256 = next(v for v in load_json("p256_vectors.json")["vectors"] if v["source"] == "nip" and v["id"] == 1)
         poseidon = next(v for v in load_json("poseidon_vectors.json")["spec_pinned_sponge"]
                         if v["input_hex"] == b"hello".hex())
         zk = groth16_vector()
@@ -270,6 +272,9 @@ class UnifiedForkRelayTest(NeuraiTestFramework):
             g("OP_CHECKSIG_ED25519 (NIP-035)", CScript([
                 bytes.fromhex(ed25519["signature"]), bytes.fromhex(ed25519["message"]),
                 bytes.fromhex(ed25519["pubkey"]), OP_CHECKSIG_ED25519])),
+            g("OP_CHECKSIG_P256 (NIP-060)", CScript([
+                bytes.fromhex(p256["sig"]), bytes.fromhex(p256["msg"]),
+                bytes.fromhex(p256["pub"]), OP_CHECKSIG_P256])),
             g("OP_CHECKSIGFROMSTACK, ECDSA key (NIP-021)",
               CScript([bytes.fromhex(ecdsa["digest"]), ecdsa_pub, OP_CHECKSIGFROMSTACK]),
               [bytes.fromhex(ecdsa["signature"])]),

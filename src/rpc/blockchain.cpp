@@ -43,6 +43,7 @@
 
 #include <mutex>
 #include <condition_variable>
+#include <algorithm>
 #include <limits>
 
 struct CUpdatedBlock
@@ -1508,6 +1509,14 @@ UniValue getblockchaininfo(const JSONRPCRequest& request)
             "    \"active_at_tip\": b,     (boolean) whether the current block uses profile 2\n"
             "    \"active_for_next_block\": b (boolean) whether a candidate block uses profile 2\n"
             "  },\n"
+            "  \"signature_opcodes\": {    (object) activation of the optional signature opcodes, which share one height\n"
+            "    \"activation_height\": n, (numeric or null) scheduled height, null when unscheduled\n"
+            "    \"active_at_tip\": b,     (boolean) whether the current block accepts them\n"
+            "    \"active_for_next_block\": b, (boolean) whether a candidate block accepts them\n"
+            "    \"opcodes\": {            (object) whether each opcode is enabled on this network\n"
+            "      \"checksigfromstack\": b, \"checksig_ed25519\": b, \"checksigadd\": b, \"checksig_p256\": b\n"
+            "    }\n"
+            "  },\n"
             "  \"pruneheight\": xxxxxx,    (numeric) lowest-height complete block stored (only present if pruning is enabled)\n"
             "  \"automatic_pruning\": xx,  (boolean) whether automatic pruning is enabled (only present if pruning is enabled)\n"
             "  \"prune_target_size\": xxxxxx,  (numeric) the target size used by pruning (only present if automatic pruning is enabled)\n"
@@ -1577,6 +1586,27 @@ UniValue getblockchaininfo(const JSONRPCRequest& request)
     publicTree.push_back(Pair("active_at_tip", publicTreeActive(chainActive.Height())));
     publicTree.push_back(Pair("active_for_next_block", publicTreeActive(chainActive.Height() + 1)));
     obj.push_back(Pair("zk_public_tree", publicTree));
+    // CSFS, Ed25519, OP_CHECKSIGADD and OP_CHECKSIG_P256 (NIP-060) share one
+    // activation height; wallets and device firmware read it here to tell an
+    // upgraded node apart and to know which opcodes the next block accepts.
+    UniValue signatureOpcodes(UniValue::VOBJ);
+    const int signatureHeight = std::max(consensusParams.nOptInFeaturesHeight, consensusParams.nSignatureOpcodesHeight);
+    if (signatureHeight == std::numeric_limits<int>::max())
+        signatureOpcodes.push_back(Pair("activation_height", UniValue()));
+    else
+        signatureOpcodes.push_back(Pair("activation_height", signatureHeight));
+    const auto signatureActive = [&](int height) {
+        return height >= consensusParams.nOptInFeaturesHeight && consensusParams.IsSignatureOpcodesActive(height);
+    };
+    signatureOpcodes.push_back(Pair("active_at_tip", signatureActive(chainActive.Height())));
+    signatureOpcodes.push_back(Pair("active_for_next_block", signatureActive(chainActive.Height() + 1)));
+    UniValue signatureEnabled(UniValue::VOBJ);
+    signatureEnabled.push_back(Pair("checksigfromstack", consensusParams.nCSFSEnabled));
+    signatureEnabled.push_back(Pair("checksig_ed25519", consensusParams.nEd25519Enabled));
+    signatureEnabled.push_back(Pair("checksigadd", consensusParams.nCheckSigAddEnabled));
+    signatureEnabled.push_back(Pair("checksig_p256", consensusParams.nP256Enabled));
+    signatureOpcodes.push_back(Pair("opcodes", signatureEnabled));
+    obj.push_back(Pair("signature_opcodes", signatureOpcodes));
     UniValue portableTree(UniValue::VOBJ);
     if (consensusParams.nZKPortableTreeHeight == std::numeric_limits<int>::max())
         portableTree.push_back(Pair("activation_height", UniValue()));

@@ -861,6 +861,7 @@ The unary opcodes `OP_NOT` and `OP_0NOTEQUAL` also operate on 64-bit values but 
 | `OP_POSEIDON` | `0xc9` | — | 38 | Hash (NIP-036) |
 | `OP_CHECKSIG_ED25519` | `0xdd` | — | 39 | Signature (NIP-035) |
 | `OP_CHECKSIGADD` | `0xde` | — | 40 | Signature (NIP-039) |
+| `OP_CHECKSIG_P256` | `0xe0` | — | 54 | Signature (NIP-060) |
 | `OP_OUTPUTAUTHDEST` | `0xc2` | — | 42 | TX Introspection (NIP-041) |
 | `OP_ZKVERIFY` | `0xc3` | — | 43 (+50 for profile 2) | Proof (NIP-016) |
 | `OP_INPUTFIELD` | `0xc4` | — | 46 | TX Introspection (NIP-043) |
@@ -871,7 +872,7 @@ The unary opcodes `OP_NOT` and `OP_0NOTEQUAL` also operate on 64-bit values but 
 
 All opcodes listed above are controlled by consensus parameters in
 `Consensus::Params`, applied from `nOptInFeaturesHeight` (and, for CSFS,
-Ed25519 and CHECKSIGADD, also from `nSignatureOpcodesHeight`):
+Ed25519, CHECKSIGADD and P-256, also from `nSignatureOpcodesHeight`):
 
 - **Reset testnet**: active from block 10.
 - **Regtest**: active from height 0 by default.

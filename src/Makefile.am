@@ -495,6 +495,12 @@ crypto_libneurai_crypto_a_SOURCES = \
   crypto/ed25519/fe_51/constants.h \
   crypto/ed25519/fe_51/base.h \
   crypto/ed25519/fe_51/base2.h \
+  crypto/p256.h \
+  crypto/p256.cpp \
+  crypto/p256/fiat/p256_32.h \
+  crypto/p256/fiat/p256_64.h \
+  crypto/p256/fiat/p256_scalar_32.h \
+  crypto/p256/fiat/p256_scalar_64.h \
   crypto/epoch_context_cache.cpp \
   crypto/epoch_context_cache.h \
   crypto/ethash/include/ethash/ethash.h \

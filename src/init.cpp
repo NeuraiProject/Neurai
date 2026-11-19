@@ -662,7 +662,7 @@ std::string HelpMessage(HelpMessageMode mode)
         strUsage += HelpMessageOpt("-merkleposeidonheight=<n>", "Override NIP-043 MerklePoseidon activation height (regtest-only)");
         strUsage += HelpMessageOpt("-assetauthheight=<n>", "Override the NIP-054 OP_CHECKASSETAUTH activation height (regtest-only)");
         strUsage += HelpMessageOpt("-txhashheight=<n>", "Override NIP-042 TXHASH activation height (regtest-only)");
-        strUsage += HelpMessageOpt("-signatureopcodesheight=<n>", "Override CSFS/Ed25519/CHECKSIGADD activation height (regtest-only)");
+        strUsage += HelpMessageOpt("-signatureopcodesheight=<n>", "Override CSFS/Ed25519/CHECKSIGADD/P-256 activation height (regtest-only)");
         strUsage += HelpMessageOpt("-optinfeaturesheight=<n>", "Override the activation height of the opt-in feature switches (regtest-only)");
         strUsage += HelpMessageOpt("-blocktimereductionheight=<n>", "Schedule the NIP-028 block-time reduction (60s -> 30s, halved subsidy) at this height (regtest-only)");
         strUsage += HelpMessageOpt("-strictauthscriptheight=<n>", "Override the strict AuthScript (witness v2/v3) activation height (regtest-only)");

@@ -38,7 +38,9 @@ def main():
         miner = source.rpc('getnewaddress')
         source.rpc('generatetoaddress', 116, miner)
         # Branches remain valid before and after activation, but their cost changes.
-        scripts = [b'\x00\x63' + bytes([op]) + b'\x68\x51' for op in (0xb4, 0xde, 0xdd)]
+        # CSFS, CHECKSIGADD, Ed25519 and P-256 (NIP-060) in unexecuted branches.
+        branch_ops = (0xb4, 0xde, 0xdd, 0xe0)
+        scripts = [b'\x00\x63' + bytes([op]) + b'\x68\x51' for op in branch_ops]
         scripts.append(h.push(e.PK) + b'\xdd')
         programs, payments = [], {}
         for script in scripts:
@@ -51,18 +53,23 @@ def main():
         funded = source.rpc('getrawtransaction', funding, True)
         indices = {o['scriptPubKey']['hex']: o['n'] for o in funded['vout']}
         target = b'\x53\x20' + bytes(range(32))
+        nbranch = len(branch_ops)
         raws = [h.transaction((funding, indices[p.hex()]), script, target)
-                for p, script in zip(programs[:3], scripts[:3])]
-        ed_raw = c.transaction((funding, indices[programs[3].hex()]), scripts[3], e.SIG, b'', target)
+                for p, script in zip(programs[:nbranch], scripts[:nbranch])]
+        ed_raw = c.transaction((funding, indices[programs[nbranch].hex()]), scripts[nbranch], e.SIG, b'', target)
+        # Each check counts one witness sigop, except OP_CHECKSIG_P256: five.
+        new_costs = [1, 1, 1, 5]
         def reject_ed(label):
             result = source.rpc('testmempoolaccept', [ed_raw])[0]
             check(label, result.get('allowed') != 1 and 'Opcode missing or not understood' in str(result), result)
         reject_ed('height117/ed25519_disabled')
         txids = [source.rpc('sendrawtransaction', raw) for raw in raws]
         def template_costs(expected, label):
+            if not isinstance(expected, list):
+                expected = [expected] * len(txids)
             txs = source.rpc('getblocktemplate', {'rules': ['segwit']})['transactions']
             costs = {t['txid']: t['sigops'] for t in txs}
-            check(label, all(costs.get(txid) == expected for txid in txids), costs)
+            check(label, all(costs.get(txid) == cost for txid, cost in zip(txids, expected)), costs)
         template_costs(0, 'height117/old_costs')
         history = [source.rpc('getblock', source.rpc('getblockhash', i), False) for i in range(1, 118)]
         producer = h.Node(args.bindir, directory / 'producer', ['-signatureopcodesheight=120', '-bypassdownload=1'])
@@ -80,7 +87,7 @@ def main():
         check('height119/stale_costs_evicted', not set(txids) & set(source.rpc('getrawmempool')), source.rpc('getrawmempool'))
         for raw in raws:
             source.rpc('sendrawtransaction', raw)
-        template_costs(1, 'height119/new_costs')
+        template_costs(new_costs, 'height119/new_costs')
         ed_txid = source.rpc('sendrawtransaction', ed_raw)
         check('height119/ed25519_admitted', ed_txid in source.rpc('getrawmempool'), ed_txid)
         # A wrong-height candidate contains valid witness/PoW but a disabled opcode.

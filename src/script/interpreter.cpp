@@ -22,6 +22,7 @@
 #include "crypto/blake3_wrap.h" // NIP-034a
 #include "crypto/poseidon_bn254.h" // NIP-036
 #include "crypto/ed25519.h"     // NIP-035
+#include "crypto/p256.h"        // NIP-060
 #include "pubkey.h"
 #include "script/script.h"
 #include "script/merkle_inclusion.h"  // NIP-031
@@ -149,8 +150,7 @@ static bool ExtractAssetField_Transfer(
             return true;
         case 0x02: {
             result.resize(8);
-            const int64_t v = static_cast<int64_t>(t.nAmount);
-            memcpy(result.data(), &v, 8);
+            WriteLE64(result.data(), static_cast<uint64_t>(static_cast<int64_t>(t.nAmount)));
             return true;
         }
         case 0x07:
@@ -172,8 +172,7 @@ static bool ExtractAssetField_New(
             return true;
         case 0x02: {
             result.resize(8);
-            const int64_t v = static_cast<int64_t>(a.nAmount);
-            memcpy(result.data(), &v, 8);
+            WriteLE64(result.data(), static_cast<uint64_t>(static_cast<int64_t>(a.nAmount)));
             return true;
         }
         case 0x03:
@@ -208,8 +207,7 @@ static bool ExtractAssetField_Reissue(
             return true;
         case 0x02: {
             result.resize(8);
-            const int64_t v = static_cast<int64_t>(r.nAmount);
-            memcpy(result.data(), &v, 8);
+            WriteLE64(result.data(), static_cast<uint64_t>(static_cast<int64_t>(r.nAmount)));
             return true;
         }
         case 0x03:
@@ -244,8 +242,7 @@ static bool ExtractAssetField_Owner(
             return true;
         case 0x02: {
             result.resize(8);
-            const int64_t v = static_cast<int64_t>(OWNER_ASSET_AMOUNT);
-            memcpy(result.data(), &v, 8);
+            WriteLE64(result.data(), static_cast<uint64_t>(static_cast<int64_t>(OWNER_ASSET_AMOUNT)));
             return true;
         }
         case 0x07:
@@ -1055,8 +1052,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
 
                         if ((flags & SCRIPT_VERIFY_64BIT_INTEGERS) && vchValue.size() == 8)
                         {
-                            int64_t nValue;
-                            memcpy(&nValue, vchValue.data(), 8);
+                            const int64_t nValue = static_cast<int64_t>(ReadLE64(vchValue.data()));
                             vchValue = CScriptNum(nValue).getvch();
                         }
 
@@ -1116,8 +1112,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
 
                         if ((flags & SCRIPT_VERIFY_64BIT_INTEGERS) && vchValue.size() == 8)
                         {
-                            int64_t nValue;
-                            memcpy(&nValue, vchValue.data(), 8);
+                            const int64_t nValue = static_cast<int64_t>(ReadLE64(vchValue.data()));
                             vchValue = CScriptNum(nValue).getvch();
                         }
 
@@ -1427,8 +1422,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
 
                         if (selector == 0x02 && (flags & SCRIPT_VERIFY_64BIT_INTEGERS) && vchResult.size() == 8)
                         {
-                            int64_t nAmount;
-                            memcpy(&nAmount, vchResult.data(), 8);
+                            const int64_t nAmount = static_cast<int64_t>(ReadLE64(vchResult.data()));
                             vchResult = CScriptNum(nAmount).getvch();
                         }
 
@@ -1467,8 +1461,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
 
                         if (selector == 0x02 && (flags & SCRIPT_VERIFY_64BIT_INTEGERS) && vchResult.size() == 8)
                         {
-                            int64_t nAmount;
-                            memcpy(&nAmount, vchResult.data(), 8);
+                            const int64_t nAmount = static_cast<int64_t>(ReadLE64(vchResult.data()));
                             vchResult = CScriptNum(nAmount).getvch();
                         }
 
@@ -1571,8 +1564,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         // Selector 0x01 (nValue): convert to CScriptNum if 64-bit integers enabled
                         if (!spent && selector == 0x01 && (flags & SCRIPT_VERIFY_64BIT_INTEGERS) && vchResult.size() == 8)
                         {
-                            int64_t nValue;
-                            memcpy(&nValue, vchResult.data(), 8);
+                            const int64_t nValue = static_cast<int64_t>(ReadLE64(vchResult.data()));
                             vchResult = CScriptNum(nValue).getvch();
                         }
 
@@ -1640,8 +1632,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                         // Selector 0x02 (amount): convert to CScriptNum if 64-bit integers enabled
                         if (selector == 0x02 && (flags & SCRIPT_VERIFY_64BIT_INTEGERS) && vchResult.size() == 8)
                         {
-                            int64_t nAmount;
-                            memcpy(&nAmount, vchResult.data(), 8);
+                            const int64_t nAmount = static_cast<int64_t>(ReadLE64(vchResult.data()));
                             vchResult = CScriptNum(nAmount).getvch();
                         }
 
@@ -2389,6 +2380,60 @@ bool EvalScript(std::vector<std::vector<unsigned char> > &stack, const CScript &
                     }
                         break;
 
+                    // NIP-060: strict-profile ECDSA P-256 / SHA-256 verifier
+                    // in a previously unassigned slot (0xe0). Stack contract:
+                    //   <sig> <msg> <pubkey> -> <0 | 1>
+                    // The order is normative (§4.5): flag, stack, public key,
+                    // signature, hash budget, verification. Encodings are
+                    // validated before the budget is charged and the
+                    // signature is verified only after it, so no curve work
+                    // is done for a script over its budget. An empty
+                    // signature pushes 0; a well-formed signature that does
+                    // not verify fails the script, independently of NULLFAIL.
+                    case OP_CHECKSIG_P256:
+                    {
+                        if (!(flags & SCRIPT_VERIFY_P256))
+                            return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
+                        if (stack.size() < 3)
+                            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+                        const valtype& vchPubKey = stacktop(-1);
+                        const valtype& vchMsg    = stacktop(-2);
+                        const valtype& vchSig    = stacktop(-3);
+
+                        using crypto::p256::StructuralResult;
+                        crypto::p256::PublicKey p256Key;
+                        switch (crypto::p256::ParsePublicKey(vchPubKey.data(), vchPubKey.size(), p256Key)) {
+                            case StructuralResult::OK: break;
+                            case StructuralResult::PUBKEY_SIZE_INVALID:
+                                return set_error(serror, SCRIPT_ERR_P256_PUBKEY_SIZE);
+                            default:
+                                return set_error(serror, SCRIPT_ERR_P256_PUBKEY_ENCODING);
+                        }
+                        crypto::p256::Signature p256Sig;
+                        switch (crypto::p256::ParseSignature(vchSig.data(), vchSig.size(), p256Sig)) {
+                            case StructuralResult::OK: break;
+                            case StructuralResult::SIG_SIZE_INVALID:
+                                return set_error(serror, SCRIPT_ERR_P256_SIG_SIZE);
+                            default:
+                                return set_error(serror, SCRIPT_ERR_P256_SIG_ENCODING);
+                        }
+                        // Charged also for an empty signature, like CSFS.
+                        if (!chargeHash(vchMsg.size() + 64, vchMsg.size() > MAX_SCRIPT_ELEMENT_SIZE)) return false;
+                        bool fSuccess = false;
+                        if (!p256Sig.empty) {
+                            if (!crypto::p256::Verify(p256Key, p256Sig, vchMsg.data(), vchMsg.size()))
+                                return set_error(serror, SCRIPT_ERR_P256_VERIFY);
+                            fSuccess = true;
+                        }
+
+                        popstack(stack); // pubkey
+                        popstack(stack); // msg
+                        popstack(stack); // sig
+                        stack.push_back(fSuccess ? vchTrue : vchFalse);
+                    }
+                        break;
+
                     // NIP-039: generic OP_CHECKSIG-compatible signature
                     // accumulator. Stack contract:
                     //   <sig> <count> <pubkey> -> <count + (1 if sig verifies)>
@@ -2848,6 +2893,15 @@ namespace
 
 } // namespace
 
+// Feeds a 32-bit field to the hasher in little endian, whatever the byte order
+// of the host (BIP119 serializes every integer little endian).
+static void HashLE32(CSHA256& hasher, uint32_t value)
+{
+    unsigned char buf[4];
+    WriteLE32(buf, value);
+    hasher.Write(buf, 4);
+}
+
 PrecomputedTransactionData::PrecomputedTransactionData(const CTransaction &txTo)
 {
     // BIP143 cache, for every transaction: OP_TXHASH reads these hashes in
@@ -2865,7 +2919,7 @@ PrecomputedTransactionData::PrecomputedTransactionData(const CTransaction &txTo)
         CSHA256 seqHasher;
         for (const auto& txin : txTo.vin) {
             uint32_t nSequence = txin.nSequence;
-            seqHasher.Write((const unsigned char*)&nSequence, 4);
+            HashLE32(seqHasher, nSequence);
         }
         seqHasher.Finalize(ctvHashSequences.begin());
 
@@ -3201,11 +3255,11 @@ static uint256 DefaultCheckTemplateVerifyHash(const CTransaction& tx, uint32_t n
 
     // 1. nVersion (4 bytes LE)
     uint32_t nVersion = tx.nVersion;
-    ss.Write((const unsigned char*)&nVersion, 4);
+    HashLE32(ss, nVersion);
 
     // 2. nLockTime (4 bytes LE)
     uint32_t nLockTime = tx.nLockTime;
-    ss.Write((const unsigned char*)&nLockTime, 4);
+    HashLE32(ss, nLockTime);
 
     // 3. Hash of scriptSigs (only if any is non-empty)
     if (cacheready) {
@@ -3235,7 +3289,7 @@ static uint256 DefaultCheckTemplateVerifyHash(const CTransaction& tx, uint32_t n
 
     // 4. Number of inputs (4 bytes LE)
     uint32_t nInputs = tx.vin.size();
-    ss.Write((const unsigned char*)&nInputs, 4);
+    HashLE32(ss, nInputs);
 
     // 5. Hash of sequences
     if (cacheready) {
@@ -3244,7 +3298,7 @@ static uint256 DefaultCheckTemplateVerifyHash(const CTransaction& tx, uint32_t n
         CSHA256 sequencesHash;
         for (const auto& txin : tx.vin) {
             uint32_t nSequence = txin.nSequence;
-            sequencesHash.Write((const unsigned char*)&nSequence, 4);
+            HashLE32(sequencesHash, nSequence);
         }
         unsigned char seqResult[CSHA256::OUTPUT_SIZE];
         sequencesHash.Finalize(seqResult);
@@ -3253,7 +3307,7 @@ static uint256 DefaultCheckTemplateVerifyHash(const CTransaction& tx, uint32_t n
 
     // 6. Number of outputs (4 bytes LE)
     uint32_t nOutputs = tx.vout.size();
-    ss.Write((const unsigned char*)&nOutputs, 4);
+    HashLE32(ss, nOutputs);
 
     // 7. Hash of outputs
     if (cacheready) {
@@ -3273,7 +3327,7 @@ static uint256 DefaultCheckTemplateVerifyHash(const CTransaction& tx, uint32_t n
     // NIP-014: commit to reference inputs for v3
     if (tx.nVersion == 3) {
         uint32_t nRefInputs = tx.vrefin.size();
-        ss.Write((const unsigned char*)&nRefInputs, 4);
+        HashLE32(ss, nRefInputs);
 
         if (nRefInputs > 0) {
             if (cacheready && txdata->ctvRefInputsReady) {
@@ -3294,7 +3348,7 @@ static uint256 DefaultCheckTemplateVerifyHash(const CTransaction& tx, uint32_t n
 
     // 8. Input index (4 bytes LE)
     uint32_t inputIndex = nIn;
-    ss.Write((const unsigned char*)&inputIndex, 4);
+    HashLE32(ss, inputIndex);
 
     uint256 result;
     ss.Finalize(result.begin());
@@ -3418,9 +3472,10 @@ bool TransactionSignatureChecker::GetTxField(unsigned char selector,
     case TXFIELD_SPENT_VALUE: {
         // nValue of the UTXO being spent (8 bytes, int64 little-endian).
         // 'amount' is always available regardless of m_spentScriptPubKey.
-        int64_t nValue = (int64_t)amount;
+        // Little endian on every host (not the CPU's byte order): the NIP-060
+        // §5 signer commits to these exact eight bytes.
         result.resize(8);
-        memcpy(result.data(), &nValue, 8);
+        WriteLE64(result.data(), static_cast<uint64_t>(static_cast<int64_t>(amount)));
         return true;
     }
 
@@ -3476,9 +3531,8 @@ bool TransactionSignatureChecker::GetOutputValue(unsigned int nOut,
     if (nOut >= txTo->vout.size())
         return false;
 
-    const int64_t nValue = (int64_t)txTo->vout[nOut].nValue;
     result.resize(8);
-    memcpy(result.data(), &nValue, 8);
+    WriteLE64(result.data(), static_cast<uint64_t>(static_cast<int64_t>(txTo->vout[nOut].nValue)));
     return true;
 }
 
@@ -3494,9 +3548,8 @@ bool TransactionSignatureChecker::GetInputValue(unsigned int nInput,
         nInput >= m_allPrevouts->size())
         return false;
 
-    const int64_t nValue = (int64_t)(*m_allPrevouts)[nInput].nValue;
     result.resize(8);
-    memcpy(result.data(), &nValue, 8);
+    WriteLE64(result.data(), static_cast<uint64_t>(static_cast<int64_t>((*m_allPrevouts)[nInput].nValue)));
     return true;
 }
 
@@ -3850,9 +3903,8 @@ bool TransactionSignatureChecker::GetTxLockTime(std::vector<unsigned char>& resu
     if (!txTo)
         return false;
 
-    const uint32_t nLockTime = txTo->nLockTime;
     result.resize(4);
-    memcpy(result.data(), &nLockTime, 4);
+    WriteLE32(result.data(), txTo->nLockTime);
     return true;
 }
 
@@ -4450,8 +4502,7 @@ size_t static WitnessSigOps(int witversion, const std::vector<unsigned char> &wi
         if (witprogram.size() == 32 && witness.stack.size() > 0)
         {
             CScript subscript(witness.stack.back().begin(), witness.stack.back().end());
-            return subscript.GetSigOpCount(true, (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) != 0,
-                (flags & SCRIPT_VERIFY_CHECKSIGADD) != 0, GetEd25519SigOps(flags));
+            return subscript.GetSigOpCount(true, GetOptionalSigOpCosts(flags));
         }
     }
 
@@ -4465,16 +4516,14 @@ size_t static WitnessSigOps(int witversion, const std::vector<unsigned char> &wi
             if (!ParseAuthScriptTreeWitness(witness, offset)) return 0;
             const auto& bytes = witness.stack[witness.stack.size()-2];
             CScript leaf(bytes.begin(), bytes.end());
-            return leaf.GetSigOpCount(true, (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) != 0,
-                (flags & SCRIPT_VERIFY_CHECKSIGADD) != 0, GetEd25519SigOps(flags))
+            return leaf.GetSigOpCount(true, GetOptionalSigOpCosts(flags))
                 + ((flags & SCRIPT_VERIFY_ZKVERIFY) ? leaf.CountZKVerify()*ZKVERIFY_SIGOP_COST : 0)
                 + (witness.stack[0][0] != 0x10 ? 1 : 0);
         }
         size_t sigops = 0;
         if (witness.stack.size() > 1) {
             CScript subscript(witness.stack.back().begin(), witness.stack.back().end());
-            sigops = subscript.GetSigOpCount(true, (flags & SCRIPT_VERIFY_CHECKSIGFROMSTACK) != 0,
-                (flags & SCRIPT_VERIFY_CHECKSIGADD) != 0, GetEd25519SigOps(flags));
+            sigops = subscript.GetSigOpCount(true, GetOptionalSigOpCosts(flags));
             if (flags & SCRIPT_VERIFY_ZKVERIFY) sigops += subscript.CountZKVerify()*ZKVERIFY_SIGOP_COST;
         }
         if (witness.stack[0].size() == 1 && witness.stack[0][0] != 0x00) {

@@ -134,6 +134,9 @@ contrib/devtools/split-debug.sh
 cmake-build-debug
 
 CMakeLists.txt
+# The ESP-IDF project of the P-256 reference firmware needs its own.
+!contrib/p256/esp32p4/CMakeLists.txt
+!contrib/p256/esp32p4/main/CMakeLists.txt
 
 # Generated local review results
 /doc/review-results/

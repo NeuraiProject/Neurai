@@ -163,6 +163,16 @@ typedef enum ScriptError_t
     SCRIPT_ERR_ED25519_PUBKEY_ENCODING,
     SCRIPT_ERR_ED25519_SIG_ENCODING,
 
+    /* NIP-060: OP_CHECKSIG_P256. The four structural categories map to
+       crypto::p256::StructuralResult; SCRIPT_ERR_P256_VERIFY is a
+       well-formed signature that does not verify, which fails the script
+       (consensus, independent of NULLFAIL). */
+    SCRIPT_ERR_P256_PUBKEY_SIZE,
+    SCRIPT_ERR_P256_PUBKEY_ENCODING,
+    SCRIPT_ERR_P256_SIG_SIZE,
+    SCRIPT_ERR_P256_SIG_ENCODING,
+    SCRIPT_ERR_P256_VERIFY,
+
     /* NIP-039: OP_CHECKSIGADD mandatory PQ-pubkey shape check. Raised when
        a public key with prefix 0x05 has a size other than
        1 + ML_DSA_44_PUBKEY_SIZE. This prevalidation fires INDEPENDENT of

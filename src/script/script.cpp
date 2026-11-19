@@ -187,6 +187,9 @@ const char* GetOpName(opcodetype opcode)
     // NIP-054
     case OP_CHECKASSETAUTH         : return "OP_CHECKASSETAUTH";
 
+    // NIP-060
+    case OP_CHECKSIG_P256          : return "OP_CHECKSIG_P256";
+
     /** XNA START */
     case OP_XNA_ASSET              : return "OP_XNA_ASSET";
     /** XNA END */
@@ -218,7 +221,7 @@ unsigned int CScript::CountZKVerify() const
     return count;
 }
 
-unsigned int CScript::GetSigOpCount(bool fAccurate, bool countCSFS, bool countCheckSigAdd, unsigned int nEd25519SigOps) const
+unsigned int CScript::GetSigOpCount(bool fAccurate, const OptionalSigOpCosts& optional) const
 {
     unsigned int n = 0;
     const_iterator pc = begin();
@@ -228,12 +231,16 @@ unsigned int CScript::GetSigOpCount(bool fAccurate, bool countCSFS, bool countCh
         opcodetype opcode;
         if (!GetOp(pc, opcode))
             break;
-        if (opcode == OP_CHECKSIG || opcode == OP_CHECKSIGVERIFY ||
-            (countCSFS && opcode == OP_CHECKSIGFROMSTACK) ||
-            (countCheckSigAdd && opcode == OP_CHECKSIGADD))
+        if (opcode == OP_CHECKSIG || opcode == OP_CHECKSIGVERIFY)
             n++;
+        else if (opcode == OP_CHECKSIGFROMSTACK)
+            n += optional.csfs;
+        else if (opcode == OP_CHECKSIGADD)
+            n += optional.checksigadd;
         else if (opcode == OP_CHECKSIG_ED25519)
-            n += nEd25519SigOps;
+            n += optional.ed25519;
+        else if (opcode == OP_CHECKSIG_P256)
+            n += optional.p256;
         else if (opcode == OP_CHECKMULTISIG || opcode == OP_CHECKMULTISIGVERIFY)
         {
             if (fAccurate && lastOpcode >= OP_1 && lastOpcode <= OP_16)
@@ -246,10 +253,10 @@ unsigned int CScript::GetSigOpCount(bool fAccurate, bool countCSFS, bool countCh
     return n;
 }
 
-unsigned int CScript::GetSigOpCount(const CScript& scriptSig, bool countCSFS, bool countCheckSigAdd, unsigned int nEd25519SigOps) const
+unsigned int CScript::GetSigOpCount(const CScript& scriptSig, const OptionalSigOpCosts& optional) const
 {
     if (!IsPayToScriptHash())
-        return GetSigOpCount(true, countCSFS, countCheckSigAdd, nEd25519SigOps);
+        return GetSigOpCount(true, optional);
 
     // This is a pay-to-script-hash scriptPubKey;
     // get the last item that the scriptSig
@@ -267,7 +274,7 @@ unsigned int CScript::GetSigOpCount(const CScript& scriptSig, bool countCSFS, bo
 
     /// ... and return its opcount:
     CScript subscript(vData.begin(), vData.end());
-    return subscript.GetSigOpCount(true, countCSFS, countCheckSigAdd, nEd25519SigOps);
+    return subscript.GetSigOpCount(true, optional);
 }
 
 bool CScript::IsPayToPublicKeyHash() const

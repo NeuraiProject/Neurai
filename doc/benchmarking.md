@@ -7,8 +7,9 @@ default; `./configure --disable-bench` skips it. It covers, among others:
 - hashing (`crypto_hash.cpp`: RIPEMD160, SHA1, SHA256, SHA512, ...) and Base58
 - the rolling bloom filter, prevector, the locked memory pool and check queues
 - script verification (`verify_script.cpp`), `OP_CHECKSIGADD`
-  (`bench_checksigadd.cpp`), Ed25519 (`bench_ed25519.cpp`) and Poseidon
-  (`bench_poseidon.cpp`)
+  (`bench_checksigadd.cpp`), Ed25519 (`bench_ed25519.cpp`), P-256 against a
+  compressed secp256k1 check, the reference of its sigop cost
+  (`bench_p256.cpp`), and Poseidon (`bench_poseidon.cpp`)
 - block checks (`checkblock.cpp`), coins cache (`ccoins_caching.cpp`), mempool
   eviction and wallet coin selection
 
