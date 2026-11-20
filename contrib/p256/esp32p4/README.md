@@ -48,6 +48,15 @@ python3 ../device_sign.py check --port /dev/ttyACM0
 The console is on USB Serial/JTAG: on boards with two USB ports (for example
 the ESP32-S3-DevKitC) use the native USB port, not the UART bridge.
 
+If a board stays silent after flashing over USB Serial/JTAG, its boot log shows
+`boot:0x20 (DOWNLOAD(USB/UART0))`: the reset left it waiting in download mode.
+A system reset boots the firmware (the port may come back under another
+`/dev/ttyACM*` number; `/dev/serial/by-id/` names stay the same):
+
+```
+esptool -p /dev/ttyACM0 --after watchdog-reset chip-id
+```
+
 Before burning a key, check the free key blocks with `idf.py efuse-summary`:
 burning an eFuse cannot be undone, and the six key blocks are shared with
 Secure Boot and flash encryption.

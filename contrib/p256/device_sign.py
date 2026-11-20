@@ -57,6 +57,14 @@ class Device:
         self.buffer = b''
         self.command('')  # wake the prompt
 
+    def discard_pending(self, quiet=0.05):
+        """Drop output still queued from earlier commands, including those of
+        another process (genkey prints OK and then PUB): a stale line must
+        never be taken for the answer to the next command."""
+        self.buffer = b''
+        while select.select([self.fd], [], [], quiet)[0]:
+            os.read(self.fd, 4096)
+
     def readline(self, timeout):
         end = time.time() + timeout
         while b'\n' not in self.buffer:
@@ -70,10 +78,11 @@ class Device:
         return line.decode(errors='replace').strip()
 
     def command(self, text, prefixes=('INFO', 'PUB', 'SIG', 'OK', 'ERR'), timeout=10):
+        self.discard_pending()
         os.write(self.fd, text.encode() + b'\r\n')
         if not text:
             time.sleep(0.3)
-            self.buffer = b''
+            self.discard_pending()
             return None
         while True:
             line = self.readline(timeout)
