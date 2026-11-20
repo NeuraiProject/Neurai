@@ -27,7 +27,8 @@ config NEURAI_P256_EFUSE_KEY_INDEX
     range 0 5
     default 5
     help
-        The block must have the key purpose ECDSA_KEY_P256. Blocks are shared with
+        The block must have the key purpose ECDSA_KEY_P256 (ECDSA_KEY on the
+        ESP32-H2, whose single ECDSA purpose serves every curve). Blocks are shared with
         Secure Boot digests and the flash encryption key: check which are free with
         `idf.py efuse-summary` before choosing one.
 

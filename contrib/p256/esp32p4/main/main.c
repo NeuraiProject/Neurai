@@ -45,6 +45,7 @@
 #include "esp_efuse.h"
 #include "psa_crypto_driver_esp_ecdsa.h"
 #include "psa_crypto_driver_esp_ecdsa_contexts.h"
+#include "soc/soc_caps.h"
 #else
 #include "nvs.h"
 #include "nvs_flash.h"
@@ -92,6 +93,14 @@ static void random_scalar(uint8_t d[32])
 
 static const char *KEY_SOURCE = "efuse";
 
+// ESP32-P4 and ESP32-C5 have one key purpose per curve; the ESP32-H2 has a
+// single ECDSA purpose and picks the curve when the key is used.
+#if SOC_ECDSA_SUPPORT_CURVE_SPECIFIC_KEY_PURPOSES
+#define P256_KEY_PURPOSE ESP_EFUSE_KEY_PURPOSE_ECDSA_KEY_P256
+#else
+#define P256_KEY_PURPOSE ESP_EFUSE_KEY_PURPOSE_ECDSA_KEY
+#endif
+
 static esp_efuse_block_t key_block(void)
 {
     return (esp_efuse_block_t)(EFUSE_BLK_KEY0 + CONFIG_NEURAI_P256_EFUSE_KEY_INDEX);
@@ -100,7 +109,7 @@ static esp_efuse_block_t key_block(void)
 // Imports a PSA reference to the eFuse key (the key itself stays in hardware).
 static int open_key(psa_key_id_t *id)
 {
-    if (esp_efuse_get_key_purpose(key_block()) != ESP_EFUSE_KEY_PURPOSE_ECDSA_KEY_P256) {
+    if (esp_efuse_get_key_purpose(key_block()) != P256_KEY_PURPOSE) {
         printf("ERR eFuse block KEY%d has no ECDSA_KEY_P256 key\n", CONFIG_NEURAI_P256_EFUSE_KEY_INDEX);
         return -1;
     }
@@ -144,7 +153,7 @@ static int cmd_genkey(int argc, char **argv)
     random_scalar(d);
     uint8_t le[32];
     for (int i = 0; i < 32; ++i) le[i] = d[31 - i]; // the eFuse expects little endian
-    esp_err_t err = esp_efuse_write_key(key_block(), ESP_EFUSE_KEY_PURPOSE_ECDSA_KEY_P256, le, sizeof(le));
+    esp_err_t err = esp_efuse_write_key(key_block(), P256_KEY_PURPOSE, le, sizeof(le));
     memset(d, 0, sizeof(d));
     memset(le, 0, sizeof(le));
     if (err != ESP_OK) {
