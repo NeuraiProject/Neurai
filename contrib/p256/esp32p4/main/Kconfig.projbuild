@@ -2,10 +2,12 @@ menu "Neurai P-256 signer"
 
 choice NEURAI_P256_KEY_SOURCE
     prompt "Where the P-256 private key lives"
-    default NEURAI_P256_KEY_EFUSE
+    default NEURAI_P256_KEY_EFUSE if SOC_ECDSA_SUPPORTED
+    default NEURAI_P256_KEY_SOFTWARE
 
 config NEURAI_P256_KEY_EFUSE
     bool "eFuse key block, used through the ECDSA peripheral"
+    depends on SOC_ECDSA_SUPPORTED
     help
         The key never leaves the hardware. Needs the ECDSA peripheral: ESP32-P4
         revision v3.0 or later, ESP32-C5, ESP32-H2.

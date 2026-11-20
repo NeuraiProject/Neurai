@@ -27,7 +27,9 @@ The host side is `contrib/p256/device_sign.py` (`check` runs the plan checks,
 | Software key in NVS (`sdkconfig.software`) | ESP32-P4 rev < v3.0, ESP32-S3 | None: tests the flow only |
 
 ESP-IDF supports the ECDSA peripheral of the ESP32-P4 only from revision v3.0
-(ECO5); revisions 0.x and 1.x also need `sdkconfig.p4rev1`.
+(ECO5); revisions 0.x and 1.x also need `sdkconfig.p4rev1`. The eFuse source
+is offered only on chips with the peripheral (`SOC_ECDSA_SUPPORTED`): on an
+ESP32-S3 the software key is the default and the only choice.
 
 ## Build and flash
 
@@ -37,9 +39,14 @@ ESP-IDF supports the ECDSA peripheral of the ESP32-P4 only from revision v3.0
 idf.py set-target esp32p4 build
 # ESP32-P4 rev 1.x, software key:
 idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.software;sdkconfig.p4rev1" set-target esp32p4 build
+# ESP32-S3, software key:
+idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.software" set-target esp32s3 build
 idf.py -p /dev/ttyACM0 flash
 python3 ../device_sign.py check --port /dev/ttyACM0
 ```
+
+The console is on USB Serial/JTAG: on boards with two USB ports (for example
+the ESP32-S3-DevKitC) use the native USB port, not the UART bridge.
 
 Before burning a key, check the free key blocks with `idf.py efuse-summary`:
 burning an eFuse cannot be undone, and the six key blocks are shared with
