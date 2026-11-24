@@ -29,6 +29,21 @@
 //                             transaction, so every call checks the 16 names
 //                             again. W = 23 per call, 575 per iteration
 //                             (mainnet); 77 and 1925 (testnet).
+// Policy version 2 (NIP-054 v7), votes by reference:
+//   - AssetAuthV2RefVotes   : asynchronous, 1016 reference votes carrying H2
+//                             and one custody input; the 1000 votes from other
+//                             lists need an owner check each (rule 6). Not
+//                             relayable (64 references at most), but valid in
+//                             a block. W = 2053 (mainnet), 5149 (testnet).
+//   - AssetAuthV2StandardRefs: the same with 64 references, the relay limit.
+//                             W = 149 (mainnet), 389 (testnet).
+//   - AssetAuthV2RepeatedCalls: as AssetAuthRepeatedCalls with a version 2
+//                             call and one vote by reference instead of a
+//                             vote input. W = 23 per call, 575 per iteration
+//                             (mainnet); 74 and 1850 (testnet).
+// Every case prints its W on stderr. The time per unit of the version 2
+// cases is the one of version 1 within a few percent (NIP-054 v7, §15).
+// On hybrid CPUs pin the run to one core (taskset) to compare cases.
 
 #include "bench.h"
 #include "assets/assets.h"
@@ -43,6 +58,8 @@
 #include "uint256.h"
 
 #include <cassert>
+#include <cstdio>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -125,6 +142,7 @@ AssetAuthCall Policy(const Names& names, int64_t c, int64_t a)
 struct Case {
     CMutableTransaction mtx;
     std::vector<CTxOut> prevouts;
+    std::vector<CTxOut> refOutputs; //!< version 2: the output of each reference input
     AssetAuthCall call;
     unsigned int nIn{0};
 
@@ -152,11 +170,15 @@ void Run(benchmark::State& state, const Case& c)
     const ChainContext context{kHeight, 0, 2, true};
     bool fUsedHeight = false;
     ScriptError err = SCRIPT_ERR_OK;
-    // The bench must time the successful path, which visits every rule.
-    const bool ok = EvaluateAssetAuth(c.call, tx, c.nIn, c.prevouts, context, kFlags, nullptr, fUsedHeight, &err);
+    const std::vector<CTxOut>* refs = c.refOutputs.empty() ? nullptr : &c.refOutputs;
+    // The bench must time the successful path, which visits every rule. The
+    // budget only reports the work W of one iteration.
+    AssetAuthWorkBudget budget(std::numeric_limits<uint64_t>::max());
+    const bool ok = EvaluateAssetAuth(c.call, tx, c.nIn, c.prevouts, context, kFlags, &budget, fUsedHeight, &err, refs);
     assert(ok);
+    fprintf(stderr, "W = %llu per iteration\n", static_cast<unsigned long long>(budget.Used()));
     while (state.KeepRunning()) {
-        EvaluateAssetAuth(c.call, tx, c.nIn, c.prevouts, context, kFlags, nullptr, fUsedHeight, &err);
+        EvaluateAssetAuth(c.call, tx, c.nIn, c.prevouts, context, kFlags, nullptr, fUsedHeight, &err, refs);
     }
 }
 
@@ -223,6 +245,32 @@ void OwnersStay(benchmark::State& state, const Names& names)
     Run(state, c);
 }
 
+/** Version 2: 16 roles and `extra` other owners vote by reference with H2. */
+void RefVotes(benchmark::State& state, const Names& names, int extra)
+{
+    Case c;
+    c.mtx.nVersion = 3;
+    c.call = Policy(names, 1, 1);
+    c.call.version = ASSETAUTH_POLICY_VERSION_2;
+    // Proposal: the custody input and one payment.
+    c.Input(CTxOut(10 * COIN, ProgramDest(0xc1)));
+    c.mtx.vout.emplace_back(9 * COIN, P2PKHDest(0x22));
+
+    std::vector<std::string> voters = c.call.roles;
+    for (int i = 0; i < extra; ++i)
+        voters.push_back(Name(names.extra, i, names.length, true));
+    for (size_t i = 0; i < voters.size(); ++i)
+        c.mtx.vrefin.emplace_back(uint256S(strprintf("%064x", 0x9000 + i)), 0);
+
+    // H2 covers the proposal only (r = 0), so the votes can carry it.
+    const CTransaction draft(c.mtx);
+    const uint256 hash = AssetAuthProposalHash(AssetAuthProposalMessage(draft, 2, c.call), ASSETAUTH_POLICY_VERSION_2);
+    const std::string message(hash.begin(), hash.end());
+    for (const std::string& voter : voters)
+        c.refOutputs.push_back(OwnerOut(P2PKHDest(0xa1), voter, message));
+    Run(state, c);
+}
+
 void RepeatedCalls(benchmark::State& state, const Names& names)
 {
     using Bytes = std::vector<unsigned char>;
@@ -285,6 +333,73 @@ void RepeatedCalls(benchmark::State& state, const Names& names)
     }
 }
 
+/** As RepeatedCalls, with version 2 calls and one vote by reference. */
+void RepeatedCallsV2(benchmark::State& state, const Names& names)
+{
+    using Bytes = std::vector<unsigned char>;
+    const int calls = 25;
+    const std::string prefix = names.role + std::string(names.length - names.role.size() - 5, 'Z');
+    std::vector<std::string> roles;
+    CScript script;
+    script << Bytes(prefix.begin(), prefix.end());
+    for (int i = 0; i < ASSETAUTH_MAX_ROLES; ++i) {
+        const std::string suffix = std::to_string(1000 + i) + "!";
+        roles.push_back(prefix + suffix);
+        script << OP_DUP << Bytes(suffix.begin(), suffix.end()) << OP_CAT << OP_SWAP;
+    }
+    script << OP_DROP;
+    for (int i = 0; i < calls; ++i) {
+        // c = 1, a = 1, b = 0, r = 0, T, version 2, M = 1, G = 1: one more
+        // item than version 1, so the roles sit one deeper.
+        script << 1 << 1 << 0 << 0 << 1000000 << ASSETAUTH_POLICY_VERSION_2 << 1 << 1;
+        for (int r = 0; r < ASSETAUTH_MAX_ROLES; ++r)
+            script << 23 << OP_PICK;
+        script << ASSETAUTH_MAX_ROLES << OP_CHECKASSETAUTH << OP_DROP;
+    }
+    for (int i = 0; i < ASSETAUTH_MAX_ROLES / 2; ++i)
+        script << OP_2DROP;
+    script << OP_TRUE;
+
+    const CScript custody = CScript() << OP_1 << ToByteVector(GetAuthScriptCommitment(0, nullptr, script));
+    CMutableTransaction mtx;
+    mtx.nVersion = 3;
+    mtx.vin.emplace_back(COutPoint(uint256S("01"), 0));
+    mtx.vout.emplace_back(9000, P2PKHDest(0x33));
+    mtx.vrefin.emplace_back(uint256S("02"), 0);
+    mtx.vin[0].scriptWitness.stack = {{0}, Bytes(script.begin(), script.end())};
+    const CTransaction tx(mtx);
+
+    // The first role votes by reference with H2, so every call is asynchronous.
+    AssetAuthCall call;
+    call.version = ASSETAUTH_POLICY_VERSION_2;
+    call.M = 1;
+    call.G = 1;
+    call.roles = roles;
+    call.c = 1;
+    call.a = 1;
+    call.T = 1000000;
+    const uint256 hash = AssetAuthProposalHash(AssetAuthProposalMessage(tx, 2, call), ASSETAUTH_POLICY_VERSION_2);
+    const std::vector<CTxOut> prevouts{CTxOut(10000, custody)};
+    const std::vector<CTxOut> refs{OwnerOut(P2PKHDest(0x11), roles[0], std::string(hash.begin(), hash.end()))};
+
+    const PrecomputedTransactionData txdata(tx);
+    const script_verify_flags flags = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_CLEANSTACK |
+                                      SCRIPT_VERIFY_AUTHSCRIPT | SCRIPT_VERIFY_AUTHSCRIPT_STRICT | SCRIPT_VERIFY_CAT |
+                                      SCRIPT_VERIFY_64BIT_INTEGERS | SCRIPT_VERIFY_AUTHSCRIPT_BUDGET |
+                                      SCRIPT_VERIFY_MINIMALDATA | SCRIPT_VERIFY_ASSETAUTH;
+    TransactionSignatureChecker checker(&tx, 0, 10000, txdata, custody, &prevouts, &refs, ChainContext{kHeight, 0, 2, true});
+    AssetAuthWorkBudget budget(std::numeric_limits<uint64_t>::max());
+    checker.assetAuthWorkBudget = &budget;
+    ScriptError err = SCRIPT_ERR_OK;
+    const bool ok = VerifyScript(tx.vin[0].scriptSig, custody, &tx.vin[0].scriptWitness, flags, checker, &err);
+    assert(ok);
+    fprintf(stderr, "W = %llu per iteration\n", static_cast<unsigned long long>(budget.Used()));
+    checker.assetAuthWorkBudget = nullptr;
+    while (state.KeepRunning()) {
+        VerifyScript(tx.vin[0].scriptSig, custody, &tx.vin[0].scriptWitness, flags, checker, &err);
+    }
+}
+
 } // namespace
 
 static void AssetAuthSyncSmall(benchmark::State& state) { SyncSmall(state); }
@@ -309,6 +424,25 @@ static void AssetAuthRepeatedCallsTestnet(benchmark::State& state)
     RepeatedCalls(state, kTestnet);
 }
 
+static void AssetAuthV2RefVotes(benchmark::State& state) { RefVotes(state, kMainnet, kExtra); }
+static void AssetAuthV2StandardRefs(benchmark::State& state) { RefVotes(state, kMainnet, 64 - ASSETAUTH_MAX_ROLES); }
+static void AssetAuthV2RepeatedCalls(benchmark::State& state) { RepeatedCallsV2(state, kMainnet); }
+static void AssetAuthV2RefVotesTestnet(benchmark::State& state)
+{
+    ScopedNetwork testnet(CBaseChainParams::TESTNET);
+    RefVotes(state, kTestnet, kExtra);
+}
+static void AssetAuthV2StandardRefsTestnet(benchmark::State& state)
+{
+    ScopedNetwork testnet(CBaseChainParams::TESTNET);
+    RefVotes(state, kTestnet, 64 - ASSETAUTH_MAX_ROLES);
+}
+static void AssetAuthV2RepeatedCallsTestnet(benchmark::State& state)
+{
+    ScopedNetwork testnet(CBaseChainParams::TESTNET);
+    RepeatedCallsV2(state, kTestnet);
+}
+
 BENCHMARK(AssetAuthSyncSmall);
 BENCHMARK(AssetAuthAsyncVotes);
 BENCHMARK(AssetAuthAssetsLeave);
@@ -317,3 +451,9 @@ BENCHMARK(AssetAuthRepeatedCalls);
 BENCHMARK(AssetAuthAsyncVotesTestnet);
 BENCHMARK(AssetAuthAssetsLeaveTestnet);
 BENCHMARK(AssetAuthRepeatedCallsTestnet);
+BENCHMARK(AssetAuthV2RefVotes);
+BENCHMARK(AssetAuthV2StandardRefs);
+BENCHMARK(AssetAuthV2RepeatedCalls);
+BENCHMARK(AssetAuthV2RefVotesTestnet);
+BENCHMARK(AssetAuthV2StandardRefsTestnet);
+BENCHMARK(AssetAuthV2RepeatedCallsTestnet);

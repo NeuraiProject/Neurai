@@ -140,6 +140,17 @@ tags):
 - The C6 proof profile (`OP_ZKVERIFY` profile `03`) and `OP_CHECKASSETAUTH`
   (NIP-054) activate at block 10 of the reset testnet with every other rule,
   instead of block 100.
+- `OP_CHECKASSETAUTH` gains policy version 2 (NIP-054 v7): a member votes by
+  sending its role token to itself with the proposal hash as transfer message,
+  and the execution reads that output as a reference input instead of spending
+  a vote lock. Version 2 shares the flag and the height of version 1, so on
+  testnet it applies as soon as nodes run this build. Until now a version 2
+  call always failed, so no block changes validity, but nodes of earlier
+  builds reject the first block that spends a version 2 custody: update pools
+  and seeds before creating one. See [covenants.md](covenants.md).
+- `verifychain 4` and `-checklevel=4` no longer report a corrupted database
+  for blocks with reference inputs whose outputs were spent later: the
+  reconnection resolves them against the state before each block (NIP-014).
 - Testnet restarted again from a new genesis block (2026-11-05,
   `000000c7…2dc77d`) and requires protocol 70031: nodes of earlier builds
   (70030) are refused at handshake. A node refuses to start on a `testnet/`
@@ -247,7 +258,7 @@ height revalidates the mempool.
 | `OP_ZKVERIFY` (Groth16 over BN254, AuthScript only), profile `01` | NIP-016 | not scheduled | 10 | 0, `-zkverifyheight` |
 | `OP_ZKVERIFY` profile `02`: public-tree transitions (C5, experimental) | — | not scheduled | 10 | 0, `-zkpublictreeheight` |
 | `OP_ZKVERIFY` profile `03`: portable-tree transitions (C6, experimental) | — | not scheduled | 10 | 0, `-zkportabletreeheight` |
-| P2AH: `OP_CHECKASSETAUTH` (`0xdf`, AuthScript only), M of N owner tokens approve a spend by direct signature or by a vote bound to a proposal hash; work budget of 450,000 units per block and 45,000 per standard transaction. See [covenants.md](covenants.md) | NIP-054 | not scheduled | 10 | 0, `-assetauthheight` |
+| P2AH: `OP_CHECKASSETAUTH` (`0xdf`, AuthScript only), M of N owner tokens approve a spend by direct signature or by a vote bound to a proposal hash (version 1: a vote lock; version 2: a vote by reference, NIP-054 v7); work budget of 450,000 units per block and 45,000 per standard transaction. See [covenants.md](covenants.md) | NIP-054 | not scheduled | 10 | 0, `-assetauthheight` |
 | Poseidon work budget: at most 200,000 permutations per block (20,000 per standard transaction) | — | not scheduled | 10 | 0, `-poseidonworkheight` |
 | Asset payload marker `rvn` → `xna` for new asset outputs; existing `rvn` outputs stay spendable | NIP-040 | not scheduled | 10 | 1, `-nip040height` |
 | DEPIN transfer state (open, close, seal) | — | not scheduled | 10 | 1, `-depinstateheight` |

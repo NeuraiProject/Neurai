@@ -95,16 +95,23 @@ uint64_t NameWork(const std::string& name)
 }
 
 uint64_t NameWork(const AssetAuthCall& call, const std::vector<ScriptAsset>& inputs,
-                  const std::vector<ScriptAsset>& outputs)
+                  const std::vector<ScriptAsset>& outputs, const std::vector<ScriptAsset>& references = {})
 {
     uint64_t work = 0;
     for (const std::string& role : call.roles)
         work += NameWork(role);
-    for (const std::vector<ScriptAsset>* assets : {&inputs, &outputs}) {
+    for (const std::vector<ScriptAsset>* assets : {&inputs, &outputs, &references}) {
         for (const ScriptAsset& asset : *assets)
             if (asset.fAsset) work += NameWork(asset.name);
     }
     return work;
+}
+
+/** Reference inputs of a transaction: only version 3 carries them (NIP-014). */
+const std::vector<COutPoint>& ReferenceInputs(const CTransaction& tx)
+{
+    static const std::vector<COutPoint> none;
+    return tx.nVersion == 3 ? tx.vrefin : none;
 }
 
 bool IsP2PKHDestination(const CScript& dest)
@@ -173,6 +180,19 @@ MessageState ReadVoteMessage(const CScript& scriptPubKey, const uint256& hash)
     return MessageState::OTHER;
 }
 
+/**
+ * Version 2 vote by reference (§3.5), but for the owner check of its name: a
+ * referenced output that transfers one owner token to a direct signature
+ * destination with H2 as its 32-byte transfer message. The caller checks the
+ * name only when it is not a role, since roles are checked as owners already.
+ */
+bool IsReferenceVote(const CTxOut& out, const ScriptAsset& asset, const uint256& hash, script_verify_flags flags)
+{
+    return asset.fAsset && asset.amount == OWNER_ASSET_AMOUNT &&
+           IsDirectSignatureFamily(AssetAuthDestination(out.scriptPubKey), flags) &&
+           ReadVoteMessage(out.scriptPubKey, hash) == MessageState::MATCH;
+}
+
 } // namespace
 
 CScript AssetAuthDestination(const CScript& scriptPubKey)
@@ -198,21 +218,38 @@ bool DecodeAssetAuthCall(const std::vector<std::vector<unsigned char>>& stack, A
     if (static_cast<uint64_t>(n) + ASSETAUTH_FIXED_ITEMS > stack.size())
         return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
 
-    // Items below the roles, from the top: G, M, version, T, b, a, c.
+    // Items below the roles, from the top: G, M, version, then T, b, a, c
+    // (version 1) or T, r, b, a, c (version 2). The first seven are numbers in
+    // both layouts and are read before the version is known, as in version 1.
     const size_t base = stack.size() - 1 - static_cast<size_t>(n);
-    int64_t values[7];
+    int64_t values[8];
     for (int i = 0; i < 7; ++i) {
         if (!ParseSmallNumber(stack[base - 1 - i], values[i]))
             return set_error(serror, SCRIPT_ERR_ASSETAUTH_ARGS);
     }
     const int64_t G = values[0], M = values[1], version = values[2];
-    call.T = values[3];
-    call.b = values[4];
-    call.a = values[5];
-    call.c = values[6];
+    size_t fixedItems = ASSETAUTH_FIXED_ITEMS;
+    if (version == ASSETAUTH_POLICY_VERSION_2) {
+        if (static_cast<uint64_t>(n) + ASSETAUTH_FIXED_ITEMS_V2 > stack.size())
+            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+        if (!ParseSmallNumber(stack[base - 8], values[7]))
+            return set_error(serror, SCRIPT_ERR_ASSETAUTH_ARGS);
+        call.T = values[3];
+        call.r = values[4];
+        call.b = values[5];
+        call.a = values[6];
+        call.c = values[7];
+        fixedItems = ASSETAUTH_FIXED_ITEMS_V2;
+    } else {
+        call.T = values[3];
+        call.b = values[4];
+        call.a = values[5];
+        call.c = values[6];
+        call.r = 0;
+    }
 
-    if (version != ASSETAUTH_POLICY_VERSION || n < 1 || n > ASSETAUTH_MAX_ROLES ||
-        M < 1 || M > G || G > n)
+    if ((version != ASSETAUTH_POLICY_VERSION && version != ASSETAUTH_POLICY_VERSION_2) ||
+        n < 1 || n > ASSETAUTH_MAX_ROLES || M < 1 || M > G || G > n)
         return set_error(serror, SCRIPT_ERR_ASSETAUTH_POLICY);
     call.version = static_cast<int>(version);
     call.M = static_cast<int>(M);
@@ -229,10 +266,10 @@ bool DecodeAssetAuthCall(const std::vector<std::vector<unsigned char>>& stack, A
         call.roles.push_back(std::move(name));
     }
 
-    if (call.c < 0 || call.a < 0 || call.b < 0 || call.T < 0)
+    if (call.c < 0 || call.a < 0 || call.b < 0 || call.r < 0 || call.T < 0)
         return set_error(serror, SCRIPT_ERR_ASSETAUTH_ARGS);
 
-    consumed = static_cast<size_t>(n) + ASSETAUTH_FIXED_ITEMS;
+    consumed = static_cast<size_t>(n) + fixedItems;
     return true;
 }
 
@@ -255,38 +292,56 @@ std::vector<unsigned char> AssetAuthProposalMessage(const CTransaction& tx, uint
         ss << tx.vout[i];
     for (size_t i = tx.vout.size() - static_cast<size_t>(call.b); i < tx.vout.size(); ++i)
         ss << tx.vout[i];
-    const std::vector<COutPoint> noRefs;
-    const std::vector<COutPoint>& refs = tx.nVersion == 3 ? tx.vrefin : noRefs;
-    WriteCompactSize(ss, refs.size());
-    for (const COutPoint& ref : refs)
-        ss << ref;
+    const std::vector<COutPoint>& refs = ReferenceInputs(tx);
+    if (call.version == ASSETAUTH_POLICY_VERSION_2) {
+        // m2: only the proposal references; the votes follow them (§3.8).
+        WriteCompactSize(ss, static_cast<uint64_t>(call.r));
+        for (int64_t i = 0; i < call.r; ++i)
+            ss << refs[i];
+    } else {
+        WriteCompactSize(ss, refs.size());
+        for (const COutPoint& ref : refs)
+            ss << ref;
+    }
     return std::vector<unsigned char>(ss.begin(), ss.end());
 }
 
-uint256 AssetAuthProposalHash(const std::vector<unsigned char>& message)
+uint256 AssetAuthProposalHash(const std::vector<unsigned char>& message, int version)
 {
-    return TaggedHash("NeuraiAssetAuthProposal", message);
+    // Distinct tags keep a vote of one version from counting in the other.
+    return TaggedHash(version == ASSETAUTH_POLICY_VERSION_2 ? "NeuraiAssetAuthProposalV2" : "NeuraiAssetAuthProposal",
+                      message);
 }
 
 uint64_t AssetAuthNameWork(const AssetAuthCall& call, const CTransaction& tx, const std::vector<CTxOut>& prevouts,
-                           script_verify_flags flags)
+                           script_verify_flags flags, const std::vector<CTxOut>* refOutputs)
 {
     CStrictAuthScriptContext strictAuthScriptContext((flags & SCRIPT_VERIFY_AUTHSCRIPT_STRICT) != 0);
-    return NameWork(call, ReadAssets(prevouts), ReadAssets(tx.vout));
+    const bool fReferences = call.version == ASSETAUTH_POLICY_VERSION_2 && refOutputs;
+    return NameWork(call, ReadAssets(prevouts), ReadAssets(tx.vout),
+                    fReferences ? ReadAssets(*refOutputs) : std::vector<ScriptAsset>());
 }
 
-uint64_t AssetAuthWork(const CTransaction& tx, size_t messageSize, uint64_t nameWork)
+uint64_t AssetAuthWork(const CTransaction& tx, size_t messageSize, uint64_t nameWork, size_t nRefs)
 {
-    return 1 + tx.vin.size() + tx.vout.size() + (messageSize + 63) / 64 + nameWork;
+    return 1 + tx.vin.size() + tx.vout.size() + nRefs + (messageSize + 63) / 64 + nameWork;
 }
 
 bool EvaluateAssetAuth(const AssetAuthCall& call, const CTransaction& tx, unsigned int nIn,
                        const std::vector<CTxOut>& prevouts, const ChainContext& context,
                        script_verify_flags flags, AssetAuthWorkBudget* budget,
-                       bool& fUsedHeight, ScriptError* serror)
+                       bool& fUsedHeight, ScriptError* serror,
+                       const std::vector<CTxOut>* refOutputs)
 {
     fUsedHeight = false;
     if (!context.available || prevouts.size() != tx.vin.size() || nIn >= tx.vin.size())
+        return set_error(serror, SCRIPT_ERR_ASSETAUTH_CONTEXT);
+
+    // Version 2 reads the referenced outputs (§3.2). Version 1 only commits
+    // the reference outpoints, so it does not need them.
+    const bool fV2 = call.version == ASSETAUTH_POLICY_VERSION_2;
+    const std::vector<COutPoint>& refs = ReferenceInputs(tx);
+    if (fV2 && !refs.empty() && (!refOutputs || refOutputs->size() != refs.size()))
         return set_error(serror, SCRIPT_ERR_ASSETAUTH_CONTEXT);
 
     // Asset scripts behind OP_2/OP_3 only parse once the strict families are
@@ -295,16 +350,20 @@ bool EvaluateAssetAuth(const AssetAuthCall& call, const CTransaction& tx, unsign
 
     const size_t nInputs = tx.vin.size();
     const size_t nOutputs = tx.vout.size();
+    const size_t nRefs = fV2 ? refs.size() : 0;
     if (static_cast<uint64_t>(call.c) > nInputs ||
-        static_cast<uint64_t>(call.a) + static_cast<uint64_t>(call.b) > nOutputs)
+        static_cast<uint64_t>(call.a) + static_cast<uint64_t>(call.b) > nOutputs ||
+        static_cast<uint64_t>(call.r) > nRefs)
         return set_error(serror, SCRIPT_ERR_ASSETAUTH_ARGS);
 
     // Charge before checking any name and before hashing (§3.13). The assets
     // are read once and reused by every rule below.
     const std::vector<ScriptAsset> inAssets = ReadAssets(prevouts);
     const std::vector<ScriptAsset> outAssets = ReadAssets(tx.vout);
+    const std::vector<ScriptAsset> refAssets = nRefs ? ReadAssets(*refOutputs) : std::vector<ScriptAsset>();
     const std::vector<unsigned char> message = AssetAuthProposalMessage(tx, context.chainId, call);
-    if (budget && !budget->Charge(AssetAuthWork(tx, message.size(), NameWork(call, inAssets, outAssets))))
+    if (budget && !budget->Charge(AssetAuthWork(tx, message.size(), NameWork(call, inAssets, outAssets, refAssets),
+                                                nRefs)))
         return set_error(serror, SCRIPT_ERR_ASSETAUTH_BUDGET);
 
     // Roles are owner names (§3.5).
@@ -312,7 +371,7 @@ bool EvaluateAssetAuth(const AssetAuthCall& call, const CTransaction& tx, unsign
         if (!IsOwnerName(role))
             return set_error(serror, SCRIPT_ERR_ASSETAUTH_POLICY);
     }
-    const uint256 hash = AssetAuthProposalHash(message);
+    const uint256 hash = AssetAuthProposalHash(message, call.version);
 
     const std::set<std::string> roleSet(call.roles.begin(), call.roles.end());
     const CScript ownDest = AssetAuthDestination(prevouts[nIn].scriptPubKey);
@@ -332,6 +391,9 @@ bool EvaluateAssetAuth(const AssetAuthCall& call, const CTransaction& tx, unsign
             approved.insert(name);
             continue;
         }
+        // Version 2 has no votes by spent input: other families never approve.
+        if (fV2)
+            continue;
         switch (ReadVoteMessage(spk, hash)) {
         case MessageState::MATCH:
             approved.insert(name);
@@ -341,6 +403,19 @@ bool EvaluateAssetAuth(const AssetAuthCall& call, const CTransaction& tx, unsign
             return set_error(serror, SCRIPT_ERR_ASSETAUTH_FOREIGN_VOTE);
         case MessageState::NONE:
             break;
+        }
+    }
+
+    // Version 2: classification of the vote references r.. (§3.6). A vote of
+    // a role switches on the asynchronous mode even when an input approved
+    // that role already (§3.7); the role still counts once.
+    for (size_t j = static_cast<size_t>(call.r); j < nRefs; ++j) {
+        const ScriptAsset& asset = refAssets[j];
+        if (!asset.fAsset || !roleSet.count(asset.name))
+            continue;
+        if (IsReferenceVote((*refOutputs)[j], asset, hash, flags)) {
+            approved.insert(asset.name);
+            fAsync = true;
         }
     }
 
@@ -377,7 +452,8 @@ bool EvaluateAssetAuth(const AssetAuthCall& call, const CTransaction& tx, unsign
             if (IsDirectSignatureFamily(dest, flags)) {
                 if (!HasSighashAll(tx, k, dest))
                     return set_error(serror, SCRIPT_ERR_ASSETAUTH_SIGHASH);
-            } else if (ReadVoteMessage(spk, hash) != MessageState::MATCH) {
+            } else if (fV2 || ReadVoteMessage(spk, hash) != MessageState::MATCH) {
+                // Version 2 only takes direct approvals here.
                 return set_error(serror, SCRIPT_ERR_ASSETAUTH_SHAPE);
             }
             approvalOwners.insert(name);
@@ -412,6 +488,16 @@ bool EvaluateAssetAuth(const AssetAuthCall& call, const CTransaction& tx, unsign
         // Rule 5: change never exceeds what the fee inputs bring.
         if (changeOut > feeIn)
             return set_error(serror, SCRIPT_ERR_ASSETAUTH_SHAPE);
+
+        // Rule 6 (version 2): every reference r.. is a vote by reference for
+        // H2, of any list. Only votes can follow the proposal references, so
+        // H2, which fixes the prefix, bounds what the executor can add.
+        for (size_t j = static_cast<size_t>(call.r); j < nRefs; ++j) {
+            const ScriptAsset& asset = refAssets[j];
+            if (!IsReferenceVote((*refOutputs)[j], asset, hash, flags) ||
+                (!roleSet.count(asset.name) && !IsOwnerName(asset.name)))
+                return set_error(serror, SCRIPT_ERR_ASSETAUTH_SHAPE);
+        }
     }
 
     // Threshold (§3.11): G when an owner kept at this destination leaves it.

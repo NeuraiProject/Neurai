@@ -1512,19 +1512,26 @@ token and the script holds no key list.
 ### Stack contract
 
 ```
-witness: 00 <c> <a> <b> <T> <script>
-script:  ... <1> <M> <G> <role_1> ... <role_n> <n> OP_CHECKASSETAUTH
+version 1 witness: 00 <c> <a> <b> <T> <script>
+version 2 witness: 00 <c> <a> <b> <r> <T> <script>
+script:            ... <version> <M> <G> <role_1> ... <role_n> <n> OP_CHECKASSETAUTH
 ```
 
-Before the opcode the stack ends in `c a b T 1 M G role_1 ... role_n n`. On
-success the opcode removes those `n + 8` items and pushes `1`; on failure the
-script fails, it never pushes `0`.
+Before the opcode the stack ends in `c a b T 1 M G role_1 ... role_n n`
+(version 1) or `c a b r T 2 M G role_1 ... role_n n` (version 2). On success
+the opcode removes those `n + 8` or `n + 9` items and pushes `1`; on failure
+the script fails, it never pushes `0`.
 
-- **Policy** (`SCRIPT_ERR_ASSETAUTH_POLICY`): version `1`, `1 <= M <= G <= n <=
-  16`, roles are valid owner names in strictly increasing byte order.
-- **Arguments** (`SCRIPT_ERR_ASSETAUTH_ARGS`): `c`, `a`, `b`, `T` are
+- **Policy** (`SCRIPT_ERR_ASSETAUTH_POLICY`): version `1` or `2`,
+  `1 <= M <= G <= n <= 16`, roles are valid owner names in strictly increasing
+  byte order.
+- **Arguments** (`SCRIPT_ERR_ASSETAUTH_ARGS`): `c`, `a`, `b`, `r`, `T` are
   non-negative minimal numbers of up to 4 bytes, `c` at most the number of
-  inputs, `a + b` at most the number of outputs.
+  inputs, `a + b` at most the number of outputs, `r` at most the number of
+  reference inputs (so `0` outside version 3 transactions).
+
+Version 1 is described first; [policy version 2](#policy-version-2-votes-by-reference)
+replaces its vote locks with votes by reference.
 
 ### Approvals
 
@@ -1576,17 +1583,68 @@ custody with `OP_INPUTFIELD <j> 04`, the full version-plus-commitment
 so the anyone-can-spend script `OP_1 <C> OP_DROP OP_DROP OP_TRUE` would pass as
 the custody and release the vote to a forged execution.
 
+### Policy version 2: votes by reference
+
+Version 2 (NIP-054 v7) has no vote locks. A member votes by sending its role
+token to itself, at a direct signature destination (P2PKH or strict v2/v3),
+with the proposal hash `H2` as its transfer message. The execution lists that
+output as a reference input (NIP-014) after the `r` reference inputs of the
+proposal: it reads the output and does not spend it. The token never leaves
+its holder, moving it withdraws the vote and selling it takes the vote away.
+
+| Where the role is | Approves |
+|---|---|
+| An input at P2PKH or strict v2/v3 | always: a direct signature, `SIGHASH_ALL` only (`SCRIPT_ERR_ASSETAUTH_SIGHASH`) |
+| An input at any other destination | never, and it is no foreign vote |
+| Reference input `r` or later | when its output transfers the owner token (amount 1) to P2PKH or strict v2/v3 with the 32-byte message `H2` |
+| Reference input before `r` | never: it belongs to the proposal |
+
+A role counts once, whether it approves by input, by reference or both. The
+call is asynchronous when a reference input from index `r` on is a vote of a
+role of the list, even if that role also signs directly. The expiry and the
+fixed shape then apply, with two changes: inputs from index `c` on are direct
+approvals or carry no asset (rule 3), so returns only give back directly
+approving owners; and every reference input from index `r` on is a vote by
+reference for `H2`, of any list (rule 6).
+
+```
+H2 = TaggedHash("NeuraiAssetAuthProposalV2", m2)
+m2 = m up to the last b outputs || compact(r) || reference inputs 0..r-1
+```
+
+With `r` equal to the number of reference inputs, `m2` equals `m`; the tags
+keep `H2` and `H` apart. The executor may add, drop or reorder votes without
+changing `H2`, so a covenant that composes with an asynchronous version 2
+custody must only read reference inputs at fixed indices below `r`, never
+`OP_REFINPUTCOUNT`.
+
+The vote belongs to the role output: whoever authorized the spend that created
+it chose the message (normally the holder, with a self-transfer), and only the
+current holder can move it. A covenant that releases a role token to a direct
+signature destination must fix the whole output script, message included
+(`OP_OUTPUTSCRIPT`), or whoever triggers it can set `H2`.
+
+Version 2 reads the referenced outputs: in a transaction with reference inputs
+it fails with `SCRIPT_ERR_ASSETAUTH_CONTEXT` without them. Version 1 only
+commits the reference outpoints. A vote must be confirmed before an execution
+references it, and the NIP-014 rules apply: a vote spent in the mempool blocks
+the execution, and a block that spends it evicts the execution, but a vote
+spent in the same block as the execution still counts.
+
 ### Work budget and caching
 
 Each execution charges
 
 ```
-W = 1 + inputs + outputs + ceil(|m| / 64) + N
+W = 1 + inputs + outputs + references + ceil(|m| / 64) + N
 N = sum of ceil(|name| / 32) over the roles and over the asset name of every
-    spent output and every output that carries one
+    spent output, every output and, for version 2, every referenced output
+    that carries one
 ```
 
-before it checks any name and before it hashes. Name validation is the costly
+before it checks any name and before it hashes. For version 2, `references`
+is the number of reference inputs and `m` is `m2`; for version 1, `references`
+is `0`. Name validation is the costly
 step: it uses regular expressions, grows with the length and is slowest for
 DEPIN owners, so a script that calls the opcode many times with the same roles
 pays for every check. A block may use at most `MAX_BLOCK_ASSETAUTH_WORK` =
@@ -1603,7 +1661,8 @@ execution cache, so every validation charges the budget.
 ### Activation
 
 `SCRIPT_VERIFY_ASSETAUTH` (bit 52), `nAssetAuthHeight`: testnet block 10,
-regtest 0 (`-assetauthheight`), mainnet unscheduled. With the flag
+regtest 0 (`-assetauthheight`), mainnet unscheduled. Both policy versions share
+the flag and the height. With the flag
 off `0xdf` is `SCRIPT_ERR_BAD_OPCODE`. Outside AuthScript the opcode fails
 with `SCRIPT_ERR_ASSETAUTH_SIGVERSION`, and without prevouts or chain context
 with `SCRIPT_ERR_ASSETAUTH_CONTEXT`, so `libneuraiconsensus` cannot run it.

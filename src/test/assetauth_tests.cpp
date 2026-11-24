@@ -67,6 +67,15 @@ CTxOut OwnerOut(const CScript& dest, const std::string& name, const std::string&
     return AssetOut(dest, name, OWNER_ASSET_AMOUNT, message);
 }
 
+/** The owner output of an issuance of `root`: an owner without a transfer payload. */
+CTxOut OwnerIssuanceOut(const CScript& dest, const std::string& root)
+{
+    CTxOut out(0, dest);
+    CNewAsset asset(root, 0);
+    asset.ConstructOwnerTransaction(out.scriptPubKey, AssetMarker::NEURAI_XNA);
+    return out;
+}
+
 std::string MessageOf(const uint256& hash)
 {
     return std::string(hash.begin(), hash.end());
@@ -102,6 +111,15 @@ AssetAuthCall Policy(int M, int G, std::vector<std::string> roles, int64_t c = 0
     return call;
 }
 
+AssetAuthCall PolicyV2(int M, int G, std::vector<std::string> roles, int64_t c = 0, int64_t a = 0, int64_t b = 0,
+                       int64_t r = 0, int64_t T = HEIGHT)
+{
+    AssetAuthCall call = Policy(M, G, std::move(roles), c, a, b, T);
+    call.version = ASSETAUTH_POLICY_VERSION_2;
+    call.r = r;
+    return call;
+}
+
 ChainContext Context(int64_t height = HEIGHT)
 {
     return ChainContext{height, 0, 2, true};
@@ -111,8 +129,17 @@ ChainContext Context(int64_t height = HEIGHT)
 struct Spend {
     CMutableTransaction mtx;
     std::vector<CTxOut> prevouts;
+    std::vector<CTxOut> refOutputs; //!< NIP-014: the output of each reference input
 
     Spend() { mtx.nVersion = 2; }
+
+    /** A reference input (NIP-014); only version 3 transactions carry them. */
+    void Ref(const CTxOut& out)
+    {
+        mtx.nVersion = 3;
+        mtx.vrefin.emplace_back(uint256S(strprintf("%064x", 0x2000 + mtx.vrefin.size())), 0);
+        refOutputs.push_back(out);
+    }
 
     void Input(const CTxOut& prevout, const CScript& scriptSig = CScript(), const CScriptWitness& witness = CScriptWitness())
     {
@@ -127,17 +154,18 @@ struct Spend {
     uint256 Hash(const AssetAuthCall& call) const
     {
         const CTransaction tx(mtx);
-        return AssetAuthProposalHash(AssetAuthProposalMessage(tx, Context().chainId, call));
+        return AssetAuthProposalHash(AssetAuthProposalMessage(tx, Context().chainId, call), call.version);
     }
 
     ScriptError Eval(const AssetAuthCall& call, unsigned int nIn, script_verify_flags flags = FLAGS,
                      ChainContext context = Context(), AssetAuthWorkBudget* budget = nullptr,
-                     bool* usedHeight = nullptr) const
+                     bool* usedHeight = nullptr, bool fRefOutputs = true) const
     {
         const CTransaction tx(mtx);
         ScriptError err = SCRIPT_ERR_OK;
         bool fUsedHeight = false;
-        if (EvaluateAssetAuth(call, tx, nIn, prevouts, context, flags, budget, fUsedHeight, &err))
+        if (EvaluateAssetAuth(call, tx, nIn, prevouts, context, flags, budget, fUsedHeight, &err,
+                              fRefOutputs ? &refOutputs : nullptr))
             err = SCRIPT_ERR_OK;
         if (usedHeight) *usedHeight = fUsedHeight;
         return err;
@@ -170,6 +198,36 @@ struct AsyncFixture {
     void Vote(size_t input, const CScript& lock, const std::string& role)
     {
         spend.prevouts[input] = OwnerOut(lock, role, MessageOf(spend.Hash(call)));
+    }
+};
+
+/**
+ * Version 2 payment by third parties (NIP-054 v7, example 6.2): ALICE votes by
+ * reference from P2PKH and BOB from strict v2, CARL does not vote, and E
+ * executes and pays the fee. Neither token moves.
+ */
+struct RefFixture {
+    AssetAuthCall call = PolicyV2(2, 3, ABC, /*c=*/1, /*a=*/2);
+    Spend spend;
+
+    explicit RefFixture(CAmount change = 4 * CENT)
+    {
+        spend.mtx.nVersion = 3;
+        spend.Input(XnaOut(CUSTODY, 150 * COIN));                                // 0 custody
+        spend.Input(XnaOut(P2PKHDest(0xe1), 5 * CENT), SigScript(SIGHASH_ALL));  // 1 fee of E
+        spend.Output(XnaOut(P2PKHDest(0xe0), 100 * COIN));                      // 0 prefix: payment
+        spend.Output(XnaOut(CUSTODY, 50 * COIN));                               // 1 prefix: back to the custody
+        spend.Output(XnaOut(P2PKHDest(0xe1), change));                          // 2 change of E
+        Vote(P2PKHDest(0xa0), "ALICE!");                                        // reference 0
+        Vote(ProgramDest(OP_2, 0xb0), "BOB!");                                  // reference 1
+    }
+
+    uint256 H2() const { return spend.Hash(call); }
+
+    /** A vote by reference: `role` at `dest` carrying H2, after the other references. */
+    void Vote(const CScript& dest, const std::string& role)
+    {
+        spend.Ref(OwnerOut(dest, role, MessageOf(H2())));
     }
 };
 
@@ -228,7 +286,8 @@ BOOST_AUTO_TEST_CASE(decode_valid_call)
 
 BOOST_AUTO_TEST_CASE(decode_policy_errors)
 {
-    BOOST_CHECK_EQUAL(Decode(CallStack(0, 0, 0, 0, 2, 1, 1, {"ALICE!"})), SCRIPT_ERR_ASSETAUTH_POLICY); // version
+    BOOST_CHECK_EQUAL(Decode(CallStack(0, 0, 0, 0, 3, 1, 1, {"ALICE!"})), SCRIPT_ERR_ASSETAUTH_POLICY); // version
+    BOOST_CHECK_EQUAL(Decode(CallStack(0, 0, 0, 0, 0, 1, 1, {"ALICE!"})), SCRIPT_ERR_ASSETAUTH_POLICY); // version 0
     BOOST_CHECK_EQUAL(Decode(CallStack(0, 0, 0, 0, 1, 0, 1, {"ALICE!"})), SCRIPT_ERR_ASSETAUTH_POLICY); // M < 1
     BOOST_CHECK_EQUAL(Decode(CallStack(0, 0, 0, 0, 1, 3, 2, ABC)), SCRIPT_ERR_ASSETAUTH_POLICY);        // M > G
     BOOST_CHECK_EQUAL(Decode(CallStack(0, 0, 0, 0, 1, 2, 4, ABC)), SCRIPT_ERR_ASSETAUTH_POLICY);        // G > n
@@ -868,6 +927,12 @@ BOOST_AUTO_TEST_CASE(random_calls_keep_invariants)
             const int64_t M = InsecureRandRange(roles.size() + 2);
             const int64_t G = M + InsecureRandRange(2);
             stack = CallStack(small(), small(), small(), HEIGHT, 1, M, G, roles);
+            if (InsecureRandBool()) {
+                // Version 2: r goes between b and T.
+                const size_t T = stack.size() - roles.size() - 5;
+                stack[T + 1] = CScriptNum(ASSETAUTH_POLICY_VERSION_2).getvch();
+                stack.insert(stack.begin() + T, CScriptNum(small()).getvch());
+            }
             if (InsecureRandBool())
                 stack.insert(stack.begin(), CScriptNum(small()).getvch());
             if (InsecureRandRange(4) == 0) {
@@ -882,11 +947,14 @@ BOOST_AUTO_TEST_CASE(random_calls_keep_invariants)
         if (Decode(stack, &call, &consumed) != SCRIPT_ERR_OK)
             continue;
         ++decoded;
-        BOOST_CHECK_EQUAL(consumed, call.roles.size() + ASSETAUTH_FIXED_ITEMS);
+        const bool fV2 = call.version == ASSETAUTH_POLICY_VERSION_2;
+        BOOST_CHECK(call.version == ASSETAUTH_POLICY_VERSION || fV2);
+        BOOST_CHECK_EQUAL(consumed, call.roles.size() + (fV2 ? ASSETAUTH_FIXED_ITEMS_V2 : ASSETAUTH_FIXED_ITEMS));
         BOOST_CHECK(consumed <= stack.size());
         BOOST_CHECK(1 <= call.M && call.M <= call.G && call.G <= static_cast<int>(call.roles.size()));
         BOOST_CHECK(call.roles.size() <= ASSETAUTH_MAX_ROLES);
-        BOOST_CHECK(call.c >= 0 && call.a >= 0 && call.b >= 0 && call.T >= 0);
+        BOOST_CHECK(call.c >= 0 && call.a >= 0 && call.b >= 0 && call.r >= 0 && call.T >= 0);
+        BOOST_CHECK(fV2 || call.r == 0);
         for (size_t i = 1; i < call.roles.size(); ++i)
             BOOST_CHECK(call.roles[i - 1] < call.roles[i]);
     }
@@ -963,6 +1031,672 @@ BOOST_AUTO_TEST_CASE(random_transactions_keep_invariants)
         const CTransaction tx(s.mtx);
         BOOST_CHECK_EQUAL(budget.Used(), AssetAuthWork(tx, AssetAuthProposalMessage(tx, Context().chainId, call).size(),
                                                        AssetAuthNameWork(call, tx, s.prevouts, flags)));
+    }
+    BOOST_CHECK(passed > 0);
+}
+
+// ---------------------------------------------------------------------------
+// Policy version 2: votes by reference (NIP-054 v7)
+// ---------------------------------------------------------------------------
+
+Stack CallStackV2(int64_t c, int64_t a, int64_t b, int64_t r, int64_t T, int64_t M, int64_t G,
+                  const std::vector<std::string>& roles)
+{
+    Stack stack;
+    for (int64_t v : {c, a, b, r, T, int64_t{ASSETAUTH_POLICY_VERSION_2}, M, G})
+        stack.push_back(CScriptNum(v).getvch());
+    for (const std::string& role : roles)
+        stack.emplace_back(role.begin(), role.end());
+    stack.push_back(CScriptNum(static_cast<int64_t>(roles.size())).getvch());
+    return stack;
+}
+
+BOOST_AUTO_TEST_CASE(v2_decode)
+{
+    AssetAuthCall call;
+    size_t consumed = 0;
+    BOOST_CHECK_EQUAL(Decode(CallStackV2(2, 3, 1, 4, 500, 2, 3, ABC), &call, &consumed), SCRIPT_ERR_OK);
+    BOOST_CHECK_EQUAL(consumed, ABC.size() + ASSETAUTH_FIXED_ITEMS_V2);
+    BOOST_CHECK_EQUAL(call.version, ASSETAUTH_POLICY_VERSION_2);
+    BOOST_CHECK_EQUAL(call.c, 2);
+    BOOST_CHECK_EQUAL(call.a, 3);
+    BOOST_CHECK_EQUAL(call.b, 1);
+    BOOST_CHECK_EQUAL(call.r, 4);
+    BOOST_CHECK_EQUAL(call.T, 500);
+    BOOST_CHECK_EQUAL(call.M, 2);
+    BOOST_CHECK_EQUAL(call.G, 3);
+    BOOST_CHECK(call.roles == ABC);
+
+    // Extra items below the call are left alone.
+    Stack deeper = CallStackV2(0, 0, 0, 0, 0, 1, 1, {"ALICE!"});
+    deeper.insert(deeper.begin(), {0x07});
+    BOOST_CHECK_EQUAL(Decode(deeper, nullptr, &consumed), SCRIPT_ERR_OK);
+    BOOST_CHECK_EQUAL(consumed, 1 + ASSETAUTH_FIXED_ITEMS_V2);
+
+    // Version 1 decodes as before, with r = 0.
+    BOOST_CHECK_EQUAL(Decode(CallStack(2, 3, 1, 500, 1, 2, 3, ABC), &call, &consumed), SCRIPT_ERR_OK);
+    BOOST_CHECK_EQUAL(consumed, ABC.size() + ASSETAUTH_FIXED_ITEMS);
+    BOOST_CHECK_EQUAL(call.r, 0);
+
+    // n + 8 items are enough to read the version, but not a version 2 call.
+    Stack shallow = CallStackV2(0, 0, 0, 0, 0, 1, 1, {"ALICE!"});
+    shallow.erase(shallow.begin());
+    BOOST_CHECK_EQUAL(Decode(shallow), SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+    // r and c, the item version 2 adds, are minimal numbers of up to 4 bytes.
+    Stack nonMinimal = CallStackV2(0, 0, 0, 0, 0, 1, 1, {"ALICE!"});
+    nonMinimal[3] = {0x05, 0x00};
+    BOOST_CHECK_EQUAL(Decode(nonMinimal), SCRIPT_ERR_ASSETAUTH_ARGS);
+    Stack tooWide = CallStackV2(0, 0, 0, 0, 0, 1, 1, {"ALICE!"});
+    tooWide[3] = {0x01, 0x02, 0x03, 0x04, 0x05};
+    BOOST_CHECK_EQUAL(Decode(tooWide), SCRIPT_ERR_ASSETAUTH_ARGS);
+    Stack wideC = CallStackV2(0, 0, 0, 0, 0, 1, 1, {"ALICE!"});
+    wideC[0] = {0x01, 0x00};
+    BOOST_CHECK_EQUAL(Decode(wideC), SCRIPT_ERR_ASSETAUTH_ARGS);
+    BOOST_CHECK_EQUAL(Decode(CallStackV2(0, 0, 0, -1, 0, 1, 1, {"ALICE!"})), SCRIPT_ERR_ASSETAUTH_ARGS);
+    BOOST_CHECK_EQUAL(Decode(CallStackV2(-1, 0, 0, 0, 0, 1, 1, {"ALICE!"})), SCRIPT_ERR_ASSETAUTH_ARGS);
+
+    // Version 3 is unknown in either layout.
+    Stack three = CallStackV2(0, 0, 0, 0, 0, 1, 1, {"ALICE!"});
+    three[5] = CScriptNum(3).getvch();
+    BOOST_CHECK_EQUAL(Decode(three), SCRIPT_ERR_ASSETAUTH_POLICY);
+    // Policy rules of version 1 apply.
+    BOOST_CHECK_EQUAL(Decode(CallStackV2(0, 0, 0, 0, 0, 3, 2, ABC)), SCRIPT_ERR_ASSETAUTH_POLICY);
+    BOOST_CHECK_EQUAL(Decode(CallStackV2(0, 0, 0, 0, 0, 1, 1, {"BOB!", "ALICE!"})), SCRIPT_ERR_ASSETAUTH_POLICY);
+}
+
+BOOST_AUTO_TEST_CASE(v2_arguments_and_context)
+{
+    RefFixture f;
+    BOOST_CHECK_EQUAL(f.spend.Eval(f.call, 0), SCRIPT_ERR_OK);
+
+    // r is at most the number of references.
+    AssetAuthCall tooMany = f.call;
+    tooMany.r = 3;
+    BOOST_CHECK_EQUAL(f.spend.Eval(tooMany, 0), SCRIPT_ERR_ASSETAUTH_ARGS);
+
+    // A transaction that is not version 3 has no references, so r = 0.
+    Spend plain;
+    plain.Input(XnaOut(CUSTODY, COIN));
+    plain.Input(OwnerOut(P2PKHDest(0xa0), "ALICE!"), SigScript(SIGHASH_ALL));
+    plain.Output(XnaOut(P2PKHDest(0xe0), COIN - CENT));
+    BOOST_CHECK_EQUAL(plain.Eval(PolicyV2(1, 1, ABC), 0), SCRIPT_ERR_OK);
+    BOOST_CHECK_EQUAL(plain.Eval(PolicyV2(1, 1, ABC, 0, 0, 0, /*r=*/1), 0), SCRIPT_ERR_ASSETAUTH_ARGS);
+    // Without references, version 2 needs no referenced outputs.
+    BOOST_CHECK_EQUAL(plain.Eval(PolicyV2(1, 1, ABC), 0, FLAGS, Context(), nullptr, nullptr, false), SCRIPT_ERR_OK);
+
+    // With references, it fails closed without their outputs.
+    BOOST_CHECK_EQUAL(f.spend.Eval(f.call, 0, FLAGS, Context(), nullptr, nullptr, false), SCRIPT_ERR_ASSETAUTH_CONTEXT);
+    RefFixture missing;
+    missing.spend.refOutputs.pop_back();
+    BOOST_CHECK_EQUAL(missing.spend.Eval(missing.call, 0), SCRIPT_ERR_ASSETAUTH_CONTEXT);
+
+    // Version 1 only commits the reference outpoints: it does not need them.
+    Spend sync = plain;
+    sync.Input(OwnerOut(P2PKHDest(0xb0), "BOB!"), SigScript(SIGHASH_ALL));
+    sync.Ref(XnaOut(P2PKHDest(0x90), COIN));
+    BOOST_CHECK_EQUAL(sync.Eval(Policy(2, 3, ABC), 0, FLAGS, Context(), nullptr, nullptr, false), SCRIPT_ERR_OK);
+}
+
+BOOST_AUTO_TEST_CASE(v2_proposal_hash_commitments)
+{
+    RefFixture base;
+    const uint256 h0 = base.H2();
+
+    auto changes = [&](const std::function<void(RefFixture&)>& mutate) {
+        RefFixture f;
+        mutate(f);
+        return f.H2() != h0;
+    };
+    // r and the proposal references are committed.
+    BOOST_CHECK(changes([](RefFixture& f) { f.call.r = 1; }));
+    {
+        RefFixture f;
+        f.call.r = 1;
+        const uint256 before = f.H2();
+        f.spend.mtx.vrefin[0].n = 7;
+        BOOST_CHECK(f.H2() != before);
+    }
+    // So is everything version 1 commits but the references.
+    BOOST_CHECK(changes([](RefFixture& f) { f.spend.mtx.nLockTime = 7; }));
+    BOOST_CHECK(changes([](RefFixture& f) { f.call.T += 1; }));
+    BOOST_CHECK(changes([](RefFixture& f) { f.call.c = 2; }));
+    BOOST_CHECK(changes([](RefFixture& f) { f.call.a = 1; }));
+    BOOST_CHECK(changes([](RefFixture& f) { f.call.b = 1; }));
+    BOOST_CHECK(changes([](RefFixture& f) { f.spend.mtx.vin[0].prevout.n = 9; }));
+    BOOST_CHECK(changes([](RefFixture& f) { f.spend.mtx.vin[0].nSequence = 5; }));
+    BOOST_CHECK(changes([](RefFixture& f) { f.spend.mtx.vout[1].nValue -= 1; }));
+
+    // Vote references are not: adding, removing or reordering them keeps H2.
+    BOOST_CHECK(!changes([](RefFixture& f) { f.spend.Ref(XnaOut(P2PKHDest(0x90), COIN)); }));
+    BOOST_CHECK(!changes([](RefFixture& f) { f.spend.mtx.vrefin.pop_back(); }));
+    BOOST_CHECK(!changes([](RefFixture& f) { std::swap(f.spend.mtx.vrefin[0], f.spend.mtx.vrefin[1]); }));
+    // Nor the inputs c.. or the intermediate outputs.
+    BOOST_CHECK(!changes([](RefFixture& f) { f.spend.mtx.vin[1].nSequence = 5; }));
+    BOOST_CHECK(!changes([](RefFixture& f) { f.spend.mtx.vout[2].nValue -= 1; }));
+
+    // With r equal to the number of references, m2 and m match byte for byte,
+    // and the tags still keep H2 and H apart.
+    const CTransaction tx(base.spend.mtx);
+    AssetAuthCall all = base.call;
+    all.r = static_cast<int64_t>(tx.vrefin.size());
+    AssetAuthCall v1 = base.call;
+    v1.version = ASSETAUTH_POLICY_VERSION;
+    v1.r = 0;
+    const std::vector<unsigned char> m2 = AssetAuthProposalMessage(tx, 2, all);
+    BOOST_CHECK(m2 == AssetAuthProposalMessage(tx, 2, v1));
+    BOOST_CHECK(AssetAuthProposalHash(m2, ASSETAUTH_POLICY_VERSION_2) != AssetAuthProposalHash(m2, ASSETAUTH_POLICY_VERSION));
+    BOOST_CHECK(AssetAuthProposalHash(m2, ASSETAUTH_POLICY_VERSION_2) == TaggedHash("NeuraiAssetAuthProposalV2", m2));
+}
+
+// Exact vectors, checked against an independent implementation: a version 3
+// transaction with one proposal input, one prefix and one suffix output, and
+// two references of which the first belongs to the proposal (r = 1).
+BOOST_AUTO_TEST_CASE(v2_proposal_hash_vectors)
+{
+    CMutableTransaction mtx;
+    mtx.nVersion = 3;
+    mtx.nLockTime = 0;
+    mtx.vin.emplace_back(COutPoint(uint256S("11"), 1), CScript(), uint32_t{CTxIn::SEQUENCE_FINAL});
+    mtx.vin.emplace_back(COutPoint(uint256S("22"), 0), CScript(), uint32_t{CTxIn::SEQUENCE_FINAL - 1});
+    mtx.vout.emplace_back(9 * COIN, P2PKHDest(0xe0));
+    mtx.vout.emplace_back(4 * CENT, P2PKHDest(0xb1));
+    mtx.vout.emplace_back(COIN, P2PKHDest(0xe1));
+    mtx.vrefin = {COutPoint(uint256S("33"), 2), COutPoint(uint256S("44"), 0)};
+    const CTransaction tx(mtx);
+    const AssetAuthCall call = PolicyV2(2, 3, ABC, /*c=*/1, /*a=*/1, /*b=*/1, /*r=*/1, /*T=*/1000);
+
+    auto hash = [&](const AssetAuthCall& c, uint8_t chainId) {
+        const uint256 h = AssetAuthProposalHash(AssetAuthProposalMessage(tx, chainId, c), c.version);
+        return HexStr(h.begin(), h.end());
+    };
+    BOOST_CHECK_EQUAL(HexStr(AssetAuthProposalMessage(tx, 2, call)),
+                      "02" "03000000" "00000000" "e8030000" "010101"                                // chain, version, locktime, T, c a b
+                      "1100000000000000000000000000000000000000000000000000000000000000" "01000000" "ffffffff" // input 0
+                      "00e9a43500000000" "1976a914e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e088ac"    // prefix output
+                      "00e1f50500000000" "1976a914e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e188ac"    // suffix output
+                      "01" "3300000000000000000000000000000000000000000000000000000000000000" "02000000"); // r, reference 0
+    BOOST_CHECK_EQUAL(hash(call, 0), "8a64677ea55c31e1f262169e4701adfe43e814306cd846062da54a5ee0459f73");
+    BOOST_CHECK_EQUAL(hash(call, 1), "e45286dbed5534ee9ad0867bd9743d6383c3ac808ca1ac84d963c056a0d77457");
+    BOOST_CHECK_EQUAL(hash(call, 2), "408465300d5d5763ffc79ce4854df4537dfbbf60622af104f96cb84db3ce6e7e");
+
+    // r = 2: the message is m of version 1, the hash is not.
+    AssetAuthCall all = call;
+    all.r = 2;
+    BOOST_CHECK_EQUAL(hash(all, 2), "61d1ad7778c945de4fa2f5bcc49b3dfb05e4f02c6b084126fb0a62054d97c20e");
+    BOOST_CHECK_EQUAL(hash(Policy(2, 3, ABC, 1, 1, 1, 1000), 2),
+                      "9c140f6de1efc3f88af1c1d91c3cc4ceb51ff54c70d79c730d51cd7a92fa41f3");
+}
+
+BOOST_AUTO_TEST_CASE(v2_votes_by_reference)
+{
+    RefFixture f;
+    bool usedHeight = false;
+    BOOST_CHECK_EQUAL(f.spend.Eval(f.call, 0, FLAGS, Context(), nullptr, &usedHeight), SCRIPT_ERR_OK);
+    BOOST_CHECK(usedHeight);
+    // The other custody-side checks see the same verdict for every proposal input.
+    BOOST_CHECK_EQUAL(f.spend.Eval(f.call, 0, FLAGS, Context(HEIGHT)), SCRIPT_ERR_OK);
+    BOOST_CHECK_EQUAL(f.spend.Eval(f.call, 0, FLAGS, Context(HEIGHT + 1)), SCRIPT_ERR_ASSETAUTH_EXPIRED);
+
+    // Strict v3 holds a vote too.
+    RefFixture v3;
+    v3.spend.refOutputs[1] = OwnerOut(ProgramDest(OP_3, 0xb0), "BOB!", MessageOf(v3.H2()));
+    BOOST_CHECK_EQUAL(v3.spend.Eval(v3.call, 0), SCRIPT_ERR_OK);
+
+    // References of BOB that are not votes. ALICE's vote keeps the call
+    // asynchronous, so each fails rule 6.
+    const uint256 h2 = f.H2();
+    const std::vector<unsigned char> m2 = AssetAuthProposalMessage(CTransaction(f.spend.mtx), 2, f.call);
+    const std::string ipfs = std::string("\x12\x20", 2) + std::string(32, '\x22');
+    const std::vector<CTxOut> notVotes{
+        OwnerOut(LOCK_B, "BOB!", MessageOf(h2)),                                   // generic AuthScript v1
+        OwnerOut(P2PKHDest(0xb0), "BOB!"),                                         // no message
+        OwnerOut(P2PKHDest(0xb0), "BOB!", std::string(32, '\x11')),                // another proposal
+        OwnerOut(P2PKHDest(0xb0), "BOB!", ipfs),                                   // 34-byte IPFS message
+        OwnerOut(P2PKHDest(0xb0), "BOB!", MessageOf(TaggedHash("NeuraiAssetAuthProposal", m2))), // version 1 tag
+        AssetOut(P2PKHDest(0xb0), "GOLD", COIN, MessageOf(h2)),                    // not an owner
+        AssetOut(P2PKHDest(0xb0), "BOB!", 2 * COIN, MessageOf(h2)),                // not one owner token
+        OwnerIssuanceOut(P2PKHDest(0xb0), "BOB"),                                  // issuance, no transfer
+        XnaOut(P2PKHDest(0xb0), COIN),                                             // no asset
+    };
+    for (const CTxOut& out : notVotes) {
+        RefFixture g;
+        g.spend.refOutputs[1] = out;
+        BOOST_CHECK_EQUAL(g.spend.Eval(g.call, 0), SCRIPT_ERR_ASSETAUTH_SHAPE);
+    }
+
+    // None of them approves BOB: without ALICE's vote the call is synchronous
+    // and ALICE's direct signature alone is short of M = 2.
+    for (const CTxOut& out : notVotes) {
+        Spend s;
+        s.mtx.nVersion = 3;
+        s.Input(XnaOut(CUSTODY, COIN));
+        s.Input(OwnerOut(P2PKHDest(0xa0), "ALICE!"), SigScript(SIGHASH_ALL));
+        s.Output(XnaOut(P2PKHDest(0xe0), COIN - CENT));
+        s.Ref(out);
+        bool used = true;
+        BOOST_CHECK_EQUAL(s.Eval(PolicyV2(2, 3, ABC), 0, FLAGS, Context(), nullptr, &used),
+                          SCRIPT_ERR_ASSETAUTH_THRESHOLD);
+        BOOST_CHECK(!used);
+    }
+
+    // An owner of another list does not count but is a valid vote (rule 6).
+    RefFixture dave;
+    dave.Vote(P2PKHDest(0xd0), "DAVE!");
+    BOOST_CHECK_EQUAL(dave.spend.Eval(dave.call, 0), SCRIPT_ERR_OK);
+    RefFixture daveOnly;
+    daveOnly.spend.refOutputs[1] = OwnerOut(P2PKHDest(0xd0), "DAVE!", MessageOf(daveOnly.H2()));
+    BOOST_CHECK_EQUAL(daveOnly.spend.Eval(daveOnly.call, 0), SCRIPT_ERR_ASSETAUTH_THRESHOLD);
+    // A name that is not an owner name is no vote, of any list.
+    RefFixture badName;
+    badName.spend.refOutputs[1] = OwnerOut(P2PKHDest(0xd0), "DAVE", MessageOf(badName.H2()));
+    BOOST_CHECK_EQUAL(badName.spend.Eval(badName.call, 0), SCRIPT_ERR_ASSETAUTH_SHAPE);
+}
+
+BOOST_AUTO_TEST_CASE(v2_classification)
+{
+    // A role spent from another family never approves in version 2, with or
+    // without a message, and is no foreign vote either.
+    Spend s;
+    s.mtx.nVersion = 3;
+    s.Input(XnaOut(CUSTODY, COIN));
+    s.Input(OwnerOut(P2PKHDest(0xb0), "BOB!"), SigScript(SIGHASH_ALL));
+    s.Input(OwnerOut(LOCK_A, "ALICE!"));
+    s.Output(XnaOut(P2PKHDest(0xe0), COIN - CENT));
+    const AssetAuthCall call = PolicyV2(2, 3, ABC);
+    for (const std::string& message : {std::string(), MessageOf(s.Hash(call)), std::string(32, '\x11')}) {
+        s.prevouts[2] = OwnerOut(LOCK_A, "ALICE!", message);
+        BOOST_CHECK_EQUAL(s.Eval(call, 0), SCRIPT_ERR_ASSETAUTH_THRESHOLD);
+    }
+    // Version 1 calls the last one a foreign vote.
+    BOOST_CHECK_EQUAL(s.Eval(Policy(2, 3, ABC), 0), SCRIPT_ERR_ASSETAUTH_FOREIGN_VOTE);
+
+    // A direct signature must be SIGHASH_ALL.
+    Spend direct = s;
+    direct.prevouts[2] = OwnerOut(P2PKHDest(0xa0), "ALICE!");
+    direct.mtx.vin[2].scriptSig = SigScript(SIGHASH_ALL);
+    BOOST_CHECK_EQUAL(direct.Eval(call, 0), SCRIPT_ERR_OK);
+    direct.mtx.vin[2].scriptSig = SigScript(SIGHASH_NONE);
+    BOOST_CHECK_EQUAL(direct.Eval(call, 0), SCRIPT_ERR_ASSETAUTH_SIGHASH);
+
+    // A proposal reference (index < r) that carries a vote does not count.
+    RefFixture f;
+    f.call.r = 1;
+    const uint256 h2 = f.H2();
+    f.spend.refOutputs[0] = OwnerOut(P2PKHDest(0xa0), "ALICE!", MessageOf(h2));
+    f.spend.refOutputs[1] = OwnerOut(ProgramDest(OP_2, 0xb0), "BOB!", MessageOf(h2));
+    BOOST_CHECK_EQUAL(f.spend.Eval(f.call, 0), SCRIPT_ERR_ASSETAUTH_THRESHOLD);
+    f.Vote(ProgramDest(OP_3, 0xc0), "CARL!");
+    BOOST_CHECK_EQUAL(f.spend.Eval(f.call, 0), SCRIPT_ERR_OK);
+    // The proposal reference itself is free: it need not be a vote.
+    f.spend.refOutputs[0] = XnaOut(P2PKHDest(0x90), COIN);
+    BOOST_CHECK_EQUAL(f.spend.Eval(f.call, 0), SCRIPT_ERR_OK);
+}
+
+BOOST_AUTO_TEST_CASE(v2_modes)
+{
+    // Synchronous: direct signatures only, and the references are free.
+    Spend s;
+    s.mtx.nVersion = 3;
+    s.Input(XnaOut(CUSTODY, COIN));
+    s.Input(OwnerOut(P2PKHDest(0xa0), "ALICE!"), SigScript(SIGHASH_ALL));
+    s.Input(OwnerOut(P2PKHDest(0xb0), "BOB!"), SigScript(SIGHASH_ALL));
+    s.Output(XnaOut(P2PKHDest(0xe0), COIN - CENT));
+    s.Output(CTxOut(0, CScript() << OP_RETURN << std::vector<unsigned char>{0x01}));
+    s.Ref(XnaOut(P2PKHDest(0x90), COIN));
+    s.Ref(AssetOut(LOCK_C, "GOLD", COIN));
+    const AssetAuthCall call = PolicyV2(2, 3, ABC);
+    bool used = true;
+    BOOST_CHECK_EQUAL(s.Eval(call, 0, FLAGS, Context(), nullptr, &used), SCRIPT_ERR_OK);
+    BOOST_CHECK(!used);
+    BOOST_CHECK_EQUAL(s.Eval(call, 0, FLAGS, Context(HEIGHT + 1)), SCRIPT_ERR_OK); // no expiry
+
+    // A vote of another list leaves this policy synchronous.
+    Spend other = s;
+    other.Ref(OwnerOut(P2PKHDest(0xd0), "DAVE!", MessageOf(other.Hash(call))));
+    BOOST_CHECK_EQUAL(other.Eval(call, 0, FLAGS, Context(), nullptr, &used), SCRIPT_ERR_OK);
+    BOOST_CHECK(!used);
+
+    // A vote of the list makes it asynchronous, and the free shape fails.
+    Spend own = s;
+    own.Ref(OwnerOut(P2PKHDest(0xc0), "CARL!", MessageOf(own.Hash(call))));
+    BOOST_CHECK_EQUAL(own.Eval(call, 0, FLAGS, Context(), nullptr, &used), SCRIPT_ERR_ASSETAUTH_SHAPE);
+    BOOST_CHECK(used);
+}
+
+BOOST_AUTO_TEST_CASE(v2_role_as_input_and_reference)
+{
+    // Only inside a block: ALICE's reference sees her output before the block,
+    // and the execution spends with a direct signature the output an earlier
+    // transaction of the block created (§3.5).
+    auto build = [](bool withBob) {
+        RefFixture f;
+        if (!withBob) {
+            f.spend.mtx.vrefin.pop_back();
+            f.spend.refOutputs.pop_back();
+        }
+        f.spend.Input(OwnerOut(P2PKHDest(0xa1), "ALICE!"), SigScript(SIGHASH_ALL));
+        f.spend.mtx.vout.insert(f.spend.mtx.vout.begin() + 2, OwnerOut(P2PKHDest(0xa1), "ALICE!")); // return
+        return f;
+    };
+    RefFixture f = build(true);
+    bool used = false;
+    BOOST_CHECK_EQUAL(f.spend.Eval(f.call, 0, FLAGS, Context(), nullptr, &used), SCRIPT_ERR_OK);
+    BOOST_CHECK(used);
+
+    // ALICE counts once: alone she is short of M = 2.
+    RefFixture alone = build(false);
+    BOOST_CHECK_EQUAL(alone.spend.Eval(alone.call, 0), SCRIPT_ERR_ASSETAUTH_THRESHOLD);
+
+    // Her vote makes the call asynchronous although she also signs: expiry
+    // and the fixed shape apply.
+    BOOST_CHECK_EQUAL(f.spend.Eval(f.call, 0, FLAGS, Context(HEIGHT + 1)), SCRIPT_ERR_ASSETAUTH_EXPIRED);
+    RefFixture extra = build(true);
+    extra.spend.mtx.vout.insert(extra.spend.mtx.vout.begin() + 2, AssetOut(P2PKHDest(0xf1), "GOLD", COIN));
+    BOOST_CHECK_EQUAL(extra.spend.Eval(extra.call, 0), SCRIPT_ERR_ASSETAUTH_SHAPE);
+
+    // Without the vote references, the same approvals are synchronous.
+    RefFixture sync = build(false);
+    sync.spend.mtx.vrefin.clear();
+    sync.spend.refOutputs.clear();
+    sync.spend.Input(OwnerOut(P2PKHDest(0xb1), "BOB!"), SigScript(SIGHASH_ALL));
+    sync.spend.mtx.vout.insert(sync.spend.mtx.vout.begin() + 2, AssetOut(P2PKHDest(0xf1), "GOLD", COIN));
+    BOOST_CHECK_EQUAL(sync.spend.Eval(sync.call, 0, FLAGS, Context(HEIGHT + 1), nullptr, &used), SCRIPT_ERR_OK);
+    BOOST_CHECK(!used);
+}
+
+BOOST_AUTO_TEST_CASE(v2_fixed_shape)
+{
+    // Rule 1: the evaluated input is a proposal input.
+    {
+        RefFixture f;
+        BOOST_CHECK_EQUAL(f.spend.Eval(f.call, 1), SCRIPT_ERR_ASSETAUTH_SHAPE);
+    }
+    // Rule 2: no input c.. at the custody.
+    {
+        RefFixture f;
+        f.spend.Input(XnaOut(CUSTODY, CENT));
+        BOOST_CHECK_EQUAL(f.spend.Eval(f.call, 0), SCRIPT_ERR_ASSETAUTH_SHAPE);
+    }
+    // Rule 3: inputs c.. are direct approvals, of any list, or carry no asset.
+    {
+        RefFixture f;
+        f.spend.Input(AssetOut(P2PKHDest(0xf0), "GOLD", COIN), SigScript(SIGHASH_ALL));
+        BOOST_CHECK_EQUAL(f.spend.Eval(f.call, 0), SCRIPT_ERR_ASSETAUTH_SHAPE);
+    }
+    {
+        // A version 1 vote: a role spent from a lock with the message.
+        RefFixture f;
+        f.spend.Input(OwnerOut(LOCK_C, "CARL!", MessageOf(f.H2())));
+        BOOST_CHECK_EQUAL(f.spend.Eval(f.call, 0), SCRIPT_ERR_ASSETAUTH_SHAPE);
+    }
+    {
+        RefFixture f;
+        f.spend.Input(OwnerOut(P2PKHDest(0xd0), "DAVE!"), SigScript(SIGHASH_NONE));
+        BOOST_CHECK_EQUAL(f.spend.Eval(f.call, 0), SCRIPT_ERR_ASSETAUTH_SIGHASH);
+    }
+    {
+        RefFixture f;
+        f.spend.Input(OwnerOut(P2PKHDest(0xd0), "DAVE!"), SigScript(SIGHASH_ALL));
+        f.spend.mtx.vout.insert(f.spend.mtx.vout.begin() + 2, OwnerOut(P2PKHDest(0xd0), "DAVE!"));
+        BOOST_CHECK_EQUAL(f.spend.Eval(f.call, 0), SCRIPT_ERR_OK);
+    }
+    // Rule 4: intermediate outputs are returns of direct approvals or change.
+    {
+        RefFixture f;
+        f.spend.mtx.vout.insert(f.spend.mtx.vout.begin() + 2, AssetOut(P2PKHDest(0xf1), "GOLD", COIN));
+        BOOST_CHECK_EQUAL(f.spend.Eval(f.call, 0), SCRIPT_ERR_ASSETAUTH_SHAPE);
+    }
+    {
+        // A vote by reference has no return: returning ALICE! is not allowed.
+        RefFixture f;
+        f.spend.mtx.vout.insert(f.spend.mtx.vout.begin() + 2, OwnerOut(P2PKHDest(0xa0), "ALICE!"));
+        BOOST_CHECK_EQUAL(f.spend.Eval(f.call, 0), SCRIPT_ERR_ASSETAUTH_SHAPE);
+    }
+    {
+        RefFixture f;
+        f.spend.mtx.vout.insert(f.spend.mtx.vout.begin() + 2,
+                                CTxOut(0, CScript() << OP_RETURN << std::vector<unsigned char>{0x01}));
+        BOOST_CHECK_EQUAL(f.spend.Eval(f.call, 0), SCRIPT_ERR_ASSETAUTH_SHAPE);
+    }
+    // Rule 5: change never exceeds the fee inputs.
+    {
+        RefFixture f(5 * CENT);
+        BOOST_CHECK_EQUAL(f.spend.Eval(f.call, 0), SCRIPT_ERR_OK);
+        RefFixture over(5 * CENT + 1);
+        BOOST_CHECK_EQUAL(over.spend.Eval(over.call, 0), SCRIPT_ERR_ASSETAUTH_SHAPE);
+    }
+    // Rule 6: every reference r.. is a vote by reference.
+    {
+        RefFixture f;
+        f.spend.Ref(XnaOut(P2PKHDest(0x90), COIN));
+        BOOST_CHECK_EQUAL(f.spend.Eval(f.call, 0), SCRIPT_ERR_ASSETAUTH_SHAPE);
+    }
+    // Example 6.3: BOB approves directly in the execution instead of voting.
+    {
+        RefFixture f;
+        f.spend.mtx.vrefin.pop_back();
+        f.spend.refOutputs.pop_back();
+        f.spend.Input(OwnerOut(P2PKHDest(0xb0), "BOB!"), SigScript(SIGHASH_ALL));
+        f.spend.mtx.vout.insert(f.spend.mtx.vout.begin() + 2, OwnerOut(P2PKHDest(0xb0), "BOB!"));
+        BOOST_CHECK_EQUAL(f.spend.Eval(f.call, 0), SCRIPT_ERR_OK);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(v2_composition)
+{
+    // A board 2-of-2 and an auditor 1-of-1 share c, a, b, r and T, so H2 too.
+    const AssetAuthCall board = PolicyV2(2, 2, ABC, /*c=*/2, /*a=*/2);
+    const AssetAuthCall auditor = PolicyV2(1, 1, {"AUDITOR!"}, /*c=*/2, /*a=*/2);
+    Spend s;
+    s.mtx.nVersion = 3;
+    s.Input(XnaOut(CUSTODY, 100 * COIN));
+    s.Input(XnaOut(CUSTODY_B, COIN));
+    s.Input(XnaOut(P2PKHDest(0xe1), 5 * CENT), SigScript(SIGHASH_ALL));
+    s.Output(XnaOut(P2PKHDest(0xe0), 100 * COIN));
+    s.Output(XnaOut(CUSTODY_B, COIN));
+    s.Output(XnaOut(P2PKHDest(0xe1), 4 * CENT));
+    const uint256 h2 = s.Hash(board);
+    BOOST_CHECK(h2 == s.Hash(auditor));
+    s.Ref(OwnerOut(P2PKHDest(0xa0), "ALICE!", MessageOf(h2)));
+    s.Ref(OwnerOut(ProgramDest(OP_2, 0xb0), "BOB!", MessageOf(h2)));
+    Spend noAuditor = s;
+    s.Ref(OwnerOut(P2PKHDest(0x0a), "AUDITOR!", MessageOf(h2)));
+    BOOST_CHECK_EQUAL(s.Eval(board, 0), SCRIPT_ERR_OK);
+    BOOST_CHECK_EQUAL(s.Eval(auditor, 1), SCRIPT_ERR_OK);
+
+    // Each policy needs its own threshold.
+    BOOST_CHECK_EQUAL(noAuditor.Eval(board, 0), SCRIPT_ERR_OK);
+    BOOST_CHECK_EQUAL(noAuditor.Eval(auditor, 1), SCRIPT_ERR_ASSETAUTH_THRESHOLD);
+
+    // With a different r the votes carry another H2: the auditor fails.
+    AssetAuthCall auditorR1 = auditor;
+    auditorR1.r = 1;
+    BOOST_CHECK(s.Eval(auditorR1, 1) != SCRIPT_ERR_OK);
+
+    // A version 1 vote input in the same transaction breaks rule 3 of version 2.
+    Spend mixed = s;
+    mixed.Input(OwnerOut(LOCK_A, "AUDITOR!", MessageOf(mixed.Hash(Policy(1, 1, {"AUDITOR!"}, 2, 2)))));
+    BOOST_CHECK_EQUAL(mixed.Eval(board, 0), SCRIPT_ERR_ASSETAUTH_SHAPE);
+
+    // Two version 2 custodies with the same roles count the same votes.
+    BOOST_CHECK_EQUAL(s.Eval(board, 1), SCRIPT_ERR_OK);
+}
+
+BOOST_AUTO_TEST_CASE(v2_threshold)
+{
+    // TOKEN! leaves the custody: G = 3 applies, with votes by reference.
+    Spend s;
+    s.mtx.nVersion = 3;
+    s.Input(OwnerOut(CUSTODY, "TOKEN!"));
+    s.Input(XnaOut(P2PKHDest(0xe1), 5 * CENT), SigScript(SIGHASH_ALL));
+    s.Output(OwnerOut(P2PKHDest(0xe5), "TOKEN!"));
+    s.Output(XnaOut(P2PKHDest(0xe1), 4 * CENT));
+    const AssetAuthCall call = PolicyV2(2, 3, ABC, /*c=*/1, /*a=*/1);
+    const std::string message = MessageOf(s.Hash(call));
+    s.Ref(OwnerOut(P2PKHDest(0xa0), "ALICE!", message));
+    s.Ref(OwnerOut(P2PKHDest(0xb0), "BOB!", message));
+    BOOST_CHECK_EQUAL(s.Eval(call, 0), SCRIPT_ERR_ASSETAUTH_THRESHOLD);
+    s.Ref(OwnerOut(P2PKHDest(0xc0), "CARL!", message));
+    BOOST_CHECK_EQUAL(s.Eval(call, 0), SCRIPT_ERR_OK);
+
+    // When it stays, M = 2 is enough.
+    Spend stay;
+    stay.mtx.nVersion = 3;
+    stay.Input(OwnerOut(CUSTODY, "TOKEN!"));
+    stay.Input(XnaOut(P2PKHDest(0xe1), 5 * CENT), SigScript(SIGHASH_ALL));
+    stay.Output(OwnerOut(CUSTODY, "TOKEN!"));
+    stay.Output(XnaOut(P2PKHDest(0xe1), 4 * CENT));
+    const std::string stayMessage = MessageOf(stay.Hash(call));
+    stay.Ref(OwnerOut(P2PKHDest(0xa0), "ALICE!", stayMessage));
+    stay.Ref(OwnerOut(P2PKHDest(0xb0), "BOB!", stayMessage));
+    BOOST_CHECK_EQUAL(stay.Eval(call, 0), SCRIPT_ERR_OK);
+}
+
+BOOST_AUTO_TEST_CASE(v2_work_budget)
+{
+    RefFixture f;
+    const CTransaction tx(f.spend.mtx);
+    const size_t messageSize = AssetAuthProposalMessage(tx, 2, f.call).size();
+    // Three roles and two referenced owners, all under 33 bytes; no input or
+    // output of the transaction carries an asset.
+    const uint64_t nameWork = AssetAuthNameWork(f.call, tx, f.spend.prevouts, FLAGS, &f.spend.refOutputs);
+    BOOST_CHECK_EQUAL(nameWork, 5U);
+    // Version 1 does not read the referenced outputs.
+    AssetAuthCall v1 = f.call;
+    v1.version = ASSETAUTH_POLICY_VERSION;
+    v1.r = 0;
+    BOOST_CHECK_EQUAL(AssetAuthNameWork(v1, tx, f.spend.prevouts, FLAGS, &f.spend.refOutputs), 3U);
+
+    const uint64_t work = AssetAuthWork(tx, messageSize, nameWork, tx.vrefin.size());
+    BOOST_CHECK_EQUAL(work, 1 + tx.vin.size() + tx.vout.size() + tx.vrefin.size() + (messageSize + 63) / 64 + nameWork);
+    AssetAuthWorkBudget exact(work);
+    BOOST_CHECK_EQUAL(f.spend.Eval(f.call, 0, FLAGS, Context(), &exact), SCRIPT_ERR_OK);
+    BOOST_CHECK_EQUAL(exact.Used(), work);
+    AssetAuthWorkBudget shortOfOne(work - 1);
+    BOOST_CHECK_EQUAL(f.spend.Eval(f.call, 0, FLAGS, Context(), &shortOfOne), SCRIPT_ERR_ASSETAUTH_BUDGET);
+
+    // Each reference pays one unit and its name: ceil(41 / 32) = 2 here. The
+    // name is no owner name, so rule 6 refuses it, after the charge.
+    RefFixture longer;
+    longer.spend.Ref(OwnerOut(P2PKHDest(0xd0), std::string(40, 'd') + "!", MessageOf(longer.H2())));
+    const CTransaction longerTx(longer.spend.mtx);
+    const uint64_t longerNames = AssetAuthNameWork(longer.call, longerTx, longer.spend.prevouts, FLAGS,
+                                                   &longer.spend.refOutputs);
+    BOOST_CHECK_EQUAL(longerNames, nameWork + 2);
+    BOOST_CHECK_EQUAL(AssetAuthWork(longerTx, messageSize, longerNames, longerTx.vrefin.size()), work + 3);
+    AssetAuthWorkBudget charged(10 * work);
+    BOOST_CHECK_EQUAL(longer.spend.Eval(longer.call, 0, FLAGS, Context(), &charged), SCRIPT_ERR_ASSETAUTH_SHAPE);
+    BOOST_CHECK_EQUAL(charged.Used(), work + 3);
+
+    // 64 references, the relay limit, with 31-byte names ending in digits.
+    RefFixture many;
+    for (int i = 0; i < 62; ++i)
+        many.Vote(P2PKHDest(0xd0), strprintf("VOTER%025d!", i));
+    const CTransaction manyTx(many.spend.mtx);
+    BOOST_CHECK_EQUAL(manyTx.vrefin.size(), 64U);
+    AssetAuthWorkBudget roomy(1000);
+    BOOST_CHECK_EQUAL(many.spend.Eval(many.call, 0, FLAGS, Context(), &roomy), SCRIPT_ERR_OK);
+    BOOST_CHECK_EQUAL(roomy.Used(),
+                      AssetAuthWork(manyTx, AssetAuthProposalMessage(manyTx, 2, many.call).size(),
+                                    AssetAuthNameWork(many.call, manyTx, many.spend.prevouts, FLAGS, &many.spend.refOutputs),
+                                    64));
+
+    // Without room for the work, the call fails before checking any name.
+    RefFixture badRoles;
+    badRoles.call.roles = {"ALICE", "BOB!", "CARL!"};
+    BOOST_CHECK_EQUAL(badRoles.spend.Eval(badRoles.call, 0), SCRIPT_ERR_ASSETAUTH_POLICY);
+    AssetAuthWorkBudget tight(1);
+    BOOST_CHECK_EQUAL(badRoles.spend.Eval(badRoles.call, 0, FLAGS, Context(), &tight), SCRIPT_ERR_ASSETAUTH_BUDGET);
+    BOOST_CHECK_EQUAL(tight.Used(), 0U);
+}
+
+BOOST_AUTO_TEST_CASE(v2_random_transactions_keep_invariants)
+{
+    SeedInsecureRand(true);
+    const std::vector<CTxOut> pool{
+        XnaOut(CUSTODY, COIN),
+        XnaOut(P2PKHDest(0xb2), 3 * CENT),
+        AssetOut(CUSTODY, "GOLD", COIN),
+        OwnerOut(CUSTODY, "TOKEN!"),
+        OwnerOut(LOCK_C, "CARL!", MessageOf(uint256S("77"))),
+        OwnerOut(P2PKHDest(0xc0), "CARL!"),
+        OwnerOut(ProgramDest(OP_2, 0xc3), "CARL!"),
+        OwnerOut(P2PKHDest(0xd0), "DAVE!"),
+        AssetOut(LOCK_A, "GOLD", 5 * COIN),
+    };
+    int passed = 0;
+    for (int iter = 0; iter < 3000; ++iter) {
+        RefFixture f;
+        Spend& s = f.spend;
+        for (uint64_t i = InsecureRandRange(4); i > 0; --i) {
+            switch (InsecureRandRange(7)) {
+            case 0:
+                if (s.mtx.vin.size() > 1) {
+                    const size_t k = InsecureRandRange(s.mtx.vin.size());
+                    s.mtx.vin.erase(s.mtx.vin.begin() + k);
+                    s.prevouts.erase(s.prevouts.begin() + k);
+                }
+                break;
+            case 1:
+                if (!s.mtx.vout.empty())
+                    s.mtx.vout.erase(s.mtx.vout.begin() + InsecureRandRange(s.mtx.vout.size()));
+                break;
+            case 2:
+                s.Input(pool[InsecureRandRange(pool.size())],
+                        InsecureRandBool() ? SigScript(InsecureRandBool() ? SIGHASH_ALL : SIGHASH_NONE) : CScript(),
+                        InsecureRandBool() ? StrictWitness(SIGHASH_ALL) : CScriptWitness());
+                break;
+            case 3:
+                s.Output(pool[InsecureRandRange(pool.size())]);
+                break;
+            case 4:
+                if (!s.mtx.vrefin.empty()) {
+                    const size_t j = InsecureRandRange(s.mtx.vrefin.size());
+                    s.mtx.vrefin.erase(s.mtx.vrefin.begin() + j);
+                    s.refOutputs.erase(s.refOutputs.begin() + j);
+                }
+                break;
+            case 5:
+                // H2 needs the prefix of the fixture's call (a = 2) in place.
+                if (InsecureRandBool() && s.mtx.vout.size() >= 2)
+                    f.Vote(InsecureRandBool() ? P2PKHDest(0xc0) : LOCK_C, InsecureRandBool() ? "CARL!" : "DAVE!");
+                else
+                    s.Ref(pool[InsecureRandRange(pool.size())]);
+                break;
+            default:
+                if (s.mtx.vrefin.size() > 1) {
+                    const size_t j = InsecureRandRange(s.mtx.vrefin.size()), k = InsecureRandRange(s.mtx.vrefin.size());
+                    std::swap(s.mtx.vrefin[j], s.mtx.vrefin[k]);
+                    std::swap(s.refOutputs[j], s.refOutputs[k]);
+                }
+                break;
+            }
+        }
+        AssetAuthCall call = f.call;
+        if (InsecureRandBool()) {
+            call.c = InsecureRandRange(4);
+            call.a = InsecureRandRange(4);
+            call.b = InsecureRandRange(3);
+            call.r = InsecureRandRange(3);
+            call.T = HEIGHT - 1 + InsecureRandRange(3);
+        }
+        const unsigned int nIn = InsecureRandRange(s.mtx.vin.size() + 1);
+        const script_verify_flags flags = InsecureRandBool() ? FLAGS : SCRIPT_VERIFY_ASSETAUTH;
+        AssetAuthWorkBudget budget(1000);
+        const ScriptError err = s.Eval(call, nIn, flags, Context(), &budget);
+        BOOST_CHECK_EQUAL(s.Eval(call, nIn, flags), err);
+        if (err != SCRIPT_ERR_OK)
+            continue;
+        ++passed;
+        const CTransaction tx(s.mtx);
+        BOOST_CHECK(nIn < tx.vin.size());
+        BOOST_CHECK(call.c <= static_cast<int64_t>(tx.vin.size()));
+        BOOST_CHECK(call.a + call.b <= static_cast<int64_t>(tx.vout.size()));
+        BOOST_CHECK(call.r <= static_cast<int64_t>(tx.vrefin.size()));
+        BOOST_CHECK_EQUAL(budget.Used(),
+                          AssetAuthWork(tx, AssetAuthProposalMessage(tx, Context().chainId, call).size(),
+                                        AssetAuthNameWork(call, tx, s.prevouts, flags, &s.refOutputs), tx.vrefin.size()));
     }
     BOOST_CHECK(passed > 0);
 }
@@ -1045,6 +1779,86 @@ BOOST_AUTO_TEST_CASE(metered_execution_skips_the_script_cache)
     // Without the chain context the opcode fails closed.
     CValidationState noContext;
     BOOST_CHECK(!CheckInputs(tx, noContext, view, true, flags, true, false, data, nullptr));
+}
+
+// Version 2 through the interpreter: a custody script `<2> <M> <G> <role> <1>
+// OP_CHECKASSETAUTH` spent with the witness [0x00, c, a, b, r, T, script] and
+// one vote by reference (NIP-054 v7).
+BOOST_AUTO_TEST_CASE(version_2_through_the_interpreter)
+{
+    LOCK(cs_main);
+    CCoinsView dummy;
+    CCoinsViewCache view(&dummy);
+
+    const std::string role = "ROLE!";
+    const CScript custodyScript = CScript() << ASSETAUTH_POLICY_VERSION_2 << 1 << 1
+                                            << std::vector<unsigned char>(role.begin(), role.end()) << 1
+                                            << OP_CHECKASSETAUTH;
+    const CScript custodySpk = CScript() << OP_1 << ToByteVector(GetAuthScriptCommitment(0, nullptr, custodyScript));
+
+    CMutableTransaction mtx;
+    mtx.nVersion = 3;
+    const COutPoint custodyPrev(GetRandHash(), 0), votePrev(GetRandHash(), 0);
+    mtx.vin.emplace_back(custodyPrev);
+    mtx.vout.emplace_back(COIN - CENT, CScript() << OP_TRUE); // prefix, a = 1
+    mtx.vrefin.push_back(votePrev);
+    const AssetAuthCall call = PolicyV2(1, 1, {role}, /*c=*/1, /*a=*/1, /*b=*/0, /*r=*/0, HEIGHT);
+    const std::vector<unsigned char> message = AssetAuthProposalMessage(CTransaction(mtx), 2, call);
+    const uint256 hash = AssetAuthProposalHash(message, ASSETAUTH_POLICY_VERSION_2);
+    view.AddCoin(custodyPrev, Coin(CTxOut(COIN, custodySpk), 1, false), false);
+    mtx.vin[0].scriptWitness.stack = {{0x00}, CScriptNum(1).getvch(), CScriptNum(1).getvch(), {}, {},
+                                      CScriptNum(HEIGHT).getvch(),
+                                      std::vector<unsigned char>(custodyScript.begin(), custodyScript.end())};
+    const CTransaction tx(mtx);
+    BOOST_CHECK(AssetAuthProposalHash(AssetAuthProposalMessage(tx, 2, call), ASSETAUTH_POLICY_VERSION_2) == hash);
+    const std::vector<CTxOut> prevouts{CTxOut(COIN, custodySpk)};
+    auto refs = std::make_shared<std::vector<CTxOut>>(std::vector<CTxOut>{OwnerOut(P2PKHDest(0xa0), role, MessageOf(hash))});
+
+    PrecomputedTransactionData data(tx);
+    auto flags = GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());
+    flags &= ~SCRIPT_VERIFY_POSEIDON_WORK; // isolate the asset-auth meter
+    BOOST_REQUIRE(flags & SCRIPT_VERIFY_ASSETAUTH);
+    BOOST_REQUIRE(flags & SCRIPT_VERIFY_CLEANSTACK);
+    const ChainContext context{HEIGHT, 0, 2, true};
+
+    // The call consumes n + 9 items and leaves true alone (CLEANSTACK).
+    CValidationState ok;
+    BOOST_CHECK_MESSAGE(CheckInputs(tx, ok, view, true, flags, true, false, data, nullptr, refs, context),
+                        FormatStateMessage(ok));
+
+    // The work counts the reference and its name: 1 + one input + one output
+    // + one reference + ceil(67 / 64) for m2 + the role and the referenced owner.
+    BOOST_CHECK_EQUAL(message.size(), 67U);
+    const uint64_t work = AssetAuthWork(tx, message.size(), AssetAuthNameWork(call, tx, prevouts, flags, refs.get()), 1);
+    BOOST_CHECK_EQUAL(work, 1U + 1 + 1 + 1 + 2 + 2);
+    auto budget = std::make_shared<AssetAuthWorkBudget>(10 * work);
+    CValidationState metered;
+    BOOST_CHECK(CheckInputs(tx, metered, view, true, flags, true, false, data, nullptr, refs, context,
+                            nullptr, nullptr, nullptr, false, budget));
+    BOOST_CHECK_EQUAL(budget->Used(), work);
+
+    // Without the referenced outputs a version 2 call fails closed.
+    CValidationState missing;
+    BOOST_CHECK(!CheckInputs(tx, missing, view, true, flags, true, false, data, nullptr, nullptr, context));
+
+    // After T the vote no longer counts.
+    CValidationState expired;
+    BOOST_CHECK(!CheckInputs(tx, expired, view, true, flags, true, false, data, nullptr, refs,
+                             ChainContext{HEIGHT + 1, 0, 2, true}));
+
+    // A reference that is not a vote leaves the call without approvals.
+    auto notVote = std::make_shared<std::vector<CTxOut>>(std::vector<CTxOut>{OwnerOut(P2PKHDest(0xa0), role)});
+    CValidationState noVote;
+    BOOST_CHECK(!CheckInputs(tx, noVote, view, true, flags, true, false, data, nullptr, notVote, context));
+
+    // The version 1 layout of the same witness leaves items on the stack: the
+    // extra r would be read as T and the call fails.
+    CMutableTransaction v1 = mtx;
+    v1.vin[0].scriptWitness.stack.erase(v1.vin[0].scriptWitness.stack.begin() + 4);
+    const CTransaction v1tx(v1);
+    PrecomputedTransactionData v1data(v1tx);
+    CValidationState shortWitness;
+    BOOST_CHECK(!CheckInputs(v1tx, shortWitness, view, true, flags, true, false, v1data, nullptr, refs, context));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

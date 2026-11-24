@@ -3583,8 +3583,10 @@ bool TransactionSignatureChecker::CheckAssetAuth(const AssetAuthCall& call, scri
     if (!AssetAuthContextAvailable())
         return set_error(serror, SCRIPT_ERR_ASSETAUTH_CONTEXT);
     bool fUsedHeight = false;
+    // Version 2 reads the referenced outputs (NIP-014); EvaluateAssetAuth
+    // fails closed when the transaction has references and they are missing.
     const bool ok = EvaluateAssetAuth(call, *txTo, nIn, *m_allPrevouts, m_chainContext, flags,
-                                      assetAuthWorkBudget, fUsedHeight, serror);
+                                      assetAuthWorkBudget, fUsedHeight, serror, m_refOutputs);
     // Asynchronous mode depends on the height: let the mempool re-validate
     // the entry on tip changes, even when the check failed.
     if (fUsedHeight)
