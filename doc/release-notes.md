@@ -151,6 +151,12 @@ tags):
 - `verifychain 4` and `-checklevel=4` no longer report a corrupted database
   for blocks with reference inputs whose outputs were spent later: the
   reconnection resolves them against the state before each block (NIP-014).
+- A block keeps one copy of each output its reference inputs read, shared by
+  all its transactions that reference it (NIP-014). Each reference used to
+  copy the output, up to 10,000 bytes for 36 bytes of block space, and the
+  script check queue held the copies: a 2 MB block of repeated references
+  took about 0.7 s to connect and, on a node with a single check thread, up
+  to 200 MB more memory. Validity does not change.
 - Testnet restarted again from a new genesis block (2026-11-05,
   `000000c7…2dc77d`) and requires protocol 70031: nodes of earlier builds
   (70030) are refused at handshake. A node refuses to start on a `testnet/`

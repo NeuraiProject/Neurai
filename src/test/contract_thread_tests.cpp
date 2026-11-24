@@ -32,7 +32,7 @@ bool Run(const CScript& contract, const CScript& spk, script_verify_flags flags,
     mutableTx.nVersion=3; mutableTx.vrefin.emplace_back(uint256S("ab"),0);
     CTransaction tx(mutableTx); PrecomputedTransactionData data(tx);
     std::vector<CTxOut> prevouts{CTxOut(0x0102030405060708LL,spk), CTxOut(9,CScript()<<OP_TRUE)};
-    std::vector<CTxOut> refs{CTxOut(17,spk)};
+    ReferencedOutputs refs(std::vector<CTxOut>{CTxOut(17,spk)});
     TransactionSignatureChecker checker(&tx,0,prevouts[0].nValue,data,spk,&prevouts,&refs);
     std::vector<Bytes> stack;
     bool ok=EvalScript(stack,contract,flags,checker,SIGVERSION_AUTHSCRIPT,&error);

@@ -356,7 +356,7 @@ enum FlushStateMode {
 static bool FlushStateToDisk(const CChainParams& chainParams, CValidationState &state, FlushStateMode mode, int nManualPruneHeight=0);
 static void FindFilesToPruneManual(std::set<int>& setFilesToPrune, int nManualPruneHeight);
 static void FindFilesToPrune(std::set<int>& setFilesToPrune, uint64_t nPruneAfterHeight);
-bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks = nullptr, std::shared_ptr<std::vector<CTxOut>> pRefOutputs = nullptr, ChainContext chainCtx = {}, bool* pfUsesChainContext = nullptr, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr, std::shared_ptr<ScriptExecutionStatus> executionStatus = nullptr, bool fBlockValidation = false, std::shared_ptr<AssetAuthWorkBudget> assetAuthWork = nullptr);
+bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks = nullptr, std::shared_ptr<const ReferencedOutputs> pRefOutputs = nullptr, ChainContext chainCtx = {}, bool* pfUsesChainContext = nullptr, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr, std::shared_ptr<ScriptExecutionStatus> executionStatus = nullptr, bool fBlockValidation = false, std::shared_ptr<AssetAuthWorkBudget> assetAuthWork = nullptr);
 static FILE* OpenUndoFile(const CDiskBlockPos &pos, bool fReadOnly = false);
 
 bool CheckFinalTx(const CTransaction &tx, int flags)
@@ -593,7 +593,7 @@ void UpdateMempoolForReorg(DisconnectedBlockTransactions &disconnectpool, bool f
 // were somehow broken and returning the wrong scriptPubKeys
 static bool CheckInputsFromMempoolAndCache(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &view, CTxMemPool& pool,
                  script_verify_flags flags, bool cacheSigStore, PrecomputedTransactionData& txdata,
-                 const std::shared_ptr<std::vector<CTxOut>>& pRefOutputs, ChainContext chainCtx = {}, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr, bool* pfUsesChainContext = nullptr, std::shared_ptr<AssetAuthWorkBudget> assetAuthWork = nullptr) {
+                 const std::shared_ptr<const ReferencedOutputs>& pRefOutputs, ChainContext chainCtx = {}, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr, bool* pfUsesChainContext = nullptr, std::shared_ptr<AssetAuthWorkBudget> assetAuthWork = nullptr) {
     AssertLockHeld(cs_main);
 
     // pool.cs should be locked already, but go ahead and re-take the lock here
@@ -990,9 +990,9 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         PrecomputedTransactionData txdata(tx);
 
         // NIP-014: resolve reference inputs for mempool script checks
-        std::shared_ptr<std::vector<CTxOut>> pRefOutputs;
+        std::shared_ptr<ReferencedOutputs> pRefOutputs;
         if (tx.nVersion == 3 && !tx.vrefin.empty()) {
-            pRefOutputs = std::make_shared<std::vector<CTxOut>>();
+            pRefOutputs = std::make_shared<ReferencedOutputs>();
             pRefOutputs->reserve(tx.vrefin.size());
             for (const auto& refout : tx.vrefin) {
                 const Coin& coin = pcoinsTip->AccessCoin(refout);
@@ -2007,9 +2007,9 @@ static void MempoolRemoveForNewTip(CTxMemPool& pool,
         if (!view.HaveInputs(tx)) return true;
         CValidationState stateDummy;
         PrecomputedTransactionData txdata(tx);
-        std::shared_ptr<std::vector<CTxOut>> pRefOutputs;
+        std::shared_ptr<ReferencedOutputs> pRefOutputs;
         if (tx.nVersion == 3 && !tx.vrefin.empty()) {
-            pRefOutputs = std::make_shared<std::vector<CTxOut>>();
+            pRefOutputs = std::make_shared<ReferencedOutputs>();
             pRefOutputs->reserve(tx.vrefin.size());
             for (const auto& refout : tx.vrefin) {
                 const Coin& coin = pcoinsTip->AccessCoin(refout);
@@ -2234,9 +2234,9 @@ static void MempoolEvictScriptRuleEntries(CTxMemPool& pool)
         if (fRequireStandard &&
             GetTransactionWitnessSigOpCost(tx, view, flags) > GetMaxStandardTxWitnessSigOps(nCandidateHeight, consensus))
             return true;
-        std::shared_ptr<std::vector<CTxOut>> pRefOutputs;
+        std::shared_ptr<ReferencedOutputs> pRefOutputs;
         if (tx.nVersion == 3 && !tx.vrefin.empty()) {
-            pRefOutputs = std::make_shared<std::vector<CTxOut>>();
+            pRefOutputs = std::make_shared<ReferencedOutputs>();
             pRefOutputs->reserve(tx.vrefin.size());
             for (const auto& refout : tx.vrefin) {
                 const Coin& coin = pcoinsTip->AccessCoin(refout);
@@ -2332,14 +2332,14 @@ static bool TxMayExecuteAssetAuth(const CTransaction& tx)
  *
  * Non-static (and re-declared) in src/test/txvalidationcache_tests.cpp
  */
-bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks, std::shared_ptr<std::vector<CTxOut>> pRefOutputs, ChainContext chainCtx, bool* pfUsesChainContext, std::shared_ptr<PoseidonWorkBudget> poseidonWork, std::shared_ptr<ScriptExecutionStatus> executionStatus, bool fBlockValidation, std::shared_ptr<AssetAuthWorkBudget> assetAuthWork)
+bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks, std::shared_ptr<const ReferencedOutputs> pRefOutputs, ChainContext chainCtx, bool* pfUsesChainContext, std::shared_ptr<PoseidonWorkBudget> poseidonWork, std::shared_ptr<ScriptExecutionStatus> executionStatus, bool fBlockValidation, std::shared_ptr<AssetAuthWorkBudget> assetAuthWork)
 {
     return CheckInputs(tx, state, inputs, fScriptChecks, flags, cacheSigStore, cacheFullScriptStore, txdata, pvChecks,
                        pRefOutputs, chainCtx, pfUsesChainContext, poseidonWork, executionStatus, fBlockValidation,
                        assetAuthWork, nullptr);
 }
 
-bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks, std::shared_ptr<std::vector<CTxOut>> pRefOutputs, ChainContext chainCtx, bool* pfUsesChainContext, std::shared_ptr<PoseidonWorkBudget> poseidonWork, std::shared_ptr<ScriptExecutionStatus> executionStatus, bool fBlockValidation, std::shared_ptr<AssetAuthWorkBudget> assetAuthWork, const MeteredWork* pRecordedWork)
+bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks, std::shared_ptr<const ReferencedOutputs> pRefOutputs, ChainContext chainCtx, bool* pfUsesChainContext, std::shared_ptr<PoseidonWorkBudget> poseidonWork, std::shared_ptr<ScriptExecutionStatus> executionStatus, bool fBlockValidation, std::shared_ptr<AssetAuthWorkBudget> assetAuthWork, const MeteredWork* pRecordedWork)
 {
     if (!executionStatus) executionStatus = std::make_shared<ScriptExecutionStatus>();
     if (!executionStatus->Apply(state)) return false;
@@ -3556,6 +3556,15 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
     // Outputs spent so far in this block: index in blockundo.vtxundo and
     // input index of the spend. Only kept when the block has references.
     std::unordered_map<COutPoint, std::pair<size_t, size_t>, SaltedOutpointHasher> mapSpentInBlock;
+    // Referenced outputs resolved so far in this block. A reference resolves
+    // to the same output wherever its transaction sits in the block, because
+    // the state at block entry does not change while the block connects, so
+    // the first resolution serves every later one. A single copy of each
+    // output is made and shared by the script checks of all the transactions
+    // that reference it; without this, every reference would copy up to
+    // MAX_SCRIPT_SIZE bytes of scriptPubKey for 36 bytes of block space, and
+    // the check queue would hold those copies until it drains.
+    std::unordered_map<COutPoint, std::shared_ptr<const CTxOut>, SaltedOutpointHasher> mapRefOutputs;
 
     for (unsigned int i = 0; i < block.vtx.size(); i++)
     {
@@ -3716,11 +3725,16 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
         {
             // NIP-014: resolve reference inputs against the UTXO state at
             // block entry (see mapSpentInBlock above).
-            std::shared_ptr<std::vector<CTxOut>> pRefOutputs;
+            std::shared_ptr<ReferencedOutputs> pRefOutputs;
             if (tx.nVersion == 3 && !tx.vrefin.empty()) {
-                pRefOutputs = std::make_shared<std::vector<CTxOut>>();
+                pRefOutputs = std::make_shared<ReferencedOutputs>();
                 pRefOutputs->reserve(tx.vrefin.size());
                 for (const auto& refout : tx.vrefin) {
+                    const auto resolved = mapRefOutputs.find(refout);
+                    if (resolved != mapRefOutputs.end()) {
+                        pRefOutputs->push_back(resolved->second);
+                        continue;
+                    }
                     const Coin* coin = &view.AccessCoin(refout);
                     if (coin->IsSpent()) {
                         // Spent earlier in this block, or never existed.
@@ -3734,7 +3748,9 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
                         return state.DoS(100, error("%s: referenced UTXO not found: %s", __func__, refout.ToString()),
                                          REJECT_INVALID, "bad-txns-vrefin-missing");
                     }
-                    pRefOutputs->push_back(coin->out);
+                    auto out = std::make_shared<const CTxOut>(coin->out);
+                    mapRefOutputs.emplace(refout, out);
+                    pRefOutputs->push_back(std::move(out));
                 }
             }
 

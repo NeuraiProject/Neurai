@@ -80,7 +80,9 @@ struct ScriptAsset {
     CAmount amount{0};
 };
 
-std::vector<ScriptAsset> ReadAssets(const std::vector<CTxOut>& outs)
+/** Outputs: std::vector<CTxOut> or ReferencedOutputs. */
+template <typename Outputs>
+std::vector<ScriptAsset> ReadAssets(const Outputs& outs)
 {
     std::vector<ScriptAsset> assets(outs.size());
     for (size_t i = 0; i < outs.size(); ++i)
@@ -314,7 +316,7 @@ uint256 AssetAuthProposalHash(const std::vector<unsigned char>& message, int ver
 }
 
 uint64_t AssetAuthNameWork(const AssetAuthCall& call, const CTransaction& tx, const std::vector<CTxOut>& prevouts,
-                           script_verify_flags flags, const std::vector<CTxOut>* refOutputs)
+                           script_verify_flags flags, const ReferencedOutputs* refOutputs)
 {
     CStrictAuthScriptContext strictAuthScriptContext((flags & SCRIPT_VERIFY_AUTHSCRIPT_STRICT) != 0);
     const bool fReferences = call.version == ASSETAUTH_POLICY_VERSION_2 && refOutputs;
@@ -331,7 +333,7 @@ bool EvaluateAssetAuth(const AssetAuthCall& call, const CTransaction& tx, unsign
                        const std::vector<CTxOut>& prevouts, const ChainContext& context,
                        script_verify_flags flags, AssetAuthWorkBudget* budget,
                        bool& fUsedHeight, ScriptError* serror,
-                       const std::vector<CTxOut>* refOutputs)
+                       const ReferencedOutputs* refOutputs)
 {
     fUsedHeight = false;
     if (!context.available || prevouts.size() != tx.vin.size() || nIn >= tx.vin.size())

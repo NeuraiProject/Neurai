@@ -3,8 +3,10 @@
 `vrefin_block_cost.py` builds blocks on regtest whose transactions reference
 outputs (NIP-014) and measures how long the node takes to connect each one and
 how much its peak resident memory grows while it does. A reference costs 36
-bytes of block space and the node copies the whole referenced output, up to
-10,000 bytes of scriptPubKey, for every transaction that references it.
+bytes of block space and can make the node read an output of up to 10,000
+bytes of scriptPubKey. Until each referenced output was resolved once per
+block and shared, the node copied it for every transaction that referenced
+it.
 
 Blocks:
 
@@ -31,7 +33,9 @@ taskset -c 0-15 python3 contrib/nip014/vrefin_block_cost.py
 
 On hybrid CPUs pin the run to one kind of core. It takes about a minute.
 
-## Results (2026-11-24, i9-14900K, P-cores, after `3c347f4`)
+## Results (2026-11-24, i9-14900K, P-cores)
+
+Before: one copy of each referenced output per transaction (`3c347f4`).
 
 | Block | `-par=0` | `-par=1` | `-par=2` |
 | --- | --- | --- | --- |
@@ -49,3 +53,21 @@ On hybrid CPUs pin the run to one kind of core. It takes about a minute.
   queue. When checks are slower than the copies and there are few check
   threads, the queue keeps almost all of them: 204 MB of the 230 MB the block
   copies.
+
+After: one copy of each referenced output per block, shared by the
+transactions that reference it. Two runs, the slower of each:
+
+| Block | `-par=0` | `-par=1` | `-par=2` |
+| --- | --- | --- | --- |
+| baseline | 0.011 s, +1 MB | 0.046 s, +1 MB | 0.020 s, +1 MB |
+| adversarial | 0.037 s, +4 MB | 0.069 s, +4 MB | 0.045 s, +5 MB |
+| distinct, 19,200 references | 0.020 s, +7 MB | 0.033 s, +7 MB | 0.029 s, +6 MB |
+| slow checks | 0.292 s, +1 MB | 1.991 s, +1 MB | 0.998 s, +1 MB |
+| slow checks + references | 0.268 s, +4 MB | 1.997 s, +3 MB | 1.018 s, +4 MB |
+
+- The adversarial block copies 64 outputs instead of 49,920 and connects
+  10 to 18 times faster, close to the baseline.
+- Slow checks with references cost what they cost without them: the check
+  queue only holds pointers.
+- Distinct references cost a few milliseconds and megabytes more: the table
+  keeps an entry per referenced output until the block is connected.

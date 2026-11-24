@@ -5,13 +5,14 @@
 
 """What reference inputs (NIP-014) cost a node when it connects a block.
 
-Builds three blocks on regtest and measures, for each one, how long the node
+Builds five blocks on regtest and measures, for each one, how long the node
 takes to connect it and how much its peak resident memory grows while it does:
 
 - adversarial: TXS standard transactions of 64 references each, all to the
   same 64 outputs whose scriptPubKey has 10,000 bytes, the largest an unspent
-  output can have. A reference costs 36 bytes of block space and copies the
-  whole referenced output;
+  output can have. A reference costs 36 bytes of block space; a node that
+  copies the referenced output for every transaction, instead of once per
+  block, copies about 500 MB here;
 - baseline: TXS transactions of the same shape without references;
 - distinct: DISTINCT_TXS transactions of 64 references each, every reference
   to a different small output, to time the lookup of each reference;

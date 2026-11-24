@@ -509,7 +509,7 @@ private:
     // OP_INPUTVALUE — see the guard in CheckInputs); a new opcode reading
     // m_allPrevouts must extend that guard (NIP revision 008).
     std::shared_ptr<std::vector<CTxOut>> m_allPrevouts;
-    std::shared_ptr<std::vector<CTxOut>> m_refOutputs;   // NIP-014
+    std::shared_ptr<const ReferencedOutputs> m_refOutputs;   // NIP-014
     std::shared_ptr<PoseidonWorkBudget> m_poseidonWork;
     std::shared_ptr<ScriptExecutionStatus> m_executionStatus;
     std::shared_ptr<AssetAuthWorkBudget> m_assetAuthWork;  // NIP-054
@@ -523,7 +523,7 @@ public:
     bool fChainContextObserved{false};
 
     CScriptCheck(): ptxTo(nullptr), nIn(0), nFlags(SCRIPT_VERIFY_NONE), cacheStore(false), error(SCRIPT_ERR_UNKNOWN_ERROR), txdata(nullptr) {}
-    CScriptCheck(const CTxOut& outIn, const CTransaction& txToIn, unsigned int nInIn, script_verify_flags nFlagsIn, bool cacheIn, PrecomputedTransactionData* txdataIn, std::shared_ptr<std::vector<CTxOut>> allPrevoutsIn = nullptr, std::shared_ptr<std::vector<CTxOut>> refOutputsIn = nullptr, ChainContext chainCtxIn = {}, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr, std::shared_ptr<ScriptExecutionStatus> executionStatus = nullptr, std::shared_ptr<AssetAuthWorkBudget> assetAuthWork = nullptr) :
+    CScriptCheck(const CTxOut& outIn, const CTransaction& txToIn, unsigned int nInIn, script_verify_flags nFlagsIn, bool cacheIn, PrecomputedTransactionData* txdataIn, std::shared_ptr<std::vector<CTxOut>> allPrevoutsIn = nullptr, std::shared_ptr<const ReferencedOutputs> refOutputsIn = nullptr, ChainContext chainCtxIn = {}, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr, std::shared_ptr<ScriptExecutionStatus> executionStatus = nullptr, std::shared_ptr<AssetAuthWorkBudget> assetAuthWork = nullptr) :
         m_tx_out(outIn), ptxTo(&txToIn), nIn(nInIn), nFlags(nFlagsIn), cacheStore(cacheIn), error(SCRIPT_ERR_UNKNOWN_ERROR), txdata(txdataIn), m_allPrevouts(std::move(allPrevoutsIn)), m_refOutputs(std::move(refOutputsIn)), m_poseidonWork(std::move(poseidonWork)), m_executionStatus(std::move(executionStatus)), m_assetAuthWork(std::move(assetAuthWork)), m_chainContext(chainCtxIn) { }
 
     bool operator()();
@@ -563,7 +563,7 @@ struct MeteredWork {
  * scripts be skipped; the work is then charged to the budgets in full. */
 bool CheckInputs(const CTransaction& tx, CValidationState& state, const CCoinsViewCache& inputs, bool fScriptChecks,
                  script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata,
-                 std::vector<CScriptCheck>* pvChecks, std::shared_ptr<std::vector<CTxOut>> pRefOutputs, ChainContext chainCtx,
+                 std::vector<CScriptCheck>* pvChecks, std::shared_ptr<const ReferencedOutputs> pRefOutputs, ChainContext chainCtx,
                  bool* pfUsesChainContext, std::shared_ptr<PoseidonWorkBudget> poseidonWork,
                  std::shared_ptr<ScriptExecutionStatus> executionStatus, bool fBlockValidation,
                  std::shared_ptr<AssetAuthWorkBudget> assetAuthWork, const MeteredWork* pRecordedWork);

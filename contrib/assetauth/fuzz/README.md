@@ -59,3 +59,7 @@ for the process with `setarch x86_64 -R`, which inside Docker needs
 
 2026-11-24, after policy version 2: one hour with `-fork=8`, about 37 million
 executions, no disagreement and no sanitizer report.
+
+2026-11-24, after the referenced outputs became shared (`ReferencedOutputs`):
+30 minutes with `-fork=8` on the efficiency cores, about 19 million
+executions, no disagreement and no sanitizer report.

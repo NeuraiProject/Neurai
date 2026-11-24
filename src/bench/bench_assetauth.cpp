@@ -170,7 +170,8 @@ void Run(benchmark::State& state, const Case& c)
     const ChainContext context{kHeight, 0, 2, true};
     bool fUsedHeight = false;
     ScriptError err = SCRIPT_ERR_OK;
-    const std::vector<CTxOut>* refs = c.refOutputs.empty() ? nullptr : &c.refOutputs;
+    const ReferencedOutputs refOutputs(c.refOutputs);
+    const ReferencedOutputs* refs = c.refOutputs.empty() ? nullptr : &refOutputs;
     // The bench must time the successful path, which visits every rule. The
     // budget only reports the work W of one iteration.
     AssetAuthWorkBudget budget(std::numeric_limits<uint64_t>::max());
@@ -380,7 +381,7 @@ void RepeatedCallsV2(benchmark::State& state, const Names& names)
     call.T = 1000000;
     const uint256 hash = AssetAuthProposalHash(AssetAuthProposalMessage(tx, 2, call), ASSETAUTH_POLICY_VERSION_2);
     const std::vector<CTxOut> prevouts{CTxOut(10000, custody)};
-    const std::vector<CTxOut> refs{OwnerOut(P2PKHDest(0x11), roles[0], std::string(hash.begin(), hash.end()))};
+    const ReferencedOutputs refs(std::vector<CTxOut>{OwnerOut(P2PKHDest(0x11), roles[0], std::string(hash.begin(), hash.end()))});
 
     const PrecomputedTransactionData txdata(tx);
     const script_verify_flags flags = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_CLEANSTACK |

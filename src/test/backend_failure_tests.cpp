@@ -13,7 +13,7 @@
 
 bool CheckInputs(const CTransaction&, CValidationState&, const CCoinsViewCache&, bool,
                  script_verify_flags, bool, bool, PrecomputedTransactionData&,
-                 std::vector<CScriptCheck>* = nullptr, std::shared_ptr<std::vector<CTxOut>> = nullptr,
+                 std::vector<CScriptCheck>* = nullptr, std::shared_ptr<const ReferencedOutputs> = nullptr,
                  ChainContext = {}, bool* = nullptr, std::shared_ptr<PoseidonWorkBudget> = nullptr,
                  std::shared_ptr<ScriptExecutionStatus> = nullptr, bool fBlockValidation = false,
                  std::shared_ptr<AssetAuthWorkBudget> = nullptr);

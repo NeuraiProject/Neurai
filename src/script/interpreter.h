@@ -790,6 +790,41 @@ public:
     virtual ~BaseSignatureChecker() {}
 };
 
+/**
+ * NIP-014: the outputs a transaction references, in vrefin order. Every output
+ * is held through a shared, immutable pointer, so that a block keeps a single
+ * copy of each output it references, however many of its transactions
+ * reference it, and the script checks of each transaction only hold pointers.
+ */
+class ReferencedOutputs
+{
+public:
+    ReferencedOutputs() = default;
+    /** Copies `outputs`. */
+    explicit ReferencedOutputs(const std::vector<CTxOut>& outputs)
+    {
+        m_outputs.reserve(outputs.size());
+        for (const CTxOut& out : outputs) push_back(out);
+    }
+
+    void reserve(size_t n) { m_outputs.reserve(n); }
+    /** Appends a copy of `out`. */
+    void push_back(const CTxOut& out) { m_outputs.push_back(std::make_shared<const CTxOut>(out)); }
+    /** Appends `out` itself, shared with whoever else holds it. */
+    void push_back(std::shared_ptr<const CTxOut> out)
+    {
+        assert(out);
+        m_outputs.push_back(std::move(out));
+    }
+
+    size_t size() const { return m_outputs.size(); }
+    bool empty() const { return m_outputs.empty(); }
+    const CTxOut& operator[](size_t i) const { return *m_outputs[i]; }
+
+private:
+    std::vector<std::shared_ptr<const CTxOut>> m_outputs;
+};
+
 class TransactionSignatureChecker : public BaseSignatureChecker
 {
 private:
@@ -804,7 +839,7 @@ private:
     // reads this member must add its flag to that guard, or it will fail
     // closed exactly like the NIP-024/NIP-022 mismatch (NIP revision 008).
     const std::vector<CTxOut>* m_allPrevouts;
-    const std::vector<CTxOut>* m_refOutputs;  // NIP-014: resolved reference outputs
+    const ReferencedOutputs* m_refOutputs;    // NIP-014: resolved reference outputs
     ChainContext m_chainContext{};            // NIP-026: chain-position view
 
     AssetNameTypeMemo* AssetNameTypes() const { return txdata ? txdata->assetNameTypes.get() : nullptr; }
@@ -836,7 +871,7 @@ public:
         : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn), m_spentScriptPubKey(&spentScriptPubKeyIn), m_allPrevouts(allPrevoutsIn), m_refOutputs(nullptr), m_chainContext(chainCtx) {}
 
     // NIP-014: Constructor with reference outputs — used by consensus validation for v3 txs.
-    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const PrecomputedTransactionData &txdataIn, const CScript& spentScriptPubKeyIn, const std::vector<CTxOut>* allPrevoutsIn, const std::vector<CTxOut>* refOutputsIn, ChainContext chainCtx = {})
+    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn, const CAmount &amountIn, const PrecomputedTransactionData &txdataIn, const CScript& spentScriptPubKeyIn, const std::vector<CTxOut>* allPrevoutsIn, const ReferencedOutputs* refOutputsIn, ChainContext chainCtx = {})
         : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn), m_spentScriptPubKey(&spentScriptPubKeyIn), m_allPrevouts(allPrevoutsIn), m_refOutputs(refOutputsIn), m_chainContext(chainCtx) {}
 
     bool CheckTreeSig(const std::vector<unsigned char>& sig, const std::vector<unsigned char>& key,

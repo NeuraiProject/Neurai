@@ -551,7 +551,8 @@ void FuzzEvaluate(Reader& in)
     const CTransaction tx(b.mtx);
     const Verdict want = Model(k, tx);
     const ChainContext context{HEIGHT, 0, CHAIN_ID, true};
-    const std::vector<CTxOut>* refs = k.dropRefs ? nullptr : &b.refOutputs;
+    const ReferencedOutputs refOutputs(b.refOutputs);
+    const ReferencedOutputs* refs = k.dropRefs ? nullptr : &refOutputs;
 
     auto eval = [&](AssetAuthWorkBudget* budget, bool& used) {
         ScriptError err = SCRIPT_ERR_OK;
@@ -614,7 +615,8 @@ void FuzzEvaluate(Reader& in)
         const CTransaction stx(s.mtx);
         ScriptError err = SCRIPT_ERR_OK;
         bool sused = false;
-        if (EvaluateAssetAuth(k.call, stx, k.nIn, s.prevouts, context, EVAL_FLAGS, nullptr, sused, &err, &s.refOutputs))
+        const ReferencedOutputs srefs(s.refOutputs);
+        if (EvaluateAssetAuth(k.call, stx, k.nIn, s.prevouts, context, EVAL_FLAGS, nullptr, sused, &err, &srefs))
             err = SCRIPT_ERR_OK;
         if (err != got) Fail("reordered votes", err, got);
     }

@@ -83,7 +83,8 @@ bool Run(const CTransaction& tx, const CScript& script, script_verify_flags flag
          const std::vector<CTxOut>* allPrevouts = nullptr)
 {
     PrecomputedTransactionData txdata(tx);
-    TransactionSignatureChecker checker(&tx, 0, 0, txdata, spentSPK, allPrevouts, refOutputs);
+    const ReferencedOutputs refs = refOutputs ? ReferencedOutputs(*refOutputs) : ReferencedOutputs();
+    TransactionSignatureChecker checker(&tx, 0, 0, txdata, spentSPK, allPrevouts, refOutputs ? &refs : nullptr);
     stack.clear();
     err = SCRIPT_ERR_OK;
     return EvalScript(stack, script, flags, checker, SIGVERSION_BASE, &err);

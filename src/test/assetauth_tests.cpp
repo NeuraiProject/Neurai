@@ -21,7 +21,7 @@
 
 #include <boost/test/unit_test.hpp>
 
-bool CheckInputs(const CTransaction &tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData &txdata, std::vector<CScriptCheck> *pvChecks = nullptr, std::shared_ptr<std::vector<CTxOut>> pRefOutputs = nullptr, ChainContext chainCtx = {}, bool* pfUsesChainContext = nullptr, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr, std::shared_ptr<ScriptExecutionStatus> executionStatus = nullptr, bool fBlockValidation = false, std::shared_ptr<AssetAuthWorkBudget> assetAuthWork = nullptr);
+bool CheckInputs(const CTransaction &tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, script_verify_flags flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData &txdata, std::vector<CScriptCheck> *pvChecks = nullptr, std::shared_ptr<const ReferencedOutputs> pRefOutputs = nullptr, ChainContext chainCtx = {}, bool* pfUsesChainContext = nullptr, std::shared_ptr<PoseidonWorkBudget> poseidonWork = nullptr, std::shared_ptr<ScriptExecutionStatus> executionStatus = nullptr, bool fBlockValidation = false, std::shared_ptr<AssetAuthWorkBudget> assetAuthWork = nullptr);
 
 namespace {
 
@@ -151,6 +151,12 @@ struct Spend {
 
     void Output(const CTxOut& out) { mtx.vout.push_back(out); }
 
+    /** The referenced outputs as the interpreter receives them. */
+    std::shared_ptr<const ReferencedOutputs> Refs() const
+    {
+        return std::make_shared<const ReferencedOutputs>(refOutputs);
+    }
+
     uint256 Hash(const AssetAuthCall& call) const
     {
         const CTransaction tx(mtx);
@@ -164,8 +170,9 @@ struct Spend {
         const CTransaction tx(mtx);
         ScriptError err = SCRIPT_ERR_OK;
         bool fUsedHeight = false;
+        const ReferencedOutputs refs(refOutputs);
         if (EvaluateAssetAuth(call, tx, nIn, prevouts, context, flags, budget, fUsedHeight, &err,
-                              fRefOutputs ? &refOutputs : nullptr))
+                              fRefOutputs ? &refs : nullptr))
             err = SCRIPT_ERR_OK;
         if (usedHeight) *usedHeight = fUsedHeight;
         return err;
@@ -1560,13 +1567,13 @@ BOOST_AUTO_TEST_CASE(v2_work_budget)
     const size_t messageSize = AssetAuthProposalMessage(tx, 2, f.call).size();
     // Three roles and two referenced owners, all under 33 bytes; no input or
     // output of the transaction carries an asset.
-    const uint64_t nameWork = AssetAuthNameWork(f.call, tx, f.spend.prevouts, FLAGS, &f.spend.refOutputs);
+    const uint64_t nameWork = AssetAuthNameWork(f.call, tx, f.spend.prevouts, FLAGS, f.spend.Refs().get());
     BOOST_CHECK_EQUAL(nameWork, 5U);
     // Version 1 does not read the referenced outputs.
     AssetAuthCall v1 = f.call;
     v1.version = ASSETAUTH_POLICY_VERSION;
     v1.r = 0;
-    BOOST_CHECK_EQUAL(AssetAuthNameWork(v1, tx, f.spend.prevouts, FLAGS, &f.spend.refOutputs), 3U);
+    BOOST_CHECK_EQUAL(AssetAuthNameWork(v1, tx, f.spend.prevouts, FLAGS, f.spend.Refs().get()), 3U);
 
     const uint64_t work = AssetAuthWork(tx, messageSize, nameWork, tx.vrefin.size());
     BOOST_CHECK_EQUAL(work, 1 + tx.vin.size() + tx.vout.size() + tx.vrefin.size() + (messageSize + 63) / 64 + nameWork);
@@ -1582,7 +1589,7 @@ BOOST_AUTO_TEST_CASE(v2_work_budget)
     longer.spend.Ref(OwnerOut(P2PKHDest(0xd0), std::string(40, 'd') + "!", MessageOf(longer.H2())));
     const CTransaction longerTx(longer.spend.mtx);
     const uint64_t longerNames = AssetAuthNameWork(longer.call, longerTx, longer.spend.prevouts, FLAGS,
-                                                   &longer.spend.refOutputs);
+                                                   longer.spend.Refs().get());
     BOOST_CHECK_EQUAL(longerNames, nameWork + 2);
     BOOST_CHECK_EQUAL(AssetAuthWork(longerTx, messageSize, longerNames, longerTx.vrefin.size()), work + 3);
     AssetAuthWorkBudget charged(10 * work);
@@ -1599,7 +1606,7 @@ BOOST_AUTO_TEST_CASE(v2_work_budget)
     BOOST_CHECK_EQUAL(many.spend.Eval(many.call, 0, FLAGS, Context(), &roomy), SCRIPT_ERR_OK);
     BOOST_CHECK_EQUAL(roomy.Used(),
                       AssetAuthWork(manyTx, AssetAuthProposalMessage(manyTx, 2, many.call).size(),
-                                    AssetAuthNameWork(many.call, manyTx, many.spend.prevouts, FLAGS, &many.spend.refOutputs),
+                                    AssetAuthNameWork(many.call, manyTx, many.spend.prevouts, FLAGS, many.spend.Refs().get()),
                                     64));
 
     // Without room for the work, the call fails before checking any name.
@@ -1696,7 +1703,7 @@ BOOST_AUTO_TEST_CASE(v2_random_transactions_keep_invariants)
         BOOST_CHECK(call.r <= static_cast<int64_t>(tx.vrefin.size()));
         BOOST_CHECK_EQUAL(budget.Used(),
                           AssetAuthWork(tx, AssetAuthProposalMessage(tx, Context().chainId, call).size(),
-                                        AssetAuthNameWork(call, tx, s.prevouts, flags, &s.refOutputs), tx.vrefin.size()));
+                                        AssetAuthNameWork(call, tx, s.prevouts, flags, s.Refs().get()), tx.vrefin.size()));
     }
     BOOST_CHECK(passed > 0);
 }
@@ -1812,7 +1819,7 @@ BOOST_AUTO_TEST_CASE(version_2_through_the_interpreter)
     const CTransaction tx(mtx);
     BOOST_CHECK(AssetAuthProposalHash(AssetAuthProposalMessage(tx, 2, call), ASSETAUTH_POLICY_VERSION_2) == hash);
     const std::vector<CTxOut> prevouts{CTxOut(COIN, custodySpk)};
-    auto refs = std::make_shared<std::vector<CTxOut>>(std::vector<CTxOut>{OwnerOut(P2PKHDest(0xa0), role, MessageOf(hash))});
+    auto refs = std::make_shared<const ReferencedOutputs>(std::vector<CTxOut>{OwnerOut(P2PKHDest(0xa0), role, MessageOf(hash))});
 
     PrecomputedTransactionData data(tx);
     auto flags = GetStandardScriptVerifyFlagsWithConsensusOptIns(GetParams().GetConsensus());
@@ -1847,7 +1854,7 @@ BOOST_AUTO_TEST_CASE(version_2_through_the_interpreter)
                              ChainContext{HEIGHT + 1, 0, 2, true}));
 
     // A reference that is not a vote leaves the call without approvals.
-    auto notVote = std::make_shared<std::vector<CTxOut>>(std::vector<CTxOut>{OwnerOut(P2PKHDest(0xa0), role)});
+    auto notVote = std::make_shared<const ReferencedOutputs>(std::vector<CTxOut>{OwnerOut(P2PKHDest(0xa0), role)});
     CValidationState noVote;
     BOOST_CHECK(!CheckInputs(tx, noVote, view, true, flags, true, false, data, nullptr, notVote, context));
 

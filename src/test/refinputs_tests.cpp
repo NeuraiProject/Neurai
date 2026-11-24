@@ -92,7 +92,8 @@ bool RunRefInputScript(const CTransaction& tx, const std::vector<CTxOut>& refOut
 {
     PrecomputedTransactionData txdata(tx);
     CScript dummySPK = CScript() << OP_TRUE;
-    TransactionSignatureChecker checker(&tx, 0, 0, txdata, dummySPK, nullptr, &refOutputs);
+    const ReferencedOutputs refs(refOutputs);
+    TransactionSignatureChecker checker(&tx, 0, 0, txdata, dummySPK, nullptr, &refs);
     ScriptError serror = SCRIPT_ERR_OK;
     std::vector<std::vector<unsigned char>> stack;
     bool ok = EvalScript(stack, script, flags, checker, SIGVERSION_BASE, &serror);
@@ -1010,6 +1011,58 @@ BOOST_AUTO_TEST_CASE(refinput_authscript_covenant_pattern)
 
     std::vector<std::vector<unsigned char>> result;
     BOOST_CHECK(RunRefInputScript(tx, refOutputs, script, REFINPUT_FLAGS, result));
+}
+
+BOOST_AUTO_TEST_CASE(referenced_outputs_share_one_copy)
+{
+    // ConnectBlock resolves each referenced output once per block and gives
+    // the same object to every transaction that references it, each in its
+    // own order.
+    const auto x = std::make_shared<const CTxOut>(1000, CScript() << OP_1);
+    const auto y = std::make_shared<const CTxOut>(2000, CScript() << OP_2);
+    ReferencedOutputs xy, yx;
+    xy.push_back(x);
+    xy.push_back(y);
+    yx.push_back(y);
+    yx.push_back(x);
+    BOOST_CHECK_EQUAL(&xy[0], x.get());
+    BOOST_CHECK_EQUAL(&yx[1], x.get());
+    BOOST_CHECK_EQUAL(&xy[1], &yx[0]);
+    BOOST_CHECK_EQUAL(x.use_count(), 3);
+
+    // An output outlives the block table: the transactions that reference
+    // it keep it.
+    auto table = std::make_shared<const CTxOut>(3000, CScript() << OP_3);
+    ReferencedOutputs kept;
+    kept.push_back(table);
+    table.reset();
+    BOOST_CHECK_EQUAL(kept[0].nValue, 3000);
+
+    // The mempool and the tests hand plain outputs over: they are copied.
+    const std::vector<CTxOut> plain{*x, *y};
+    const ReferencedOutputs copied(plain);
+    BOOST_CHECK_EQUAL(copied.size(), 2U);
+    BOOST_CHECK(copied[0] == *x && copied[1] == *y);
+    BOOST_CHECK(&copied[0] != x.get() && &copied[0] != &plain[0]);
+
+    // Each transaction reads its own references, in its own order.
+    CMutableTransaction mtx = BuildV3TestTx(1, 1, 2);
+    const CTransaction tx(mtx);
+    PrecomputedTransactionData txdata(tx);
+    const CScript dummySPK = CScript() << OP_TRUE;
+    const CScript script = CScript() << CScriptNum(0) << std::vector<unsigned char>{0x01} << OP_REFINPUTFIELD
+                                     << EncodeLE8(1000) << OP_EQUALVERIFY
+                                     << CScriptNum(1) << std::vector<unsigned char>{0x01} << OP_REFINPUTFIELD
+                                     << EncodeLE8(2000) << OP_EQUAL;
+    std::vector<std::vector<unsigned char>> stack;
+    ScriptError err = SCRIPT_ERR_OK;
+    const TransactionSignatureChecker xyChecker(&tx, 0, 0, txdata, dummySPK, nullptr, &xy);
+    BOOST_CHECK(EvalScript(stack, script, REFINPUT_FLAGS, xyChecker, SIGVERSION_BASE, &err));
+    BOOST_CHECK(!stack.empty() && CastToBool(stack.back()));
+    stack.clear();
+    const TransactionSignatureChecker yxChecker(&tx, 0, 0, txdata, dummySPK, nullptr, &yx);
+    BOOST_CHECK(!EvalScript(stack, script, REFINPUT_FLAGS, yxChecker, SIGVERSION_BASE, &err));
+    BOOST_CHECK_EQUAL(err, SCRIPT_ERR_EQUALVERIFY);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

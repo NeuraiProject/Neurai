@@ -1879,7 +1879,7 @@ namespace {
 struct RPCSigningContext {
     PrecomputedTransactionData txdata;
     std::vector<CTxOut> prevouts;
-    std::vector<CTxOut> refs;
+    ReferencedOutputs refs;
     ChainContext chain;
     script_verify_flags flags = script_verify_flags::from_int(0);
 
@@ -1906,15 +1906,17 @@ struct RPCSigningContext {
         // supplied through prevtxs or outputs of unconfirmed parents.
         LOCK(mempool.cs);
         if (tx.nVersion == 3) {
-            refs.reserve(tx.vrefin.size());
+            std::vector<CTxOut> outputs;
+            outputs.reserve(tx.vrefin.size());
             for (const auto& outpoint : tx.vrefin) {
                 const Coin& coin = pcoinsTip->AccessCoin(outpoint);
                 if (coin.IsSpent() || mempool.isSpent(outpoint)) {
-                    refs.clear();
+                    outputs.clear();
                     break;
                 }
-                refs.push_back(coin.out);
+                outputs.push_back(coin.out);
             }
+            refs = ReferencedOutputs(outputs);
         }
     }
 

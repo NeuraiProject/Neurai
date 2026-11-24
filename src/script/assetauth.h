@@ -92,7 +92,7 @@ uint256 AssetAuthProposalHash(const std::vector<unsigned char>& message, int ver
  * scripts are read as assets, as in EvaluateAssetAuth.
  */
 uint64_t AssetAuthNameWork(const AssetAuthCall& call, const CTransaction& tx, const std::vector<CTxOut>& prevouts,
-                           script_verify_flags flags, const std::vector<CTxOut>* refOutputs = nullptr);
+                           script_verify_flags flags, const ReferencedOutputs* refOutputs = nullptr);
 
 /**
  * Work units charged by one execution:
@@ -113,7 +113,7 @@ bool EvaluateAssetAuth(const AssetAuthCall& call, const CTransaction& tx, unsign
                        const std::vector<CTxOut>& prevouts, const ChainContext& context,
                        script_verify_flags flags, AssetAuthWorkBudget* budget,
                        bool& fUsedHeight, ScriptError* serror,
-                       const std::vector<CTxOut>* refOutputs = nullptr);
+                       const ReferencedOutputs* refOutputs = nullptr);
 
 /** Destination of a scriptPubKey: the script without its asset suffix. */
 CScript AssetAuthDestination(const CScript& scriptPubKey);
