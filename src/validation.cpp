@@ -3537,6 +3537,26 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
     std::vector<std::pair<std::string, CNullAssetTxData>> myNullAssetData;
     // DEPIN assets whose transfer state already changed in this block
     std::set<std::string> setDepinStateChangedInBlock;
+
+    // NIP-014 (section 7.2): reference inputs resolve against the UTXO state
+    // at block entry. Before the first UpdateCoins below, that state is view,
+    // whoever the caller is: VerifyDB connects blocks over a view that is not
+    // a cache over pcoinsTip, and pcoinsTip is the chain tip there. Each
+    // reference is read from view when its transaction is checked, so no copy
+    // of the block's referenced outputs is made ahead of the transactions. An
+    // output spent earlier in this block is taken from that spend's undo
+    // record; an output created in this block was not in the state at entry.
+    bool fBlockHasRefInputs = false;
+    for (const auto& ptx : block.vtx) {
+        if (ptx->nVersion == 3 && !ptx->vrefin.empty()) {
+            fBlockHasRefInputs = true;
+            break;
+        }
+    }
+    // Outputs spent so far in this block: index in blockundo.vtxundo and
+    // input index of the spend. Only kept when the block has references.
+    std::unordered_map<COutPoint, std::pair<size_t, size_t>, SaltedOutpointHasher> mapSpentInBlock;
+
     for (unsigned int i = 0; i < block.vtx.size(); i++)
     {
         const CTransaction &tx = *(block.vtx[i]);
@@ -3694,19 +3714,27 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
         txdata.emplace_back(tx);
         if (!tx.IsCoinBase())
         {
-            // NIP-014: resolve reference inputs against pre-block UTXO snapshot
+            // NIP-014: resolve reference inputs against the UTXO state at
+            // block entry (see mapSpentInBlock above).
             std::shared_ptr<std::vector<CTxOut>> pRefOutputs;
             if (tx.nVersion == 3 && !tx.vrefin.empty()) {
                 pRefOutputs = std::make_shared<std::vector<CTxOut>>();
                 pRefOutputs->reserve(tx.vrefin.size());
                 for (const auto& refout : tx.vrefin) {
-                    // Use pcoinsTip (pre-block snapshot, never modified during ConnectBlock)
-                    const Coin& coin = pcoinsTip->AccessCoin(refout);
-                    if (coin.IsSpent()) {
+                    const Coin* coin = &view.AccessCoin(refout);
+                    if (coin->IsSpent()) {
+                        // Spent earlier in this block, or never existed.
+                        const auto it = mapSpentInBlock.find(refout);
+                        coin = it == mapSpentInBlock.end() ? nullptr :
+                               &blockundo.vtxundo[it->second.first].vprevout[it->second.second];
+                    }
+                    // An output of this block, spent since or not, was not in
+                    // the state at block entry either.
+                    if (coin == nullptr || coin->IsSpent() || coin->nHeight >= static_cast<uint32_t>(pindex->nHeight)) {
                         return state.DoS(100, error("%s: referenced UTXO not found: %s", __func__, refout.ToString()),
                                          REJECT_INVALID, "bad-txns-vrefin-missing");
                     }
-                    pRefOutputs->push_back(coin.out);
+                    pRefOutputs->push_back(coin->out);
                 }
             }
 
@@ -3790,6 +3818,16 @@ static bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockInd
         /** XNA END */
 
         UpdateCoins(tx, view, i == 0 ? undoDummy : blockundo.vtxundo.back(), pindex->nHeight, block.GetHash(), assetsCache, undoAssetData);
+
+        // NIP-014: later references in this block still see these outputs.
+        // UpdateCoins records the spent coin of input k at vprevout[k].
+        if (fBlockHasRefInputs && i > 0) {
+            const size_t undoIndex = blockundo.vtxundo.size() - 1;
+            assert(blockundo.vtxundo[undoIndex].vprevout.size() == tx.vin.size());
+            for (size_t k = 0; k < tx.vin.size(); k++) {
+                mapSpentInBlock.emplace(tx.vin[k].prevout, std::make_pair(undoIndex, k));
+            }
+        }
 
         /** XNA START */
         if (!undoAssetData->first.empty()) {
